@@ -1,0 +1,53 @@
+:root[data-theme="hearth"] {
+  --bean-bg: oklch(0.9 0.004 85);
+  --bean-surface: oklch(0.995 0.005 75);
+  --bean-surface-2: oklch(0.975 0.012 70);
+  --bean-border: oklch(0.9 0.01 70);
+  --bean-text: oklch(0.3 0.02 60);
+  --bean-text-dim: oklch(0.55 0.015 60);
+  --bean-accent: oklch(0.66 0.15 48);
+  --bean-accent-ink: #fff;
+  --bean-orb-1: oklch(0.85 0.12 74);
+  --bean-orb-2: oklch(0.71 0.16 50);
+  --bean-orb-3: oklch(0.58 0.16 32);
+  --bean-orb-glow: oklch(0.74 0.15 52 / 0.5);
+  --bean-orb-check: oklch(0.62 0.13 150 / 0.55);
+  --bean-orb-check-ink: oklch(0.55 0.13 150);
+  --bean-console-bg: oklch(0.205 0.018 60);
+  --bean-console-fg: oklch(0.82 0.02 80);
+  --bean-console-cmd: oklch(0.74 0.12 52);
+  --bean-console-meta: oklch(0.6 0.02 70);
+}
+
+:root[data-theme="graphite"] {
+  --bean-bg: oklch(0.155 0.02 285);
+  --bean-surface: oklch(0.235 0.014 265);
+  --bean-surface-2: oklch(0.205 0.013 265);
+  --bean-border: oklch(0.34 0.014 265);
+  --bean-text: oklch(0.92 0.008 260);
+  --bean-text-dim: oklch(0.62 0.02 260);
+  --bean-accent: oklch(0.74 0.12 235);
+  --bean-accent-ink: oklch(0.18 0.012 265);
+  --bean-orb-1: oklch(0.87 0.09 215);
+  --bean-orb-2: oklch(0.71 0.13 248);
+  --bean-orb-3: oklch(0.52 0.15 278);
+  --bean-orb-glow: oklch(0.7 0.14 240 / 0.5);
+  --bean-orb-check: oklch(0.76 0.12 160 / 0.55);
+  --bean-orb-check-ink: oklch(0.8 0.12 160);
+  --bean-console-bg: oklch(0.165 0.015 270);
+  --bean-console-fg: oklch(0.8 0.02 240);
+  --bean-console-cmd: oklch(0.78 0.1 235);
+  --bean-console-meta: oklch(0.55 0.02 260);
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bean-bg);
+  color: var(--bean-text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

@@ -1,0 +1,23 @@
+.bean-menu {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  -webkit-app-region: no-drag;
+}
+.bean-menu--open { pointer-events: auto; }
+
+/* Quick-action tiles share the drag-bloom tile look, layout math, and stagger animation (see
+   drag-bloom.css .bean-petal + computeStackPositions). Unlike the drag skill tiles these are
+   real clickable buttons, not math-hit-tested, so pointer-events stay on and :hover/:focus
+   double for the "active" state.
+   button.bean-petal--menu (not just .bean-petal--menu): drag-bloom.css's plain .bean-petal sets
+   pointer-events:none at equal specificity and loads after this file, so it would win on source
+   order alone — the extra type selector guarantees this override wins regardless. */
+button.bean-petal--menu {
+  pointer-events: auto;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}

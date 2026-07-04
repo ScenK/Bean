@@ -1,0 +1,81 @@
+@keyframes bean-orb-pulse {
+  0%, 100% { opacity: .72; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.04); }
+}
+@keyframes bean-orb-ring-out {
+  0% { transform: scale(.5); opacity: .3; }
+  80% { opacity: 0; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+@keyframes bean-orb-glow-soft {
+  0%, 100% { opacity: .34; transform: scale(1); }
+  50% { opacity: .55; transform: scale(1.08); }
+}
+
+.bean-orb {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.bean-orb-glow {
+  position: absolute;
+  inset: -18%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, var(--bean-orb-glow), transparent 68%);
+  filter: blur(14px);
+  animation: bean-orb-glow-soft 3s ease-in-out infinite;
+}
+
+/* Expanding halo rings — the idle "signal" pulse from the mockup. */
+.bean-orb-ring {
+  position: absolute;
+  inset: 14%;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--bean-orb-glow) 0%, transparent 70%);
+  opacity: 0;
+  animation: bean-orb-ring-out 3s ease-out infinite;
+}
+.bean-orb-ring--delay { animation-delay: 1.5s; }
+
+.bean-orb-mark-wrap {
+  position: relative;
+  z-index: 1;
+  width: 64%;
+  height: 64%;
+  display: grid;
+  place-items: center;
+  animation: bean-orb-pulse 3.2s ease-in-out infinite;
+}
+.bean-orb-mark {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* Bean fills follow the theme accent (see theme.css --bean-orb-* vars); lit brightens the body. */
+.bean-orb-body {
+  fill: var(--bean-orb-2);
+  transition: fill .3s ease;
+}
+.bean-orb--lit .bean-orb-body { fill: var(--bean-orb-1); }
+.bean-orb-crease {
+  fill: var(--bean-orb-3);
+  opacity: .5;
+}
+.bean-orb-crease-line {
+  stroke: var(--bean-orb-1);
+  opacity: .35;
+}
+.bean-orb-gloss {
+  fill: #fff;
+  opacity: .28;
+}
+
+/* Livelier when actively listening/working; calmer when just done. */
+.bean-orb[data-state="working"] .bean-orb-mark-wrap,
+.bean-orb[data-state="listening"] .bean-orb-mark-wrap { animation-duration: 2.4s; }
+.bean-orb[data-state="working"] .bean-orb-glow { animation-duration: 2s; }
+.bean-orb[data-state="done"] .bean-orb-ring { animation-play-state: paused; }

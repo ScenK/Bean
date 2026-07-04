@@ -1,0 +1,134 @@
+.bean-drag-bloom {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+  -webkit-app-region: no-drag;
+}
+.bean-drag-bloom--open { pointer-events: auto; }
+
+/* Quick-action / skill tiles: a vertical stack that grows downward from the bean (see the
+   redesign mockup). Each tile is positioned by its center (left/top from computeStackPositions,
+   translate(-50%,-50%)). Closed, tiles sit slightly right + shrunk + transparent; opening slides
+   them into place, staggered by --i so they cascade in like the mockup. */
+.bean-petal {
+  position: absolute;
+  box-sizing: border-box;
+  width: 216px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  pointer-events: none;
+  opacity: 0;
+  /* Closed: parked to the right + shrunk. Opening slides each tile left into place (mockup's
+     x:56 → 0), staggered by --i so they cascade in. */
+  transform: translate(calc(-50% + 52px), -50%) scale(0.9);
+  transition: transform 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.25), opacity 0.2s ease,
+    background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  background: color-mix(in oklab, var(--bean-accent) 6%, var(--bean-surface));
+  backdrop-filter: blur(14px);
+  border: 1px solid color-mix(in oklab, var(--bean-accent) 14%, var(--bean-border));
+  border-radius: 13px;
+  padding: 9px 12px;
+  box-shadow: 0 12px 32px -20px rgba(0, 0, 0, 0.7);
+}
+.bean-drag-bloom--open .bean-petal,
+.bean-menu--open .bean-petal {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  transition-delay: calc(var(--i, 0) * 40ms);
+}
+.bean-petal--suggested {
+  border-color: color-mix(in oklab, var(--bean-accent) 55%, var(--bean-border));
+}
+
+/* Active (drag-hover) / clickable-hover: amber accent lift + glow, tile nudges up in scale. */
+.bean-drag-bloom--open .bean-petal--active,
+.bean-menu--open .bean-petal--menu:hover,
+.bean-menu--open .bean-petal--menu:focus-visible {
+  transform: translate(-50%, -50%) scale(1.03);
+}
+.bean-petal--active,
+.bean-petal--menu:hover,
+.bean-petal--menu:focus-visible {
+  z-index: 2;
+  background: color-mix(in oklab, var(--bean-accent) 18%, var(--bean-surface));
+  border-color: var(--bean-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--bean-accent) 26%, transparent),
+    0 18px 40px -22px rgba(0, 0, 0, 0.75);
+}
+
+/* Per-tile icon color (set inline from a peaceful palette in avatar.ts) is the only splash of
+   color; the tile surface stays on the single amber accent. */
+.bean-petal-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--bean-text-dim);
+  background: color-mix(in oklab, currentColor 14%, transparent);
+}
+.bean-petal-icon svg { width: 15px; height: 15px; display: block; }
+.bean-petal-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.bean-petal-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.bean-petal-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.bean-petal-name {
+  font: 600 13px ui-monospace, monospace;
+  color: var(--bean-text);
+}
+.bean-petal--active .bean-petal-name { color: var(--bean-accent); }
+.bean-petal-desc {
+  font: 11px ui-monospace, monospace;
+  color: var(--bean-text-dim);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bean-petal-badge {
+  font: 700 8.5px ui-monospace, monospace;
+  letter-spacing: 0.06em;
+  color: var(--bean-accent-ink);
+  background: var(--bean-accent);
+  border-radius: 999px;
+  padding: 2px 6px;
+}
+
+.bean-reading {
+  position: absolute;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font: 12px ui-monospace, monospace;
+  color: var(--bean-text);
+  background: var(--bean-surface);
+  border: 1px solid var(--bean-border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  z-index: 9;
+}
+.bean-reading--open { opacity: 1; }
+.bean-petal-badge--end { position: absolute; top: 10px; right: 10px; }

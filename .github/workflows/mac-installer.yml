@@ -1,0 +1,38 @@
+name: Mac installer
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # gh release create needs write access; default token is read-only
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test && pnpm typecheck
+      - run: pnpm dist:mac
+        env:
+          # ponytail: unsigned build; add CSC_LINK/CSC_KEY_PASSWORD secrets when a
+          # Developer ID cert exists.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bean-mac
+          path: |
+            packages/app/release/*.dmg
+            packages/app/release/*.zip
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" packages/app/release/*.dmg packages/app/release/*.zip --generate-notes

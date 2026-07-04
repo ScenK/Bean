@@ -1,0 +1,70 @@
+/* The avatar is an expanding capsule (mockup: ~/Develop/Desktop Quick Action App). Collapsed it
+   is just the 48px bean; on proximity / menu / drag it grows into a box holding the bean (right)
+   and helper text (left). The bean sits flush on the right and the box is right-anchored in JS,
+   so the box grows leftward without the bean moving. padding-right stays 0 so the bean's distance
+   from the box's right edge is constant (border + half-orb); only padding-LEFT grows, opening room
+   for the text. overflow stays visible so the bean's glow/rings aren't clipped. */
+.bean-box {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border-radius: 24px;
+  border: 1px solid transparent;
+  background: transparent;
+  transition: width 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.15), height 0.28s ease,
+    padding-left 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.15), border-radius 0.3s ease,
+    background 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
+}
+.bean-box--expanded {
+  width: 176px;
+  height: 72px;
+  padding-left: 14px;
+  border-radius: 20px;
+  background: color-mix(in oklab, var(--bean-accent) 8%, var(--bean-surface));
+  border-color: color-mix(in oklab, var(--bean-accent) 22%, var(--bean-border));
+  box-shadow: 0 16px 44px -24px rgba(0, 0, 0, 0.72);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+.bean-box--hovering {
+  border-color: var(--bean-accent);
+  background: color-mix(in oklab, var(--bean-accent) 16%, var(--bean-surface));
+}
+
+.bean-box-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden; /* text is clipped to the (shrinking) box, never spilling past it */
+  opacity: 0;
+  pointer-events: none;
+}
+/* Fade in only while expanding. On collapse this rule drops away and, with no transition on the
+   base, the text vanishes instantly — so it can't trail out of the shrinking box (the "ghost"). */
+.bean-box--expanded .bean-box-text {
+  opacity: 1;
+  transition: opacity 0.18s ease 0.04s;
+}
+.bean-box-title {
+  font: 600 12.5px ui-monospace, monospace;
+  color: var(--bean-text);
+}
+.bean-box-hint {
+  font: 10.5px ui-monospace, monospace;
+  color: var(--bean-text-dim);
+  margin-top: 2px;
+  transition: color 0.18s ease;
+}
+.bean-box--hovering .bean-box-hint { color: var(--bean-accent); }
+
+.bean-orb-slot {
+  flex: none;
+  width: 48px;
+  height: 48px;
+}

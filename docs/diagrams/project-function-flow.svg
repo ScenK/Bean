@@ -1,0 +1,251 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1120" viewBox="0 0 1600 1120" role="img" aria-labelledby="title desc">
+  <title id="title">Bean project function flow</title>
+  <desc id="desc">High-level function flow for the Bean Electron app, showing renderer windows, IPC, core package functions, user configuration, OpenAI, and Terminal handoff.</desc>
+  <defs>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      .bg { fill: #f7f5ef; }
+      .panel { fill: #ffffff; stroke: #d2cdc1; stroke-width: 1.2; }
+      .lane-title { font: 700 22px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #22252a; }
+      .lane-subtitle { font: 500 13px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #686c73; }
+      .title { font: 800 34px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #202327; }
+      .subtitle { font: 500 16px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #5c6168; }
+      .box-title { font: 800 15px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #1f252d; }
+      .box-text { font: 500 12px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #48515d; }
+      .small { font: 500 11px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #5f6670; }
+      .note-title { font: 800 13px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #26303a; }
+      .note { font: 500 12px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #4f5864; }
+      .chip { font: 800 11px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: .5px; fill: #ffffff; }
+      .arrow { fill: none; stroke: #59616c; stroke-width: 2.2; marker-end: url(#arrow); }
+      .arrow-soft { fill: none; stroke: #8a929d; stroke-width: 1.8; marker-end: url(#arrow-soft); stroke-dasharray: 5 6; }
+      .arrow-accent { fill: none; stroke: #246b63; stroke-width: 2.6; marker-end: url(#arrow-accent); }
+      .box-ui { fill: #edf7f6; stroke: #79b5ad; }
+      .box-main { fill: #f2f0ff; stroke: #8e86c8; }
+      .box-core { fill: #fff6df; stroke: #d6a744; }
+      .box-out { fill: #eef1f4; stroke: #9aa4ae; }
+      .box-store { fill: #f9edf2; stroke: #cb7b99; }
+      .shadow { filter: url(#shadow); }
+    </style>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#000000" flood-opacity=".08"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#59616c"/>
+    </marker>
+    <marker id="arrow-soft" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8a929d"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#246b63"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1600" height="1120"/>
+
+  <text x="60" y="62" class="title">Bean function flow</text>
+  <text x="60" y="91" class="subtitle">A newcomer map of the current Electron app: UI windows call a preload bridge, Electron main owns IPC/window wiring, core owns pure routing and IO helpers, and launches leave the app via Terminal.</text>
+
+  <g class="shadow">
+    <rect x="50" y="130" width="350" height="850" rx="14" class="panel"/>
+    <rect x="425" y="130" width="350" height="850" rx="14" class="panel"/>
+    <rect x="800" y="130" width="350" height="850" rx="14" class="panel"/>
+    <rect x="1175" y="130" width="350" height="850" rx="14" class="panel"/>
+  </g>
+
+  <text x="75" y="170" class="lane-title">Renderer / UI</text>
+  <text x="75" y="193" class="lane-subtitle">Preact/plain TS windows loaded by Electron</text>
+  <text x="450" y="170" class="lane-title">Electron main + IPC</text>
+  <text x="450" y="193" class="lane-subtitle">Window lifecycle and trusted OS access</text>
+  <text x="825" y="170" class="lane-title">@bean/core</text>
+  <text x="825" y="193" class="lane-subtitle">Pure ESM helpers, no Electron imports</text>
+  <text x="1200" y="170" class="lane-title">Runtime / external</text>
+  <text x="1200" y="193" class="lane-subtitle">User files, OpenAI, and launched CLIs</text>
+
+  <!-- UI lane -->
+  <g class="shadow">
+    <rect x="80" y="230" width="290" height="96" rx="10" class="box-ui"/>
+    <rect x="80" y="360" width="290" height="112" rx="10" class="box-ui"/>
+    <rect x="80" y="510" width="290" height="124" rx="10" class="box-ui"/>
+    <rect x="80" y="675" width="290" height="126" rx="10" class="box-ui"/>
+    <rect x="80" y="838" width="290" height="94" rx="10" class="box-ui"/>
+  </g>
+  <text x="102" y="262" class="box-title">avatar.ts</text>
+  <text x="102" y="284" class="box-text">Desktop pet surface</text>
+  <text x="102" y="304" class="box-text">opens components, accepts drops,</text>
+  <text x="102" y="324" class="box-text">asks main to resize/move window.</text>
+
+  <text x="102" y="392" class="box-title">Component windows</text>
+  <text x="102" y="414" class="box-text">chat, skills, persona, projects,</text>
+  <text x="102" y="434" class="box-text">notes, plan, settings, about</text>
+  <text x="102" y="454" class="box-text">created as singleton BrowserWindows.</text>
+
+  <text x="102" y="542" class="box-title">ChatWindow -> ChatPanel</text>
+  <text x="102" y="564" class="box-text">window.bean.chat(history, message)</text>
+  <text x="102" y="584" class="box-text">renders reply bubbles and</text>
+  <text x="102" y="604" class="box-text">ProposalCard when a run is proposed.</text>
+  <text x="102" y="624" class="small">Drop on avatar can prefill the chat.</text>
+
+  <text x="102" y="707" class="box-title">ProposalCard / PlanWindow</text>
+  <text x="102" y="729" class="box-text">User reviews composed prompt,</text>
+  <text x="102" y="749" class="box-text">adds extra task text, then confirms.</text>
+  <text x="102" y="769" class="box-text">Calls window.bean.launch(...).</text>
+  <text x="102" y="789" class="small">Same card is used by chat and plan.</text>
+
+  <text x="102" y="870" class="box-title">Admin panels</text>
+  <text x="102" y="892" class="box-text">Skills / Projects / Persona / Notes /</text>
+  <text x="102" y="912" class="box-text">Settings — list/save IPC via preload.</text>
+
+  <!-- main lane -->
+  <g class="shadow">
+    <rect x="455" y="230" width="290" height="108" rx="10" class="box-main"/>
+    <rect x="455" y="372" width="290" height="112" rx="10" class="box-main"/>
+    <rect x="455" y="520" width="290" height="112" rx="10" class="box-main"/>
+    <rect x="455" y="670" width="290" height="126" rx="10" class="box-main"/>
+    <rect x="455" y="835" width="290" height="96" rx="10" class="box-main"/>
+  </g>
+  <text x="477" y="262" class="box-title">main.ts startup</text>
+  <text x="477" y="284" class="box-text">loads config paths, builds OpenAI</text>
+  <text x="477" y="304" class="box-text">chat adapters, registers IPC,</text>
+  <text x="477" y="324" class="box-text">then createAvatarWindow().</text>
+
+  <text x="477" y="404" class="box-title">preload.ts bridge</text>
+  <text x="477" y="426" class="box-text">contextBridge exposes window.bean</text>
+  <text x="477" y="446" class="box-text">route, chat, launch, openComponent,</text>
+  <text x="477" y="466" class="box-text">list/save helpers, theme, config.</text>
+
+  <text x="477" y="552" class="box-title">registerIpc()</text>
+  <text x="477" y="574" class="box-text">central handler table using IPC</text>
+  <text x="477" y="594" class="box-text">constants from channels.ts.</text>
+  <text x="477" y="614" class="box-text">Keeps renderer calls thin.</text>
+
+  <text x="477" y="702" class="box-title">Window orchestration</text>
+  <text x="477" y="724" class="box-text">openComponent(kind, droppedUrl)</text>
+  <text x="477" y="744" class="box-text">createComponentWindow(kind)</text>
+  <text x="477" y="764" class="box-text">pendingPlan / pendingDroppedUrl</text>
+  <text x="477" y="784" class="box-text">theme broadcast + avatar resize.</text>
+
+  <text x="477" y="867" class="box-title">buildLaunchHandler()</text>
+  <text x="477" y="889" class="box-text">receives LaunchRequest and calls</text>
+  <text x="477" y="909" class="box-text">launchInTerminal(...).</text>
+
+  <!-- core lane -->
+  <g class="shadow">
+    <rect x="830" y="230" width="290" height="116" rx="10" class="box-core"/>
+    <rect x="830" y="385" width="290" height="128" rx="10" class="box-core"/>
+    <rect x="830" y="550" width="290" height="118" rx="10" class="box-core"/>
+    <rect x="830" y="705" width="290" height="110" rx="10" class="box-core"/>
+    <rect x="830" y="852" width="290" height="84" rx="10" class="box-core"/>
+  </g>
+  <text x="852" y="262" class="box-title">Loaders / stores</text>
+  <text x="852" y="284" class="box-text">loadConfig(), loadLayeredSkills(),</text>
+  <text x="852" y="304" class="box-text">loadProjects(), loadPersona(),</text>
+  <text x="852" y="324" class="box-text">loadMemories(), loadNotes(),</text>
+  <text x="852" y="340" class="small">loadReminders(); save variants.</text>
+
+  <text x="852" y="417" class="box-title">converse()</text>
+  <text x="852" y="439" class="box-text">Builds system prompt from persona,</text>
+  <text x="852" y="459" class="box-text">skills, projects, memories, notes.</text>
+  <text x="852" y="479" class="box-text">Calls propose_run/propose_note, or</text>
+  <text x="852" y="499" class="box-text">runs reminders/fetch_url tools itself.</text>
+
+  <text x="852" y="582" class="box-title">route()</text>
+  <text x="852" y="604" class="box-text">Direct router: asks model for JSON</text>
+  <text x="852" y="624" class="box-text">skill/project match; falls back to</text>
+  <text x="852" y="644" class="box-text">first project/default skill on errors.</text>
+
+  <text x="852" y="737" class="box-title">Prompt/project helpers</text>
+  <text x="852" y="759" class="box-text">composePrompt()</text>
+  <text x="852" y="779" class="box-text">bestProjectForSkill()</text>
+  <text x="852" y="799" class="box-text">planForDroppedSkill()</text>
+
+  <text x="852" y="884" class="box-title">launcher.ts</text>
+  <text x="852" y="906" class="box-text">launchCommand() + launchInTerminal()</text>
+  <text x="852" y="926" class="small">Fire-and-forget handoff.</text>
+
+  <!-- external lane -->
+  <g class="shadow">
+    <rect x="1205" y="230" width="290" height="126" rx="10" class="box-store"/>
+    <rect x="1205" y="395" width="290" height="98" rx="10" class="box-out"/>
+    <rect x="1205" y="535" width="290" height="112" rx="10" class="box-out"/>
+    <rect x="1205" y="685" width="290" height="114" rx="10" class="box-out"/>
+    <rect x="1205" y="842" width="290" height="92" rx="10" class="box-store"/>
+  </g>
+  <text x="1227" y="262" class="box-title">~/.bean runtime files</text>
+  <text x="1227" y="284" class="box-text">config.json: key, model, terminal app</text>
+  <text x="1227" y="304" class="box-text">skills/*.md: skill body/frontmatter</text>
+  <text x="1227" y="324" class="box-text">projects.json, persona, memory.json,</text>
+  <text x="1227" y="340" class="small">notes/*.md, reminders.json.</text>
+
+  <text x="1227" y="427" class="box-title">OpenAI chat completions</text>
+  <text x="1227" y="449" class="box-text">makeOpenAIChat()</text>
+  <text x="1227" y="469" class="box-text">makeOpenAIConverse()</text>
+
+  <text x="1227" y="567" class="box-title">Terminal.app / .command</text>
+  <text x="1227" y="589" class="box-text">For opencode and claude, writes a</text>
+  <text x="1227" y="609" class="box-text">temporary shell script and opens it.</text>
+  <text x="1227" y="629" class="small">The app does not stream or track output.</text>
+
+  <text x="1227" y="717" class="box-title">CLI target</text>
+  <text x="1227" y="739" class="box-text">opencode run --dir &lt;project&gt; -- prompt</text>
+  <text x="1227" y="759" class="box-text">claude -p prompt</text>
+  <text x="1227" y="779" class="box-text">zed &lt;project&gt; for open mode</text>
+
+  <text x="1227" y="874" class="box-title">Built-in project data</text>
+  <text x="1227" y="896" class="box-text">Repo-shipped .bean/skills are merged</text>
+  <text x="1227" y="916" class="box-text">with user skills by loadLayeredSkills().</text>
+
+  <!-- arrows -->
+  <path class="arrow" d="M 370 278 C 410 278, 410 284, 455 284"/>
+  <path class="arrow" d="M 745 284 C 785 284, 785 288, 830 288"/>
+  <path class="arrow-soft" d="M 1120 288 C 1160 288, 1160 292, 1205 292"/>
+
+  <path class="arrow" d="M 225 326 L 225 360"/>
+  <path class="arrow" d="M 370 416 C 410 416, 410 428, 455 428"/>
+  <path class="arrow" d="M 600 484 L 600 520"/>
+  <path class="arrow" d="M 745 574 C 785 574, 785 449, 830 449"/>
+  <path class="arrow-soft" d="M 975 385 C 975 360, 1030 294, 1205 294"/>
+  <path class="arrow-accent" d="M 1120 449 C 1160 449, 1160 445, 1205 445"/>
+  <path class="arrow-accent" d="M 1205 445 C 1160 445, 1160 449, 1120 449"/>
+
+  <path class="arrow" d="M 370 572 C 410 572, 410 576, 455 576"/>
+  <path class="arrow" d="M 745 576 C 785 576, 785 449, 830 449"/>
+  <path class="arrow-accent" d="M 1120 449 C 1160 449, 1160 446, 1205 446"/>
+  <path class="arrow" d="M 975 513 L 975 550"/>
+  <path class="arrow" d="M 975 668 L 975 705"/>
+  <path class="arrow" d="M 830 760 C 785 760, 785 738, 745 738"/>
+  <path class="arrow" d="M 455 738 C 415 738, 415 738, 370 738"/>
+
+  <path class="arrow" d="M 370 738 C 410 738, 410 889, 455 889"/>
+  <path class="arrow" d="M 745 889 C 785 889, 785 894, 830 894"/>
+  <path class="arrow-accent" d="M 1120 894 C 1160 894, 1160 591, 1205 591"/>
+  <path class="arrow" d="M 1350 647 L 1350 685"/>
+
+  <path class="arrow-soft" d="M 370 894 C 410 894, 410 745, 455 745"/>
+  <path class="arrow-soft" d="M 745 745 C 785 745, 785 288, 830 288"/>
+  <path class="arrow-soft" d="M 1120 894 C 1160 894, 1160 888, 1205 888"/>
+
+  <!-- labels -->
+  <rect x="390" y="252" width="70" height="24" rx="12" fill="#59616c"/>
+  <text x="405" y="269" class="chip">startup</text>
+  <rect x="390" y="394" width="70" height="24" rx="12" fill="#59616c"/>
+  <text x="405" y="411" class="chip">bridge</text>
+  <rect x="760" y="548" width="58" height="24" rx="12" fill="#59616c"/>
+  <text x="776" y="565" class="chip">chat</text>
+  <rect x="760" y="720" width="58" height="24" rx="12" fill="#59616c"/>
+  <text x="773" y="737" class="chip">plan</text>
+  <rect x="390" y="710" width="70" height="24" rx="12" fill="#59616c"/>
+  <text x="406" y="727" class="chip">confirm</text>
+  <rect x="1134" y="869" width="68" height="24" rx="12" fill="#246b63"/>
+  <text x="1149" y="886" class="chip">launch</text>
+
+  <!-- footer notes -->
+  <g class="shadow">
+    <rect x="50" y="998" width="1475" height="88" rx="14" fill="#ffffff" stroke="#d2cdc1"/>
+  </g>
+  <text x="78" y="1026" class="note-title">Read this first</text>
+  <text x="78" y="1048" class="note">Current source shows a component-window architecture, not the older avatar -> intake -> console path. Electron wiring stays in @bean/app;</text>
+  <text x="78" y="1066" class="note">reusable routing, prompt, config, project, skill, persona, memory, note, reminder, and launch helpers stay in @bean/core. Most work flows through chat:</text>
+  <text x="78" y="1084" class="note">ChatWindow -> window.bean.chat -> registerIpc/buildChatHandler -> converse() -> optional ProposalCard -> launchInTerminal() -> Terminal/CLI.</text>
+</svg>

@@ -1,0 +1,42 @@
+{
+  "name": "@bean/core",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./persona": {
+      "types": "./dist/persona.d.ts",
+      "default": "./dist/persona.js"
+    },
+    "./prompt": {
+      "types": "./dist/prompt.d.ts",
+      "default": "./dist/prompt.js"
+    },
+    "./frontmatter": {
+      "types": "./dist/frontmatter.d.ts",
+      "default": "./dist/frontmatter.js"
+    },
+    "./project-select": {
+      "types": "./dist/project-select.d.ts",
+      "default": "./dist/project-select.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "openai": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}

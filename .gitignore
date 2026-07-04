@@ -1,0 +1,8 @@
+node_modules/
+dist/
+release/
+.turbo/
+*.log
+.DS_Store
+/.superpowers/
+/.worktrees/

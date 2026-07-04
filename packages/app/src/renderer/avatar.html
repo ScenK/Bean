@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="theme.css" />
+    <link rel="stylesheet" href="orb.css" />
+    <link rel="stylesheet" href="avatar-box.css" />
+    <link rel="stylesheet" href="bubble-menu.css" />
+    <link rel="stylesheet" href="drag-bloom.css" />
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+      }
+      body {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #bean {
+        cursor: default;
+      }
+      /* Only show the grabbing hand while actually dragging the bean around the screen
+         (avatar.ts toggles .bean-moving once a real move starts, not on plain hover/click). */
+      html.bean-moving, html.bean-moving * {
+        cursor: grabbing !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="bean" class="bean-box" title="Bean">
+      <div class="bean-box-text">
+        <span class="bean-box-title">Bean</span>
+        <span class="bean-box-hint">drop anything here</span>
+      </div>
+      <div id="bean-orb" class="bean-orb-slot"></div>
+    </div>
+    <div id="bean-menu" class="bean-menu"></div>
+    <div id="bean-drag-bloom" class="bean-drag-bloom"></div>
+    <div id="bean-reading" class="bean-reading">reading…</div>
+    <script type="module" src="avatar.js"></script>
+  </body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "bean",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "dev": "turbo run build --filter=@bean/core && pnpm --filter @bean/app build && pnpm --filter @bean/app dev",
+    "dist:mac": "turbo run build --filter=@bean/core && pnpm --filter @bean/app dist:mac"
+  },
+  "devDependencies": {
+    "turbo": "latest",
+    "typescript": "latest"
+  }
+}

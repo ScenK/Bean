@@ -1,0 +1,53 @@
+{
+  "name": "@bean/app",
+  "version": "0.8.0",
+  "description": "A desktop companion that chats, remembers, and — with your confirmation — gets things done.",
+  "author": "Scen.K",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "node scripts/dev.mjs",
+    "start": "electron dist/main.js",
+    "dist:mac": "pnpm build && electron-builder --mac",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "build": {
+    "appId": "dev.scenk.bean",
+    "productName": "Bean",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "assets/**",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "../../.bean", "to": "builtin" }
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "extendInfo": {
+        "LSUIElement": true
+      }
+    }
+  },
+  "devDependencies": {
+    "@bean/core": "workspace:*",
+    "@types/node": "latest",
+    "dompurify": "^3.4.11",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "esbuild": "latest",
+    "marked": "^18.0.5",
+    "preact": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}
