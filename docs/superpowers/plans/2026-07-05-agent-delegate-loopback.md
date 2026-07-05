@@ -824,8 +824,8 @@ git commit -m "feat: delegateCli config setting with Settings picker"
 - Produces (used by Tasks 6–7):
   - `DelegateEvent` union (`started` / `output` / `done` / `failed` / `cancelled`, each with `taskId`)
   - `DelegateStartRequest { projectPath: string; prompt: string }`
-  - `createDelegateTasks(deps): { start(req): string; cancel(taskId): void; replay(): DelegateEvent[] }`
-  - Delivery contract: `deps.send(event)` returns `true` if a chat renderer received it. Terminal events (`done`/`failed`/`cancelled`) that WERE delivered remove the task; undelivered ones stay buffered and `replay()` returns-and-consumes them, so a result finishing while the chat window is closed survives until the next window opens.
+  - `createDelegateTasks(deps): { start(req): string; cancel(taskId): void; cancelAll(): void }`
+  - Lifetime contract: tasks are bound to the chat window. `cancelAll()` cancels every still-running task (main calls it when the chat window is destroyed — the no-ghosts backstop behind the renderer's Keep working / Stop & close prompt). Terminal events (`done`/`failed`/`cancelled`) remove the task from the registry; there is no buffering or replay.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -836,23 +836,23 @@ import { describe, expect, it } from "vitest";
 import { createDelegateTasks, type DelegateEvent } from "../src/delegate-tasks.js";
 import type { DelegateCallbacks, DelegateHandle, DelegateRequest } from "@bean/core";
 
-function harness(opts: { cli?: "claude" | "opencode"; delivered?: boolean } = {}) {
+function harness(opts: { cli?: "claude" | "opencode" } = {}) {
   const sent: DelegateEvent[] = [];
   const cancels: string[] = [];
-  let captured: DelegateCallbacks | undefined;
-  let capturedReq: DelegateRequest | undefined;
+  const captured: DelegateCallbacks[] = [];
+  const reqs: DelegateRequest[] = [];
   let nextId = 0;
   const tasks = createDelegateTasks({
     resolveCli: () => opts.cli ?? "claude",
-    send: (e) => { sent.push(e); return opts.delivered ?? true; },
+    send: (e) => { sent.push(e); },
     newId: () => `task-${++nextId}`,
     run: (req, cbs) => {
-      capturedReq = req;
-      captured = cbs;
+      reqs.push(req);
+      captured.push(cbs);
       return { cancel: () => cancels.push(req.prompt) } satisfies DelegateHandle;
     },
   });
-  return { tasks, sent, cancels, cbs: () => captured!, req: () => capturedReq! };
+  return { tasks, sent, cancels, captured, reqs, cbs: () => captured.at(-1)!, req: () => reqs.at(-1)! };
 }
 
 describe("createDelegateTasks", () => {
@@ -864,15 +864,18 @@ describe("createDelegateTasks", () => {
     expect(h.sent).toEqual([{ taskId: "task-1", type: "started" }]);
   });
 
-  it("emits started immediately as failed when no CLI is available", () => {
+  it("emits a deferred failed event when no CLI is available", async () => {
     const h = harness();
     const tasks = createDelegateTasks({
       resolveCli: () => undefined,
-      send: (e) => { h.sent.push(e); return true; },
+      send: (e) => { h.sent.push(e); },
       newId: () => "task-x",
       run: () => { throw new Error("must not spawn"); },
     });
     tasks.start({ projectPath: "/p", prompt: "go" });
+    // Deferred past the invoke reply so the renderer has the taskId before the event lands.
+    expect(h.sent).toEqual([]);
+    await new Promise((resolve) => setImmediate(resolve));
     expect(h.sent).toEqual([{ taskId: "task-x", type: "failed", message: "No delegate CLI found — install claude or opencode." }]);
   });
 
@@ -908,27 +911,23 @@ describe("createDelegateTasks", () => {
     expect(h.sent.length).toBe(before);
   });
 
-  it("a delivered terminal event removes the task; replay is empty", () => {
-    const h = harness({ delivered: true });
-    h.tasks.start({ projectPath: "/p", prompt: "go" });
+  it("cancelAll cancels every running task and emits cancelled for each", () => {
+    const h = harness();
+    const a = h.tasks.start({ projectPath: "/p", prompt: "one" });
+    const b = h.tasks.start({ projectPath: "/p", prompt: "two" });
+    h.tasks.cancelAll();
+    expect(h.cancels).toEqual(["one", "two"]);
+    expect(h.sent.filter((e) => e.type === "cancelled").map((e) => e.taskId)).toEqual([a, b]);
+  });
+
+  it("cancelAll skips already-finished tasks and is idempotent", () => {
+    const h = harness();
+    h.tasks.start({ projectPath: "/p", prompt: "one" });
     h.cbs().onDone("done");
-    expect(h.tasks.replay()).toEqual([]);
-  });
-
-  it("an undelivered terminal event stays buffered; replay returns and consumes it", () => {
-    const h = harness({ delivered: false });
-    const id = h.tasks.start({ projectPath: "/p", prompt: "go" });
-    h.cbs().onDone("finished while chat was closed");
-    expect(h.tasks.replay()).toEqual([{ taskId: id, type: "done", result: "finished while chat was closed" }]);
-    expect(h.tasks.replay()).toEqual([]);
-  });
-
-  it("replay returns the latest event of a still-running task without consuming it", () => {
-    const h = harness({ delivered: false });
-    const id = h.tasks.start({ projectPath: "/p", prompt: "go" });
-    h.cbs().onOutput("working");
-    expect(h.tasks.replay()).toEqual([{ taskId: id, type: "output", line: "working" }]);
-    expect(h.tasks.replay()).toEqual([{ taskId: id, type: "output", line: "working" }]);
+    h.tasks.cancelAll();
+    h.tasks.cancelAll();
+    expect(h.cancels).toEqual([]);
+    expect(h.sent.filter((e) => e.type === "cancelled")).toEqual([]);
   });
 });
 ```
@@ -961,8 +960,8 @@ export interface DelegateStartRequest {
 export interface DelegateTasksDeps {
   /** Effective delegate CLI: the configured one when detected, else the first detected; undefined = none. */
   resolveCli: () => CliName | undefined;
-  /** Push to the chat renderer; returns true only if a chat window actually received it. */
-  send: (event: DelegateEvent) => boolean;
+  /** Push to the chat renderer (a no-op when no chat window is open — see the lifetime rule). */
+  send: (event: DelegateEvent) => void;
   newId: () => string;
   /** DI seam for tests; production uses core's runDelegate. */
   run?: (req: DelegateRequest, cbs: DelegateCallbacks, spawnFn?: DelegateSpawnFn, timeoutMs?: number) => DelegateHandle;
@@ -970,24 +969,18 @@ export interface DelegateTasksDeps {
 
 const isTerminal = (e: DelegateEvent): boolean => e.type === "done" || e.type === "failed" || e.type === "cancelled";
 
-// Tracks live delegations in the main process. Events push to the chat window when one is
-// open; each task's latest event is buffered so a window that opens later can pull current
-// state (same drop-race philosophy as ipc.ts's buildPlanStore). A terminal event delivered
-// to a live window ends the task's registry life; an undelivered one waits for replay(),
-// which returns-and-consumes it — so a result finishing with the chat closed isn't lost.
+// Tracks live delegations in the main process. Tasks are bound to the chat window's
+// lifetime — no ghosts: the renderer's close-time prompt lets the user keep working or
+// stop everything, and main calls cancelAll() when the chat window is destroyed as the
+// hard backstop. A terminal event ends the task's registry life; nothing is buffered.
 export function createDelegateTasks(deps: DelegateTasksDeps) {
   const run = deps.run ?? runDelegate;
-  const tasks = new Map<string, { cancel: () => void; lastEvent: DelegateEvent; done: boolean }>();
+  const tasks = new Map<string, { cancel: () => void }>();
 
   const emit = (event: DelegateEvent): void => {
-    const t = tasks.get(event.taskId);
-    if (!t || t.done) return;
-    t.lastEvent = event;
-    const delivered = deps.send(event);
-    if (isTerminal(event)) {
-      t.done = true;
-      if (delivered) tasks.delete(event.taskId);
-    }
+    if (event.type !== "started" && !tasks.has(event.taskId)) return; // finished/cancelled already
+    if (isTerminal(event)) tasks.delete(event.taskId);
+    deps.send(event);
   };
 
   return {
@@ -995,8 +988,11 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       const taskId = deps.newId();
       const cli = deps.resolveCli();
       if (!cli) {
-        tasks.set(taskId, { cancel: () => {}, lastEvent: { taskId, type: "started" }, done: false });
-        emit({ taskId, type: "failed", message: "No delegate CLI found — install claude or opencode." });
+        // Straight to send, not emit: no task was registered (nothing to cancel), and
+        // emit's not-registered guard would otherwise swallow this very first event.
+        // Deferred so the renderer's invoke reply (carrying this taskId) lands first —
+        // a synchronous send would race ahead of it and find no card to update.
+        setImmediate(() => deps.send({ taskId, type: "failed", message: "No delegate CLI found — install claude or opencode." }));
         return taskId;
       }
       const handle = run(
@@ -1007,30 +1003,31 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
           onError: (err) => emit({ taskId, type: "failed", message: err.message }),
         },
       );
-      tasks.set(taskId, { cancel: handle.cancel, lastEvent: { taskId, type: "started" }, done: false });
+      tasks.set(taskId, { cancel: handle.cancel });
       emit({ taskId, type: "started" });
       return taskId;
     },
 
     cancel(taskId: string): void {
       const t = tasks.get(taskId);
-      if (!t || t.done) return;
+      if (!t) return;
       t.cancel();
       emit({ taskId, type: "cancelled" });
     },
 
-    /** Latest event per buffered task, for a freshly-mounted chat renderer. Terminal events
-     * are consumed by this call; running-task events are not. */
-    replay(): DelegateEvent[] {
-      const events = [...tasks.values()].map((t) => t.lastEvent);
-      for (const [id, t] of tasks) if (t.done) tasks.delete(id);
-      return events;
+    /** Cancel every still-running task — called by the renderer's Stop & close choice
+     * (per-task cancel) and by main when the chat window is destroyed (this, in bulk). */
+    cancelAll(): void {
+      for (const [taskId, t] of [...tasks]) {
+        t.cancel();
+        emit({ taskId, type: "cancelled" });
+      }
     },
   };
 }
 ```
 
-Note: the `emit` guard means the no-CLI path must register the task before emitting the `failed` event (as written above) so the event isn't dropped, and the `started` placeholder `lastEvent` is immediately overwritten. Also note `emit` sets `done` before deletion, so the undelivered-terminal task stays in the map with `done: true` — which is exactly what `replay()` consumes.
+One load-bearing subtlety: `emit` drops any non-`started` event whose task is no longer registered — that's what makes "later callbacks are ignored" after cancel/done work (core's `runDelegate` settles once, but a cancelled child's stray `onOutput` could still race in). The no-CLI failure bypasses `emit` for exactly that reason (see the comment in `start`).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1041,7 +1038,7 @@ Expected: PASS (all).
 
 ```bash
 git add packages/app/src/delegate-tasks.ts packages/app/__test__/delegate-tasks.test.ts
-git commit -m "feat(app): delegate task registry with buffered replay"
+git commit -m "feat(app): delegate task registry bound to the chat window's lifetime"
 ```
 
 ---
@@ -1058,7 +1055,7 @@ git commit -m "feat(app): delegate task registry with buffered replay"
 
 **Interfaces:**
 - Consumes: `createDelegateTasks` / `DelegateEvent` / `DelegateStartRequest` (Task 5), `runtime.getDelegateCli()` (Task 4), `converse`'s `delegateAvailable` parameter (Task 3).
-- Produces: channels `bean:delegate-start` (invoke → taskId), `bean:delegate-cancel` (send), `bean:delegate-event` (main→renderer push), `bean:delegate-replay` (invoke → DelegateEvent[]); `window.bean.delegateStart/delegateCancel/delegateReplay/onDelegateEvent`; `ChatHandlerDeps.delegateAvailable?: () => boolean`.
+- Produces: channels `bean:delegate-start` (invoke → taskId), `bean:delegate-cancel` (send), `bean:delegate-event` (main→renderer push); `window.bean.delegateStart/delegateCancel/onDelegateEvent`; `ChatHandlerDeps.delegateAvailable?: () => boolean`; main-side no-ghosts backstop: chat window `closed` → `delegateTasks.cancelAll()`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1098,7 +1095,6 @@ Expected: new test FAILS (`propose_delegate` not offered).
   delegateStart: "bean:delegate-start",
   delegateCancel: "bean:delegate-cancel",
   delegateEvent: "bean:delegate-event",
-  delegateReplay: "bean:delegate-replay",
 ```
 
 3b. `packages/app/src/ipc.ts`:
@@ -1118,18 +1114,16 @@ Expected: new test FAILS (`propose_delegate` not offered).
   delegateTasks: {
     start: (req: DelegateStartRequest) => string;
     cancel: (taskId: string) => void;
-    replay: () => DelegateEvent[];
   };
 ```
 
-with the type-only import at the top: `import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";`
+with the type-only import at the top: `import type { DelegateStartRequest } from "./delegate-tasks.js";`
 
 - In `registerIpc`, after the launch handler block:
 
 ```typescript
   ipcMain.handle(IPC.delegateStart, (_e, req: DelegateStartRequest) => deps.delegateTasks.start(req));
   ipcMain.on(IPC.delegateCancel, (_e, taskId: string) => deps.delegateTasks.cancel(taskId));
-  ipcMain.handle(IPC.delegateReplay, () => deps.delegateTasks.replay());
 ```
 
 3c. `packages/app/src/preload.ts` — type-only import (the preload is bundled CJS; a value import of delegate-tasks would drag `runDelegate`/`node:child_process` into the preload bundle — see `.memory/safety-preload-must-be-cjs.md`):
@@ -1143,7 +1137,6 @@ and in the exposed object:
 ```typescript
   delegateStart: (req: DelegateStartRequest): Promise<string> => ipcRenderer.invoke(IPC.delegateStart, req),
   delegateCancel: (taskId: string): void => ipcRenderer.send(IPC.delegateCancel, taskId),
-  delegateReplay: (): Promise<DelegateEvent[]> => ipcRenderer.invoke(IPC.delegateReplay),
   onDelegateEvent: (cb: (e: DelegateEvent) => void) =>
     ipcRenderer.on(IPC.delegateEvent, (_e, ev: DelegateEvent) => cb(ev)),
 ```
@@ -1153,7 +1146,6 @@ and in the exposed object:
 ```typescript
       delegateStart(req: DelegateStartRequest): Promise<string>;
       delegateCancel(taskId: string): void;
-      delegateReplay(): Promise<DelegateEvent[]>;
       onDelegateEvent(cb: (e: DelegateEvent) => void): void;
 ```
 
@@ -1179,17 +1171,36 @@ and in the exposed object:
         if ((preferred === "claude" || preferred === "opencode") && availableClis.includes(preferred)) return preferred;
         return availableClis[0];
       },
-      // Only the chat window renders delegate cards; delivery means "a live chat window
-      // got it" so the registry knows whether to buffer a terminal event for replay.
+      // Only the chat window renders delegate cards. Tasks share the chat window's
+      // lifetime, so a missing/destroyed window just drops the event.
       send: (event) => {
         const chat = componentWindows.get("chat");
-        if (!chat || chat.isDestroyed()) return false;
-        sendToWindow(chat, IPC.delegateEvent, event);
-        return true;
+        if (chat && !chat.isDestroyed()) sendToWindow(chat, IPC.delegateEvent, event);
       },
       newId: () => randomUUID(),
     });
+    cancelAllDelegates = delegateTasks.cancelAll;
 ```
+
+- The no-ghosts backstop needs a hook in `openComponent`, which is defined **before** the
+  `try` block that creates `delegateTasks` — bridge with a late-bound function. Above the
+  `openComponent` definition add:
+
+```typescript
+  // Bound after delegateTasks exists (inside the try below). Chat-window destruction kills
+  // all delegate tasks — the hard guarantee behind the renderer's Keep/Stop close prompt.
+  let cancelAllDelegates: () => void = () => {};
+```
+
+  and inside `openComponent`'s `if (kind === "chat")` block (next to the existing
+  `win.on("close", ...)` handler):
+
+```typescript
+      win.on("closed", () => cancelAllDelegates());
+```
+
+  Note it's `closed` (window destroyed — fires after the renderer's Keep/Stop prompt has
+  resolved and the close was allowed), not the cancelable `close`.
 
 - In the `registerIpc` deps: replace the old inline `getAvailableClis` IIFE with `getAvailableClis: () => availableClis,` and add:
 
@@ -1221,8 +1232,8 @@ git commit -m "feat(app): delegate IPC channels, preload bridge, and main wiring
 - Modify: `packages/app/src/renderer/components/chat/ChatWindow.tsx`
 
 **Interfaces:**
-- Consumes: `ProposedDelegate` (Task 3, type-only from `@bean/core`), `DelegateEvent` (type-only from `../../../delegate-tasks.js`), `window.bean.delegateStart/delegateCancel/delegateReplay/onDelegateEvent` (Task 6).
-- Produces: `ChatItem` gains a `"delegate"` variant; the loopback contract: on a `done` event the renderer auto-sends `[delegate result for "<instruction>"]: <result>` through `sendMessage` with a collapsed display label, so the model summarizes and the result enters history.
+- Consumes: `ProposedDelegate` (Task 3, type-only from `@bean/core`), `DelegateEvent` (type-only from `../../../delegate-tasks.js`), `window.bean.delegateStart/delegateCancel/onDelegateEvent` (Task 6).
+- Produces: `ChatItem` gains a `"delegate"` variant; the loopback contract: on a `done` event the renderer auto-sends `[delegate result for "<instruction>"]: <result>` through `sendMessage` with a collapsed display label, so the model summarizes and the result enters history. Also: a `"delegates"` stage in the chat window's close flow — closing with a running task asks Keep working / Stop & close before the existing memory-review flow.
 
 There are no renderer unit tests in this repo (no DOM test setup) — this task's gate is `pnpm typecheck && pnpm build`, plus a manual smoke test if `~/.bean` is configured.
 
@@ -1416,30 +1427,25 @@ import type { DelegateEvent } from "../../../delegate-tasks.js";
 ```typescript
   // Applies a delegate lifecycle event to the matching card; a `done` result loops back
   // through the normal chat flow (collapsed to a short label) so the model summarizes it
-  // in its own voice and the result enters conversation history for chaining.
-  // No matching card (this window opened after the task started — pushes and replays alike):
-  // non-terminal events are dropped, but terminal ones still surface as a status line, and
-  // a done result still loops back — a finished task's outcome is never silently lost.
+  // in its own voice and the result enters conversation history for chaining. Tasks share
+  // this window's lifetime, so every event has a card here; no-match means the item's
+  // taskId hasn't landed yet or the task predates a hot-reload — drop it.
   const applyDelegateEvent = (e: DelegateEvent): void => {
     const match = itemsRef.current.find(
       (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.taskId === e.taskId,
     );
-    if (match) {
-      setItems((prev) => prev.map((it) => {
-        if (it.kind !== "delegate" || it.taskId !== e.taskId) return it;
-        if (e.type === "output") return { ...it, tail: [...it.tail.slice(-29), e.line] };
-        if (e.type === "done") return { ...it, state: "done" as const, result: e.result };
-        if (e.type === "failed") return { ...it, state: "failed" as const, error: e.message };
-        if (e.type === "cancelled") return { ...it, state: "cancelled" as const };
-        return it;
-      }));
-    } else if (e.type === "failed") {
-      setItems((prev) => [...prev, { kind: "status", id: newId(), text: `A background task failed: ${e.message}`, tone: "error" }]);
-    }
+    if (!match) return;
+    setItems((prev) => prev.map((it) => {
+      if (it.kind !== "delegate" || it.taskId !== e.taskId) return it;
+      if (e.type === "output") return { ...it, tail: [...it.tail.slice(-29), e.line] };
+      if (e.type === "done") return { ...it, state: "done" as const, result: e.result };
+      if (e.type === "failed") return { ...it, state: "failed" as const, error: e.message };
+      if (e.type === "cancelled") return { ...it, state: "cancelled" as const };
+      return it;
+    }));
     if (e.type === "done") {
-      const label = match ? match.proposal.instruction : "an earlier background task";
       void sendRef.current(
-        `[delegate result for "${label}"]: ${e.result}\n\nBriefly summarize this outcome for the user in your own words.`,
+        `[delegate result for "${match.proposal.instruction}"]: ${e.result}\n\nBriefly summarize this outcome for the user in your own words.`,
         "📦 Delegate finished",
       );
     }
@@ -1450,8 +1456,6 @@ import type { DelegateEvent } from "../../../delegate-tasks.js";
 
 ```typescript
     window.bean.onDelegateEvent(applyDelegateEvent);
-    // A task that finished while no chat window was open: pull its buffered terminal event.
-    window.bean.delegateReplay().then((events) => events.forEach(applyDelegateEvent));
 ```
 
 Note: `applyDelegateEvent` is referenced from the once-mounted effect but reads live state only through `itemsRef`/`sendRef`/`setItems` (all stable), so no stale-closure ref dance is needed beyond what the file already does.
@@ -1464,6 +1468,72 @@ Note: `applyDelegateEvent` is referenced from the once-mounted effect but reads 
         onDelegateCancelTask={cancelDelegateTask}
 ```
 
+4g. Close-flow prompt — closing the chat with a running delegate asks the user first (same
+card pattern as the memory review; a delegate must never become a ghost without its human
+context).
+
+Extend the `CloseFlow` type with a new stage:
+
+```typescript
+type CloseFlow =
+  | { stage: "delegates" }
+  | { stage: "confirm" }
+  | { stage: "loading" }
+  | { stage: "review"; items: { text: string; projectPath?: string; checked: boolean }[] };
+```
+
+Replace the body of the existing `window.bean.onReviewBeforeClose(...)` callback so the
+delegate check runs first (transcript capture stays as-is):
+
+```typescript
+    window.bean.onReviewBeforeClose(() => {
+      const transcript: ChatTurn[] = itemsRef.current
+        .filter((it): it is Extract<ChatItem, { kind: "user" | "reply" }> => it.kind === "user" || it.kind === "reply")
+        .map((it) => ({ role: it.kind === "user" ? "user" : "assistant", content: it.text }));
+      closeTranscriptRef.current = transcript;
+      // A running delegate blocks the close behind an explicit choice — stop it or stay.
+      if (itemsRef.current.some((it) => it.kind === "delegate" && it.state === "running")) {
+        setCloseFlow({ stage: "delegates" });
+        return;
+      }
+      if (transcript.length === 0) { window.bean.allowChatClose(); return; }
+      setCloseFlow({ stage: "confirm" });
+    });
+```
+
+Add the two handlers next to `dismissClose`:
+
+```typescript
+  // "Keep working": abort the close entirely — window stays open, task keeps running.
+  const keepWorking = (): void => setCloseFlow(null);
+
+  // "Stop & close": cancel every running delegate, then continue the normal close flow
+  // (memory review when there's a transcript, plain close otherwise).
+  const stopDelegatesAndClose = (): void => {
+    for (const it of itemsRef.current) {
+      if (it.kind === "delegate" && it.state === "running" && it.taskId) window.bean.delegateCancel(it.taskId);
+    }
+    if (closeTranscriptRef.current.length === 0) { dismissClose(); return; }
+    setCloseFlow({ stage: "confirm" });
+  };
+```
+
+Render the stage above the existing `closeFlow?.stage === "confirm"` block:
+
+```tsx
+      {closeFlow?.stage === "delegates" ? (
+        <div class="bean-memory-review">
+          <div class="bean-memory-review-card">
+            <div class="bean-memory-review-title">A delegated task is still running — closing will stop it.</div>
+            <div class="bean-card-actions">
+              <button type="button" class="bean-btn" onClick={keepWorking}>Keep working</button>
+              <button type="button" class="bean-btn bean-btn--ghost" onClick={stopDelegatesAndClose}>Stop & close</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+```
+
 - [ ] **Step 5: Typecheck, test, build**
 
 Run: `pnpm test && pnpm typecheck && pnpm build`
@@ -1471,7 +1541,7 @@ Expected: all PASS. (Build catches renderer-bundle issues — e.g. an accidental
 
 - [ ] **Step 6: Manual smoke test (only if `~/.bean/config.json` has a key and a CLI is installed)**
 
-Run `pnpm dev`. Open chat → ask e.g. "have an agent list the files in <project> and report back". Expect: DelegateCard → confirm → running with tail → done → Bean summarizes the result in a new reply. Also verify Cancel mid-run flips the card to Cancelled with no summary.
+Run `pnpm dev`. Open chat → ask e.g. "have an agent list the files in <project> and report back". Expect: DelegateCard → confirm → running with tail → done → Bean summarizes the result in a new reply. Also verify: (a) Cancel mid-run flips the card to Cancelled with no summary; (b) closing the chat window mid-run shows the "still running" card — Keep working keeps both window and task alive, Stop & close kills the task and proceeds to the memory-review flow; (c) after Stop & close, `ps aux | grep -E "claude|opencode"` shows no leftover delegate process.
 
 - [ ] **Step 7: Commit**
 
@@ -1507,11 +1577,13 @@ Key contracts:
 - **Loopback:** on `done` the renderer auto-sends `[delegate result for "…"]: …` through the
   normal chat flow (collapsed display label), so the model summarizes and the result enters
   history for chaining.
-- **Delivery/replay:** `send()` returns whether a live chat window got the event; undelivered
-  terminal events stay buffered and `bean:delegate-replay` returns-and-consumes them on the
-  next chat mount — a result finishing with the chat closed isn't lost.
+- **Tasks share the chat window's lifetime — no ghosts:** closing the chat with a running
+  delegate shows a Keep working / Stop & close card (same pattern as the memory review),
+  and main calls `cancelAll()` on chat-window `closed` as the hard backstop. Nothing is
+  buffered or replayed; a delegate never runs on without its human context.
 - **Cancel is silent in core:** `DelegateHandle.cancel()` kills the (detached) process group
-  and settles with NO callback; the registry emits the `cancelled` event itself.
+  and settles with NO callback; the registry emits the `cancelled` event itself (and drops
+  the task, which is also what makes stray post-terminal callbacks no-ops).
 - The delegate CLI is user-picked in Settings (`delegateCli`, "" = first detected); the chat
   model never chooses the harness.
 ```
@@ -1532,7 +1604,7 @@ two paths — the launcher stays fire-and-forget.
 Add under `## convention`:
 
 ```markdown
-- [convention-delegate-loopback.md](convention-delegate-loopback.md) — `propose_delegate` → headless `claude -p`/`opencode run` via core `runDelegate()`; tracked tasks, event push + buffered replay, result loops back into chat. The deliberate exception to launch-hands-off-to-terminal.
+- [convention-delegate-loopback.md](convention-delegate-loopback.md) — `propose_delegate` → headless `claude -p`/`opencode run` via core `runDelegate()`; tracked tasks bound to the chat window's lifetime (Keep/Stop close prompt + `cancelAll()` backstop), result loops back into chat. The deliberate exception to launch-hands-off-to-terminal.
 ```
 
 - [ ] **Step 4: Update `AGENTS.md`**

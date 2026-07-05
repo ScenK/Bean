@@ -59,11 +59,10 @@ export interface DelegateRequest {
 
 ### `@bean/app` — wiring
 
-- **`delegate-tasks.ts`** (new, main process): task registry
-  `Map<taskId, { cancel, lastEvent, meta }>`. Starts tasks via `runDelegate`, pushes
-  lifecycle events to the renderer with `webContents.send`, and **buffers each task's
-  latest event** so a re-subscribing renderer (window closed/reopened) gets current
-  state replayed. Handler-builder functions (`buildDelegateStartHandler`, …) are
+- **`delegate-tasks.ts`** (new, main process): task registry `Map<taskId, { cancel, done }>`.
+  Starts tasks via `runDelegate`, pushes lifecycle events to the chat renderer, and exposes
+  `cancelAll()` — **tasks are bound to the chat window's lifetime** (no ghosts: a delegate
+  never outlives the human context that started it). The registry factory is a pure function
   separable from Electron for tests, like `ipc.ts`'s existing builders.
 - **`channels.ts`**: `bean:delegate-start` (invoke), `bean:delegate-cancel` (invoke),
   `bean:delegate-event` (main → renderer push; Bean's first push channel).
@@ -101,6 +100,11 @@ export interface DelegateRequest {
    `[delegate result for <instruction>]: <result>`. Bean's model replies in its own
    voice; the result is now in history, so follow-up delegations can chain.
 6. Cancel → `bean:delegate-cancel(taskId)` → process-group kill → *cancelled* state.
+7. Closing the chat window while a task runs: a confirm card (same pattern as the
+   memory-review close flow) asks the user to choose — **Keep working** (the window stays
+   open) or **Stop & close** (all running tasks are cancelled, then the normal close flow —
+   including the memory review — proceeds). As a hard backstop, the main process calls
+   `cancelAll()` when the chat window is destroyed, so a task can never outlive the chat.
 
 ## Error handling
 
@@ -112,8 +116,9 @@ export interface DelegateRequest {
 - **Timeout** (30 min): kill + `failed("timed out")`.
 - **Invalid tool args** in `converse()`: proposal dropped, text reply returned
   (mirrors `propose_run`).
-- **Window closed mid-run**: task keeps running in main; buffered last-event replay on
-  re-subscribe brings a reopened window current.
+- **Window closed mid-run**: never silent — the close is intercepted and the user chooses
+  Keep working / Stop & close; the main process's `cancelAll()` on window destruction is
+  the backstop that guarantees no orphaned agent processes.
 
 ## Testing
 
@@ -125,8 +130,8 @@ export interface DelegateRequest {
   skill), skill composition via `composePrompt`, invalid project → proposal dropped,
   tool absent when no delegate CLI is available.
 - **app `ipc`/`delegate-tasks` tests**: handler builders exercised without Electron —
-  start assigns ids and forwards events, cancel routes to the right task, last-event
-  replay on subscribe.
+  start assigns ids and forwards events, cancel routes to the right task, `cancelAll()`
+  cancels every running task and ignores finished ones.
 - Gate: `pnpm test && pnpm typecheck` green.
 
 ## Out of scope (YAGNI)
@@ -134,6 +139,8 @@ export interface DelegateRequest {
 - Session continuation (`claude -p --resume`) — a future follow-up; the loopback turn
   already enables conversational chaining.
 - Cost/token reporting, run history persistence, parallel-task orchestration UI.
+- Tasks surviving a chat-window close (deliberate: closing the chat prompts Keep working /
+  Stop & close — a delegate never runs on without its human context).
 - Letting the chat model choose the harness per-task.
 - Any change to `launcher.ts` / the Terminal launch path.
 
