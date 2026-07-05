@@ -71,27 +71,36 @@ So each E2E test file:
 | Test | Drives | Asserts |
 |---|---|---|
 | Smoke | Launch app | Avatar `BrowserWindow` opens, `window.bean` bridge exists, no crash/console error |
-| Chat | Real DOM click: avatar → chat tile; type message; send | Stubbed reply renders in the transcript |
+| Chat | `window.bean.openComponent("chat")`; real DOM type + send in the chat window | Stubbed reply renders in the transcript |
 | Proposal (in-chat) | Stub returns a `propose_run` tool call; confirm the resulting `ProposalCard` | Card shows the skill name; confirming an in-chat-target proposal sends the prompt in-chat |
 | Launch boundary | Same, but proposal targets `terminal`/`opencode` | Before clicking confirm, override `window.bean.launch` in-page with a spy; assert it's called with the expected `{mode, projectPath, prompt}` — verifies wiring without spawning a real process |
 | Component windows | Call `window.bean.openComponent(kind)` for `skills`, `projects`, `settings` | Each opens a new window and renders its expected root content with no console errors |
 
+(Opening windows is driven directly via `window.bean.openComponent()` rather than simulating
+the avatar's petal-menu click: that petal UI already has its own geometry/state-machine unit
+tests (`avatar-menu.test.ts`), and its window-resize IPC round trip is unrelated flakiness this
+suite doesn't need to take on to cover the chat/proposal/window-opening value described above.)
+
 ### CI wiring
 
-- New job `e2e` added to `.github/workflows/ci.yml`, alongside the existing `test` job, same
-  triggers (`push: [main]`, `pull_request`).
-- Runs on `ubuntu-latest` (cheaper/faster than macOS; nothing in the covered flows requires
-  real macOS, since the launch boundary is spied rather than exercised for real):
+- New, separate workflow file `.github/workflows/e2e.yml` — not a job inside `ci.yml`.
+- Trigger: `workflow_dispatch` only. Never `push`/`pull_request`, and never added to any
+  branch-protection required-checks list. Bean is solo-maintained, so the only person who ever
+  merges chooses when to spend the time running it — before a PR that touches app boot, IPC,
+  or window behavior, not on every commit. (This repo is public, so macOS Actions minutes are
+  free either way — the manual trigger is about deliberate frequency/review discipline, not
+  cost.)
+- Runs on `macos-latest`, not `ubuntu-latest`: `packages/app/src/main.ts` calls the macOS-only
+  `nativeImage.createMenuSymbol()` unconditionally at startup (tray menu icons) — its behavior
+  on Linux is undocumented/unverified, so a Linux runner risks the whole app failing to boot
+  before any covered flow even runs. macOS also matches Bean's actual (macOS-only) production
+  platform and needs no `xvfb`:
   ```yaml
   - pnpm install --frozen-lockfile
   - pnpm build
-  - npx playwright install --with-deps chromium   # installs xvfb + system deps
-  - xvfb-run -a pnpm --filter @bean/app run test:e2e
+  - pnpm --filter @bean/app run test:e2e
   ```
-- Separate job (not appended to the existing `test` job) so a flaky E2E run doesn't block the
-  fast unit-test signal.
-- `mac-installer.yml` is unchanged — it already runs `pnpm test && pnpm typecheck` before
-  packaging; e2e is not added there to keep release builds fast.
+- `ci.yml` and `mac-installer.yml` are both unchanged.
 
 ### Documentation fix
 
