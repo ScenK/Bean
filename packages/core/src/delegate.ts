@@ -69,6 +69,7 @@ export function runDelegate(
 
   let settled = false;
   let cancelling = false;
+  let timedOut = false;
   let onCancelled: (() => void) | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
   let result: string | undefined;
@@ -94,8 +95,9 @@ export function runDelegate(
   };
 
   const timer = setTimeout(() => {
+    timedOut = true;
     kill("SIGTERM");
-    settle(() => callbacks.onError(new Error(`delegate timed out after ${Math.round(timeoutMs / 60_000)} minutes`)));
+    killTimer = setTimeout(() => kill("SIGKILL"), 5_000);
   }, timeoutMs);
 
   const handleLine = (line: string): void => {
@@ -138,6 +140,10 @@ export function runDelegate(
     if (settled) return;
     if (cancelling) {
       settle(() => onCancelled?.());
+      return;
+    }
+    if (timedOut) {
+      settle(() => callbacks.onError(new Error(`delegate timed out after ${Math.round(timeoutMs / 60_000)} minutes`)));
       return;
     }
     if (stdoutBuf.trim()) handleLine(stdoutBuf);

@@ -197,13 +197,36 @@ describe("runDelegate", () => {
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
   });
 
-  it("times out after timeoutMs, killing the child and reporting onError", () => {
+  it("timeout waits for close before reporting onError", () => {
     vi.useFakeTimers();
     const child = new FakeChild();
     const { cbs, errors } = collect();
     runDelegate({ cli: "claude", projectPath: "/p", prompt: "go" }, cbs, () => asChild(child), 60_000);
     vi.advanceTimersByTime(60_000);
     expect(child.killed).toBe(true);
+    expect(errors).toEqual([]);
+    child.emit("close", 143);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("timed out");
+  });
+
+  it("timeout escalates to SIGKILL when the child does not close", () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const signals: NodeJS.Signals[] = [];
+    child.kill = (signal?: NodeJS.Signals | number) => { signals.push(signal as NodeJS.Signals); return true; };
+    const { cbs, errors } = collect();
+    runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, cbs, () => asChild(child), 60_000);
+
+    vi.advanceTimersByTime(60_000);
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(errors).toEqual([]);
+
+    vi.advanceTimersByTime(5_000);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(errors).toEqual([]);
+
+    child.emit("close", null);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("timed out");
   });
