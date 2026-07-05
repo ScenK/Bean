@@ -73,7 +73,7 @@ So each E2E test file:
 | Smoke | Launch app | Avatar `BrowserWindow` opens, `window.bean` bridge exists, no crash/console error |
 | Chat | `window.bean.openComponent("chat")`; real DOM type + send in the chat window | Stubbed reply renders in the transcript |
 | Proposal (in-chat) | Stub returns a `propose_run` tool call; confirm the resulting `ProposalCard` | Card shows the skill name; confirming an in-chat-target proposal sends the prompt in-chat |
-| Launch boundary | Same, but proposal targets `terminal`/`opencode` | Before clicking confirm, override `window.bean.launch` in-page with a spy; assert it's called with the expected `{mode, projectPath, prompt}` — verifies wiring without spawning a real process |
+| Launch boundary | Same, but proposal targets `terminal`/`opencode` | Before clicking confirm, detach and replace the main-process `ipcMain` listener for the `bean:launch` channel (via `ElectronApplication.evaluate()`); assert the recorded payload matches `{mode, projectPath, prompt}` — verifies wiring without spawning a real process. (Implementation note: a renderer-side `window.bean.launch = spy` reassignment, as originally sketched here, does NOT work — `contextBridge.exposeInMainWorld` deep-freezes the exposed API object, making that assignment a silent no-op. The `ipcMain`-level interception is the mechanism that ships, and is if anything a stronger proof since it verifies the real IPC channel end-to-end.) |
 | Component windows | Call `window.bean.openComponent(kind)` for `skills`, `projects`, `settings` | Each opens a new window and renders its expected root content with no console errors |
 
 (Opening windows is driven directly via `window.bean.openComponent()` rather than simulating
