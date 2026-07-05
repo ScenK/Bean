@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
 import { newId, type ChatItem } from "../../shared/chat-types.js";
 import type { ChatTurn, LinkedNote, MemoryCandidate, Memory, ProposedNote, RouteSuggestion } from "@bean/core";
+import type { DelegateEvent } from "../../../delegate-tasks.js";
 
 // Extraction is a real LLM call — a reasoning model (e.g. gpt-5-mini) routinely takes ~5s and
 // longer for bigger transcripts. This is only a backstop against a genuinely hung request, so it
@@ -17,6 +18,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 // a silent hang) → loading (extraction in flight) → review (pick which candidates to keep).
 // `null` means no card — the window closes normally.
 type CloseFlow =
+  | { stage: "delegates" }
   | { stage: "confirm" }
   | { stage: "loading" }
   | { stage: "review"; items: { text: string; projectPath?: string; checked: boolean }[] };
@@ -74,12 +76,17 @@ export function ChatWindow() {
     };
     window.bean.getPendingChatPrompt().then((p) => { if (p) runPrompt(p); });
     window.bean.onChatPrompt(runPrompt);
+    window.bean.onDelegateEvent(applyDelegateEvent);
     window.bean.onReviewBeforeClose(() => {
       const transcript: ChatTurn[] = itemsRef.current
         .filter((it): it is Extract<ChatItem, { kind: "user" | "reply" }> => it.kind === "user" || it.kind === "reply")
         .map((it) => ({ role: it.kind === "user" ? "user" : "assistant", content: it.text }));
-      if (transcript.length === 0) { window.bean.allowChatClose(); return; }
       closeTranscriptRef.current = transcript;
+      if (itemsRef.current.some((it) => it.kind === "delegate" && it.state === "running")) {
+        setCloseFlow({ stage: "delegates" });
+        return;
+      }
+      if (transcript.length === 0) { window.bean.allowChatClose(); return; }
       setCloseFlow({ stage: "confirm" });
     });
   }, []);
@@ -114,6 +121,7 @@ export function ChatWindow() {
         if (res.reply.trim()) next.push({ kind: "reply", id: newId(), text: res.reply });
         if (res.proposedRun) next.push({ kind: "proposal", id: newId(), run: res.proposedRun, state: "pending" });
         if (res.proposedNote) next.push({ kind: "note", id: newId(), note: res.proposedNote, state: "pending" });
+        if (res.proposedDelegate) next.push({ kind: "delegate", id: newId(), proposal: res.proposedDelegate, state: "pending", tail: [] });
         return next;
       });
       setStatus("idle");
@@ -141,6 +149,28 @@ export function ChatWindow() {
 
   const cancelProposal = (id: string): void => {
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "proposal" ? { ...it, state: "cancelled" } : it)));
+  };
+
+  const confirmDelegate = async (id: string, editedPrompt: string): Promise<void> => {
+    const item = itemsRef.current.find(
+      (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
+    );
+    if (!item) return;
+    const taskId = await window.bean.delegateStart({ projectPath: item.proposal.projectPath, prompt: editedPrompt });
+    setItems((prev) => prev.map((it) =>
+      it.id === id && it.kind === "delegate" ? { ...it, state: "running" as const, taskId } : it,
+    ));
+  };
+
+  const dismissDelegate = (id: string): void => {
+    setItems((prev) => prev.map((it) => (it.id === id && it.kind === "delegate" ? { ...it, state: "dismissed" as const } : it)));
+  };
+
+  const cancelDelegateTask = (id: string): void => {
+    const item = itemsRef.current.find(
+      (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
+    );
+    if (item?.taskId) window.bean.delegateCancel(item.taskId);
   };
 
   const saveNote = async (id: string, edited: ProposedNote, asNew: boolean): Promise<void> => {
@@ -176,9 +206,40 @@ export function ChatWindow() {
     void sendMessage("Save this conversation as a note (use the propose_note tool).", "📝 Save to notes");
   };
 
+  const applyDelegateEvent = (e: DelegateEvent): void => {
+    const match = itemsRef.current.find(
+      (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.taskId === e.taskId,
+    );
+    if (!match) return;
+    setItems((prev) => prev.map((it) => {
+      if (it.kind !== "delegate" || it.taskId !== e.taskId) return it;
+      if (e.type === "output") return { ...it, tail: [...it.tail.slice(-29), e.line] };
+      if (e.type === "done") return { ...it, state: "done" as const, result: e.result };
+      if (e.type === "failed") return { ...it, state: "failed" as const, error: e.message };
+      if (e.type === "cancelled") return { ...it, state: "cancelled" as const };
+      return it;
+    }));
+    if (e.type === "done") {
+      void sendRef.current(
+        `[delegate result for "${match.proposal.instruction}"]: ${e.result}\n\nBriefly summarize this outcome for the user in your own words.`,
+        "Delegate finished",
+      );
+    }
+  };
+
   // Shared by the confirm-stage "Skip" and the review-stage "Skip" — both mean "close with
   // no write", they just fire from different stages of the same flow.
   const dismissClose = (): void => { setCloseFlow(null); window.bean.allowChatClose(); };
+
+  const keepWorking = (): void => setCloseFlow(null);
+
+  const stopDelegatesAndClose = (): void => {
+    for (const it of itemsRef.current) {
+      if (it.kind === "delegate" && it.state === "running" && it.taskId) window.bean.delegateCancel(it.taskId);
+    }
+    if (closeTranscriptRef.current.length === 0) { dismissClose(); return; }
+    setCloseFlow({ stage: "confirm" });
+  };
 
   const confirmExtract = (): void => {
     setCloseFlow({ stage: "loading" });
@@ -218,6 +279,17 @@ export function ChatWindow() {
 
   return (
     <div class="bean-dashboard bean-chat-window">
+      {closeFlow?.stage === "delegates" ? (
+        <div class="bean-memory-review">
+          <div class="bean-memory-review-card">
+            <div class="bean-memory-review-title">A delegated task is still running — closing will stop it.</div>
+            <div class="bean-card-actions">
+              <button type="button" class="bean-btn" onClick={keepWorking}>Keep working</button>
+              <button type="button" class="bean-btn bean-btn--ghost" onClick={stopDelegatesAndClose}>Stop & close</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {closeFlow?.stage === "confirm" ? (
         <div class="bean-memory-review">
           <div class="bean-memory-review-card">
@@ -265,6 +337,9 @@ export function ChatWindow() {
         onCancel={cancelProposal}
         onNoteSave={(id, edited, asNew) => void saveNote(id, edited, asNew)}
         onNoteDismiss={dismissNote}
+        onDelegateConfirm={(id, edited) => void confirmDelegate(id, edited)}
+        onDelegateDismiss={dismissDelegate}
+        onDelegateCancelTask={cancelDelegateTask}
         onSaveToNotes={saveToNotes}
         onUnlink={() => setLinkedNote(undefined)}
       />

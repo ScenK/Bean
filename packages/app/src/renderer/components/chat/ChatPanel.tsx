@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { ProposalCard } from "../../shared/ProposalCard.js";
 import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
+import { DelegateCard } from "./DelegateCard.js";
 import type { ChatItem } from "../../shared/chat-types.js";
 import type { LinkedNote, ProposedNote, RouteSuggestion } from "@bean/core";
 
@@ -17,6 +18,9 @@ export function ChatPanel({
   onCancel,
   onNoteSave,
   onNoteDismiss,
+  onDelegateConfirm,
+  onDelegateDismiss,
+  onDelegateCancelTask,
   onSaveToNotes,
   onUnlink,
 }: {
@@ -35,6 +39,9 @@ export function ChatPanel({
   onCancel: (id: string) => void;
   onNoteSave: (id: string, edited: ProposedNote, asNew: boolean) => void;
   onNoteDismiss: (id: string) => void;
+  onDelegateConfirm: (id: string, editedPrompt: string) => void;
+  onDelegateDismiss: (id: string) => void;
+  onDelegateCancelTask: (id: string) => void;
   onSaveToNotes: () => void;
   onUnlink: () => void;
 }) {
@@ -132,6 +139,17 @@ export function ChatPanel({
                 linkedVersion={it.note.slug !== undefined && it.note.slug === linkedNote?.slug ? linkedNote.version : undefined}
                 onSave={(edited, asNew) => onNoteSave(it.id, edited, asNew)}
                 onDismiss={() => onNoteDismiss(it.id)}
+              />
+            );
+          }
+          if (it.kind === "delegate") {
+            return (
+              <DelegateCard
+                key={it.id}
+                item={it}
+                onConfirm={(edited) => onDelegateConfirm(it.id, edited)}
+                onDismiss={() => onDelegateDismiss(it.id)}
+                onCancelTask={() => onDelegateCancelTask(it.id)}
               />
             );
           }
