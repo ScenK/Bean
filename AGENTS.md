@@ -71,7 +71,11 @@ pnpm --filter @bean/core exec vitest run -t "falls back"   # by test name
 ```
 
 **Validation gate:** run `pnpm test && pnpm typecheck` and confirm both exit 0 before
-claiming work is done. There is no CI yet — local green is the only safety net.
+claiming work is done. CI (`.github/workflows/ci.yml`) runs the same two commands on every
+push to `main` and every PR, plus an `e2e` job (Playwright driving the real built Electron
+app — see `packages/app/e2e/`) on `macos-latest`. The `e2e` job is advisory, not a required
+check, so an occasional flake never blocks a merge — but check its result before merging a PR
+that touches app boot, IPC, or window behavior.
 
 ---
 

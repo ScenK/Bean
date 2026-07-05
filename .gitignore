@@ -6,3 +6,5 @@ release/
 .DS_Store
 /.superpowers/
 /.worktrees/
+/packages/app/test-results/
+/packages/app/playwright-report/

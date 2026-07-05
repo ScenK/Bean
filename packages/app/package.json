@@ -11,6 +11,7 @@
     "start": "electron dist/main.js",
     "dist:mac": "pnpm build && electron-builder --mac",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "postversion": "git push --follow-tags"
   },
@@ -44,6 +45,7 @@
   },
   "devDependencies": {
     "@bean/core": "workspace:*",
+    "@playwright/test": "^1.61.1",
     "@types/node": "latest",
     "dompurify": "^3.4.11",
     "electron": "latest",
