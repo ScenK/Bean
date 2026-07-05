@@ -258,6 +258,9 @@ app.whenReady().then(async () => {
     },
   });
 
+  // PATH doesn't change mid-session — detect once, serve from cache. Finder-launched
+  // Electron gets a minimal PATH missing whatever the user's shell profile adds (nvm,
+  // npm/pnpm global bins, ~/.local/bin, ...) — ask the login shell for its real PATH.
   const availableClis = detectClis(
     [process.env.PATH ?? "", loginShellPath(), "/opt/homebrew/bin", "/usr/local/bin"].join(":"),
   );
