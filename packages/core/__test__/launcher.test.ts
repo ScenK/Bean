@@ -1,11 +1,16 @@
 import { expect, test, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { launchCommand, launchInTerminal } from "../src/launcher.js";
+import { detectClis, launchCommand, launchInTerminal } from "../src/launcher.js";
 import type { LaunchRequest, LaunchSpawnFn } from "../src/launcher.js";
 
 test("launchCommand builds the opencode TUI command with a pre-sent prompt", () => {
   const req: LaunchRequest = { mode: "opencode", projectPath: "/dev/acme", prompt: "do it" };
-  expect(launchCommand(req)).toEqual({ command: "opencode", args: ["/dev/acme", "--prompt", "do it"] });
+  expect(launchCommand(req)).toEqual({ command: "opencode", args: ["/dev/acme", "--prompt=do it"] });
+});
+
+test("a prompt starting with '-' stays glued to --prompt instead of parsing as a flag", () => {
+  const req: LaunchRequest = { mode: "opencode", projectPath: "/p", prompt: "--- frontmatter-looking text" };
+  expect(launchCommand(req).args).toEqual(["/p", "--prompt=--- frontmatter-looking text"]);
 });
 
 test("launchCommand builds the claude interactive command with a pre-sent prompt", () => {
@@ -21,6 +26,15 @@ test("launchCommand builds the open command via `open -a` with the configured ed
 test("launchCommand's open command has an empty editor arg when no editor is configured", () => {
   const req: LaunchRequest = { mode: "open", projectPath: "/dev/acme" };
   expect(launchCommand(req)).toEqual({ command: "open", args: ["-a", "", "/dev/acme"] });
+});
+
+test("detectClis reports which CLIs exist on PATH, in fixed opencode-first order", () => {
+  const path = "/usr/local/bin:/opt/homebrew/bin";
+  expect(detectClis(path, () => true)).toEqual(["opencode", "claude"]);
+  expect(detectClis(path, (p) => p.endsWith("/claude"))).toEqual(["claude"]);
+  expect(detectClis(path, (p) => p === "/opt/homebrew/bin/opencode")).toEqual(["opencode"]);
+  expect(detectClis(path, () => false)).toEqual([]);
+  expect(detectClis("", () => true)).toEqual([]);
 });
 
 function fakeChild() {
@@ -54,7 +68,7 @@ test("opencode mode writes a .command script cd'ing into the project and calls o
 
   expect(written?.path).toMatch(/bean-run-.*\.command$/);
   expect(written?.content).toContain("cd '/dev/acme'");
-  expect(written?.content).toContain("'opencode' '/dev/acme' '--prompt' 'do it'");
+  expect(written?.content).toContain("'opencode' '/dev/acme' '--prompt=do it'");
   expect(spawnFn).toHaveBeenCalledWith("open", [written?.path]);
 });
 
@@ -66,7 +80,7 @@ test("a prompt containing a single quote is embedded losslessly via the '\\'' es
     writeScript,
   );
   const content = writeScript.mock.calls[0]![1] as string;
-  expect(content).toContain(`'say '\\''hi'\\'' to it'`);
+  expect(content).toContain(`'--prompt=say '\\''hi'\\'' to it'`);
 });
 
 test("does not throw when the spawned process errors (e.g. command not on PATH)", () => {

@@ -24,6 +24,7 @@ export interface AppInfo {
 export const IPC = {
   route: "bean:route",
   launch: "bean:launch",
+  availableClis: "bean:available-clis",
   chat: "bean:chat",
   listSkills: "bean:list-skills",
   listProjects: "bean:list-projects",

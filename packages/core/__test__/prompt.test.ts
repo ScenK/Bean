@@ -24,6 +24,13 @@ test("omits url section when absent", () => {
   expect(out.toLowerCase()).not.toContain("context url");
 });
 
+test("strips frontmatter from the composed prompt", () => {
+  const withFm: Skill = { ...skill, body: "---\ndescription: 'Review PRs'\ntarget: terminal\n---\n# Review\nDo a thorough review." };
+  const out = composePrompt(withFm, "review MR 42");
+  expect(out.startsWith("# Review")).toBe(true);
+  expect(out).not.toContain("target: terminal");
+});
+
 test("omits the Task section when instruction is empty", () => {
   const out = composePrompt(skill, "");
   expect(out.toLowerCase()).not.toContain("## task");

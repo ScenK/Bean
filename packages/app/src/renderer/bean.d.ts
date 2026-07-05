@@ -1,5 +1,5 @@
 import type {
-  RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest,
+  RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, MemoryCandidate, ChatTurn, Note, NoteDraft,
 } from "@bean/core";
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo } from "../channels.js";
@@ -9,6 +9,7 @@ declare global {
     bean: {
       route(input: RouteInput): Promise<RouteSuggestion>;
       launch(req: LaunchRequest): void;
+      availableClis(): Promise<CliName[]>;
       chat(req: ChatRequest): Promise<ConverseResult>;
       getModel(): Promise<string>;
       getPathForFile(file: File): string;

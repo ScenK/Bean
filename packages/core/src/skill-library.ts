@@ -1,10 +1,10 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Skill } from "./types.js";
-import { parseDescription, parseFrontmatter } from "./frontmatter.js";
+import { formatSkillBody, parseDescription, parseFrontmatter } from "./frontmatter.js";
 
 // Re-exported so node-side consumers (and the barrel) still reach it from here.
-export { setFrontmatter } from "./frontmatter.js";
+export { setFrontmatter, stripFrontmatter, formatSkillBody } from "./frontmatter.js";
 
 export async function loadSkills(dir: string): Promise<Skill[]> {
   let entries: string[];
@@ -44,7 +44,7 @@ export async function saveSkill(dir: string, name: string, body: string): Promis
   // ponytail: guard against path traversal across the IPC trust boundary
   if (/[/\\]|\.\./.test(name)) throw new Error(`invalid skill name: ${name}`);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `${name}.md`), body, "utf8");
+  await writeFile(join(dir, `${name}.md`), formatSkillBody(body), "utf8");
 }
 
 export async function deleteSkill(dir: string, name: string): Promise<void> {
