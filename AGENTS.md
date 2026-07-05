@@ -22,7 +22,11 @@ Before touching code:
 
 1. Read this file.
 2. Read [`.memory/INDEX.md`](.memory/INDEX.md) and follow links relevant to your task. Treat `safety-*` entries as load-bearing.
-3. Confirm you are on a feature branch, not `master` (the default branch; PRs target `main`).
+3. **Never work directly on `main`.** For every new task, create an isolated worktree first:
+   `pnpm worktree:create <branch-name>` — this checks out `.worktrees/<branch-name>` off a new
+   branch and runs `codegraph init` inside it, then work from that directory. When the task is
+   done, remove it with `pnpm worktree:remove <branch-name>` (see
+   [Worktrees](#worktrees) below).
 
 ---
 
@@ -76,6 +80,22 @@ push to `main` and every PR, plus an `e2e` job (Playwright driving the real buil
 app — see `packages/app/e2e/`) on `macos-latest`. The `e2e` job is advisory, not a required
 check, so an occasional flake never blocks a merge — but check its result before merging a PR
 that touches app boot, IPC, or window behavior.
+
+---
+
+## Worktrees
+
+Never edit code on `main`. Every new task gets its own git worktree, wired through root pnpm
+scripts (`scripts/worktree.sh`):
+
+```bash
+pnpm worktree:create <branch-name>   # .worktrees/<branch-name>, new branch, then `codegraph init`
+pnpm worktree:remove <branch-name>   # git worktree remove + delete the branch
+```
+
+Worktrees live under `.worktrees/` at the project root (gitignored). `codegraph init` is run
+automatically inside the new worktree because the `.codegraph/` index isn't shared across
+worktrees — each checkout needs its own.
 
 ---
 

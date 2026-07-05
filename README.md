@@ -77,6 +77,11 @@ pnpm dist:mac    # build a distributable .dmg/.zip
 Monorepo: `packages/core` (pure routing/IO logic, zero Electron) + `packages/app`
 (Electron shell, esbuild-bundled). See `AGENTS.md` for the full architecture.
 
+Contributions from AI agents are welcome, but must follow `AGENTS.md` — in particular:
+isolate every task in its own worktree (`pnpm worktree:create <branch>` /
+`pnpm worktree:remove <branch>`, never commit on `main` directly), and have `codegraph`
+installed and on your `PATH`, since worktree creation runs `codegraph init` automatically.
+
 ## Function flow
 
 ![Bean function flow](docs/diagrams/project-function-flow.svg)
