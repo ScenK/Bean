@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { detectClis, launchCommand, launchInTerminal } from "../src/launcher.js";
-import type { LaunchRequest, LaunchSpawnFn } from "../src/launcher.js";
+import { detectClis, launchCommand, launchInTerminal, loginShellPath } from "../src/launcher.js";
+import type { LaunchRequest, LaunchSpawnFn, SpawnSyncFn } from "../src/launcher.js";
 
 test("launchCommand builds the opencode TUI command with a pre-sent prompt", () => {
   const req: LaunchRequest = { mode: "opencode", projectPath: "/dev/acme", prompt: "do it" };
@@ -35,6 +35,17 @@ test("detectClis reports which CLIs exist on PATH, in fixed opencode-first order
   expect(detectClis(path, (p) => p === "/opt/homebrew/bin/opencode")).toEqual(["opencode"]);
   expect(detectClis(path, () => false)).toEqual([]);
   expect(detectClis("", () => true)).toEqual([]);
+});
+
+test("loginShellPath runs the shell as an interactive login shell and returns its PATH", () => {
+  const run = vi.fn<SpawnSyncFn>(() => ({ stdout: "/opt/homebrew/bin:/Users/x/.local/bin\n" }));
+  expect(loginShellPath("/bin/zsh", run)).toBe("/opt/homebrew/bin:/Users/x/.local/bin");
+  expect(run).toHaveBeenCalledWith("/bin/zsh", ["-ilc", "echo -n $PATH"]);
+});
+
+test("loginShellPath falls back to an empty string when the shell invocation fails", () => {
+  const run: SpawnSyncFn = () => { throw new Error("spawnSync ENOENT"); };
+  expect(loginShellPath("/bin/zsh", run)).toBe("");
 });
 
 function fakeChild() {
