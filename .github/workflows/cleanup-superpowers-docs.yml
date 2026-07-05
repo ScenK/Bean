@@ -1,0 +1,27 @@
+name: Clean up superpowers docs
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  cleanup:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+      - name: Remove plan/spec docs
+        run: |
+          git rm -rq --ignore-unmatch docs/superpowers/plans docs/superpowers/specs
+          if git diff --cached --quiet; then
+            echo "Nothing to clean up"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: remove superpowers plan/spec docs after merge (#${{ github.event.pull_request.number }})"
+          git push
