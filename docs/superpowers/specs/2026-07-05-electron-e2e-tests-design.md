@@ -83,13 +83,11 @@ suite doesn't need to take on to cover the chat/proposal/window-opening value de
 
 ### CI wiring
 
-- New, separate workflow file `.github/workflows/e2e.yml` — not a job inside `ci.yml`.
-- Trigger: `workflow_dispatch` only. Never `push`/`pull_request`, and never added to any
-  branch-protection required-checks list. Bean is solo-maintained, so the only person who ever
-  merges chooses when to spend the time running it — before a PR that touches app boot, IPC,
-  or window behavior, not on every commit. (This repo is public, so macOS Actions minutes are
-  free either way — the manual trigger is about deliberate frequency/review discipline, not
-  cost.)
+- New job `e2e` added directly to `.github/workflows/ci.yml`, alongside the existing `test`
+  job, same triggers (`push: [main]`, `pull_request`) — runs automatically on every commit.
+  This repo is public, so macOS Actions minutes are free (no per-minute multiplier cost
+  concern), which is what makes running it on every push/PR the right default rather than a
+  manual/opt-in step.
 - Runs on `macos-latest`, not `ubuntu-latest`: `packages/app/src/main.ts` calls the macOS-only
   `nativeImage.createMenuSymbol()` unconditionally at startup (tray menu icons) — its behavior
   on Linux is undocumented/unverified, so a Linux runner risks the whole app failing to boot
@@ -100,7 +98,13 @@ suite doesn't need to take on to cover the chat/proposal/window-opening value de
   - pnpm build
   - pnpm --filter @bean/app run test:e2e
   ```
-- `ci.yml` and `mac-installer.yml` are both unchanged.
+- Separate job (not appended to the existing `test` job) so a flaky/slower e2e run doesn't
+  hold up the fast unit-test signal.
+- Not added to any branch-protection required-checks list — visible (✅/❌ on every PR) but
+  advisory, so an occasional flake never hard-blocks an otherwise-good merge. This is
+  independent of the cost question above.
+- `mac-installer.yml` is unchanged — it already runs `pnpm test && pnpm typecheck` before
+  packaging; e2e is not added there to keep release builds fast.
 
 ### Documentation fix
 
