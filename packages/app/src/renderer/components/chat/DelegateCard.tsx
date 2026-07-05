@@ -58,7 +58,7 @@ export function DelegateCard({
           <button type="button" class="bean-btn bean-btn--ghost" onClick={() => setShowDetail(!showDetail)}>
             {showDetail ? "Hide output" : `Show output (${item.tail.length})`}
           </button>
-          {showDetail ? <pre class="bean-card-prompt">{item.tail.join("\n")}</pre> : null}
+          {showDetail ? <pre class="bean-card-prompt bean-delegate-output">{item.tail.join("\n")}</pre> : null}
         </>
       ) : null}
       {item.state === "done" && item.result ? (
@@ -66,7 +66,7 @@ export function DelegateCard({
           <button type="button" class="bean-btn bean-btn--ghost" onClick={() => setShowDetail(!showDetail)}>
             {showDetail ? "Hide result" : "Show result"}
           </button>
-          {showDetail ? <pre class="bean-card-prompt">{item.result}</pre> : null}
+          {showDetail ? <pre class="bean-card-prompt bean-delegate-output">{item.result}</pre> : null}
         </>
       ) : null}
       {item.state === "failed" && item.error ? <div class="bean-status bean-status--error">{item.error}</div> : null}
