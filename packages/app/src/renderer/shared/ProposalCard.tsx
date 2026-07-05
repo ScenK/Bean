@@ -20,7 +20,11 @@ export function ProposalCard({
 }) {
   const [prompt, setPrompt] = useState(run.composedPrompt);
   const [extra, setExtra] = useState("");
-  const [cli, setCli] = useState<CliName>(cliOptions?.[0] ?? "opencode");
+  // Track only an explicit user pick; the effective CLI derives from the latest cliOptions.
+  // cliOptions arrives async (after first render), so seeding useState from it would freeze
+  // the pre-detection default — a claude-only machine would silently launch opencode.
+  const [cliChoice, setCliChoice] = useState<CliName | undefined>(undefined);
+  const cli: CliName = cliChoice ?? cliOptions?.[0] ?? "opencode";
   const [projectPath, setProjectPath] = useState(run.projectPath);
   const done = state !== "pending";
   const showCliPicker = run.target !== "chat" && (cliOptions?.length ?? 0) > 1;
@@ -70,7 +74,7 @@ export function ProposalCard({
                 type="button"
                 disabled={done}
                 class={`bean-skills-project-chip${cli === c ? " bean-skills-project-chip--on" : ""}`}
-                onClick={() => setCli(c)}
+                onClick={() => setCliChoice(c)}
               >
                 {cli === c ? "✓ " : ""}{c}
               </button>
