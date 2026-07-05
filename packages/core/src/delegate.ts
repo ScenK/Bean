@@ -1,3 +1,5 @@
+import type { ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { CliName } from "./launcher.js";
 
 export interface DelegateRequest {
@@ -37,4 +39,112 @@ export function claudeTailLine(event: unknown): string | undefined {
 export function claudeResult(event: unknown): string | undefined {
   const e = event as { type?: unknown; result?: unknown } | null;
   return e?.type === "result" && typeof e.result === "string" ? e.result : undefined;
+}
+
+export interface DelegateCallbacks {
+  onOutput: (line: string) => void;
+  onDone: (result: string) => void;
+  onError: (err: Error) => void;
+}
+
+export interface DelegateHandle {
+  cancel: () => void;
+}
+
+export type DelegateSpawnFn = (command: string, args: string[], cwd: string) => ChildProcess;
+
+const defaultDelegateSpawn: DelegateSpawnFn = (command, args, cwd) =>
+  spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], detached: true });
+
+export const DELEGATE_TIMEOUT_MS = 30 * 60_000;
+
+export function runDelegate(
+  req: DelegateRequest,
+  callbacks: DelegateCallbacks,
+  spawnFn: DelegateSpawnFn = defaultDelegateSpawn,
+  timeoutMs: number = DELEGATE_TIMEOUT_MS,
+): DelegateHandle {
+  const { command, args } = delegateCommand(req);
+  const child = spawnFn(command, args, req.projectPath);
+
+  let settled = false;
+  let result: string | undefined;
+  const rawLines: string[] = [];
+  let stdoutBuf = "";
+  let stderrBuf = "";
+
+  const settle = (fn: () => void): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    fn();
+  };
+
+  const kill = (): void => {
+    try {
+      if (typeof child.pid === "number") process.kill(-child.pid, "SIGTERM");
+      else child.kill("SIGTERM");
+    } catch {
+      child.kill("SIGTERM");
+    }
+  };
+
+  const timer = setTimeout(() => {
+    kill();
+    settle(() => callbacks.onError(new Error(`delegate timed out after ${Math.round(timeoutMs / 60_000)} minutes`)));
+  }, timeoutMs);
+
+  const handleLine = (line: string): void => {
+    if (!line.trim() || settled) return;
+    rawLines.push(line);
+    if (req.cli !== "claude") {
+      callbacks.onOutput(line);
+      return;
+    }
+    let event: unknown;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      callbacks.onOutput(line);
+      return;
+    }
+    const r = claudeResult(event);
+    if (r !== undefined) {
+      result = r;
+      return;
+    }
+    const tail = claudeTailLine(event);
+    if (tail) callbacks.onOutput(tail);
+  };
+
+  child.stdout?.on("data", (chunk: Buffer) => {
+    stdoutBuf += chunk.toString("utf8");
+    for (let i = stdoutBuf.indexOf("\n"); i !== -1; i = stdoutBuf.indexOf("\n")) {
+      handleLine(stdoutBuf.slice(0, i));
+      stdoutBuf = stdoutBuf.slice(i + 1);
+    }
+  });
+
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderrBuf = (stderrBuf + chunk.toString("utf8")).slice(-4000);
+  });
+
+  child.on("error", (err: Error) => settle(() => callbacks.onError(err)));
+  child.on("close", (code: number | null) => {
+    if (settled) return;
+    if (stdoutBuf.trim()) handleLine(stdoutBuf);
+    if (code === 0) {
+      settle(() => callbacks.onDone(result ?? rawLines.join("\n")));
+      return;
+    }
+    const tail = stderrBuf.trim().split("\n").slice(-5).join("\n");
+    settle(() => callbacks.onError(new Error(`${command} exited with code ${code}${tail ? ` - ${tail}` : ""}`)));
+  });
+
+  return {
+    cancel: () => {
+      kill();
+      settle(() => {});
+    },
+  };
 }
