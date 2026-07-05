@@ -8,7 +8,8 @@
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "dev": "turbo run build --filter=@bean/core && pnpm --filter @bean/app build && pnpm --filter @bean/app dev",
-    "dist:mac": "turbo run build --filter=@bean/core && pnpm --filter @bean/app dist:mac"
+    "dist:mac": "turbo run build --filter=@bean/core && pnpm --filter @bean/app dist:mac",
+    "release": "pnpm --dir packages/app version"
   },
   "devDependencies": {
     "turbo": "latest",
