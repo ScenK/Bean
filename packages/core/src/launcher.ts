@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { constants, accessSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { chmodSync, writeFileSync } from "node:fs";
@@ -27,6 +27,24 @@ export function detectClis(
   const dirs = pathEnv.split(delimiter).filter(Boolean);
   const onPath = (cmd: CliName): boolean => dirs.some((d) => isExecutable(join(d, cmd)));
   return (["opencode", "claude"] as const).filter(onPath);
+}
+
+export type SpawnSyncFn = (command: string, args: string[]) => { stdout?: string };
+const defaultSpawnSync: SpawnSyncFn = (command, args) => spawnSync(command, args, { encoding: "utf8", timeout: 3000 });
+
+/** Finder/Dock-launched (packaged) apps get launchd's minimal PATH — none of the dirs a
+ * login shell profile adds (nvm, volta, npm/pnpm global bins, ~/.local/bin, ...), which is
+ * where CLIs like `claude` commonly live. Ask the user's actual login shell instead of
+ * guessing directories; feeds into detectClis alongside process.env.PATH. */
+export function loginShellPath(
+  shell: string = process.env.SHELL ?? "/bin/zsh",
+  run: SpawnSyncFn = defaultSpawnSync,
+): string {
+  try {
+    return run(shell, ["-ilc", "echo -n $PATH"]).stdout?.trim() ?? "";
+  } catch {
+    return "";
+  }
 }
 
 export interface LaunchRequest {
