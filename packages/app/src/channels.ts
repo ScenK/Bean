@@ -7,6 +7,7 @@ export interface ConfigView {
   model: string;
   terminalApp: string;
   editorApp: string;
+  delegateCli: string;
   paths: { config: string; skills: string; projects: string; persona: string };
 }
 export interface ConfigUpdate {
@@ -14,6 +15,7 @@ export interface ConfigUpdate {
   model: string;
   terminalApp: string;
   editorApp: string;
+  delegateCli: string;
 }
 export interface AppInfo {
   version: string;
@@ -24,6 +26,9 @@ export interface AppInfo {
 export const IPC = {
   route: "bean:route",
   launch: "bean:launch",
+  delegateStart: "bean:delegate-start",
+  delegateCancel: "bean:delegate-cancel",
+  delegateEvent: "bean:delegate-event",
   availableClis: "bean:available-clis",
   chat: "bean:chat",
   listSkills: "bean:list-skills",

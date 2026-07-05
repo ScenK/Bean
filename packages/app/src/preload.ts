@@ -4,10 +4,15 @@ import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, MemoryCandidate, ChatTurn, Note, NoteDraft,
 } from "@bean/core";
+import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
 
 contextBridge.exposeInMainWorld("bean", {
   route: (input: RouteInput): Promise<RouteSuggestion> => ipcRenderer.invoke(IPC.route, input),
   launch: (req: LaunchRequest): void => ipcRenderer.send(IPC.launch, req),
+  delegateStart: (req: DelegateStartRequest): Promise<string> => ipcRenderer.invoke(IPC.delegateStart, req),
+  delegateCancel: (taskId: string): void => ipcRenderer.send(IPC.delegateCancel, taskId),
+  onDelegateEvent: (cb: (e: DelegateEvent) => void) =>
+    ipcRenderer.on(IPC.delegateEvent, (_e, ev: DelegateEvent) => cb(ev)),
   availableClis: (): Promise<CliName[]> => ipcRenderer.invoke(IPC.availableClis),
   chat: (req: ChatRequest): Promise<ConverseResult> => ipcRenderer.invoke(IPC.chat, req),
   getModel: (): Promise<string> => ipcRenderer.invoke(IPC.getModel),

@@ -16,4 +16,5 @@ export * from "./router.js";
 export * from "./converse.js";
 export * from "./openai-chat.js";
 export * from "./launcher.js";
+export * from "./delegate.js";
 export * from "./drop-plan.js";

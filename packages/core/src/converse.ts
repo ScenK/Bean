@@ -22,10 +22,17 @@ export type ProposedRun = RouteSuggestion;
 /** A note draft awaiting user confirmation in the chat — notes are never saved silently.
  * `slug` present = update that existing note in place (chat linked to a note). */
 export interface ProposedNote { title: string; body: string; project?: string; slug?: string; }
+// A confirm-first background coding task that reports its final result back to this chat.
+export interface ProposedDelegate {
+  projectPath: string;
+  instruction: string;
+  skillName?: string;
+  composedPrompt: string;
+}
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */
 export interface LinkedNote { slug: string; title: string; version: number; body: string; }
-export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; }
+export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; }
 export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?: string; linkedNote?: LinkedNote; }
 
 const BEHAVIOR_INSTRUCTIONS =
@@ -41,7 +48,14 @@ const BEHAVIOR_INSTRUCTIONS =
   "with unresolved threads, call propose_note to draft one — the user confirms it before " +
   "anything is saved. Notes capture conversation output (summaries, ideas, open questions), " +
   "NOT durable one-line facts about the user — those are handled elsewhere. Don't propose a " +
-  "note for small talk or a talk that reached no substance.";
+  "note for small talk or a talk that reached no substance. If you are given a " +
+  "propose_delegate tool: use it when the user wants project work done; a background " +
+  "agent does the work while the chat stays open, and its result returns to this " +
+  "conversation. If the user asks you to inspect, explore, summarize, or explain a linked project, " +
+  "use propose_delegate; do not say you cannot access the repository. " +
+  "Use propose_run instead when the user wants to watch or continue the " +
+  "work in their own terminal. Both are confirm-first.";
+  
 
 function proposeNoteTool(projects: Project[], linkedNote?: LinkedNote): ToolSpec {
   const properties: Record<string, unknown> = {
@@ -94,6 +108,31 @@ function proposeRunTool(skills: Skill[], projects: Project[]): ToolSpec {
   };
 }
 
+function proposeDelegateTool(skills: Skill[], projects: Project[]): ToolSpec {
+  const properties: Record<string, unknown> = {
+    project: { type: "string", enum: projects.map((p) => p.path), description: "the project path to work in" },
+    instruction: {
+      type: "string",
+      description: "the concrete, self-contained task for the delegated agent — include all context it needs",
+    },
+  };
+  if (skills.length > 0) {
+    properties.skill = {
+      type: "string",
+      enum: skills.map((s) => s.name),
+      description: "optional skill whose instructions frame the task; omit for a free-form task",
+    };
+  }
+  return {
+    name: "propose_delegate",
+    description:
+      "Delegate a task to a background coding agent that can inspect, summarize, explain, or work " +
+      "inside the project and reports " +
+      "the result back to this chat when finished. The user confirms before it starts.",
+    parameters: { type: "object", properties, required: ["project", "instruction"] },
+  };
+}
+
 function catalog(skills: Skill[], projects: Project[]): string {
   const skillList = skills.map((s) => `- ${s.name}: ${s.description}`).join("\n");
   const projectList = projects.map((p) => `- ${p.name} (${p.path})`).join("\n");
@@ -122,8 +161,13 @@ export async function converse(
   actions: ActionTool[] = [],
   now: () => Date = () => new Date(),
   linkedNote?: LinkedNote,
+  delegateAvailable = false,
 ): Promise<ConverseResult> {
-  const systemParts = [composePersonaPrompt(persona), BEHAVIOR_INSTRUCTIONS, catalog(skills, projects)];
+  const systemParts = [
+    composePersonaPrompt(persona),
+    BEHAVIOR_INSTRUCTIONS,
+    catalog(skills, projects),
+  ];
   // Local time so the model can resolve "in 20 minutes" / "at 5pm" into a concrete timestamp.
   if (actions.length > 0) systemParts.push(`Current date and time: ${now().toString()}`);
   const recall = memoriesBlock(memories, projects);
@@ -146,6 +190,7 @@ export async function converse(
   // enum is an invalid tool schema), so offer no propose_run tool.
   const tools = [
     ...(skills.length > 0 && projects.length > 0 ? [proposeRunTool(skills, projects)] : []),
+    ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects)] : []),
     proposeNoteTool(projects, linkedNote),
     ...actions.map((a) => a.spec),
   ];
@@ -182,6 +227,26 @@ export async function converse(
           composedPrompt: composePrompt(skill, instruction, droppedUrl),
           confidence: 1,
           target: skill.target,
+        },
+      };
+    }
+
+    const delegateCall = toolCalls.find((c) => c.name === "propose_delegate");
+    if (delegateCall) {
+      const args = (delegateCall.args ?? {}) as { project?: unknown; instruction?: unknown; skill?: unknown };
+      const project = projects.find((p) => p.path === args.project);
+      if (!project || typeof args.instruction !== "string" || !args.instruction.trim()) {
+        return { reply: content, model: deps.model };
+      }
+      const skill = skills.find((s) => s.name === args.skill);
+      return {
+        reply: content,
+        model: deps.model,
+        proposedDelegate: {
+          projectPath: project.path,
+          instruction: args.instruction,
+          skillName: skill?.name,
+          composedPrompt: skill ? composePrompt(skill, args.instruction, droppedUrl) : args.instruction,
         },
       };
     }

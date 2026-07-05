@@ -33,3 +33,8 @@ dropped URL) losslessly into the generated shell script — verified in
 **Still true, unchanged:** the frontmatter/flag-misparsing risk noted in the old runner
 ponytail comment (a prompt starting with `-`/`--` could be misread by `opencode`'s yargs CLI as
 a flag) — carried forward verbatim into `launchCommand()`'s comment. Not yet fixed at the source.
+
+**Scope update:** this convention covers Terminal launches (`launchInTerminal`) only. The
+delegate subsystem ([convention-delegate-loopback](convention-delegate-loopback.md)) is the
+deliberate exception: headless runs that Bean spawns, streams, and tracks. Don't merge the
+two paths — the launcher stays fire-and-forget.

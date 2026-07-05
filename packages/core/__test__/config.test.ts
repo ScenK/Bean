@@ -43,11 +43,11 @@ test("saveConfig round-trips openaiApiKey and model", async () => {
   expect(cfg.model).toBe("gpt-5");
 });
 
-test("saveConfig writes only openaiApiKey, model, terminalApp and editorApp (no beanDir)", async () => {
+test("saveConfig writes only persisted config fields (no beanDir)", async () => {
   const file = join(dir, "config.json");
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m", terminalApp: "" });
   const parsed = JSON.parse(await readFile(file, "utf8"));
-  expect(Object.keys(parsed).sort()).toEqual(["editorApp", "model", "openaiApiKey", "terminalApp"]);
+  expect(Object.keys(parsed).sort()).toEqual(["delegateCli", "editorApp", "model", "openaiApiKey", "terminalApp"]);
 });
 
 test("loads config and defaults terminalApp to empty string", async () => {
@@ -83,6 +83,17 @@ test("saveConfig round-trips editorApp", async () => {
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m", terminalApp: "", editorApp: "/Applications/Zed.app" });
   const cfg = await loadConfig(file, "/b");
   expect(cfg.editorApp).toBe("/Applications/Zed.app");
+});
+
+test("defaults delegateCli to empty and round-trips it through save", async () => {
+  const file = join(dir, "config.json");
+  await writeFile(file, JSON.stringify({ openaiApiKey: "sk-x" }));
+  const cfg = await loadConfig(file, "/b");
+  expect(cfg.delegateCli).toBe("");
+
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m", terminalApp: "", editorApp: "", delegateCli: "claude" });
+  const roundTripped = await loadConfig(file, "/b");
+  expect(roundTripped.delegateCli).toBe("claude");
 });
 
 test("projectBeanDir resolves to <repo-root>/.bean", () => {

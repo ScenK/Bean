@@ -67,6 +67,79 @@ test("no propose_run tool is offered when skills or projects are empty", async (
   expect(captured.map((t) => t.name)).toEqual(["propose_note"]);
 });
 
+test("valid propose_delegate returns a free-form delegated task", async () => {
+  const deps = depsReturning("On it.", [
+    { name: "propose_delegate", args: { project: "/work/api", instruction: "fix the flaky test" } },
+  ]);
+  const res = await converse([], "delegate this", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true);
+  expect(res.proposedDelegate).toEqual({
+    projectPath: "/work/api",
+    instruction: "fix the flaky test",
+    skillName: undefined,
+    composedPrompt: "fix the flaky test",
+  });
+});
+
+test("propose_delegate composes a known optional skill into the prompt", async () => {
+  const deps = depsReturning("On it.", [
+    { name: "propose_delegate", args: { project: "/work/api", instruction: "do it", skill: "review-code" } },
+  ]);
+  const res = await converse([], "delegate this", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true);
+  expect(res.proposedDelegate?.skillName).toBe("review-code");
+  expect(res.proposedDelegate?.composedPrompt).toContain("REVIEW BODY");
+  expect(res.proposedDelegate?.composedPrompt).toContain("## Task");
+  expect(res.proposedDelegate?.composedPrompt).toContain("do it");
+});
+
+test("propose_delegate treats unknown skill as no skill", async () => {
+  const deps = depsReturning("On it.", [
+    { name: "propose_delegate", args: { project: "/work/api", instruction: "do it", skill: "nope" } },
+  ]);
+  const res = await converse([], "delegate this", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true);
+  expect(res.proposedDelegate?.skillName).toBeUndefined();
+  expect(res.proposedDelegate?.composedPrompt).toBe("do it");
+});
+
+test("propose_delegate drops unknown project or missing instruction", async () => {
+  for (const args of [{ project: "/nope", instruction: "x" }, { project: "/work/api" }]) {
+    const deps = depsReturning("on it", [{ name: "propose_delegate", args }]);
+    const res = await converse([], "delegate this", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true);
+    expect(res.proposedDelegate).toBeUndefined();
+    expect(res.reply).toBe("on it");
+  }
+});
+
+test("propose_delegate tool is offered only when delegation is available", async () => {
+  let captured: ToolSpec[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => { captured = tools; return { content: "ok", toolCalls: [] }; },
+  };
+  await converse([], "hi", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, false);
+  expect(captured.map((t) => t.name)).not.toContain("propose_delegate");
+  await converse([], "hi", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true);
+  expect(captured.map((t) => t.name)).toContain("propose_delegate");
+});
+
+test("delegate instructions tell the model to inspect linked projects instead of refusing", async () => {
+  let systemContent = "";
+  let delegateDescription = "";
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages, tools }) => {
+      systemContent = messages[0]!.content;
+      delegateDescription = tools.find((t) => t.name === "propose_delegate")?.description ?? "";
+      return { content: "ok", toolCalls: [] };
+    },
+  };
+
+  await converse([], "what does the bean project do?", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true);
+
+  expect(systemContent).toContain("inspect, explore, summarize, or explain a linked project");
+  expect(systemContent).toContain("do not say you cannot access the repository");
+  expect(delegateDescription).toContain("inspect, summarize, explain");
+});
+
 test("recalled memories are injected after the catalog, labeled global vs project", async () => {
   let systemContent = "";
   const deps: ConverseDeps = {
@@ -135,6 +208,24 @@ test("behavior instructions tell the model not to recite the skill/project catal
   };
   await converse([], "hi", skills, projects, DEFAULT_PERSONA, [], deps);
   expect(systemContent).toContain("don't recite or summarize it unprompted");
+});
+
+test("delegate guidance lives in behavior instructions", async () => {
+  let systemContent = "";
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages }) => {
+      systemContent = messages[0]!.content;
+      return { content: "ok", toolCalls: [] };
+    },
+  };
+  await converse([], "hi", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true);
+  const delegateIdx = systemContent.indexOf("a background agent does the work while the chat stays open");
+  const noteIdx = systemContent.indexOf("Don't propose a note for small talk");
+  const catalogIdx = systemContent.indexOf("Skills:");
+  expect(delegateIdx).toBeGreaterThan(noteIdx);
+  expect(delegateIdx).toBeLessThan(catalogIdx);
+  expect(systemContent).toContain("its result returns to this conversation");
 });
 
 test("proposedRun carries the skill's chat target", async () => {

@@ -3,12 +3,16 @@ import type {
   Memory, MemoryCandidate, ChatTurn, Note, NoteDraft,
 } from "@bean/core";
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo } from "../channels.js";
+import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
 
 declare global {
   interface Window {
     bean: {
       route(input: RouteInput): Promise<RouteSuggestion>;
       launch(req: LaunchRequest): void;
+      delegateStart(req: DelegateStartRequest): Promise<string>;
+      delegateCancel(taskId: string): void;
+      onDelegateEvent(cb: (e: DelegateEvent) => void): void;
       availableClis(): Promise<CliName[]>;
       chat(req: ChatRequest): Promise<ConverseResult>;
       getModel(): Promise<string>;

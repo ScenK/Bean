@@ -223,6 +223,11 @@ button, input, textarea, select, a {
   padding: 9px 11px;
   box-sizing: border-box;
 }
+.bean-delegate-output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
+}
 .bean-card-actions { display: flex; gap: 8px; }
 .bean-btn {
   font: 600 12px sans-serif;
