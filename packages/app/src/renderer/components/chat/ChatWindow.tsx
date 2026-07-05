@@ -23,6 +23,36 @@ type CloseFlow =
   | { stage: "loading" }
   | { stage: "review"; items: { text: string; projectPath?: string; checked: boolean }[] };
 
+type QueuedSend = { text: string; display?: string };
+
+export function markDelegateStarting(items: ChatItem[], id: string): ChatItem[] {
+  return items.map((it) => (it.kind === "delegate" && it.id === id ? { ...it, state: "running" as const } : it));
+}
+
+export function applyDelegateEventToItems(
+  items: ChatItem[],
+  e: DelegateEvent,
+): { items: ChatItem[]; loopback?: QueuedSend } {
+  const match = items.find(
+    (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.taskId === e.taskId,
+  );
+  if (!match) return { items };
+  return {
+    items: items.map((it) => {
+      if (it.kind !== "delegate" || it.taskId !== e.taskId) return it;
+      if (e.type === "output") return { ...it, tail: [...it.tail.slice(-29), e.line] };
+      if (e.type === "done") return { ...it, state: "done" as const, result: e.result };
+      if (e.type === "failed") return { ...it, state: "failed" as const, error: e.message };
+      if (e.type === "cancelled") return { ...it, state: "cancelled" as const };
+      return it;
+    }),
+    loopback: e.type === "done" ? {
+      text: `[delegate result for "${match.proposal.instruction}"]: ${e.result}\n\nBriefly summarize this outcome for the user in your own words.`,
+      display: "📦 Delegate finished",
+    } : undefined,
+  };
+}
+
 export function ChatWindow() {
   const [droppedUrl, setDroppedUrl] = useState<string | undefined>(undefined);
   const [items, setItems] = useState<ChatItem[]>([]);
@@ -33,6 +63,9 @@ export function ChatWindow() {
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
   const itemsRef = useRef<ChatItem[]>([]);
   itemsRef.current = items;
+  const busyRef = useRef(false);
+  const queuedSendsRef = useRef<QueuedSend[]>([]);
+  const pendingDelegateStartsRef = useRef(new Set<string>());
   // sendMessage is reached via sendRef from the once-mounted effect, so it reads the linked
   // note through a ref too — state alone would be a stale closure there.
   const linkedNoteRef = useRef<LinkedNote | undefined>(undefined);
@@ -43,7 +76,7 @@ export function ChatWindow() {
   const closeTranscriptRef = useRef<ChatTurn[]>([]);
   // The mount effect below runs once, so it must reach sendMessage through a ref — a direct
   // reference would close over the first render's stale `busy`/`items`.
-  const sendRef = useRef<(text: string, display?: string) => Promise<void>>(async () => {});
+  const sendRef = useRef<(text: string, display?: string, queueIfBusy?: boolean) => Promise<void>>(async () => {});
 
   useEffect(() => {
     const setTheme = (theme: string): void => {
@@ -100,9 +133,14 @@ export function ChatWindow() {
     return () => clearTimeout(t);
   }, [droppedUrl]);
 
-  const sendMessage = async (text: string, display?: string): Promise<void> => {
+  const sendMessage = async (text: string, display?: string, queueIfBusy = false): Promise<void> => {
     const message = text.trim();
-    if (!message || busy) return;
+    if (!message) return;
+    if (busyRef.current) {
+      if (queueIfBusy) queuedSendsRef.current.push({ text: message, display });
+      return;
+    }
+    busyRef.current = true;
     setBusy(true);
     setStatus("working");
     const workingId = newId();
@@ -129,7 +167,10 @@ export function ChatWindow() {
       setItems((prev) => [...prev.filter((it) => it.id !== workingId), { kind: "status", id: newId(), text: "Failed to reach Bean.", tone: "error" }]);
       setStatus("error");
     } finally {
+      busyRef.current = false;
       setBusy(false);
+      const next = queuedSendsRef.current.shift();
+      if (next) void sendMessage(next.text, next.display, true);
     }
   };
   sendRef.current = sendMessage;
@@ -152,14 +193,21 @@ export function ChatWindow() {
   };
 
   const confirmDelegate = async (id: string, editedPrompt: string): Promise<void> => {
+    if (pendingDelegateStartsRef.current.has(id)) return;
     const item = itemsRef.current.find(
       (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
     );
-    if (!item) return;
-    const taskId = await window.bean.delegateStart({ projectPath: item.proposal.projectPath, prompt: editedPrompt });
-    setItems((prev) => prev.map((it) =>
-      it.id === id && it.kind === "delegate" ? { ...it, state: "running" as const, taskId } : it,
-    ));
+    if (!item || item.state !== "pending") return;
+    pendingDelegateStartsRef.current.add(id);
+    setItems((prev) => markDelegateStarting(prev, id));
+    try {
+      const taskId = await window.bean.delegateStart({ projectPath: item.proposal.projectPath, prompt: editedPrompt });
+      setItems((prev) => prev.map((it) =>
+        it.id === id && it.kind === "delegate" ? { ...it, state: "running" as const, taskId } : it,
+      ));
+    } finally {
+      pendingDelegateStartsRef.current.delete(id);
+    }
   };
 
   const dismissDelegate = (id: string): void => {
@@ -207,24 +255,9 @@ export function ChatWindow() {
   };
 
   const applyDelegateEvent = (e: DelegateEvent): void => {
-    const match = itemsRef.current.find(
-      (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.taskId === e.taskId,
-    );
-    if (!match) return;
-    setItems((prev) => prev.map((it) => {
-      if (it.kind !== "delegate" || it.taskId !== e.taskId) return it;
-      if (e.type === "output") return { ...it, tail: [...it.tail.slice(-29), e.line] };
-      if (e.type === "done") return { ...it, state: "done" as const, result: e.result };
-      if (e.type === "failed") return { ...it, state: "failed" as const, error: e.message };
-      if (e.type === "cancelled") return { ...it, state: "cancelled" as const };
-      return it;
-    }));
-    if (e.type === "done") {
-      void sendRef.current(
-        `[delegate result for "${match.proposal.instruction}"]: ${e.result}\n\nBriefly summarize this outcome for the user in your own words.`,
-        "Delegate finished",
-      );
-    }
+    const { loopback } = applyDelegateEventToItems(itemsRef.current, e);
+    setItems((prev) => applyDelegateEventToItems(prev, e).items);
+    if (loopback) void sendRef.current(loopback.text, loopback.display, true);
   };
 
   // Shared by the confirm-stage "Skip" and the review-stage "Skip" — both mean "close with
