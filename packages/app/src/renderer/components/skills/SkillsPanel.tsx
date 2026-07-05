@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import type { Project, RouteSuggestion, Skill } from "@bean/core";
-import { setFrontmatter } from "@bean/core/frontmatter";
+import { parseFrontmatter, setFrontmatter } from "@bean/core/frontmatter";
 import { bestProjectForSkill } from "@bean/core/project-select";
 import { composePrompt } from "@bean/core/prompt";
 
@@ -97,6 +97,8 @@ export function SkillsPanel({
 
   const save = async (): Promise<void> => {
     if (!selectedSkill) return;
+    const targetProblem = targetHintFor(draft);
+    if (targetProblem) { setSaveError(targetProblem); return; }
     try {
       await window.bean.saveSkill(selectedSkill.name, draft);
       await refresh();
@@ -124,6 +126,8 @@ export function SkillsPanel({
     if (!name) { setSaveError("Name is required"); return; }
     if (/[/\\]|\.\./.test(name)) { setSaveError("Name can't contain / \\ or .."); return; }
     if (skills.some((s) => s.name === name)) { setSaveError(`A skill named "${name}" already exists`); return; }
+    const targetProblem = targetHintFor(draft);
+    if (targetProblem) { setSaveError(targetProblem); return; }
     try {
       await window.bean.saveSkill(name, draft);
       await refresh();
@@ -179,6 +183,16 @@ export function SkillsPanel({
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
     }
+  };
+
+  // Save-time check for `target:` — Bean's own required tag deciding whether a confirmed run
+  // goes to the terminal (opencode) or back into the chat window. Never auto-inserted: where
+  // a skill runs is the user's call, so saving is blocked until they pick one.
+  const targetHintFor = (body: string): string | undefined => {
+    const target = parseFrontmatter(body).target?.toLowerCase();
+    if (target === "chat" || target === "terminal") return undefined;
+    if (target) return `Unknown target "${target}" — use \`target: terminal\` (run in coding agent) or \`target: chat\` (reply in Bean's chat).`;
+    return "Add `target: terminal` (run in opencode) or `target: chat` (reply in Bean's chat) to the frontmatter — Bean needs it to route the skill.";
   };
 
   const canRun = projects.length > 0;
@@ -319,9 +333,9 @@ export function SkillsPanel({
             <textarea
               class="bean-skills-editor"
               value={draft}
-              onInput={(e) => setDraft((e.target as HTMLTextAreaElement).value)}
+              onInput={(e) => { setDraft((e.target as HTMLTextAreaElement).value); setSaveError(undefined); }}
             />
-            {saveError ? <div class="bean-skills-error">Save failed: {saveError}</div> : null}
+            {saveError ? <div class="bean-skills-notice">{saveError}</div> : null}
             <div class="bean-card-actions">
               <button type="button" class="bean-btn" onClick={() => void save()}>Save</button>
               <button type="button" class="bean-btn bean-btn--ghost" onClick={cancelEdit}>Cancel</button>
@@ -344,10 +358,10 @@ export function SkillsPanel({
             <textarea
               class="bean-skills-editor"
               value={draft}
-              placeholder={"---\ndescription: One line for the router\n---\n# Skill title\nSteps..."}
-              onInput={(e) => setDraft((e.target as HTMLTextAreaElement).value)}
+              placeholder={"---\ndescription: One line for the router\ntarget: terminal\n---\n# Skill title\nSteps..."}
+              onInput={(e) => { setDraft((e.target as HTMLTextAreaElement).value); setSaveError(undefined); }}
             />
-            {saveError ? <div class="bean-skills-error">{saveError}</div> : null}
+            {saveError ? <div class="bean-skills-notice">{saveError}</div> : null}
             <div class="bean-card-actions">
               <button type="button" class="bean-btn" onClick={() => void saveNew()}>Save</button>
               <button type="button" class="bean-btn bean-btn--ghost" onClick={cancelAdd}>Cancel</button>

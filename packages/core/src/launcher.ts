@@ -1,11 +1,33 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
+import { constants, accessSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { chmodSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 export type LaunchMode = "opencode" | "claude" | "open";
+export type CliName = "opencode" | "claude";
+
+const defaultIsExecutable = (p: string): boolean => {
+  try {
+    accessSync(p, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Which of Bean's supported CLIs are on PATH — drives the Plan window's CLI picker.
+ * Sync PATH scan, no child processes; call once at startup and cache. */
+export function detectClis(
+  pathEnv: string = process.env.PATH ?? "",
+  isExecutable: (p: string) => boolean = defaultIsExecutable,
+): CliName[] {
+  const dirs = pathEnv.split(delimiter).filter(Boolean);
+  const onPath = (cmd: CliName): boolean => dirs.some((d) => isExecutable(join(d, cmd)));
+  return (["opencode", "claude"] as const).filter(onPath);
+}
 
 export interface LaunchRequest {
   mode: LaunchMode;
@@ -19,7 +41,9 @@ export function launchCommand(req: LaunchRequest, editorApp?: string): { command
     // which reply once and exit. This drops the user into the normal TUI/REPL with the message
     // pre-sent, so they can keep working after it replies.
     case "opencode":
-      return { command: "opencode", args: [req.projectPath, "--prompt", req.prompt ?? ""] };
+      // --prompt=… as one token: a prompt starting with "-" (e.g. leftover frontmatter "---")
+      // would otherwise be eaten by opencode's flag parser, launching the TUI with no prompt.
+      return { command: "opencode", args: [req.projectPath, `--prompt=${req.prompt ?? ""}`] };
     case "claude":
       return { command: "claude", args: [req.prompt ?? ""] };
     case "open":

@@ -2,7 +2,7 @@ import {
   route, converse, launchInTerminal,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
-  type LaunchRequest, type LaunchSpawnFn, type Memory, type MemoryCandidate, type ChatTurn,
+  type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
   type ActionTool, type Note, type NoteDraft,
 } from "@bean/core";
 import type { RouterDeps } from "@bean/core";
@@ -277,6 +277,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps {
   spawnLaunch?: LaunchSpawnFn;
   getTerminalApp: () => string;
   getEditorApp: () => string;
+  getAvailableClis: () => CliName[];
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
 }
 
@@ -342,6 +343,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
 
   const launchHandler = buildLaunchHandler(deps);
   ipcMain.on(IPC.launch, (_e, req: LaunchRequest) => launchHandler(req));
+  ipcMain.handle(IPC.availableClis, () => deps.getAvailableClis());
 
   const personaHandlers = buildPersonaHandlers(deps);
   ipcMain.handle(IPC.getPersona, () => personaHandlers.get());

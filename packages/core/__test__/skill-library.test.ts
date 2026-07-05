@@ -49,6 +49,12 @@ test("setFrontmatter upserts, removes, and creates a block", async () => {
   expect(setFrontmatter("body", "enabled", undefined)).toBe("body");
 });
 
+test("frontmatter values shed wrapping quotes", async () => {
+  await writeFile(join(dir, "q.md"), "---\ndescription: 'Review PRs'\n---\nbody");
+  const skills = await loadSkills(dir);
+  expect(skills[0]!.description).toBe("Review PRs");
+});
+
 test("falls back to first heading line for description", async () => {
   await writeFile(join(dir, "investigate.md"), "# Investigate a bug\nsteps...");
   const skills = await loadSkills(dir);
@@ -61,12 +67,18 @@ test("ignores non-md files and returns empty for missing dir", async () => {
   expect(await loadSkills(dir)).toEqual([]);
 });
 
-test("saveSkill writes the file with the given body", async () => {
-  await saveSkill(dir, "new-skill", "# New skill\nbody text");
+test("saveSkill trims whitespace but never injects target or other frontmatter", async () => {
+  await saveSkill(dir, "new-skill", "\n\n# New skill\nbody text\n\n");
+  const raw = await readFile(join(dir, "new-skill.md"), "utf8");
+  expect(raw).toBe("# New skill\nbody text\n");
+});
+
+test("saveSkill leaves an existing target untouched", async () => {
+  await saveSkill(dir, "chatty", "---\ntarget: chat\n---\nbody");
+  const raw = await readFile(join(dir, "chatty.md"), "utf8");
+  expect(raw).toBe("---\ntarget: chat\n---\nbody\n");
   const skills = await loadSkills(dir);
-  expect(skills).toHaveLength(1);
-  expect(skills[0]!.name).toBe("new-skill");
-  expect(skills[0]!.body).toBe("# New skill\nbody text");
+  expect(skills[0]!.target).toBe("chat");
 });
 
 test("saveSkill creates the skills directory if missing", async () => {
@@ -81,7 +93,8 @@ test("saveSkill overwrites existing content", async () => {
   await writeFile(join(dir, "review-code.md"), "old body");
   await saveSkill(dir, "review-code", "new body");
   const raw = await readFile(join(dir, "review-code.md"), "utf8");
-  expect(raw).toBe("new body");
+  expect(raw).toContain("new body");
+  expect(raw).not.toContain("old body");
 });
 
 test("saveSkill rejects a name containing a path separator", async () => {

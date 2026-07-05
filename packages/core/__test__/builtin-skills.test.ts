@@ -5,7 +5,7 @@ import { loadSkills } from "../src/skill-library.js";
 test("ships the built-in skills at <repo-root>/.bean/skills", async () => {
   const skills = await loadSkills(skillsDir(projectBeanDir()));
   expect(skills.map((s) => s.name).sort()).toEqual([
-    "draft-reply", "explain", "extract-tasks", "summarize"
+    "draft-reply", "explain", "extract-tasks", "review-pr", "summarize"
   ]);
 });
 

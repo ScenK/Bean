@@ -682,6 +682,20 @@ button, input, textarea, select, a {
   font-size: 12px;
   color: #e5484d;
 }
+.bean-card-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* target:-reminder banner — must be readable at a glance, unlike the dim projects-hint */
+.bean-skills-notice {
+  font-size: 12.5px;
+  color: var(--bean-text);
+  background: rgba(234, 179, 8, 0.14);
+  border: 1px solid rgba(234, 179, 8, 0.45);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
 
 /* --- persona (SP5) --- */
 .bean-persona {

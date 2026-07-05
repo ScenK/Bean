@@ -8,7 +8,7 @@ import {
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, saveMemories, extractMemories,
   loadReminders, saveReminders, dueReminders, extractPageText,
-  loadNotes, saveNote, deleteNote, notesDir,
+  loadNotes, saveNote, deleteNote, notesDir, detectClis,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool } from "@bean/core";
 import { createAvatarWindow, createComponentWindow } from "./windows.js";
@@ -317,6 +317,12 @@ app.whenReady().then(async () => {
       applyConfig: (update) => runtime.apply(update),
       getTerminalApp: () => runtime.getTerminalApp(),
       getEditorApp: () => runtime.getEditorApp(),
+      // PATH doesn't change mid-session — detect once, serve from cache. Finder-launched
+      // Electron gets a minimal PATH, so also scan the usual homebrew/local bins.
+      getAvailableClis: (() => {
+        const clis = detectClis([process.env.PATH ?? "", "/opt/homebrew/bin", "/usr/local/bin"].join(":"));
+        return () => clis;
+      })(),
       onLaunchError: (req, err) => {
         const label = req.mode === "open" ? "open the project in your editor" : `launch (${req.mode})`;
         dialog.showErrorBox("Bean", `Couldn't ${label}: ${err.message}`);

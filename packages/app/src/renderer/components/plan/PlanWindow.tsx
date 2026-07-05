@@ -2,11 +2,13 @@
 import { useEffect, useState } from "preact/hooks";
 import { ProposalCard } from "../../shared/ProposalCard.js";
 import type { Theme } from "../../../channels.js";
-import type { RouteSuggestion } from "@bean/core";
+import type { CliName, Project, RouteSuggestion } from "@bean/core";
 
 export function PlanWindow() {
   const [theme, setTheme] = useState<Theme>("hearth");
   const [run, setRun] = useState<RouteSuggestion | undefined>(undefined);
+  const [clis, setClis] = useState<CliName[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
 
   useEffect(() => {
     window.bean.getTheme().then(setTheme);
@@ -16,6 +18,8 @@ export function PlanWindow() {
     // stuck forever. onProposeRun still handles updates to an already-open window.
     window.bean.getPendingPlan().then((p) => { if (p) setRun(p); });
     window.bean.onProposeRun((suggestion) => setRun(suggestion));
+    window.bean.availableClis().then(setClis);
+    window.bean.listProjects().then(setProjects);
   }, []);
 
   useEffect(() => {
@@ -29,6 +33,15 @@ export function PlanWindow() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // The projects this run could target: the ones the skill is assigned to, or — for a
+  // general skill (no assignments) — every project. 2+ candidates puts a picker on the card.
+  const projectOptions = run
+    ? (() => {
+        const assigned = projects.filter((p) => p.skills?.includes(run.skillName));
+        return assigned.length > 0 ? assigned : projects;
+      })()
+    : [];
+
   return (
     <div class="bean-dashboard">
       <div class="bean-plan">
@@ -40,9 +53,11 @@ export function PlanWindow() {
           <ProposalCard
             run={run}
             state="pending"
-            onConfirm={(edited) => {
+            cliOptions={clis}
+            projectOptions={projectOptions}
+            onConfirm={(edited, choice) => {
               if (run.target === "chat") window.bean.runInChat(edited, run.skillName);
-              else window.bean.launch({ mode: "opencode", projectPath: run.projectPath, prompt: edited });
+              else window.bean.launch({ mode: choice.cli, projectPath: choice.projectPath, prompt: edited });
               window.close();
             }}
             onCancel={() => window.close()}

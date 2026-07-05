@@ -1,13 +1,14 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo } from "./channels.js";
 import type {
-  RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest,
+  RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, MemoryCandidate, ChatTurn, Note, NoteDraft,
 } from "@bean/core";
 
 contextBridge.exposeInMainWorld("bean", {
   route: (input: RouteInput): Promise<RouteSuggestion> => ipcRenderer.invoke(IPC.route, input),
   launch: (req: LaunchRequest): void => ipcRenderer.send(IPC.launch, req),
+  availableClis: (): Promise<CliName[]> => ipcRenderer.invoke(IPC.availableClis),
   chat: (req: ChatRequest): Promise<ConverseResult> => ipcRenderer.invoke(IPC.chat, req),
   getModel: (): Promise<string> => ipcRenderer.invoke(IPC.getModel),
   // File/folder drags (Finder) populate dataTransfer.files, not text/uri-list — this is the

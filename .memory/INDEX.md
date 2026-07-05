@@ -15,6 +15,7 @@
 - [safety-window-behavior.md](safety-window-behavior.md) — avatar/intake share one window; the no-drag click target, console respawn, and don't-quit-on-avatar-close rules.
 - [safety-dev-children-not-detached.md](safety-dev-children-not-detached.md) — `pnpm dev`'s watch/Electron children must stay in the orchestrator's process group (no `detached`) so Ctrl+C reaches them; detaching orphans the Electron app on quit.
 - [safety-single-instance-lock-and-dev-relaunch.md](safety-single-instance-lock-and-dev-relaunch.md) — dev relaunch must wait for the old Electron's exit (single-instance lock race), main.ts handles SIGINT/SIGTERM itself, and lock failure uses `app.exit` not `app.quit`.
+- [safety-skill-frontmatter-and-prompt-flag.md](safety-skill-frontmatter-and-prompt-flag.md) — skill frontmatter is stripped from composed prompts, opencode gets `--prompt=` as one token, and the Skills editor requires `target:` at save time (never auto-inserted) — a `---`-leading prompt used to launch opencode with no prompt.
 - [safety-builtin-skills-packaging.md](safety-builtin-skills-packaging.md) — `projectBeanDir()`'s path walk only works in dev; packaged builds need `.bean` copied via electron-builder `extraResources` and `main.ts` to switch on `app.isPackaged`. Verify with a real `pnpm dist:mac`, not just tests.
 
 ## convention — how we do things here
