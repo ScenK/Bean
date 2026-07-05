@@ -275,11 +275,11 @@ app.whenReady().then(async () => {
     const cfgPath = configFile(dir);
     // ponytail: first launch has no ~/.bean yet — bootstrap an empty-key config so
     // loadConfig (which throws on missing file) has something to read instead of crashing.
-    if (!existsSync(cfgPath)) await saveConfig(cfgPath, { openaiApiKey: "", model: "gpt-4o-mini", terminalApp: "", editorApp: "" });
+    if (!existsSync(cfgPath)) await saveConfig(cfgPath, { openaiApiKey: "", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "" });
     const cfg = await loadConfig(cfgPath, dir);
 
     const runtime = createRuntimeConfig(
-      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp },
+      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli },
       {
         makeChat: makeOpenAIChat,
         makeConverse: makeOpenAIConverse,
@@ -307,6 +307,7 @@ app.whenReady().then(async () => {
         model: runtime.getModel(),
         terminalApp: runtime.getTerminalApp(),
         editorApp: runtime.getEditorApp(),
+        delegateCli: runtime.getDelegateCli(),
         paths: {
           config: configFile(dir),
           skills: skillsDir(dir),

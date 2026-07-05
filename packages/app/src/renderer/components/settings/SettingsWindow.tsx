@@ -1,4 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
+import type { CliName } from "@bean/core";
 import type { ConfigView } from "../../../channels.js";
 import type { Theme } from "../../../channels.js";
 
@@ -17,6 +18,8 @@ export function SettingsWindow() {
   const [model, setModel] = useState("");
   const [terminalApp, setTerminalApp] = useState("");
   const [editorApp, setEditorApp] = useState("");
+  const [delegateCli, setDelegateCli] = useState("");
+  const [clis, setClis] = useState<CliName[]>([]);
   const [paths, setPaths] = useState<ConfigView["paths"] | undefined>(undefined);
   const [save, setSave] = useState<SaveState>("idle");
   const [error, setError] = useState<string | undefined>(undefined);
@@ -24,11 +27,13 @@ export function SettingsWindow() {
   useEffect(() => {
     window.bean.getTheme().then(setTheme);
     window.bean.onThemeChanged(setTheme);
+    window.bean.availableClis().then(setClis);
     window.bean.getConfig().then((c: ConfigView) => {
       setApiKey(c.openaiApiKey);
       setModel(c.model);
       setTerminalApp(c.terminalApp);
       setEditorApp(c.editorApp);
+      setDelegateCli(c.delegateCli);
       setPaths(c.paths);
     });
   }, []);
@@ -41,7 +46,7 @@ export function SettingsWindow() {
     try {
       await window.bean.saveConfig({
         openaiApiKey: apiKey.trim(), model: model.trim(),
-        terminalApp: terminalApp.trim(), editorApp: editorApp.trim(),
+        terminalApp: terminalApp.trim(), editorApp: editorApp.trim(), delegateCli,
       });
       setSave("saved");
     } catch (err) {
@@ -111,6 +116,18 @@ export function SettingsWindow() {
             />
             <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void browseEditorApp()}>Browse…</button>
           </div>
+        </label>
+
+        <label class="bean-field">
+          <span class="bean-field-label">DELEGATE CLI</span>
+          <select
+            class="bean-input"
+            value={delegateCli}
+            onChange={(e) => { setDelegateCli((e.target as HTMLSelectElement).value); setSave("idle"); }}
+          >
+            <option value="">Auto (first detected{clis[0] ? `: ${clis[0]}` : ""})</option>
+            {clis.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
         </label>
 
         <div class="bean-field">

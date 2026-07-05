@@ -3,7 +3,7 @@ import type { RouterDeps, ConverseDeps } from "@bean/core";
 export interface RuntimeConfigDeps {
   makeChat: (apiKey: string) => RouterDeps["chat"];
   makeConverse: (apiKey: string) => ConverseDeps["chat"];
-  saveConfigFile: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string }) => Promise<void>;
+  saveConfigFile: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string }) => Promise<void>;
 }
 
 export interface RuntimeConfig {
@@ -13,20 +13,22 @@ export interface RuntimeConfig {
   getApiKey: () => string;
   getTerminalApp: () => string;
   getEditorApp: () => string;
-  apply: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string }) => Promise<void>;
+  getDelegateCli: () => string;
+  apply: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string }) => Promise<void>;
 }
 
 // Holds the live OpenAI clients + model behind stable wrapper functions. IPC handlers close
 // over the wrappers once at startup; apply() swaps the underlying clients in place so a Settings
 // save takes effect on the next chat/route with no restart (see the Settings window).
 export function createRuntimeConfig(
-  initial: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string },
+  initial: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string },
   deps: RuntimeConfigDeps,
 ): RuntimeConfig {
   let apiKey = initial.openaiApiKey;
   let model = initial.model;
   let terminalApp = initial.terminalApp;
   let editorApp = initial.editorApp;
+  let delegateCli = initial.delegateCli;
   // ponytail: the OpenAI SDK throws in its constructor when apiKey is "", so building the
   // clients eagerly would crash startup before the user ever gets to Settings. Build lazily
   // per-call instead; a missing key just surfaces as an auth error from the actual chat call.
@@ -46,17 +48,19 @@ export function createRuntimeConfig(
     getApiKey: () => apiKey,
     getTerminalApp: () => terminalApp,
     getEditorApp: () => editorApp,
+    getDelegateCli: () => delegateCli,
     apply: async (update) => {
       const nextChatClient = update.openaiApiKey ? deps.makeChat(update.openaiApiKey) : null;
       const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey) : null;
       await deps.saveConfigFile({
         openaiApiKey: update.openaiApiKey, model: update.model,
-        terminalApp: update.terminalApp, editorApp: update.editorApp,
+        terminalApp: update.terminalApp, editorApp: update.editorApp, delegateCli: update.delegateCli,
       });
       apiKey = update.openaiApiKey;
       model = update.model;
       terminalApp = update.terminalApp;
       editorApp = update.editorApp;
+      delegateCli = update.delegateCli;
       chatClient = nextChatClient;
       converseClient = nextConverseClient;
     },

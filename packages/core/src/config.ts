@@ -41,18 +41,19 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
     model: parsed.model ?? "gpt-4o-mini",
     terminalApp: parsed.terminalApp ?? "",
     editorApp: parsed.editorApp ?? "",
+    delegateCli: parsed.delegateCli ?? "",
     beanDir: beanDirPath,
   };
 }
 
 export async function saveConfig(
   file: string,
-  config: { openaiApiKey: string; model: string; terminalApp: string; editorApp?: string },
+  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string },
 ): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   const out = {
     openaiApiKey: config.openaiApiKey, model: config.model,
-    terminalApp: config.terminalApp, editorApp: config.editorApp ?? "",
+    terminalApp: config.terminalApp ?? "", editorApp: config.editorApp ?? "", delegateCli: config.delegateCli ?? "",
   };
   await writeFile(file, JSON.stringify(out, null, 2) + "\n", "utf8");
 }
