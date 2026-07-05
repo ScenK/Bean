@@ -32,7 +32,10 @@ Bean is a desktop-pet Electron app. Double-click the avatar (or drop a URL on it
 the ChatWindow → `converse()` builds a system prompt from persona/skills/projects/memories and
 may propose a run (skill + project + instruction) → user reviews/confirms in a ProposalCard →
 Bean writes a temp shell script and opens it in Terminal.app (or launches `zed` directly for
-open mode). Bean does not stream or track the launched process's output.
+open mode). Bean does not stream or track the launched process's output. The exception is
+**delegation**: `converse()` can also propose a delegate run (`propose_delegate`) — a headless
+`claude -p` / `opencode run` that Bean spawns, streams, and cancels via core's `delegate.ts` +
+app's `delegate-tasks.ts`, with the result fed back into the chat when it finishes.
 
 It's a **pnpm-workspace monorepo** with two packages:
 
@@ -89,6 +92,9 @@ claiming work is done. There is no CI yet — local green is the only safety net
     `"claude"`, and `"open"` (zed). For `"opencode"`/`"claude"` it writes a temp
     `bean-run-*.command` script and opens it via `open -a <terminalApp>`; for `"open"` it
     spawns `zed` directly. Fire-and-forget — Bean does not stream or track that process's output.
+  - `delegate.ts` `runDelegate()` is the tracked counterpart to the launcher: it spawns a
+    headless CLI (`delegateCommand()` maps claude/opencode flags), streams a parsed tail,
+    collects the final result, and can cancel the process group. Pure and DI'd like the rest.
   - `openai-chat.ts` is the only place the real `openai` SDK is touched; it adapts the client
     to the `deps.chat` shape. `makeOpenAIChatWithClient` exists so tests inject a fake client.
   - `config.ts` / `skill-library.ts` / `project-registry.ts` are pure loaders taking explicit
