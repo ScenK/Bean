@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
 import { newId, type ChatItem } from "../../shared/chat-types.js";
-import type { ChatTurn, LinkedNote, MemoryCandidate, Memory, ProposedNote, RouteSuggestion } from "@bean/core";
+import type { ChatTurn, LinkedNote, MemoryCandidate, Memory, ProposedDelegate, ProposedNote, RouteSuggestion } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
 
 // Extraction is a real LLM call — a reasoning model (e.g. gpt-5-mini) routinely takes ~5s and
@@ -31,6 +31,10 @@ export function markDelegateStarting(items: ChatItem[], id: string): ChatItem[] 
 
 export function hasActiveDelegates(items: ChatItem[], pendingStarts: number): boolean {
   return pendingStarts > 0 || items.some((it) => it.kind === "delegate" && (it.state === "starting" || it.state === "running"));
+}
+
+export function addDelegateProposal(items: ChatItem[], proposal: ProposedDelegate, id: string): ChatItem[] {
+  return [...items, { kind: "delegate", id, proposal, state: "starting", tail: [] }];
 }
 
 export function applyDelegateEventToItems(
@@ -181,10 +185,16 @@ export function ChatWindow() {
 
       setItems((prev) => {
         const next = prev.filter((it) => it.id !== workingId);
+        let delegateToStart: { id: string; projectPath: string; prompt: string } | undefined;
         if (res.reply.trim()) next.push({ kind: "reply", id: newId(), text: res.reply });
         if (res.proposedRun) next.push({ kind: "proposal", id: newId(), run: res.proposedRun, state: "pending" });
         if (res.proposedNote) next.push({ kind: "note", id: newId(), note: res.proposedNote, state: "pending" });
-        if (res.proposedDelegate) next.push({ kind: "delegate", id: newId(), proposal: res.proposedDelegate, state: "pending", tail: [] });
+        if (res.proposedDelegate) {
+          const id = newId();
+          delegateToStart = { id, projectPath: res.proposedDelegate.projectPath, prompt: res.proposedDelegate.composedPrompt };
+          next.push(...addDelegateProposal([], res.proposedDelegate, id));
+        }
+        if (delegateToStart) queueMicrotask(() => void startDelegate(delegateToStart.id, delegateToStart.projectPath, delegateToStart.prompt));
         return next;
       });
       setStatus("idle");
@@ -217,13 +227,9 @@ export function ChatWindow() {
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "proposal" ? { ...it, state: "cancelled" } : it)));
   };
 
-  const confirmDelegate = async (id: string, editedPrompt: string): Promise<void> => {
+  const startDelegate = async (id: string, projectPath: string, prompt: string): Promise<void> => {
     if (pendingDelegateStartsRef.current.has(id)) return;
-    const item = itemsRef.current.find(
-      (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
-    );
-    if (!item || item.state !== "pending") return;
-    const start = window.bean.delegateStart({ projectPath: item.proposal.projectPath, prompt: editedPrompt });
+    const start = window.bean.delegateStart({ projectPath, prompt });
     pendingDelegateStartsRef.current.set(id, start);
     setItems((prev) => markDelegateStarting(prev, id));
     try {
@@ -231,12 +237,20 @@ export function ChatWindow() {
       delegateTaskIdsRef.current.set(id, taskId);
       const buffered = pendingDelegateEventsRef.current.get(taskId) ?? [];
       pendingDelegateEventsRef.current.delete(taskId);
-      const result = attachDelegateTaskId(itemsRef.current, id, taskId, editedPrompt, buffered);
+      const result = attachDelegateTaskId(itemsRef.current, id, taskId, prompt, buffered);
       setItems(result.items);
       for (const loopback of result.loopbacks) void sendRef.current(loopback.text, loopback.display, true);
     } finally {
       pendingDelegateStartsRef.current.delete(id);
     }
+  };
+
+  const confirmDelegate = async (id: string, editedPrompt: string): Promise<void> => {
+    const item = itemsRef.current.find(
+      (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
+    );
+    if (!item || (item.state !== "pending" && item.state !== "starting")) return;
+    return startDelegate(id, item.proposal.projectPath, editedPrompt);
   };
 
   const dismissDelegate = (id: string): void => {

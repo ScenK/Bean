@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyDelegateEventToItems, attachDelegateTaskId, hasActiveDelegates, markDelegateStarting } from "../src/renderer/components/chat/ChatWindow.js";
+import { addDelegateProposal, applyDelegateEventToItems, attachDelegateTaskId, hasActiveDelegates, markDelegateStarting } from "../src/renderer/components/chat/ChatWindow.js";
 import { insertDroppedPath, type ChatItem } from "../src/renderer/shared/chat-types.js";
 import type { DelegateEvent } from "../src/delegate-tasks.js";
 
@@ -13,6 +13,17 @@ const delegate = {
 } satisfies ChatItem;
 
 describe("ChatWindow delegate state", () => {
+  it("adds delegate proposals in starting state for automatic launch", () => {
+    const result = addDelegateProposal([], {
+      projectPath: "/p",
+      instruction: "read README",
+      composedPrompt: "read README",
+    }, "d1");
+
+    expect(result[0]).toMatchObject({ kind: "delegate", id: "d1", state: "starting" });
+    expect(result[0]).not.toHaveProperty("taskId");
+  });
+
   it("returns a summary loopback when a delegate finishes", () => {
     const event = { taskId: "t1", type: "done", result: "fixed" } satisfies DelegateEvent;
     const result = applyDelegateEventToItems([delegate], event);
