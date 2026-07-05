@@ -19,8 +19,6 @@ test("chat: sending a message renders the stubbed reply", async () => {
     await chat.locator(".bean-send").click();
     await expect(chat.locator(".bean-bubble--bean")).toContainText("Hello from stub!");
   } finally {
-    await app.close();
-    await stub.close();
-    await home.cleanup();
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });

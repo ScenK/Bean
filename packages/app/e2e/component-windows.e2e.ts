@@ -27,8 +27,6 @@ test("component windows: skills, projects, settings open and render their fixtur
     const settings = await open("settings");
     await expect(settings.locator('input[placeholder="sk-…"]')).toBeVisible();
   } finally {
-    await app.close();
-    await stub.close();
-    await home.cleanup();
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });

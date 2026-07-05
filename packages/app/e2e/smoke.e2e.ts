@@ -13,8 +13,6 @@ test("app boots: avatar window opens with the window.bean IPC bridge", async () 
       .poll(() => avatar.evaluate(() => typeof (window as unknown as { bean?: unknown }).bean))
       .toBe("object");
   } finally {
-    await app.close();
-    await stub.close();
-    await home.cleanup();
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });

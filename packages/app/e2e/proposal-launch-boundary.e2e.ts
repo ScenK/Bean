@@ -6,6 +6,7 @@ import { startStubOpenAI } from "./fixtures/stub-openai.js";
 test("proposal (terminal target): confirming calls window.bean.launch, never a real process", async () => {
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
+  // Depends on .bean/skills/review-pr.md's current name + `target: terminal` frontmatter.
   stub.queue({
     toolCall: { name: "propose_run", args: { skill: "review-pr", project: home.projectPath, instruction: "review PR 1" } },
   });
@@ -16,6 +17,7 @@ test("proposal (terminal target): confirming calls window.bean.launch, never a r
       app.waitForEvent("window"),
       avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
     ]);
+    await chat.waitForLoadState("domcontentloaded");
     await chat.locator(".bean-input--composer").fill("review PR 1");
     await chat.locator(".bean-send").click();
 
@@ -40,8 +42,6 @@ test("proposal (terminal target): confirming calls window.bean.launch, never a r
       .poll(() => app.evaluate(() => (globalThis as unknown as { __lastLaunch?: unknown }).__lastLaunch))
       .toMatchObject({ mode: "opencode", projectPath: home.projectPath });
   } finally {
-    await app.close();
-    await stub.close();
-    await home.cleanup();
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });

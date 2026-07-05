@@ -7,6 +7,7 @@ test("proposal (in-chat target): confirming sends the composed prompt in chat", 
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
   // First request: the model proposes running the "draft-reply" skill (target: chat).
+  // Depends on .bean/skills/draft-reply.md's current name + `target: chat` frontmatter.
   stub.queue({
     toolCall: { name: "propose_run", args: { skill: "draft-reply", project: home.projectPath, instruction: "reply to Jane" } },
   });
@@ -19,6 +20,7 @@ test("proposal (in-chat target): confirming sends the composed prompt in chat", 
       app.waitForEvent("window"),
       avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
     ]);
+    await chat.waitForLoadState("domcontentloaded");
     await chat.locator(".bean-input--composer").fill("draft a reply to Jane");
     await chat.locator(".bean-send").click();
 
@@ -29,8 +31,6 @@ test("proposal (in-chat target): confirming sends the composed prompt in chat", 
     await expect(chat.locator(".bean-status")).toContainText("Running here");
     await expect(chat.locator(".bean-bubble--bean").last()).toContainText("Here's a draft reply to Jane.");
   } finally {
-    await app.close();
-    await stub.close();
-    await home.cleanup();
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });
