@@ -231,6 +231,18 @@ describe("runDelegate", () => {
     expect(errors[0]).toContain("timed out");
   });
 
+  it("timeout still reports even if cancel is called before close", () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const { cbs, errors } = collect();
+    const handle = runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, cbs, () => asChild(child), 60_000);
+    vi.advanceTimersByTime(60_000);
+    handle.cancel(() => { throw new Error("cancel should not win after timeout"); });
+    child.emit("close", 143);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("timed out");
+  });
+
   it("exports a 30-minute default timeout", () => {
     expect(DELEGATE_TIMEOUT_MS).toBe(30 * 60_000);
   });

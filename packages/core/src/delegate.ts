@@ -138,12 +138,12 @@ export function runDelegate(
   child.on("error", (err: Error) => settle(() => callbacks.onError(err)));
   child.on("close", (code: number | null) => {
     if (settled) return;
-    if (cancelling) {
-      settle(() => onCancelled?.());
-      return;
-    }
     if (timedOut) {
       settle(() => callbacks.onError(new Error(`delegate timed out after ${Math.round(timeoutMs / 60_000)} minutes`)));
+      return;
+    }
+    if (cancelling) {
+      settle(() => onCancelled?.());
       return;
     }
     if (stdoutBuf.trim()) handleLine(stdoutBuf);
