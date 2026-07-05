@@ -19,3 +19,12 @@ export function newId(): string {
   counter += 1;
   return `item-${counter}`;
 }
+
+export function insertDroppedPath(value: string, path: string, start: number, end: number): { value: string; cursor: number } {
+  const before = value.slice(0, start);
+  const after = value.slice(end);
+  const left = before && !/\s$/.test(before) ? `${before} ` : before;
+  const right = after.replace(/^\s+/, "");
+  const inserted = `${path} `;
+  return { value: `${left}${inserted}${right}`, cursor: left.length + inserted.length };
+}

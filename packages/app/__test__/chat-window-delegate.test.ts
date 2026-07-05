@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyDelegateEventToItems, attachDelegateTaskId, hasActiveDelegates, markDelegateStarting } from "../src/renderer/components/chat/ChatWindow.js";
-import type { ChatItem } from "../src/renderer/shared/chat-types.js";
+import { insertDroppedPath, type ChatItem } from "../src/renderer/shared/chat-types.js";
 import type { DelegateEvent } from "../src/delegate-tasks.js";
 
 const delegate = {
@@ -50,5 +50,21 @@ describe("ChatWindow delegate state", () => {
     const starting = { ...delegate, state: "starting", taskId: undefined } satisfies ChatItem;
 
     expect(hasActiveDelegates([starting], 0)).toBe(true);
+  });
+});
+
+describe("chat composer drops", () => {
+  it("inserts a dropped path at the cursor with spacing", () => {
+    expect(insertDroppedPath("summarize ", "/tmp/image.png", 10, 10)).toEqual({
+      value: "summarize /tmp/image.png ",
+      cursor: 25,
+    });
+  });
+
+  it("replaces the current selection with the dropped path", () => {
+    expect(insertDroppedPath("read this file", "/tmp/folder", 5, 9)).toEqual({
+      value: "read /tmp/folder file",
+      cursor: 17,
+    });
   });
 });

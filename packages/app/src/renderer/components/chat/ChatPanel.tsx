@@ -3,7 +3,7 @@ import { ProposalCard } from "../../shared/ProposalCard.js";
 import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
 import { DelegateCard } from "./DelegateCard.js";
-import type { ChatItem } from "../../shared/chat-types.js";
+import { insertDroppedPath, type ChatItem } from "../../shared/chat-types.js";
 import type { LinkedNote, ProposedNote, RouteSuggestion } from "@bean/core";
 
 export function ChatPanel({
@@ -103,6 +103,23 @@ export function ChatPanel({
     onSend(text);
   };
 
+  const droppedPath = (e: DragEvent): string | undefined => {
+    const file = e.dataTransfer?.files?.[0];
+    return file ? window.bean.getPathForFile(file) : undefined;
+  };
+
+  const dropPathIntoComposer = (e: DragEvent): void => {
+    const path = droppedPath(e);
+    if (!path || !inputRef.current) return;
+    e.preventDefault();
+    const el = inputRef.current;
+    const next = insertDroppedPath(el.value, path, el.selectionStart, el.selectionEnd);
+    el.value = next.value;
+    el.focus();
+    el.setSelectionRange(next.cursor, next.cursor);
+    resizeInput();
+  };
+
   return (
     <div class="bean-chat">
       <div class="bean-chat-scroll" ref={scrollRef} onScroll={onScroll}>
@@ -178,6 +195,8 @@ export function ChatPanel({
             placeholder="Message Bean…"
             disabled={busy}
             onInput={resizeInput}
+            onDragOver={(e) => { if (droppedPath(e)) e.preventDefault(); }}
+            onDrop={dropPathIntoComposer}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
             }}
