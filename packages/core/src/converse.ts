@@ -22,6 +22,7 @@ export type ProposedRun = RouteSuggestion;
 /** A note draft awaiting user confirmation in the chat — notes are never saved silently.
  * `slug` present = update that existing note in place (chat linked to a note). */
 export interface ProposedNote { title: string; body: string; project?: string; slug?: string; }
+// A confirm-first background coding task that reports its final result back to this chat.
 export interface ProposedDelegate {
   projectPath: string;
   instruction: string;
@@ -47,7 +48,11 @@ const BEHAVIOR_INSTRUCTIONS =
   "with unresolved threads, call propose_note to draft one — the user confirms it before " +
   "anything is saved. Notes capture conversation output (summaries, ideas, open questions), " +
   "NOT durable one-line facts about the user — those are handled elsewhere. Don't propose a " +
-  "note for small talk or a talk that reached no substance.";
+  "note for small talk or a talk that reached no substance. If you are given a " +
+  "propose_delegate tool: use it when the user wants project work done; a background " +
+  "agent does the work while the chat stays open, and its result returns to this " +
+  "conversation. Use propose_run instead when the user wants to watch or continue the " +
+  "work in their own terminal. Both are confirm-first.";
   
 
 function proposeNoteTool(projects: Project[], linkedNote?: LinkedNote): ToolSpec {
@@ -157,10 +162,7 @@ export async function converse(
 ): Promise<ConverseResult> {
   const systemParts = [
     composePersonaPrompt(persona),
-    BEHAVIOR_INSTRUCTIONS +
-      " If you are given a propose_delegate tool: use it when the user wants project work done " +
-      "and the outcome reported back here. Use propose_run instead when the user wants to watch " +
-      "or continue the work in their own terminal. Both are confirm-first.",
+    BEHAVIOR_INSTRUCTIONS,
     catalog(skills, projects),
   ];
   // Local time so the model can resolve "in 20 minutes" / "at 5pm" into a concrete timestamp.

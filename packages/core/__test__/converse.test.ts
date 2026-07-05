@@ -191,6 +191,24 @@ test("behavior instructions tell the model not to recite the skill/project catal
   expect(systemContent).toContain("don't recite or summarize it unprompted");
 });
 
+test("delegate guidance lives in behavior instructions", async () => {
+  let systemContent = "";
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages }) => {
+      systemContent = messages[0]!.content;
+      return { content: "ok", toolCalls: [] };
+    },
+  };
+  await converse([], "hi", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true);
+  const delegateIdx = systemContent.indexOf("a background agent does the work while the chat stays open");
+  const noteIdx = systemContent.indexOf("Don't propose a note for small talk");
+  const catalogIdx = systemContent.indexOf("Skills:");
+  expect(delegateIdx).toBeGreaterThan(noteIdx);
+  expect(delegateIdx).toBeLessThan(catalogIdx);
+  expect(systemContent).toContain("its result returns to this conversation");
+});
+
 test("proposedRun carries the skill's chat target", async () => {
   const chatSkills: Skill[] = [{ name: "summarize", description: "s", body: "B", target: "chat" }];
   const deps = depsReturning("On it.", [
