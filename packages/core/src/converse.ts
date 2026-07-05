@@ -51,7 +51,9 @@ const BEHAVIOR_INSTRUCTIONS =
   "note for small talk or a talk that reached no substance. If you are given a " +
   "propose_delegate tool: use it when the user wants project work done; a background " +
   "agent does the work while the chat stays open, and its result returns to this " +
-  "conversation. Use propose_run instead when the user wants to watch or continue the " +
+  "conversation. If the user asks you to inspect, explore, summarize, or explain a linked project, " +
+  "use propose_delegate; do not say you cannot access the repository. " +
+  "Use propose_run instead when the user wants to watch or continue the " +
   "work in their own terminal. Both are confirm-first.";
   
 
@@ -124,7 +126,8 @@ function proposeDelegateTool(skills: Skill[], projects: Project[]): ToolSpec {
   return {
     name: "propose_delegate",
     description:
-      "Delegate a task to a background coding agent that works inside the project and reports " +
+      "Delegate a task to a background coding agent that can inspect, summarize, explain, or work " +
+      "inside the project and reports " +
       "the result back to this chat when finished. The user confirms before it starts.",
     parameters: { type: "object", properties, required: ["project", "instruction"] },
   };

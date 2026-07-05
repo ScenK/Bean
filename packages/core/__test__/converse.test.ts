@@ -121,6 +121,25 @@ test("propose_delegate tool is offered only when delegation is available", async
   expect(captured.map((t) => t.name)).toContain("propose_delegate");
 });
 
+test("delegate instructions tell the model to inspect linked projects instead of refusing", async () => {
+  let systemContent = "";
+  let delegateDescription = "";
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages, tools }) => {
+      systemContent = messages[0]!.content;
+      delegateDescription = tools.find((t) => t.name === "propose_delegate")?.description ?? "";
+      return { content: "ok", toolCalls: [] };
+    },
+  };
+
+  await converse([], "what does the bean project do?", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true);
+
+  expect(systemContent).toContain("inspect, explore, summarize, or explain a linked project");
+  expect(systemContent).toContain("do not say you cannot access the repository");
+  expect(delegateDescription).toContain("inspect, summarize, explain");
+});
+
 test("recalled memories are injected after the catalog, labeled global vs project", async () => {
   let systemContent = "";
   const deps: ConverseDeps = {
