@@ -11,7 +11,8 @@
     "start": "electron dist/main.js",
     "dist:mac": "pnpm build && electron-builder --mac",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "postversion": "git push --follow-tags"
   },
   "build": {
     "appId": "dev.scenk.bean",
