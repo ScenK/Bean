@@ -2,6 +2,7 @@
 
 <div align="center">
   <img src="docs/icon.png" alt="Bean app icon" width="128" height="128" />
+  <blockquote>I'll do whatever I can suggest; if not, the task is delegated to an external agent. </blockquote>
 </div>
 
 A personal harness that lives on your desktop as a tiny pet. Day to day it's just a
@@ -35,13 +36,12 @@ Use your own account to sign it or use
   Hover → a box. Click → petals for chat/skills/projects/notes. Drag a URL onto it →
   it blooms into your skills instead, so you drop the link straight onto the one that
   should handle it.
-- **Nothing runs without you confirming it.** Chat, drag-drop, and the skills panel all
+- **Proposals before executing.** Chat, drag-drop, and the skills panel all
   end at the same proposal card — skill, target project, composed prompt, editable —
   with an explicit **Confirm & run**. A skill can target `chat` (runs right there) or
   `terminal` (hands off to the external agent).
-- **Fire-and-forget launches.** Once confirmed, Bean hands off to Terminal or your
-  editor and stops watching — it's a harness for *starting* real work, not a wrapper
-  around it.
+- **Fire-and-forget or loopback.** Bean can act as a lightweight harness to start your work and step aside,
+  or stay active in loop-back mode (`opencode run` / `claude -p`) to keep the agent driving tasks forward.
 
 ## Requirements
 
