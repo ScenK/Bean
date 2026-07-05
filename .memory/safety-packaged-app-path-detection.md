@@ -19,3 +19,15 @@ hardcoding can only ever cover the ones we thought of. Verify PATH-detection cha
 `pnpm dist:mac` launched from Finder (not `pnpm dev`), same caveat as
 [safety-builtin-skills-packaging.md](safety-builtin-skills-packaging.md) — unit tests inject the
 shell runner and can't catch a real launchd-environment regression.
+
+**Follow-up bug (fixed):** this PATH fix originally only reached CLI *detection*. The
+delegate-spawn path (`core/src/delegate.ts`'s `defaultDelegateSpawn`) spawned `claude`/`opencode`
+with no `env` override, so it inherited the packaged app's raw `process.env` — same minimal
+launchd PATH — even though `detectClis` had already found the CLI using the login-shell-augmented
+PATH. Symptom: "spawn claude ENOENT" when running a delegate task in the packaged app, despite the
+CLI showing as available. Fix: `main.ts` names the merged PATH string (`resolvedPath`) instead of
+building it inline, and passes it to `createDelegateTasks({ resolvedPath, ... })`;
+`delegate-tasks.ts` uses it to build a `spawnFn` with `env: { ...process.env, PATH: resolvedPath }`
+and threads that into `runDelegate(...)`. If you add another child-process spawn path for a CLI
+tool, it needs this same `resolvedPath` threaded in — `detectClis` finding a CLI does not mean a
+bare `spawn()` elsewhere will find it too.

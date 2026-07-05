@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { runDelegate } from "@bean/core";
 import type { CliName, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
 
@@ -17,6 +18,10 @@ export interface DelegateTasksDeps {
   resolveCli: () => CliName | undefined;
   send: (event: DelegateEvent) => void;
   newId: () => string;
+  // Finder-launched Electron gets launchd's minimal PATH; detectClis already resolves the
+  // login shell's real PATH for CLI detection — reuse that same string here so the actual
+  // spawn can find claude/opencode too (see .memory/safety-packaged-app-path-detection.md).
+  resolvedPath?: string;
   run?: (req: DelegateRequest, cbs: DelegateCallbacks, spawnFn?: DelegateSpawnFn, timeoutMs?: number) => DelegateHandle;
 }
 
@@ -24,6 +29,15 @@ const isTerminal = (e: DelegateEvent): boolean => e.type === "done" || e.type ==
 
 export function createDelegateTasks(deps: DelegateTasksDeps) {
   const run = deps.run ?? runDelegate;
+  const spawnFn: DelegateSpawnFn | undefined = deps.resolvedPath
+    ? (command, args, cwd) =>
+        spawn(command, args, {
+          cwd,
+          stdio: ["ignore", "pipe", "pipe"],
+          detached: true,
+          env: { ...process.env, PATH: deps.resolvedPath },
+        })
+    : undefined;
   const tasks = new Map<string, { cancel: DelegateHandle["cancel"]; cancelling: boolean }>();
 
   const emit = (event: DelegateEvent): void => {
@@ -49,6 +63,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
           onDone: (result) => emit({ taskId, type: "done", result }),
           onError: (err) => emit({ taskId, type: "failed", message: err.message }),
         },
+        spawnFn,
       );
       tasks.set(taskId, { cancel: handle.cancel, cancelling: false });
       emit({ taskId, type: "started" });
