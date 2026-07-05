@@ -1,6 +1,7 @@
 import { createOrb } from "./orb.js";
 import type { AvatarMode, ComponentKind } from "../channels.js";
 import { createDragPreparationGate } from "../drag-preparation.js";
+import { createDragWatchdog } from "../drag-watchdog.js";
 import { AVATAR_SIZE, avatarSizeForMode } from "../avatar-menu.js";
 import { computeStackPositions, nearestPetalIndex, pointInRect, type Point } from "../petal-geometry.js";
 import type { Project, Skill } from "@bean/core";
@@ -118,12 +119,20 @@ if (el && orbSlot && hint && bloom && reading) {
   };
   const collapse = (): void => {
     cancelCollapse();
+    dragWatchdog.disarm();
     menu?.classList.remove("bean-menu--open");
     bloom.classList.remove("bean-drag-bloom--open");
     setHover(undefined);
     collapseBox();
     collapseTimer = window.setTimeout(() => { collapseTimer = undefined; setMode("normal"); }, 300);
   };
+
+  // Backstop for a drag that ends without the bloom seeing drop/dragleave (this window is known
+  // to drop terminal events — see drag-watchdog.ts): drag events stop arriving, the watchdog
+  // goes silent, and we collapse instead of wedging in "drag" mode forever.
+  const dragWatchdog = createDragWatchdog(() => {
+    if (mode === "drag") collapse();
+  });
 
   // ── Proximity: cursor enters/leaves the (transparent) avatar window ───────
   // The window itself is the proximity zone; growing to the box on enter and back on leave gives
@@ -190,6 +199,9 @@ if (el && orbSlot && hint && bloom && reading) {
   });
 
   window.addEventListener("click", (e) => {
+    // Escape hatch: real clicks can't happen mid-drag (the mouse is held by the drag session),
+    // so a click while still in "drag" mode means the mode is wedged — collapse it.
+    if (mode === "drag") { collapse(); return; }
     if (mode !== "menu") return;
     const target = e.target as HTMLElement;
     // el.contains, not ===: the box holds nested orb/text nodes, so a click on the bean body
@@ -201,6 +213,7 @@ if (el && orbSlot && hint && bloom && reading) {
   window.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (mode === "menu") setMenuOpen(false);
+    else if (mode === "drag") collapse();
   });
 
   // Drag a URL onto Bean: dragenter opens a downward stack of tiles below the (temporarily grown)
@@ -322,6 +335,17 @@ if (el && orbSlot && hint && bloom && reading) {
 
   el.addEventListener("dragenter", (e) => {
     e.preventDefault();
+    dragWatchdog.arm();
+    if (mode === "drag") {
+      // Re-entry while a dragleave-triggered collapse is pending (mode flips back to "normal"
+      // only after collapse()'s 300ms timer): cancel it and restore the bloom. Without this the
+      // window shrinks out from under the still-held drag, and the eventual drop can land
+      // outside the resized window — leaving the avatar wedged in drag mode (the freeze bug).
+      cancelCollapse();
+      expandBox("drop anything here");
+      bloom.classList.add("bean-drag-bloom--open");
+      return;
+    }
     if (mode !== "normal" && mode !== "hover") return;
     if (!dragPreparation.begin()) return;
     cancelCollapse();
@@ -340,6 +364,7 @@ if (el && orbSlot && hint && bloom && reading) {
 
   bloom.addEventListener("dragover", (e) => {
     e.preventDefault();
+    dragWatchdog.arm();
     // The box itself always wins over petal-proximity snapping: without this, a drop meant for
     // the box (not any specific skill) could still land within nearestPetalIndex's maxDist of
     // the first petal — implicitly running a skill nobody chose. See el.getBoundingClientRect(),
@@ -369,7 +394,9 @@ if (el && orbSlot && hint && bloom && reading) {
   });
 
   // Fallback path: a drop that lands on the bean before the bloom's own handler catches it.
-  el.addEventListener("dragover", (e) => e.preventDefault());
+  // While a collapse is pending the bloom is pointer-events:none, so dragovers land here —
+  // keep feeding the watchdog so it only fires on genuine drag-event silence.
+  el.addEventListener("dragover", (e) => { e.preventDefault(); dragWatchdog.arm(); });
   el.addEventListener("drop", (e) => {
     e.preventDefault();
     if (mode === "drag") return; // the bloom's own drop handler already covers this

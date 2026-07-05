@@ -17,6 +17,7 @@
 - [safety-single-instance-lock-and-dev-relaunch.md](safety-single-instance-lock-and-dev-relaunch.md) — dev relaunch must wait for the old Electron's exit (single-instance lock race), main.ts handles SIGINT/SIGTERM itself, and lock failure uses `app.exit` not `app.quit`.
 - [safety-skill-frontmatter-and-prompt-flag.md](safety-skill-frontmatter-and-prompt-flag.md) — skill frontmatter is stripped from composed prompts, opencode gets `--prompt=` as one token, and the Skills editor requires `target:` at save time (never auto-inserted) — a `---`-leading prompt used to launch opencode with no prompt.
 - [safety-builtin-skills-packaging.md](safety-builtin-skills-packaging.md) — `projectBeanDir()`'s path walk only works in dev; packaged builds need `.bean` copied via electron-builder `extraResources` and `main.ts` to switch on `app.isPackaged`. Verify with a real `pnpm dist:mac`, not just tests.
+- [safety-drag-mode-needs-watchdog.md](safety-drag-mode-needs-watchdog.md) — the drag-skill bloom wedged the avatar (looked like a full app freeze) when drop/dragleave never arrived; the watchdog + collapse-race + escape-hatch guards that fix it.
 - [safety-packaged-app-path-detection.md](safety-packaged-app-path-detection.md) — Finder-launched Bean gets launchd's minimal PATH, so `detectClis` misses CLIs installed via nvm/volta/pnpm/`~/.local/bin`; `loginShellPath()` asks the real login shell instead of hardcoding more directories.
 
 ## convention — how we do things here
