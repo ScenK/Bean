@@ -26,6 +26,9 @@ export interface AppInfo {
 export const IPC = {
   route: "bean:route",
   launch: "bean:launch",
+  delegateStart: "bean:delegate-start",
+  delegateCancel: "bean:delegate-cancel",
+  delegateEvent: "bean:delegate-event",
   availableClis: "bean:available-clis",
   chat: "bean:chat",
   listSkills: "bean:list-skills",

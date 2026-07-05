@@ -17,6 +17,7 @@ import { IPC, type Theme, type ComponentKind } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
+import { createDelegateTasks } from "./delegate-tasks.js";
 
 // dist/main.js sits next to package.json (esbuild output isn't relocated).
 const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"));
@@ -89,6 +90,7 @@ app.whenReady().then(async () => {
   });
 
   const componentWindows = new Map<ComponentKind, BrowserWindow>();
+  let cancelAllDelegates: () => void = () => {};
   // Same drop-race fix as planStore below: a URL dropped on the avatar can reach a chat window
   // whose renderer hasn't mounted (and subscribed to componentDroppedUrl) yet, silently losing
   // the push. droppedUrlStore.get() is stashed alongside every push so the renderer can pull it
@@ -120,6 +122,7 @@ app.whenReady().then(async () => {
         componentWindows.set(kind, win);
         sendToWindow(win, IPC.reviewBeforeClose, undefined);
       });
+      win.on("closed", () => cancelAllDelegates());
     }
     if (droppedUrl && kind === "chat") {
       droppedUrlStore.set(droppedUrl);
@@ -255,6 +258,10 @@ app.whenReady().then(async () => {
     },
   });
 
+  const availableClis = detectClis(
+    [process.env.PATH ?? "", loginShellPath(), "/opt/homebrew/bin", "/usr/local/bin"].join(":"),
+  );
+
   setInterval(() => {
     void (async () => {
       const reminders = await loadReminders(remindersPath);
@@ -287,6 +294,20 @@ app.whenReady().then(async () => {
       },
     );
 
+    const delegateTasks = createDelegateTasks({
+      resolveCli: () => {
+        const preferred = runtime.getDelegateCli();
+        if ((preferred === "claude" || preferred === "opencode") && availableClis.includes(preferred)) return preferred;
+        return availableClis[0];
+      },
+      send: (event) => {
+        const chat = componentWindows.get("chat");
+        if (chat && !chat.isDestroyed()) sendToWindow(chat, IPC.delegateEvent, event);
+      },
+      newId: () => randomUUID(),
+    });
+    cancelAllDelegates = delegateTasks.cancelAll;
+
     registerIpc(ipcMain, {
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
       loadMemories, saveMemories, extractMemories,
@@ -318,15 +339,9 @@ app.whenReady().then(async () => {
       applyConfig: (update) => runtime.apply(update),
       getTerminalApp: () => runtime.getTerminalApp(),
       getEditorApp: () => runtime.getEditorApp(),
-      // PATH doesn't change mid-session — detect once, serve from cache. Finder-launched
-      // Electron gets a minimal PATH missing whatever the user's shell profile adds (nvm,
-      // npm/pnpm global bins, ~/.local/bin, ...) — ask the login shell for its real PATH.
-      getAvailableClis: (() => {
-        const clis = detectClis(
-          [process.env.PATH ?? "", loginShellPath(), "/opt/homebrew/bin", "/usr/local/bin"].join(":"),
-        );
-        return () => clis;
-      })(),
+      getAvailableClis: () => availableClis,
+      delegateTasks,
+      delegateAvailable: () => availableClis.length > 0,
       onLaunchError: (req, err) => {
         const label = req.mode === "open" ? "open the project in your editor" : `launch (${req.mode})`;
         dialog.showErrorBox("Bean", `Couldn't ${label}: ${err.message}`);

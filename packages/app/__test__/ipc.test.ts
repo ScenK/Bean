@@ -128,6 +128,30 @@ test("chat handler passes the linked note through to converse (system prompt + p
   expect(out.proposedNote?.slug).toBe("flaky");
 });
 
+test("chat handler passes delegate availability through to converse", async () => {
+  let seenTools: string[] = [];
+  const handler = buildChatHandler({
+    loadSkills: async () => [{ name: "review-code", description: "r", body: "BODY" }] as Skill[],
+    loadProjects: async () => [{ name: "api", path: "/work/api" }] as Project[],
+    loadPersona: async () => ({ name: "Bean", tags: ["Warm"] }) as Persona,
+    converse: async ({ tools }) => {
+      seenTools = tools.map((t) => t.name);
+      return { content: "ok", toolCalls: [] };
+    },
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills",
+    skillsDir: "/b/skills",
+    projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json",
+    projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [],
+    memoryFile: "/b/memory.json",
+    delegateAvailable: () => true,
+  });
+  await handler({ history: [], message: "delegate this" });
+  expect(seenTools).toContain("propose_delegate");
+});
+
 test("notes handlers pass the configured dir through to the injected store fns", async () => {
   const calls: unknown[][] = [];
   const handlers = buildNotesHandlers({
@@ -285,7 +309,7 @@ test("launch handler forwards getTerminalApp() into launchInTerminal's terminalA
 
 test("config get handler returns the injected view", () => {
   const view: ConfigView = {
-    openaiApiKey: "sk-x", model: "m", terminalApp: "", editorApp: "",
+    openaiApiKey: "sk-x", model: "m", terminalApp: "", editorApp: "", delegateCli: "",
     paths: { config: "/b/config.json", skills: "/b/skills", projects: "/b/projects.json", persona: "/b/persona.json" },
   };
   const handlers = buildConfigHandlers({ getConfig: () => view, applyConfig: async () => {} });
@@ -352,11 +376,11 @@ test("memory handlers list, save, and extract through injected deps", async () =
 test("config save handler forwards the update to applyConfig", async () => {
   const applied: ConfigUpdate[] = [];
   const handlers = buildConfigHandlers({
-    getConfig: () => ({ openaiApiKey: "", model: "", terminalApp: "", editorApp: "", paths: { config: "", skills: "", projects: "", persona: "" } }),
+    getConfig: () => ({ openaiApiKey: "", model: "", terminalApp: "", editorApp: "", delegateCli: "", paths: { config: "", skills: "", projects: "", persona: "" } }),
     applyConfig: async (u) => { applied.push(u); },
   });
-  await handlers.save({ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app" });
-  expect(applied).toEqual([{ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app" }]);
+  await handlers.save({ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app", delegateCli: "claude" });
+  expect(applied).toEqual([{ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app", delegateCli: "claude" }]);
 });
 
 test("chat-prompt store lets a late-mounting chat window pull the pending prompt (same race fix)", () => {

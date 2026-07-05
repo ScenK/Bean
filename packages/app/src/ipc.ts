@@ -9,6 +9,7 @@ import type { RouterDeps } from "@bean/core";
 import { BrowserWindow, dialog, screen, shell, type IpcMain } from "electron";
 import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo } from "./channels.js";
 import { avatarSizeForMode, dragBloomLayout, nextAvatarBounds, type Bounds } from "./avatar-menu.js";
+import type { DelegateStartRequest } from "./delegate-tasks.js";
 
 export { IPC };
 
@@ -86,6 +87,7 @@ export interface ChatHandlerDeps {
   projectPersonaFile: string;
   memoryFile: string;
   actions?: ActionTool[];
+  delegateAvailable?: () => boolean;
 }
 
 export function buildChatHandler(deps: ChatHandlerDeps) {
@@ -100,7 +102,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
     return converse(
       req.history, req.message, enabled, projects, persona, memories,
       { chat: deps.converse, model: deps.getModel() }, req.droppedUrl, deps.actions,
-      undefined, req.linkedNote,
+      undefined, req.linkedNote, deps.delegateAvailable?.() ?? false,
     );
   };
 }
@@ -263,6 +265,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps {
   deleteNote: NotesHandlerDeps["deleteNote"];
   notesDir: string;
   actions?: ActionTool[];
+  delegateAvailable?: () => boolean;
   broadcast: (channel: string, payload: unknown) => void;
   openComponent: (kind: ComponentKind, droppedUrl?: string) => void;
   proposeRun: (suggestion: RouteSuggestion) => void;
@@ -278,6 +281,10 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps {
   getTerminalApp: () => string;
   getEditorApp: () => string;
   getAvailableClis: () => CliName[];
+  delegateTasks: {
+    start: (req: DelegateStartRequest) => string;
+    cancel: (taskId: string) => void;
+  };
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
 }
 
@@ -343,6 +350,8 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
 
   const launchHandler = buildLaunchHandler(deps);
   ipcMain.on(IPC.launch, (_e, req: LaunchRequest) => launchHandler(req));
+  ipcMain.handle(IPC.delegateStart, (_e, req: DelegateStartRequest) => deps.delegateTasks.start(req));
+  ipcMain.on(IPC.delegateCancel, (_e, taskId: string) => deps.delegateTasks.cancel(taskId));
   ipcMain.handle(IPC.availableClis, () => deps.getAvailableClis());
 
   const personaHandlers = buildPersonaHandlers(deps);
