@@ -49,10 +49,10 @@ describe("delegateCommand", () => {
     ]);
   });
 
-  it("maps opencode to headless run", () => {
+  it("maps opencode to headless run with auto approval", () => {
     const { command, args } = delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "fix the bug" });
     expect(command).toBe("opencode");
-    expect(args).toEqual(["run", "fix the bug"]);
+    expect(args).toEqual(["run", "--auto", "fix the bug"]);
   });
 });
 
@@ -105,7 +105,7 @@ describe("runDelegate", () => {
       collect().cbs,
       (command, args, cwd) => { seen.push({ command, args, cwd }); return asChild(child); },
     );
-    expect(seen).toEqual([{ command: "opencode", args: ["run", "go"], cwd: "/my/project" }]);
+    expect(seen).toEqual([{ command: "opencode", args: ["run", "--auto", "go"], cwd: "/my/project" }]);
   });
 
   it("claude: streams tail lines and resolves onDone with the result event", () => {

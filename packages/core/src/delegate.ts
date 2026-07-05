@@ -21,7 +21,7 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
       ],
     };
   }
-  return { command: "opencode", args: ["run", req.prompt] };
+  return { command: "opencode", args: ["run", "--auto", req.prompt] };
 }
 
 export function claudeTailLine(event: unknown): string | undefined {
