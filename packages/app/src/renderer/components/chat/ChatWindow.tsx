@@ -26,7 +26,11 @@ type CloseFlow =
 type QueuedSend = { text: string; display?: string };
 
 export function markDelegateStarting(items: ChatItem[], id: string): ChatItem[] {
-  return items.map((it) => (it.kind === "delegate" && it.id === id ? { ...it, state: "running" as const } : it));
+  return items.map((it) => (it.kind === "delegate" && it.id === id ? { ...it, state: "starting" as const } : it));
+}
+
+export function hasActiveDelegates(items: ChatItem[], pendingStarts: number): boolean {
+  return pendingStarts > 0 || items.some((it) => it.kind === "delegate" && (it.state === "starting" || it.state === "running"));
 }
 
 export function applyDelegateEventToItems(
@@ -65,7 +69,8 @@ export function ChatWindow() {
   itemsRef.current = items;
   const busyRef = useRef(false);
   const queuedSendsRef = useRef<QueuedSend[]>([]);
-  const pendingDelegateStartsRef = useRef(new Set<string>());
+  const pendingDelegateStartsRef = useRef(new Map<string, Promise<string>>());
+  const delegateTaskIdsRef = useRef(new Map<string, string>());
   // sendMessage is reached via sendRef from the once-mounted effect, so it reads the linked
   // note through a ref too — state alone would be a stale closure there.
   const linkedNoteRef = useRef<LinkedNote | undefined>(undefined);
@@ -115,7 +120,7 @@ export function ChatWindow() {
         .filter((it): it is Extract<ChatItem, { kind: "user" | "reply" }> => it.kind === "user" || it.kind === "reply")
         .map((it) => ({ role: it.kind === "user" ? "user" : "assistant", content: it.text }));
       closeTranscriptRef.current = transcript;
-      if (itemsRef.current.some((it) => it.kind === "delegate" && it.state === "running")) {
+      if (hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size)) {
         setCloseFlow({ stage: "delegates" });
         return;
       }
@@ -198,10 +203,12 @@ export function ChatWindow() {
       (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
     );
     if (!item || item.state !== "pending") return;
-    pendingDelegateStartsRef.current.add(id);
+    const start = window.bean.delegateStart({ projectPath: item.proposal.projectPath, prompt: editedPrompt });
+    pendingDelegateStartsRef.current.set(id, start);
     setItems((prev) => markDelegateStarting(prev, id));
     try {
-      const taskId = await window.bean.delegateStart({ projectPath: item.proposal.projectPath, prompt: editedPrompt });
+      const taskId = await start;
+      delegateTaskIdsRef.current.set(id, taskId);
       setItems((prev) => prev.map((it) =>
         it.id === id && it.kind === "delegate" ? { ...it, state: "running" as const, taskId } : it,
       ));
@@ -218,7 +225,8 @@ export function ChatWindow() {
     const item = itemsRef.current.find(
       (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
     );
-    if (item?.taskId) window.bean.delegateCancel(item.taskId);
+    const taskId = item?.taskId ?? delegateTaskIdsRef.current.get(id);
+    if (taskId) window.bean.delegateCancel(taskId);
   };
 
   const saveNote = async (id: string, edited: ProposedNote, asNew: boolean): Promise<void> => {
@@ -256,6 +264,11 @@ export function ChatWindow() {
 
   const applyDelegateEvent = (e: DelegateEvent): void => {
     const { loopback } = applyDelegateEventToItems(itemsRef.current, e);
+    if (e.type === "done" || e.type === "failed" || e.type === "cancelled") {
+      for (const [id, taskId] of delegateTaskIdsRef.current) {
+        if (taskId === e.taskId) delegateTaskIdsRef.current.delete(id);
+      }
+    }
     setItems((prev) => applyDelegateEventToItems(prev, e).items);
     if (loopback) void sendRef.current(loopback.text, loopback.display, true);
   };
@@ -266,9 +279,20 @@ export function ChatWindow() {
 
   const keepWorking = (): void => setCloseFlow(null);
 
-  const stopDelegatesAndClose = (): void => {
+  const stopDelegatesAndClose = async (): Promise<void> => {
+    await Promise.allSettled(pendingDelegateStartsRef.current.values());
+    const cancelled = new Set<string>();
+    for (const taskId of delegateTaskIdsRef.current.values()) {
+      cancelled.add(taskId);
+      window.bean.delegateCancel(taskId);
+    }
     for (const it of itemsRef.current) {
-      if (it.kind === "delegate" && it.state === "running" && it.taskId) window.bean.delegateCancel(it.taskId);
+      if (it.kind !== "delegate" || (it.state !== "starting" && it.state !== "running")) continue;
+      const taskId = it.taskId ?? delegateTaskIdsRef.current.get(it.id);
+      if (taskId && !cancelled.has(taskId)) {
+        cancelled.add(taskId);
+        window.bean.delegateCancel(taskId);
+      }
     }
     if (closeTranscriptRef.current.length === 0) { dismissClose(); return; }
     setCloseFlow({ stage: "confirm" });

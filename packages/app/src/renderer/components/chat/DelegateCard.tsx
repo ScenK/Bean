@@ -5,6 +5,7 @@ type DelegateItem = Extract<ChatItem, { kind: "delegate" }>;
 
 const STATE_LABEL: Record<DelegateItem["state"], string> = {
   pending: "Delegate",
+  starting: "Starting...",
   running: "Working...",
   done: "Finished",
   failed: "Failed",
@@ -28,12 +29,13 @@ export function DelegateCard({
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    if (item.state !== "running") return;
+    if (item.state !== "running" && item.state !== "starting") return;
     const t = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => clearInterval(t);
   }, [item.state]);
 
   const pending = item.state === "pending";
+  const starting = item.state === "starting";
   const running = item.state === "running";
   const mmss = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
 
@@ -70,7 +72,7 @@ export function DelegateCard({
       {item.state === "failed" && item.error ? <div class="bean-status bean-status--error">{item.error}</div> : null}
       <div class="bean-card-actions">
         <button type="button" class="bean-btn" disabled={!pending} onClick={() => onConfirm(prompt)}>
-          {running ? `Working... ${mmss}` : STATE_LABEL[item.state]}
+          {running || starting ? `${STATE_LABEL[item.state]} ${mmss}` : STATE_LABEL[item.state]}
         </button>
         {pending ? <button type="button" class="bean-btn bean-btn--ghost" onClick={onDismiss}>Dismiss</button> : null}
         {running ? <button type="button" class="bean-btn bean-btn--ghost" onClick={onCancelTask}>Cancel</button> : null}

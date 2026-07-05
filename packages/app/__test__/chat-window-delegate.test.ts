@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyDelegateEventToItems, markDelegateStarting } from "../src/renderer/components/chat/ChatWindow.js";
+import { applyDelegateEventToItems, hasActiveDelegates, markDelegateStarting } from "../src/renderer/components/chat/ChatWindow.js";
 import type { ChatItem } from "../src/renderer/shared/chat-types.js";
 import type { DelegateEvent } from "../src/delegate-tasks.js";
 
@@ -24,9 +24,15 @@ describe("ChatWindow delegate state", () => {
     });
   });
 
-  it("marks a pending delegate as running before taskId is known", () => {
+  it("marks a pending delegate as starting before taskId is known", () => {
     const pending = { ...delegate, state: "pending", taskId: undefined } satisfies ChatItem;
 
-    expect(markDelegateStarting([pending], "d1")[0]).toMatchObject({ state: "running", taskId: undefined });
+    expect(markDelegateStarting([pending], "d1")[0]).toMatchObject({ state: "starting", taskId: undefined });
+  });
+
+  it("treats starting delegates as active during close", () => {
+    const starting = { ...delegate, state: "starting", taskId: undefined } satisfies ChatItem;
+
+    expect(hasActiveDelegates([starting], 0)).toBe(true);
   });
 });
