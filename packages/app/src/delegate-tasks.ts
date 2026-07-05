@@ -24,10 +24,12 @@ const isTerminal = (e: DelegateEvent): boolean => e.type === "done" || e.type ==
 
 export function createDelegateTasks(deps: DelegateTasksDeps) {
   const run = deps.run ?? runDelegate;
-  const tasks = new Map<string, { cancel: () => void }>();
+  const tasks = new Map<string, { cancel: DelegateHandle["cancel"]; cancelling: boolean }>();
 
   const emit = (event: DelegateEvent): void => {
-    if (event.type !== "started" && !tasks.has(event.taskId)) return;
+    const task = tasks.get(event.taskId);
+    if (event.type !== "started" && !task) return;
+    if (task?.cancelling && event.type !== "cancelled") return;
     if (isTerminal(event)) tasks.delete(event.taskId);
     deps.send(event);
   };
@@ -48,7 +50,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
           onError: (err) => emit({ taskId, type: "failed", message: err.message }),
         },
       );
-      tasks.set(taskId, { cancel: handle.cancel });
+      tasks.set(taskId, { cancel: handle.cancel, cancelling: false });
       emit({ taskId, type: "started" });
       return taskId;
     },
@@ -56,14 +58,16 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     cancel(taskId: string): void {
       const t = tasks.get(taskId);
       if (!t) return;
-      t.cancel();
-      emit({ taskId, type: "cancelled" });
+      if (t.cancelling) return;
+      t.cancelling = true;
+      t.cancel(() => emit({ taskId, type: "cancelled" }));
     },
 
     cancelAll(): void {
       for (const [taskId, t] of [...tasks]) {
-        t.cancel();
-        emit({ taskId, type: "cancelled" });
+        if (t.cancelling) continue;
+        t.cancelling = true;
+        t.cancel(() => emit({ taskId, type: "cancelled" }));
       }
     },
   };

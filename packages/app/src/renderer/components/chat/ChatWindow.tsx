@@ -57,6 +57,25 @@ export function applyDelegateEventToItems(
   };
 }
 
+export function attachDelegateTaskId(
+  items: ChatItem[],
+  id: string,
+  taskId: string,
+  instruction: string,
+  buffered: DelegateEvent[],
+): { items: ChatItem[]; loopbacks: QueuedSend[] } {
+  let next = items.map((it) => (
+    it.kind === "delegate" && it.id === id ? { ...it, state: "running" as const, taskId, proposal: { ...it.proposal, instruction } } : it
+  ));
+  const loopbacks: QueuedSend[] = [];
+  for (const event of buffered) {
+    const result = applyDelegateEventToItems(next, event);
+    next = result.items;
+    if (result.loopback) loopbacks.push(result.loopback);
+  }
+  return { items: next, loopbacks };
+}
+
 export function ChatWindow() {
   const [droppedUrl, setDroppedUrl] = useState<string | undefined>(undefined);
   const [items, setItems] = useState<ChatItem[]>([]);
@@ -71,6 +90,7 @@ export function ChatWindow() {
   const queuedSendsRef = useRef<QueuedSend[]>([]);
   const pendingDelegateStartsRef = useRef(new Map<string, Promise<string>>());
   const delegateTaskIdsRef = useRef(new Map<string, string>());
+  const pendingDelegateEventsRef = useRef(new Map<string, DelegateEvent[]>());
   // sendMessage is reached via sendRef from the once-mounted effect, so it reads the linked
   // note through a ref too — state alone would be a stale closure there.
   const linkedNoteRef = useRef<LinkedNote | undefined>(undefined);
@@ -209,9 +229,11 @@ export function ChatWindow() {
     try {
       const taskId = await start;
       delegateTaskIdsRef.current.set(id, taskId);
-      setItems((prev) => prev.map((it) =>
-        it.id === id && it.kind === "delegate" ? { ...it, state: "running" as const, taskId } : it,
-      ));
+      const buffered = pendingDelegateEventsRef.current.get(taskId) ?? [];
+      pendingDelegateEventsRef.current.delete(taskId);
+      const result = attachDelegateTaskId(itemsRef.current, id, taskId, editedPrompt, buffered);
+      setItems(result.items);
+      for (const loopback of result.loopbacks) void sendRef.current(loopback.text, loopback.display, true);
     } finally {
       pendingDelegateStartsRef.current.delete(id);
     }
@@ -264,10 +286,15 @@ export function ChatWindow() {
 
   const applyDelegateEvent = (e: DelegateEvent): void => {
     const { loopback } = applyDelegateEventToItems(itemsRef.current, e);
+    if (!itemsRef.current.some((it) => it.kind === "delegate" && it.taskId === e.taskId)) {
+      pendingDelegateEventsRef.current.set(e.taskId, [...(pendingDelegateEventsRef.current.get(e.taskId) ?? []), e]);
+      return;
+    }
     if (e.type === "done" || e.type === "failed" || e.type === "cancelled") {
       for (const [id, taskId] of delegateTaskIdsRef.current) {
         if (taskId === e.taskId) delegateTaskIdsRef.current.delete(id);
       }
+      pendingDelegateEventsRef.current.delete(e.taskId);
     }
     setItems((prev) => applyDelegateEventToItems(prev, e).items);
     if (loopback) void sendRef.current(loopback.text, loopback.display, true);

@@ -169,16 +169,32 @@ describe("runDelegate", () => {
     expect(errors).toEqual(["spawn claude ENOENT"]);
   });
 
-  it("cancel kills the child and settles silently - later close fires no callback", () => {
+  it("cancel kills the child and settles silently only after close", () => {
     const child = new FakeChild();
     const { cbs, outputs, dones, errors } = collect();
     const handle = runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, cbs, () => asChild(child));
-    handle.cancel();
+    let cancelled = false;
+    handle.cancel(() => { cancelled = true; });
     expect(child.killed).toBe(true);
+    expect(cancelled).toBe(false);
     child.emit("close", 143);
+    expect(cancelled).toBe(true);
     expect(outputs).toEqual([]);
     expect(dones).toEqual([]);
     expect(errors).toEqual([]);
+  });
+
+  it("cancel escalates to SIGKILL when the child does not close", () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const signals: NodeJS.Signals[] = [];
+    child.kill = (signal?: NodeJS.Signals | number) => { signals.push(signal as NodeJS.Signals); return true; };
+    const handle = runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, collect().cbs, () => asChild(child));
+    handle.cancel();
+
+    expect(signals).toEqual(["SIGTERM"]);
+    vi.advanceTimersByTime(5_000);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
   });
 
   it("times out after timeoutMs, killing the child and reporting onError", () => {

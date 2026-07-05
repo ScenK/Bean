@@ -14,10 +14,11 @@ Key contracts:
   history for chaining.
 - **Tasks share the chat window's lifetime — no ghosts:** closing the chat with a running
   delegate shows a Keep working / Stop & close card (same pattern as the memory review),
-  and main calls `cancelAll()` on chat-window `closed` as the hard backstop. Nothing is
-  buffered or replayed; a delegate never runs on without its human context.
-- **Cancel is silent in core:** `DelegateHandle.cancel()` kills the (detached) process group
-  and settles with NO callback; the registry emits the `cancelled` event itself (and drops
-  the task, which is also what makes stray post-terminal callbacks no-ops).
+  and main calls `cancelAll()` on chat-window `closed` as the hard backstop. The renderer only
+  buffers delegate events until `delegateStart()` returns the task id, then replays them; a
+  delegate never runs on without its human context.
+- **Cancel waits for process close:** `DelegateHandle.cancel(onCancelled)` sends SIGTERM to the
+  process group, escalates to SIGKILL if it does not close quickly, and only then lets the app
+  registry emit `cancelled` and drop the task. Stray post-cancel callbacks are ignored.
 - The delegate CLI is user-picked in Settings (`delegateCli`, "" = first detected); the chat
   model never chooses the harness.

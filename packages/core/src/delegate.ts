@@ -48,7 +48,7 @@ export interface DelegateCallbacks {
 }
 
 export interface DelegateHandle {
-  cancel: () => void;
+  cancel: (onCancelled?: () => void) => void;
 }
 
 export type DelegateSpawnFn = (command: string, args: string[], cwd: string) => ChildProcess;
@@ -68,6 +68,9 @@ export function runDelegate(
   const child = spawnFn(command, args, req.projectPath);
 
   let settled = false;
+  let cancelling = false;
+  let onCancelled: (() => void) | undefined;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
   let result: string | undefined;
   const rawLines: string[] = [];
   let stdoutBuf = "";
@@ -77,25 +80,26 @@ export function runDelegate(
     if (settled) return;
     settled = true;
     clearTimeout(timer);
+    if (killTimer) clearTimeout(killTimer);
     fn();
   };
 
-  const kill = (): void => {
+  const kill = (signal: NodeJS.Signals): void => {
     try {
-      if (typeof child.pid === "number") process.kill(-child.pid, "SIGTERM");
-      else child.kill("SIGTERM");
+      if (typeof child.pid === "number") process.kill(-child.pid, signal);
+      else child.kill(signal);
     } catch {
-      child.kill("SIGTERM");
+      child.kill(signal);
     }
   };
 
   const timer = setTimeout(() => {
-    kill();
+    kill("SIGTERM");
     settle(() => callbacks.onError(new Error(`delegate timed out after ${Math.round(timeoutMs / 60_000)} minutes`)));
   }, timeoutMs);
 
   const handleLine = (line: string): void => {
-    if (!line.trim() || settled) return;
+    if (!line.trim() || settled || cancelling) return;
     rawLines.push(line);
     if (req.cli !== "claude") {
       callbacks.onOutput(line);
@@ -132,6 +136,10 @@ export function runDelegate(
   child.on("error", (err: Error) => settle(() => callbacks.onError(err)));
   child.on("close", (code: number | null) => {
     if (settled) return;
+    if (cancelling) {
+      settle(() => onCancelled?.());
+      return;
+    }
     if (stdoutBuf.trim()) handleLine(stdoutBuf);
     if (code === 0) {
       settle(() => callbacks.onDone(result ?? rawLines.join("\n")));
@@ -142,9 +150,13 @@ export function runDelegate(
   });
 
   return {
-    cancel: () => {
-      kill();
-      settle(() => {});
+    cancel: (done) => {
+      if (settled || cancelling) return;
+      cancelling = true;
+      onCancelled = done;
+      clearTimeout(timer);
+      kill("SIGTERM");
+      killTimer = setTimeout(() => kill("SIGKILL"), 5_000);
     },
   };
 }

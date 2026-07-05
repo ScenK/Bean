@@ -5,6 +5,7 @@ import type { DelegateCallbacks, DelegateHandle, DelegateRequest } from "@bean/c
 function harness(opts: { cli?: "claude" | "opencode" } = {}) {
   const sent: DelegateEvent[] = [];
   const cancels: string[] = [];
+  const cancelCallbacks: (() => void)[] = [];
   const captured: DelegateCallbacks[] = [];
   const reqs: DelegateRequest[] = [];
   let nextId = 0;
@@ -15,10 +16,10 @@ function harness(opts: { cli?: "claude" | "opencode" } = {}) {
     run: (req, cbs) => {
       reqs.push(req);
       captured.push(cbs);
-      return { cancel: () => cancels.push(req.prompt) } satisfies DelegateHandle;
+      return { cancel: (onCancelled) => { cancels.push(req.prompt); cancelCallbacks.push(onCancelled); } } satisfies DelegateHandle;
     },
   });
-  return { tasks, sent, cancels, captured, reqs, cbs: () => captured.at(-1)!, req: () => reqs.at(-1)! };
+  return { tasks, sent, cancels, cancelCallbacks, captured, reqs, cbs: () => captured.at(-1)!, req: () => reqs.at(-1)! };
 }
 
 describe("createDelegateTasks", () => {
@@ -55,11 +56,13 @@ describe("createDelegateTasks", () => {
     ]);
   });
 
-  it("cancel kills the handle and emits cancelled; later callbacks are ignored", () => {
+  it("cancel emits cancelled only after the handle confirms termination; later callbacks are ignored", () => {
     const h = harness();
     const id = h.tasks.start({ projectPath: "/p", prompt: "go" });
     h.tasks.cancel(id);
     expect(h.cancels).toEqual(["go"]);
+    expect(h.sent.at(-1)).toEqual({ taskId: id, type: "started" });
+    h.cancelCallbacks[0]!();
     expect(h.sent.at(-1)).toEqual({ taskId: id, type: "cancelled" });
     h.cbs().onDone("too late");
     h.cbs().onOutput("too late");
@@ -82,6 +85,8 @@ describe("createDelegateTasks", () => {
     const b = h.tasks.start({ projectPath: "/p", prompt: "two" });
     h.tasks.cancelAll();
     expect(h.cancels).toEqual(["one", "two"]);
+    expect(h.sent.filter((e) => e.type === "cancelled")).toEqual([]);
+    h.cancelCallbacks.forEach((cb) => cb());
     expect(h.sent.filter((e) => e.type === "cancelled").map((e) => e.taskId)).toEqual([a, b]);
   });
 
