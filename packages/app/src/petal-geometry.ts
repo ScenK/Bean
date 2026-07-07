@@ -36,3 +36,15 @@ export function pointInRect(
 ): boolean {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 }
+
+export function resolvePetalDropIndex(
+  clientX: number,
+  clientY: number,
+  bloomRect: { left: number; top: number; right: number; bottom: number },
+  boxRect: { left: number; top: number; right: number; bottom: number },
+  positions: Point[],
+  maxDist: number,
+): number | undefined {
+  if (pointInRect(clientX, clientY, boxRect)) return undefined;
+  return nearestPetalIndex(clientX - bloomRect.left, clientY - bloomRect.top, positions, maxDist);
+}
