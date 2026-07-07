@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { createDragPreparationGate } from "../src/drag-preparation.js";
-import { computeStackPositions, nearestPetalIndex, pointInRect } from "../src/petal-geometry.js";
+import { computeStackPositions, nearestPetalIndex, pointInRect, resolvePetalDropIndex } from "../src/petal-geometry.js";
 
 test("returns no tiles for zero count", () => {
   expect(computeStackPositions(0, 100, 100, 60)).toEqual([]);
@@ -37,6 +37,16 @@ test("pointInRect is false for a point outside the rect", () => {
   const rect = { left: 0, top: 0, right: 100, bottom: 50 };
   expect(pointInRect(-1, 25, rect)).toBe(false);
   expect(pointInRect(50, 51, rect)).toBe(false);
+});
+
+test("drop resolution uses the drop point when dragover hover state is stale", () => {
+  expect(resolvePetalDropIndex(
+    198, 222,
+    { left: 100, top: 100, right: 400, bottom: 720 },
+    { left: 220, top: 24, right: 300, bottom: 104 },
+    [{ x: 100, y: 60 }, { x: 100, y: 120 }],
+    130,
+  )).toBe(1);
 });
 
 test("drag preparation gate rejects duplicate drag enters while preparation is pending", () => {

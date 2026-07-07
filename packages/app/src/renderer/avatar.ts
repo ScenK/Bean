@@ -3,7 +3,7 @@ import type { AvatarMode, ComponentKind } from "../channels.js";
 import { createDragPreparationGate } from "../drag-preparation.js";
 import { createDragWatchdog } from "../drag-watchdog.js";
 import { AVATAR_SIZE, avatarSizeForMode } from "../avatar-menu.js";
-import { computeStackPositions, nearestPetalIndex, pointInRect, type Point } from "../petal-geometry.js";
+import { computeStackPositions, nearestPetalIndex, pointInRect, resolvePetalDropIndex, type Point } from "../petal-geometry.js";
 import type { Project, Skill } from "@bean/core";
 
 // Quick-actions and the drag-skill bloom render as the same vertical tile stack (see the
@@ -387,7 +387,8 @@ if (el && orbSlot && hint && bloom && reading) {
   bloom.addEventListener("drop", (e) => {
     e.preventDefault();
     const url = dataUrl(e);
-    const chosen = hoverIndex !== undefined ? dragTiles[hoverIndex] : undefined;
+    const index = resolvePetalDropIndex(e.clientX, e.clientY, bloom.getBoundingClientRect(), el.getBoundingClientRect(), petalPositions, 130);
+    const chosen = index !== undefined ? dragTiles[index] : undefined;
     closeBloom();
     if (url && chosen) chosen.run(url);
     else if (url) void window.bean.openComponent("chat", url); // no tile chosen — plain fallback
