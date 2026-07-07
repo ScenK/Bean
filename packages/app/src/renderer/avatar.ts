@@ -426,10 +426,7 @@ if (el && orbSlot && hint && bloom && reading) {
     if (e.defaultPrevented || mode !== "drag") return; // bloom/el already handled it
     e.preventDefault();
     const url = dataUrl(e);
-    const rect = bloom.getBoundingClientRect();
-    const index = pointInRect(e.clientX, e.clientY, el.getBoundingClientRect())
-      ? undefined
-      : nearestPetalIndex(e.clientX - rect.left, e.clientY - rect.top, petalPositions, 130);
+    const index = resolvePetalDropIndex(e.clientX, e.clientY, bloom.getBoundingClientRect(), el.getBoundingClientRect(), petalPositions, 130);
     const chosen = index !== undefined ? dragTiles[index] : undefined;
     closeBloom();
     if (url && chosen) chosen.run(url);
