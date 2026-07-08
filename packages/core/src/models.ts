@@ -2,7 +2,10 @@ import type { CliName } from "./launcher.js";
 
 /** A canonical model name shown to the user; `aliases` maps to whatever flag value each
  * CLI actually expects. A CLI absent from `aliases` means that model can't be requested
- * on that CLI at all (its picker row shows dimmed with a reason). */
+ * on that CLI at all (its picker row shows dimmed with a reason). Each model here is
+ * available on exactly one CLI — claude code and opencode (via the github-copilot
+ * provider) don't offer the same underlying models, so there's no shared "same model,
+ * different flag spelling" pairing to make across CLIs like there used to be. */
 export interface ModelInfo {
   id: string;
   label: string;
@@ -10,9 +13,13 @@ export interface ModelInfo {
 }
 
 export const MODELS: ModelInfo[] = [
-  { id: "sonnet-4-5", label: "Sonnet 4.5", aliases: { opencode: "claude-sonnet-4-5", claude: "sonnet-4-5" } },
-  { id: "opus-4-5", label: "Opus 4.5", aliases: { opencode: "claude-opus-4-5", claude: "opus-4-5" } },
-  { id: "gpt-5-mini", label: "GPT-5 mini", aliases: { opencode: "gpt-5-mini" } },
+  { id: "sonnet", label: "Sonnet", aliases: { claude: "sonnet" } },
+  { id: "opus", label: "Opus", aliases: { claude: "opus" } },
+  { id: "haiku", label: "Haiku", aliases: { claude: "haiku" } },
+  { id: "gpt-5-5", label: "GPT-5.5", aliases: { opencode: "github-copilot/gpt-5.5" } },
+  { id: "gpt-5-4", label: "GPT-5.4", aliases: { opencode: "github-copilot/gpt-5.4" } },
+  { id: "claude-sonnet-5", label: "Claude Sonnet 5", aliases: { opencode: "github-copilot/claude-sonnet-5" } },
+  { id: "claude-opus-4-8", label: "Claude Opus 4.8", aliases: { opencode: "github-copilot/claude-opus-4.8" } },
 ];
 
 /** The CLI-specific flag value for a canonical model, or undefined if that model has no
