@@ -140,6 +140,24 @@ test("delegate instructions tell the model to inspect linked projects instead of
   expect(delegateDescription).toContain("inspect, summarize, explain");
 });
 
+test("delegate guidance tells the model to propose directly, not ask permission in chat first", async () => {
+  let systemContent = "";
+  let delegateDescription = "";
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages, tools }) => {
+      systemContent = messages[0]!.content;
+      delegateDescription = tools.find((t) => t.name === "propose_delegate")?.description ?? "";
+      return { content: "ok", toolCalls: [] };
+    },
+  };
+
+  await converse([], "hi", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true);
+
+  expect(systemContent).toContain("don't ask the user in chat text whether you should delegate first");
+  expect(delegateDescription).toContain("don't ask the user for permission in chat text first");
+});
+
 test("recalled memories are injected after the catalog, labeled global vs project", async () => {
   let systemContent = "";
   const deps: ConverseDeps = {
