@@ -399,10 +399,38 @@ if (el && orbSlot && hint && bloom && reading) {
   // keep feeding the watchdog so it only fires on genuine drag-event silence.
   el.addEventListener("dragover", (e) => { e.preventDefault(); dragWatchdog.arm(); });
   el.addEventListener("drop", (e) => {
+    if (mode === "drag") return; // the document-level backstop below handles a mid-collapse drop
     e.preventDefault();
-    if (mode === "drag") return; // the bloom's own drop handler already covers this
     const url = dataUrl(e);
     if (url) void window.bean.openComponent("chat", url);
+  });
+
+  // Guard 4 (see .memory/safety-drag-mode-needs-watchdog.md): while a collapse is pending the
+  // bloom is pointer-events:none, so over the tile column — away from the box — drag events
+  // retarget to the window body, where nothing cancels the collapse, re-arms the watchdog, or
+  // preventDefaults the dragover. The drag dies silently and the eventual drop is refused (or
+  // lands outside the shrunk window), which is exactly the "dropped a URL on a skill tile and
+  // nothing happened" bug. Catch drag events at the document: any dragover anywhere in the
+  // window keeps drag mode alive, and a drop that still slips through is resolved with the
+  // same box-wins-then-nearest-tile hit test the bloom uses.
+  document.addEventListener("dragover", (e) => {
+    if (mode !== "drag") return;
+    e.preventDefault();
+    dragWatchdog.arm();
+    if (collapseTimer === undefined) return; // bloom is alive — its own handlers manage hover state
+    cancelCollapse();
+    expandBox("drop anything here");
+    bloom.classList.add("bean-drag-bloom--open");
+  });
+  document.addEventListener("drop", (e) => {
+    if (e.defaultPrevented || mode !== "drag") return; // bloom/el already handled it
+    e.preventDefault();
+    const url = dataUrl(e);
+    const index = resolvePetalDropIndex(e.clientX, e.clientY, bloom.getBoundingClientRect(), el.getBoundingClientRect(), petalPositions, 130);
+    const chosen = index !== undefined ? dragTiles[index] : undefined;
+    closeBloom();
+    if (url && chosen) chosen.run(url);
+    else if (url) void window.bean.openComponent("chat", url);
   });
 
   // #bean is no-drag (see comment above), so dragging the visible body itself is done manually:
