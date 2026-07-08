@@ -1,10 +1,10 @@
 import {
-  route, converse, launchInTerminal, sniffUrl, prepareScratchWorkspace, scratchDir,
+  route, converse, launchInTerminal, scratchDir,
   availableModels, loadModelMemory, saveModelMemory,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
-  type ActionTool, type Note, type NoteDraft, type AvailableModel, type UrlKind,
+  type ActionTool, type Note, type NoteDraft, type AvailableModel,
 } from "@bean/core";
 import { mkdir } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";
@@ -160,26 +160,15 @@ export interface LaunchHandlerDeps {
   getTerminalApp?: () => string;
   getEditorApp?: () => string;
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
-  // Resolve a "" (no-project) run into a real path before launchCommand ever sees it — a
-  // shallow clone/fetched-page scratch dir for a sourceUrl, or a bare scratch dir without one.
-  // Injectable so tests don't hit the network/git.
+  // Resolve a "" (no-project) run into a real (bare, always-empty) scratch dir before
+  // launchCommand ever sees it. Injectable so tests don't hit the filesystem.
   beanDirPath?: string;
-  sniffUrl?: (url: string) => Promise<UrlKind>;
-  prepareScratchWorkspace?: (url: string, kind: Exclude<UrlKind, "unknown">, beanDirPath: string) => Promise<string>;
   ensureDir?: (dir: string) => Promise<void>;
 }
 
 async function resolveProjectPath(req: LaunchRequest, deps: LaunchHandlerDeps): Promise<string> {
   if (req.projectPath) return req.projectPath;
-  const beanDirPath = deps.beanDirPath ?? "";
-  if (req.sourceUrl) {
-    const sniff = deps.sniffUrl ?? sniffUrl;
-    const kind = await sniff(req.sourceUrl);
-    if (kind === "unknown") throw new Error(`Couldn't reach ${req.sourceUrl} — try again or pick a project.`);
-    const prepare = deps.prepareScratchWorkspace ?? prepareScratchWorkspace;
-    return prepare(req.sourceUrl, kind, beanDirPath);
-  }
-  const dir = scratchDir(beanDirPath);
+  const dir = scratchDir(deps.beanDirPath ?? "");
   const ensureDir = deps.ensureDir ?? ((d: string) => mkdir(d, { recursive: true }).then(() => {}));
   await ensureDir(dir);
   return dir;
@@ -347,8 +336,6 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps {
   getAvailableClis: () => CliName[];
   beanDirPath: string;
   modelMemoryFile: string;
-  sniffUrl?: (url: string) => Promise<UrlKind>;
-  prepareScratchWorkspace?: (url: string, kind: Exclude<UrlKind, "unknown">, beanDirPath: string) => Promise<string>;
   delegateTasks: {
     start: (req: DelegateStartRequest) => string;
     cancel: (taskId: string) => void;
@@ -430,8 +417,6 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   });
   ipcMain.handle(IPC.getModelMemory, (_e, skillName: string) => modelMemoryHandlers.get(skillName));
   ipcMain.handle(IPC.setModelMemory, (_e, skillName: string, modelId: string) => modelMemoryHandlers.set(skillName, modelId));
-
-  ipcMain.handle(IPC.sniffUrl, (_e, url: string) => (deps.sniffUrl ?? sniffUrl)(url));
 
   const personaHandlers = buildPersonaHandlers(deps);
   ipcMain.handle(IPC.getPersona, () => personaHandlers.get());

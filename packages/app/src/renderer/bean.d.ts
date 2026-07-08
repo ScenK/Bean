@@ -1,6 +1,6 @@
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
-  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, UrlKind,
+  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel,
 } from "@bean/core";
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
@@ -17,7 +17,6 @@ declare global {
       availableModels(): Promise<AvailableModel[]>;
       getModelMemory(skillName: string): Promise<string | undefined>;
       setModelMemory(skillName: string, modelId: string): Promise<void>;
-      sniffUrl(url: string): Promise<UrlKind>;
       chat(req: ChatRequest): Promise<ConverseResult>;
       getModel(): Promise<string>;
       getPathForFile(file: File): string;

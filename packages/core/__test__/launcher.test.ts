@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { detectClis, detectGit, launchCommand, launchInTerminal, loginShellPath } from "../src/launcher.js";
+import { detectClis, launchCommand, launchInTerminal, loginShellPath } from "../src/launcher.js";
 import type { LaunchRequest, LaunchSpawnFn, SpawnSyncFn } from "../src/launcher.js";
 
 test("launchCommand builds the opencode TUI command with a pre-sent prompt", () => {
@@ -50,13 +50,6 @@ test("detectClis reports which CLIs exist on PATH, in fixed opencode-first order
   expect(detectClis(path, (p) => p === "/opt/homebrew/bin/opencode")).toEqual(["opencode"]);
   expect(detectClis(path, () => false)).toEqual([]);
   expect(detectClis("", () => true)).toEqual([]);
-});
-
-test("detectGit reports whether git is on PATH", () => {
-  const path = "/usr/local/bin:/opt/homebrew/bin";
-  expect(detectGit(path, () => true)).toBe(true);
-  expect(detectGit(path, () => false)).toBe(false);
-  expect(detectGit(path, (p) => p.endsWith("/git"))).toBe(true);
 });
 
 test("loginShellPath runs the shell as an interactive login shell and returns its PATH", () => {

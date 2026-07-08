@@ -33,7 +33,6 @@ export const IPC = {
   availableModels: "bean:available-models",
   getModelMemory: "bean:get-model-memory",
   setModelMemory: "bean:set-model-memory",
-  sniffUrl: "bean:sniff-url",
   chat: "bean:chat",
   listSkills: "bean:list-skills",
   listProjects: "bean:list-projects",

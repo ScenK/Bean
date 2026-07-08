@@ -75,7 +75,6 @@ export function PlanWindow() {
                   projectPath: choice.projectPath ?? "",
                   prompt: edited,
                   model: choice.model,
-                  sourceUrl: choice.sourceUrl,
                 });
               }
               window.close();

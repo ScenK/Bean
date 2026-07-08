@@ -17,13 +17,23 @@ is a flat `Record<skillName, modelId>` at `~/.bean/model-memory.json`
 `required` (omit ≠ enum mismatch); an explicit-but-unknown project value is still rejected.
 `LaunchRequest.projectPath` stays a required **string**, with `""` as the sentinel the IPC layer
 (`buildLaunchHandler` in `packages/app/src/ipc.ts`) resolves into a real path just before
-`launchInTerminal` — either `prepareScratchWorkspace()` (shallow git clone for a repo URL, or
-fetched-page text for a page URL, `packages/core/src/scratch-workspace.ts`) or a bare
-`scratchDir(beanDir)` when no URL was given. `sniffUrl()` (`packages/core/src/url-sniff.ts`)
-decides repo-vs-page via `git ls-remote` first, then an HTML-content-type HEAD request.
+`launchInTerminal` — a bare `scratchDir(beanDir)` (`packages/core/src/config.ts`), always empty.
+
+**Bean does not fetch or clone the optional URL seed itself (deliberate, not a gap).** An
+earlier version of this feature had Bean shell out to `git ls-remote`/`git clone` and `fetch()`
+to classify and materialize a "no project" URL locally (`url-sniff.ts`, `scratch-workspace.ts` —
+both deleted). That duplicated capability the *launched* CLI already has: opencode/claude are
+full coding agents with their own shell/git/fetch access, so having Bean do it first only added
+attack surface (SSRF/`file:` validation, a whole PATH-threading bug class for `git` specifically)
+for a feature the agent could do itself. Current design: the optional URL box in
+`ProposalCard`'s "no project" picker is purely a client-side prompt convenience — on confirm it's
+folded into the composed prompt text as a `## Source` section (same pattern as the `## Task`
+section for the extra-instructions box), never sent to IPC as a separate field. If you're adding
+a feature that needs Bean itself to reach out to a URL/repo, ask first whether the delegated
+agent should just be told to do it instead — that's almost always the right default here.
 
 **Gotcha:** `buildLaunchHandler`'s returned function stays **synchronous** when `req.projectPath`
-is already truthy (or mode is `"open"`) — it only takes the async scratch-resolution detour for
+is already truthy (or mode is `"open"`) — it only takes the async scratch-dir-ensure detour for
 `""`. Existing `ipc.test.ts`/e2e assertions that call the handler and immediately check
 `spawnLaunch` depend on this; don't make the whole function unconditionally async or those break.
 

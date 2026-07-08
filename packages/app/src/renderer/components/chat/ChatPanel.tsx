@@ -48,7 +48,7 @@ export function ChatPanel({
     id: string,
     editedPrompt: string,
     run: RouteSuggestion,
-    choice: { cli: CliName; projectPath?: string; sourceUrl?: string; model?: string },
+    choice: { cli: CliName; projectPath?: string; model?: string },
   ) => void;
   onCancel: (id: string) => void;
   onNoteSave: (id: string, edited: ProposedNote, asNew: boolean) => void;

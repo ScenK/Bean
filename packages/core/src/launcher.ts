@@ -30,16 +30,6 @@ export function detectClis(
   return (["opencode", "claude"] as const).filter(onPath);
 }
 
-/** Same PATH-scan approach as detectClis, for the one `git` binary the 2a "no project" URL
- * flow needs (clone detection) — kept separate since git isn't one of Bean's run CLIs. */
-export function detectGit(
-  pathEnv: string = process.env.PATH ?? "",
-  isExecutable: (p: string) => boolean = defaultIsExecutable,
-): boolean {
-  const dirs = pathEnv.split(delimiter).filter(Boolean);
-  return dirs.some((d) => isExecutable(join(d, "git")));
-}
-
 export type SpawnSyncFn = (command: string, args: string[]) => { stdout?: string };
 const defaultSpawnSync: SpawnSyncFn = (command, args) => spawnSync(command, args, { encoding: "utf8", timeout: 3000 });
 
@@ -60,14 +50,13 @@ export function loginShellPath(
 
 export interface LaunchRequest {
   mode: LaunchMode;
-  // "" = no project picked (2a) — the IPC launch handler resolves this to a real scratch-
-  // workspace path (see scratch-workspace.ts) before launchCommand ever sees it.
+  // "" = no project picked (2a) — the IPC launch handler resolves this to a bare scratch-
+  // workspace dir (scratchDir in config.ts) before launchCommand ever sees it. Bean never
+  // seeds this dir itself (no git clone/page fetch) — a URL the user typed is folded into
+  // `prompt` instead, and the launched agent fetches/clones it itself if it needs to.
   projectPath: string;
   prompt?: string; // required for "opencode"/"claude", ignored for "open"
   model?: string; // canonical model id (models.ts); ignored for "open" or a model with no alias on this CLI
-  // Optional URL seed for a "" (no-project) run — sniffed (url-sniff.ts) into a shallow clone
-  // or a fetched-page scratch dir. Meaningless when projectPath is already a real path.
-  sourceUrl?: string;
 }
 
 export function launchCommand(req: LaunchRequest, editorApp?: string): { command: string; args: string[] } {

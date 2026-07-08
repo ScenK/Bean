@@ -13,8 +13,6 @@ export * from "./memory/extract.js";
 export * from "./reminders.js";
 export * from "./models.js";
 export * from "./model-memory.js";
-export * from "./url-sniff.js";
-export * from "./scratch-workspace.js";
 export * from "./web-page.js";
 export * from "./router.js";
 export * from "./converse.js";

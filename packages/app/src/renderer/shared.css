@@ -780,15 +780,6 @@ button, input, textarea, select, a {
   margin-top: 4px;
 }
 .bean-chip-menu-hint { font-size: 11px; line-height: 1.4; color: var(--bean-text-dim); }
-.bean-chip-menu-sniff-badge {
-  align-self: flex-start;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--bean-accent);
-  background: color-mix(in oklch, var(--bean-accent) 14%, transparent);
-  border-radius: 6px;
-  padding: 3px 8px;
-}
 .bean-chip-menu-cli-footer {
   display: flex;
   align-items: center;

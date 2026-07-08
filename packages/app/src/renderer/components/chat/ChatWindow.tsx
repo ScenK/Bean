@@ -226,7 +226,7 @@ export function ChatWindow() {
     id: string,
     editedPrompt: string,
     run: RouteSuggestion,
-    choice: { cli: CliName; projectPath?: string; sourceUrl?: string; model?: string },
+    choice: { cli: CliName; projectPath?: string; model?: string },
   ): void => {
     const inChat = run.target === "chat";
     setItems((prev) => [
@@ -243,7 +243,6 @@ export function ChatWindow() {
       projectPath: choice.projectPath ?? "",
       prompt: editedPrompt,
       model: choice.model,
-      sourceUrl: choice.sourceUrl,
     });
   };
 

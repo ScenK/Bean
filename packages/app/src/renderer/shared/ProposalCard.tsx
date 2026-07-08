@@ -1,30 +1,17 @@
-import { useEffect, useState } from "preact/hooks";
-import type { AvailableModel, CliName, Project, ProposedRun, UrlKind } from "@bean/core";
+import { useState } from "preact/hooks";
+import type { AvailableModel, CliName, Project, ProposedRun } from "@bean/core";
 import { pickModel } from "@bean/core/models";
 import { ChipMenu } from "./ChipMenu.js";
 
 export type PickableModel = AvailableModel;
 
-function urlSuffixLabel(url: string, kind: UrlKind | "checking" | undefined): string {
+// Just the hostname for the project chip's "no project · <host>" suffix — Bean doesn't
+// classify the URL (repo vs page) itself anymore; the launched agent figures that out.
+function urlHostLabel(url: string): string {
   try {
-    const u = new URL(url);
-    if (kind === "repo") {
-      const parts = u.pathname.split("/").filter(Boolean);
-      return parts.length >= 2 ? `${parts[0]}/${parts[1]} ⎘` : `${u.hostname} ⎘`;
-    }
-    return `${u.hostname} ↗`;
+    return new URL(url).hostname;
   } catch {
     return url;
-  }
-}
-
-function sniffBadgeLabel(kind: UrlKind | "checking" | undefined): string | undefined {
-  switch (kind) {
-    case "checking": return "checking…";
-    case "repo": return "⎘ detected: git repo — shallow clone";
-    case "page": return "↗ detected: web page — will be fetched as content";
-    case "unknown": return "? unreachable — will retry at run time";
-    default: return undefined;
   }
 }
 
@@ -48,7 +35,7 @@ export function ProposalCard({
   state: "pending" | "confirmed" | "cancelled";
   onConfirm: (
     editedPrompt: string,
-    choice: { cli: CliName; projectPath?: string; sourceUrl?: string; model?: string },
+    choice: { cli: CliName; projectPath?: string; model?: string },
   ) => void;
   onCancel: () => void;
   /** CLIs found on this machine — a picker shows only when there's a real choice (2+, terminal target). */
@@ -69,7 +56,6 @@ export function ProposalCard({
   const cli: CliName = cliChoice ?? cliOptions?.[0] ?? "opencode";
   const [projectPath, setProjectPath] = useState<string | undefined>(run.projectPath);
   const [sourceUrl, setSourceUrl] = useState(run.sourceUrl ?? "");
-  const [urlKind, setUrlKind] = useState<UrlKind | "checking" | undefined>(undefined);
   const [modelChoice, setModelChoice] = useState<string | undefined>(undefined);
   const done = state !== "pending";
   const isChat = run.target === "chat";
@@ -82,37 +68,22 @@ export function ProposalCard({
   const hasModelMenu = !isChat && models.length > 0;
   const showCliOnlyPicker = !isChat && !hasModelMenu && (cliOptions?.length ?? 0) > 1;
 
-  // Debounced live sniff of the "no project" URL seed, mirroring the mockup's inline badge.
-  useEffect(() => {
-    const trimmed = sourceUrl.trim();
-    if (projectPath !== undefined || !trimmed) {
-      setUrlKind(undefined);
-      return;
-    }
-    let cancelled = false;
-    setUrlKind("checking");
-    const t = setTimeout(() => {
-      void window.bean.sniffUrl(trimmed).then((k) => { if (!cancelled) setUrlKind(k); });
-    }, 400);
-    return () => { cancelled = true; clearTimeout(t); };
-  }, [projectPath, sourceUrl]);
-
   // ponytail: same "## Task" convention core's composePrompt() uses, applied here so users
-  // can add instructions without editing the skill's own template text in the box above.
+  // can add instructions without editing the skill's own template text in the box above. An
+  // optional "no project" URL seed is folded in the same way — Bean doesn't fetch/clone it
+  // itself, the launched agent (opencode/claude) has its own shell/git access to do that.
   const runFinalPrompt = (): void => {
     const task = extra.trim();
-    onConfirm(task ? `${prompt}\n\n## Task\n${task}` : prompt, {
-      cli,
-      projectPath,
-      sourceUrl: projectPath === undefined ? sourceUrl.trim() || undefined : undefined,
-      model,
-    });
+    const withTask = task ? `${prompt}\n\n## Task\n${task}` : prompt;
+    const url = projectPath === undefined ? sourceUrl.trim() : "";
+    const finalPrompt = url ? `${withTask}\n\n## Source\n${url}` : withTask;
+    onConfirm(finalPrompt, { cli, projectPath, model });
   };
 
   const projectName = projectOptions?.find((p) => p.path === projectPath)?.name ?? projectPath;
   const projectChipLabel = projectPath !== undefined
     ? <>📁 {projectName}</>
-    : <>no project{sourceUrl.trim() ? <> · <span class="bean-chip-menu-sub">{urlSuffixLabel(sourceUrl.trim(), urlKind)}</span></> : null}</>;
+    : <>no project{sourceUrl.trim() ? <> · <span class="bean-chip-menu-sub">{urlHostLabel(sourceUrl.trim())}</span></> : null}</>;
   const modelLabel = models.find((m) => m.id === model)?.label ?? model;
 
   return (
@@ -157,13 +128,9 @@ export function ProposalCard({
                       placeholder="https://…"
                       onInput={(e) => setSourceUrl((e.target as HTMLInputElement).value)}
                     />
-                    {sniffBadgeLabel(urlKind) ? (
-                      <span class="bean-chip-menu-sniff-badge">{sniffBadgeLabel(urlKind)}</span>
-                    ) : (
-                      <span class="bean-chip-menu-hint">
-                        Bean detects what it is: a repo gets a shallow clone; a page is fetched as content.
-                      </span>
-                    )}
+                    <span class="bean-chip-menu-hint">
+                      Added to the task as a source link — the launched agent fetches or clones it itself.
+                    </span>
                   </div>
                 ) : null}
               </div>
