@@ -717,11 +717,14 @@ button, input, textarea, select, a {
 .bean-chip-menu-caret { font-size: 9px; color: var(--bean-text-dim); }
 .bean-chip-menu-sub { font: 500 11px ui-monospace, monospace; color: var(--bean-text-dim); }
 .bean-chip-menu-panel {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
+  /* fixed (not absolute): its position is computed in JS from the trigger's screen rect
+   * (ChipMenu.tsx) so it isn't clipped by an ancestor's overflow:hidden/auto (bean-dashboard,
+   * bean-plan) the way an absolutely-positioned descendant would be. */
+  position: fixed;
   z-index: 20;
   min-width: 260px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   background: var(--bean-surface);
   border: 1px solid var(--bean-border);
   border-radius: 13px;
