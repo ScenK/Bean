@@ -31,3 +31,18 @@ building it inline, and passes it to `createDelegateTasks({ resolvedPath, ... })
 and threads that into `runDelegate(...)`. If you add another child-process spawn path for a CLI
 tool, it needs this same `resolvedPath` threaded in — `detectClis` finding a CLI does not mean a
 bare `spawn()` elsewhere will find it too.
+
+**Second follow-up bug (fixed):** the 2a "no project" URL-seed flow hit the exact same class of
+bug for `git`, not a Bean CLI. `sniffUrl()`'s `git ls-remote` probe (`core/src/url-sniff.ts`) and
+`prepareScratchWorkspace()`'s `git clone` (`core/src/scratch-workspace.ts`) both spawned `git`
+with no `env` override, so a Finder-launched build with `git` only on a login-shell-managed PATH
+(e.g. Homebrew) could misclassify a repo URL as a page (ls-remote silently fails, falls through
+to the HEAD/page check) or fail the clone outright — despite `detectClis`/delegate spawning
+already working correctly for the same reason this file exists. Fix: both files now export a
+`make*` factory (`makeGitLsRemote(env)`, `makeScratchSpawn(env)`) instead of a bare
+env-less default, and `main.ts` builds both from the same `resolvedPath`-augmented env used for
+`delegateTasks` and passes them into `registerIpc` via the already-existing `sniffUrl`/
+`prepareScratchWorkspace` injection points in `ipc.ts`. Same rule applies: any new `git`/CLI
+child-process spawn needs `resolvedPath` threaded in explicitly — it's never inherited for free.
+Unit tests inject fakes for `GitLsRemoteFn`/`ScratchSpawnFn` (they always have, even before this
+fix) and can't catch a missing `env`, same real-`pnpm dist:mac`-required caveat as above.

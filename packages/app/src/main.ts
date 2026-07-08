@@ -10,6 +10,7 @@ import {
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, saveMemories, extractMemories,
   loadReminders, saveReminders, dueReminders, extractPageText,
   loadNotes, saveNote, deleteNote, notesDir, detectClis, loginShellPath,
+  sniffUrl, makeGitLsRemote, prepareScratchWorkspace, makeScratchSpawn,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool } from "@bean/core";
 import { createAvatarWindow, createComponentWindow } from "./windows.js";
@@ -264,6 +265,12 @@ app.whenReady().then(async () => {
   // npm/pnpm global bins, ~/.local/bin, ...) — ask the login shell for its real PATH.
   const resolvedPath = [process.env.PATH ?? "", loginShellPath(), "/opt/homebrew/bin", "/usr/local/bin"].join(":");
   const availableClis = detectClis(resolvedPath);
+  // Same PATH concern as detectClis/delegate spawning above: a Finder-launched app's minimal
+  // launchd PATH may not have git either, so the no-project URL flow's ls-remote/clone need
+  // the same login-shell-resolved PATH (.memory/safety-packaged-app-path-detection.md).
+  const gitEnv = { ...process.env, PATH: resolvedPath };
+  const gitLsRemote = makeGitLsRemote(gitEnv);
+  const scratchSpawn = makeScratchSpawn(gitEnv);
 
   setInterval(() => {
     void (async () => {
@@ -345,6 +352,8 @@ app.whenReady().then(async () => {
       getEditorApp: () => runtime.getEditorApp(),
       getAvailableClis: () => availableClis,
       beanDirPath: dir,
+      sniffUrl: (url) => sniffUrl(url, gitLsRemote),
+      prepareScratchWorkspace: (url, kind, beanDirPath) => prepareScratchWorkspace(url, kind, beanDirPath, scratchSpawn),
       modelMemoryFile: modelMemoryFile(dir),
       delegateTasks,
       delegateAvailable: () => availableClis.length > 0,

@@ -48,15 +48,23 @@ function isPrivateIpv6(host: string): boolean {
 // Async git probe (not spawnSync) so a slow/unreachable remote can't block Electron's main
 // process for the whole 3s timeout on every debounced keystroke.
 export type GitLsRemoteFn = (url: string) => Promise<boolean>;
-const defaultGitLsRemote: GitLsRemoteFn = (url) =>
-  new Promise((resolve) => {
-    const child = spawn("git", ["ls-remote", "--exit-code", url], { stdio: ["ignore", "pipe", "ignore"] });
-    let out = "";
-    const timer = setTimeout(() => child.kill(), 3000);
-    child.stdout?.on("data", (d) => { out += String(d); });
-    child.on("error", () => { clearTimeout(timer); resolve(false); });
-    child.on("close", (code) => { clearTimeout(timer); resolve(code === 0 && out.trim() !== ""); });
-  });
+
+// Finder-launched Electron gets launchd's minimal PATH, missing wherever the user's login
+// shell profile actually installs git (Homebrew, profile-managed paths, ...) — same class of
+// bug as detectClis/delegate spawn (.memory/safety-packaged-app-path-detection.md). Exported
+// as a factory (not just a bare default) so main.ts can build one with the same
+// login-shell-resolved PATH it already threads into CLI detection and delegate spawning.
+export function makeGitLsRemote(env: NodeJS.ProcessEnv = process.env): GitLsRemoteFn {
+  return (url) =>
+    new Promise((resolve) => {
+      const child = spawn("git", ["ls-remote", "--exit-code", url], { stdio: ["ignore", "pipe", "ignore"], env });
+      let out = "";
+      const timer = setTimeout(() => child.kill(), 3000);
+      child.stdout?.on("data", (d) => { out += String(d); });
+      child.on("error", () => { clearTimeout(timer); resolve(false); });
+      child.on("close", (code) => { clearTimeout(timer); resolve(code === 0 && out.trim() !== ""); });
+    });
+}
 
 export type FetchHeadFn = (url: string) => Promise<{ ok: boolean; contentType: string | null }>;
 const defaultFetchHead: FetchHeadFn = async (url) => {
@@ -70,7 +78,7 @@ const defaultFetchHead: FetchHeadFn = async (url) => {
  * "unknown" (the mockup's "unreachable — will retry at run time" badge). */
 export async function sniffUrl(
   url: string,
-  gitLsRemote: GitLsRemoteFn = defaultGitLsRemote,
+  gitLsRemote: GitLsRemoteFn = makeGitLsRemote(),
   fetchHead: FetchHeadFn = defaultFetchHead,
 ): Promise<UrlKind> {
   if (!isSafeRemoteUrl(url)) return "unknown";

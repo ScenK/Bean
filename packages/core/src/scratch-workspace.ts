@@ -19,12 +19,19 @@ export function slugForUrl(url: string): string {
 // Async (not spawnSync) — a clone is a network call and would otherwise block Electron's
 // main process for its whole duration.
 export type ScratchSpawnFn = (command: string, args: string[], cwd: string) => Promise<void>;
-const defaultSpawn: ScratchSpawnFn = (command, args, cwd) =>
-  new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: "ignore" });
-    child.on("error", reject);
-    child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`${command} exited with code ${code}`))));
-  });
+
+// Same PATH concern as makeGitLsRemote (url-sniff.ts) — Finder-launched Electron's minimal
+// launchd PATH may not include wherever git actually lives (Homebrew, profile-managed paths).
+// Factory so main.ts can pass the same login-shell-resolved PATH used for CLI detection/
+// delegate spawning (.memory/safety-packaged-app-path-detection.md).
+export function makeScratchSpawn(env: NodeJS.ProcessEnv = process.env): ScratchSpawnFn {
+  return (command, args, cwd) =>
+    new Promise((resolve, reject) => {
+      const child = spawn(command, args, { cwd, stdio: "ignore", env });
+      child.on("error", reject);
+      child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`${command} exited with code ${code}`))));
+    });
+}
 
 export type FetchTextFn = (url: string) => Promise<string>;
 const defaultFetchText: FetchTextFn = async (url) => {
@@ -45,7 +52,7 @@ export async function prepareScratchWorkspace(
   url: string,
   kind: Exclude<UrlKind, "unknown">,
   beanDirPath: string,
-  spawnFn: ScratchSpawnFn = defaultSpawn,
+  spawnFn: ScratchSpawnFn = makeScratchSpawn(),
   fetchText: FetchTextFn = defaultFetchText,
   pathExists: PathExistsFn = defaultPathExists,
 ): Promise<string> {
