@@ -34,7 +34,7 @@ export function hasActiveDelegates(items: ChatItem[], pendingStarts: number): bo
 }
 
 export function addDelegateProposal(items: ChatItem[], proposal: ProposedDelegate, id: string): ChatItem[] {
-  return [...items, { kind: "delegate", id, proposal, state: "starting", tail: [] }];
+  return [...items, { kind: "delegate", id, proposal, state: "pending", tail: [] }];
 }
 
 export function applyDelegateEventToItems(
@@ -185,16 +185,10 @@ export function ChatWindow() {
 
       setItems((prev) => {
         const next = prev.filter((it) => it.id !== workingId);
-        let delegateToStart: { id: string; projectPath: string; prompt: string } | undefined;
         if (res.reply.trim()) next.push({ kind: "reply", id: newId(), text: res.reply });
         if (res.proposedRun) next.push({ kind: "proposal", id: newId(), run: res.proposedRun, state: "pending" });
         if (res.proposedNote) next.push({ kind: "note", id: newId(), note: res.proposedNote, state: "pending" });
-        if (res.proposedDelegate) {
-          const id = newId();
-          delegateToStart = { id, projectPath: res.proposedDelegate.projectPath, prompt: res.proposedDelegate.composedPrompt };
-          next.push(...addDelegateProposal([], res.proposedDelegate, id));
-        }
-        if (delegateToStart) queueMicrotask(() => void startDelegate(delegateToStart.id, delegateToStart.projectPath, delegateToStart.prompt));
+        if (res.proposedDelegate) next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
         return next;
       });
       setStatus("idle");

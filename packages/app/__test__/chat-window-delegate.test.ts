@@ -13,14 +13,14 @@ const delegate = {
 } satisfies ChatItem;
 
 describe("ChatWindow delegate state", () => {
-  it("adds delegate proposals in starting state for automatic launch", () => {
+  it("adds delegate proposals in pending state, awaiting user confirmation", () => {
     const result = addDelegateProposal([], {
       projectPath: "/p",
       instruction: "read README",
       composedPrompt: "read README",
     }, "d1");
 
-    expect(result[0]).toMatchObject({ kind: "delegate", id: "d1", state: "starting" });
+    expect(result[0]).toMatchObject({ kind: "delegate", id: "d1", state: "pending" });
     expect(result[0]).not.toHaveProperty("taskId");
   });
 
