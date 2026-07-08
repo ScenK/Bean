@@ -51,10 +51,13 @@ const BEHAVIOR_INSTRUCTIONS =
   "note for small talk or a talk that reached no substance. If you are given a " +
   "propose_delegate tool: use it when the user wants project work done; a background " +
   "agent does the work while the chat stays open, and its result returns to this " +
-  "conversation. If the user asks you to inspect, explore, summarize, or explain a linked project, " +
+  "conversation. Call propose_delegate directly — don't ask the user in chat text whether " +
+  "you should delegate first; the card Bean shows afterward is the confirmation step. " +
+  "If the user asks you to inspect, explore, summarize, or explain a linked project, " +
   "use propose_delegate; do not say you cannot access the repository. " +
   "Use propose_run instead when the user wants to watch or continue the " +
-  "work in their own terminal. Both are confirm-first.";
+  "work in their own terminal. Both are confirm-first via the card shown after you " +
+  "propose — not by asking permission in chat text.";
   
 
 function proposeNoteTool(projects: Project[], linkedNote?: LinkedNote): ToolSpec {
@@ -127,8 +130,9 @@ function proposeDelegateTool(skills: Skill[], projects: Project[]): ToolSpec {
     name: "propose_delegate",
     description:
       "Delegate a task to a background coding agent that can inspect, summarize, explain, or work " +
-      "inside the project and reports " +
-      "the result back to this chat when finished. The user confirms before it starts.",
+      "inside the project and reports the result back to this chat when finished. Call it directly — " +
+      "don't ask the user for permission in chat text first; the card shown afterward is what the " +
+      "user confirms and edits before it actually starts.",
     parameters: { type: "object", properties, required: ["project", "instruction"] },
   };
 }
