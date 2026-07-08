@@ -40,21 +40,31 @@ export function ChipMenu({
   }, [open]);
 
   // Recompute on open (and on resize, in case the window is resized while the menu is open) —
-  // measures the actual panel height so it can flip above the trigger when there's no room below.
+  // measures the actual panel size (not a guess) so both the flip-up and the right-edge clamp
+  // are exact. Without a menuWidth prop the panel's width is content-driven (project names,
+  // alias captions), so guessing it from the trigger chip's width — as an earlier version of
+  // this did — could still under-clamp and let the real, wider panel spill off the right edge.
   useLayoutEffect(() => {
     if (!open) return;
     const reposition = (): void => {
       const trigger = triggerRef.current;
-      if (!trigger) return;
+      const panel = panelRef.current;
+      if (!trigger || !panel) return;
       const rect = trigger.getBoundingClientRect();
-      const panelHeight = panelRef.current?.offsetHeight ?? 0;
+      const panelHeight = panel.offsetHeight;
+      const panelWidth = panel.offsetWidth;
       const spaceBelow = window.innerHeight - rect.bottom - GAP;
       const openUp = panelHeight > spaceBelow && rect.top - GAP > spaceBelow;
-      const width = menuWidth ?? Math.max(rect.width, 260);
-      const left = Math.min(Math.max(rect.left, VIEWPORT_MARGIN), window.innerWidth - width - VIEWPORT_MARGIN);
+      const left = Math.min(
+        Math.max(rect.left, VIEWPORT_MARGIN),
+        window.innerWidth - panelWidth - VIEWPORT_MARGIN,
+      );
       const top = openUp ? rect.top - GAP - panelHeight : rect.bottom + GAP;
       setPos({ top, left, openUp });
     };
+    // Content (project/model lists) is already loaded before the menu can be opened, so one
+    // measure-then-place pass is enough — width/height don't depend on where the fixed box
+    // ends up, only on its own content.
     reposition();
     window.addEventListener("resize", reposition);
     return () => window.removeEventListener("resize", reposition);

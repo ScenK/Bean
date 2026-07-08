@@ -723,6 +723,7 @@ button, input, textarea, select, a {
   position: fixed;
   z-index: 20;
   min-width: 260px;
+  max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   background: var(--bean-surface);
