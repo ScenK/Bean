@@ -1,5 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { ChatItem } from "../../shared/chat-types.js";
+import type { PickableModel } from "../../shared/ProposalCard.js";
+import { ChipMenu } from "../../shared/ChipMenu.js";
 
 type DelegateItem = Extract<ChatItem, { kind: "delegate" }>;
 
@@ -18,15 +20,24 @@ export function DelegateCard({
   onConfirm,
   onDismiss,
   onCancelTask,
+  modelOptions,
 }: {
   item: DelegateItem;
-  onConfirm: (editedPrompt: string) => void;
+  onConfirm: (editedPrompt: string, model?: string) => void;
   onDismiss: () => void;
   onCancelTask: () => void;
+  /** Canonical models, annotated with which detected CLIs support each — the delegate's own
+   * CLI is resolved server-side (delegate-tasks.ts), so this dims a model only when NO
+   * detected CLI supports it at all, rather than against one picked CLI. */
+  modelOptions?: PickableModel[];
 }) {
   const [prompt, setPrompt] = useState(item.proposal.composedPrompt);
   const [showDetail, setShowDetail] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [modelChoice, setModelChoice] = useState<string | undefined>(undefined);
+  const models = modelOptions ?? [];
+  const model = modelChoice ?? models[0]?.id;
+  const modelLabel = models.find((m) => m.id === model)?.label ?? model;
 
   useEffect(() => {
     if (item.state !== "running" && item.state !== "starting") return;
@@ -45,6 +56,33 @@ export function DelegateCard({
         <span class="bean-chip">delegate · background agent</span>
         <span class="bean-chip">project · {item.proposal.projectPath}</span>
         {item.proposal.skillName ? <span class="bean-chip">skill · {item.proposal.skillName}</span> : null}
+        {pending && models.length > 0 ? (
+          <ChipMenu chipLabel={<>{modelLabel}</>}>
+            {(close) => (
+              <div class="bean-chip-menu-list">
+                {models.map((m) => {
+                  const available = m.availableOn.length > 0;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      disabled={!available}
+                      class={`bean-chip-menu-row bean-chip-menu-row--model${model === m.id ? " bean-chip-menu-row--on" : ""}${available ? "" : " bean-chip-menu-row--dimmed"}`}
+                      onClick={() => { if (available) { setModelChoice(m.id); close(); } }}
+                    >
+                      <span class="bean-chip-menu-row-title">{model === m.id ? "✓ " : ""}{m.label}</span>
+                      <span class="bean-chip-menu-caption">
+                        {Object.entries(m.aliases).map(([cli, alias]) => `${alias} · ${cli}`).join("  /  ") || "no CLI support"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </ChipMenu>
+        ) : model ? (
+          <span class="bean-chip">{modelLabel}</span>
+        ) : null}
       </div>
       {pending ? (
         <textarea
@@ -71,7 +109,7 @@ export function DelegateCard({
       ) : null}
       {item.state === "failed" && item.error ? <div class="bean-status bean-status--error">{item.error}</div> : null}
       <div class="bean-card-actions">
-        <button type="button" class="bean-btn" disabled={!pending} onClick={() => onConfirm(prompt)}>
+        <button type="button" class="bean-btn" disabled={!pending} onClick={() => onConfirm(prompt, model)}>
           {running || starting ? `${STATE_LABEL[item.state]} ${mmss}` : STATE_LABEL[item.state]}
         </button>
         {pending ? <button type="button" class="bean-btn bean-btn--ghost" onClick={onDismiss}>Dismiss</button> : null}

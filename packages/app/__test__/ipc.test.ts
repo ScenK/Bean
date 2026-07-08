@@ -5,10 +5,11 @@ import {
   buildDeleteSkillHandler,
   buildPersonaHandlers, buildLaunchHandler, buildConfigHandlers, buildPlanStore, buildMemoryHandlers,
   buildDroppedUrlStore, buildChatPromptStore, buildNotesHandlers,
+  buildModelsHandler, buildModelMemoryHandlers,
 } from "../src/ipc.js";
 import type { ConfigView, ConfigUpdate } from "../src/channels.js";
 import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate } from "@bean/core";
-import type { LaunchSpawnFn } from "@bean/core";
+import type { LaunchSpawnFn, UrlKind } from "@bean/core";
 import { EventEmitter } from "node:events";
 
 test("route handler wires core pieces together", async () => {
@@ -390,4 +391,79 @@ test("chat-prompt store lets a late-mounting chat window pull the pending prompt
   expect(store.get()).toEqual({ prompt: "## Skill\nsummarize…", label: "summarize" });
   // Consumed once so a reopened chat can't replay a stale run.
   expect(store.get()).toBeUndefined();
+});
+
+test("models handler returns the canonical list annotated for the detected CLIs", () => {
+  const handler = buildModelsHandler({ getAvailableClis: () => ["claude"] });
+  const models = handler();
+  expect(models.find((m) => m.id === "sonnet-4-5")?.availableOn).toEqual(["claude"]);
+  expect(models.find((m) => m.id === "gpt-5-mini")?.availableOn).toEqual([]);
+});
+
+test("model memory handlers get/set through the injected store fns against the configured file", async () => {
+  const store: Record<string, string> = {};
+  const handlers = buildModelMemoryHandlers({
+    loadModelMemory: async (file) => { expect(file).toBe("/b/model-memory.json"); return { ...store }; },
+    saveModelMemory: async (file, next) => { expect(file).toBe("/b/model-memory.json"); Object.assign(store, next); },
+    modelMemoryFile: "/b/model-memory.json",
+  });
+  expect(await handlers.get("summarize")).toBeUndefined();
+  await handlers.set("summarize", "sonnet-4-5");
+  expect(await handlers.get("summarize")).toBe("sonnet-4-5");
+});
+
+test("launch handler with a real projectPath fires synchronously (no scratch-workspace detour)", () => {
+  const child = fakeChild();
+  const spawnLaunch = vi.fn<LaunchSpawnFn>(() => child as never);
+  const handler = buildLaunchHandler({ spawnLaunch });
+
+  handler({ mode: "opencode", projectPath: "/dev/acme", prompt: "go" });
+
+  // Synchronous: no awaited microtask needed before the spawn happens.
+  expect(spawnLaunch).toHaveBeenCalledWith("open", expect.anything());
+});
+
+test("launch handler with no project and no sourceUrl resolves via a bare scratch dir before launching", async () => {
+  const child = fakeChild();
+  const spawnLaunch = vi.fn<LaunchSpawnFn>(() => child as never);
+  const ensureDir = vi.fn(async () => {});
+  const handler = buildLaunchHandler({ spawnLaunch, beanDirPath: "/b", ensureDir });
+
+  handler({ mode: "opencode", projectPath: "", prompt: "go" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(ensureDir).toHaveBeenCalledWith("/b/workspace");
+  // launchInTerminal writes a real .command script and opens it via `open` — same shape
+  // launcher.test.ts already covers; here we're only proving the async resolution ran first.
+  expect(spawnLaunch).toHaveBeenCalledWith("open", [expect.stringMatching(/bean-run-.*\.command$/)]);
+});
+
+test("launch handler with no project and a sourceUrl clones/fetches into a scratch workspace before launching", async () => {
+  const child = fakeChild();
+  const spawnLaunch = vi.fn<LaunchSpawnFn>(() => child as never);
+  const sniffUrl = async (): Promise<UrlKind> => "repo";
+  const prepareScratchWorkspace = vi.fn(async (url: string) => `/b/workspace/${url.split("/").pop()}`);
+  const handler = buildLaunchHandler({ spawnLaunch, beanDirPath: "/b", sniffUrl, prepareScratchWorkspace });
+
+  handler({ mode: "opencode", projectPath: "", prompt: "go", sourceUrl: "https://github.com/etcd-io/etcd" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(prepareScratchWorkspace).toHaveBeenCalledWith("https://github.com/etcd-io/etcd", "repo", "/b");
+  expect(spawnLaunch).toHaveBeenCalledWith("open", [expect.stringMatching(/bean-run-.*\.command$/)]);
+});
+
+test("launch handler reports an error when the sourceUrl can't be sniffed at all", async () => {
+  const spawnLaunch = vi.fn<LaunchSpawnFn>();
+  const onLaunchError = vi.fn();
+  const sniffUrl = async (): Promise<UrlKind> => "unknown";
+  const handler = buildLaunchHandler({ spawnLaunch, onLaunchError, beanDirPath: "/b", sniffUrl });
+
+  handler({ mode: "opencode", projectPath: "", prompt: "go", sourceUrl: "https://unreachable.example" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(spawnLaunch).not.toHaveBeenCalled();
+  expect(onLaunchError).toHaveBeenCalledWith(
+    expect.objectContaining({ sourceUrl: "https://unreachable.example" }),
+    expect.objectContaining({ message: expect.stringContaining("unreachable.example") }),
+  );
 });

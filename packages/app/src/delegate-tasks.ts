@@ -12,6 +12,7 @@ export type DelegateEvent =
 export interface DelegateStartRequest {
   projectPath: string;
   prompt: string;
+  model?: string; // canonical model id (models.ts)
 }
 
 export interface DelegateTasksDeps {
@@ -57,7 +58,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
         return taskId;
       }
       const handle = run(
-        { cli, projectPath: req.projectPath, prompt: req.prompt },
+        { cli, projectPath: req.projectPath, prompt: req.prompt, model: req.model },
         {
           onOutput: (line) => emit({ taskId, type: "output", line }),
           onDone: (result) => emit({ taskId, type: "done", result }),

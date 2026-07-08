@@ -22,6 +22,7 @@ export function personaFile(dir: string): string { return join(dir, "persona.jso
 export function memoryFile(dir: string): string { return join(dir, "memory.json"); }
 export function remindersFile(dir: string): string { return join(dir, "reminders.json"); }
 export function notesDir(dir: string): string { return join(dir, "notes"); }
+export function modelMemoryFile(dir: string): string { return join(dir, "model-memory.json"); }
 
 export async function loadConfig(file: string, beanDirPath: string): Promise<BeanConfig> {
   let raw: string;

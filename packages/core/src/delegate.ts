@@ -1,15 +1,18 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import type { CliName } from "./launcher.js";
+import { resolveModelAlias } from "./models.js";
 
 export interface DelegateRequest {
   cli: CliName;
   projectPath: string;
   prompt: string;
+  model?: string; // canonical model id (models.ts); flag omitted if the model has no alias on this CLI
 }
 
 // Headless one-shot delegation, unlike launcher.ts's interactive TUI launches.
 export function delegateCommand(req: DelegateRequest): { command: string; args: string[] } {
+  const alias = req.model ? resolveModelAlias(req.model, req.cli) : undefined;
   if (req.cli === "claude") {
     return {
       command: "claude",
@@ -18,10 +21,11 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
         "--output-format", "stream-json",
         "--verbose",
         "--allowedTools", "Bash,Edit,Write,Read,Glob,Grep",
+        ...(alias ? ["--model", alias] : []),
       ],
     };
   }
-  return { command: "opencode", args: ["run", "--auto", req.prompt] };
+  return { command: "opencode", args: ["run", "--auto", ...(alias ? ["--model", alias] : []), req.prompt] };
 }
 
 export function claudeTailLine(event: unknown): string | undefined {

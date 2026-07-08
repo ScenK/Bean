@@ -97,16 +97,21 @@ function proposeRunTool(skills: Skill[], projects: Project[]): ToolSpec {
   return {
     name: "propose_run",
     description:
-      "Propose running one skill on one project. Use exactly one of the allowed skill " +
-      "and project values (a project value is that project's path).",
+      "Propose running one skill, optionally on one project. Use exactly one of the allowed " +
+      "skill and project values (a project value is that project's path); omit project when the " +
+      "user wants to run without one (a scratch workspace, e.g. for a URL-only task).",
     parameters: {
       type: "object",
       properties: {
         skill: { type: "string", enum: skills.map((s) => s.name), description: "the skill to run" },
-        project: { type: "string", enum: projects.map((p) => p.path), description: "the project path to run in" },
+        project: {
+          type: "string",
+          enum: projects.map((p) => p.path),
+          description: "the project path to run in; omit to run without a project",
+        },
         instruction: { type: "string", description: "the concrete task instruction" },
       },
-      required: ["skill", "project", "instruction"],
+      required: ["skill", "instruction"],
     },
   };
 }
@@ -190,10 +195,10 @@ export async function converse(
     { role: "user", content: latestUserText },
   ];
 
-  // No skills or projects means propose_run could never validly fire (and an empty
-  // enum is an invalid tool schema), so offer no propose_run tool.
+  // No skills means propose_run could never validly fire; project is optional (no-project /
+  // scratch workspace runs) so an empty projects list no longer excludes the tool.
   const tools = [
-    ...(skills.length > 0 && projects.length > 0 ? [proposeRunTool(skills, projects)] : []),
+    ...(skills.length > 0 ? [proposeRunTool(skills, projects)] : []),
     ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects)] : []),
     proposeNoteTool(projects, linkedNote),
     ...actions.map((a) => a.spec),
@@ -219,15 +224,17 @@ export async function converse(
     if (call) {
       const args = (call.args ?? {}) as { skill?: unknown; project?: unknown; instruction?: unknown };
       const skill = skills.find((s) => s.name === args.skill);
-      const project = projects.find((p) => p.path === args.project);
-      if (!skill || !project) return { reply: content, model: deps.model };
+      // args.project absent = a deliberate no-project run; present-but-unknown = the model
+      // named something outside the enum, which we still treat as invalid.
+      const project = args.project === undefined ? undefined : projects.find((p) => p.path === args.project);
+      if (!skill || (args.project !== undefined && !project)) return { reply: content, model: deps.model };
       const instruction = typeof args.instruction === "string" ? args.instruction : latestUserText;
       return {
         reply: content,
         model: deps.model,
         proposedRun: {
           skillName: skill.name,
-          projectPath: project.path,
+          projectPath: project?.path,
           composedPrompt: composePrompt(skill, instruction, droppedUrl),
           confidence: 1,
           target: skill.target,

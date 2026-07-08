@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { resolveModelAlias } from "./models.js";
 
 export type LaunchMode = "opencode" | "claude" | "open";
 export type CliName = "opencode" | "claude";
@@ -29,6 +30,16 @@ export function detectClis(
   return (["opencode", "claude"] as const).filter(onPath);
 }
 
+/** Same PATH-scan approach as detectClis, for the one `git` binary the 2a "no project" URL
+ * flow needs (clone detection) — kept separate since git isn't one of Bean's run CLIs. */
+export function detectGit(
+  pathEnv: string = process.env.PATH ?? "",
+  isExecutable: (p: string) => boolean = defaultIsExecutable,
+): boolean {
+  const dirs = pathEnv.split(delimiter).filter(Boolean);
+  return dirs.some((d) => isExecutable(join(d, "git")));
+}
+
 export type SpawnSyncFn = (command: string, args: string[]) => { stdout?: string };
 const defaultSpawnSync: SpawnSyncFn = (command, args) => spawnSync(command, args, { encoding: "utf8", timeout: 3000 });
 
@@ -49,8 +60,14 @@ export function loginShellPath(
 
 export interface LaunchRequest {
   mode: LaunchMode;
+  // "" = no project picked (2a) — the IPC launch handler resolves this to a real scratch-
+  // workspace path (see scratch-workspace.ts) before launchCommand ever sees it.
   projectPath: string;
   prompt?: string; // required for "opencode"/"claude", ignored for "open"
+  model?: string; // canonical model id (models.ts); ignored for "open" or a model with no alias on this CLI
+  // Optional URL seed for a "" (no-project) run — sniffed (url-sniff.ts) into a shallow clone
+  // or a fetched-page scratch dir. Meaningless when projectPath is already a real path.
+  sourceUrl?: string;
 }
 
 export function launchCommand(req: LaunchRequest, editorApp?: string): { command: string; args: string[] } {
@@ -58,12 +75,19 @@ export function launchCommand(req: LaunchRequest, editorApp?: string): { command
     // Interactive session with an initial prompt for both — not `opencode run` / `claude -p`,
     // which reply once and exit. This drops the user into the normal TUI/REPL with the message
     // pre-sent, so they can keep working after it replies.
-    case "opencode":
+    case "opencode": {
+      const alias = req.model ? resolveModelAlias(req.model, "opencode") : undefined;
       // --prompt=… as one token: a prompt starting with "-" (e.g. leftover frontmatter "---")
       // would otherwise be eaten by opencode's flag parser, launching the TUI with no prompt.
-      return { command: "opencode", args: [req.projectPath, `--prompt=${req.prompt ?? ""}`] };
-    case "claude":
-      return { command: "claude", args: [req.prompt ?? ""] };
+      return {
+        command: "opencode",
+        args: [req.projectPath, `--prompt=${req.prompt ?? ""}`, ...(alias ? ["--model", alias] : [])],
+      };
+    }
+    case "claude": {
+      const alias = req.model ? resolveModelAlias(req.model, "claude") : undefined;
+      return { command: "claude", args: [...(alias ? ["--model", alias] : []), req.prompt ?? ""] };
+    }
     case "open":
       // editorApp is the user-configured editor .app (Settings); empty = not configured yet,
       // caught by launchInTerminal before ever spawning. `.app` bundles aren't executables

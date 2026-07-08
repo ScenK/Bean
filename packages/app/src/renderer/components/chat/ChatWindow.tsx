@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
 import { newId, type ChatItem } from "../../shared/chat-types.js";
-import type { ChatTurn, LinkedNote, MemoryCandidate, Memory, ProposedDelegate, ProposedNote, RouteSuggestion } from "@bean/core";
+import type { PickableModel } from "../../shared/ProposalCard.js";
+import type {
+  ChatTurn, CliName, LinkedNote, MemoryCandidate, Memory, Project, ProposedDelegate, ProposedNote, RouteSuggestion,
+} from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
 
 // Extraction is a real LLM call — a reasoning model (e.g. gpt-5-mini) routinely takes ~5s and
@@ -88,6 +91,12 @@ export function ChatWindow() {
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
   const [closeFlow, setCloseFlow] = useState<CloseFlow | null>(null);
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
+  // Run-choice data for ProposalCard/DelegateCard's model+project+CLI pickers — fetched once,
+  // same as PlanWindow's equivalent state.
+  const [clis, setClis] = useState<CliName[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [runModels, setRunModels] = useState<PickableModel[]>([]);
+  const [lastUsedModels, setLastUsedModels] = useState<Record<string, string>>({});
   const itemsRef = useRef<ChatItem[]>([]);
   itemsRef.current = items;
   const busyRef = useRef(false);
@@ -114,6 +123,9 @@ export function ChatWindow() {
     window.bean.getModel().then(setModel);
     window.bean.getTheme().then(setTheme);
     window.bean.onThemeChanged(setTheme);
+    window.bean.availableClis().then(setClis);
+    window.bean.listProjects().then(setProjects);
+    window.bean.availableModels().then(setRunModels);
     // Pull any URL dropped before this window's renderer finished mounting — the push below
     // (onComponentDroppedUrl) can arrive first and gets silently dropped, same race
     // getPendingPlan fixes for the Plan window.
@@ -186,7 +198,13 @@ export function ChatWindow() {
       setItems((prev) => {
         const next = prev.filter((it) => it.id !== workingId);
         if (res.reply.trim()) next.push({ kind: "reply", id: newId(), text: res.reply });
-        if (res.proposedRun) next.push({ kind: "proposal", id: newId(), run: res.proposedRun, state: "pending" });
+        if (res.proposedRun) {
+          next.push({ kind: "proposal", id: newId(), run: res.proposedRun, state: "pending" });
+          const skillName = res.proposedRun.skillName;
+          void window.bean.getModelMemory(skillName).then((modelId) => {
+            if (modelId) setLastUsedModels((prev) => ({ ...prev, [skillName]: modelId }));
+          });
+        }
         if (res.proposedNote) next.push({ kind: "note", id: newId(), note: res.proposedNote, state: "pending" });
         if (res.proposedDelegate) next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
         return next;
@@ -204,26 +222,38 @@ export function ChatWindow() {
   };
   sendRef.current = sendMessage;
 
-  const confirmProposal = (id: string, editedPrompt: string, run: RouteSuggestion): void => {
+  const confirmProposal = (
+    id: string,
+    editedPrompt: string,
+    run: RouteSuggestion,
+    choice: { cli: CliName; projectPath?: string; sourceUrl?: string; model?: string },
+  ): void => {
     const inChat = run.target === "chat";
     setItems((prev) => [
       ...prev.map((it) => (it.id === id && it.kind === "proposal" ? { ...it, state: "confirmed" as const } : it)),
       { kind: "status", id: newId(), text: inChat ? "Running here…" : "Handed off to Terminal.", tone: "done" },
     ]);
+    if (choice.model) void window.bean.setModelMemory(run.skillName, choice.model);
     if (inChat) {
       void sendMessage(editedPrompt, `▶ ${run.skillName}`);
       return;
     }
-    window.bean.launch({ mode: "opencode", projectPath: run.projectPath, prompt: editedPrompt });
+    window.bean.launch({
+      mode: choice.cli,
+      projectPath: choice.projectPath ?? "",
+      prompt: editedPrompt,
+      model: choice.model,
+      sourceUrl: choice.sourceUrl,
+    });
   };
 
   const cancelProposal = (id: string): void => {
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "proposal" ? { ...it, state: "cancelled" } : it)));
   };
 
-  const startDelegate = async (id: string, projectPath: string, prompt: string): Promise<void> => {
+  const startDelegate = async (id: string, projectPath: string, prompt: string, model?: string): Promise<void> => {
     if (pendingDelegateStartsRef.current.has(id)) return;
-    const start = window.bean.delegateStart({ projectPath, prompt });
+    const start = window.bean.delegateStart({ projectPath, prompt, model });
     pendingDelegateStartsRef.current.set(id, start);
     setItems((prev) => markDelegateStarting(prev, id));
     try {
@@ -239,12 +269,12 @@ export function ChatWindow() {
     }
   };
 
-  const confirmDelegate = async (id: string, editedPrompt: string): Promise<void> => {
+  const confirmDelegate = async (id: string, editedPrompt: string, model?: string): Promise<void> => {
     const item = itemsRef.current.find(
       (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
     );
     if (!item || (item.state !== "pending" && item.state !== "starting")) return;
-    return startDelegate(id, item.proposal.projectPath, editedPrompt);
+    return startDelegate(id, item.proposal.projectPath, editedPrompt, model);
   };
 
   const dismissDelegate = (id: string): void => {
@@ -424,12 +454,16 @@ export function ChatWindow() {
         status={status}
         prefillUrl={droppedUrl}
         linkedNote={linkedNote}
+        clis={clis}
+        projects={projects}
+        runModels={runModels}
+        lastUsedModels={lastUsedModels}
         onSend={sendMessage}
         onConfirm={confirmProposal}
         onCancel={cancelProposal}
         onNoteSave={(id, edited, asNew) => void saveNote(id, edited, asNew)}
         onNoteDismiss={dismissNote}
-        onDelegateConfirm={(id, edited) => void confirmDelegate(id, edited)}
+        onDelegateConfirm={(id, edited, model) => void confirmDelegate(id, edited, model)}
         onDelegateDismiss={dismissDelegate}
         onDelegateCancelTask={cancelDelegateTask}
         onSaveToNotes={saveToNotes}

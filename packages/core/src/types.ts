@@ -32,7 +32,14 @@ export interface RouteInput {
 
 export interface RouteSuggestion {
   skillName: string;
-  projectPath: string;
+  /** Absent = "no project" — the run works in a scratch workspace instead of a picked
+   * project (2a). Resolved to a real path (scratch clone/fetch of `sourceUrl`, or an empty
+   * scratch dir) just before launch — see prepareScratchWorkspace in scratch-workspace.ts. */
+  projectPath?: string;
+  /** Optional URL seed for a "no project" run — a git repo gets a shallow clone, a page
+   * gets fetched as content (sniffUrl in url-sniff.ts decides which). Distinct from
+   * RouteInput.droppedUrl, which seeds the *prompt text*, not the run's working directory. */
+  sourceUrl?: string;
   composedPrompt: string;
   confidence: number; // 0..1
   /** Where a confirmed run executes: "chat" submits the prompt into Bean's chat;

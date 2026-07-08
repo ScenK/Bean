@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { detectClis, launchCommand, launchInTerminal, loginShellPath } from "../src/launcher.js";
+import { detectClis, detectGit, launchCommand, launchInTerminal, loginShellPath } from "../src/launcher.js";
 import type { LaunchRequest, LaunchSpawnFn, SpawnSyncFn } from "../src/launcher.js";
 
 test("launchCommand builds the opencode TUI command with a pre-sent prompt", () => {
@@ -16,6 +16,21 @@ test("a prompt starting with '-' stays glued to --prompt instead of parsing as a
 test("launchCommand builds the claude interactive command with a pre-sent prompt", () => {
   const req: LaunchRequest = { mode: "claude", projectPath: "/dev/acme", prompt: "do it" };
   expect(launchCommand(req)).toEqual({ command: "claude", args: ["do it"] });
+});
+
+test("launchCommand appends --model when the chosen model has an alias for opencode", () => {
+  const req: LaunchRequest = { mode: "opencode", projectPath: "/p", prompt: "go", model: "sonnet-4-5" };
+  expect(launchCommand(req).args).toEqual(["/p", "--prompt=go", "--model", "claude-sonnet-4-5"]);
+});
+
+test("launchCommand appends --model when the chosen model has an alias for claude", () => {
+  const req: LaunchRequest = { mode: "claude", projectPath: "/p", prompt: "go", model: "sonnet-4-5" };
+  expect(launchCommand(req).args).toEqual(["--model", "sonnet-4-5", "go"]);
+});
+
+test("launchCommand omits --model when the chosen model has no alias for this CLI", () => {
+  const req: LaunchRequest = { mode: "claude", projectPath: "/p", prompt: "go", model: "gpt-5-mini" };
+  expect(launchCommand(req).args).toEqual(["go"]);
 });
 
 test("launchCommand builds the open command via `open -a` with the configured editor, no prompt needed", () => {
@@ -35,6 +50,13 @@ test("detectClis reports which CLIs exist on PATH, in fixed opencode-first order
   expect(detectClis(path, (p) => p === "/opt/homebrew/bin/opencode")).toEqual(["opencode"]);
   expect(detectClis(path, () => false)).toEqual([]);
   expect(detectClis("", () => true)).toEqual([]);
+});
+
+test("detectGit reports whether git is on PATH", () => {
+  const path = "/usr/local/bin:/opt/homebrew/bin";
+  expect(detectGit(path, () => true)).toBe(true);
+  expect(detectGit(path, () => false)).toBe(false);
+  expect(detectGit(path, (p) => p.endsWith("/git"))).toBe(true);
 });
 
 test("loginShellPath runs the shell as an interactive login shell and returns its PATH", () => {
