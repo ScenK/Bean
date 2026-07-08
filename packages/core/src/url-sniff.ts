@@ -39,6 +39,9 @@ function isPrivateIpv4([a, b]: number[]): boolean {
 function isPrivateIpv6(host: string): boolean {
   if (host === "::1" || host === "::") return true; // loopback / unspecified
   if (host.startsWith("fe80")) return true; // link-local
+  // IPv4-mapped (::ffff:a.b.c.d; Node normalizes to ::ffff:7f00:1 etc.) — reject the whole
+  // mapped range so loopback/private IPv4 can't sneak in as IPv6 (e.g. ::ffff:127.0.0.1).
+  if (host.startsWith("::ffff:")) return true;
   return /^f[cd][0-9a-f]{2}:/.test(host); // fc00::/7 unique-local
 }
 
