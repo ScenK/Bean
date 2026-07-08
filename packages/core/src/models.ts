@@ -31,3 +31,21 @@ export function availableModels(clis: CliName[]): AvailableModel[] {
     availableOn: clis.filter((cli) => m.aliases[cli] !== undefined),
   }));
 }
+
+/** The model the proposal will actually launch with, given an explicit user pick, the
+ * last-used model, and the current CLI. Keeps the picked/remembered model only while the
+ * current CLI supports it — otherwise falls back to a CLI-supported model, so switching CLI
+ * can never launch a model the CLI silently ignores (would drop --model and run its default). */
+export function pickModel(
+  models: AvailableModel[],
+  cli: CliName,
+  choice?: string,
+  lastUsed?: string,
+): string | undefined {
+  const supportsCli = (id: string | undefined): boolean =>
+    id !== undefined && models.some((m) => m.id === id && m.aliases[cli] !== undefined);
+  const remembered = lastUsed !== undefined && models.some((m) => m.id === lastUsed) ? lastUsed : undefined;
+  const preferred = choice ?? remembered;
+  if (supportsCli(preferred)) return preferred;
+  return models.find((m) => m.aliases[cli] !== undefined)?.id ?? models[0]?.id;
+}

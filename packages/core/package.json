@@ -17,6 +17,10 @@
       "types": "./dist/prompt.d.ts",
       "default": "./dist/prompt.js"
     },
+    "./models": {
+      "types": "./dist/models.d.ts",
+      "default": "./dist/models.js"
+    },
     "./frontmatter": {
       "types": "./dist/frontmatter.d.ts",
       "default": "./dist/frontmatter.js"

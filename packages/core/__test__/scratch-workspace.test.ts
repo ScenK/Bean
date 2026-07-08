@@ -46,3 +46,26 @@ test("a failed clone rejects", async () => {
     "git clone failed",
   );
 });
+
+test("a repo already cloned into the scratch dir is reused, not re-cloned", async () => {
+  const spawnFn = vi.fn<ScratchSpawnFn>(async () => {});
+  const pathExists = async (): Promise<boolean> => true;
+  const dest = await prepareScratchWorkspace(
+    "https://github.com/etcd-io/etcd", "repo", dir, spawnFn, vi.fn(), pathExists,
+  );
+  expect(dest).toBe(join(scratchDir(dir), "github.com-etcd-io-etcd"));
+  expect(spawnFn).not.toHaveBeenCalled();
+});
+
+test("an unsafe URL is rejected before any git/fetch IO", async () => {
+  const spawnFn = vi.fn<ScratchSpawnFn>();
+  const fetchText = vi.fn<FetchTextFn>();
+  await expect(
+    prepareScratchWorkspace("file:///etc/hosts", "page", dir, spawnFn, fetchText),
+  ).rejects.toThrow(/unsafe URL/);
+  await expect(
+    prepareScratchWorkspace("http://127.0.0.1:3000/", "repo", dir, spawnFn, fetchText),
+  ).rejects.toThrow(/unsafe URL/);
+  expect(spawnFn).not.toHaveBeenCalled();
+  expect(fetchText).not.toHaveBeenCalled();
+});

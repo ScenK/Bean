@@ -1,5 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import type { AvailableModel, CliName, Project, ProposedRun, UrlKind } from "@bean/core";
+import { pickModel } from "@bean/core/models";
 import { ChipMenu } from "./ChipMenu.js";
 
 export type PickableModel = AvailableModel;
@@ -73,11 +74,11 @@ export function ProposalCard({
   const done = state !== "pending";
   const isChat = run.target === "chat";
   const models = modelOptions ?? [];
-  const defaultModel =
-    (lastUsedModel && models.some((m) => m.id === lastUsedModel) ? lastUsedModel : undefined) ??
-    models.find((m) => m.availableOn.includes(cli))?.id ??
-    models[0]?.id;
-  const model = modelChoice ?? defaultModel;
+  // Effective model, not the raw pick: if the user switches CLI to one that can't run the
+  // picked/remembered model, pickModel falls back to a CLI-supported model so the chip label,
+  // the menu checkmark, and the launched --model all stay consistent (an unsupported model
+  // would otherwise drop --model and silently launch the CLI's default).
+  const model = pickModel(models, cli, modelChoice, lastUsedModel);
   const hasModelMenu = !isChat && models.length > 0;
   const showCliOnlyPicker = !isChat && !hasModelMenu && (cliOptions?.length ?? 0) > 1;
 
