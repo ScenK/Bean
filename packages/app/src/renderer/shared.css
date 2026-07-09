@@ -750,7 +750,11 @@ button, input, textarea, select, a {
 }
 .bean-chip-menu-row:hover:not(:disabled) { background: var(--bean-surface-2); }
 .bean-chip-menu-row--on { background: var(--bean-accent); color: var(--bean-accent-ink); }
-.bean-chip-menu-row--on:hover { background: var(--bean-accent); }
+/* :not(:disabled) on the base hover rule above raises its specificity past a plain
+ * ".bean-chip-menu-row--on:hover" — matching it here too is what makes this win instead of
+ * silently losing the background fight (was: hovering the selected row kept its white
+ * accent-ink text but background fell back to the light hover color — unreadable). */
+.bean-chip-menu-row--on:hover:not(:disabled) { background: var(--bean-accent); color: var(--bean-accent-ink); }
 .bean-chip-menu-row--dimmed { opacity: 0.55; cursor: default; }
 .bean-chip-menu-row--no-project { color: var(--bean-text-dim); }
 .bean-chip-menu-row-title { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
