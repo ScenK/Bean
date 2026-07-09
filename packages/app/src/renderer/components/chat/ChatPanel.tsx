@@ -174,11 +174,17 @@ export function ChatPanel({
             );
           }
           if (it.kind === "delegate") {
+            // Same "assigned skills, else every project" fallback used for the sibling
+            // ProposalCard below — resolves the project chip to a name instead of a raw path.
+            const assignedDelegate = it.proposal.skillName
+              ? projects.filter((p) => p.skills?.includes(it.proposal.skillName!))
+              : [];
             return (
               <DelegateCard
                 key={it.id}
                 item={it}
                 modelOptions={runModels}
+                projectOptions={assignedDelegate.length > 0 ? assignedDelegate : projects}
                 onConfirm={(edited, model) => onDelegateConfirm(it.id, edited, model)}
                 onDismiss={() => onDelegateDismiss(it.id)}
                 onCancelTask={() => onDelegateCancelTask(it.id)}

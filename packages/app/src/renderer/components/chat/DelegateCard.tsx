@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { ChatItem } from "../../shared/chat-types.js";
 import type { PickableModel } from "../../shared/ProposalCard.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
+import type { Project } from "@bean/core";
 
 type DelegateItem = Extract<ChatItem, { kind: "delegate" }>;
 
@@ -21,6 +22,7 @@ export function DelegateCard({
   onDismiss,
   onCancelTask,
   modelOptions,
+  projectOptions,
 }: {
   item: DelegateItem;
   onConfirm: (editedPrompt: string, model?: string) => void;
@@ -30,6 +32,10 @@ export function DelegateCard({
    * CLI is resolved server-side (delegate-tasks.ts), so this dims a model only when NO
    * detected CLI supports it at all, rather than against one picked CLI. */
   modelOptions?: PickableModel[];
+  /** Projects this delegate's skill can run in — same "assigned, else every project" list
+   * ChatPanel already builds for the sibling ProposalCard — used to show the project's name
+   * instead of its full filesystem path (matching ProposalCard's chip). */
+  projectOptions?: Project[];
 }) {
   const [prompt, setPrompt] = useState(item.proposal.composedPrompt);
   const [showDetail, setShowDetail] = useState(false);
@@ -38,6 +44,8 @@ export function DelegateCard({
   const models = modelOptions ?? [];
   const model = modelChoice ?? models[0]?.id;
   const modelLabel = models.find((m) => m.id === model)?.label ?? model;
+  const projectName =
+    projectOptions?.find((p) => p.path === item.proposal.projectPath)?.name ?? item.proposal.projectPath;
 
   useEffect(() => {
     if (item.state !== "running" && item.state !== "starting") return;
@@ -54,7 +62,7 @@ export function DelegateCard({
     <div class="bean-card">
       <div class="bean-card-chips">
         <span class="bean-chip">delegate · background agent</span>
-        <span class="bean-chip">project · {item.proposal.projectPath}</span>
+        <span class="bean-chip">project · {projectName}</span>
         {item.proposal.skillName ? <span class="bean-chip">skill · {item.proposal.skillName}</span> : null}
         {pending && models.length > 0 ? (
           <ChipMenu chipLabel={<>{modelLabel}</>}>
