@@ -80,43 +80,32 @@ app.whenReady().then(async () => {
     { label: "About", icon: symbol("info.circle"), click: () => openComponent("about") },
     { label: "Exit", icon: symbol("rectangle.portrait.and.arrow.right"), accelerator: "Cmd+Q", click: () => app.quit() },
   ]);
-  const makeTray = (): Tray => {
-    const t = new Tray(trayIcon);
-    if (trayIcon.isEmpty()) t.setTitle("🫘");
-    t.setToolTip("Bean");
-    // A hidden avatar (tucked away by Cmd+W) is re-summoned by the first tray click; when the
-    // bean is already visible, the click pops the menu as usual.
-    t.on("click", () => {
-      if (!avatar.isDestroyed() && !avatar.isVisible()) {
-        avatar.show();
-        avatar.focus();
-        return;
-      }
-      t.popUpContextMenu(trayMenu);
-    });
-    return t;
-  };
-  tray = makeTray();
-  // Menu-bar app: no Dock icon; the tray is the persistent presence. Hidden only AFTER the
-  // Tray exists: switching the activation policy to accessory first (dock.hide) makes macOS
-  // park the status item off-screen instead of placing it, so the bean never shows up.
-  app.dock?.hide();
-  // macOS 26.5 (Tahoe) regression: menu-bar placement happens ~1-2s after Tray creation, and
-  // depending on what the app is doing at that instant (a floating window, an activation-policy
-  // flip) macOS parks the item off-screen instead — getBounds() then reports y below the screen
-  // (e.g. {x:0,y:1150}) rather than the menu bar's y=0. Recreating the Tray reliably gets it
-  // placed on the next attempt, so poll and recreate until it lands (bounded, in case a future
-  // OS quirk makes placement impossible).
-  let trayRetries = 0;
-  const trayPlacement = setInterval(() => {
-    if (!tray || tray.isDestroyed()) { clearInterval(trayPlacement); return; }
-    const b = tray.getBounds();
-    const placed = b.y === 0 && b.height > 0;
-    if (placed || trayRetries >= 5) { clearInterval(trayPlacement); return; }
-    trayRetries++;
-    tray.destroy();
-    tray = makeTray();
-  }, 1500);
+  tray = new Tray(trayIcon);
+  if (trayIcon.isEmpty()) tray.setTitle("🫘");
+  tray.setToolTip("Bean");
+  // A hidden avatar (tucked away by Cmd+W) is re-summoned by the first tray click; when the
+  // bean is already visible, the click pops the menu as usual.
+  tray.on("click", () => {
+    if (!avatar.isDestroyed() && !avatar.isVisible()) {
+      avatar.show();
+      avatar.focus();
+      return;
+    }
+    tray?.popUpContextMenu(trayMenu);
+  });
+  // Menu-bar app: no Dock icon; the tray is the persistent presence. Packaged builds are
+  // already dock-less via LSUIElement (package.json build.mac.extendInfo), so this is only a
+  // dev-run flip — and it stays AFTER Tray creation, and skipped entirely in dev: macOS 26.5
+  // (Tahoe) races async status-item placement and can park the tray icon off-screen when the
+  // app flips its activation policy (or owns floating windows) around Tray creation, see
+  // .memory/safety-tray-tahoe-placement.md. Dev keeps the Dock icon, which doubles as the
+  // re-summon path (the "activate" handler below) when the tray icon loses that race.
+  if (app.isPackaged) app.dock?.hide();
+  // Dock-icon click (dev only; packaged has no Dock icon) surfaces a Cmd+W-hidden bean —
+  // mirrors the tray-click re-summon so a lost tray icon never strands the pet.
+  app.on("activate", () => {
+    if (!avatar.isDestroyed() && !avatar.isVisible()) { avatar.show(); avatar.focus(); }
+  });
 
   let quitting = false;
   app.on("before-quit", () => { quitting = true; });
