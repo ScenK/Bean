@@ -41,11 +41,16 @@ app.whenReady().then(async () => {
   // walk resolves outside the app bundle. electron-builder copies .bean into Resources/builtin
   // instead (see package.json build.extraResources) — use that when packaged.
   const projectDir = app.isPackaged ? join(process.resourcesPath, "builtin") : projectBeanDir();
-  // Menu-bar app: no Dock icon; the tray is the persistent presence.
-  app.dock?.hide();
 
   const avatar = createAvatarWindow();
-  avatar.on("closed", () => { /* keep app */ });
+  // Menu-bar app: Cmd+W (the default app-menu Close role) should tuck the pet away, not destroy
+  // it, so avatar.html stays loaded once and the bean stays re-summonable. Real quits (Cmd+Q /
+  // Exit) set `quitting` first (before-quit, below), so the close proceeds then.
+  avatar.on("close", (e) => {
+    if (quitting) return;
+    e.preventDefault();
+    avatar.hide();
+  });
 
   // A second launch (e.g. double-clicking Bean.app again) just surfaces the bean.
   app.on("second-instance", () => {
@@ -63,9 +68,6 @@ app.whenReady().then(async () => {
     if (existsSync(png)) trayIcon.addRepresentation({ scaleFactor, buffer: readFileSync(png) });
   }
   trayIcon.setTemplateImage(true);
-  tray = new Tray(trayIcon);
-  if (trayIcon.isEmpty()) tray.setTitle("🫘");
-  tray.setToolTip("Bean");
   // Settings/Persona/About/Exit — the avatar's left-click quick actions (Chat/Skills/Projects/
   // Notes, see QUICK_ACTIONS in renderer/avatar.ts) cover the rest. No right-click on the tray.
   // Icons are SF Symbols via createMenuSymbol (macOS-native, no asset files needed); accelerators
@@ -78,7 +80,32 @@ app.whenReady().then(async () => {
     { label: "About", icon: symbol("info.circle"), click: () => openComponent("about") },
     { label: "Exit", icon: symbol("rectangle.portrait.and.arrow.right"), accelerator: "Cmd+Q", click: () => app.quit() },
   ]);
-  tray.on("click", () => tray?.popUpContextMenu(trayMenu));
+  tray = new Tray(trayIcon);
+  if (trayIcon.isEmpty()) tray.setTitle("🫘");
+  tray.setToolTip("Bean");
+  // A hidden avatar (tucked away by Cmd+W) is re-summoned by the first tray click; when the
+  // bean is already visible, the click pops the menu as usual.
+  tray.on("click", () => {
+    if (!avatar.isDestroyed() && !avatar.isVisible()) {
+      avatar.show();
+      avatar.focus();
+      return;
+    }
+    tray?.popUpContextMenu(trayMenu);
+  });
+  // Menu-bar app: no Dock icon; the tray is the persistent presence. Packaged builds are
+  // already dock-less via LSUIElement (package.json build.mac.extendInfo), so this is only a
+  // dev-run flip — and it stays AFTER Tray creation, and skipped entirely in dev: macOS 26.5
+  // (Tahoe) races async status-item placement and can park the tray icon off-screen when the
+  // app flips its activation policy (or owns floating windows) around Tray creation, see
+  // .memory/safety-tray-tahoe-placement.md. Dev keeps the Dock icon, which doubles as the
+  // re-summon path (the "activate" handler below) when the tray icon loses that race.
+  if (app.isPackaged) app.dock?.hide();
+  // Dock-icon click (dev only; packaged has no Dock icon) surfaces a Cmd+W-hidden bean —
+  // mirrors the tray-click re-summon so a lost tray icon never strands the pet.
+  app.on("activate", () => {
+    if (!avatar.isDestroyed() && !avatar.isVisible()) { avatar.show(); avatar.focus(); }
+  });
 
   let quitting = false;
   app.on("before-quit", () => { quitting = true; });
@@ -107,7 +134,10 @@ app.whenReady().then(async () => {
       }
       return;
     }
-    const win = createComponentWindow(kind, avatar.getBounds());
+    // Defense-in-depth: with hide-on-close the avatar isn't destroyed in normal use, but never
+    // call getBounds() on a destroyed window (it throws) — fall back to default placement.
+    const anchor = avatar.isDestroyed() ? undefined : avatar.getBounds();
+    const win = createComponentWindow(kind, anchor);
     trackComponentWindow(componentWindows, kind, win);
     if (kind === "chat") {
       win.on("close", (e) => {
