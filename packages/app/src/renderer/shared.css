@@ -426,6 +426,15 @@ button, input, textarea, select, a {
   color: var(--bean-text-dim);
   padding: 6px 10px;
 }
+.bean-skills-list-label--toggle {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.bean-skills-list-label--toggle:hover { color: var(--bean-text); }
 .bean-skills-row {
   display: flex;
   align-items: center;

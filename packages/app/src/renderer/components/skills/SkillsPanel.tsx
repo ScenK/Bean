@@ -19,6 +19,7 @@ export function SkillsPanel({
   const [draft, setDraft] = useState("");
   const [draftName, setDraftName] = useState("");
   const [saveError, setSaveError] = useState<string | undefined>(undefined);
+  const [showDisabled, setShowDisabled] = useState(false);
 
   const refresh = async (): Promise<void> => {
     const [nextSkills, nextProjects] = await Promise.all([
@@ -40,6 +41,7 @@ export function SkillsPanel({
     return [...matched].sort((a, b) => Number(a.enabled === false) - Number(b.enabled === false));
   }, [skills, query]);
   const firstDisabledName = filteredSkills.find((s) => s.enabled === false)?.name;
+  const disabledCount = filteredSkills.filter((s) => s.enabled === false).length;
   const projectNamesFor = (name: string): string[] =>
     projects.filter((p) => p.skills?.includes(name)).map((p) => p.name);
 
@@ -141,7 +143,10 @@ export function SkillsPanel({
 
   const deleteSkill = async (): Promise<void> => {
     if (!selectedSkill) return;
-    if (!confirm(`Delete skill "${selectedSkill.name}"? This cannot be undone.`)) return;
+    const confirmMsg = selectedSkill.overridesBuiltIn
+      ? `Reset "${selectedSkill.name}" to its built-in version? Your edits will be lost.`
+      : `Delete skill "${selectedSkill.name}"? This cannot be undone.`;
+    if (!confirm(confirmMsg)) return;
     try {
       await window.bean.deleteSkill(selectedSkill.name);
       // Clean up any project↔skill assignments so nothing dangles.
@@ -224,12 +229,24 @@ export function SkillsPanel({
         ) : filteredSkills.length === 0 ? (
           <div class="bean-panel-empty">No skills match "{query}".</div>
         ) : (
-          filteredSkills.map((s) => (
-            <div key={s.name} class="bean-skills-row-group">
-              {s.name === firstDisabledName ? <div class="bean-skills-list-label">Disabled</div> : null}
-              {skillRow(s)}
-            </div>
-          ))
+          filteredSkills.map((s) => {
+            if (s.enabled === false) {
+              if (s.name !== firstDisabledName) return showDisabled ? skillRow(s) : null;
+              return (
+                <div key={s.name} class="bean-skills-row-group">
+                  <button
+                    type="button"
+                    class="bean-skills-list-label bean-skills-list-label--toggle"
+                    onClick={() => setShowDisabled((v) => !v)}
+                  >
+                    {showDisabled ? "▾" : "▸"} Disabled ({disabledCount})
+                  </button>
+                  {showDisabled ? skillRow(s) : null}
+                </div>
+              );
+            }
+            return skillRow(s);
+          })
         )}
         <span class="bean-skills-spacer" />
         <button type="button" class="bean-btn" onClick={startAdd}>+ Add skill</button>
@@ -320,10 +337,10 @@ export function SkillsPanel({
                 type="button"
                 class="bean-skills-delete-link"
                 disabled={selectedSkill.source === "project"}
-                title={selectedSkill.source === "project" ? "Built-in skill — edit it to make your own copy, then you can delete that copy" : undefined}
+                title={selectedSkill.source === "project" ? "Built-in skill — edit it to make your own copy, then you can delete that copy" : selectedSkill.overridesBuiltIn ? "Discard your edits and go back to the built-in version" : undefined}
                 onClick={() => void deleteSkill()}
               >
-                Delete…
+                {selectedSkill.overridesBuiltIn ? "Reset…" : "Delete…"}
               </button>
             </div>
           </>

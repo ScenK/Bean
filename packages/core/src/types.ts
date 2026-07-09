@@ -10,6 +10,10 @@ export interface Skill {
   /** Which layer's copy is currently in effect — set only by loadLayeredSkills(). Absent when
    * loaded via plain loadSkills() from a single dir. */
   source?: "project" | "user";
+  /** True when this "user" skill has a same-named built-in counterpart it's shadowing — set
+   * only by loadLayeredSkills(). Lets the UI offer "Reset" (delete the override, fall back to
+   * the built-in) instead of a plain "Delete". */
+  overridesBuiltIn?: boolean;
   /** `target: chat` frontmatter runs the skill in Bean's own chat instead of the terminal.
    * Absent = terminal. */
   target?: "chat" | "terminal";

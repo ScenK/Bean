@@ -141,6 +141,7 @@ test("loadLayeredSkills: user overrides project by name", async () => {
   expect(skills).toHaveLength(1);
   expect(skills[0]!.body).toBe("NEW");
   expect(skills[0]!.source).toBe("user");
+  expect(skills[0]!.overridesBuiltIn).toBe(true);
 });
 
 test("loadLayeredSkills: non-colliding names from both dirs are unioned", async () => {
@@ -150,6 +151,7 @@ test("loadLayeredSkills: non-colliding names from both dirs are unioned", async 
   expect(skills.map((s) => s.name)).toEqual(["a", "b"]);
   expect(skills[0]!.source).toBe("project");
   expect(skills[1]!.source).toBe("user");
+  expect(skills[1]!.overridesBuiltIn).toBe(false);
 });
 
 test("loadLayeredSkills: missing project dir behaves like today (user skills only)", async () => {
@@ -158,4 +160,23 @@ test("loadLayeredSkills: missing project dir behaves like today (user skills onl
   expect(skills).toHaveLength(1);
   expect(skills[0]!.name).toBe("b");
   expect(skills[0]!.source).toBe("user");
+});
+
+test("loadLayeredSkills: disabling a built-in skill (no other edits) still counts as built-in, not a user override", async () => {
+  await writeFile(join(projectDir, "a.md"), "---\ndescription: d\n---\nBody");
+  await writeFile(join(userDir, "a.md"), "---\ndescription: d\nenabled: false\n---\nBody");
+  const skills = await loadLayeredSkills(projectDir, userDir);
+  expect(skills).toHaveLength(1);
+  expect(skills[0]!.source).toBe("project");
+  expect(skills[0]!.overridesBuiltIn).toBe(false);
+  expect(skills[0]!.enabled).toBe(false);
+});
+
+test("loadLayeredSkills: disabling a built-in skill with no pre-existing frontmatter still counts as built-in", async () => {
+  await writeFile(join(projectDir, "a.md"), "Body");
+  await writeFile(join(userDir, "a.md"), "---\nenabled: false\n---\nBody");
+  const skills = await loadLayeredSkills(projectDir, userDir);
+  expect(skills[0]!.source).toBe("project");
+  expect(skills[0]!.overridesBuiltIn).toBe(false);
+  expect(skills[0]!.enabled).toBe(false);
 });
