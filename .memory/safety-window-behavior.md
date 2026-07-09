@@ -27,6 +27,15 @@ seems — verify empirically (a code review alone missed this).
 the 4 component windows just clears its entry from `main.ts`'s `componentWindows` map; a later
 `openComponent(kind)` call creates a fresh one. There is intentionally no auto-respawn.
 
+**Cmd+W hides the avatar, it does not destroy it.** The avatar's `close` event is
+intercepted in `main.ts` (`e.preventDefault(); avatar.hide()`) unless `quitting` is set, so
+avatar.html stays loaded for the app's lifetime (see above) and the window keeps its bounds.
+Re-summon a hidden bean by **clicking the tray icon** (`tray.on("click")` shows it when
+hidden, else pops the menu). Don't revert this to a plain destroy: destroying it made
+`openComponent`'s `avatar.getBounds()` throw `Object has been destroyed` when a tray menu item
+(Settings/Persona/About) was clicked afterward, and left no way to get the pet back. A
+belt-and-suspenders `avatar.isDestroyed()` guard also wraps that `getBounds()` call.
+
 **Closing the avatar does not quit the app** (macOS-style); the app only quits on
 `window-all-closed` off-darwin. Intentional.
 

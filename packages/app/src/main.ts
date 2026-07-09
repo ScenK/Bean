@@ -41,11 +41,16 @@ app.whenReady().then(async () => {
   // walk resolves outside the app bundle. electron-builder copies .bean into Resources/builtin
   // instead (see package.json build.extraResources) — use that when packaged.
   const projectDir = app.isPackaged ? join(process.resourcesPath, "builtin") : projectBeanDir();
-  // Menu-bar app: no Dock icon; the tray is the persistent presence.
-  app.dock?.hide();
 
   const avatar = createAvatarWindow();
-  avatar.on("closed", () => { /* keep app */ });
+  // Menu-bar app: Cmd+W (the default app-menu Close role) should tuck the pet away, not destroy
+  // it, so avatar.html stays loaded once and the bean stays re-summonable. Real quits (Cmd+Q /
+  // Exit) set `quitting` first (before-quit, below), so the close proceeds then.
+  avatar.on("close", (e) => {
+    if (quitting) return;
+    e.preventDefault();
+    avatar.hide();
+  });
 
   // A second launch (e.g. double-clicking Bean.app again) just surfaces the bean.
   app.on("second-instance", () => {
@@ -63,9 +68,6 @@ app.whenReady().then(async () => {
     if (existsSync(png)) trayIcon.addRepresentation({ scaleFactor, buffer: readFileSync(png) });
   }
   trayIcon.setTemplateImage(true);
-  tray = new Tray(trayIcon);
-  if (trayIcon.isEmpty()) tray.setTitle("🫘");
-  tray.setToolTip("Bean");
   // Settings/Persona/About/Exit — the avatar's left-click quick actions (Chat/Skills/Projects/
   // Notes, see QUICK_ACTIONS in renderer/avatar.ts) cover the rest. No right-click on the tray.
   // Icons are SF Symbols via createMenuSymbol (macOS-native, no asset files needed); accelerators
@@ -78,7 +80,43 @@ app.whenReady().then(async () => {
     { label: "About", icon: symbol("info.circle"), click: () => openComponent("about") },
     { label: "Exit", icon: symbol("rectangle.portrait.and.arrow.right"), accelerator: "Cmd+Q", click: () => app.quit() },
   ]);
-  tray.on("click", () => tray?.popUpContextMenu(trayMenu));
+  const makeTray = (): Tray => {
+    const t = new Tray(trayIcon);
+    if (trayIcon.isEmpty()) t.setTitle("🫘");
+    t.setToolTip("Bean");
+    // A hidden avatar (tucked away by Cmd+W) is re-summoned by the first tray click; when the
+    // bean is already visible, the click pops the menu as usual.
+    t.on("click", () => {
+      if (!avatar.isDestroyed() && !avatar.isVisible()) {
+        avatar.show();
+        avatar.focus();
+        return;
+      }
+      t.popUpContextMenu(trayMenu);
+    });
+    return t;
+  };
+  tray = makeTray();
+  // Menu-bar app: no Dock icon; the tray is the persistent presence. Hidden only AFTER the
+  // Tray exists: switching the activation policy to accessory first (dock.hide) makes macOS
+  // park the status item off-screen instead of placing it, so the bean never shows up.
+  app.dock?.hide();
+  // macOS 26.5 (Tahoe) regression: menu-bar placement happens ~1-2s after Tray creation, and
+  // depending on what the app is doing at that instant (a floating window, an activation-policy
+  // flip) macOS parks the item off-screen instead — getBounds() then reports y below the screen
+  // (e.g. {x:0,y:1150}) rather than the menu bar's y=0. Recreating the Tray reliably gets it
+  // placed on the next attempt, so poll and recreate until it lands (bounded, in case a future
+  // OS quirk makes placement impossible).
+  let trayRetries = 0;
+  const trayPlacement = setInterval(() => {
+    if (!tray || tray.isDestroyed()) { clearInterval(trayPlacement); return; }
+    const b = tray.getBounds();
+    const placed = b.y === 0 && b.height > 0;
+    if (placed || trayRetries >= 5) { clearInterval(trayPlacement); return; }
+    trayRetries++;
+    tray.destroy();
+    tray = makeTray();
+  }, 1500);
 
   let quitting = false;
   app.on("before-quit", () => { quitting = true; });
@@ -107,7 +145,10 @@ app.whenReady().then(async () => {
       }
       return;
     }
-    const win = createComponentWindow(kind, avatar.getBounds());
+    // Defense-in-depth: with hide-on-close the avatar isn't destroyed in normal use, but never
+    // call getBounds() on a destroyed window (it throws) — fall back to default placement.
+    const anchor = avatar.isDestroyed() ? undefined : avatar.getBounds();
+    const win = createComponentWindow(kind, anchor);
     trackComponentWindow(componentWindows, kind, win);
     if (kind === "chat") {
       win.on("close", (e) => {
