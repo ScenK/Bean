@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, memoryFile, remindersFile,
+  modelMemoryFile,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, saveMemories, extractMemories,
   loadReminders, saveReminders, dueReminders, extractPageText,
@@ -343,6 +344,8 @@ app.whenReady().then(async () => {
       getTerminalApp: () => runtime.getTerminalApp(),
       getEditorApp: () => runtime.getEditorApp(),
       getAvailableClis: () => availableClis,
+      beanDirPath: dir,
+      modelMemoryFile: modelMemoryFile(dir),
       delegateTasks,
       delegateAvailable: () => availableClis.length > 0,
       onLaunchError: (req, err) => {

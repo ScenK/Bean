@@ -1,10 +1,12 @@
 import {
-  route, converse, launchInTerminal,
+  route, converse, launchInTerminal, scratchDir,
+  availableModels, loadModelMemory, saveModelMemory,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
-  type ActionTool, type Note, type NoteDraft,
+  type ActionTool, type Note, type NoteDraft, type AvailableModel,
 } from "@bean/core";
+import { mkdir } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";
 import { BrowserWindow, dialog, screen, shell, type IpcMain } from "electron";
 import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo } from "./channels.js";
@@ -158,12 +160,63 @@ export interface LaunchHandlerDeps {
   getTerminalApp?: () => string;
   getEditorApp?: () => string;
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
+  // Resolve a "" (no-project) run into a real (bare, always-empty) scratch dir before
+  // launchCommand ever sees it. Injectable so tests don't hit the filesystem.
+  beanDirPath?: string;
+  ensureDir?: (dir: string) => Promise<void>;
+}
+
+async function resolveProjectPath(req: LaunchRequest, deps: LaunchHandlerDeps): Promise<string> {
+  if (req.projectPath) return req.projectPath;
+  const dir = scratchDir(deps.beanDirPath ?? "");
+  const ensureDir = deps.ensureDir ?? ((d: string) => mkdir(d, { recursive: true }).then(() => {}));
+  await ensureDir(dir);
+  return dir;
 }
 
 export function buildLaunchHandler(deps: LaunchHandlerDeps) {
   return (req: LaunchRequest): void => {
-    const onError = deps.onLaunchError ? (err: Error) => deps.onLaunchError!(req, err) : undefined;
-    launchInTerminal(req, deps.spawnLaunch, undefined, deps.getTerminalApp?.(), deps.getEditorApp?.(), onError);
+    const onError = deps.onLaunchError ? (err: Error) => deps.onLaunchError!(req, err) : ((err: Error) => { console.error("bean: launch failed", err); });
+    const fire = (resolved: LaunchRequest): void => {
+      launchInTerminal(resolved, deps.spawnLaunch, undefined, deps.getTerminalApp?.(), deps.getEditorApp?.(), onError);
+    };
+    // A real projectPath (or "open" mode, which never uses one) launches synchronously exactly
+    // like before this feature — only a "" (no-project) run needs the async scratch-workspace
+    // detour, so existing callers/tests see no behavior change.
+    if (req.projectPath || req.mode === "open") {
+      fire(req);
+      return;
+    }
+    void resolveProjectPath(req, deps).then(
+      (projectPath) => fire({ ...req, projectPath }),
+      (err: unknown) => onError(err instanceof Error ? err : new Error(String(err))),
+    );
+  };
+}
+
+export interface ModelsHandlerDeps {
+  getAvailableClis: () => CliName[];
+}
+
+export function buildModelsHandler(deps: ModelsHandlerDeps) {
+  return (): AvailableModel[] => availableModels(deps.getAvailableClis());
+}
+
+export interface ModelMemoryHandlerDeps {
+  loadModelMemory: (file: string) => Promise<Record<string, string>>;
+  saveModelMemory: (file: string, memory: Record<string, string>) => Promise<void>;
+  modelMemoryFile: string;
+}
+
+export function buildModelMemoryHandlers(deps: ModelMemoryHandlerDeps) {
+  return {
+    get: async (skillName: string): Promise<string | undefined> =>
+      (await deps.loadModelMemory(deps.modelMemoryFile))[skillName],
+    set: async (skillName: string, modelId: string): Promise<void> => {
+      const memory = await deps.loadModelMemory(deps.modelMemoryFile);
+      memory[skillName] = modelId;
+      await deps.saveModelMemory(deps.modelMemoryFile, memory);
+    },
   };
 }
 
@@ -281,6 +334,8 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps {
   getTerminalApp: () => string;
   getEditorApp: () => string;
   getAvailableClis: () => CliName[];
+  beanDirPath: string;
+  modelMemoryFile: string;
   delegateTasks: {
     start: (req: DelegateStartRequest) => string;
     cancel: (taskId: string) => void;
@@ -353,6 +408,15 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.delegateStart, (_e, req: DelegateStartRequest) => deps.delegateTasks.start(req));
   ipcMain.on(IPC.delegateCancel, (_e, taskId: string) => deps.delegateTasks.cancel(taskId));
   ipcMain.handle(IPC.availableClis, () => deps.getAvailableClis());
+
+  const modelsHandler = buildModelsHandler(deps);
+  ipcMain.handle(IPC.availableModels, () => modelsHandler());
+
+  const modelMemoryHandlers = buildModelMemoryHandlers({
+    loadModelMemory, saveModelMemory, modelMemoryFile: deps.modelMemoryFile,
+  });
+  ipcMain.handle(IPC.getModelMemory, (_e, skillName: string) => modelMemoryHandlers.get(skillName));
+  ipcMain.handle(IPC.setModelMemory, (_e, skillName: string, modelId: string) => modelMemoryHandlers.set(skillName, modelId));
 
   const personaHandlers = buildPersonaHandlers(deps);
   ipcMain.handle(IPC.getPersona, () => personaHandlers.get());

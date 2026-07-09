@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { ProposalCard } from "../../shared/ProposalCard.js";
+import { ProposalCard, type PickableModel } from "../../shared/ProposalCard.js";
 import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { insertDroppedPath, type ChatItem } from "../../shared/chat-types.js";
-import type { LinkedNote, ProposedNote, RouteSuggestion } from "@bean/core";
+import type { CliName, LinkedNote, Project, ProposedNote, RouteSuggestion } from "@bean/core";
 
 export function ChatPanel({
   items,
@@ -13,6 +13,10 @@ export function ChatPanel({
   status,
   prefillUrl,
   linkedNote,
+  clis,
+  projects,
+  runModels,
+  lastUsedModels,
   onSend,
   onConfirm,
   onCancel,
@@ -34,12 +38,22 @@ export function ChatPanel({
   prefillUrl?: string;
   // The note this chat continues from (header chip; ✕ unlinks so saves become new notes).
   linkedNote?: LinkedNote;
+  // Run-choice data for ProposalCard/DelegateCard's project/model/CLI pickers.
+  clis: CliName[];
+  projects: Project[];
+  runModels: PickableModel[];
+  lastUsedModels: Record<string, string>;
   onSend: (text: string) => void;
-  onConfirm: (id: string, editedPrompt: string, run: RouteSuggestion) => void;
+  onConfirm: (
+    id: string,
+    editedPrompt: string,
+    run: RouteSuggestion,
+    choice: { cli: CliName; projectPath?: string; model?: string },
+  ) => void;
   onCancel: (id: string) => void;
   onNoteSave: (id: string, edited: ProposedNote, asNew: boolean) => void;
   onNoteDismiss: (id: string) => void;
-  onDelegateConfirm: (id: string, editedPrompt: string) => void;
+  onDelegateConfirm: (id: string, editedPrompt: string, model?: string) => void;
   onDelegateDismiss: (id: string) => void;
   onDelegateCancelTask: (id: string) => void;
   onSaveToNotes: () => void;
@@ -160,22 +174,35 @@ export function ChatPanel({
             );
           }
           if (it.kind === "delegate") {
+            // Same "assigned skills, else every project" fallback used for the sibling
+            // ProposalCard below — resolves the project chip to a name instead of a raw path.
+            const assignedDelegate = it.proposal.skillName
+              ? projects.filter((p) => p.skills?.includes(it.proposal.skillName!))
+              : [];
             return (
               <DelegateCard
                 key={it.id}
                 item={it}
-                onConfirm={(edited) => onDelegateConfirm(it.id, edited)}
+                modelOptions={runModels}
+                projectOptions={assignedDelegate.length > 0 ? assignedDelegate : projects}
+                onConfirm={(edited, model) => onDelegateConfirm(it.id, edited, model)}
                 onDismiss={() => onDelegateDismiss(it.id)}
                 onCancelTask={() => onDelegateCancelTask(it.id)}
               />
             );
           }
+          // Same "assigned skills, else every project" fallback PlanWindow uses for its picker.
+          const assigned = projects.filter((p) => p.skills?.includes(it.run.skillName));
           return (
             <ProposalCard
               key={it.id}
               run={it.run}
               state={it.state}
-              onConfirm={(edited) => onConfirm(it.id, edited, it.run)}
+              cliOptions={clis}
+              projectOptions={assigned.length > 0 ? assigned : projects}
+              modelOptions={runModels}
+              lastUsedModel={lastUsedModels[it.run.skillName]}
+              onConfirm={(edited, choice) => onConfirm(it.id, edited, it.run, choice)}
               onCancel={() => onCancel(it.id)}
             />
           );

@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo } from "./channels.js";
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
-  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft,
+  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel,
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
 
@@ -14,6 +14,10 @@ contextBridge.exposeInMainWorld("bean", {
   onDelegateEvent: (cb: (e: DelegateEvent) => void) =>
     ipcRenderer.on(IPC.delegateEvent, (_e, ev: DelegateEvent) => cb(ev)),
   availableClis: (): Promise<CliName[]> => ipcRenderer.invoke(IPC.availableClis),
+  availableModels: (): Promise<AvailableModel[]> => ipcRenderer.invoke(IPC.availableModels),
+  getModelMemory: (skillName: string): Promise<string | undefined> => ipcRenderer.invoke(IPC.getModelMemory, skillName),
+  setModelMemory: (skillName: string, modelId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.setModelMemory, skillName, modelId),
   chat: (req: ChatRequest): Promise<ConverseResult> => ipcRenderer.invoke(IPC.chat, req),
   getModel: (): Promise<string> => ipcRenderer.invoke(IPC.getModel),
   // File/folder drags (Finder) populate dataTransfer.files, not text/uri-list — this is the

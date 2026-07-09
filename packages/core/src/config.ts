@@ -22,6 +22,12 @@ export function personaFile(dir: string): string { return join(dir, "persona.jso
 export function memoryFile(dir: string): string { return join(dir, "memory.json"); }
 export function remindersFile(dir: string): string { return join(dir, "reminders.json"); }
 export function notesDir(dir: string): string { return join(dir, "notes"); }
+export function modelMemoryFile(dir: string): string { return join(dir, "model-memory.json"); }
+// A "no project" run's working directory (2a) — the launched CLI's cwd when no real project
+// was picked. Bean never seeds it (no git clone/page fetch): if the user typed an optional
+// URL, it's folded into the composed prompt instead, and the launched agent (opencode/claude,
+// a full coding agent with its own shell/git access) fetches or clones it itself if needed.
+export function scratchDir(dir: string): string { return join(dir, "workspace"); }
 
 export async function loadConfig(file: string, beanDirPath: string): Promise<BeanConfig> {
   let raw: string;

@@ -32,7 +32,15 @@ export interface RouteInput {
 
 export interface RouteSuggestion {
   skillName: string;
-  projectPath: string;
+  /** Absent = "no project" — the run works in a scratch workspace instead of a picked
+   * project (2a). Resolved to a bare scratch dir just before launch (scratchDir in
+   * config.ts) — Bean never seeds it itself; see `sourceUrl` below. */
+  projectPath?: string;
+  /** Optional URL to prefill the "no project" picker's URL box with. Purely a UI seed —
+   * ProposalCard folds it into the composed prompt text at confirm time (not resolved by
+   * Bean into a clone/fetch) so the launched agent fetches/clones it itself if needed.
+   * Distinct from RouteInput.droppedUrl, which seeds the prompt directly via composePrompt. */
+  sourceUrl?: string;
   composedPrompt: string;
   confidence: number; // 0..1
   /** Where a confirmed run executes: "chat" submits the prompt into Bean's chat;

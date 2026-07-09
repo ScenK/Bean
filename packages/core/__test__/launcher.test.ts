@@ -18,6 +18,21 @@ test("launchCommand builds the claude interactive command with a pre-sent prompt
   expect(launchCommand(req)).toEqual({ command: "claude", args: ["do it"] });
 });
 
+test("launchCommand appends --model when the chosen model has an alias for opencode", () => {
+  const req: LaunchRequest = { mode: "opencode", projectPath: "/p", prompt: "go", model: "claude-sonnet-5" };
+  expect(launchCommand(req).args).toEqual(["/p", "--prompt=go", "--model", "github-copilot/claude-sonnet-5"]);
+});
+
+test("launchCommand appends --model when the chosen model has an alias for claude", () => {
+  const req: LaunchRequest = { mode: "claude", projectPath: "/p", prompt: "go", model: "sonnet" };
+  expect(launchCommand(req).args).toEqual(["--model", "sonnet", "go"]);
+});
+
+test("launchCommand omits --model when the chosen model has no alias for this CLI", () => {
+  const req: LaunchRequest = { mode: "claude", projectPath: "/p", prompt: "go", model: "gpt-5-5" };
+  expect(launchCommand(req).args).toEqual(["go"]);
+});
+
 test("launchCommand builds the open command via `open -a` with the configured editor, no prompt needed", () => {
   const req: LaunchRequest = { mode: "open", projectPath: "/dev/acme" };
   expect(launchCommand(req, "/Applications/Zed.app")).toEqual({ command: "open", args: ["-a", "/Applications/Zed.app", "/dev/acme"] });

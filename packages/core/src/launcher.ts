@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { resolveModelAlias } from "./models.js";
 
 export type LaunchMode = "opencode" | "claude" | "open";
 export type CliName = "opencode" | "claude";
@@ -49,8 +50,13 @@ export function loginShellPath(
 
 export interface LaunchRequest {
   mode: LaunchMode;
+  // "" = no project picked (2a) — the IPC launch handler resolves this to a bare scratch-
+  // workspace dir (scratchDir in config.ts) before launchCommand ever sees it. Bean never
+  // seeds this dir itself (no git clone/page fetch) — a URL the user typed is folded into
+  // `prompt` instead, and the launched agent fetches/clones it itself if it needs to.
   projectPath: string;
   prompt?: string; // required for "opencode"/"claude", ignored for "open"
+  model?: string; // canonical model id (models.ts); ignored for "open" or a model with no alias on this CLI
 }
 
 export function launchCommand(req: LaunchRequest, editorApp?: string): { command: string; args: string[] } {
@@ -58,12 +64,19 @@ export function launchCommand(req: LaunchRequest, editorApp?: string): { command
     // Interactive session with an initial prompt for both — not `opencode run` / `claude -p`,
     // which reply once and exit. This drops the user into the normal TUI/REPL with the message
     // pre-sent, so they can keep working after it replies.
-    case "opencode":
+    case "opencode": {
+      const alias = req.model ? resolveModelAlias(req.model, "opencode") : undefined;
       // --prompt=… as one token: a prompt starting with "-" (e.g. leftover frontmatter "---")
       // would otherwise be eaten by opencode's flag parser, launching the TUI with no prompt.
-      return { command: "opencode", args: [req.projectPath, `--prompt=${req.prompt ?? ""}`] };
-    case "claude":
-      return { command: "claude", args: [req.prompt ?? ""] };
+      return {
+        command: "opencode",
+        args: [req.projectPath, `--prompt=${req.prompt ?? ""}`, ...(alias ? ["--model", alias] : [])],
+      };
+    }
+    case "claude": {
+      const alias = req.model ? resolveModelAlias(req.model, "claude") : undefined;
+      return { command: "claude", args: [...(alias ? ["--model", alias] : []), req.prompt ?? ""] };
+    }
     case "open":
       // editorApp is the user-configured editor .app (Settings); empty = not configured yet,
       // caught by launchInTerminal before ever spawning. `.app` bundles aren't executables

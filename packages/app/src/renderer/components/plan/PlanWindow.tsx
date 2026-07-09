@@ -1,6 +1,6 @@
 // packages/app/src/renderer/components/plan/PlanWindow.tsx
 import { useEffect, useState } from "preact/hooks";
-import { ProposalCard } from "../../shared/ProposalCard.js";
+import { ProposalCard, type PickableModel } from "../../shared/ProposalCard.js";
 import type { Theme } from "../../../channels.js";
 import type { CliName, Project, RouteSuggestion } from "@bean/core";
 
@@ -9,6 +9,8 @@ export function PlanWindow() {
   const [run, setRun] = useState<RouteSuggestion | undefined>(undefined);
   const [clis, setClis] = useState<CliName[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [models, setModels] = useState<PickableModel[]>([]);
+  const [lastUsedModel, setLastUsedModel] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     window.bean.getTheme().then(setTheme);
@@ -20,7 +22,14 @@ export function PlanWindow() {
     window.bean.onProposeRun((suggestion) => setRun(suggestion));
     window.bean.availableClis().then(setClis);
     window.bean.listProjects().then(setProjects);
+    window.bean.availableModels().then(setModels);
   }, []);
+
+  // The "last used" badge is per-skill, so re-fetch whenever the proposed run's skill changes.
+  useEffect(() => {
+    if (!run) return;
+    window.bean.getModelMemory(run.skillName).then(setLastUsedModel);
+  }, [run?.skillName]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -55,9 +64,19 @@ export function PlanWindow() {
             state="pending"
             cliOptions={clis}
             projectOptions={projectOptions}
+            modelOptions={models}
+            lastUsedModel={lastUsedModel}
             onConfirm={(edited, choice) => {
+              if (choice.model) void window.bean.setModelMemory(run.skillName, choice.model);
               if (run.target === "chat") window.bean.runInChat(edited, run.skillName);
-              else window.bean.launch({ mode: choice.cli, projectPath: choice.projectPath, prompt: edited });
+              else {
+                window.bean.launch({
+                  mode: choice.cli,
+                  projectPath: choice.projectPath ?? "",
+                  prompt: edited,
+                  model: choice.model,
+                });
+              }
               window.close();
             }}
             onCancel={() => window.close()}

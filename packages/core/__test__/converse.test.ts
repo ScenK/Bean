@@ -57,14 +57,33 @@ test("propose_run tool is enum-constrained to known skill names and project path
   expect(props.project?.enum).toEqual(["/work/api", "/dev/bean"]);
 });
 
-test("no propose_run tool is offered when skills or projects are empty", async () => {
+test("no propose_run tool is offered when there are no skills", async () => {
   let captured: ToolSpec[] = [{ name: "sentinel", description: "", parameters: {} }];
   const deps: ConverseDeps = {
     model: "m",
     chat: async ({ tools }) => { captured = tools; return { content: "hi", toolCalls: [] }; },
   };
-  await converse([], "hi", skills, [], DEFAULT_PERSONA, [], deps);
+  await converse([], "hi", [], projects, DEFAULT_PERSONA, [], deps);
   expect(captured.map((t) => t.name)).toEqual(["propose_note"]);
+});
+
+test("propose_run is still offered with no configured projects — project is optional", async () => {
+  let captured: ToolSpec[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => { captured = tools; return { content: "hi", toolCalls: [] }; },
+  };
+  await converse([], "hi", skills, [], DEFAULT_PERSONA, [], deps);
+  expect(captured.map((t) => t.name)).toEqual(["propose_run", "propose_note"]);
+});
+
+test("omitting project in propose_run proposes a no-project (scratch workspace) run", async () => {
+  const deps = depsReturning("On it.", [
+    { name: "propose_run", args: { skill: "review-code", instruction: "summarize this page" } },
+  ]);
+  const res = await converse([], "summarize this", skills, projects, DEFAULT_PERSONA, [], deps);
+  expect(res.proposedRun?.skillName).toBe("review-code");
+  expect(res.proposedRun?.projectPath).toBeUndefined();
 });
 
 test("valid propose_delegate returns a free-form delegated task", async () => {
