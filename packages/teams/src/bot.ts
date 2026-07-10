@@ -155,6 +155,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         return;
       }
       if (!proposalId) return;
+      if (beanAction !== "cancel-proposal" && beanAction !== "confirm") return;
       const p = deps.proposals.claim(proposalId);
       if (beanAction === "cancel-proposal") {
         if (p?.cardActivityId !== undefined) {

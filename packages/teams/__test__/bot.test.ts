@@ -149,6 +149,24 @@ test("cancel-proposal updates the card to cancelled", async () => {
   expect(JSON.stringify(effects.updates[0]?.card)).toContain("cancelled");
 });
 
+test("unrecognized beanAction with a valid proposalId does not consume the proposal", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  const bot = buildTeamsBot(deps);
+  await bot.onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "some-unknown-action", proposalId: id } },
+    effects,
+  );
+  expect(delegateCalls).toHaveLength(0);
+  await bot.onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id } },
+    effects,
+  );
+  expect(effects.posted.some((p) => p.includes("expired"))).toBe(false);
+  expect(delegateCalls).toHaveLength(1);
+});
+
 test("proposedRun / proposedNote redirect to the desktop app", async () => {
   const { deps } = makeDeps({
     chat: async () => ({
