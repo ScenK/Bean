@@ -22,6 +22,23 @@ Adaptive Card and execute on THIS machine. Design: `docs/superpowers/specs/2026-
    Apps → "Upload a custom app" (corporate tenants: IT approval / custom app policy needed).
    The `teamsAppManifest/` folder next to this README holds a fill-in template.
 
+## Testing before rolling out to the org
+
+Two ways to validate the bot without touching your employer's tenant or IT policy:
+
+- **[Bot Framework Emulator](https://github.com/Microsoft/BotFramework-Emulator)** — fastest
+  loop. Point it at `http://localhost:3978/api/messages` with the App ID/password/tenant ID
+  from step 1. It speaks the same Activity protocol Teams does and renders Adaptive Cards
+  (including clicking Run/Cancel), but needs no tunnel, no Teams channel, no manifest upload.
+  Good for iterating on `bot.ts`/`cards.ts` behavior.
+- **A personal [Microsoft 365 Developer sandbox](https://developer.microsoft.com/microsoft-365/dev-program)**
+  — free, self-service tenant where you're Global Admin, so "upload custom apps" and the Azure
+  Bot's Teams channel are yours to enable with no approval. Register the bot (step 1), create
+  `~/.bean/teams.json` pointing at *that* tenant's App ID/tenant ID, run the tunnel + server,
+  and sideload the manifest for yourself only. This is the real Teams client — actual @mention
+  and card rendering — entirely outside your org, testing solo (talk to the bot directly; no
+  need to invite anyone into the sandbox for this).
+
 ## Run
 
     pnpm build
