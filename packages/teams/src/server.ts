@@ -3,6 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory,
   detectClis, runDelegate,
+  buildTeamsBot, type BotEffects, ConversationStore, ProposalStore, RunRegistry,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -10,10 +11,7 @@ import {
   type ConversationReference, type Activity,
 } from "botbuilder";
 import express from "express";
-import { buildTeamsBot, type BotEffects } from "./bot.js";
-import { ConversationStore } from "./conversation.js";
-import { ProposalStore } from "./proposals.js";
-import { RunRegistry } from "./runs.js";
+import { finishedCard, proposalCard, runningCard } from "./cards.js";
 import { loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 
 const dir = beanDir();
@@ -54,6 +52,7 @@ const bot = buildTeamsBot({
   runs: new RunRegistry(runDelegate),
   proposals: new ProposalStore(),
   conversations: new ConversationStore(),
+  cards: { proposalCard, runningCard, finishedCard },
 });
 
 /** Effects bound to the incoming turn's conversation; posts after the turn ends go

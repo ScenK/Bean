@@ -1,9 +1,11 @@
-import {
-  converse, availableModels,
-  type ConverseDeps, type Skill, type Project, type Persona, type Memory, type CliName,
-  type DelegateRequest,
-} from "@bean/core";
-import { finishedCard, proposalCard, runningCard } from "./cards.js";
+import { converse, type ConverseDeps } from "../converse.js";
+import { availableModels } from "../models.js";
+import type { Skill, Project } from "../types.js";
+import type { Persona } from "../persona.js";
+import type { Memory } from "../memory/memory.js";
+import type { CliName } from "../launcher.js";
+import type { DelegateRequest } from "../delegate.js";
+import type { CardBuilders } from "./cards-api.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
 import type { PendingProposal, ProposalStore } from "./proposals.js";
@@ -42,6 +44,7 @@ export interface TeamsBotDeps {
   runs: RunRegistry;
   proposals: ProposalStore;
   conversations: ConversationStore;
+  cards: CardBuilders;
 }
 
 const DESKTOP_ONLY = "That needs the Bean desktop app — I can only chat and run delegate tasks from Teams.";
@@ -66,34 +69,34 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     };
     const started = deps.runs.start(req, {
       onTail: (line) => {
-        void updateTo(runningCard({ projectName, instruction: p.proposal.instruction, startedBy, tail: line, projectPath: req.projectPath }));
+        void updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, tail: line, projectPath: req.projectPath }));
       },
       onDone: (result) => {
         void (async () => {
           deps.conversations.append(p.conversationId, { role: "assistant", content: `[delegate result] ${result}` });
-          await updateTo(finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done" }));
+          await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done" }));
           await fx.post(result);
         })();
       },
       onError: (message) => {
         void (async () => {
-          await updateTo(finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error" }));
+          await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error" }));
           await fx.post(`Delegate run failed: ${message}`);
         })();
       },
       onCancelled: () => {
         void (async () => {
-          await updateTo(finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled" }));
+          await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled" }));
           await fx.post("Run cancelled.");
         })();
       },
     });
     if (!started) {
-      await updateTo(finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled" }));
+      await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled" }));
       await fx.post("A run is already going in that project — wait for it or cancel it first.");
       return;
     }
-    await updateTo(runningCard({ projectName, instruction: p.proposal.instruction, startedBy, projectPath: req.projectPath }));
+    await updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, projectPath: req.projectPath }));
     const memory = await deps.loadModelMemory();
     await deps.saveModelMemory({ ...memory, ...memoryUpdatesFor({ cli, model }) });
   }
@@ -137,7 +140,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           defaultCli: choice.cli, defaultModel: choice.model,
         });
         const projectName = projects.find((p) => p.path === proposal.projectPath)?.name ?? proposal.projectPath;
-        const activityId = await fx.postCard(proposalCard({
+        const activityId = await fx.postCard(deps.cards.proposalCard({
           proposalId: pending.id, projectName, skillName: proposal.skillName,
           instruction: proposal.instruction, clis: detected,
           models: availableModels(detected), defaultCli: choice.cli, defaultModel: choice.model,
@@ -161,7 +164,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (p?.cardActivityId !== undefined) {
           const projects = await deps.loadProjects();
           const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? p.proposal.projectPath;
-          await fx.updateCard(p.cardActivityId, finishedCard({
+          await fx.updateCard(p.cardActivityId, deps.cards.finishedCard({
             projectName, instruction: p.proposal.instruction, startedBy: action.fromName, outcome: "cancelled",
           }));
         }

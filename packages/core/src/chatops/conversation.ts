@@ -1,4 +1,4 @@
-import type { ChatTurn } from "@bean/core";
+import type { ChatTurn } from "../converse.js";
 
 // 40 turns ≈ 20 user/assistant exchanges — enough thread context without unbounded growth.
 const MAX_TURNS = 40;

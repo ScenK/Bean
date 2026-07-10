@@ -1,17 +1,6 @@
-import type { AvailableModel, CliName } from "@bean/core";
+import type { ProposalCardInput, RunningCardInput, FinishedCardInput } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
-
-export interface ProposalCardInput {
-  proposalId: string;
-  projectName: string;
-  skillName?: string;
-  instruction: string;
-  clis: CliName[];
-  models: AvailableModel[];
-  defaultCli: CliName;
-  defaultModel?: string;
-}
 
 /** Confirm-first proposal: verbatim instruction, cli/model ChoiceSets, Run/Cancel.
  * Input ids "cli"/"model" come back merged into the Action.Submit data. */
@@ -58,13 +47,7 @@ export function proposalCard(input: ProposalCardInput): object {
   };
 }
 
-export function runningCard(input: {
-  projectName: string;
-  instruction: string;
-  startedBy: string;
-  tail?: string;
-  projectPath: string;
-}): object {
+export function runningCard(input: RunningCardInput): object {
   return {
     $schema: SCHEMA,
     type: "AdaptiveCard",
@@ -80,12 +63,7 @@ export function runningCard(input: {
   };
 }
 
-export function finishedCard(input: {
-  projectName: string;
-  instruction: string;
-  startedBy: string;
-  outcome: "done" | "error" | "cancelled";
-}): object {
+export function finishedCard(input: FinishedCardInput): object {
   return {
     $schema: SCHEMA,
     type: "AdaptiveCard",

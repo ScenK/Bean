@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { ProposalStore } from "../src/proposals.js";
+import { ProposalStore } from "../src/chatops/proposals.js";
 
 const proposal = { projectPath: "/p", instruction: "do", composedPrompt: "do" };
 const base = { proposal, conversationId: "c1", proposedBy: "alice", defaultCli: "claude" as const };

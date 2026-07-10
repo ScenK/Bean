@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import type { DelegateCallbacks, DelegateRequest } from "@bean/core";
-import { RunRegistry } from "../src/runs.js";
+import type { DelegateCallbacks, DelegateRequest } from "../src/index.js";
+import { RunRegistry } from "../src/chatops/runs.js";
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { memoryUpdatesFor, resolveCliModel } from "../src/resolve.js";
+import { memoryUpdatesFor, resolveCliModel } from "../src/chatops/resolve.js";
 
 test("stated cli+model win when the cli is detected", () => {
   const r = resolveCliModel(["claude", "opencode"], { cli: "opencode", model: "gpt-5-5" }, {});

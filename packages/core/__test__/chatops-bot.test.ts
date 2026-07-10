@@ -1,10 +1,17 @@
 import { expect, test, vi } from "vitest";
-import type { ConverseResult } from "@bean/core";
-import { buildTeamsBot, type BotEffects, type TeamsBotDeps } from "../src/bot.js";
-import { ConversationStore } from "../src/conversation.js";
-import { ProposalStore } from "../src/proposals.js";
-import { RunRegistry } from "../src/runs.js";
-import type { DelegateCallbacks, DelegateRequest } from "@bean/core";
+import type { ConverseResult } from "../src/index.js";
+import { buildTeamsBot, type BotEffects, type TeamsBotDeps } from "../src/chatops/bot.js";
+import { ConversationStore } from "../src/chatops/conversation.js";
+import { ProposalStore } from "../src/chatops/proposals.js";
+import { RunRegistry } from "../src/chatops/runs.js";
+import type { CardBuilders } from "../src/chatops/cards-api.js";
+import type { DelegateCallbacks, DelegateRequest } from "../src/index.js";
+
+const fakeCards = {
+  proposalCard: (i: object) => ({ kind: "proposal", ...i }),
+  runningCard: (i: object) => ({ kind: "running", ...i }),
+  finishedCard: (i: object) => ({ kind: "finished", ...i }),
+};
 
 function fx(): BotEffects & { posted: string[]; cards: object[]; updates: { id: string; card: object }[] } {
   const posted: string[] = [];
@@ -48,6 +55,7 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     runs,
     proposals: new ProposalStore(),
     conversations: new ConversationStore(),
+    cards: fakeCards as CardBuilders,
     ...overrides,
   };
   return { deps, delegateCalls, saved };

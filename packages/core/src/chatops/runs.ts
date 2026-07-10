@@ -1,4 +1,4 @@
-import type { DelegateCallbacks, DelegateHandle, DelegateRequest } from "@bean/core";
+import type { DelegateCallbacks, DelegateHandle, DelegateRequest } from "../delegate.js";
 
 export type RunDelegateFn = (req: DelegateRequest, callbacks: DelegateCallbacks) => DelegateHandle;
 

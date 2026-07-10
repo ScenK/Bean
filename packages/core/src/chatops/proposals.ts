@@ -1,4 +1,5 @@
-import type { CliName, ProposedDelegate } from "@bean/core";
+import type { CliName } from "../launcher.js";
+import type { ProposedDelegate } from "../converse.js";
 
 export interface PendingProposal {
   id: string;

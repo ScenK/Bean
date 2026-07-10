@@ -1,4 +1,5 @@
-import { availableModels, pickModel, type CliName } from "@bean/core";
+import { availableModels, pickModel } from "../models.js";
+import type { CliName } from "../launcher.js";
 
 export interface CliModelChoice {
   cli: CliName;

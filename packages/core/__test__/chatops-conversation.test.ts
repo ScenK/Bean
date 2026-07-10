@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { ConversationStore } from "../src/conversation.js";
+import { ConversationStore } from "../src/chatops/conversation.js";
 
 test("returns empty history for an unknown conversation", () => {
   expect(new ConversationStore().history("c1")).toEqual([]);
