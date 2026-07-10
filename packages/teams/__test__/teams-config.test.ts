@@ -11,8 +11,8 @@ test("teamsConfigFile joins dir with teams.json", () => {
 test("loads a valid config and defaults port to 3978", async () => {
   const dir = await mkdtemp(join(tmpdir(), "bean-teams-"));
   const file = join(dir, "teams.json");
-  await writeFile(file, JSON.stringify({ botAppId: "id", botAppPassword: "pw" }), "utf8");
-  expect(await loadTeamsConfig(file)).toEqual({ botAppId: "id", botAppPassword: "pw", port: 3978 });
+  await writeFile(file, JSON.stringify({ botAppId: "id", botAppPassword: "pw", tenantId: "tid" }), "utf8");
+  expect(await loadTeamsConfig(file)).toEqual({ botAppId: "id", botAppPassword: "pw", tenantId: "tid", port: 3978 });
 });
 
 test("missing file throws with a setup hint", async () => {
@@ -23,5 +23,12 @@ test("incomplete config throws", async () => {
   const dir = await mkdtemp(join(tmpdir(), "bean-teams-"));
   const file = join(dir, "teams.json");
   await writeFile(file, JSON.stringify({ botAppId: "id" }), "utf8");
-  await expect(loadTeamsConfig(file)).rejects.toThrow(/needs botAppId and botAppPassword/);
+  await expect(loadTeamsConfig(file)).rejects.toThrow(/needs botAppId, botAppPassword, and tenantId/);
+});
+
+test("config missing tenantId throws (Azure Bot no longer offers Multi Tenant)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bean-teams-"));
+  const file = join(dir, "teams.json");
+  await writeFile(file, JSON.stringify({ botAppId: "id", botAppPassword: "pw" }), "utf8");
+  await expect(loadTeamsConfig(file)).rejects.toThrow(/needs botAppId, botAppPassword, and tenantId/);
 });

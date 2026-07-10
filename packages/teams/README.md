@@ -7,10 +7,12 @@ Adaptive Card and execute on THIS machine. Design: `docs/superpowers/specs/2026-
 ## One-time setup
 
 1. **Azure Bot registration** (free tier): portal.azure.com → "Azure Bot" → create with
-   type *Multi Tenant*. Note the **Microsoft App ID**; create a **client secret** under the
-   linked app registration. Enable the **Microsoft Teams channel** on the bot resource.
+   type *Single Tenant* (Azure no longer offers *Multi Tenant* for new registrations).
+   Note the **Microsoft App ID** and the **Tenant ID** (Azure AD → Overview, or the linked
+   app registration's "Directory (tenant) ID"); create a **client secret** under the linked
+   app registration. Enable the **Microsoft Teams channel** on the bot resource.
 2. **Config**: create `~/.bean/teams.json`:
-   `{ "botAppId": "<app id>", "botAppPassword": "<client secret>", "port": 3978 }`
+   `{ "botAppId": "<app id>", "botAppPassword": "<client secret>", "tenantId": "<tenant id>", "port": 3978 }`
 3. **Tunnel**: install [devtunnel](https://learn.microsoft.com/azure/developer/dev-tunnels/),
    then `devtunnel host -p 3978 --allow-anonymous`. Set the bot's **messaging endpoint** to
    `https://<tunnel-id>.devtunnels.ms/api/messages`. (Bot Framework JWT auth on the endpoint

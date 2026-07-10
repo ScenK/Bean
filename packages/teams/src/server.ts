@@ -24,10 +24,14 @@ if (!beanConfig.openaiApiKey) throw new Error("openaiApiKey missing in ~/.bean/c
 // ConfigurationServiceClientCredentialFactory builds the app-id/password credentials;
 // ConfigurationBotFrameworkAuthentication just needs an (empty) options object plus that
 // factory — this is the documented botbuilder 4.23 shape, not the brief's indicative one.
+// SingleTenant (not MultiTenant): Azure Bot Service no longer offers "Multi Tenant" as an
+// app type for new registrations, so this bot is scoped to the one AAD tenant that owns
+// the app registration — teamsConfig.tenantId comes from that registration's Overview page.
 const credentialsFactory = new ConfigurationServiceClientCredentialFactory({
   MicrosoftAppId: teamsConfig.botAppId,
   MicrosoftAppPassword: teamsConfig.botAppPassword,
-  MicrosoftAppType: "MultiTenant",
+  MicrosoftAppType: "SingleTenant",
+  MicrosoftAppTenantId: teamsConfig.tenantId,
 });
 const auth = new ConfigurationBotFrameworkAuthentication({}, credentialsFactory);
 const adapter = new CloudAdapter(auth);
