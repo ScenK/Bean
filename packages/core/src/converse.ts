@@ -2,6 +2,8 @@ import { composePrompt } from "./prompt.js";
 import { composePersonaPrompt, type Persona } from "./persona.js";
 import type { Project, RouteSuggestion, Skill } from "./types.js";
 import type { Memory } from "./memory/memory.js";
+import type { CliName } from "./launcher.js";
+import { MODELS } from "./models.js";
 
 export interface ConvoMsg { role: "system" | "user" | "assistant"; content: string; }
 export interface ChatTurn { role: "user" | "assistant"; content: string; }
@@ -28,6 +30,10 @@ export interface ProposedDelegate {
   instruction: string;
   skillName?: string;
   composedPrompt: string;
+  /** CLI the user explicitly asked for in chat, validated against the caller's detected CLIs. */
+  cli?: CliName;
+  /** Canonical model id (models.ts) the user explicitly asked for. */
+  model?: string;
 }
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */
@@ -116,7 +122,7 @@ function proposeRunTool(skills: Skill[], projects: Project[]): ToolSpec {
   };
 }
 
-function proposeDelegateTool(skills: Skill[], projects: Project[]): ToolSpec {
+function proposeDelegateTool(skills: Skill[], projects: Project[], availableClis: CliName[]): ToolSpec {
   const properties: Record<string, unknown> = {
     project: { type: "string", enum: projects.map((p) => p.path), description: "the project path to work in" },
     instruction: {
@@ -130,6 +136,21 @@ function proposeDelegateTool(skills: Skill[], projects: Project[]): ToolSpec {
       enum: skills.map((s) => s.name),
       description: "optional skill whose instructions frame the task; omit for a free-form task",
     };
+  }
+  if (availableClis.length > 0) {
+    properties.cli = {
+      type: "string",
+      enum: availableClis,
+      description: "only when the user explicitly asked for a specific CLI; omit otherwise",
+    };
+    const modelIds = MODELS.filter((m) => availableClis.some((cli) => m.aliases[cli] !== undefined)).map((m) => m.id);
+    if (modelIds.length > 0) {
+      properties.model = {
+        type: "string",
+        enum: modelIds,
+        description: "only when the user explicitly asked for a specific model; omit otherwise",
+      };
+    }
   }
   return {
     name: "propose_delegate",
@@ -171,6 +192,7 @@ export async function converse(
   now: () => Date = () => new Date(),
   linkedNote?: LinkedNote,
   delegateAvailable = false,
+  availableClis: CliName[] = [],
 ): Promise<ConverseResult> {
   const systemParts = [
     composePersonaPrompt(persona),
@@ -199,7 +221,7 @@ export async function converse(
   // scratch workspace runs) so an empty projects list no longer excludes the tool.
   const tools = [
     ...(skills.length > 0 ? [proposeRunTool(skills, projects)] : []),
-    ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects)] : []),
+    ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects, availableClis)] : []),
     proposeNoteTool(projects, linkedNote),
     ...actions.map((a) => a.spec),
   ];
@@ -244,7 +266,9 @@ export async function converse(
 
     const delegateCall = toolCalls.find((c) => c.name === "propose_delegate");
     if (delegateCall) {
-      const args = (delegateCall.args ?? {}) as { project?: unknown; instruction?: unknown; skill?: unknown };
+      const args = (delegateCall.args ?? {}) as {
+        project?: unknown; instruction?: unknown; skill?: unknown; cli?: unknown; model?: unknown;
+      };
       const project = projects.find((p) => p.path === args.project);
       if (!project || typeof args.instruction !== "string" || !args.instruction.trim()) {
         return { reply: content, model: deps.model };
@@ -258,6 +282,8 @@ export async function converse(
           instruction: args.instruction,
           skillName: skill?.name,
           composedPrompt: skill ? composePrompt(skill, args.instruction, droppedUrl) : args.instruction,
+          cli: availableClis.includes(args.cli as CliName) ? (args.cli as CliName) : undefined,
+          model: MODELS.some((m) => m.id === args.model) ? (args.model as string) : undefined,
         },
       };
     }
