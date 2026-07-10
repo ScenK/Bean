@@ -1,13 +1,20 @@
 # project-teams-bot
 
-`packages/teams/` (`@bean/teams`) is a third workspace package: a local Express+botbuilder
-server exposing Bean to a Teams group chat (spec: docs/superpowers/specs/2026-07-10-teams-bot-design.md).
+Bean has two chat adapters over one shared brain:
 
-- Same layering rule as app/: `bot.ts` & stores are pure/DI'd; only `server.ts` touches botbuilder.
-- `converse()` grew a trailing `availableClis` param and `ProposedDelegate` optional `cli`/`model`
-  fields (chat-stated CLI/model). Backward-compatible; the desktop ignores them so far.
-- Model memory keys `teams:cli` / `teams:model:<cli>` share ~/.bean/model-memory.json with the
-  desktop's skillName keys — the `teams:` prefix is the collision guard. Don't "clean up" either side.
+- **Brain**: `packages/core/src/chatops/` — `bot.ts` (buildTeamsBot; name kept for history),
+  conversation/proposal/run stores, cli-model resolve. Pure/DI'd; card builders are injected
+  via `CardBuilders` (`cards-api.ts`), so the brain has zero presentation code.
+- **Adapters**: `packages/teams/` (Azure Bot + Adaptive Cards + tunnel; work group) and
+  `packages/discord/` (gateway + embeds/buttons; personal, allowlist-only). Each is
+  config + card builders + one impure `server.ts`.
+- Specs: docs/superpowers/specs/2026-07-10-teams-bot-design.md and
+  2026-07-10-discord-adapter-design.md.
+- `converse()` grew a trailing `availableClis` param; `ProposedDelegate` has optional
+  `cli`/`model` (chat-stated). Backward-compatible; the desktop ignores them so far.
+- Model memory keys `teams:cli` / `teams:model:<cli>` are intentionally shared by ALL chat
+  adapters (historical name) in ~/.bean/model-memory.json beside the desktop's skillName
+  keys. Don't rename or "clean up" either side.
 - Conversation/proposal state is in-memory by design (POC): restart = amnesia.
 - Auth is **Single Tenant**, not the design doc's original Multi Tenant: Azure Bot Service
   stopped offering "Multi Tenant" as an app-registration type in the portal for new bots
