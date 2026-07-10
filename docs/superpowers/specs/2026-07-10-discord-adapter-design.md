@@ -42,7 +42,13 @@ paths as needed; `@bean/teams` (`cards.ts` untouched, `server.ts` imports) switc
 
 Notes:
 
-- `cards.ts` stays in `@bean/teams` — Adaptive Cards are Teams presentation.
+- `cards.ts` stays in `@bean/teams` — Adaptive Cards are Teams presentation. Since `bot.ts`
+  currently calls the card builders directly, the move includes one deliberate (and only)
+  logic change: `chatops/bot.ts` defines a `CardBuilders` interface
+  (`proposalCard`/`runningCard`/`finishedCard`, each `(input) => object`, with the three
+  input types moving into chatops) and takes it as a new `cards: CardBuilders` field on
+  `TeamsBotDeps`. `@bean/teams` passes its Adaptive Card builders; `@bean/discord` passes
+  its embed/component builders. The moved bot tests inject a trivial JSON-echo fake.
 - Model-memory keys stay literally `teams:cli` / `teams:model:<cli>`: they are persisted
   user state in `~/.bean/model-memory.json`; renaming would orphan values. `resolve.ts`
   gains a comment stating the historical key name is intentionally shared by all chat
@@ -97,12 +103,13 @@ instead).
   and optional skill, description = verbatim instruction) + two select menus (CLI, model —
   pre-selected to the resolved defaults, same option-building inputs as `proposalCard`) +
   Run / Cancel buttons.
-- **customId contract:** `bean:<action>:<id>` — `bean:confirm:<proposalId>`,
-  `bean:cancel-proposal:<proposalId>`, `bean:cancel-run:<proposalId>`,
+- **customId contract:** `bean:<action>:<payload>` — `bean:confirm:<proposalId>`,
+  `bean:cancel-proposal:<proposalId>`, `bean:cancel-run:<projectPath>`,
   `bean:cli:<proposalId>`, `bean:model:<proposalId>`. `server.ts` parses these and maps to
-  the existing `CardAction` value shape (`beanAction`, `proposalId`, `cli`, `model`).
-  Note `cancel-run` carries the proposalId; server.ts resolves it to the projectPath it
-  cached when the run started (see state below).
+  the existing `CardAction` value shape (`beanAction`, `proposalId`, `cli`, `model`,
+  `projectPath`). `cancel-run` carries the project path directly (the running-card builder
+  already has it), so no proposalId→projectPath lookup is needed; the payload is everything
+  after the second colon, so paths are colon-safe.
 - **Running / finished states:** embed variants matching the Teams cards (running shows
   "started by", throttled tail line in a code block, Cancel-run button; finished shows the
   outcome, no components).
@@ -117,8 +124,7 @@ instead).
   message-options shape under that `object` type — the adapter owns both ends, same as Teams.
 - **Adapter-local state (the only state in server.ts):** a `Map<proposalMessageId, {cli?, model?}>`
   caching the latest select-menu choices (Discord delivers each select change as its own
-  interaction), plus a `Map<proposalMessageId, projectPath>` recorded at confirm for
-  cancel-run resolution. Entries are deleted when the proposal resolves. Select and button
+  interaction). Entries are deleted when the proposal resolves. Select and button
   interactions are acked with `deferUpdate()` inside Discord's 3-second window before any
   slow work.
 
