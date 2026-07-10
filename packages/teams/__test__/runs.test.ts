@@ -67,6 +67,36 @@ test("cancelAll cancels every active run and returns the count", () => {
   expect(reg.cancelAll()).toBe(0);
 });
 
+test("a run that settles synchronously (spawn failure) leaves the project free", () => {
+  const reg = new RunRegistry((_r, cb) => {
+    cb.onError(new Error("spawn failed"));
+    return { cancel: () => {} };
+  });
+  const ev = events();
+  expect(reg.start(req, ev)).toBe(true);
+  expect(ev.onError).toHaveBeenCalledWith("spawn failed");
+  expect(reg.isRunning("/p")).toBe(false);
+  expect(reg.start(req, events())).toBe(true); // path not stuck busy
+});
+
+test("stale callbacks from a cancelled run cannot corrupt a newer run", () => {
+  const { fn, calls } = fakeRun();
+  const reg = new RunRegistry(fn, 5000);
+  const evA = events();
+  reg.start(req, evA);
+  reg.cancel("/p");
+  const evB = events();
+  expect(reg.start(req, evB)).toBe(true);
+  // Run A's delegate misbehaves and fires onDone after cancel.
+  calls[0]?.cb.onDone("late");
+  expect(evA.onDone).not.toHaveBeenCalled();
+  expect(reg.isRunning("/p")).toBe(true); // B still registered
+  // B's throttle timer must still be alive.
+  calls[1]?.cb.onOutput("b line");
+  vi.advanceTimersByTime(5000);
+  expect(evB.onTail).toHaveBeenCalledWith("b line");
+});
+
 test("cancel cancels the underlying handle and fires onCancelled", () => {
   const { fn, cancelled } = fakeRun();
   const reg = new RunRegistry(fn);
