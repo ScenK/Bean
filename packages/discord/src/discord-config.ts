@@ -27,6 +27,9 @@ export async function loadDiscordConfig(file: string): Promise<DiscordConfig> {
   } catch {
     throw new Error(`Discord config invalid: ${file}`);
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`Discord config invalid: ${file}`);
+  }
   const ids = Array.isArray(parsed.allowedUserIds) ? parsed.allowedUserIds.filter((x) => typeof x === "string" && x) : [];
   if (!parsed.botToken || ids.length === 0) {
     throw new Error(`Discord config incomplete: ${file} needs botToken and a non-empty allowedUserIds`);

@@ -31,6 +31,13 @@ test("invalid JSON throws", async () => {
   await expect(loadDiscordConfig(file)).rejects.toThrow(/Discord config invalid/);
 });
 
+test("valid JSON that is not an object throws invalid", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bean-discord-"));
+  const file = join(dir, "discord.json");
+  await writeFile(file, "null", "utf8");
+  await expect(loadDiscordConfig(file)).rejects.toThrow(/Discord config invalid/);
+});
+
 test("empty botToken or empty allowlist throws (would ignore everyone)", async () => {
   await expect(loadDiscordConfig(await write({ botToken: "", allowedUserIds: ["1"] })))
     .rejects.toThrow(/needs botToken and a non-empty allowedUserIds/);
