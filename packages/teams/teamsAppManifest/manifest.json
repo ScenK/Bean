@@ -1,0 +1,36 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "1ba7fc48-d369-4d8a-b643-94c56555faee",
+  "packageName": "com.bean.teamsbot",
+  "developer": {
+    "name": "Bean",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
+  },
+  "name": {
+    "short": "Bean",
+    "full": "Bean Desktop Pet Bot"
+  },
+  "description": {
+    "short": "Chat with Bean in a Teams group.",
+    "full": "Local POC bot that lets a Teams group chat @mention Bean, propose delegate runs via Adaptive Cards, and stream results back to the thread."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#5B4B8A",
+  "bots": [
+    {
+      "botId": "<APP_ID>",
+      "scopes": ["groupChat", "team"],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}
