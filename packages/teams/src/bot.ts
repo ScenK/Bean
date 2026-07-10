@@ -167,7 +167,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }
         return;
       }
-      if (beanAction !== "confirm") return;
+      // beanAction === "confirm" (the only value the line-158 guard lets fall through here)
       if (!p) {
         await fx.post("That proposal expired — ask me again.");
         return;
