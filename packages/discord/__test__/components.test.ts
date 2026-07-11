@@ -48,3 +48,29 @@ test("finished message has no components", () => {
   expect(card.components).toEqual([]);
   expect(JSON.stringify(card)).toContain("done");
 });
+
+test("note proposal message shows the title/body and wires save/cancel customIds", () => {
+  const s = JSON.stringify(discordCards.noteProposalCard({
+    proposalId: "note-1", title: "Our chat", body: "## Summary\n\nwe talked", projectName: "bean", updating: false,
+  }));
+  expect(s).toContain("Our chat");
+  expect(s).toContain("bean:save-note:note-1");
+  expect(s).toContain("bean:cancel-note:note-1");
+});
+
+test("note result message has no components and states the outcome", () => {
+  const card = discordCards.noteResultCard({ title: "Our chat", savedBy: "scen", outcome: "saved" }) as {
+    components: unknown[];
+  };
+  expect(card.components).toEqual([]);
+  expect(JSON.stringify(card)).toContain("saved");
+});
+
+test("note proposal clamps a long body to Discord's 4096-char embed description limit", () => {
+  const card = discordCards.noteProposalCard({
+    proposalId: "note-1", title: "T", body: "x".repeat(5000), updating: false,
+  }) as { embeds: { description: string }[] };
+  const desc = card.embeds[0]?.description ?? "";
+  expect(desc.length).toBeLessThanOrEqual(4096);
+  expect(desc).toContain("the full note is saved");
+});

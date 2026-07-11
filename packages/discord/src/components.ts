@@ -1,4 +1,6 @@
-import type { CardBuilders, FinishedCardInput, ProposalCardInput, RunningCardInput } from "@bean/core";
+import type {
+  CardBuilders, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
+} from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
 // Plain JSON keeps the builders pure/testable and discord.js accepts them directly.
@@ -66,4 +68,36 @@ function finishedCard(input: FinishedCardInput): object {
   };
 }
 
-export const discordCards: CardBuilders = { proposalCard, runningCard, finishedCard };
+// Discord rejects an embed whose description exceeds 4096 chars, which would drop the whole
+// Save/Cancel card for a long-but-valid note. Clamp the *display* only — NoteProposalStore
+// keeps the full draft, so Save still writes every character.
+const EMBED_DESC_LIMIT = 4096;
+function noteDescription(title: string, body: string): string {
+  const full = `**${title}**\n\n${body}`;
+  if (full.length <= EMBED_DESC_LIMIT) return full;
+  const suffix = "\n\n…(preview truncated; the full note is saved)";
+  return full.slice(0, EMBED_DESC_LIMIT - suffix.length) + suffix;
+}
+
+function noteProposalCard(input: NoteProposalCardInput): object {
+  return {
+    embeds: [{
+      title: input.updating ? "Bean proposes a note update" : "Bean proposes a note",
+      description: noteDescription(input.title, input.body),
+      fields: [{ name: "Note", value: input.projectName ?? "general", inline: true }],
+    }],
+    components: [row([
+      { type: BUTTON, style: 3, label: input.updating ? "Update note" : "Save note", custom_id: `bean:save-note:${input.proposalId}` },
+      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-note:${input.proposalId}` },
+    ])],
+  };
+}
+
+function noteResultCard(input: NoteResultCardInput): object {
+  return {
+    embeds: [{ title: `Note ${input.outcome} (by ${input.savedBy})`, description: input.title }],
+    components: [],
+  };
+}
+
+export const discordCards: CardBuilders = { proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard };

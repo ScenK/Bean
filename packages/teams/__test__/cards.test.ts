@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { finishedCard, proposalCard, runningCard } from "../src/cards.js";
+import { finishedCard, noteProposalCard, noteResultCard, proposalCard, runningCard } from "../src/cards.js";
 
 const models = [
   { id: "sonnet", label: "Sonnet", aliases: { claude: "sonnet" }, availableOn: ["claude" as const] },
@@ -50,4 +50,21 @@ test("finished card states the outcome and has no actions", () => {
   };
   expect(card.actions ?? []).toHaveLength(0);
   expect(flatten(card)).toContain("done");
+});
+
+test("note proposal card shows the title/body and wires save/cancel data", () => {
+  const s = flatten(noteProposalCard({
+    proposalId: "note-1", title: "Our chat", body: "## Summary\n\nwe talked", projectName: "bean", updating: false,
+  }));
+  expect(s).toContain("Our chat");
+  expect(s).toContain("we talked");
+  expect(s).toContain('"beanAction":"save-note"');
+  expect(s).toContain('"beanAction":"cancel-note"');
+  expect(s).toContain('"proposalId":"note-1"');
+});
+
+test("note result card states the outcome and has no actions", () => {
+  const card = noteResultCard({ title: "Our chat", savedBy: "bob", outcome: "saved" }) as { actions?: unknown[] };
+  expect(card.actions ?? []).toHaveLength(0);
+  expect(flatten(card)).toContain("saved");
 });

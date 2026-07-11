@@ -1,4 +1,6 @@
-import type { ProposalCardInput, RunningCardInput, FinishedCardInput } from "@bean/core";
+import type {
+  ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
+} from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
 
@@ -71,6 +73,44 @@ export function finishedCard(input: FinishedCardInput): object {
     body: [
       { type: "TextBlock", weight: "bolder", text: `Run ${input.outcome} in ${input.projectName} (started by ${input.startedBy})` },
       { type: "TextBlock", text: input.instruction, wrap: true, isSubtle: true },
+    ],
+    actions: [],
+  };
+}
+
+/** Confirm-first note draft: title, body, project/general, Save/Cancel.
+ * data ids come back merged into the Action.Submit payload as beanAction + proposalId. */
+export function noteProposalCard(input: NoteProposalCardInput): object {
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", size: "medium", weight: "bolder", text: input.updating ? "Bean proposes a note update" : "Bean proposes a note" },
+      { type: "TextBlock", weight: "bolder", text: input.title, wrap: true },
+      { type: "FactSet", facts: [{ title: "Note", value: input.projectName ?? "general" }] },
+      { type: "TextBlock", text: input.body, wrap: true },
+    ],
+    actions: [
+      {
+        type: "Action.Submit",
+        title: input.updating ? "Update note" : "Save note",
+        style: "positive",
+        data: { beanAction: "save-note", proposalId: input.proposalId },
+      },
+      { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-note", proposalId: input.proposalId } },
+    ],
+  };
+}
+
+export function noteResultCard(input: NoteResultCardInput): object {
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", weight: "bolder", text: `Note ${input.outcome} (by ${input.savedBy})` },
+      { type: "TextBlock", text: input.title, wrap: true, isSubtle: true },
     ],
     actions: [],
   };
