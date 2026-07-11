@@ -426,3 +426,36 @@ test("propose_delegate tool schema includes cli/model enums when clis are availa
   expect(props.model?.enum).toContain("sonnet");
   expect(props.model?.enum).not.toContain("gpt-5-5"); // opencode-only model, claude-only session
 });
+
+test("propose_remember tool is only offered when rememberAvailable is true", async () => {
+  let captured: ToolSpec[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => { captured = tools; return { content: "ok", toolCalls: [] }; },
+  };
+  await converse([], "hi", skills, projects, DEFAULT_PERSONA, [], deps,
+    undefined, [], undefined, undefined, false, [], true);
+  expect(captured.map((t) => t.name)).toContain("propose_remember");
+  const remember = captured.find((t) => t.name === "propose_remember")!;
+  expect((remember.parameters as { properties: object }).properties).toEqual({});
+});
+
+test("propose_remember is absent by default (desktop path)", async () => {
+  let captured: ToolSpec[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => { captured = tools; return { content: "ok", toolCalls: [] }; },
+  };
+  await converse([], "hi", skills, projects, DEFAULT_PERSONA, [], deps);
+  expect(captured.map((t) => t.name)).not.toContain("propose_remember");
+});
+
+test("a propose_remember tool call short-circuits to proposedRemember", async () => {
+  const deps = depsReturning("Sure — which of these should I keep?", [
+    { name: "propose_remember", args: {} },
+  ]);
+  const res = await converse([], "remember what we discussed", skills, projects, DEFAULT_PERSONA, [], deps,
+    undefined, [], undefined, undefined, false, [], true);
+  expect(res.reply).toBe("Sure — which of these should I keep?");
+  expect(res.proposedRemember).toBe(true);
+});
