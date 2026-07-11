@@ -26,5 +26,6 @@ export * from "./chatops/cards-api.js";
 export * from "./chatops/conversation.js";
 export * from "./chatops/proposals.js";
 export * from "./chatops/note-proposals.js";
+export * from "./chatops/memory-proposals.js";
 export * from "./chatops/runs.js";
 export * from "./chatops/resolve.js";

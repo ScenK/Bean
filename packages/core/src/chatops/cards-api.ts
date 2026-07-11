@@ -43,10 +43,24 @@ export interface NoteResultCardInput {
   outcome: "saved" | "cancelled";
 }
 
+export interface MemoryProposalCardInput {
+  proposalId: string;
+  /** Candidate facts to confirm; projectName is the resolved display name or absent for global. */
+  facts: { text: string; projectName?: string }[];
+}
+
+export interface MemoryResultCardInput {
+  count: number;
+  savedBy: string;
+  outcome: "saved" | "cancelled";
+}
+
 export interface CardBuilders {
   proposalCard: (input: ProposalCardInput) => object;
   runningCard: (input: RunningCardInput) => object;
   finishedCard: (input: FinishedCardInput) => object;
   noteProposalCard: (input: NoteProposalCardInput) => object;
   noteResultCard: (input: NoteResultCardInput) => object;
+  memoryProposalCard: (input: MemoryProposalCardInput) => object;
+  memoryResultCard: (input: MemoryResultCardInput) => object;
 }

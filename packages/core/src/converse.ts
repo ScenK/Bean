@@ -38,7 +38,7 @@ export interface ProposedDelegate {
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */
 export interface LinkedNote { slug: string; title: string; version: number; body: string; }
-export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; }
+export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedRemember?: boolean; }
 export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?: string; linkedNote?: LinkedNote; }
 
 const BEHAVIOR_INSTRUCTIONS =
@@ -63,7 +63,9 @@ const BEHAVIOR_INSTRUCTIONS =
   "use propose_delegate; do not say you cannot access the repository. " +
   "Use propose_run instead when the user wants to watch or continue the " +
   "work in their own terminal. Both are confirm-first via the card shown after you " +
-  "propose — not by asking permission in chat text.";
+  "propose — not by asking permission in chat text." +
+  " When the user explicitly asks you to remember or save durable facts from this chat, call " +
+  "propose_remember — the user then confirms which facts are kept; never save memory silently.";
   
 
 function proposeNoteTool(projects: Project[], linkedNote?: LinkedNote): ToolSpec {
@@ -92,6 +94,21 @@ function proposeNoteTool(projects: Project[], linkedNote?: LinkedNote): ToolSpec
         "The user confirms before saving."
       : "Draft a note capturing this conversation's output for the user to confirm and save.",
     parameters: { type: "object", properties, required: ["title", "body"] },
+  };
+}
+
+// Argless: a trigger only. The model decides WHEN to offer to remember; extractMemories()
+// (run by the caller) decides WHAT. Gated behind rememberAvailable so the desktop app —
+// which captures memory at chat-close — never grows a second memory path.
+function proposeRememberTool(): ToolSpec {
+  return {
+    name: "propose_remember",
+    description:
+      "Call this only when the user explicitly asks you to remember or save durable facts from " +
+      "this conversation (e.g. \"remember this\", \"save what we figured out\"). It offers the user " +
+      "a card of candidate facts to confirm — do not use it to save anything silently, and do not " +
+      "call it proactively without an explicit ask.",
+    parameters: { type: "object", properties: {} },
   };
 }
 
@@ -193,6 +210,7 @@ export async function converse(
   linkedNote?: LinkedNote,
   delegateAvailable = false,
   availableClis: CliName[] = [],
+  rememberAvailable = false,
 ): Promise<ConverseResult> {
   const systemParts = [
     composePersonaPrompt(persona),
@@ -223,6 +241,7 @@ export async function converse(
     ...(skills.length > 0 ? [proposeRunTool(skills, projects)] : []),
     ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects, availableClis)] : []),
     proposeNoteTool(projects, linkedNote),
+    ...(rememberAvailable ? [proposeRememberTool()] : []),
     ...actions.map((a) => a.spec),
   ];
   const actionByName = new Map(actions.map((a) => [a.spec.name, a]));
@@ -300,6 +319,11 @@ export async function converse(
         model: deps.model,
         proposedNote: { title: args.title.trim(), body: args.body, project, slug: linkedNote?.slug },
       };
+    }
+
+    const rememberCall = toolCalls.find((c) => c.name === "propose_remember");
+    if (rememberCall) {
+      return { reply: content, model: deps.model, proposedRemember: true };
     }
 
     const actionCalls = toolCalls.filter((c) => actionByName.has(c.name));

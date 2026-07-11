@@ -4,6 +4,7 @@ import { buildTeamsBot, type BotEffects, type TeamsBotDeps } from "../src/chatop
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { ProposalStore } from "../src/chatops/proposals.js";
 import { NoteProposalStore } from "../src/chatops/note-proposals.js";
+import { MemoryProposalStore } from "../src/chatops/memory-proposals.js";
 import { RunRegistry } from "../src/chatops/runs.js";
 import type { CardBuilders } from "../src/chatops/cards-api.js";
 import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index.js";
@@ -14,6 +15,8 @@ const fakeCards = {
   finishedCard: (i: object) => ({ kind: "finished", ...i }),
   noteProposalCard: (i: object) => ({ kind: "note-proposal", ...i }),
   noteResultCard: (i: object) => ({ kind: "note-result", ...i }),
+  memoryProposalCard: (i: object) => ({ kind: "memory-proposal", ...i }),
+  memoryResultCard: (i: object) => ({ kind: "memory-result", ...i }),
 };
 
 function fx(): BotEffects & { posted: string[]; cards: object[]; updates: { id: string; card: object }[] } {
@@ -37,6 +40,7 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
   });
   const saved: Record<string, string>[] = [];
   const savedNotes: NoteDraft[] = [];
+  const savedMemories: import("../src/memory/memory.js").Memory[][] = [];
   const result = overrides.converseResult ?? { reply: "hello there" };
   const deps: TeamsBotDeps = {
     // bot.ts calls converse() internally; we exercise it through a chat fn that
@@ -60,11 +64,13 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     proposals: new ProposalStore(),
     noteProposals: new NoteProposalStore(),
     saveNote: async (draft) => { savedNotes.push(draft); return "our-chat"; },
+    memoryProposals: new MemoryProposalStore(),
+    saveMemories: async (mems) => { savedMemories.push(mems); },
     conversations: new ConversationStore(),
     cards: fakeCards as CardBuilders,
     ...overrides,
   };
-  return { deps, delegateCalls, saved, savedNotes };
+  return { deps, delegateCalls, saved, savedNotes, savedMemories };
 }
 
 const msg = { conversationId: "c1", text: "hi bean", fromId: "u1", fromName: "alice" };
@@ -296,6 +302,117 @@ test("save-note on an expired draft posts a message and saves nothing", async ()
   );
   expect(savedNotes).toHaveLength(0);
   expect(effects.posted.some((p) => p.includes("expired"))).toBe(true);
+});
+
+// First call (converse) → propose_remember; second call (extractMemories) → two facts.
+function rememberDeps() {
+  let call = 0;
+  const chat: TeamsBotDeps["chat"] = async () => {
+    call++;
+    if (call === 1) return { content: "Which should I keep?", toolCalls: [{ name: "propose_remember", args: {} }] };
+    return {
+      content: "",
+      toolCalls: [
+        { name: "remember", args: { text: "prefers tabs" } },
+        { name: "remember", args: { text: "uses vitest", projectPath: "/p/bean" } },
+      ],
+    };
+  };
+  return makeDeps({ chat });
+}
+
+async function proposeMemoryThenId(deps: TeamsBotDeps, effects: ReturnType<typeof fx>): Promise<string> {
+  await buildTeamsBot(deps).onMessage(msg, effects);
+  const card = JSON.stringify(effects.cards[0]);
+  const match = /"proposalId":"(mem-\d+)"/.exec(card);
+  if (!match?.[1]) throw new Error("no memory proposal id in card");
+  return match[1];
+}
+
+test("proposedRemember runs extraction and posts a selectable memory card", async () => {
+  const { deps } = rememberDeps();
+  const effects = fx();
+  await buildTeamsBot(deps).onMessage(msg, effects);
+  expect(effects.cards).toHaveLength(1);
+  const s = JSON.stringify(effects.cards[0]);
+  expect(s).toContain("memory-proposal");
+  expect(s).toContain("prefers tabs");
+  expect(s).toContain("uses vitest");
+});
+
+test("save-memories with undefined memoryPicks saves every candidate", async () => {
+  const { deps, savedMemories } = rememberDeps();
+  const effects = fx();
+  const id = await proposeMemoryThenId(deps, effects);
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "save-memories", proposalId: id } },
+    effects,
+  );
+  expect(savedMemories).toHaveLength(1);
+  expect(savedMemories[0]).toHaveLength(2);
+  expect(savedMemories[0]!.map((m) => m.text)).toEqual(["prefers tabs", "uses vitest"]);
+  expect(savedMemories[0]![1]!.projectPath).toBe("/p/bean");
+  expect(effects.posted.some((p) => p.includes("Remembered 2"))).toBe(true);
+});
+
+test("save-memories honors memoryPicks and saves only the selected subset", async () => {
+  const { deps, savedMemories } = rememberDeps();
+  const effects = fx();
+  const id = await proposeMemoryThenId(deps, effects);
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "save-memories", proposalId: id, memoryPicks: ["1"] } },
+    effects,
+  );
+  expect(savedMemories[0]).toHaveLength(1);
+  expect(savedMemories[0]![0]!.text).toBe("uses vitest");
+});
+
+test("save-memories with an empty pick set saves nothing", async () => {
+  const { deps, savedMemories } = rememberDeps();
+  const effects = fx();
+  const id = await proposeMemoryThenId(deps, effects);
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "save-memories", proposalId: id, memoryPicks: [] } },
+    effects,
+  );
+  expect(savedMemories).toHaveLength(0);
+});
+
+test("cancel-memories updates the card and saves nothing", async () => {
+  const { deps, savedMemories } = rememberDeps();
+  const effects = fx();
+  const id = await proposeMemoryThenId(deps, effects);
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "cancel-memories", proposalId: id } },
+    effects,
+  );
+  expect(savedMemories).toHaveLength(0);
+  expect(JSON.stringify(effects.updates.at(-1)?.card)).toContain("cancelled");
+});
+
+test("save-memories on an expired proposal posts a message and saves nothing", async () => {
+  const { deps, savedMemories } = rememberDeps();
+  const effects = fx();
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "save-memories", proposalId: "mem-999" } },
+    effects,
+  );
+  expect(savedMemories).toHaveLength(0);
+  expect(effects.posted.some((p) => p.includes("expired"))).toBe(true);
+});
+
+test("proposedRemember with no extracted facts posts a message and no card", async () => {
+  let call = 0;
+  const chat: TeamsBotDeps["chat"] = async () => {
+    call++;
+    if (call === 1) return { content: "ok", toolCalls: [{ name: "propose_remember", args: {} }] };
+    return { content: "", toolCalls: [] };
+  };
+  const { deps } = makeDeps({ chat });
+  const effects = fx();
+  await buildTeamsBot(deps).onMessage(msg, effects);
+  expect(effects.cards).toHaveLength(0);
+  expect(effects.posted.some((p) => p.toLowerCase().includes("nothing"))).toBe(true);
 });
 
 test("proposedDelegate with no CLI detected posts an error and no card", async () => {

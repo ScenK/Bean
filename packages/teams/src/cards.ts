@@ -1,5 +1,6 @@
 import type {
   ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
+  MemoryProposalCardInput, MemoryResultCardInput,
 } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
@@ -112,6 +113,49 @@ export function noteResultCard(input: NoteResultCardInput): object {
       { type: "TextBlock", weight: "bolder", text: `Note ${input.outcome} (by ${input.savedBy})` },
       { type: "TextBlock", text: input.title, wrap: true, isSubtle: true },
     ],
+    actions: [],
+  };
+}
+
+/** Confirm-first memory batch: one selectable toggle per candidate fact (default on),
+ * Remember selected / Cancel. Toggle ids fact-<i> come back merged into the Submit payload;
+ * the Teams server turns the "true" ones into memoryPicks. */
+export function memoryProposalCard(input: MemoryProposalCardInput): object {
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", size: "medium", weight: "bolder", text: "Bean wants to remember" },
+      ...input.facts.map((f, i) => ({
+        type: "Input.Toggle",
+        id: `fact-${i}`,
+        title: f.projectName ? `(${f.projectName}) ${f.text}` : f.text,
+        value: "true",
+        wrap: true,
+      })),
+    ],
+    actions: [
+      {
+        type: "Action.Submit",
+        title: "Remember selected",
+        style: "positive",
+        data: { beanAction: "save-memories", proposalId: input.proposalId },
+      },
+      { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-memories", proposalId: input.proposalId } },
+    ],
+  };
+}
+
+export function memoryResultCard(input: MemoryResultCardInput): object {
+  const text = input.outcome === "saved"
+    ? `Memory saved: remembered ${input.count} fact(s) (by ${input.savedBy})`
+    : `Memory cancelled (by ${input.savedBy})`;
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [{ type: "TextBlock", weight: "bolder", text }],
     actions: [],
   };
 }

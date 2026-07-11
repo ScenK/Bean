@@ -1,5 +1,6 @@
 import type {
-  CardBuilders, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
+  CardBuilders, FinishedCardInput, MemoryProposalCardInput, MemoryResultCardInput,
+  NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
 } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
@@ -100,4 +101,52 @@ function noteResultCard(input: NoteResultCardInput): object {
   };
 }
 
-export const discordCards: CardBuilders = { proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard };
+// Discord select option labels are capped at 100 chars; the full fact is kept in the
+// MemoryProposalStore, so Remember still saves the untruncated text.
+const OPTION_LABEL_LIMIT = 100;
+function clampLabel(text: string): string {
+  return text.length <= OPTION_LABEL_LIMIT ? text : text.slice(0, OPTION_LABEL_LIMIT - 1) + "…";
+}
+
+function memoryProposalCard(input: MemoryProposalCardInput): object {
+  const facts = input.facts.slice(0, 25); // Discord select menus allow at most 25 options
+  const select = {
+    type: STRING_SELECT,
+    custom_id: `bean:pick-memories:${input.proposalId}`,
+    placeholder: "Facts to remember",
+    min_values: 0,
+    max_values: facts.length,
+    options: facts.map((f, i) => ({
+      label: clampLabel(f.projectName ? `[${f.projectName}] ${f.text}` : f.text),
+      value: String(i),
+      default: true,
+    })),
+  };
+  return {
+    embeds: [{
+      title: "Bean wants to remember",
+      description: facts
+        .map((f, i) => `${i + 1}. ${f.projectName ? `(${f.projectName}) ` : ""}${f.text}`)
+        .join("\n")
+        .slice(0, 4096),
+    }],
+    components: [
+      row([select]),
+      row([
+        { type: BUTTON, style: 3, label: "Remember selected", custom_id: `bean:save-memories:${input.proposalId}` },
+        { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-memories:${input.proposalId}` },
+      ]),
+    ],
+  };
+}
+
+function memoryResultCard(input: MemoryResultCardInput): object {
+  const title = input.outcome === "saved"
+    ? `Memory saved: remembered ${input.count} fact(s) (by ${input.savedBy})`
+    : `Memory cancelled (by ${input.savedBy})`;
+  return { embeds: [{ title }], components: [] };
+}
+
+export const discordCards: CardBuilders = {
+  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
+};

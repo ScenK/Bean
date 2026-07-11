@@ -1,9 +1,9 @@
 import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile, notesDir,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveMemories,
   detectClis, runDelegate,
-  buildTeamsBot, type BotEffects, AmbientStore, ConversationStore, NoteProposalStore, ProposalStore, RunRegistry,
+  buildTeamsBot, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore, RunRegistry,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -11,7 +11,7 @@ import {
   type ConversationReference, type Activity,
 } from "botbuilder";
 import express from "express";
-import { finishedCard, noteProposalCard, noteResultCard, proposalCard, runningCard } from "./cards.js";
+import { finishedCard, memoryProposalCard, memoryResultCard, noteProposalCard, noteResultCard, proposalCard, runningCard } from "./cards.js";
 import { loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 
 const dir = beanDir();
@@ -54,8 +54,10 @@ const bot = buildTeamsBot({
   proposals: new ProposalStore(),
   noteProposals: new NoteProposalStore(),
   saveNote: (draft) => saveNote(notesDir(dir), draft),
+  memoryProposals: new MemoryProposalStore(),
+  saveMemories: (m) => saveMemories(memoryFile(dir), m),
   conversations: new ConversationStore(),
-  cards: { proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard },
+  cards: { proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard },
 });
 
 // Ambient (non-mention) channel messages only reach /api/messages if the Teams app manifest
@@ -109,8 +111,18 @@ app.post("/api/messages", (req, res) => {
     const fx = effectsFor(context);
     const value = a.value as Record<string, string> | undefined;
     if (value?.beanAction) {
+      const memoryPicks = value.beanAction === "save-memories"
+        ? Object.keys(value).filter((k) => /^fact-\d+$/.test(k) && value[k] === "true").map((k) => k.slice(5))
+        : undefined;
       await bot.onCardAction(
-        { conversationId: a.conversation.id, fromName: a.from.name ?? "someone", value },
+        {
+          conversationId: a.conversation.id,
+          fromName: a.from.name ?? "someone",
+          value: {
+            beanAction: value.beanAction, proposalId: value.proposalId, projectPath: value.projectPath,
+            cli: value.cli, model: value.model, memoryPicks,
+          },
+        },
         fx,
       );
       return;

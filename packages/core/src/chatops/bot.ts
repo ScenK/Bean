@@ -1,8 +1,9 @@
 import { converse, type ConverseDeps } from "../converse.js";
+import { extractMemories } from "../memory/extract.js";
 import { availableModels } from "../models.js";
 import type { Skill, Project } from "../types.js";
 import type { Persona } from "../persona.js";
-import type { Memory } from "../memory/memory.js";
+import type { Memory, MemoryCandidate } from "../memory/memory.js";
 import type { CliName } from "../launcher.js";
 import type { DelegateRequest } from "../delegate.js";
 import type { CardBuilders } from "./cards-api.js";
@@ -11,6 +12,7 @@ import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
 import type { PendingProposal, ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
+import type { MemoryProposalStore } from "./memory-proposals.js";
 import type { NoteDraft } from "../note-store.js";
 import type { RunRegistry } from "./runs.js";
 
@@ -24,7 +26,7 @@ export interface IncomingMessage {
 export interface CardAction {
   conversationId: string;
   fromName: string;
-  value: { beanAction?: string; proposalId?: string; projectPath?: string; cli?: string; model?: string };
+  value: { beanAction?: string; proposalId?: string; projectPath?: string; cli?: string; model?: string; memoryPicks?: string[] };
 }
 
 export interface BotEffects {
@@ -51,6 +53,9 @@ export interface TeamsBotDeps {
   noteProposals: NoteProposalStore;
   /** Persists a confirmed note to ~/.bean/notes (server injects the notes dir). */
   saveNote: (draft: NoteDraft) => Promise<string>;
+  memoryProposals: MemoryProposalStore;
+  /** Persists the full memory list (server injects the memory file path). */
+  saveMemories: (memories: Memory[]) => Promise<void>;
   conversations: ConversationStore;
   cards: CardBuilders;
 }
@@ -142,6 +147,51 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
   }
 
+  async function handleMemoryAction(
+    kind: "save-memories" | "cancel-memories",
+    proposalId: string | undefined,
+    memoryPicks: string[] | undefined,
+    actor: string,
+    fx: BotEffects,
+  ): Promise<void> {
+    if (!proposalId) return;
+    const pending = deps.memoryProposals.claim(proposalId);
+    if (!pending) {
+      await fx.post("That memory batch expired — ask me to remember again.");
+      return;
+    }
+    const resultCard = (outcome: "saved" | "cancelled", count: number): object =>
+      deps.cards.memoryResultCard({ count, savedBy: actor, outcome });
+    const updateTo = async (card: object): Promise<void> => {
+      if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
+    };
+    if (kind === "cancel-memories") {
+      await updateTo(resultCard("cancelled", 0));
+      return;
+    }
+    // undefined picks = the platform's "all selected" default (e.g. Discord's untouched menu).
+    const selected = memoryPicks === undefined
+      ? pending.candidates
+      : memoryPicks.map((i) => pending.candidates[Number(i)]).filter((c): c is MemoryCandidate => c !== undefined);
+    if (selected.length === 0) {
+      await updateTo(resultCard("cancelled", 0));
+      await fx.post("Didn't remember anything — nothing was selected.");
+      return;
+    }
+    try {
+      const existing = await deps.loadMemories();
+      const now = new Date().toISOString();
+      const additions: Memory[] = selected.map((c, i) => ({
+        id: `${Date.now()}-${i}`, text: c.text, projectPath: c.projectPath, createdAt: now,
+      }));
+      await deps.saveMemories([...existing, ...additions]);
+      await updateTo(resultCard("saved", selected.length));
+      await fx.post(`Remembered ${selected.length} fact(s).`);
+    } catch (err) {
+      await fx.post(`Couldn't save memory: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   return {
     async onMessage(msg: IncomingMessage, fx: BotEffects): Promise<void> {
       try {
@@ -166,7 +216,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const result = await converse(
           history, msg.text, skills, projects, persona, memories,
           { chat: deps.chat, model: deps.model },
-          undefined, [], undefined, undefined, true, detected,
+          undefined, [], undefined, undefined, true, detected, true,
         );
         deps.conversations.append(msg.conversationId, { role: "user", content: msg.text });
         if (result.reply) {
@@ -187,6 +237,24 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             proposalId: pending.id, title: note.title, body: note.body, projectName, updating: note.slug !== undefined,
           }));
           deps.noteProposals.setCardActivityId(pending.id, activityId);
+          return;
+        }
+        if (result.proposedRemember) {
+          const transcript = [...history, { role: "user" as const, content: msg.text }];
+          const candidates = await extractMemories(
+            transcript, memories, projects, { chat: deps.chat, model: deps.model },
+          );
+          if (candidates.length === 0) {
+            await fx.post("Nothing here worth remembering long-term.");
+            return;
+          }
+          const nameFor = (path: string): string => projects.find((p) => p.path === path)?.name ?? path;
+          const facts = candidates.map((c) => ({
+            text: c.text, projectName: c.projectPath ? nameFor(c.projectPath) : undefined,
+          }));
+          const pending = deps.memoryProposals.add({ candidates, conversationId: msg.conversationId, proposedBy: msg.fromName });
+          const activityId = await fx.postCard(deps.cards.memoryProposalCard({ proposalId: pending.id, facts }));
+          deps.memoryProposals.setCardActivityId(pending.id, activityId);
           return;
         }
         const proposal = result.proposedDelegate;
@@ -220,6 +288,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (beanAction === "save-note" || beanAction === "cancel-note") {
         await handleNoteAction(beanAction, proposalId, action.fromName, fx);
+        return;
+      }
+      if (beanAction === "save-memories" || beanAction === "cancel-memories") {
+        await handleMemoryAction(beanAction, proposalId, action.value.memoryPicks, action.fromName, fx);
         return;
       }
       if (!proposalId) return;
