@@ -11,10 +11,11 @@
     "dist:mac": "turbo run build --filter=@bean/core --filter=@bean/discord --filter=@bean/teams && pnpm --filter @bean/app dist:mac",
     "release": "pnpm --dir packages/app version",
     "worktree:create": "bash scripts/worktree.sh create",
-    "worktree:remove": "bash scripts/worktree.sh remove"
+    "worktree:remove": "bash scripts/worktree.sh remove",
+    "upgrade:outdated": "node scripts/outdated-report.mjs"
   },
   "devDependencies": {
-    "turbo": "latest",
-    "typescript": "latest"
+    "turbo": "^2.10.4",
+    "typescript": "^7.0.2"
   }
 }
