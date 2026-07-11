@@ -6,6 +6,7 @@ import type { Memory } from "../memory/memory.js";
 import type { CliName } from "../launcher.js";
 import type { DelegateRequest } from "../delegate.js";
 import type { CardBuilders } from "./cards-api.js";
+import { formatAmbientBlock, type AmbientMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
 import type { PendingProposal, ProposalStore } from "./proposals.js";
@@ -29,6 +30,8 @@ export interface BotEffects {
   postCard: (card: object) => Promise<string>;
   updateCard: (activityId: string, card: object) => Promise<void>;
   post: (text: string) => Promise<void>;
+  /** Ambient channel messages (not addressed to Bean) since the given epoch ms, oldest first. */
+  fetchRecent?: (sinceMs: number) => Promise<AmbientMessage[]>;
 }
 
 export interface TeamsBotDeps {
@@ -113,7 +116,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps.loadSkills(), deps.loadProjects(), deps.loadPersona(), deps.loadMemories(), deps.loadModelMemory(),
         ]);
         const detected = deps.detectClis();
-        const history = deps.conversations.history(msg.conversationId);
+        let history = deps.conversations.history(msg.conversationId);
+        if (fx.fetchRecent) {
+          // ponytail: fixed 15-min window; the block carries timestamps so the model can
+          // scope "the last 10 minutes" itself — parse the user's timeframe if it matters.
+          const ambient = (await fx.fetchRecent(Date.now() - 15 * 60_000)).slice(-50);
+          if (ambient.length > 0) {
+            history = [{ role: "user", content: formatAmbientBlock(ambient) }, ...history];
+          }
+        }
         const result = await converse(
           history, msg.text, skills, projects, persona, memories,
           { chat: deps.chat, model: deps.model },

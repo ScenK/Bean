@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory,
   detectClis, runDelegate,
-  buildTeamsBot, type BotEffects, ConversationStore, ProposalStore, RunRegistry,
+  buildTeamsBot, type BotEffects, AmbientStore, ConversationStore, ProposalStore, RunRegistry,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -56,6 +56,18 @@ const bot = buildTeamsBot({
   cards: { proposalCard, runningCard, finishedCard },
 });
 
+// Ambient (non-mention) channel messages only reach /api/messages if the Teams app manifest
+// grants the RSC permission ChannelMessage.Read.Group — see packages/teams/README.md.
+const ambient = new AmbientStore();
+
+/** True when the message @mentions the bot; personal (1:1) chats always count as addressed. */
+function addressedToBot(a: Activity): boolean {
+  if (a.conversation.conversationType === "personal") return true;
+  return (a.entities ?? []).some(
+    (e) => e.type === "mention" && (e as { mentioned?: { id?: string } }).mentioned?.id === a.recipient.id,
+  );
+}
+
 /** Effects bound to the incoming turn's conversation; posts after the turn ends go
  * through continueConversationAsync (proactive messages need a fresh context). */
 function effectsFor(context: TurnContext): BotEffects {
@@ -103,6 +115,12 @@ app.post("/api/messages", (req, res) => {
     }
     const text = TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "";
     if (!text) return;
+    if (!addressedToBot(a)) {
+      // Not for Bean — remember it as context for a later mention, but don't reply.
+      ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
+      return;
+    }
+    fx.fetchRecent = async (sinceMs) => ambient.since(a.conversation.id, sinceMs);
     await context.sendActivity({ type: ActivityTypes.Typing });
     // Teams clears the typing indicator quickly; resend while onMessage is still working.
     const typing = setInterval(() => { void context.sendActivity({ type: ActivityTypes.Typing }); }, 5000);
