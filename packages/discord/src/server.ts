@@ -14,6 +14,7 @@ import { discordCards } from "./components.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
 
 const dir = beanDir();
+const builtinDir = process.env.BEAN_BUILTIN_DIR || projectBeanDir();
 const discordConfig = await loadDiscordConfig(discordConfigFile(dir));
 const beanConfig = await loadConfig(configFile(dir), dir);
 if (!beanConfig.openaiApiKey) throw new Error("openaiApiKey missing in ~/.bean/config.json");
@@ -22,9 +23,9 @@ const clis = detectClis();
 const bot = buildTeamsBot({
   chat: makeOpenAIConverse(beanConfig.openaiApiKey),
   model: beanConfig.model,
-  loadSkills: () => loadLayeredSkills(skillsDir(projectBeanDir()), skillsDir(dir)),
+  loadSkills: () => loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
   loadProjects: () => loadProjects(projectsFile(dir)),
-  loadPersona: () => loadPersona(personaFile(dir), personaFile(projectBeanDir())),
+  loadPersona: () => loadPersona(personaFile(dir), personaFile(builtinDir)),
   loadMemories: () => loadMemories(memoryFile(dir)),
   loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
   saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),
