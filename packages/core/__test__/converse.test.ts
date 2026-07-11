@@ -393,3 +393,36 @@ test("composePersonaPrompt reflects a custom persona's name and tags", () => {
     "You are Ponyta, a playful, formal desktop coding companion. Reply in a way that reflects that.",
   );
 });
+
+test("propose_delegate carries a stated cli and model into the proposal", async () => {
+  const deps = depsReturning("On it.", [
+    { name: "propose_delegate", args: { project: "/work/api", instruction: "do it", cli: "opencode", model: "gpt-5-5" } },
+  ]);
+  const res = await converse([], "delegate this", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true, ["claude", "opencode"]);
+  expect(res.proposedDelegate?.cli).toBe("opencode");
+  expect(res.proposedDelegate?.model).toBe("gpt-5-5");
+});
+
+test("propose_delegate drops a cli not in availableClis and an unknown model", async () => {
+  const deps = depsReturning("On it.", [
+    { name: "propose_delegate", args: { project: "/work/api", instruction: "do it", cli: "opencode", model: "not-a-model" } },
+  ]);
+  const res = await converse([], "delegate this", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true, ["claude"]);
+  expect(res.proposedDelegate?.cli).toBeUndefined();
+  expect(res.proposedDelegate?.model).toBeUndefined();
+  expect(res.proposedDelegate?.projectPath).toBe("/work/api");
+});
+
+test("propose_delegate tool schema includes cli/model enums when clis are available", async () => {
+  let seenTools: ToolSpec[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => { seenTools = tools; return { content: "ok", toolCalls: [] }; },
+  };
+  await converse([], "hi", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [], undefined, undefined, true, ["claude"]);
+  const tool = seenTools.find((t) => t.name === "propose_delegate");
+  const props = (tool?.parameters as { properties: Record<string, { enum?: string[] }> }).properties;
+  expect(props.cli?.enum).toEqual(["claude"]);
+  expect(props.model?.enum).toContain("sonnet");
+  expect(props.model?.enum).not.toContain("gpt-5-5"); // opencode-only model, claude-only session
+});
