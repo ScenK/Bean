@@ -343,14 +343,15 @@ app.whenReady().then(async () => {
     });
     cancelAllDelegates = delegateTasks.cancelAll;
 
-    // Discord/Teams bot servers are separate workspace packages (packages/discord,
-    // packages/teams), each a plain `node dist/server.js` process — not something the packaged
-    // app ships, so this only works from a repo checkout (which is the only place ~/.bean's
-    // discord.json/teams.json would exist anyway).
+    const chatopsRoot = app.isPackaged ? process.resourcesPath : dirname(projectBeanDir());
     const chatopsServers = createChatopsServers({
-      repoRoot: dirname(projectBeanDir()),
+      repoRoot: chatopsRoot,
       resolvedPath,
       send: (event) => broadcast(IPC.chatopsEvent, event),
+      ...(app.isPackaged ? {
+        serverEntries: { discord: "chatops/discord/server.js", teams: "chatops/teams/server.js" },
+        extraEnv: { BEAN_BUILTIN_DIR: projectDir },
+      } : {}),
     });
     app.on("before-quit", () => chatopsServers.stopAll());
 

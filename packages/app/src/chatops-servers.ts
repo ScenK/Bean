@@ -21,6 +21,8 @@ export interface ChatopsServersDeps {
   repoRoot: string;
   resolvedPath: string;
   send: (event: ChatopsEvent) => void;
+  serverEntries?: Record<ChatopsBot, string>;
+  extraEnv?: NodeJS.ProcessEnv;
   spawnFn?: (command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => SpawnedProcess;
   existsFn?: (path: string) => boolean;
 }
@@ -28,6 +30,7 @@ export interface ChatopsServersDeps {
 export function createChatopsServers(deps: ChatopsServersDeps) {
   const doSpawn = deps.spawnFn ?? ((command, args, cwd, env) => spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] }));
   const exists = deps.existsFn ?? existsSync;
+  const serverEntries = deps.serverEntries ?? SERVER_ENTRY;
   const procs = new Map<ChatopsBot, SpawnedProcess>();
   const state: Record<ChatopsBot, ChatopsState> = { discord: { running: false }, teams: { running: false } };
 
@@ -38,14 +41,14 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
 
     start(bot: ChatopsBot): void {
       if (procs.has(bot)) return;
-      const entry = join(deps.repoRoot, SERVER_ENTRY[bot]);
+      const entry = join(deps.repoRoot, serverEntries[bot]);
       if (!exists(entry)) {
         state[bot] = { running: false, error: `Not built — run "pnpm --filter @bean/${bot} build" first.` };
         emit(bot);
         return;
       }
       let lastErr = "";
-      const child = doSpawn("node", [entry], deps.repoRoot, { ...process.env, PATH: deps.resolvedPath });
+      const child = doSpawn("node", [entry], deps.repoRoot, { ...process.env, ...deps.extraEnv, PATH: deps.resolvedPath });
       child.stderr?.on("data", (chunk) => { lastErr = chunk.toString().trim() || lastErr; });
       procs.set(bot, child);
       state[bot] = { running: true };

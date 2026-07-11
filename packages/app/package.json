@@ -30,6 +30,22 @@
       {
         "from": "../../.bean",
         "to": "builtin"
+      },
+      {
+        "from": "../discord/dist",
+        "to": "chatops/discord",
+        "filter": [
+          "server.js",
+          "server.js.map"
+        ]
+      },
+      {
+        "from": "../teams/dist",
+        "to": "chatops/teams",
+        "filter": [
+          "server.js",
+          "server.js.map"
+        ]
       }
     ],
     "mac": {

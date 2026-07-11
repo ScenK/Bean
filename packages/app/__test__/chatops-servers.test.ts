@@ -39,6 +39,28 @@ describe("createChatopsServers", () => {
     expect(h.sent).toEqual([{ bot: "discord", running: true }]);
   });
 
+  it("can start a packaged server bundle from resources", () => {
+    const sent: ChatopsEvent[] = [];
+    const spawned: { command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }[] = [];
+    const servers = createChatopsServers({
+      repoRoot: "/Resources",
+      resolvedPath: "/usr/bin",
+      send: (e) => sent.push(e),
+      existsFn: (p) => p === "/Resources/chatops/discord/server.js",
+      spawnFn: (command, args, cwd, env) => {
+        spawned.push({ command, args, cwd, env });
+        return fakeProcess().proc;
+      },
+      serverEntries: { discord: "chatops/discord/server.js", teams: "chatops/teams/server.js" },
+      extraEnv: { BEAN_BUILTIN_DIR: "/Resources/builtin" },
+    });
+
+    servers.start("discord");
+
+    expect(spawned).toEqual([{ command: "node", args: ["/Resources/chatops/discord/server.js"], cwd: "/Resources", env: expect.objectContaining({ PATH: "/usr/bin", BEAN_BUILTIN_DIR: "/Resources/builtin" }) }]);
+    expect(sent).toEqual([{ bot: "discord", running: true }]);
+  });
+
   it("start is a no-op while already running", () => {
     const h = harness();
     h.servers.start("discord");
