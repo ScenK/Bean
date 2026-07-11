@@ -47,7 +47,14 @@ export function SettingsWindow() {
       setPaths(c.paths);
     });
     window.bean.chatopsStatus().then(setChatops);
-    window.bean.onChatopsEvent((e) => setChatops((prev) => ({ ...prev, [e.bot]: { running: e.running, error: e.error } })));
+    window.bean.onChatopsEvent((e) => {
+      setChatops((prev) => ({ ...prev, [e.bot]: { running: e.running, error: e.error } }));
+      if (e.error) {
+        setTimeout(() => {
+          setChatops((prev) => (prev[e.bot].error === e.error ? { ...prev, [e.bot]: { ...prev[e.bot], error: undefined } } : prev));
+        }, 3000);
+      }
+    });
   }, []);
 
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
