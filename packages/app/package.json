@@ -67,7 +67,7 @@
     "electron": "latest",
     "electron-builder": "latest",
     "esbuild": "latest",
-    "marked": "^18.0.5",
+    "marked": "^18.0.6",
     "preact": "latest",
     "typescript": "latest",
     "vitest": "latest"
