@@ -1,9 +1,9 @@
 import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile, notesDir,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveMemories,
   detectClis, runDelegate,
-  buildTeamsBot, ConversationStore, NoteProposalStore, ProposalStore, RunRegistry, type BotEffects,
+  buildTeamsBot, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore, RunRegistry, type BotEffects,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, Partials,
@@ -34,6 +34,8 @@ const bot = buildTeamsBot({
   proposals: new ProposalStore(),
   noteProposals: new NoteProposalStore(),
   saveNote: (draft) => saveNote(notesDir(dir), draft),
+  memoryProposals: new MemoryProposalStore(),
+  saveMemories: (m) => saveMemories(memoryFile(dir), m),
   conversations: new ConversationStore(),
   cards: discordCards,
 });
@@ -51,7 +53,7 @@ const client = new Client({
 // Latest select-menu choices per proposal message id — Discord sends each select change
 // as its own interaction, so the values must be cached until the Run button is pressed.
 // Entries die with the proposal (deleted on confirm/cancel).
-const selections = new Map<string, { cli?: string; model?: string }>();
+const selections = new Map<string, { cli?: string; model?: string; memoryPicks?: string[] }>();
 
 const allowed = (userId: string): boolean => discordConfig.allowedUserIds.includes(userId);
 
@@ -118,6 +120,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       const sel = selections.get(interaction.message.id) ?? {};
       if (action === "cli") sel.cli = interaction.values[0];
       if (action === "model") sel.model = interaction.values[0];
+      if (action === "pick-memories") sel.memoryPicks = interaction.values;
       selections.set(interaction.message.id, sel);
       return;
     }
@@ -137,7 +140,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       {
         conversationId: interaction.channelId,
         fromName: interaction.user.displayName,
-        value: { beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model },
+        value: { beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, memoryPicks: sel.memoryPicks },
       },
       fx,
     );

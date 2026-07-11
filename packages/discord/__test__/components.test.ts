@@ -74,3 +74,33 @@ test("note proposal clamps a long body to Discord's 4096-char embed description 
   expect(desc.length).toBeLessThanOrEqual(4096);
   expect(desc).toContain("the full note is saved");
 });
+
+test("memory proposal message has a multi-select of facts and remember/cancel buttons", () => {
+  const card = discordCards.memoryProposalCard({
+    proposalId: "mem-1",
+    facts: [{ text: "prefers tabs" }, { text: "uses vitest", projectName: "bean" }],
+  }) as { components: { components: { type: number; custom_id?: string; max_values?: number; options?: unknown[] }[] }[] };
+  const s = JSON.stringify(card);
+  expect(s).toContain("prefers tabs");
+  expect(s).toContain("bean:pick-memories:mem-1");
+  expect(s).toContain("bean:save-memories:mem-1");
+  expect(s).toContain("bean:cancel-memories:mem-1");
+  const select = card.components[0]!.components[0]!;
+  expect(select.type).toBe(3); // string select
+  expect(select.max_values).toBe(2);
+  expect(select.options).toHaveLength(2);
+});
+
+test("memory result message has no components and states the outcome", () => {
+  const card = discordCards.memoryResultCard({ count: 2, savedBy: "scen", outcome: "saved" }) as { components: unknown[] };
+  expect(card.components).toEqual([]);
+  expect(JSON.stringify(card)).toContain("saved");
+});
+
+test("memory proposal clamps a long fact label to Discord's 100-char option limit", () => {
+  const card = discordCards.memoryProposalCard({
+    proposalId: "mem-1", facts: [{ text: "x".repeat(200) }],
+  }) as { components: { components: { options?: { label: string }[] }[] }[] };
+  const label = card.components[0]!.components[0]!.options![0]!.label;
+  expect(label.length).toBeLessThanOrEqual(100);
+});
