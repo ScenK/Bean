@@ -103,10 +103,17 @@ app.post("/api/messages", (req, res) => {
     }
     const text = TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "";
     if (!text) return;
-    await bot.onMessage(
-      { conversationId: a.conversation.id, text, fromId: a.from.id, fromName: a.from.name ?? "someone" },
-      fx,
-    );
+    await context.sendActivity({ type: ActivityTypes.Typing });
+    // Teams clears the typing indicator quickly; resend while onMessage is still working.
+    const typing = setInterval(() => { void context.sendActivity({ type: ActivityTypes.Typing }); }, 5000);
+    try {
+      await bot.onMessage(
+        { conversationId: a.conversation.id, text, fromId: a.from.id, fromName: a.from.name ?? "someone" },
+        fx,
+      );
+    } finally {
+      clearInterval(typing);
+    }
   });
 });
 

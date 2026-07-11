@@ -77,10 +77,19 @@ client.on("messageCreate", async (message) => {
     if (!isDm && !message.mentions.users.has(client.user?.id ?? "")) return;
     const text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
     if (!text) return;
-    await bot.onMessage(
-      { conversationId: message.channelId, text, fromId: message.author.id, fromName: message.author.displayName },
-      effectsFor(message.channel),
-    );
+    if ("sendTyping" in message.channel) await message.channel.sendTyping();
+    // Discord's typing indicator lasts ~10s; refresh it while onMessage is still working.
+    const typing = "sendTyping" in message.channel
+      ? setInterval(() => message.channel.sendTyping().catch(() => {}), 8000)
+      : undefined;
+    try {
+      await bot.onMessage(
+        { conversationId: message.channelId, text, fromId: message.author.id, fromName: message.author.displayName },
+        effectsFor(message.channel),
+      );
+    } finally {
+      clearInterval(typing);
+    }
   } catch (err) {
     console.error("messageCreate error:", err);
   }
