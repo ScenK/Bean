@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile, notesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveMemories,
   detectClis, runDelegate,
-  buildTeamsBot, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore, RunRegistry, type BotEffects,
+  buildTeamsBot, mentionsBotName, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore, RunRegistry, type BotEffects,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, Partials,
@@ -86,7 +86,12 @@ client.on("messageCreate", async (message) => {
   try {
     if (message.author.bot || !allowed(message.author.id)) return;
     const isDm = message.channel.type === ChannelType.DM;
-    if (!isDm && !message.mentions.users.has(client.user?.id ?? "")) return;
+    const addressed =
+      isDm ||
+      message.mentions.users.has(client.user?.id ?? "") ||
+      message.mentions.repliedUser?.id === client.user?.id ||
+      mentionsBotName(message.content, client.user?.username ?? "");
+    if (!addressed) return;
     const text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
     if (!text) return;
     if ("sendTyping" in message.channel) await message.channel.sendTyping();
