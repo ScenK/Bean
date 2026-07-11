@@ -17,7 +17,7 @@ const COMPONENT_WINDOW_SIZE: Record<ComponentKind, { width: number; height: numb
   projects: { width: 1040, height: 720 },
   notes: { width: 1040, height: 720 },
   plan: { width: 640, height: 620 },
-  settings: { width: 480, height: 560 },
+  settings: { width: 560, height: 680 },
   about: { width: 420, height: 380 },
 };
 

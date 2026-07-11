@@ -1047,11 +1047,13 @@ button, input, textarea, select, a {
 /* --- settings --- */
 .bean-settings {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
   padding: 18px 16px;
-  overflow: auto;
+  overflow-y: auto;
+  background: var(--bean-surface-2);
 }
 .bean-field {
   display: flex;
@@ -1108,6 +1110,109 @@ button, input, textarea, select, a {
 }
 .bean-chatops-label-error {
   color: #e5484d;
+}
+
+.bean-settings-jumpbar {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 10px 16px;
+  overflow-x: auto;
+  background: var(--bean-surface);
+  border-bottom: 1px solid var(--bean-border);
+}
+.bean-settings-tab {
+  flex: none;
+  font: 600 12px sans-serif;
+  color: var(--bean-text-dim);
+  background: transparent;
+  border: 1px solid var(--bean-border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bean-settings-tab--active {
+  color: var(--bean-accent-ink);
+  background: var(--bean-accent);
+  border-color: var(--bean-accent);
+}
+.bean-settings-card {
+  flex: none;
+  background: var(--bean-surface);
+  border: 1px solid var(--bean-border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.bean-settings-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--bean-border);
+  font: 700 11px ui-monospace, monospace;
+  letter-spacing: 0.05em;
+  color: var(--bean-text-dim);
+}
+.bean-settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--bean-border);
+}
+.bean-settings-row:last-child { border-bottom: none; }
+.bean-settings-row-label {
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--bean-text);
+}
+.bean-settings-row-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-end;
+}
+.bean-settings-row-control .bean-input { text-align: right; }
+.bean-input--compact {
+  flex: none;
+  width: 120px;
+  font: 12px ui-monospace, monospace;
+  letter-spacing: 0.14em;
+}
+.bean-settings-segment {
+  display: flex;
+  gap: 4px;
+  background: var(--bean-surface);
+  border: 1px solid var(--bean-border);
+  border-radius: 9px;
+  padding: 3px;
+}
+.bean-settings-segment-btn {
+  font: 600 12px sans-serif;
+  color: var(--bean-text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.bean-settings-segment-btn--active {
+  color: var(--bean-accent-ink);
+  background: var(--bean-accent);
+}
+.bean-settings-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--bean-border);
 }
 
 /* --- about --- */
