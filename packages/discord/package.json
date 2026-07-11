@@ -14,9 +14,9 @@
     "discord.js": "^14.26.5"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "esbuild": "latest",
-    "typescript": "latest",
-    "vitest": "latest"
+    "@types/node": "^26.1.1",
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }

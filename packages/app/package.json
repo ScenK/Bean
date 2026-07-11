@@ -62,14 +62,14 @@
   "devDependencies": {
     "@bean/core": "workspace:*",
     "@playwright/test": "^1.61.1",
-    "@types/node": "latest",
+    "@types/node": "^26.1.1",
     "dompurify": "^3.4.11",
-    "electron": "latest",
-    "electron-builder": "latest",
-    "esbuild": "latest",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.1",
     "marked": "^18.0.6",
-    "preact": "latest",
-    "typescript": "latest",
-    "vitest": "latest"
+    "preact": "^10.29.7",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }
