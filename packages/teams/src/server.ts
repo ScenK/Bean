@@ -1,9 +1,9 @@
 import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
-  skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory,
+  skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile, notesDir,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote,
   detectClis, runDelegate,
-  buildTeamsBot, type BotEffects, AmbientStore, ConversationStore, ProposalStore, RunRegistry,
+  buildTeamsBot, type BotEffects, AmbientStore, ConversationStore, NoteProposalStore, ProposalStore, RunRegistry,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -11,7 +11,7 @@ import {
   type ConversationReference, type Activity,
 } from "botbuilder";
 import express from "express";
-import { finishedCard, proposalCard, runningCard } from "./cards.js";
+import { finishedCard, noteProposalCard, noteResultCard, proposalCard, runningCard } from "./cards.js";
 import { loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 
 const dir = beanDir();
@@ -52,8 +52,10 @@ const bot = buildTeamsBot({
   detectClis: () => clis,
   runs: new RunRegistry(runDelegate),
   proposals: new ProposalStore(),
+  noteProposals: new NoteProposalStore(),
+  saveNote: (draft) => saveNote(notesDir(dir), draft),
   conversations: new ConversationStore(),
-  cards: { proposalCard, runningCard, finishedCard },
+  cards: { proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard },
 });
 
 // Ambient (non-mention) channel messages only reach /api/messages if the Teams app manifest

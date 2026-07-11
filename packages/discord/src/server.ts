@@ -1,9 +1,9 @@
 import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
-  skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory,
+  skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile, notesDir,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote,
   detectClis, runDelegate,
-  buildTeamsBot, ConversationStore, ProposalStore, RunRegistry, type BotEffects,
+  buildTeamsBot, ConversationStore, NoteProposalStore, ProposalStore, RunRegistry, type BotEffects,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, Partials,
@@ -32,6 +32,8 @@ const bot = buildTeamsBot({
   detectClis: () => clis,
   runs: new RunRegistry(runDelegate),
   proposals: new ProposalStore(),
+  noteProposals: new NoteProposalStore(),
+  saveNote: (draft) => saveNote(notesDir(dir), draft),
   conversations: new ConversationStore(),
   cards: discordCards,
 });

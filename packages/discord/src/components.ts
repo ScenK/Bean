@@ -1,4 +1,6 @@
-import type { CardBuilders, FinishedCardInput, ProposalCardInput, RunningCardInput } from "@bean/core";
+import type {
+  CardBuilders, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
+} from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
 // Plain JSON keeps the builders pure/testable and discord.js accepts them directly.
@@ -66,4 +68,27 @@ function finishedCard(input: FinishedCardInput): object {
   };
 }
 
-export const discordCards: CardBuilders = { proposalCard, runningCard, finishedCard };
+// Discord embed descriptions cap at 4096 chars; note bodies from chat are well under that.
+// ponytail: truncate if a note ever overflows — not worth the code until it does.
+function noteProposalCard(input: NoteProposalCardInput): object {
+  return {
+    embeds: [{
+      title: input.updating ? "Bean proposes a note update" : "Bean proposes a note",
+      description: `**${input.title}**\n\n${input.body}`,
+      fields: [{ name: "Note", value: input.projectName ?? "general", inline: true }],
+    }],
+    components: [row([
+      { type: BUTTON, style: 3, label: input.updating ? "Update note" : "Save note", custom_id: `bean:save-note:${input.proposalId}` },
+      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-note:${input.proposalId}` },
+    ])],
+  };
+}
+
+function noteResultCard(input: NoteResultCardInput): object {
+  return {
+    embeds: [{ title: `Note ${input.outcome} (by ${input.savedBy})`, description: input.title }],
+    components: [],
+  };
+}
+
+export const discordCards: CardBuilders = { proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard };

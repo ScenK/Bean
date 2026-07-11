@@ -10,6 +10,8 @@ import { formatAmbientBlock, type AmbientMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
 import type { PendingProposal, ProposalStore } from "./proposals.js";
+import type { NoteProposalStore } from "./note-proposals.js";
+import type { NoteDraft } from "../note-store.js";
 import type { RunRegistry } from "./runs.js";
 
 export interface IncomingMessage {
@@ -46,6 +48,9 @@ export interface TeamsBotDeps {
   detectClis: () => CliName[];
   runs: RunRegistry;
   proposals: ProposalStore;
+  noteProposals: NoteProposalStore;
+  /** Persists a confirmed note to ~/.bean/notes (server injects the notes dir). */
+  saveNote: (draft: NoteDraft) => Promise<string>;
   conversations: ConversationStore;
   cards: CardBuilders;
 }
@@ -104,6 +109,39 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     await deps.saveModelMemory({ ...memory, ...memoryUpdatesFor({ cli, model }) });
   }
 
+  async function handleNoteAction(
+    kind: "save-note" | "cancel-note",
+    proposalId: string | undefined,
+    actor: string,
+    fx: BotEffects,
+  ): Promise<void> {
+    if (!proposalId) return;
+    const pending = deps.noteProposals.claim(proposalId);
+    if (!pending) {
+      await fx.post("That note draft expired — ask me to take the note again.");
+      return;
+    }
+    const resultCard = (outcome: "saved" | "cancelled"): object =>
+      deps.cards.noteResultCard({ title: pending.note.title, savedBy: actor, outcome });
+    const updateTo = async (card: object): Promise<void> => {
+      if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
+    };
+    if (kind === "cancel-note") {
+      await updateTo(resultCard("cancelled"));
+      return;
+    }
+    try {
+      await deps.saveNote({
+        title: pending.note.title, body: pending.note.body,
+        project: pending.note.project, slug: pending.note.slug, source: "chat",
+      });
+      await updateTo(resultCard("saved"));
+      await fx.post(`Saved note "${pending.note.title}".`);
+    } catch (err) {
+      await fx.post(`Couldn't save the note: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   return {
     async onMessage(msg: IncomingMessage, fx: BotEffects): Promise<void> {
       try {
@@ -135,8 +173,20 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps.conversations.append(msg.conversationId, { role: "assistant", content: result.reply });
           await fx.reply(result.reply);
         }
-        if (result.proposedRun || result.proposedNote) {
+        if (result.proposedRun) {
           await fx.post(DESKTOP_ONLY);
+          return;
+        }
+        if (result.proposedNote) {
+          const note = result.proposedNote;
+          const projectName = note.project
+            ? (projects.find((p) => p.path === note.project)?.name ?? note.project)
+            : undefined;
+          const pending = deps.noteProposals.add({ note, conversationId: msg.conversationId, proposedBy: msg.fromName });
+          const activityId = await fx.postCard(deps.cards.noteProposalCard({
+            proposalId: pending.id, title: note.title, body: note.body, projectName, updating: note.slug !== undefined,
+          }));
+          deps.noteProposals.setCardActivityId(pending.id, activityId);
           return;
         }
         const proposal = result.proposedDelegate;
@@ -166,6 +216,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       const { beanAction, proposalId, projectPath } = action.value;
       if (beanAction === "cancel-run") {
         if (!deps.runs.cancel(projectPath ?? "")) await fx.post("Nothing is running in that project.");
+        return;
+      }
+      if (beanAction === "save-note" || beanAction === "cancel-note") {
+        await handleNoteAction(beanAction, proposalId, action.fromName, fx);
         return;
       }
       if (!proposalId) return;
