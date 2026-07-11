@@ -41,11 +41,18 @@ export interface LinkedNote { slug: string; title: string; version: number; body
 export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedRemember?: boolean; }
 export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?: string; linkedNote?: LinkedNote; }
 
-const BEHAVIOR_INSTRUCTIONS =
-  "You cannot do project work yourself — a separate `opencode` process does. When the user " +
-  "wants a concrete task done in one of their projects, call the propose_run tool with the " +
-  "best matching skill name, project path, and a clear instruction; otherwise just reply in " +
-  "text. Any other tools you are given (reminders etc.) you DO execute yourself — call them " +
+// runAvailable=false (chatops: Discord/Teams) — no terminal exists there, so propose_run
+// is only offered for `target: chat` skills (which run on Bean's own model, no agent
+// harness); everything else routes to propose_delegate.
+const behaviorInstructions = (runAvailable: boolean): string =>
+  "You cannot do project work yourself — a separate `opencode` process does. " +
+  (runAvailable
+    ? "When the user " +
+      "wants a concrete task done in one of their projects, call the propose_run tool with the " +
+      "best matching skill name, project path, and a clear instruction; otherwise just reply in " +
+      "text. "
+    : "") +
+  "Any other tools you are given (reminders etc.) you DO execute yourself — call them " +
   "directly when the user asks, then confirm what you did in one short sentence. " +
   "Only propose a run when the user clearly wants work done. The skills/projects list below " +
   "is for your own routing decisions — don't recite or summarize it unprompted. Only describe " +
@@ -61,9 +68,14 @@ const BEHAVIOR_INSTRUCTIONS =
   "you should delegate first; the card Bean shows afterward is the confirmation step. " +
   "If the user asks you to inspect, explore, summarize, or explain a linked project, " +
   "use propose_delegate; do not say you cannot access the repository. " +
-  "Use propose_run instead when the user wants to watch or continue the " +
-  "work in their own terminal. Both are confirm-first via the card shown after you " +
-  "propose — not by asking permission in chat text." +
+  (runAvailable
+    ? "Use propose_run instead when the user wants to watch or continue the " +
+      "work in their own terminal. Both are confirm-first via the card shown after you " +
+      "propose — not by asking permission in chat text."
+    : "There is no terminal here. If you are given a propose_run tool, its skills run " +
+      "directly in this chat — call it for those. Any other request to run, launch, or " +
+      "kick off work is a propose_delegate call. Delegates are confirm-first via the card " +
+      "shown after you propose — not by asking permission in chat text.") +
   " When the user explicitly asks you to remember or save durable facts from this chat, call " +
   "propose_remember — the user then confirms which facts are kept; never save memory silently.";
   
@@ -117,11 +129,14 @@ function proposeRememberTool(): ToolSpec {
 // known values. This stops the model from emitting a display label or bare name
 // (e.g. "bean (/path)" or "bean") where an exact project path is required — which
 // converse()'s validation would otherwise silently drop, killing the confirm card.
-function proposeRunTool(skills: Skill[], projects: Project[]): ToolSpec {
+function proposeRunTool(skills: Skill[], projects: Project[], inChatOnly = false): ToolSpec {
   return {
     name: "propose_run",
     description:
-      "Propose running one skill, optionally on one project. Use exactly one of the allowed " +
+      (inChatOnly
+        ? "Run one of these skills right here in this chat — no terminal or background agent involved. "
+        : "Propose running one skill, optionally on one project. ") +
+      "Use exactly one of the allowed " +
       "skill and project values (a project value is that project's path); omit project when the " +
       "user wants to run without one (a scratch workspace, e.g. for a URL-only task).",
     parameters: {
@@ -212,10 +227,12 @@ export async function converse(
   delegateAvailable = false,
   availableClis: CliName[] = [],
   rememberAvailable = false,
+  // false where confirming a run couldn't execute anything (chatops — no desktop, no terminal).
+  runAvailable = true,
 ): Promise<ConverseResult> {
   const systemParts = [
     composePersonaPrompt(persona),
-    BEHAVIOR_INSTRUCTIONS,
+    behaviorInstructions(runAvailable),
     catalog(skills, projects),
   ];
   // Local time so the model can resolve "in 20 minutes" / "at 5pm" into a concrete timestamp.
@@ -238,8 +255,11 @@ export async function converse(
 
   // No skills means propose_run could never validly fire; project is optional (no-project /
   // scratch workspace runs) so an empty projects list no longer excludes the tool.
+  // Without a terminal (chatops), only `target: chat` skills are runnable via propose_run —
+  // they execute on Bean's own model; terminal skills there go through propose_delegate.
+  const runnableSkills = runAvailable ? skills : skills.filter((s) => s.target === "chat");
   const tools = [
-    ...(skills.length > 0 ? [proposeRunTool(skills, projects)] : []),
+    ...(runnableSkills.length > 0 ? [proposeRunTool(runnableSkills, projects, !runAvailable)] : []),
     ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects, availableClis)] : []),
     proposeNoteTool(projects, linkedNote),
     ...(rememberAvailable ? [proposeRememberTool()] : []),
@@ -265,7 +285,7 @@ export async function converse(
     const call = toolCalls.find((c) => c.name === "propose_run");
     if (call) {
       const args = (call.args ?? {}) as { skill?: unknown; project?: unknown; instruction?: unknown };
-      const skill = skills.find((s) => s.name === args.skill);
+      const skill = runnableSkills.find((s) => s.name === args.skill);
       // args.project absent = a deliberate no-project run; present-but-unknown = the model
       // named something outside the enum, which we still treat as invalid.
       const project = args.project === undefined ? undefined : projects.find((p) => p.path === args.project);
