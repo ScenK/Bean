@@ -75,11 +75,23 @@ pnpm --filter @bean/core exec vitest run -t "falls back"   # by test name
 ```
 
 **Validation gate:** run `pnpm test && pnpm typecheck` and confirm both exit 0 before
-claiming work is done. CI (`.github/workflows/ci.yml`) runs the same two commands on every
-push to `main` and every PR, plus an `e2e` job (Playwright driving the real built Electron
-app — see `packages/app/e2e/`) on `macos-latest`. The `e2e` job is advisory, not a required
-check, so an occasional flake never blocks a merge — but check its result before merging a PR
-that touches app boot, IPC, or window behavior.
+claiming work is done. If a change touches subprocesses, spawned CLIs/bots, PATH/env handling,
+Electron resources, app boot, IPC/preload, window/tray behavior, or anything that differs between
+source checkout and packaged app, also verify both worlds before claiming done:
+
+- **Dev:** run the relevant `pnpm dev`/package build path or a direct child-process smoke test
+  from the repo checkout.
+- **Compiled:** run `pnpm dist:mac`, inspect/use the built `Bean.app` under
+  `packages/app/release/mac-*/Bean.app`, and smoke-test the exact packaged entry/resource path.
+
+Do not trust unit tests, `pnpm build`, or dev-mode success for packaged behavior. Clear stale
+state between those checks (quit old Bean instances, stop child processes, rebuild the package,
+and use fresh temp `HOME`/`~/.bean` fixtures when config affects the result). CI
+(`.github/workflows/ci.yml`) runs the same two commands on every push to `main` and every PR,
+plus an `e2e` job (Playwright driving the real built Electron app — see `packages/app/e2e/`) on
+`macos-latest`. The `e2e` job is advisory, not a required check, so an occasional flake never
+blocks a merge — but check its result before merging a PR that touches app boot, IPC, or window
+behavior.
 
 ---
 
