@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { CliName } from "@bean/core";
 import type { ConfigView } from "../../../channels.js";
 import type { Theme } from "../../../channels.js";
+import type { ChatopsBot, ChatopsState } from "../../../chatops-servers.js";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -10,6 +11,11 @@ const PATH_LABELS: { key: keyof ConfigView["paths"]; label: string }[] = [
   { key: "skills", label: "Skills" },
   { key: "projects", label: "Projects" },
   { key: "persona", label: "Persona" },
+];
+
+const CHATOPS_BOTS: { key: ChatopsBot; label: string }[] = [
+  { key: "discord", label: "Discord" },
+  { key: "teams", label: "Teams" },
 ];
 
 export function SettingsWindow() {
@@ -23,6 +29,10 @@ export function SettingsWindow() {
   const [paths, setPaths] = useState<ConfigView["paths"] | undefined>(undefined);
   const [save, setSave] = useState<SaveState>("idle");
   const [error, setError] = useState<string | undefined>(undefined);
+  const [chatops, setChatops] = useState<Record<ChatopsBot, ChatopsState>>({
+    discord: { running: false },
+    teams: { running: false },
+  });
 
   useEffect(() => {
     window.bean.getTheme().then(setTheme);
@@ -36,6 +46,8 @@ export function SettingsWindow() {
       setDelegateCli(c.delegateCli);
       setPaths(c.paths);
     });
+    window.bean.chatopsStatus().then(setChatops);
+    window.bean.onChatopsEvent((e) => setChatops((prev) => ({ ...prev, [e.bot]: { running: e.running, error: e.error } })));
   }, []);
 
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
@@ -139,6 +151,31 @@ export function SettingsWindow() {
           >
             {theme === "hearth" ? "Switch to Graphite" : "Switch to Hearth"}
           </button>
+        </div>
+
+        <div class="bean-field">
+          <span class="bean-field-label">CHAT BOTS</span>
+          <div class="bean-paths">
+            {CHATOPS_BOTS.map(({ key, label }) => {
+              const s = chatops[key];
+              const dotClass = s.running ? "bean-chatops-dot--running" : s.error ? "bean-chatops-dot--error" : "";
+              return (
+                <div key={key} class="bean-chatops-row" title={s.error}>
+                  <span class={`bean-chatops-dot ${dotClass}`} />
+                  <span class={`bean-chatops-label ${s.error ? "bean-chatops-label-error" : ""}`}>
+                    {label}{s.running ? " — running" : s.error ? ` — ${s.error}` : " — stopped"}
+                  </span>
+                  <button
+                    type="button"
+                    class="bean-btn bean-btn--ghost"
+                    onClick={() => (s.running ? window.bean.chatopsStop(key) : window.bean.chatopsStart(key))}
+                  >
+                    {s.running ? "Stop" : "Start"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         <div class="bean-field">

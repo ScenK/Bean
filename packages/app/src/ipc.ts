@@ -12,6 +12,7 @@ import { BrowserWindow, dialog, screen, shell, type IpcMain } from "electron";
 import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo } from "./channels.js";
 import { avatarSizeForMode, dragBloomLayout, nextAvatarBounds, type Bounds } from "./avatar-menu.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
+import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 
 export { IPC };
 
@@ -300,7 +301,21 @@ export function buildThemeHandlers(deps: ThemeHandlerDeps) {
   };
 }
 
-export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps {
+export interface ChatopsHandlerDeps {
+  chatopsStatus: () => Record<ChatopsBot, ChatopsState>;
+  chatopsStart: (bot: ChatopsBot) => void;
+  chatopsStop: (bot: ChatopsBot) => void;
+}
+
+export function buildChatopsHandlers(deps: ChatopsHandlerDeps) {
+  return {
+    status: (): Record<ChatopsBot, ChatopsState> => deps.chatopsStatus(),
+    start: (bot: ChatopsBot): void => deps.chatopsStart(bot),
+    stop: (bot: ChatopsBot): void => deps.chatopsStop(bot),
+  };
+}
+
+export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, ChatopsHandlerDeps {
   converse: ConverseDeps["chat"];
   saveSkill: (dir: string, name: string, body: string) => Promise<void>;
   deleteSkill: (dir: string, name: string) => Promise<void>;
@@ -443,6 +458,11 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
     await theme.set(next);
     deps.broadcast(IPC.themeChanged, next);
   });
+
+  const chatopsHandlers = buildChatopsHandlers(deps);
+  ipcMain.handle(IPC.chatopsStatus, () => chatopsHandlers.status());
+  ipcMain.on(IPC.chatopsStart, (_e, bot: ChatopsBot) => chatopsHandlers.start(bot));
+  ipcMain.on(IPC.chatopsStop, (_e, bot: ChatopsBot) => chatopsHandlers.stop(bot));
 
   ipcMain.handle(IPC.openComponent, (_e, kind: ComponentKind, droppedUrl?: string) => deps.openComponent(kind, droppedUrl));
   ipcMain.on(IPC.proposeRun, (_e, suggestion: RouteSuggestion) => deps.proposeRun(suggestion));

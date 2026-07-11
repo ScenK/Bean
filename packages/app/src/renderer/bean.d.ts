@@ -4,6 +4,7 @@ import type {
 } from "@bean/core";
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
+import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
 
 declare global {
   interface Window {
@@ -60,6 +61,10 @@ declare global {
       extractMemories(transcript: ChatTurn[]): Promise<MemoryCandidate[]>;
       onReviewBeforeClose(cb: () => void): void;
       allowChatClose(): void;
+      chatopsStatus(): Promise<Record<ChatopsBot, ChatopsState>>;
+      chatopsStart(bot: ChatopsBot): void;
+      chatopsStop(bot: ChatopsBot): void;
+      onChatopsEvent(cb: (e: ChatopsEvent) => void): void;
     };
   }
 }
