@@ -104,10 +104,11 @@ function proposeRememberTool(): ToolSpec {
   return {
     name: "propose_remember",
     description:
-      "Call this only when the user explicitly asks you to remember or save durable facts from " +
-      "this conversation (e.g. \"remember this\", \"save what we figured out\"). It offers the user " +
-      "a card of candidate facts to confirm — do not use it to save anything silently, and do not " +
-      "call it proactively without an explicit ask.",
+      "Call this only when the user's LATEST message directly asks you to remember or save " +
+      "durable facts (e.g. \"remember this\", \"save what we figured out\"). It offers the user " +
+      "a card of candidate facts to confirm — do not use it to save anything silently. Never " +
+      "call it without that direct ask: banter, jokes, messages addressed to someone else, or " +
+      "remarks about you needing to learn/be taught are NOT requests to remember.",
     parameters: { type: "object", properties: {} },
   };
 }

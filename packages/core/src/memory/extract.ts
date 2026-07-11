@@ -4,12 +4,15 @@ import type { Project } from "../types.js";
 
 const EXTRACT_INSTRUCTIONS =
   "You are reviewing a finished conversation to decide what — if anything — is worth " +
-  "remembering long-term about the user or their projects. Call the remember tool once per " +
-  "fact worth keeping. Remember ONLY durable, reusable facts: the user's stable preferences " +
-  "and working style, and project conventions, decisions, or gotchas. Do NOT remember one-off " +
-  "task details, transient state, anything already in the existing memory list, or small talk. " +
-  "If nothing meets that bar, call no tools. Tag a fact with a projectPath only when it is " +
-  "clearly about that specific project; otherwise leave it global.";
+  "remembering long-term. Call the remember tool once per fact worth keeping. Remember ONLY " +
+  "durable, reusable facts: the user's stable preferences and working style; project " +
+  "conventions, decisions, or gotchas; and lasting facts about people or bots the user " +
+  "interacts with. Do NOT remember one-off task details, transient state, anything already " +
+  "in the existing memory list, or small talk. EXCEPTION: if the user explicitly asked to " +
+  'remember a specific fact ("remember that ..."), record that fact faithfully even if it ' +
+  "would not otherwise meet the bar. If nothing meets that bar, call no tools. Tag a fact " +
+  "with a projectPath only when it is clearly about that specific project; otherwise leave " +
+  "it global.";
 
 function rememberTool(projects: Project[]): ToolSpec {
   const properties: Record<string, unknown> = {
