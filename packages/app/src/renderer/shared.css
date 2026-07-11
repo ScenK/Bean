@@ -1103,8 +1103,10 @@ button, input, textarea, select, a {
 .bean-chatops-dot--error { background: #e5484d; opacity: 1; box-shadow: 0 0 0 3px color-mix(in oklch, #e5484d 20%, transparent); }
 .bean-chatops-label {
   flex: 1;
+  min-width: 0;
   font: 11.5px ui-monospace, monospace;
   color: var(--bean-text);
+  overflow-wrap: break-word;
 }
 .bean-chatops-label-error {
   color: #e5484d;

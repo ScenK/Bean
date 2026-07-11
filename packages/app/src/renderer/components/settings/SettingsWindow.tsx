@@ -46,11 +46,12 @@ export function SettingsWindow() {
 
   // A chatops error (e.g. "not built") stays informative for a few seconds, then clears itself
   // so a stale row doesn't sit red forever — the underlying process state is already gone by then.
-  const CHATOPS_ERROR_AUTOHIDE_MS = 6000;
-  const scheduleErrorClear = (bot: ChatopsBot): void => {
-    window.setTimeout(() => {
-      setChatops((prev) => (prev[bot].error ? { ...prev, [bot]: { ...prev[bot], error: undefined } } : prev));
-    }, CHATOPS_ERROR_AUTOHIDE_MS);
+  // Guards on the exact error value so a fresher error that arrives before the timeout fires
+  // isn't clobbered by a stale clear.
+  const scheduleErrorClear = (bot: ChatopsBot, err: string): void => {
+    setTimeout(() => {
+      setChatops((prev) => (prev[bot].error === err ? { ...prev, [bot]: { ...prev[bot], error: undefined } } : prev));
+    }, 3000);
   };
 
   useEffect(() => {
@@ -67,11 +68,11 @@ export function SettingsWindow() {
     });
     window.bean.chatopsStatus().then((status) => {
       setChatops(status);
-      (Object.keys(status) as ChatopsBot[]).forEach((bot) => { if (status[bot].error) scheduleErrorClear(bot); });
+      (Object.keys(status) as ChatopsBot[]).forEach((bot) => { if (status[bot].error) scheduleErrorClear(bot, status[bot].error!); });
     });
     window.bean.onChatopsEvent((e) => {
       setChatops((prev) => ({ ...prev, [e.bot]: { running: e.running, error: e.error } }));
-      if (e.error) scheduleErrorClear(e.bot);
+      if (e.error) scheduleErrorClear(e.bot, e.error);
     });
   }, []);
 
