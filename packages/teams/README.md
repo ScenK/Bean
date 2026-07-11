@@ -21,6 +21,14 @@ Adaptive Card and execute on THIS machine. Design: `docs/superpowers/specs/2026-
    `scopes: ["groupChat", "team"]`) plus two icons, zip them, and upload via Teams →
    Apps → "Upload a custom app" (corporate tenants: IT approval / custom app policy needed).
    The `teamsAppManifest/` folder next to this README holds a fill-in template.
+5. **Ambient channel history (optional)**: for "@Bean summarize the last 10 minutes" to see
+   messages that didn't mention Bean, the manifest must grant the RSC (resource-specific
+   consent) permissions already present in the template — `ChannelMessage.Read.Group` (team
+   channels) and `ChatMessage.Read.Chat` (group chats) under `authorization.permissions.resourceSpecific`,
+   plus `webApplicationInfo.id` = the App ID. A team owner consents when installing the app.
+   With RSC granted, Teams delivers *every* channel message to the bot; Bean stores the
+   non-mention ones in memory (last ~200 per conversation, lost on restart) and never replies
+   to them. Without RSC, everything else still works — Bean just can't see ambient chatter.
 
 ## Testing before rolling out to the org
 
@@ -58,3 +66,5 @@ results post back to the thread when the run finishes.
 - [ ] Second confirm on the same project while running → polite refusal.
 - [ ] Cancel run → card shows "cancelled".
 - [ ] A proposal left >10 min → "expired" on confirm.
+- [ ] (RSC granted) chat without mentioning Bean, then "@Bean summarize the last 10 minutes"
+      → summary references the ambient messages; the non-mention messages got no reply.

@@ -53,7 +53,7 @@ const selections = new Map<string, { cli?: string; model?: string }>();
 
 const allowed = (userId: string): boolean => discordConfig.allowedUserIds.includes(userId);
 
-function effectsFor(channel: TextBasedChannel): BotEffects {
+function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string): BotEffects {
   const send = async (options: string | MessageCreateOptions): Promise<Message> => {
     if (!("send" in channel)) throw new Error("channel is not sendable");
     return channel.send(options as MessageCreateOptions);
@@ -66,6 +66,14 @@ function effectsFor(channel: TextBasedChannel): BotEffects {
       if (!("messages" in channel)) return;
       const msg = await channel.messages.fetch(activityId);
       await msg.edit(card as Parameters<Message["edit"]>[0]);
+    },
+    fetchRecent: async (sinceMs) => {
+      if (!("messages" in channel)) return [];
+      const fetched = await channel.messages.fetch({ limit: 50 });
+      return [...fetched.values()]
+        .filter((m) => m.createdTimestamp >= sinceMs && !m.author.bot && m.id !== triggeringMessageId && m.content)
+        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+        .map((m) => ({ fromName: m.author.displayName, text: m.content, at: m.createdTimestamp }));
     },
   };
 }
@@ -85,7 +93,7 @@ client.on("messageCreate", async (message) => {
     try {
       await bot.onMessage(
         { conversationId: message.channelId, text, fromId: message.author.id, fromName: message.author.displayName },
-        effectsFor(message.channel),
+        effectsFor(message.channel, message.id),
       );
     } finally {
       clearInterval(typing);

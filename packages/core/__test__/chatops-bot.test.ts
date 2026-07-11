@@ -75,6 +75,40 @@ test("plain message: replies with converse text and records history", async () =
   ]);
 });
 
+test("fetchRecent messages are injected as an ambient context block", async () => {
+  const seen: { role: string; content: string }[][] = [];
+  const { deps } = makeDeps({
+    chat: async ({ messages }) => {
+      seen.push(messages.map((m) => ({ role: m.role, content: String(m.content) })));
+      return { content: "summary", toolCalls: [] };
+    },
+  });
+  const bot = buildTeamsBot(deps);
+  const effects = { ...fx(), fetchRecent: async () => [{ fromName: "alice", text: "ship it", at: Date.now() }] };
+  await bot.onMessage(msg, effects);
+  const block = seen[0]?.find((m) => m.content.includes("not addressed to you"));
+  expect(block?.role).toBe("user");
+  expect(block?.content).toContain("alice: ship it");
+  // context block is per-turn, not persisted into the conversation history
+  expect(deps.conversations.history("c1").some((t) => t.content.includes("alice"))).toBe(false);
+});
+
+test("empty or absent fetchRecent injects nothing", async () => {
+  const seen: string[][] = [];
+  const { deps } = makeDeps({
+    chat: async ({ messages }) => {
+      seen.push(messages.map((m) => String(m.content)));
+      return { content: "ok", toolCalls: [] };
+    },
+  });
+  const bot = buildTeamsBot(deps);
+  await bot.onMessage(msg, { ...fx(), fetchRecent: async () => [] });
+  await bot.onMessage(msg, fx());
+  for (const messages of seen) {
+    expect(messages.some((c) => c.includes("not addressed to you"))).toBe(false);
+  }
+});
+
 test("proposedDelegate posts a proposal card", async () => {
   const { deps } = makeDeps({
     converseResult: {
