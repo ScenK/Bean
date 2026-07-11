@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile, notesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveMemories,
   detectClis, runDelegate,
-  buildTeamsBot, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore, RunRegistry,
+  buildTeamsBot, mentionsBotName, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore, RunRegistry,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -64,12 +64,15 @@ const bot = buildTeamsBot({
 // grants the RSC permission ChannelMessage.Read.Group — see packages/teams/README.md.
 const ambient = new AmbientStore();
 
-/** True when the message @mentions the bot; personal (1:1) chats always count as addressed. */
+/** True when the message @mentions the bot or names it in the text; personal (1:1)
+ * chats always count as addressed. Untagged channel messages only arrive at all
+ * with the RSC permission above. */
 function addressedToBot(a: Activity): boolean {
   if (a.conversation.conversationType === "personal") return true;
-  return (a.entities ?? []).some(
+  const mentioned = (a.entities ?? []).some(
     (e) => e.type === "mention" && (e as { mentioned?: { id?: string } }).mentioned?.id === a.recipient.id,
   );
+  return mentioned || mentionsBotName(a.text ?? "", a.recipient.name ?? "");
 }
 
 /** Effects bound to the incoming turn's conversation; posts after the turn ends go
