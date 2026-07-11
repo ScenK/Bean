@@ -74,4 +74,8 @@ export const IPC = {
   extractMemories: "bean:extract-memories",
   reviewBeforeClose: "bean:review-before-close",
   allowChatClose: "bean:allow-chat-close",
+  chatopsStatus: "bean:chatops-status",
+  chatopsStart: "bean:chatops-start",
+  chatopsStop: "bean:chatops-stop",
+  chatopsEvent: "bean:chatops-event",
 } as const;

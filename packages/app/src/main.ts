@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
+import { createChatopsServers } from "./chatops-servers.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, memoryFile, remindersFile,
@@ -342,6 +343,17 @@ app.whenReady().then(async () => {
     });
     cancelAllDelegates = delegateTasks.cancelAll;
 
+    // Discord/Teams bot servers are separate workspace packages (packages/discord,
+    // packages/teams), each a plain `node dist/server.js` process — not something the packaged
+    // app ships, so this only works from a repo checkout (which is the only place ~/.bean's
+    // discord.json/teams.json would exist anyway).
+    const chatopsServers = createChatopsServers({
+      repoRoot: dirname(projectBeanDir()),
+      resolvedPath,
+      send: (event) => broadcast(IPC.chatopsEvent, event),
+    });
+    app.on("before-quit", () => chatopsServers.stopAll());
+
     registerIpc(ipcMain, {
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
       loadMemories, saveMemories, extractMemories,
@@ -387,6 +399,9 @@ app.whenReady().then(async () => {
         author: pkg.author,
         description: pkg.description,
       }),
+      chatopsStatus: chatopsServers.status,
+      chatopsStart: chatopsServers.start,
+      chatopsStop: chatopsServers.stop,
       getCurrentTheme, setCurrentTheme, broadcast, openComponent, proposeRun, planFromDrop,
       getPendingPlan: planStore.get,
       getPendingDroppedUrl: droppedUrlStore.get,

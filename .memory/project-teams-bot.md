@@ -16,6 +16,13 @@ Bean has two chat adapters over one shared brain:
   adapters (historical name) in ~/.bean/model-memory.json beside the desktop's skillName
   keys. Don't rename or "clean up" either side.
 - Conversation/proposal state is in-memory by design (POC): restart = amnesia.
+- Settings has a "CHAT BOTS" section (Start/Stop per bot) wired via `packages/app/src/chatops-servers.ts`
+  (`createChatopsServers`): Electron main spawns `node packages/{discord,teams}/dist/server.js` as a
+  plain child process (repo root resolved the same way `projectBeanDir()` does) and tracks running/error
+  state, broadcast to renderer via `bean:chatops-event`. Dev-only by construction — packaged builds don't
+  ship `packages/discord`/`packages/teams`, so the buttons only work from a repo checkout (same
+  precondition as `~/.bean/discord.json`/`teams.json` existing at all). Requires `pnpm --filter @bean/discord
+  build` (and teams) first; missing dist surfaces as an inline error instead of throwing.
 - Auth is **Single Tenant**, not the design doc's original Multi Tenant: Azure Bot Service
   stopped offering "Multi Tenant" as an app-registration type in the portal for new bots
   (security hardening on Microsoft's side). `TeamsConfig` requires `tenantId` alongside

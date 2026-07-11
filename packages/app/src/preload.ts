@@ -5,6 +5,7 @@ import type {
   Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel,
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
+import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
 
 contextBridge.exposeInMainWorld("bean", {
   route: (input: RouteInput): Promise<RouteSuggestion> => ipcRenderer.invoke(IPC.route, input),
@@ -75,4 +76,9 @@ contextBridge.exposeInMainWorld("bean", {
     ipcRenderer.invoke(IPC.extractMemories, transcript),
   onReviewBeforeClose: (cb: () => void) => ipcRenderer.on(IPC.reviewBeforeClose, () => cb()),
   allowChatClose: (): void => ipcRenderer.send(IPC.allowChatClose),
+  chatopsStatus: (): Promise<Record<ChatopsBot, ChatopsState>> => ipcRenderer.invoke(IPC.chatopsStatus),
+  chatopsStart: (bot: ChatopsBot): void => ipcRenderer.send(IPC.chatopsStart, bot),
+  chatopsStop: (bot: ChatopsBot): void => ipcRenderer.send(IPC.chatopsStop, bot),
+  onChatopsEvent: (cb: (e: ChatopsEvent) => void) =>
+    ipcRenderer.on(IPC.chatopsEvent, (_e, ev: ChatopsEvent) => cb(ev)),
 });

@@ -1083,6 +1083,30 @@ button, input, textarea, select, a {
   color: var(--bean-text);
   word-break: break-all;
 }
+.bean-chatops-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bean-chatops-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bean-text-dim);
+  opacity: 0.5;
+  box-shadow: 0 0 0 3px transparent;
+}
+.bean-chatops-dot--running { background: #30a46c; opacity: 1; box-shadow: 0 0 0 3px color-mix(in oklch, #30a46c 20%, transparent); }
+.bean-chatops-dot--error { background: #e5484d; opacity: 1; box-shadow: 0 0 0 3px color-mix(in oklch, #e5484d 20%, transparent); }
+.bean-chatops-label {
+  flex: 1;
+  font: 11.5px ui-monospace, monospace;
+  color: var(--bean-text);
+}
+.bean-chatops-label-error {
+  color: #e5484d;
+}
 
 /* --- about --- */
 .bean-about {
