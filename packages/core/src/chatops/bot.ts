@@ -240,10 +240,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             );
             deps.conversations.append(msg.conversationId, { role: "user", content: run.composedPrompt });
             // Nested proposals from the skill prompt are deliberately ignored — one hop only.
-            if (followup.reply) {
-              deps.conversations.append(msg.conversationId, { role: "assistant", content: followup.reply });
-              await fx.post(followup.reply);
-            }
+            // A pure tool-use second hop leaves reply empty; never answer with silence.
+            const text = followup.reply.trim() ||
+              `The ${run.skillName} skill didn't produce a reply — try asking me directly instead.`;
+            deps.conversations.append(msg.conversationId, { role: "assistant", content: text });
+            await fx.post(text);
             return;
           }
           // Backstop only: terminal-target propose_run isn't offered from chatops, so this

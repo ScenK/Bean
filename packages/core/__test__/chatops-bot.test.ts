@@ -256,6 +256,27 @@ test("chat-target propose_run runs on Bean's own model and replies in the same c
   expect(effects.cards).toHaveLength(0);
 });
 
+// Second hop goes pure tool-use with no text (nested proposals are one-hop-ignored):
+// the user must still get a message, never silence.
+test("chat-target run whose second hop returns no text posts a fallback, not silence", async () => {
+  let calls = 0;
+  const { deps } = makeDeps({
+    loadSkills: async () => [{ name: "summarize", description: "d", body: "SUM BODY", target: "chat", enabled: true }],
+    chat: async () => {
+      calls++;
+      if (calls === 1) {
+        return { content: "", toolCalls: [{ name: "propose_run", args: { skill: "summarize", instruction: "summarize" } }] };
+      }
+      return { content: "", toolCalls: [{ name: "propose_note", args: { title: "t", body: "b" } }] };
+    },
+  });
+  const effects = fx();
+  await buildTeamsBot(deps).onMessage(msg, effects);
+  expect(effects.posted).toHaveLength(1);
+  expect(effects.posted[0]).toContain("summarize skill didn't produce a reply");
+  expect(effects.cards).toHaveLength(0);
+});
+
 // A stray propose_run for a terminal-target skill is dropped by converse()'s validation
 // (it checks against the chat-target subset in chatops), so the reply lands but nothing
 // runs and nothing redirects — no dead-end message, no card.
