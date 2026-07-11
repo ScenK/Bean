@@ -30,6 +30,14 @@ Bean has two chat adapters over one shared brain:
   User-Assigned Managed Identity (the portal's other option) is not viable here — it only
   issues credentials to workloads running on Azure compute, and this bot runs on the
   owner's Mac behind a dev tunnel.
+- **Notes are confirm-first on the bots too** (parity with the desktop's draft card): a
+  `propose_note` from `converse()` posts a Save/Cancel card, and only a Save tap writes to
+  `~/.bean/notes` via the injected `deps.saveNote` (`notesDir(dir)` in each `server.ts`).
+  Pending drafts live in `chatops/note-proposals.ts` `NoteProposalStore` (`note-*` ids,
+  one-shot claim, 10-min expiry — the note twin of `ProposalStore`). `bot.ts` `onMessage`
+  keeps `proposedRun` desktop-only but no longer bounces `proposedNote`; `onCardAction`
+  handles `save-note`/`cancel-note`. **Don't fold `proposedNote` back into the `DESKTOP_ONLY`
+  message** — that was the pre-parity behavior and is deliberately gone.
 - **Ambient channel history**: when mentioned, the bot injects recent non-mention channel
   messages as one synthetic user-role history turn (`BotEffects.fetchRecent`, fixed
   15-min/50-msg window, `chatops/ambient.ts`). Discord fetches on demand via
