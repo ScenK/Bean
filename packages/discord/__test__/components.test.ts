@@ -65,3 +65,12 @@ test("note result message has no components and states the outcome", () => {
   expect(card.components).toEqual([]);
   expect(JSON.stringify(card)).toContain("saved");
 });
+
+test("note proposal clamps a long body to Discord's 4096-char embed description limit", () => {
+  const card = discordCards.noteProposalCard({
+    proposalId: "note-1", title: "T", body: "x".repeat(5000), updating: false,
+  }) as { embeds: { description: string }[] };
+  const desc = card.embeds[0]?.description ?? "";
+  expect(desc.length).toBeLessThanOrEqual(4096);
+  expect(desc).toContain("the full note is saved");
+});

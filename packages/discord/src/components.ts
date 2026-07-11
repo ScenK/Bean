@@ -68,13 +68,22 @@ function finishedCard(input: FinishedCardInput): object {
   };
 }
 
-// Discord embed descriptions cap at 4096 chars; note bodies from chat are well under that.
-// ponytail: truncate if a note ever overflows — not worth the code until it does.
+// Discord rejects an embed whose description exceeds 4096 chars, which would drop the whole
+// Save/Cancel card for a long-but-valid note. Clamp the *display* only — NoteProposalStore
+// keeps the full draft, so Save still writes every character.
+const EMBED_DESC_LIMIT = 4096;
+function noteDescription(title: string, body: string): string {
+  const full = `**${title}**\n\n${body}`;
+  if (full.length <= EMBED_DESC_LIMIT) return full;
+  const suffix = "\n\n…(preview truncated; the full note is saved)";
+  return full.slice(0, EMBED_DESC_LIMIT - suffix.length) + suffix;
+}
+
 function noteProposalCard(input: NoteProposalCardInput): object {
   return {
     embeds: [{
       title: input.updating ? "Bean proposes a note update" : "Bean proposes a note",
-      description: `**${input.title}**\n\n${input.body}`,
+      description: noteDescription(input.title, input.body),
       fields: [{ name: "Note", value: input.projectName ?? "general", inline: true }],
     }],
     components: [row([
