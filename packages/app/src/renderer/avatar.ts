@@ -182,12 +182,10 @@ if (el && orbSlot && hint && bloom && reading) {
         ${tileInner(ICONS[a.kind] ?? "", a.name, a.desc, color(i))}
       </button>`;
     }).join("");
-    // Notes tile badge: how many notes still have unresolved open questions — a gentle
-    // "you left something unfinished" cue (mockup 1a). Patched in async after the menu paints.
+    // Notes tile badge: total saved note count. Patched in async after the menu paints.
     void window.bean.listNotes().then((notes) => {
-      const open = notes.filter((n) => n.openCount > 0).length;
       const tile = menu.querySelector('.bean-petal--menu[data-kind="notes"]');
-      if (open > 0 && tile) tile.insertAdjacentHTML("beforeend", `<span class="bean-petal-badge bean-petal-badge--end">${open}</span>`);
+      if (notes.length > 0 && tile) tile.insertAdjacentHTML("beforeend", `<span class="bean-petal-badge bean-petal-badge--end">${notes.length}</span>`);
     });
   };
 
