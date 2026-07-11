@@ -60,7 +60,8 @@ export interface TeamsBotDeps {
   cards: CardBuilders;
 }
 
-const DESKTOP_ONLY = "That needs the Bean desktop app — I can only chat and run delegate tasks from Teams.";
+const DESKTOP_ONLY =
+  "That needs the Bean desktop app — from here I can only chat and run background delegate tasks. Ask me again and I'll run it as one.";
 const NO_CLI = "I can't run delegate tasks: neither `claude` nor `opencode` is on this machine's PATH.";
 
 export function buildTeamsBot(deps: TeamsBotDeps): {
@@ -213,10 +214,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             history = [{ role: "user", content: formatAmbientBlock(ambient) }, ...history];
           }
         }
+        // runAvailable=false: propose_run is never offered here — confirming one couldn't
+        // execute anything from Teams/Discord; propose_delegate is the only run path.
         const result = await converse(
           history, msg.text, skills, projects, persona, memories,
           { chat: deps.chat, model: deps.model },
-          undefined, [], undefined, undefined, true, detected, true,
+          undefined, [], undefined, undefined, true, detected, true, false,
         );
         deps.conversations.append(msg.conversationId, { role: "user", content: msg.text });
         if (result.reply) {
@@ -224,6 +227,28 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           await fx.reply(result.reply);
         }
         if (result.proposedRun) {
+          // A `target: chat` skill runs on Bean's own model: resend the composed prompt
+          // through this same conversation (mirrors ChatWindow's confirmProposal). No
+          // confirm card — it's just another chat reply, no agent harness or side effects.
+          if (result.proposedRun.target === "chat") {
+            const run = result.proposedRun;
+            const followup = await converse(
+              deps.conversations.history(msg.conversationId), run.composedPrompt,
+              skills, projects, persona, memories,
+              { chat: deps.chat, model: deps.model },
+              undefined, [], undefined, undefined, true, detected, true, false,
+            );
+            deps.conversations.append(msg.conversationId, { role: "user", content: run.composedPrompt });
+            // Nested proposals from the skill prompt are deliberately ignored — one hop only.
+            // A pure tool-use second hop leaves reply empty; never answer with silence.
+            const text = followup.reply.trim() ||
+              `The ${run.skillName} skill didn't produce a reply — try asking me directly instead.`;
+            deps.conversations.append(msg.conversationId, { role: "assistant", content: text });
+            await fx.post(text);
+            return;
+          }
+          // Backstop only: terminal-target propose_run isn't offered from chatops, so this
+          // can't fire from a well-behaved model — but if it does, point at what works.
           await fx.post(DESKTOP_ONLY);
           return;
         }

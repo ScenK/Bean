@@ -67,6 +67,44 @@ test("no propose_run tool is offered when there are no skills", async () => {
   expect(captured.map((t) => t.name)).toEqual(["propose_note"]);
 });
 
+test("runAvailable=false (chatops) offers propose_run only for chat-target skills", async () => {
+  const mixed = [
+    { name: "review-code", description: "review a diff", body: "REVIEW BODY", target: "terminal" as const },
+    { name: "summarize", description: "summarize content", body: "SUM BODY", target: "chat" as const },
+  ];
+  let captured: ToolSpec[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => { captured = tools; return { content: "hi", toolCalls: [] }; },
+  };
+  await converse(
+    [], "summarize this", mixed, projects, DEFAULT_PERSONA, [], deps,
+    undefined, [], undefined, undefined, true, [], false, false,
+  );
+  expect(captured.map((t) => t.name)).toEqual(["propose_run", "propose_delegate", "propose_note"]);
+  const props = (captured[0]!.parameters as { properties: Record<string, { enum?: string[] }> }).properties;
+  expect(props.skill?.enum).toEqual(["summarize"]);
+  expect(captured[0]!.description).toContain("right here in this chat");
+});
+
+test("runAvailable=false with no chat-target skills drops propose_run and rejects stray calls", async () => {
+  let captured: ToolSpec[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => {
+      captured = tools;
+      // Stray call for a terminal skill anyway — must not become a proposedRun.
+      return { content: "hi", toolCalls: [{ name: "propose_run", args: { skill: "review-code", instruction: "x" } }] };
+    },
+  };
+  const res = await converse(
+    [], "run review-code on api", skills, projects, DEFAULT_PERSONA, [], deps,
+    undefined, [], undefined, undefined, true, [], false, false,
+  );
+  expect(captured.map((t) => t.name)).toEqual(["propose_delegate", "propose_note"]);
+  expect(res.proposedRun).toBeUndefined();
+});
+
 test("propose_run is still offered with no configured projects — project is optional", async () => {
   let captured: ToolSpec[] = [];
   const deps: ConverseDeps = {

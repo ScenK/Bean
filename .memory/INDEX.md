@@ -19,6 +19,7 @@
 - [safety-builtin-skills-packaging.md](safety-builtin-skills-packaging.md) — `projectBeanDir()`'s path walk only works in dev; packaged builds need `.bean` copied via electron-builder `extraResources` and `main.ts` to switch on `app.isPackaged`. Verify with a real `pnpm dist:mac`, not just tests.
 - [safety-drag-mode-needs-watchdog.md](safety-drag-mode-needs-watchdog.md) — the drag-skill bloom wedged the avatar (looked like a full app freeze) when drop/dragleave never arrived; the watchdog + collapse-race + escape-hatch guards that fix it.
 - [safety-tray-tahoe-placement.md](safety-tray-tahoe-placement.md) — macOS 26.5 (Tahoe) races tray placement and can park the icon off-screen in dev runs (packaged builds immune via LSUIElement); no workaround loop — dev keeps its Dock icon (`dock.hide()` only when packaged) and the `activate` handler re-summons a hidden bean.
+- [safety-chatops-no-propose-run.md](safety-chatops-no-propose-run.md) — chatops passes `runAvailable=false` to `converse()`: propose_run is offered only for `target: chat` skills (run on Bean's own model, in-conversation); terminal skills go through delegate only.
 - [safety-packaged-app-path-detection.md](safety-packaged-app-path-detection.md) — Finder-launched Bean gets launchd's minimal PATH, so `detectClis` misses CLIs installed via nvm/volta/pnpm/`~/.local/bin`; `loginShellPath()` asks the real login shell instead of hardcoding more directories.
 
 ## convention — how we do things here

@@ -221,7 +221,66 @@ test("unrecognized beanAction with a valid proposalId does not consume the propo
   expect(delegateCalls).toHaveLength(1);
 });
 
-test("proposedRun redirects to the desktop app", async () => {
+test("terminal-target skills never get propose_run offered from chatops — only propose_delegate", async () => {
+  let captured: string[] = [];
+  const { deps } = makeDeps({
+    chat: async ({ tools }) => {
+      captured = tools.map((t) => t.name);
+      return { content: "hi", toolCalls: [] };
+    },
+  });
+  await buildTeamsBot(deps).onMessage({ ...msg, text: "run fix-bug on bean" }, fx());
+  expect(captured).not.toContain("propose_run");
+  expect(captured).toContain("propose_delegate");
+});
+
+test("chat-target propose_run runs on Bean's own model and replies in the same chat", async () => {
+  let calls = 0;
+  let secondUserContent = "";
+  const { deps } = makeDeps({
+    loadSkills: async () => [{ name: "summarize", description: "d", body: "SUM BODY", target: "chat", enabled: true }],
+    chat: async ({ messages }) => {
+      calls++;
+      if (calls === 1) {
+        return { content: "sure", toolCalls: [{ name: "propose_run", args: { skill: "summarize", instruction: "summarize the thread" } }] };
+      }
+      secondUserContent = messages[messages.length - 1]!.content;
+      return { content: "Here's the summary.", toolCalls: [] };
+    },
+  });
+  const effects = fx();
+  await buildTeamsBot(deps).onMessage(msg, effects);
+  expect(effects.posted).toContain("Here's the summary.");
+  expect(secondUserContent).toContain("SUM BODY");
+  expect(effects.posted.some((t) => t.includes("Bean desktop app"))).toBe(false);
+  expect(effects.cards).toHaveLength(0);
+});
+
+// Second hop goes pure tool-use with no text (nested proposals are one-hop-ignored):
+// the user must still get a message, never silence.
+test("chat-target run whose second hop returns no text posts a fallback, not silence", async () => {
+  let calls = 0;
+  const { deps } = makeDeps({
+    loadSkills: async () => [{ name: "summarize", description: "d", body: "SUM BODY", target: "chat", enabled: true }],
+    chat: async () => {
+      calls++;
+      if (calls === 1) {
+        return { content: "", toolCalls: [{ name: "propose_run", args: { skill: "summarize", instruction: "summarize" } }] };
+      }
+      return { content: "", toolCalls: [{ name: "propose_note", args: { title: "t", body: "b" } }] };
+    },
+  });
+  const effects = fx();
+  await buildTeamsBot(deps).onMessage(msg, effects);
+  expect(effects.posted).toHaveLength(1);
+  expect(effects.posted[0]).toContain("summarize skill didn't produce a reply");
+  expect(effects.cards).toHaveLength(0);
+});
+
+// A stray propose_run for a terminal-target skill is dropped by converse()'s validation
+// (it checks against the chat-target subset in chatops), so the reply lands but nothing
+// runs and nothing redirects — no dead-end message, no card.
+test("a stray terminal-skill propose_run from chatops is dropped, keeping the reply", async () => {
   const { deps } = makeDeps({
     chat: async () => ({
       content: "sure",
@@ -231,9 +290,8 @@ test("proposedRun redirects to the desktop app", async () => {
   const bot = buildTeamsBot(deps);
   const effects = fx();
   await bot.onMessage(msg, effects);
-  expect(effects.posted).toContain(
-    "That needs the Bean desktop app — I can only chat and run delegate tasks from Teams.",
-  );
+  expect(effects.posted).toEqual(["sure"]);
+  expect(effects.cards).toHaveLength(0);
 });
 
 // propose_note fires when the model calls the tool with a title + body.
@@ -255,9 +313,7 @@ test("proposedNote posts a confirm-first note card instead of redirecting", asyn
   const { deps } = makeDeps({ chat: noteChat });
   const effects = fx();
   await buildTeamsBot(deps).onMessage(msg, effects);
-  expect(effects.posted).not.toContain(
-    "That needs the Bean desktop app — I can only chat and run delegate tasks from Teams.",
-  );
+  expect(effects.posted.some((t) => t.includes("Bean desktop app"))).toBe(false);
   expect(effects.cards).toHaveLength(1);
   const s = JSON.stringify(effects.cards[0]);
   expect(s).toContain("note-proposal");
