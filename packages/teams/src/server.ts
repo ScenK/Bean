@@ -2,7 +2,7 @@ import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile, notesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, loadNotes, saveMemories,
-  detectClis, runDelegate,
+  detectClis, runDelegate, claimOutbox, outboxDir,
   buildTeamsBot, mentionsBotName, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore, RunRegistry,
 } from "@bean/core";
 import {
@@ -11,6 +11,8 @@ import {
   type ConversationReference, type Activity,
 } from "botbuilder";
 import express from "express";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { finishedCard, memoryProposalCard, memoryResultCard, noteProposalCard, noteResultCard, proposalCard, runningCard } from "./cards.js";
 import { loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 
@@ -19,6 +21,22 @@ const builtinDir = process.env.BEAN_BUILTIN_DIR || projectBeanDir();
 const teamsConfig = await loadTeamsConfig(teamsConfigFile(dir));
 const beanConfig = await loadConfig(configFile(dir), dir);
 if (!beanConfig.openaiApiKey) throw new Error("openaiApiKey missing in ~/.bean/config.json");
+
+// Proactive delivery (outbox digests) needs a ConversationReference per Teams conversation;
+// persisted so a restart doesn't drop routines until someone mentions the bot again.
+const conversationRefsFile = join(beanDir(), "teams-conversations.json");
+let conversationRefs: Record<string, Partial<ConversationReference>> = {};
+try {
+  conversationRefs = JSON.parse(await readFile(conversationRefsFile, "utf8")) as typeof conversationRefs;
+} catch { /* first run */ }
+
+async function rememberConversation(ref: Partial<ConversationReference>): Promise<void> {
+  const id = ref.conversation?.id;
+  if (!id || conversationRefs[id]) return;
+  conversationRefs[id] = ref;
+  await mkdir(dirname(conversationRefsFile), { recursive: true });
+  await writeFile(conversationRefsFile, JSON.stringify(conversationRefs, null, 2) + "\n", "utf8");
+}
 
 // ConfigurationServiceClientCredentialFactory builds the app-id/password credentials;
 // ConfigurationBotFrameworkAuthentication just needs an (empty) options object plus that
@@ -80,6 +98,7 @@ function addressedToBot(a: Activity): boolean {
  * through continueConversationAsync (proactive messages need a fresh context). */
 function effectsFor(context: TurnContext): BotEffects {
   const ref: Partial<ConversationReference> = TurnContext.getConversationReference(context.activity);
+  void rememberConversation(ref);
   const proactive = async (fn: (ctx: TurnContext) => Promise<void>): Promise<void> => {
     await adapter.continueConversationAsync(teamsConfig.botAppId, ref, fn);
   };
@@ -156,3 +175,24 @@ app.post("/api/messages", (req, res) => {
 app.listen(teamsConfig.port, () => {
   console.log(`@bean/teams listening on :${teamsConfig.port} (clis: ${clis.join(", ") || "none"})`);
 });
+
+// Routine digests: the main app enqueues outbox files; deliver them via a proactive message.
+const OUTBOX_POLL_MS = 5_000;
+setInterval(() => {
+  void (async () => {
+    for (const msg of await claimOutbox(outboxDir(beanDir()), "teams")) {
+      const ref = conversationRefs[msg.channel];
+      if (!ref) {
+        console.error(`outbox: unknown teams conversation ${msg.channel} — message dropped (mention the bot there once first)`);
+        continue;
+      }
+      try {
+        await adapter.continueConversationAsync(teamsConfig.botAppId, ref, async (context) => {
+          await context.sendActivity(msg.title ? `**${msg.title}**\n\n${msg.body}` : msg.body);
+        });
+      } catch (err) {
+        console.error("outbox: teams send failed", err);
+      }
+    }
+  })();
+}, OUTBOX_POLL_MS);
