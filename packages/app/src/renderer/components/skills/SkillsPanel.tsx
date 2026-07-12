@@ -3,6 +3,7 @@ import type { Project, RouteSuggestion, Skill } from "@bean/core";
 import { parseFrontmatter, setFrontmatter } from "@bean/core/frontmatter";
 import { bestProjectForSkill } from "@bean/core/project-select";
 import { composePrompt } from "@bean/core/prompt";
+import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 
 type Mode = "view" | "edit" | "add";
 
@@ -28,7 +29,7 @@ export function SkillsPanel({
     ]);
     setSkills(nextSkills);
     setProjects(nextProjects);
-    setSelectedName((prev) => (prev && nextSkills.some((s) => s.name === prev) ? prev : nextSkills[0]?.name));
+    setSelectedName((prev) => (prev && nextSkills.some((s) => s.name === prev) ? prev : undefined));
   };
 
   useEffect(() => { void refresh(); }, []);
@@ -386,7 +387,7 @@ export function SkillsPanel({
           </>
         ) : null}
         {!selectedSkill && mode !== "add" ? (
-          <div class="bean-panel-empty">Select a skill to view it, or add a new one.</div>
+          <PanelEmptyState message="Select a skill to view it, or add a new one." />
         ) : null}
       </div>
     </div>

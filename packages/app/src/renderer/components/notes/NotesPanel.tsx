@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { Markdown } from "../../shared/Markdown.js";
+import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import type { Note, Project } from "@bean/core";
 
 type Mode = "view" | "edit" | "add";
@@ -22,7 +23,7 @@ export function NotesPanel() {
     ]);
     setNotes(nextNotes);
     setProjects(nextProjects);
-    setSelectedSlug((prev) => (prev && nextNotes.some((n) => n.slug === prev) ? prev : nextNotes[0]?.slug));
+    setSelectedSlug((prev) => (prev && nextNotes.some((n) => n.slug === prev) ? prev : undefined));
   };
 
   useEffect(() => { void refresh(); }, []);
@@ -246,7 +247,9 @@ export function NotesPanel() {
             </div>
           </>
         ) : null}
-        {mode === "view" && !selected ? <div class="bean-panel-empty">Select a note.</div> : null}
+        {mode === "view" && !selected ? (
+          <PanelEmptyState message="Select a note to view it, or add a new one." />
+        ) : null}
       </div>
     </div>
   );
