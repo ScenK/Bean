@@ -118,15 +118,7 @@ app.whenReady().then(async () => {
         label: `${row.dot} ${row.label}`,
         type: "checkbox",
         checked: row.checked,
-        // Electron closes the whole native menu on any item click and offers no way to keep it
-        // open — there's no "stay open until the pointer leaves" hook. The closest available
-        // approximation: act, then pop the (freshly rebuilt) menu back up shortly after, so the
-        // user sees whether start/stop actually succeeded (dot flips to 🔴 fast on a startup
-        // crash) without needing a second click.
-        click: () => {
-          if (row.checked) chatopsServers?.stop(row.bot); else chatopsServers?.start(row.bot);
-          setTimeout(() => { trayMenu = buildTrayMenu(); tray?.popUpContextMenu(trayMenu); }, 500);
-        },
+        click: () => (row.checked ? chatopsServers?.stop(row.bot) : chatopsServers?.start(row.bot)),
       });
       if (row.error) items.push({ label: `⚠️ ${row.error}`, enabled: false });
     }
