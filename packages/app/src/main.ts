@@ -473,6 +473,9 @@ app.whenReady().then(async () => {
           title: `Routine: ${routine.name}`, body: result.digest,
         }, randomUUID);
       }
+      if (routine.sinks.notify && notificationTransport.available()) {
+        await notificationTransport.send({ title: `Routine: ${routine.name}`, body: result.digest });
+      }
     };
 
     const routineScheduler = createRoutineScheduler({
