@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { Project, LaunchMode, Skill } from "@bean/core";
 import { truncateMiddle } from "./truncate-path.js";
+import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 
 const LAUNCH_CHIPS: { mode: LaunchMode; label: string; needsPrompt: boolean }[] = [
   { mode: "opencode", label: "opencode", needsPrompt: true },
@@ -233,7 +234,7 @@ export function ProjectsPanel({
             ) : null}
           </div>
         ) : (
-          <div class="bean-panel-empty">Select a project to launch it, or add a new one.</div>
+          <PanelEmptyState message="Select a project to launch it, or add a new one." />
         )}
       </div>
     </div>

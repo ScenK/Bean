@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/ho
 import type { Routine, RoutineStep, Skill, Project, AvailableModel } from "@bean/core";
 import { nextRun, parseCron } from "@bean/core/cron";
 import { ChipMenu } from "../../shared/ChipMenu.js";
+import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import type { RoutineStateView } from "../../../ipc.js";
 
 const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -155,6 +156,8 @@ export function RoutinesPanel() {
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [states, setStates] = useState<Record<string, RoutineStateView>>({});
   const [selected, setSelected] = useState<string | undefined>(undefined);
+  // Nothing selected and not creating = the detail pane starts blank, not a create form.
+  const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<Routine>(emptyRoutine());
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
@@ -220,8 +223,8 @@ export function RoutinesPanel() {
       ? { kind: "delegate", skill: step.skill ?? "", model: step.model, instruction: step.instruction }
       : { kind: "chat", skill: step.skill || undefined, model: step.model, instruction: step.instruction });
 
-  const select = (name: string): void => { setSelected(name); setError(""); };
-  const startNew = (): void => { setSelected(undefined); setDraft(emptyRoutine()); setError(""); };
+  const select = (name: string): void => { setSelected(name); setCreating(false); setError(""); };
+  const startNew = (): void => { setSelected(undefined); setCreating(true); setDraft(emptyRoutine()); setError(""); };
 
   const toggleEnabled = async (r: Routine): Promise<void> => {
     await window.bean.routinesSave({ ...r, enabled: !r.enabled });
@@ -234,6 +237,7 @@ export function RoutinesPanel() {
       setError("");
       await refresh();
       setSelected(draft.name);
+      setCreating(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "save failed — check name, cadence, and steps");
     }
@@ -331,6 +335,10 @@ export function RoutinesPanel() {
       </div>
 
       <div class="bean-skills-detail">
+        {!selected && !creating ? (
+          <PanelEmptyState message="Select a routine to view it, or set up a new one." />
+        ) : (
+        <>
         <div class="bean-skills-header">
           <div class="bean-skills-header-main">
             {selected ? (
@@ -688,6 +696,8 @@ export function RoutinesPanel() {
             ))}
           </div>
         ) : null}
+        </>
+        )}
       </div>
     </div>
   );
