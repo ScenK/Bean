@@ -7,7 +7,10 @@ import { join } from "node:path";
 export interface OutboxMessage {
   id: string;
   transport: "teams" | "discord";
-  channel: string; // discord: channel id; teams: conversation id
+  // Absent = DM the user directly (discord: allowed user(s); teams: known personal
+  // conversation(s)) — the default delivery mode. Present = a specific channel id (discord)
+  // or conversation id (teams).
+  channel?: string;
   title?: string;
   body: string;
   createdAt: string; // ISO
@@ -56,7 +59,11 @@ export async function claimOutbox(dir: string, transport: "teams" | "discord"): 
     }
     // ponytail: only claim (and delete) files for this transport — leave other transports' files
     // untouched so a discord claim can't eat teams' queue, or vice versa.
-    if (parsed.transport === transport && typeof parsed.channel === "string" && typeof parsed.body === "string") {
+    if (
+      parsed.transport === transport &&
+      (parsed.channel === undefined || typeof parsed.channel === "string") &&
+      typeof parsed.body === "string"
+    ) {
       out.push(parsed);
       await rm(path, { force: true });
     } else {

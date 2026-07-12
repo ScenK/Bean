@@ -600,6 +600,8 @@ export function RoutinesPanel() {
           </label>
           {(["discord", "teams"] as const).map((transport) => {
             const entry = draft.sinks.chatops?.find((c) => c.transport === transport);
+            const label = transport === "discord" ? "Discord" : "Teams";
+            const specific = entry?.channel !== undefined;
             return (
               <div key={transport} class="bean-routines-sink-row">
                 <label class="bean-routines-sink-row">
@@ -609,17 +611,38 @@ export function RoutinesPanel() {
                     onChange={(e) => {
                       const on = (e.target as HTMLInputElement).checked;
                       const rest = (draft.sinks.chatops ?? []).filter((c) => c.transport !== transport);
-                      const chatops = on ? [...rest, { transport, channel: "" }] : rest;
+                      // Default to DM (no channel) — a specific channel/conversation is opt-in below.
+                      const chatops = on ? [...rest, { transport, channel: undefined }] : rest;
                       setDraft({ ...draft, sinks: { ...draft.sinks, chatops: chatops.length > 0 ? chatops : undefined } });
                     }}
                   />
-                  Post to {transport}
+                  Post to {label} (DM)
                 </label>
                 {entry ? (
+                  <label class="bean-routines-sink-row bean-routines-sink-suboption">
+                    <input
+                      type="checkbox"
+                      checked={specific}
+                      onChange={(e) => {
+                        const useSpecific = (e.target as HTMLInputElement).checked;
+                        setDraft({
+                          ...draft,
+                          sinks: {
+                            ...draft.sinks,
+                            chatops: (draft.sinks.chatops ?? []).map((c) =>
+                              c.transport === transport ? { ...c, channel: useSpecific ? "" : undefined } : c),
+                          },
+                        });
+                      }}
+                    />
+                    Use a specific {transport === "discord" ? "channel" : "conversation"} instead
+                  </label>
+                ) : null}
+                {entry && specific ? (
                   <input
-                    class="bean-input bean-input--boxed"
+                    class="bean-input bean-input--boxed bean-routines-sink-suboption"
                     placeholder={transport === "discord" ? "channel id" : "conversation id"}
-                    value={entry.channel}
+                    value={entry.channel ?? ""}
                     onInput={(e) => setDraft({
                       ...draft,
                       sinks: {

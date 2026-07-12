@@ -3,7 +3,9 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isValidCron } from "./cron.js";
 
-export interface RoutineChatopsSink { transport: "teams" | "discord"; channel: string }
+// Absent/empty channel = DM the user directly (the default); a non-empty channel targets a
+// specific discord channel id or teams conversation id instead.
+export interface RoutineChatopsSink { transport: "teams" | "discord"; channel?: string }
 export interface RoutineSinks { chatops?: RoutineChatopsSink[]; note?: boolean }
 
 export type RoutineStep =
@@ -67,7 +69,7 @@ export function isValidRoutine(v: unknown): v is Routine {
       const cs = c as Record<string, unknown> | null;
       if (typeof cs !== "object" || cs === null) return false;
       if (cs.transport !== "teams" && cs.transport !== "discord") return false;
-      if (!str(cs.channel) || !cs.channel.trim()) return false;
+      if (cs.channel !== undefined && !str(cs.channel)) return false;
     }
   }
   return true;

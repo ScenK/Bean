@@ -53,6 +53,12 @@ describe("isValidRoutine", () => {
     expect(isValidRoutine({ ...routine(), steps: [{ kind: "launch", instruction: "x" }] })).toBe(false);
     expect(isValidRoutine({ ...routine(), cron: 5 })).toBe(false);
   });
+  it("accepts a chatops sink with no channel (DM) and one with a channel (specific target)", () => {
+    expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "discord" }] } }))).toBe(true);
+    expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "teams", channel: "conv1" }] } }))).toBe(true);
+    expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "discord", channel: 5 }] } }))).toBe(false);
+    expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "slack" }] } }))).toBe(false);
+  });
 });
 
 describe("routine state", () => {

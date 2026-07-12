@@ -181,17 +181,26 @@ const OUTBOX_POLL_MS = 5_000;
 setInterval(() => {
   void (async () => {
     for (const msg of await claimOutbox(outboxDir(beanDir()), "teams")) {
-      const ref = conversationRefs[msg.channel];
-      if (!ref) {
-        console.error(`outbox: unknown teams conversation ${msg.channel} — message dropped (mention the bot there once first)`);
+      const text = msg.title ? `**${msg.title}**\n\n${msg.body}` : msg.body;
+      // No channel = DM the user directly: every personal (1:1) conversation we've seen so
+      // far (the default delivery mode). A specific channel targets one known conversation.
+      const targets = msg.channel
+        ? (conversationRefs[msg.channel] ? [conversationRefs[msg.channel]!] : [])
+        : Object.values(conversationRefs).filter((r) => r.conversation?.conversationType === "personal");
+      if (targets.length === 0) {
+        console.error(msg.channel
+          ? `outbox: unknown teams conversation ${msg.channel} — message dropped (mention the bot there once first)`
+          : "outbox: no known personal Teams conversation yet — message dropped (DM the bot once first)");
         continue;
       }
-      try {
-        await adapter.continueConversationAsync(teamsConfig.botAppId, ref, async (context) => {
-          await context.sendActivity(msg.title ? `**${msg.title}**\n\n${msg.body}` : msg.body);
-        });
-      } catch (err) {
-        console.error("outbox: teams send failed", err);
+      for (const ref of targets) {
+        try {
+          await adapter.continueConversationAsync(teamsConfig.botAppId, ref, async (context) => {
+            await context.sendActivity(text);
+          });
+        } catch (err) {
+          console.error("outbox: teams send failed", err);
+        }
       }
     }
   })();

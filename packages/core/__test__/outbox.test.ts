@@ -54,4 +54,12 @@ describe("outbox", () => {
     expect(await claimOutbox(dir, "discord")).toEqual([]);
     expect(await readdir(dir)).toEqual([]); // no longer left on disk forever
   });
+  it("enqueues and claims a DM message with no channel (channel omitted = DM)", async () => {
+    const dir = await tmp();
+    await enqueueOutbox(dir, { transport: "discord", body: "dm me" }, newId);
+    const discord = await claimOutbox(dir, "discord");
+    expect(discord).toHaveLength(1);
+    expect(discord[0]).toMatchObject({ body: "dm me" });
+    expect(discord[0]!.channel).toBeUndefined();
+  });
 });
