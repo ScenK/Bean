@@ -33,3 +33,10 @@ export * from "./chatops/runs.js";
 export * from "./chatops/resolve.js";
 export { parseCron, isValidCron, nextRun } from "./cron.js";
 export type { CronSpec } from "./cron.js";
+export {
+  appendRunRecord, deleteRoutine, isValidRoutine, loadRoutines,
+  loadRoutineStates, saveRoutine, saveRoutineStates,
+} from "./routine-store.js";
+export type {
+  Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RunRecord,
+} from "./routine-store.js";
