@@ -31,4 +31,17 @@ describe("outbox", () => {
     expect(await claimOutbox(dir, "discord")).toEqual([]);
     expect(await readdir(dir)).toEqual([]);
   });
+  it("a malformed file for one transport is untouched by another transport's claim, but self-cleans on its own claim", async () => {
+    const dir = await tmp();
+    await writeFile(join(dir, "teams-x.json"), "{broken", "utf8");
+    await enqueueOutbox(dir, { transport: "discord", channel: "c1", body: "hi" }, newId);
+
+    const discord = await claimOutbox(dir, "discord");
+    expect(discord.map((m) => m.body)).toEqual(["hi"]);
+    expect(await readdir(dir)).toEqual(["teams-x.json"]); // malformed teams file left alone
+
+    const teams = await claimOutbox(dir, "teams");
+    expect(teams).toEqual([]); // still no valid teams messages
+    expect(await readdir(dir)).toEqual([]); // but its own claim swept the malformed file
+  });
 });

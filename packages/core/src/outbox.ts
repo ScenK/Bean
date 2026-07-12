@@ -35,11 +35,22 @@ export async function claimOutbox(dir: string, transport: "teams" | "discord"): 
   const out: OutboxMessage[] = [];
   for (const file of entries.filter((f) => f.endsWith(".json"))) {
     const path = join(dir, file);
+    const isOwnTransport = file.startsWith(`${transport}-`);
+    // orphan: doesn't belong to either known transport, so no poll loop owns cleaning it up
+    const isOrphan = !file.startsWith("teams-") && !file.startsWith("discord-");
+    if (!isOwnTransport && !isOrphan) continue; // other transport's file — leave it untouched
+
+    if (isOrphan) {
+      // unattributable to any transport — sweep it (matches "malformed files are deleted and
+      // skipped"), but never return it: it's not a valid message for this or any poll loop.
+      await rm(path, { force: true });
+      continue;
+    }
     let parsed: OutboxMessage;
     try {
       parsed = JSON.parse(await readFile(path, "utf8")) as OutboxMessage;
     } catch {
-      // malformed — delete unconditionally so junk can't wedge the poll loop
+      // malformed — delete unconditionally so junk can't wedge *this transport's* own poll loop
       await rm(path, { force: true });
       continue;
     }
