@@ -5,10 +5,13 @@ import type { Memory } from "./memory/memory.js";
 import type { CliName } from "./launcher.js";
 import { MODELS } from "./models.js";
 
-export interface ConvoMsg { role: "system" | "user" | "assistant"; content: string; }
+export type ConvoMsg =
+  | { role: "system" | "user"; content: string }
+  | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
+  | { role: "tool"; content: string; toolCallId: string };
 export interface ChatTurn { role: "user" | "assistant"; content: string; }
 export interface ToolSpec { name: string; description: string; parameters: object; }
-export interface ToolCall { name: string; args: unknown; }
+export interface ToolCall { id?: string; name: string; args: unknown; }
 // A tool Bean executes itself (in the Electron main process), unlike propose_run
 // which is confirm-first. run() returns a plain-text result fed back to the model.
 export interface ActionTool { spec: ToolSpec; run: (args: unknown) => Promise<string>; }
@@ -269,8 +272,6 @@ export async function converse(
 
   // Tool-execution loop: action tools run here and their result goes back to the model
   // for a confirming reply; propose_run short-circuits out to the UI as before.
-  // ponytail: tool results are fake user-role messages, not the OpenAI tool_call_id
-  // protocol — switch to real tool messages if the model starts re-calling tools.
   let content = "";
   for (let round = 0; round < 3; round++) {
     let toolCalls: ToolCall[] = [];
@@ -350,7 +351,7 @@ export async function converse(
     const actionCalls = toolCalls.filter((c) => actionByName.has(c.name));
     if (actionCalls.length === 0) return { reply: content, model: deps.model };
 
-    if (content) messages.push({ role: "assistant", content });
+    messages.push({ role: "assistant", content, toolCalls });
     for (const c of actionCalls) {
       let result: string;
       try {
@@ -358,7 +359,7 @@ export async function converse(
       } catch (err) {
         result = `error: ${err instanceof Error ? err.message : String(err)}`;
       }
-      messages.push({ role: "user", content: `[tool result for ${c.name}]: ${result}` });
+      messages.push({ role: "tool", content: result, toolCallId: c.id ?? c.name });
     }
   }
   return { reply: content, model: deps.model };

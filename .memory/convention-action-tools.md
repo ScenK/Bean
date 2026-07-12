@@ -22,8 +22,9 @@ that lets chat-target skills actually read dropped URLs. Built-in content skills
 (summarize/explain/draft-reply/extract-tasks in repo `.bean/skills/`) are chat-target;
 `builtin-skills.test.ts` enumerates them, so adding a built-in means updating that test.
 
-Tool results are appended as user-role messages (`[tool result for X]: …`), not the
-OpenAI `tool_call_id` protocol — deliberate shortcut; switch to real tool messages if
-models start re-calling tools. Reminders fire from a 30s poll in `main.ts` via Electron
-`Notification`; the store mirrors `memory-store.ts`. New helper capabilities (notes,
-routines) should follow this ActionTool shape, keeping IO pure/DI in core.
+Tool results use the OpenAI `tool_call_id` protocol: `converse()` preserves the assistant
+tool-call turn, appends one `role: "tool"` result per executed action, and
+`openai-chat.ts` translates Bean's camelCase internal shape to OpenAI's snake_case API
+shape. Reminders fire from a 30s poll in `main.ts` via Electron `Notification`; the store
+mirrors `memory-store.ts`. New helper capabilities (notes, routines) should follow this
+ActionTool shape, keeping IO pure/DI in core.
