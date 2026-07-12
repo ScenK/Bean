@@ -1419,7 +1419,16 @@ button, input, textarea, select, a {
 
 /* Editor: title block */
 .bean-routines-name-input { font-size: 19px; font-weight: 700; letter-spacing: -0.012em; }
-.bean-routines-desc-input { margin-top: 8px; font-size: 13px; }
+/* Edit mode: boxed, grows with content (JS sets the height), wraps — never a single-line input. */
+.bean-routines-desc-input {
+  margin-top: 8px;
+  min-height: 40px;
+  resize: none;
+  overflow: hidden;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
 /* Saved routines read as text, not form fields (name is immutable; description stays editable
    but borderless so it looks like a paragraph). */
 .bean-routines-name-text {
@@ -1433,8 +1442,8 @@ button, input, textarea, select, a {
   margin-top: 8px;
   width: 100%;
   box-sizing: border-box;
-  min-height: 44px;
-  resize: vertical;
+  resize: none;
+  overflow: hidden;
   border: none;
   background: transparent;
   outline: none;

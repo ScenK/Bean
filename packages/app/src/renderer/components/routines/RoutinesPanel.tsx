@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Routine, RoutineStep, Skill, Project, AvailableModel } from "@bean/core";
 import { nextRun, parseCron } from "@bean/core/cron";
 import { ChipMenu } from "../../shared/ChipMenu.js";
@@ -124,6 +124,29 @@ function statusText(state: RoutineStateView | undefined): string {
   if (state.missed) return "missed last run";
   const last = state.history[0];
   return last ? `last: ${last.status} · ${new Date(last.finishedAt).toLocaleString()}` : "not run yet";
+}
+
+// A textarea that grows to fit its content (no manual resize handle) — so the description
+// reads as flowing text in view mode and wraps/grows as you type in edit mode.
+function AutoTextarea(props: { value: string; onValue: (v: string) => void; class?: string; placeholder?: string }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const fit = (): void => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  };
+  useLayoutEffect(fit, [props.value]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      class={props.class}
+      placeholder={props.placeholder}
+      value={props.value}
+      onInput={(e) => { props.onValue((e.target as HTMLTextAreaElement).value); fit(); }}
+    />
+  );
 }
 
 // 1a "Routine as a recipe": list rail on the left, a recipe-style editor on the right —
@@ -316,11 +339,11 @@ export function RoutinesPanel() {
                   <h2 class="bean-routines-name-text">{draft.name}</h2>
                   <span class="bean-skills-badge bean-skills-badge--yours">YOURS</span>
                 </div>
-                <textarea
+                <AutoTextarea
                   class="bean-routines-desc-text"
                   placeholder="Add a description…"
                   value={draft.description ?? ""}
-                  onInput={(e) => setDraft({ ...draft, description: (e.target as HTMLTextAreaElement).value || undefined })}
+                  onValue={(v) => setDraft({ ...draft, description: v || undefined })}
                 />
               </>
             ) : (
@@ -334,12 +357,11 @@ export function RoutinesPanel() {
                     onInput={(e) => setDraft({ ...draft, name: (e.target as HTMLInputElement).value })}
                   />
                 </div>
-                <input
+                <AutoTextarea
                   class="bean-input bean-input--boxed bean-routines-desc-input"
-                  type="text"
                   placeholder="Description (optional)"
                   value={draft.description ?? ""}
-                  onInput={(e) => setDraft({ ...draft, description: (e.target as HTMLInputElement).value || undefined })}
+                  onValue={(v) => setDraft({ ...draft, description: v || undefined })}
                 />
               </>
             )}
