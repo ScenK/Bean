@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { createChatopsServers } from "./chatops-servers.js";
+import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage } from "electron";
+import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, memoryFile, remindersFile,
   modelMemoryFile,
@@ -51,6 +53,11 @@ app.whenReady().then(async () => {
   const projectDir = app.isPackaged ? join(process.resourcesPath, "builtin") : projectBeanDir();
 
   const avatar = createAvatarWindow();
+  // Hoisted out of the `try` block below (where it's created) so the tray menu's click
+  // handler — built further up in this function, long before that `try` runs — can read
+  // it. Safe because click handlers only fire on user interaction, after this whole
+  // whenReady() callback (including the try block) has finished running.
+  let chatopsServers: ReturnType<typeof createChatopsServers> | undefined;
   // Menu-bar app: Cmd+W (the default app-menu Close role) should tuck the pet away, not destroy
   // it, so avatar.html stays loaded once and the bean stays re-summonable. Real quits (Cmd+Q /
   // Exit) set `quitting` first (before-quit, below), so the close proceeds then.
@@ -82,12 +89,32 @@ app.whenReady().then(async () => {
   // follow macOS convention (⌘, for preferences, ⌘Q for quit) — About has none, matching the
   // system App menu, where About never gets a shortcut either.
   const symbol = (name: string) => nativeImage.createMenuSymbol(name);
-  const trayMenu = Menu.buildFromTemplate([
+  // Discord/Teams start/stop, folded into one "Chat Bots" submenu item instead of one tray
+  // row per bot. Mirrors SettingsWindow.tsx's own Start/Stop toggle — same chatopsServers
+  // object, so both surfaces stay in sync. Rebuilt fresh in buildTrayMenu() below (not just
+  // once here) so the checkbox/dot state is current every time the tray menu opens.
+  const buildChatopsSubmenu = (): MenuItemConstructorOptions[] => {
+    const status = chatopsServers?.status() ?? { discord: { running: false }, teams: { running: false } };
+    const items: MenuItemConstructorOptions[] = [];
+    for (const row of chatopsMenuRows(status)) {
+      items.push({
+        label: `${row.dot} ${row.label}`,
+        type: "checkbox",
+        checked: row.checked,
+        click: () => (row.checked ? chatopsServers?.stop(row.bot) : chatopsServers?.start(row.bot)),
+      });
+      if (row.error) items.push({ label: `⚠️ ${row.error}`, enabled: false });
+    }
+    return items;
+  };
+  const buildTrayMenu = (): Menu => Menu.buildFromTemplate([
     { label: "Settings", icon: symbol("gearshape"), accelerator: "Cmd+,", click: () => openComponent("settings") },
+    { label: "Chat Bots", icon: symbol("message"), submenu: buildChatopsSubmenu() },
     { label: "Persona", icon: symbol("person.crop.circle"), accelerator: "Cmd+P", click: () => openComponent("persona") },
     { label: "About", icon: symbol("info.circle"), click: () => openComponent("about") },
     { label: "Exit", icon: symbol("rectangle.portrait.and.arrow.right"), accelerator: "Cmd+Q", click: () => app.quit() },
   ]);
+  let trayMenu = buildTrayMenu();
   tray = new Tray(trayIcon);
   if (trayIcon.isEmpty()) tray.setTitle("🫘");
   tray.setToolTip("Bean");
@@ -99,6 +126,7 @@ app.whenReady().then(async () => {
       avatar.focus();
       return;
     }
+    trayMenu = buildTrayMenu();
     tray?.popUpContextMenu(trayMenu);
   });
   // Menu-bar app: no Dock icon; the tray is the persistent presence. Packaged builds are
@@ -387,7 +415,7 @@ app.whenReady().then(async () => {
     cancelAllDelegates = delegateTasks.cancelAll;
 
     const chatopsRoot = app.isPackaged ? process.resourcesPath : dirname(projectBeanDir());
-    const chatopsServers = createChatopsServers({
+    chatopsServers = createChatopsServers({
       repoRoot: chatopsRoot,
       resolvedPath,
       send: (event) => broadcast(IPC.chatopsEvent, event),
@@ -396,7 +424,7 @@ app.whenReady().then(async () => {
         extraEnv: { BEAN_BUILTIN_DIR: projectDir },
       } : {}),
     });
-    app.on("before-quit", () => chatopsServers.stopAll());
+    app.on("before-quit", () => chatopsServers?.stopAll());
 
     // --- Routines: cron-scheduled multi-step automations (see .memory/project-routines.md). ---
     const routinesPath = routinesDir(dir);
