@@ -24,6 +24,7 @@ export function remindersFile(dir: string): string { return join(dir, "reminders
 export function notesDir(dir: string): string { return join(dir, "notes"); }
 export function routinesDir(dir: string): string { return join(dir, "routines"); }
 export function routineStateFile(dir: string): string { return join(dir, "routines", ".state.json"); }
+export function outboxDir(dir: string): string { return join(dir, "outbox"); }
 export function modelMemoryFile(dir: string): string { return join(dir, "model-memory.json"); }
 // A "no project" run's working directory (2a) — the launched CLI's cwd when no real project
 // was picked. Bean never seeds it (no git clone/page fetch): if the user typed an optional

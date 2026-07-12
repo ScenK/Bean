@@ -42,3 +42,5 @@ export type {
 } from "./routine-store.js";
 export { runRoutine, ROUTINE_STEP_TIMEOUT_MS } from "./routine-runner.js";
 export type { DelegateStepRequest, RoutineRunnerDeps, RoutineRunResult, StepResult } from "./routine-runner.js";
+export { claimOutbox, enqueueOutbox } from "./outbox.js";
+export type { OutboxMessage } from "./outbox.js";
