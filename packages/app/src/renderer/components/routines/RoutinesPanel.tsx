@@ -99,7 +99,8 @@ export function RoutinesPanel() {
 
   const runNow = async (): Promise<void> => {
     if (!selected) return;
-    await window.bean.routinesRunNow(selected);
+    const { started, reason } = await window.bean.routinesRunNow(selected);
+    setError(started ? "" : (reason ?? "couldn't start run"));
     await refresh();
   };
 
