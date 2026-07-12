@@ -817,24 +817,6 @@ button, input, textarea, select, a {
   margin-top: 4px;
 }
 .bean-chip-menu-hint { font-size: 11px; line-height: 1.4; color: var(--bean-text-dim); }
-.bean-chip-menu-cli-footer {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
-  padding: 5px 10px 3px;
-}
-.bean-chip-menu-pill {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--bean-text);
-  background: var(--bean-surface);
-  border: 1px solid var(--bean-border);
-  border-radius: 999px;
-  padding: 4px 10px;
-  cursor: pointer;
-}
-.bean-chip-menu-pill--on { color: var(--bean-accent-ink); background: var(--bean-accent); border-color: var(--bean-accent); }
 
 /* target:-reminder banner — must be readable at a glance, unlike the dim projects-hint */
 .bean-skills-notice {

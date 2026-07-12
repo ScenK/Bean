@@ -1,6 +1,5 @@
 import { useState } from "preact/hooks";
 import type { AvailableModel, CliName, Project, ProposedRun } from "@bean/core";
-import { pickModel } from "@bean/core/models";
 import { ChipMenu } from "./ChipMenu.js";
 
 export type PickableModel = AvailableModel;
@@ -49,22 +48,25 @@ export function ProposalCard({
 }) {
   const [prompt, setPrompt] = useState(run.composedPrompt);
   const [extra, setExtra] = useState("");
-  // Track only an explicit user pick; the effective CLI derives from the latest cliOptions.
-  // cliOptions arrives async (after first render), so seeding useState from it would freeze
-  // the pre-detection default — a claude-only machine would silently launch opencode.
+  // Only used by the no-model fallback picker below — when there's a model list, the CLI is
+  // derived from whichever model is picked instead of asked for separately (matches
+  // RoutinesPanel/DelegateCard, which don't ask for a CLI up front either).
   const [cliChoice, setCliChoice] = useState<CliName | undefined>(undefined);
-  const cli: CliName = cliChoice ?? cliOptions?.[0] ?? "opencode";
   const [projectPath, setProjectPath] = useState<string | undefined>(run.projectPath);
   const [sourceUrl, setSourceUrl] = useState(run.sourceUrl ?? "");
   const [modelChoice, setModelChoice] = useState<string | undefined>(undefined);
   const done = state !== "pending";
   const isChat = run.target === "chat";
   const models = modelOptions ?? [];
-  // Effective model, not the raw pick: if the user switches CLI to one that can't run the
-  // picked/remembered model, pickModel falls back to a CLI-supported model so the chip label,
-  // the menu checkmark, and the launched --model all stay consistent (an unsupported model
-  // would otherwise drop --model and silently launch the CLI's default).
-  const model = pickModel(models, cli, modelChoice, lastUsedModel);
+  // Effective model: explicit pick, else the remembered last-used model (if it's still in the
+  // list), else the first model offered.
+  const model = modelChoice ?? (models.some((m) => m.id === lastUsedModel) ? lastUsedModel : undefined) ?? models[0]?.id;
+  const modelObj = models.find((m) => m.id === model);
+  // CLI follows from the model — each model resolves to exactly one CLI, so picking a model
+  // already answers "which CLI." Falls back to the no-model picker's explicit choice.
+  const cli: CliName =
+    (modelObj && cliOptions?.find((c) => modelObj.aliases[c] !== undefined)) ??
+    cliChoice ?? cliOptions?.[0] ?? "opencode";
   const hasModelMenu = !isChat && models.length > 0;
   const showCliOnlyPicker = !isChat && !hasModelMenu && (cliOptions?.length ?? 0) > 1;
 
@@ -146,7 +148,7 @@ export function ProposalCard({
             {(close) => (
               <div class="bean-chip-menu-list">
                 {models.map((m) => {
-                  const available = m.aliases[cli] !== undefined;
+                  const available = m.availableOn.length > 0;
                   return (
                     <button
                       key={m.id}
@@ -160,32 +162,11 @@ export function ProposalCard({
                         {m.id === lastUsedModel ? <em class="bean-chip-menu-badge">LAST USED · {run.skillName.toUpperCase()}</em> : null}
                       </span>
                       <span class="bean-chip-menu-caption">
-                        {available ? aliasCaption(m) : `${aliasCaption(m) || "no CLI support"} — not available via ${cli}`}
+                        {aliasCaption(m) || "no CLI support"}
                       </span>
                     </button>
                   );
                 })}
-                <div class="bean-chip-menu-divider" />
-                <div class="bean-chip-menu-cli-footer">
-                  <span class="bean-field-label">CLI</span>
-                  <button
-                    type="button"
-                    class={`bean-chip-menu-pill${cliChoice === undefined ? " bean-chip-menu-pill--on" : ""}`}
-                    onClick={() => setCliChoice(undefined)}
-                  >
-                    {cliChoice === undefined ? "✓ " : ""}auto
-                  </button>
-                  {cliOptions?.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      class={`bean-chip-menu-pill${cliChoice === c ? " bean-chip-menu-pill--on" : ""}`}
-                      onClick={() => setCliChoice(c)}
-                    >
-                      {cliChoice === c ? "✓ " : ""}{c}
-                    </button>
-                  ))}
-                </div>
               </div>
             )}
           </ChipMenu>
