@@ -11,6 +11,7 @@ export * from "./memory/memory.js";
 export * from "./memory/store.js";
 export * from "./memory/extract.js";
 export * from "./reminders.js";
+export * from "./deliver.js";
 export * from "./models.js";
 export * from "./model-memory.js";
 export * from "./web-page.js";

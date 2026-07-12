@@ -10,9 +10,9 @@ import {
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, saveMemories, extractMemories,
   loadReminders, saveReminders, dueReminders, extractPageText,
-  loadNotes, saveNote, deleteNote, notesDir, detectClis, loginShellPath,
+  loadNotes, saveNote, deleteNote, notesDir, detectClis, loginShellPath, deliver,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool } from "@bean/core";
+import type { RouteSuggestion, ActionTool, Transport } from "@bean/core";
 import { createAvatarWindow, createComponentWindow } from "./windows.js";
 import { registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, type ChatPromptPayload } from "./ipc.js";
 import { IPC, type Theme, type ComponentKind } from "./channels.js";
@@ -219,6 +219,25 @@ app.whenReady().then(async () => {
   // due ones as desktop notifications. Polling the file means set_reminder never has to
   // wake a scheduler. ponytail: 30s granularity; tighten if minute-exact ever matters.
   const remindersPath = remindersFile(dir);
+  // Message fanout: deliver() sends to every available() transport. Only Notification is
+  // real today; the rest are honest stubs the routine feature will implement.
+  const notificationTransport: Transport = {
+    name: "notification",
+    available: () => Notification.isSupported(),
+    send: (msg) => {
+      const n = new Notification({ title: msg.title ?? "Bean", body: msg.body });
+      n.on("click", () => openComponent("chat"));
+      n.show();
+    },
+  };
+  // ponytail: stub seam — no avatar message-bubble UI exists yet. Add real IPC +
+  // renderer rendering when the routine feature needs it.
+  const bubbleTransport: Transport = { name: "bubble", available: () => false, send: () => {} };
+  // ponytail: stub seams — bots are inbound-only, no main->bot outbound push path exists yet.
+  // Build the main->server channel when the routine feature lands.
+  const discordTransport: Transport = { name: "discord", available: () => false, send: () => {} };
+  const teamsTransport: Transport = { name: "teams", available: () => false, send: () => {} };
+  const transports: Transport[] = [notificationTransport, bubbleTransport, discordTransport, teamsTransport];
   const actionTools: ActionTool[] = [
     {
       spec: {
@@ -303,9 +322,9 @@ app.whenReady().then(async () => {
       if (due.length === 0) return;
       const firedAt = new Date().toISOString();
       for (const r of due) {
-        const n = new Notification({ title: "Bean", body: r.text });
-        n.on("click", () => openComponent("chat"));
-        n.show();
+        void deliver({ body: r.text }, transports).then((outcomes) => {
+          for (const o of outcomes) if (!o.ok) console.error("bean: deliver failed", o.name, o.error);
+        });
         r.firedAt = firedAt;
       }
       await saveReminders(remindersPath, reminders);
