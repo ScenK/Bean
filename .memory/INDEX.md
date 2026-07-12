@@ -41,3 +41,4 @@
 - [project-model-selection-and-no-project-runs.md](project-model-selection-and-no-project-runs.md) — the model picker (canonical names + per-CLI aliases + last-used-per-skill) and the merged "no project" scratch-workspace flow; Bean deliberately does *not* fetch/clone a URL seed itself (folded into the prompt, left to the delegated agent) — don't reintroduce that; `buildLaunchHandler` stays sync unless projectPath is "".
 - [project-teams-bot](project-teams-bot.md) — chatops brain in core + Teams/Discord adapters; model-memory key namespacing.
 - [project-chatops-memory-flow](project-chatops-memory-flow.md) — memory capture in Teams/Discord bots
+- [project-routines](project-routines.md) — cron-scheduled multi-step automations: storage, pure DI'd runner (routine-only `save_note`, no propose_*), scheduler (no catch-up), chatops digest fanout via `~/.bean/outbox/`

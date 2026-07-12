@@ -2,7 +2,7 @@ import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile, notesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, loadNotes, saveMemories,
-  detectClis, runDelegate,
+  detectClis, runDelegate, claimOutbox, outboxDir,
   buildTeamsBot, mentionsBotName, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore, RunRegistry, type BotEffects,
 } from "@bean/core";
 import {
@@ -160,4 +160,37 @@ client.on("error", (err) => console.error("client error:", err));
 client.once("clientReady", () => {
   console.log(`@bean/discord logged in as ${client.user?.tag} (clis: ${clis.join(", ") || "none"})`);
 });
+
+// Routine digests: the main app enqueues outbox files; deliver them to their channel.
+const OUTBOX_POLL_MS = 5_000;
+setInterval(() => {
+  void (async () => {
+    for (const msg of await claimOutbox(outboxDir(beanDir()), "discord")) {
+      const text = msg.title ? `**${msg.title}**\n${msg.body}` : msg.body;
+      if (!msg.channel) {
+        // No channel = DM every allowed user directly (the default delivery mode).
+        for (const userId of discordConfig.allowedUserIds) {
+          try {
+            const user = await client.users.fetch(userId);
+            for (const chunk of chunkText(text)) await user.send(chunk);
+          } catch (err) {
+            console.error(`outbox: discord DM to ${userId} failed`, err);
+          }
+        }
+        continue;
+      }
+      try {
+        const channel = await client.channels.fetch(msg.channel);
+        if (!channel?.isTextBased() || !("send" in channel)) {
+          console.error(`outbox: discord channel ${msg.channel} not sendable`);
+          continue;
+        }
+        for (const chunk of chunkText(text)) await channel.send(chunk);
+      } catch (err) {
+        console.error("outbox: discord send failed", err);
+      }
+    }
+  })();
+}, OUTBOX_POLL_MS);
+
 await client.login(discordConfig.botToken);

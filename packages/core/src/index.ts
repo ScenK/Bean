@@ -31,3 +31,16 @@ export * from "./chatops/note-proposals.js";
 export * from "./chatops/memory-proposals.js";
 export * from "./chatops/runs.js";
 export * from "./chatops/resolve.js";
+export { parseCron, isValidCron, nextRun } from "./cron.js";
+export type { CronSpec } from "./cron.js";
+export {
+  appendRunRecord, deleteRoutine, isValidRoutine, loadRoutines,
+  loadRoutineStates, saveRoutine, saveRoutineStates,
+} from "./routine-store.js";
+export type {
+  Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RunRecord,
+} from "./routine-store.js";
+export { runRoutine, ROUTINE_STEP_TIMEOUT_MS } from "./routine-runner.js";
+export type { DelegateStepRequest, RoutineRunnerDeps, RoutineRunResult, StepResult } from "./routine-runner.js";
+export { claimOutbox, enqueueOutbox } from "./outbox.js";
+export type { OutboxMessage } from "./outbox.js";

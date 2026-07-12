@@ -1,10 +1,10 @@
 import {
   route, converse, launchInTerminal, scratchDir,
-  availableModels, loadModelMemory, saveModelMemory,
+  availableModels, loadModelMemory, saveModelMemory, isValidRoutine,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
-  type ActionTool, type Note, type NoteDraft, type AvailableModel,
+  type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
 } from "@bean/core";
 import { mkdir } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";
@@ -315,6 +315,38 @@ export function buildChatopsHandlers(deps: ChatopsHandlerDeps) {
   };
 }
 
+export interface RoutineStateView { lastRun?: string; missed?: boolean; history: RunRecord[]; running: boolean }
+
+export interface RoutineHandlerDeps {
+  loadRoutines: () => Promise<Routine[]>;
+  saveRoutine: (routine: Routine) => Promise<void>;
+  deleteRoutine: (name: string) => Promise<void>;
+  loadStates: () => Promise<Record<string, RoutineState>>;
+  isRunning: (name: string) => boolean;
+  runNow: (name: string) => Promise<{ started: boolean; reason?: string }>;
+}
+
+export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
+  return {
+    list: (): Promise<Routine[]> => deps.loadRoutines(),
+    save: async (routine: Routine): Promise<void> => {
+      if (!isValidRoutine(routine)) throw new Error("invalid routine");
+      await deps.saveRoutine(routine);
+    },
+    remove: (name: string): Promise<void> => deps.deleteRoutine(name),
+    state: async (): Promise<Record<string, RoutineStateView>> => {
+      const [routines, states] = await Promise.all([deps.loadRoutines(), deps.loadStates()]);
+      const out: Record<string, RoutineStateView> = {};
+      for (const r of routines) {
+        const s = states[r.name];
+        out[r.name] = { lastRun: s?.lastRun, missed: s?.missed, history: s?.history ?? [], running: deps.isRunning(r.name) };
+      }
+      return out;
+    },
+    runNow: (name: string): Promise<{ started: boolean; reason?: string }> => deps.runNow(name),
+  };
+}
+
 export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, ChatopsHandlerDeps {
   converse: ConverseDeps["chat"];
   saveSkill: (dir: string, name: string, body: string) => Promise<void>;
@@ -356,6 +388,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
     cancel: (taskId: string) => void;
   };
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
+  routineHandlers: ReturnType<typeof buildRoutineHandlers>;
 }
 
 export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
@@ -463,6 +496,12 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.chatopsStatus, () => chatopsHandlers.status());
   ipcMain.on(IPC.chatopsStart, (_e, bot: ChatopsBot) => chatopsHandlers.start(bot));
   ipcMain.on(IPC.chatopsStop, (_e, bot: ChatopsBot) => chatopsHandlers.stop(bot));
+
+  ipcMain.handle(IPC.routinesList, () => deps.routineHandlers.list());
+  ipcMain.handle(IPC.routinesSave, (_e, routine: Routine) => deps.routineHandlers.save(routine));
+  ipcMain.handle(IPC.routinesDelete, (_e, name: string) => deps.routineHandlers.remove(name));
+  ipcMain.handle(IPC.routinesState, () => deps.routineHandlers.state());
+  ipcMain.handle(IPC.routinesRunNow, (_e, name: string) => deps.routineHandlers.runNow(name));
 
   ipcMain.handle(IPC.openComponent, (_e, kind: ComponentKind, droppedUrl?: string) => deps.openComponent(kind, droppedUrl));
   ipcMain.on(IPC.proposeRun, (_e, suggestion: RouteSuggestion) => deps.proposeRun(suggestion));

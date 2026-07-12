@@ -5,10 +5,10 @@ import {
   buildDeleteSkillHandler,
   buildPersonaHandlers, buildLaunchHandler, buildConfigHandlers, buildPlanStore, buildMemoryHandlers,
   buildDroppedUrlStore, buildChatPromptStore, buildNotesHandlers,
-  buildModelsHandler, buildModelMemoryHandlers,
+  buildModelsHandler, buildModelMemoryHandlers, buildRoutineHandlers,
 } from "../src/ipc.js";
 import type { ConfigView, ConfigUpdate } from "../src/channels.js";
-import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate } from "@bean/core";
+import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate, Routine } from "@bean/core";
 import type { LaunchSpawnFn } from "@bean/core";
 import { EventEmitter } from "node:events";
 
@@ -436,4 +436,36 @@ test("launch handler with no project resolves via a bare scratch dir before laun
   // launchInTerminal writes a real .command script and opens it via `open` — same shape
   // launcher.test.ts already covers; here we're only proving the async resolution ran first.
   expect(spawnLaunch).toHaveBeenCalledWith("open", [expect.stringMatching(/bean-run-.*\.command$/)]);
+});
+
+const routine: Routine = {
+  name: "r", enabled: true, cron: "0 6 * * *",
+  steps: [{ kind: "chat", instruction: "x" }], sinks: {},
+};
+
+test("routine handlers merge in-memory running state into the state view", async () => {
+  const h = buildRoutineHandlers({
+    loadRoutines: async () => [routine],
+    saveRoutine: vi.fn(async () => {}),
+    deleteRoutine: vi.fn(async () => {}),
+    loadStates: async () => ({ r: { lastRun: "2026-07-12T06:30:00.000Z", history: [] } }),
+    isRunning: (name) => name === "r",
+    runNow: async () => ({ started: true }),
+  });
+  const state = await h.state();
+  expect(state.r).toMatchObject({ lastRun: "2026-07-12T06:30:00.000Z", running: true });
+});
+
+test("routine handlers save validates and delegates; delete and runNow pass through", async () => {
+  const saveRoutine = vi.fn(async () => {});
+  const runNow = vi.fn(async () => ({ started: true }) as const);
+  const h = buildRoutineHandlers({
+    loadRoutines: async () => [], saveRoutine, deleteRoutine: vi.fn(async () => {}),
+    loadStates: async () => ({}), isRunning: () => false, runNow,
+  });
+  await h.save(routine);
+  expect(saveRoutine).toHaveBeenCalledWith(routine);
+  await expect(h.save({ ...routine, cron: "bad" })).rejects.toThrow();
+  await h.runNow("r");
+  expect(runNow).toHaveBeenCalledWith("r");
 });

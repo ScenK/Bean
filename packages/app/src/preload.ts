@@ -2,10 +2,11 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo } from "./channels.js";
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
-  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel,
+  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine,
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
+import type { RoutineStateView } from "./ipc.js";
 
 contextBridge.exposeInMainWorld("bean", {
   route: (input: RouteInput): Promise<RouteSuggestion> => ipcRenderer.invoke(IPC.route, input),
@@ -70,6 +71,11 @@ contextBridge.exposeInMainWorld("bean", {
   listNotes: (): Promise<Note[]> => ipcRenderer.invoke(IPC.listNotes),
   saveNote: (draft: NoteDraft): Promise<string> => ipcRenderer.invoke(IPC.saveNote, draft),
   deleteNote: (slug: string): Promise<void> => ipcRenderer.invoke(IPC.deleteNote, slug),
+  routinesList: (): Promise<Routine[]> => ipcRenderer.invoke(IPC.routinesList),
+  routinesSave: (routine: Routine): Promise<void> => ipcRenderer.invoke(IPC.routinesSave, routine),
+  routinesDelete: (name: string): Promise<void> => ipcRenderer.invoke(IPC.routinesDelete, name),
+  routinesState: (): Promise<Record<string, RoutineStateView>> => ipcRenderer.invoke(IPC.routinesState),
+  routinesRunNow: (name: string): Promise<{ started: boolean; reason?: string }> => ipcRenderer.invoke(IPC.routinesRunNow, name),
   listMemories: (): Promise<Memory[]> => ipcRenderer.invoke(IPC.listMemories),
   saveMemories: (memories: Memory[]): Promise<void> => ipcRenderer.invoke(IPC.saveMemories, memories),
   extractMemories: (transcript: ChatTurn[]): Promise<MemoryCandidate[]> =>

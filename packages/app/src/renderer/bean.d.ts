@@ -1,10 +1,11 @@
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
-  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel,
+  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine,
 } from "@bean/core";
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
+import type { RoutineStateView } from "../ipc.js";
 
 declare global {
   interface Window {
@@ -56,6 +57,11 @@ declare global {
       listNotes(): Promise<Note[]>;
       saveNote(draft: NoteDraft): Promise<string>;
       deleteNote(slug: string): Promise<void>;
+      routinesList(): Promise<Routine[]>;
+      routinesSave(routine: Routine): Promise<void>;
+      routinesDelete(name: string): Promise<void>;
+      routinesState(): Promise<Record<string, RoutineStateView>>;
+      routinesRunNow(name: string): Promise<{ started: boolean; reason?: string }>;
       listMemories(): Promise<Memory[]>;
       saveMemories(memories: Memory[]): Promise<void>;
       extractMemories(transcript: ChatTurn[]): Promise<MemoryCandidate[]>;

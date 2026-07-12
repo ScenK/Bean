@@ -28,17 +28,25 @@ export interface DelegateTasksDeps {
 
 const isTerminal = (e: DelegateEvent): boolean => e.type === "done" || e.type === "failed" || e.type === "cancelled";
 
-export function createDelegateTasks(deps: DelegateTasksDeps) {
-  const run = deps.run ?? runDelegate;
-  const spawnFn: DelegateSpawnFn | undefined = deps.resolvedPath
+// Finder-launched Electron gets launchd's minimal PATH; pass the login shell's resolved PATH
+// (see .memory/safety-packaged-app-path-detection.md) so a spawned claude/opencode can find
+// its own dependencies. Exported so main.ts's routine delegate-step adapter reuses the exact
+// same spawn instead of duplicating this PATH-injection logic.
+export function resolvedPathSpawnFn(resolvedPath: string | undefined): DelegateSpawnFn | undefined {
+  return resolvedPath
     ? (command, args, cwd) =>
         spawn(command, args, {
           cwd,
           stdio: ["ignore", "pipe", "pipe"],
           detached: true,
-          env: { ...process.env, PATH: deps.resolvedPath },
+          env: { ...process.env, PATH: resolvedPath },
         })
     : undefined;
+}
+
+export function createDelegateTasks(deps: DelegateTasksDeps) {
+  const run = deps.run ?? runDelegate;
+  const spawnFn = resolvedPathSpawnFn(deps.resolvedPath);
   const tasks = new Map<string, { cancel: DelegateHandle["cancel"]; cancelling: boolean }>();
 
   const emit = (event: DelegateEvent): void => {
