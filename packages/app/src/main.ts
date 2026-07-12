@@ -20,6 +20,9 @@ import { createAvatarWindow, createComponentWindow } from "./windows.js";
 import { registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildRoutineHandlers, type ChatPromptPayload } from "./ipc.js";
 import { IPC, type Theme, type ComponentKind } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
+import {
+  hasRequestedNotificationPermission, markNotificationPermissionRequested, notificationPermissionFile,
+} from "./notification-permission-store.js";
 import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
 import { createDelegateTasks, resolvedPathSpawnFn } from "./delegate-tasks.js";
@@ -234,6 +237,18 @@ app.whenReady().then(async () => {
       n.show();
     },
   };
+  // Request macOS's notification permission on first launch instead of waiting for it to
+  // fire implicitly on the first reminder. Electron has no Notification.requestPermission() —
+  // the OS prompt only appears the first time a Notification is actually constructed/shown —
+  // so fire one once, ever (tracked via notificationPermissionFile), rather than on every launch.
+  const notifPermissionPath = notificationPermissionFile(app.getPath("userData"));
+  void (async () => {
+    if (!Notification.isSupported()) return;
+    if (await hasRequestedNotificationPermission(notifPermissionPath)) return;
+    new Notification({ title: "Bean", body: "Notifications are on — I'll use these for reminders." }).show();
+    await markNotificationPermissionRequested(notifPermissionPath);
+  })();
+
   // ponytail: stub seam — no avatar message-bubble UI exists yet. Add real IPC +
   // renderer rendering when the routine feature needs it.
   const bubbleTransport: Transport = { name: "bubble", available: () => false, send: () => {} };
