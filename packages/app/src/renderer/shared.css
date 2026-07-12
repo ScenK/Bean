@@ -1416,13 +1416,17 @@ button, input, textarea, select, a {
   background: var(--bean-text-dim);
   opacity: 0.5;
 }
-.bean-routines-dot--running { background: var(--bean-accent); opacity: 1; animation: bean-console-blink 1.1s infinite; }
-.bean-routines-dot--ok { background: oklch(0.7 0.14 155); opacity: 1; }
+.bean-routines-dot--enabled { background: oklch(0.7 0.14 155); opacity: 1; }
+.bean-routines-dot--running {
+  background: oklch(0.7 0.14 155);
+  opacity: 1;
+  animation: bean-console-blink 1.1s infinite;
+  box-shadow: 0 0 6px oklch(0.7 0.14 155 / 70%);
+}
 .bean-routines-dot--failed { background: #e5484d; opacity: 1; }
-.bean-routines-dot--missed { background: oklch(0.66 0.15 48); opacity: 1; }
-.bean-routines-dot--idle { background: var(--bean-text-dim); opacity: 0.5; }
+.bean-routines-dot--off { background: var(--bean-text-dim); opacity: 0.5; }
 .bean-skills-row--selected .bean-routines-dot { box-shadow: 0 0 7px rgba(255, 255, 255, 0.8); }
-.bean-skills-row--selected .bean-routines-dot--idle { background: #fff; }
+.bean-skills-row--selected .bean-routines-dot--off { background: #fff; }
 
 .bean-routines-new {
   width: 100%;
