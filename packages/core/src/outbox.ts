@@ -59,6 +59,10 @@ export async function claimOutbox(dir: string, transport: "teams" | "discord"): 
     if (parsed.transport === transport && typeof parsed.channel === "string" && typeof parsed.body === "string") {
       out.push(parsed);
       await rm(path, { force: true });
+    } else {
+      // filename says this transport, but body disagrees (only via hand-editing) — same
+      // treatment as a parse failure: delete rather than leave it stranded forever.
+      await rm(path, { force: true });
     }
   }
   return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));

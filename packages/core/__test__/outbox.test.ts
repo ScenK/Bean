@@ -44,4 +44,14 @@ describe("outbox", () => {
     expect(teams).toEqual([]); // still no valid teams messages
     expect(await readdir(dir)).toEqual([]); // but its own claim swept the malformed file
   });
+  it("filename prefix matches but body transport disagrees (hand-edited) → deleted, not returned or stranded", async () => {
+    const dir = await tmp();
+    await writeFile(
+      join(dir, "discord-mismatch.json"),
+      JSON.stringify({ transport: "teams", channel: "conv1", body: "hi" }),
+      "utf8",
+    );
+    expect(await claimOutbox(dir, "discord")).toEqual([]);
+    expect(await readdir(dir)).toEqual([]); // no longer left on disk forever
+  });
 });
