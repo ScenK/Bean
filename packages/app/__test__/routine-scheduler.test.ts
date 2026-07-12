@@ -95,4 +95,40 @@ describe("routine scheduler", () => {
     expect(await sched.runNow("morning")).toEqual({ started: true });
     expect(deps.runRoutine).toHaveBeenCalledTimes(1);
   });
+
+  it("a failed manual re-run of a previously-missed routine still clears the missed-guard for later ticks", async () => {
+    let currentTime = d(9, 0, 12); // scheduler start
+    let states: Record<string, RoutineState> = { morning: { lastRun: d(6, 30, 10).toISOString(), history: [] } };
+    let runCall = 0;
+    const runRoutine = vi.fn(async () => {
+      runCall++;
+      if (runCall === 1) throw new Error("boom");
+      return runResult();
+    });
+    const deps: RoutineSchedulerDeps = {
+      loadRoutines: async () => [routine()],
+      loadStates: async () => states,
+      saveStates: async (s) => { states = s; },
+      runRoutine,
+      deliverDigest: vi.fn(async () => {}),
+      now: () => currentTime,
+    };
+    const sched = createRoutineScheduler(deps);
+
+    vi.useFakeTimers();
+    sched.start(); // markMissed: lastRun on the 10th → fire on the 11th, before startedAt on the 12th
+    await vi.runOnlyPendingTimersAsync();
+    sched.stop();
+    vi.useRealTimers();
+    expect(states.morning?.missed).toBe(true);
+
+    const res = await sched.runNow("morning"); // runRoutine rejects on this first call
+    expect(res).toEqual({ started: true }); // errors are caught inside execute(), runNow still resolves
+    expect(states.morning?.missed).toBeUndefined(); // disk-cleared regardless of the failure
+
+    currentTime = d(6, 31, 13); // jump past the next fire time so the routine is due again
+    await sched.tick();
+    // second runRoutine call proves the missed-guard didn't stick around after the failure
+    expect(runRoutine).toHaveBeenCalledTimes(2);
+  });
 });

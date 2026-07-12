@@ -43,10 +43,12 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         ...before,
         [routine.name]: { ...(prior ?? { history: [] }), lastRun: now().toISOString(), missed: undefined },
       });
+      missedNames.delete(routine.name); // clear in lockstep with the disk stamp above — an attempted
+      // run (success or failure) counts as "handled," so a throw below can't leave tick() stuck
+      // skipping this routine forever while disk already says not-missed.
       const result = await deps.runRoutine(routine);
       const after = await deps.loadStates();
       await deps.saveStates({ ...after, [routine.name]: appendRunRecord(after[routine.name], result.record) });
-      missedNames.delete(routine.name); // a completed run clears missed, mirroring appendRunRecord on disk
       await deps.deliverDigest(routine, result);
     } catch (err) {
       console.error(`bean: routine "${routine.name}" run failed`, err);
@@ -62,6 +64,11 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     // where a concurrent tick/runNow could slip in between "decided to run" and "flagged running".
     const routines = await deps.loadRoutines();
     const candidates = routines.filter((r) => r.enabled && !running.has(r.name));
+    // ponytail: marks ALL candidates running before due-ness is known, not just the one(s) that
+    // turn out due — for the loadStates() await below (sub-ms to a few ms), isRunning()/runNow()
+    // will wrongly report a non-due routine as running. Unavoidable without breaking the
+    // overlap-skip test's single-microtask-tick timing; upgrade path if this bites in practice is
+    // a separate "pending-due-check" set kept apart from the public running set.
     for (const routine of candidates) running.add(routine.name);
     const states = await deps.loadStates();
     const nowT = now();
