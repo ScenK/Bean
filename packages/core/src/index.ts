@@ -40,3 +40,5 @@ export {
 export type {
   Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RunRecord,
 } from "./routine-store.js";
+export { runRoutine, ROUTINE_STEP_TIMEOUT_MS } from "./routine-runner.js";
+export type { DelegateStepRequest, RoutineRunnerDeps, RoutineRunResult, StepResult } from "./routine-runner.js";
