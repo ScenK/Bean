@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { createChatopsServers } from "./chatops-servers.js";
+import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
@@ -58,6 +59,12 @@ app.whenReady().then(async () => {
   // it. Safe because click handlers only fire on user interaction, after this whole
   // whenReady() callback (including the try block) has finished running.
   let chatopsServers: ReturnType<typeof createChatopsServers> | undefined;
+  // Mirrors SettingsWindow.tsx's scheduleErrorClear (same 3s window): a tray-only cache of when
+  // each bot's current error first appeared, so the submenu can stop showing a stale error even
+  // though chatopsServers' own state (shared with Settings) keeps it until overwritten. Updated
+  // by the `send` callback below; read by buildChatopsSubmenu's displayState.
+  const CHATOPS_ERROR_DISPLAY_MS = 3000;
+  const chatopsErrorSince: Partial<Record<ChatopsBot, number>> = {};
   // Menu-bar app: Cmd+W (the default app-menu Close role) should tuck the pet away, not destroy
   // it, so avatar.html stays loaded once and the bean stays re-summonable. Real quits (Cmd+Q /
   // Exit) set `quitting` first (before-quit, below), so the close proceeds then.
@@ -94,14 +101,32 @@ app.whenReady().then(async () => {
   // object, so both surfaces stay in sync. Rebuilt fresh in buildTrayMenu() below (not just
   // once here) so the checkbox/dot state is current every time the tray menu opens.
   const buildChatopsSubmenu = (): MenuItemConstructorOptions[] => {
-    const status = chatopsServers?.status() ?? { discord: { running: false }, teams: { running: false } };
+    const rawStatus = chatopsServers?.status() ?? { discord: { running: false }, teams: { running: false } };
+    // Drop an error once it's past CHATOPS_ERROR_DISPLAY_MS old — see chatopsErrorSince above.
+    const displayState = (bot: ChatopsBot, s: ChatopsState): ChatopsState => {
+      const since = chatopsErrorSince[bot];
+      const stale = s.error && since !== undefined && Date.now() - since > CHATOPS_ERROR_DISPLAY_MS;
+      return stale ? { running: s.running } : s;
+    };
+    const status: Record<ChatopsBot, ChatopsState> = {
+      discord: displayState("discord", rawStatus.discord),
+      teams: displayState("teams", rawStatus.teams),
+    };
     const items: MenuItemConstructorOptions[] = [];
     for (const row of chatopsMenuRows(status)) {
       items.push({
         label: `${row.dot} ${row.label}`,
         type: "checkbox",
         checked: row.checked,
-        click: () => (row.checked ? chatopsServers?.stop(row.bot) : chatopsServers?.start(row.bot)),
+        // Electron closes the whole native menu on any item click and offers no way to keep it
+        // open — there's no "stay open until the pointer leaves" hook. The closest available
+        // approximation: act, then pop the (freshly rebuilt) menu back up shortly after, so the
+        // user sees whether start/stop actually succeeded (dot flips to 🔴 fast on a startup
+        // crash) without needing a second click.
+        click: () => {
+          if (row.checked) chatopsServers?.stop(row.bot); else chatopsServers?.start(row.bot);
+          setTimeout(() => { trayMenu = buildTrayMenu(); tray?.popUpContextMenu(trayMenu); }, 500);
+        },
       });
       if (row.error) items.push({ label: `⚠️ ${row.error}`, enabled: false });
     }
@@ -418,7 +443,10 @@ app.whenReady().then(async () => {
     chatopsServers = createChatopsServers({
       repoRoot: chatopsRoot,
       resolvedPath,
-      send: (event) => broadcast(IPC.chatopsEvent, event),
+      send: (event) => {
+        if (event.error) chatopsErrorSince[event.bot] = Date.now(); else delete chatopsErrorSince[event.bot];
+        broadcast(IPC.chatopsEvent, event);
+      },
       ...(app.isPackaged ? {
         serverEntries: { discord: "chatops/discord/server.js", teams: "chatops/teams/server.js" },
         extraEnv: { BEAN_BUILTIN_DIR: projectDir },

@@ -32,4 +32,21 @@ describe("chatopsMenuRows", () => {
     const rows = chatopsMenuRows(status({ running: false }, { running: true }));
     expect(rows.map((r) => r.bot)).toEqual(["discord", "teams"]);
   });
+
+  it("collapses newlines/whitespace in the error into one line", () => {
+    const rows = chatopsMenuRows(status({ running: false, error: "boom\nat foo.js:12\n  bar" }, { running: false }));
+    expect(rows[0]!.error).toBe("boom at foo.js:12 bar");
+  });
+
+  it("truncates a long error with an ellipsis instead of growing the menu width", () => {
+    const longError = "x".repeat(80);
+    const rows = chatopsMenuRows(status({ running: false, error: longError }, { running: false }));
+    expect(rows[0]!.error).toHaveLength(40);
+    expect(rows[0]!.error).toBe(`${"x".repeat(39)}…`);
+  });
+
+  it("leaves a short error untouched", () => {
+    const rows = chatopsMenuRows(status({ running: false, error: "boom" }, { running: false }));
+    expect(rows[0]!.error).toBe("boom");
+  });
 });
