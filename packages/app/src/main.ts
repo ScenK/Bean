@@ -11,15 +11,19 @@ import {
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, saveMemories, extractMemories,
   loadReminders, saveReminders, dueReminders, extractPageText,
   loadNotes, saveNote, deleteNote, notesDir, retrieveNoteTool, detectClis, loginShellPath, deliver,
+  loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
+  routinesDir, routineStateFile, outboxDir, enqueueOutbox, runRoutine, runDelegate,
+  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool, Transport } from "@bean/core";
+import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult } from "@bean/core";
 import { createAvatarWindow, createComponentWindow } from "./windows.js";
 import { registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildRoutineHandlers, type ChatPromptPayload } from "./ipc.js";
 import { IPC, type Theme, type ComponentKind } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
-import { createDelegateTasks } from "./delegate-tasks.js";
+import { createDelegateTasks, resolvedPathSpawnFn } from "./delegate-tasks.js";
+import { createRoutineScheduler } from "./routine-scheduler.js";
 
 // dist/main.js sits next to package.json (esbuild output isn't relocated).
 const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"));
@@ -348,13 +352,17 @@ app.whenReady().then(async () => {
       },
     );
 
+    // Shared by createDelegateTasks (chat window's delegate button) and the routine
+    // delegate-step adapter below — one resolver, not two copies of this preference logic.
+    const resolveDelegateCli = (): (typeof availableClis)[number] | undefined => {
+      const preferred = runtime.getDelegateCli();
+      if ((preferred === "claude" || preferred === "opencode") && availableClis.includes(preferred)) return preferred;
+      return availableClis[0];
+    };
+
     const delegateTasks = createDelegateTasks({
       resolvedPath,
-      resolveCli: () => {
-        const preferred = runtime.getDelegateCli();
-        if ((preferred === "claude" || preferred === "opencode") && availableClis.includes(preferred)) return preferred;
-        return availableClis[0];
-      },
+      resolveCli: resolveDelegateCli,
       send: (event) => {
         const chat = componentWindows.get("chat");
         if (chat && !chat.isDestroyed()) sendToWindow(chat, IPC.delegateEvent, event);
@@ -374,6 +382,93 @@ app.whenReady().then(async () => {
       } : {}),
     });
     app.on("before-quit", () => chatopsServers.stopAll());
+
+    // --- Routines: cron-scheduled multi-step automations (see .memory/project-routines.md). ---
+    const routinesPath = routinesDir(dir);
+    const routineStatePath = routineStateFile(dir);
+
+    // Delegate step adapter: runDelegate's callback shape → a promise, prior outputs folded
+    // into the prompt, scratch workspace when the step has no project. Reuses the same
+    // resolved login-shell PATH spawn as delegate-tasks (safety-packaged-app-path-detection)
+    // and enforces the 15-minute routine step timeout explicitly (runDelegate's own default
+    // is 30 minutes, meant for the interactive chat delegate button, not routines).
+    const delegateStep = (req: DelegateStepRequest): Promise<string> =>
+      new Promise((resolve, reject) => {
+        const cli = resolveDelegateCli();
+        if (!cli) { reject(new Error("No delegate CLI found — install claude or opencode.")); return; }
+        const prompt =
+          (req.skill ? composePrompt(req.skill, req.instruction) : req.instruction) +
+          (req.priorOutputs ? `\n\nOutput of this routine's earlier steps:\n${req.priorOutputs}` : "");
+        runDelegate(
+          { cli, projectPath: req.projectPath ?? scratchDir(dir), prompt, model: req.model },
+          { onOutput: () => {}, onDone: resolve, onError: reject },
+          resolvedPathSpawnFn(resolvedPath),
+          ROUTINE_STEP_TIMEOUT_MS,
+        );
+      });
+
+    // Act-now note saving for routine chat steps (chat's propose_note stays confirm-first;
+    // this is the pre-authorized routine counterpart — the user consented by writing the step).
+    // Deliberately NOT added to actionTools: that array also backs the interactive chat window,
+    // which must keep save_note confirm-first.
+    const saveNoteTool: ActionTool = {
+      spec: {
+        name: "save_note",
+        description: "Save a markdown note to the user's notes. Use only when the routine step's instruction asks for it.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "short note title" },
+            body: { type: "string", description: "markdown body" },
+          },
+          required: ["title", "body"],
+        },
+      },
+      run: async (args) => {
+        const { title, body } = (args ?? {}) as { title?: unknown; body?: unknown };
+        if (typeof title !== "string" || typeof body !== "string") return "error: save_note needs { title, body }";
+        const slug = await saveNote(notesDir(dir), { title, body, source: "manual" });
+        return `note saved as ${slug}`;
+      },
+    };
+
+    const runOneRoutine = async (routine: Routine): Promise<RoutineRunResult> => {
+      const skills = await loadLayeredSkills(skillsDir(projectDir), skillsDir(dir));
+      return runRoutine(routine, {
+        chat: runtime.converse,
+        model: runtime.getModel(),
+        delegate: delegateStep,
+        tools: [...actionTools, saveNoteTool],
+        findSkill: (name) => skills.find((s) => s.name === name),
+      });
+    };
+
+    const deliverDigest = async (routine: Routine, result: RoutineRunResult): Promise<void> => {
+      if (routine.sinks.note) {
+        await saveNote(notesDir(dir), {
+          title: `routine: ${routine.name}`,
+          body: result.digest,
+          source: "manual",
+          slug: `routine-${routine.name}`, // update-in-place: one living note per routine
+        });
+      }
+      for (const sink of routine.sinks.chatops ?? []) {
+        await enqueueOutbox(outboxDir(dir), {
+          transport: sink.transport, channel: sink.channel,
+          title: `Routine: ${routine.name}`, body: result.digest,
+        }, randomUUID);
+      }
+    };
+
+    const routineScheduler = createRoutineScheduler({
+      loadRoutines: () => loadRoutines(routinesPath),
+      loadStates: () => loadRoutineStates(routineStatePath),
+      saveStates: (s) => saveRoutineStates(routineStatePath, s),
+      runRoutine: runOneRoutine,
+      deliverDigest,
+    });
+    routineScheduler.start();
+    app.on("before-quit", () => routineScheduler.stop());
 
     registerIpc(ipcMain, {
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
@@ -428,15 +523,13 @@ app.whenReady().then(async () => {
       getPendingDroppedUrl: droppedUrlStore.get,
       runInChat,
       getPendingChatPrompt: chatPromptStore.get,
-      // ponytail: placeholder scheduler wiring — Task 9 replaces isRunning/runNow with the
-      // real scheduler and swaps loadRoutines/etc for the actual store functions.
       routineHandlers: buildRoutineHandlers({
-        loadRoutines: async () => [],
-        saveRoutine: async () => {},
-        deleteRoutine: async () => {},
-        loadStates: async () => ({}),
-        isRunning: () => false,
-        runNow: async () => ({ started: false, reason: "scheduler not wired yet" }),
+        loadRoutines: () => loadRoutines(routinesPath),
+        saveRoutine: (r) => saveRoutine(routinesPath, r),
+        deleteRoutine: (name) => deleteRoutine(routinesPath, name),
+        loadStates: () => loadRoutineStates(routineStatePath),
+        isRunning: (name) => routineScheduler.isRunning(name),
+        runNow: (name) => routineScheduler.runNow(name),
       }),
     });
   } catch (err) {
