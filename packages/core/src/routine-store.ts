@@ -6,7 +6,7 @@ import { isValidCron } from "./cron.js";
 // Absent/empty channel = DM the user directly (the default); a non-empty channel targets a
 // specific discord channel id or teams conversation id instead.
 export interface RoutineChatopsSink { transport: "teams" | "discord"; channel?: string }
-export interface RoutineSinks { chatops?: RoutineChatopsSink[]; note?: boolean }
+export interface RoutineSinks { chatops?: RoutineChatopsSink[]; note?: boolean; notify?: boolean }
 
 export type RoutineStep =
   | { kind: "delegate"; skill: string; project?: string; model?: string; instruction: string }
@@ -63,6 +63,7 @@ export function isValidRoutine(v: unknown): v is Routine {
   if (typeof r.sinks !== "object" || r.sinks === null) return false;
   const sinks = r.sinks as Record<string, unknown>;
   if (sinks.note !== undefined && typeof sinks.note !== "boolean") return false;
+  if (sinks.notify !== undefined && typeof sinks.notify !== "boolean") return false;
   if (sinks.chatops !== undefined) {
     if (!Array.isArray(sinks.chatops)) return false;
     for (const c of sinks.chatops as unknown[]) {

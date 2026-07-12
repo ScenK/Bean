@@ -282,6 +282,7 @@ export function RoutinesPanel() {
   const sinkTargets: string[] = [];
   if (draft.sinks.note) sinkTargets.push("your Daily Dashboard");
   for (const c of draft.sinks.chatops ?? []) sinkTargets.push(c.transport === "discord" ? "Discord" : "Teams");
+  if (draft.sinks.notify) sinkTargets.push("a desktop notification");
 
   const routineRow = (r: Routine) => (
     <div
@@ -605,6 +606,14 @@ export function RoutinesPanel() {
               onChange={(e) => setDraft({ ...draft, sinks: { ...draft.sinks, note: (e.target as HTMLInputElement).checked || undefined } })}
             />
             Save digest as a note
+          </label>
+          <label class="bean-routines-sink-row">
+            <input
+              type="checkbox"
+              checked={draft.sinks.notify === true}
+              onChange={(e) => setDraft({ ...draft, sinks: { ...draft.sinks, notify: (e.target as HTMLInputElement).checked || undefined } })}
+            />
+            Send a desktop notification
           </label>
           {(["discord", "teams"] as const).map((transport) => {
             const entry = draft.sinks.chatops?.find((c) => c.transport === transport);
