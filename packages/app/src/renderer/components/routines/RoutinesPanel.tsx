@@ -108,15 +108,15 @@ function nextRunView(cron: string): { ok: boolean; text: string } {
   }
 }
 
-type DotKind = "running" | "failed" | "missed" | "ok" | "idle";
+type DotKind = "running" | "failed" | "enabled" | "off";
 
-function dotKind(state: RoutineStateView | undefined): DotKind {
-  if (!state) return "idle";
-  if (state.running) return "running";
-  if (state.missed) return "missed";
-  const last = state.history[0];
-  if (!last) return "idle";
-  return last.status === "failed" ? "failed" : "ok";
+// Enabled = green, running = glowing green, failed/missed = red, disabled = grey — the pill's
+// on/off state always wins over run history so a paused routine never reads as healthy.
+function dotKind(enabled: boolean, state: RoutineStateView | undefined): DotKind {
+  if (!enabled) return "off";
+  if (state?.running) return "running";
+  if (state?.missed || state?.history[0]?.status === "failed") return "failed";
+  return "enabled";
 }
 
 function statusText(state: RoutineStateView | undefined): string {
@@ -165,10 +165,14 @@ export function RoutinesPanel() {
   // Catalogs that back the per-step skill / project / model pickers (same sources the
   // ProposalCard/DelegateCard chips use).
   const [skills, setSkills] = useState<Skill[]>([]);
+  // Step skill pickers should only offer skills currently enabled — a disabled skill stays
+  // assigned to a step that already references it, it just can't be newly picked.
+  const enabledSkills = useMemo(() => skills.filter((s) => s.enabled !== false), [skills]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [models, setModels] = useState<AvailableModel[]>([]);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
+  const [triggering, setTriggering] = useState(false);
 
   const refresh = async (): Promise<void> => {
     const [list, st] = await Promise.all([window.bean.routinesList(), window.bean.routinesState()]);
@@ -231,6 +235,18 @@ export function RoutinesPanel() {
     await refresh();
   };
 
+  // The detail header's toggle mirrors the list-row pill, but for an existing routine it must
+  // persist right away too — otherwise the next poll's refresh() overwrites the local draft
+  // with the still-disabled saved copy and the flip silently reverts.
+  const toggleDraftEnabled = async (): Promise<void> => {
+    const next = { ...draft, enabled: !draft.enabled };
+    setDraft(next);
+    if (selected) {
+      await window.bean.routinesSave(next);
+      await refresh();
+    }
+  };
+
   const save = async (): Promise<void> => {
     try {
       await window.bean.routinesSave(draft);
@@ -245,9 +261,17 @@ export function RoutinesPanel() {
 
   const runNow = async (): Promise<void> => {
     if (!selected) return;
-    const { started, reason } = await window.bean.routinesRunNow(selected);
-    setError(started ? "" : (reason ?? "couldn't start run"));
-    await refresh();
+    setTriggering(true);
+    try {
+      const { started, reason } = await window.bean.routinesRunNow(selected);
+      setError(started ? "" : (reason ?? "couldn't start run"));
+      await refresh();
+    } finally {
+      // The scheduler's isRunning() flag is set synchronously on start, so by the time refresh()
+      // resolves the polled state already reflects it — safe to drop the optimistic flag here
+      // and let selectedState.running (polled every 5s) own the button until the run finishes.
+      setTriggering(false);
+    }
   };
 
   const remove = async (): Promise<void> => {
@@ -304,11 +328,12 @@ export function RoutinesPanel() {
           {humanCadence(r.cron)} · {r.enabled ? `${r.steps.length} step${r.steps.length === 1 ? "" : "s"}` : "paused"}
         </div>
       </div>
-      <span class={`bean-routines-dot bean-routines-dot--${dotKind(states[r.name])}`} />
+      <span class={`bean-routines-dot bean-routines-dot--${dotKind(r.enabled, states[r.name])}`} />
     </div>
   );
 
   const selectedState = selected ? states[selected] : undefined;
+  const isRunningSelected = triggering || Boolean(selectedState?.running);
 
   return (
     <div class="bean-skills">
@@ -378,12 +403,14 @@ export function RoutinesPanel() {
           <div class="bean-skills-toggle-col">
             <button
               type="button"
+              role="switch"
+              aria-checked={draft.enabled}
               class={`bean-skills-toggle${draft.enabled ? " bean-skills-toggle--on" : ""}`}
-              onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}
+              onClick={() => void toggleDraftEnabled()}
             >
               <span class="bean-skills-toggle-knob" />
             </button>
-            <span class="bean-skills-toggle-label">Runs automatically</span>
+            <span class="bean-skills-toggle-label">{draft.enabled ? "Runs automatically" : "Paused"}</span>
           </div>
         </div>
 
@@ -484,7 +511,7 @@ export function RoutinesPanel() {
                                 onClick={() => { setSkill(i, step, undefined); close(); }}
                               >{step.skill ? "" : "✓ "}No skill</button>
                             ) : null}
-                            {skills.map((s) => (
+                            {enabledSkills.map((s) => (
                               <button
                                 key={s.name}
                                 type="button"
@@ -686,7 +713,16 @@ export function RoutinesPanel() {
               : "No digest sink — results stay in run history."}
           </span>
           <span class="bean-skills-spacer" />
-          {selected ? <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void runNow()}>Run now</button> : null}
+          {selected ? (
+            <button
+              type="button"
+              class="bean-btn bean-btn--ghost"
+              disabled={isRunningSelected}
+              onClick={() => void runNow()}
+            >
+              {isRunningSelected ? "Running…" : "Run now"}
+            </button>
+          ) : null}
           <button type="button" class="bean-btn" onClick={() => void save()}>Save routine</button>
         </div>
         {selected ? (
