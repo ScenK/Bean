@@ -13,7 +13,7 @@ import type { ConversationStore } from "./conversation.js";
 import type { PendingProposal, ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
 import type { MemoryProposalStore } from "./memory-proposals.js";
-import type { NoteDraft } from "../note-store.js";
+import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
 import type { RunRegistry } from "./runs.js";
 
 export interface IncomingMessage {
@@ -53,6 +53,8 @@ export interface TeamsBotDeps {
   noteProposals: NoteProposalStore;
   /** Persists a confirmed note to ~/.bean/notes (server injects the notes dir). */
   saveNote: (draft: NoteDraft) => Promise<string>;
+  /** Reads back saved notes from ~/.bean/notes (server injects the notes dir); backs retrieve_note. */
+  loadNotes: () => Promise<Note[]>;
   memoryProposals: MemoryProposalStore;
   /** Persists the full memory list (server injects the memory file path). */
   saveMemories: (memories: Memory[]) => Promise<void>;
@@ -68,6 +70,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   onMessage: (msg: IncomingMessage, fx: BotEffects) => Promise<void>;
   onCardAction: (action: CardAction, fx: BotEffects) => Promise<void>;
 } {
+  const actions = [retrieveNoteTool(deps.loadNotes)];
+
   async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();
     const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? p.proposal.projectPath;
@@ -219,7 +223,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const result = await converse(
           history, msg.text, skills, projects, persona, memories,
           { chat: deps.chat, model: deps.model },
-          undefined, [], undefined, undefined, true, detected, true, false,
+          undefined, actions, undefined, undefined, true, detected, true, false,
         );
         deps.conversations.append(msg.conversationId, { role: "user", content: msg.text });
         if (result.reply) {
@@ -236,7 +240,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               deps.conversations.history(msg.conversationId), run.composedPrompt,
               skills, projects, persona, memories,
               { chat: deps.chat, model: deps.model },
-              undefined, [], undefined, undefined, true, detected, true, false,
+              undefined, actions, undefined, undefined, true, detected, true, false,
             );
             deps.conversations.append(msg.conversationId, { role: "user", content: run.composedPrompt });
             // Nested proposals from the skill prompt are deliberately ignored — one hop only.

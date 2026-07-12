@@ -1,6 +1,7 @@
 import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parseFrontmatter } from "./frontmatter.js";
+import type { ActionTool } from "./converse.js";
 
 /** A saved note: conversation output parked for later. Unlike memories, notes are never
  * injected into prompts — they do nothing until the user explicitly continues one in chat. */
@@ -115,4 +116,35 @@ export async function saveNote(
 export async function deleteNote(dir: string, slug: string): Promise<void> {
   if (traversal.test(slug)) throw new Error(`invalid note slug: ${slug}`);
   await rm(join(dir, `${slug}.md`), { force: true });
+}
+
+/** ActionTool letting converse() look up a saved note by title/topic — notes are otherwise
+ * write-only from chat (propose_note). Plain case-insensitive substring match over title/body. */
+export function retrieveNoteTool(loadNotesFn: () => Promise<Note[]>): ActionTool {
+  return {
+    spec: {
+      name: "retrieve_note",
+      description:
+        "Search the user's saved notes by title or topic and return the best match's full content. " +
+        "Use when the user asks you to look up, recall, retrieve, or read back a saved note.",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string", description: "words from the note's title or topic to search for" } },
+        required: ["query"],
+      },
+    },
+    run: async (args) => {
+      const { query } = (args ?? {}) as { query?: unknown };
+      if (typeof query !== "string" || !query.trim()) return "error: retrieve_note needs { query }";
+      const q = query.trim().toLowerCase();
+      const matches = (await loadNotesFn()).filter(
+        (n) => n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q),
+      );
+      if (matches.length === 0) return `no saved notes matched "${query}"`;
+      const note = matches[0]!;
+      const others = matches.slice(1, 5).map((n) => n.title);
+      return `# ${note.title}\n\n${note.body}` +
+        (others.length > 0 ? `\n\n(other matches: ${others.join(", ")})` : "");
+    },
+  };
 }

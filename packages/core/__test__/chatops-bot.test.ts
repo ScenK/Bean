@@ -64,6 +64,7 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     proposals: new ProposalStore(),
     noteProposals: new NoteProposalStore(),
     saveNote: async (draft) => { savedNotes.push(draft); return "our-chat"; },
+    loadNotes: async () => [],
     memoryProposals: new MemoryProposalStore(),
     saveMemories: async (mems) => { savedMemories.push(mems); },
     conversations: new ConversationStore(),

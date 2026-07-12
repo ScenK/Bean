@@ -10,7 +10,7 @@ import {
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, saveMemories, extractMemories,
   loadReminders, saveReminders, dueReminders, extractPageText,
-  loadNotes, saveNote, deleteNote, notesDir, detectClis, loginShellPath, deliver,
+  loadNotes, saveNote, deleteNote, notesDir, retrieveNoteTool, detectClis, loginShellPath, deliver,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport } from "@bean/core";
 import { createAvatarWindow, createComponentWindow } from "./windows.js";
@@ -274,6 +274,7 @@ app.whenReady().then(async () => {
         return pending.length === 0 ? "no pending reminders" : JSON.stringify(pending);
       },
     },
+    retrieveNoteTool(() => loadNotes(notesDir(dir))),
   ];
   actionTools.push({
     spec: {
