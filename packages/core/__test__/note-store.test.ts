@@ -2,7 +2,7 @@ import { expect, test, beforeEach, afterEach } from "vitest";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadNotes, saveNote, deleteNote, openQuestionCount } from "../src/note-store.js";
+import { loadNotes, saveNote, deleteNote, openQuestionCount, retrieveNoteTool } from "../src/note-store.js";
 
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "bean-notes-")); });
@@ -92,4 +92,14 @@ test("titleless file falls back to slug; weird title slugifies to 'note'", async
   const [n] = await loadNotes(dir);
   expect(n!.title).toBe("raw");
   expect(await saveNote(dir, { title: "!!!", body: "" }, t0)).toBe("note");
+});
+
+test("retrieveNoteTool matches by title or body and returns the note's content", async () => {
+  await saveNote(dir, { title: "Roadmap Q3", body: "## Summary\nship the thing" }, t0);
+  await saveNote(dir, { title: "Grocery list", body: "eggs, milk" }, t1);
+  const tool = retrieveNoteTool(() => loadNotes(dir));
+  expect(await tool.run({ query: "roadmap" })).toContain("ship the thing");
+  expect(await tool.run({ query: "eggs" })).toContain("Grocery list");
+  expect(await tool.run({ query: "nonexistent" })).toContain("no saved notes matched");
+  expect(await tool.run({})).toContain("error");
 });
