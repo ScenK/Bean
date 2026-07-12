@@ -82,23 +82,32 @@ async function runChatStep(
   return content;
 }
 
-async function composeDigest(routine: Routine, results: StepResult[], deps: RoutineRunnerDeps): Promise<string> {
+async function composeDigest(
+  routine: Routine,
+  results: StepResult[],
+  deps: RoutineRunnerDeps,
+  timeoutMs: number,
+): Promise<string> {
   const fallback = `Routine "${routine.name}" finished.\n\n${priorOutputsBlock(results)}`;
   try {
-    const res = await deps.chat({
-      model: deps.model,
-      messages: [
-        {
-          role: "system",
-          content:
-            `Compose one digest of this run of the routine "${routine.name}" for the user. ` +
-            "Lead with a one-line overall status, then a short section per step. Call out any FAILED " +
-            "step explicitly with its error. Plain text/markdown, no preamble, no questions.",
-        },
-        { role: "user", content: priorOutputsBlock(results) },
-      ],
-      tools: [],
-    });
+    const res = await withTimeout(
+      deps.chat({
+        model: deps.model,
+        messages: [
+          {
+            role: "system",
+            content:
+              `Compose one digest of this run of the routine "${routine.name}" for the user. ` +
+              "Lead with a one-line overall status, then a short section per step. Call out any FAILED " +
+              "step explicitly with its error. Plain text/markdown, no preamble, no questions.",
+          },
+          { role: "user", content: priorOutputsBlock(results) },
+        ],
+        tools: [],
+      }),
+      timeoutMs,
+      "digest",
+    );
     return res.content.trim() || fallback;
   } catch {
     return fallback;
@@ -131,7 +140,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
     }
   }
 
-  const digest = await composeDigest(routine, results, deps);
+  const digest = await composeDigest(routine, results, deps, timeoutMs);
   const record: RunRecord = {
     startedAt,
     finishedAt: now().toISOString(),

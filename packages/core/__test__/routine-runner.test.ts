@@ -115,6 +115,23 @@ describe("runRoutine", () => {
     expect(res.results[0]!.output).toContain("timed out");
   });
 
+  it("times out a hung digest chat call and still returns the plain-text fallback", async () => {
+    vi.useFakeTimers();
+    const hungDigest: RoutineRunnerDeps["chat"] = (a) =>
+      a.messages.some((m) => m.role === "system" && m.content.includes("Compose one digest"))
+        ? new Promise(() => {}) // digest call never resolves
+        : Promise.resolve({ content: "step out", toolCalls: [] });
+    const p = runRoutine(
+      routine([{ kind: "chat", instruction: "x" }]),
+      baseDeps(hungDigest, { stepTimeoutMs: 1000 }),
+    );
+    await vi.advanceTimersByTimeAsync(1001);
+    const res = await p;
+    vi.useRealTimers();
+    expect(res.digest).toContain("r"); // routine name present
+    expect(res.digest).toContain("step out");
+  });
+
   it("falls back to a plain-text digest when the digest chat call fails", async () => {
     let call = 0;
     const flaky: RoutineRunnerDeps["chat"] = async () => {
