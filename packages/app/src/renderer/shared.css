@@ -770,6 +770,8 @@ button, input, textarea, select, a {
 .bean-chip-menu-caption {
   font: 11px ui-monospace, monospace;
   color: var(--bean-text-dim);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .bean-chip-menu-row--on .bean-chip-menu-caption { color: color-mix(in oklch, var(--bean-accent-ink) 75%, transparent); }
 .bean-chip-menu-badge {
@@ -1369,7 +1371,21 @@ button, input, textarea, select, a {
 .bean-skills-row--selected .bean-notes-meta { color: rgba(255, 255, 255, 0.7); }
 .bean-skills-row--selected .bean-notes-open { color: var(--bean-accent); background: #fff; border-color: transparent; }
 
-/* Routines */
+/* Routines (mockup 1a — "Routine as a recipe") */
+
+/* List rail: [enable pill] [name + cadence] [status dot] */
+.bean-routines-row { gap: 11px; }
+.bean-routines-row--off { opacity: 0.55; }
+.bean-routines-row-sub {
+  margin-top: 3px;
+  font: 11px ui-monospace, monospace;
+  color: var(--bean-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bean-skills-row--selected .bean-routines-row-sub { color: rgba(255, 255, 255, 0.8); }
+
 .bean-routines-dot {
   flex: none;
   width: 7px;
@@ -1383,51 +1399,233 @@ button, input, textarea, select, a {
 .bean-routines-dot--failed { background: #e5484d; opacity: 1; }
 .bean-routines-dot--missed { background: oklch(0.66 0.15 48); opacity: 1; }
 .bean-routines-dot--idle { background: var(--bean-text-dim); opacity: 0.5; }
+.bean-skills-row--selected .bean-routines-dot { box-shadow: 0 0 7px rgba(255, 255, 255, 0.8); }
 .bean-skills-row--selected .bean-routines-dot--idle { background: #fff; }
 
-.bean-routines-toggle-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12.5px;
-  color: var(--bean-text-dim);
-  margin-top: 6px;
+.bean-routines-new {
+  width: 100%;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--bean-accent-ink);
+  background: var(--bean-accent);
+  border: none;
+  border-radius: 11px;
+  padding: 10px;
+  margin: 2px 0 4px;
+  cursor: pointer;
 }
-.bean-routines-cadence-row { display: flex; gap: 8px; }
-.bean-routines-cadence-row .bean-input--boxed { flex: 1; }
+.bean-routines-new:hover { filter: brightness(1.05); }
 
-.bean-routines-step-card {
+/* Editor: title block */
+.bean-routines-name-input { font-size: 19px; font-weight: 700; letter-spacing: -0.012em; }
+.bean-routines-desc-input { margin-top: 8px; font-size: 13px; }
+/* Saved routines read as text, not form fields (name is immutable; description stays editable
+   but borderless so it looks like a paragraph). */
+.bean-routines-name-text {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--bean-text);
+}
+.bean-routines-desc-text {
+  margin-top: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  resize: vertical;
+  border: none;
+  background: transparent;
+  outline: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--bean-text-dim);
+}
+.bean-routines-desc-text::placeholder { color: var(--bean-text-dim); opacity: 0.6; }
+
+.bean-routines-divider { height: 1px; background: var(--bean-border); }
+
+/* Cadence as a sentence with inline dropdown chips */
+.bean-routines-sentence {
+  font-size: 15.5px;
+  line-height: 2;
+  color: var(--bean-text);
+  text-wrap: pretty;
+}
+.bean-routines-chip-select {
+  font: 600 14px ui-monospace, monospace;
+  color: var(--bean-accent);
   background: var(--bean-surface-2);
   border: 1px solid var(--bean-border);
-  border-radius: 12px;
-  padding: 10px;
+  border-radius: 7px;
+  padding: 3px 24px 3px 9px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+.bean-routines-tz {
+  font: 600 14px ui-monospace, monospace;
+  color: var(--bean-text-dim);
+  background: var(--bean-surface-2);
+  border: 1px solid var(--bean-border);
+  border-radius: 7px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+.bean-routines-cron-input {
+  width: auto;
+  max-width: 200px;
+  font: 600 13px ui-monospace, monospace;
+  padding: 5px 9px;
+}
+.bean-routines-custom-link {
+  margin-left: 8px;
+  font-size: 12.5px;
+  color: var(--bean-accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.bean-routines-cadence-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+}
+.bean-routines-cron-cap {
+  font: 12px ui-monospace, monospace;
+  color: var(--bean-text-dim);
+  background: var(--bean-surface-2);
+  border: 1px solid var(--bean-border);
+  border-radius: 7px;
+  padding: 5px 10px;
+}
+.bean-routines-next {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--bean-accent);
+}
+.bean-routines-next-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bean-accent);
+}
+.bean-routines-next--bad { color: #e5484d; }
+.bean-routines-next--bad .bean-routines-next-dot { background: #e5484d; }
+
+/* Steps: numbered timeline of delegate cards */
+.bean-routines-section-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.bean-routines-section-note { font-size: 12.5px; color: var(--bean-text-dim); }
+.bean-routines-steps { display: flex; flex-direction: column; gap: 12px; }
+.bean-routines-step { display: flex; gap: 12px; align-items: stretch; }
+.bean-routines-step-rail {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-.bean-routines-pill-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.bean-routines-step-index {
-  flex: none;
-  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  font: 700 11px ui-monospace, monospace;
+  gap: 5px;
+  flex: none;
+  padding-top: 2px;
+}
+.bean-routines-step-num {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  font: 700 12px ui-monospace, monospace;
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
   border-radius: 50%;
 }
+.bean-routines-step-line { width: 1.5px; flex: 1; min-height: 24px; background: var(--bean-border); }
+.bean-routines-step-card {
+  flex: 1;
+  min-width: 0;
+  background: var(--bean-surface);
+  border: 1px solid var(--bean-border);
+  border-radius: 14px;
+  padding: 13px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bean-routines-pill-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .bean-routines-pill-select, .bean-routines-pill-input {
   font: 600 11.5px ui-monospace, monospace;
   color: var(--bean-text);
-  background: var(--bean-surface);
+  background: var(--bean-surface-2);
   border: 1px solid var(--bean-border);
   border-radius: 999px;
-  padding: 4px 10px;
+  padding: 4.5px 10px;
 }
 .bean-routines-pill-input { flex: 1; min-width: 90px; }
-.bean-routines-step-instruction { min-height: 70px; }
+/* Accent variant of the shared ChipMenu trigger — the step's skill picker reads as the
+   primary chip (mockup 1a), matching the ProposalCard model chip's popover behaviour. */
+.bean-chip-menu-trigger--accent {
+  color: var(--bean-accent-ink);
+  background: var(--bean-accent);
+  border-color: var(--bean-accent);
+}
+.bean-chip-menu-trigger--accent .bean-chip-menu-caret { color: color-mix(in oklch, var(--bean-accent-ink) 70%, transparent); }
+/* Keep a step's chip triggers from stretching to the instruction below when a skill/project
+   name is long — the label truncates and the popover shows the full name. */
+.bean-routines-chip-label {
+  display: block;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bean-routines-handle { font-size: 15px; color: var(--bean-text-dim); cursor: grab; user-select: none; }
+.bean-routines-handle:active { cursor: grabbing; }
+.bean-routines-step--dragging { opacity: 0.45; }
+.bean-routines-step--drop .bean-routines-step-card {
+  border-color: var(--bean-accent);
+  box-shadow: 0 0 0 1px var(--bean-accent);
+}
+.bean-routines-step-instruction {
+  min-height: 62px;
+  resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
+  font: 12px/1.55 ui-monospace, monospace;
+  color: var(--bean-text);
+  background: var(--bean-surface-2);
+  border: 1px solid var(--bean-border);
+  border-radius: 9px;
+  padding: 10px 12px;
+}
+.bean-routines-step-actions { display: flex; align-items: center; gap: 8px; }
+.bean-routines-add {
+  margin-left: 36px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1.5px dashed var(--bean-border);
+  border-radius: 13px;
+  padding: 11px 15px;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bean-accent);
+}
+.bean-routines-add:hover { border-color: var(--bean-accent); }
+.bean-routines-add-plus { font-size: 15px; }
+.bean-routines-add-hint { font-weight: 400; color: var(--bean-text-dim); }
+
+/* Digest sinks + footer */
 .bean-routines-sink-row {
   display: flex;
   align-items: center;
@@ -1435,6 +1633,24 @@ button, input, textarea, select, a {
   font-size: 12.5px;
   color: var(--bean-text-dim);
 }
+.bean-routines-footer { display: flex; align-items: center; gap: 12px; }
+.bean-routines-digest-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--bean-text-dim);
+}
+.bean-routines-digest-line b { color: var(--bean-text); }
+.bean-routines-bean-chip {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 5px;
+  background: radial-gradient(circle at 35% 25%, var(--bean-orb-1), var(--bean-orb-2) 55%, var(--bean-orb-3));
+}
+.bean-routines-delete { align-self: flex-start; margin-top: -6px; }
+
 .bean-routines-history-entry { font-size: 12px; color: var(--bean-text-dim); }
 .bean-routines-history-digest {
   white-space: pre-wrap;

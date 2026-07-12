@@ -28,7 +28,7 @@ export function ChipMenu({
   // that overflows a scrolling/overflow:hidden ancestor (bean-dashboard, bean-plan), which cut
   // off the model menu once it had enough rows to not fit below the chip. `position: fixed`
   // escapes that clipping (its containing block is the viewport, not those ancestors).
-  const [pos, setPos] = useState<{ top: number; left: number; openUp: boolean } | undefined>(undefined);
+  const [pos, setPos] = useState<{ top: number; left: number; openUp: boolean; maxHeight: number } | undefined>(undefined);
 
   useEffect(() => {
     if (!open) return;
@@ -53,14 +53,20 @@ export function ChipMenu({
       const rect = trigger.getBoundingClientRect();
       const panelHeight = panel.offsetHeight;
       const panelWidth = panel.offsetWidth;
-      const spaceBelow = window.innerHeight - rect.bottom - GAP;
-      const openUp = panelHeight > spaceBelow && rect.top - GAP > spaceBelow;
+      const spaceBelow = window.innerHeight - rect.bottom - GAP - VIEWPORT_MARGIN;
+      const spaceAbove = rect.top - GAP - VIEWPORT_MARGIN;
+      // Open upward only when there's genuinely more room above. Either way, cap the panel to
+      // the space available on that side so a long list scrolls inside the popover (overflow-y:
+      // auto) instead of spilling past the viewport edge.
+      const openUp = panelHeight > spaceBelow && spaceAbove > spaceBelow;
+      const avail = openUp ? spaceAbove : spaceBelow;
+      const maxHeight = Math.max(120, Math.min(panelHeight, avail));
       const left = Math.min(
         Math.max(rect.left, VIEWPORT_MARGIN),
         window.innerWidth - panelWidth - VIEWPORT_MARGIN,
       );
-      const top = openUp ? rect.top - GAP - panelHeight : rect.bottom + GAP;
-      setPos({ top, left, openUp });
+      const top = openUp ? rect.top - GAP - maxHeight : rect.bottom + GAP;
+      setPos({ top, left, openUp, maxHeight });
     };
     // Content (project/model lists) is already loaded before the menu can be opened, so one
     // measure-then-place pass is enough — width/height don't depend on where the fixed box
@@ -92,6 +98,7 @@ export function ChipMenu({
             visibility: pos ? "visible" : "hidden",
             top: pos ? `${pos.top}px` : 0,
             left: pos ? `${pos.left}px` : 0,
+            maxHeight: pos ? `${pos.maxHeight}px` : undefined,
           }}
         >
           {children(() => setOpen(false))}

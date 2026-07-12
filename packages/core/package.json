@@ -25,6 +25,10 @@
       "types": "./dist/frontmatter.d.ts",
       "default": "./dist/frontmatter.js"
     },
+    "./cron": {
+      "types": "./dist/cron.d.ts",
+      "default": "./dist/cron.js"
+    },
     "./project-select": {
       "types": "./dist/project-select.d.ts",
       "default": "./dist/project-select.js"
