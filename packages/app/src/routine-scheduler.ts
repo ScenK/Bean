@@ -30,7 +30,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
 
   const scheduleBase = (state: RoutineState | undefined): Date => {
     const last = state?.lastRun ? new Date(state.lastRun) : undefined;
-    return last && last.getTime() > startedAt.getTime() ? last : (last ?? startedAt);
+    return last ?? startedAt;
   };
 
   async function execute(routine: Routine): Promise<void> {
