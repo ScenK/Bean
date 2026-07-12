@@ -325,7 +325,7 @@ test("action tool call executes the tool and feeds the result back to the model"
     chat: async ({ messages }) => {
       rounds.push(messages.map((m) => ({ ...m })));
       return rounds.length === 1
-        ? { content: "", toolCalls: [{ name: "set_reminder", args: { text: "stretch", at: "soon" } }] }
+        ? { content: "", toolCalls: [{ id: "call_1", name: "set_reminder", args: { text: "stretch", at: "soon" } }] }
         : { content: "Done — reminder set.", toolCalls: [] };
     },
   };
@@ -333,7 +333,10 @@ test("action tool call executes the tool and feeds the result back to the model"
   expect(ran).toEqual([{ text: "stretch", at: "soon" }]);
   expect(res.reply).toBe("Done — reminder set.");
   expect(res.proposedRun).toBeUndefined();
-  expect(rounds[1]!.at(-1)!.content).toBe("[tool result for set_reminder]: reminder saved");
+  expect(rounds[1]!.slice(-2)).toEqual([
+    { role: "assistant", content: "", toolCalls: [{ id: "call_1", name: "set_reminder", args: { text: "stretch", at: "soon" } }] },
+    { role: "tool", content: "reminder saved", toolCallId: "call_1" },
+  ]);
 });
 
 test("action tool loop terminates even if the model keeps calling tools", async () => {
@@ -353,13 +356,13 @@ test("a throwing action feeds an error string back instead of crashing", async (
   const deps: ConverseDeps = {
     model: "m",
     chat: async ({ messages }) => {
-      const last = messages.at(-1)!.content;
-      if (last.startsWith("[tool result")) { toolResult = last; return { content: "sorry", toolCalls: [] }; }
-      return { content: "", toolCalls: [{ name: "boom", args: {} }] };
+      const last = messages.at(-1)!;
+      if (last.role === "tool") { toolResult = last.content; return { content: "sorry", toolCalls: [] }; }
+      return { content: "", toolCalls: [{ id: "call_boom", name: "boom", args: {} }] };
     },
   };
   const res = await converse([], "go", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [action]);
-  expect(toolResult).toBe("[tool result for boom]: error: disk full");
+  expect(toolResult).toBe("error: disk full");
   expect(res.reply).toBe("sorry");
 });
 

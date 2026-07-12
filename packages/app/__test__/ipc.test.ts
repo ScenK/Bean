@@ -174,9 +174,9 @@ test("chat handler passes action tools through to converse and executes them", a
     loadProjects: async () => [{ name: "api", path: "/work/api" }] as Project[],
     loadPersona: async () => ({ name: "Bean", tags: ["Warm"] }) as Persona,
     converse: async ({ tools, messages }) => {
-      if (messages.at(-1)!.content.startsWith("[tool result")) return { content: "done", toolCalls: [] };
+      if (messages.at(-1)!.role === "tool") return { content: "done", toolCalls: [] };
       expect(tools.map((t) => t.name)).toContain("set_reminder");
-      return { content: "", toolCalls: [{ name: "set_reminder", args: { text: "t", at: "now" } }] };
+      return { content: "", toolCalls: [{ id: "call_1", name: "set_reminder", args: { text: "t", at: "now" } }] };
     },
     getModel: () => "m",
     projectSkillsDir: "/b/project-skills",

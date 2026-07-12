@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ChatMsg, RouterDeps } from "./router.js";
-import type { ConverseDeps, ToolCall } from "./converse.js";
+import type { ConverseDeps, ConvoMsg, ToolCall } from "./converse.js";
 
 interface ChatClient {
   chat: {
@@ -29,14 +29,18 @@ interface ToolChatClient {
     completions: {
       create: (args: {
         model: string;
-        messages: Array<{ role: string; content: string }>;
+        messages: Array<
+          | { role: "system" | "user"; content: string }
+          | { role: "assistant"; content: string; tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> }
+          | { role: "tool"; content: string; tool_call_id: string }
+        >;
         tools?: Array<{ type: "function"; function: { name: string; description: string; parameters: object } }>;
         tool_choice?: "auto";
       }) => Promise<{
         choices: Array<{
           message?: {
             content?: string | null;
-            tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> | null;
+            tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> | null;
           };
         }>;
       }>;
@@ -44,11 +48,31 @@ interface ToolChatClient {
   };
 }
 
+function toOpenAIMessage(message: ConvoMsg): Parameters<ToolChatClient["chat"]["completions"]["create"]>[0]["messages"][number] {
+  if (message.role === "tool") return { role: "tool", content: message.content, tool_call_id: message.toolCallId };
+  if (message.role === "assistant") {
+    return {
+      role: "assistant",
+      content: message.content,
+      ...(message.toolCalls && message.toolCalls.length > 0
+        ? {
+            tool_calls: message.toolCalls.map((c) => ({
+              id: c.id ?? c.name,
+              type: "function" as const,
+              function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) },
+            })),
+          }
+        : {}),
+    };
+  }
+  return message;
+}
+
 export function makeOpenAIConverseWithClient(client: ToolChatClient): ConverseDeps["chat"] {
   return async ({ model, messages, tools }) => {
     const res = await client.chat.completions.create({
       model,
-      messages,
+      messages: messages.map(toOpenAIMessage),
       tools: tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })),
       tool_choice: "auto",
     });
@@ -59,7 +83,7 @@ export function makeOpenAIConverseWithClient(client: ToolChatClient): ConverseDe
       const name = tc.function?.name;
       if (!name) continue;
       try {
-        toolCalls.push({ name, args: JSON.parse(tc.function?.arguments ?? "{}") });
+        toolCalls.push({ id: tc.id, name, args: JSON.parse(tc.function?.arguments ?? "{}") });
       } catch {
         /* skip malformed tool call */
       }

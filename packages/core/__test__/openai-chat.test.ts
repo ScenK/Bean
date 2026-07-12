@@ -30,7 +30,7 @@ test("converse adapter maps content and a tool call", async () => {
           choices: [{
             message: {
               content: "sure",
-              tool_calls: [{ function: { name: "propose_run", arguments: '{"skill":"review-code","project":"/work/api","instruction":"go"}' } }],
+              tool_calls: [{ id: "call_run", function: { name: "propose_run", arguments: '{"skill":"review-code","project":"/work/api","instruction":"go"}' } }],
             },
           }],
         }),
@@ -41,8 +41,41 @@ test("converse adapter maps content and a tool call", async () => {
   const out = await chat({ model: "m", messages: [{ role: "user", content: "hi" }], tools: [] });
   expect(out.content).toBe("sure");
   expect(out.toolCalls).toHaveLength(1);
+  expect(out.toolCalls[0]?.id).toBe("call_run");
   expect(out.toolCalls[0]?.name).toBe("propose_run");
   expect((out.toolCalls[0]?.args as { skill?: string }).skill).toBe("review-code");
+});
+
+test("converse adapter sends assistant tool calls and tool result messages", async () => {
+  let createdArgs: unknown;
+  const fakeClient = {
+    chat: {
+      completions: {
+        create: async (args: unknown) => {
+          createdArgs = args;
+          return { choices: [{ message: { content: "ok" } }] };
+        },
+      },
+    },
+  };
+  const chat = makeOpenAIConverseWithClient(fakeClient as never);
+  await chat({
+    model: "m",
+    messages: [
+      { role: "assistant", content: "", toolCalls: [{ id: "call_1", name: "set_reminder", args: { text: "stretch" } }] },
+      { role: "tool", content: "reminder saved", toolCallId: "call_1" },
+    ],
+    tools: [],
+  });
+
+  expect((createdArgs as { messages: unknown[] }).messages).toEqual([
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [{ id: "call_1", type: "function", function: { name: "set_reminder", arguments: '{"text":"stretch"}' } }],
+    },
+    { role: "tool", content: "reminder saved", tool_call_id: "call_1" },
+  ]);
 });
 
 test("converse adapter skips a tool call with malformed arguments", async () => {
