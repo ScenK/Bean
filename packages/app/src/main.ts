@@ -14,7 +14,7 @@ import {
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport } from "@bean/core";
 import { createAvatarWindow, createComponentWindow } from "./windows.js";
-import { registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, type ChatPromptPayload } from "./ipc.js";
+import { registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildRoutineHandlers, type ChatPromptPayload } from "./ipc.js";
 import { IPC, type Theme, type ComponentKind } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import { createRuntimeConfig } from "./runtime-config.js";
@@ -428,6 +428,16 @@ app.whenReady().then(async () => {
       getPendingDroppedUrl: droppedUrlStore.get,
       runInChat,
       getPendingChatPrompt: chatPromptStore.get,
+      // ponytail: placeholder scheduler wiring — Task 9 replaces isRunning/runNow with the
+      // real scheduler and swaps loadRoutines/etc for the actual store functions.
+      routineHandlers: buildRoutineHandlers({
+        loadRoutines: async () => [],
+        saveRoutine: async () => {},
+        deleteRoutine: async () => {},
+        loadStates: async () => ({}),
+        isRunning: () => false,
+        runNow: async () => ({ started: false, reason: "scheduler not wired yet" }),
+      }),
     });
   } catch (err) {
     dialog.showErrorBox("Bean", err instanceof Error ? err.message : String(err));
