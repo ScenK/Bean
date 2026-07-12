@@ -3,7 +3,7 @@
 Settings, Persona, About, and Exit live **only behind a left-click on the macOS tray icon**
 (`main.ts`'s `tray.on("click", ...)` → `trayMenu`). There is **no right-click anywhere** —
 not on the tray, not on the avatar. The avatar's own left-click quick-actions menu
-(`QUICK_ACTIONS` in `renderer/avatar.ts`) is unrelated and only covers Chat/Skills/Projects/Notes.
+(`QUICK_ACTIONS` in `renderer/avatar.ts`) is unrelated and only covers Chat/Skills/Projects/Notes/Routines.
 
 Each tray item has a leading icon and (except About) a `⌘` accelerator, matching how `role: "quit"`
 used to auto-decorate Exit before it was swapped for a plain `click` handler. Icons come from

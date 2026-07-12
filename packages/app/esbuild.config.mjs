@@ -28,6 +28,7 @@ const rendererOpts = { ...common, platform: "browser", jsx: "automatic", jsxImpo
     "src/renderer/components/persona/index.tsx",
     "src/renderer/components/projects/index.tsx",
     "src/renderer/components/notes/index.tsx",
+    "src/renderer/components/routines/index.tsx",
     "src/renderer/components/plan/index.tsx",
     "src/renderer/components/settings/index.tsx",
     "src/renderer/components/about/index.tsx",
@@ -63,7 +64,7 @@ const componentHtml = (name) => `<!doctype html>
 function copyStaticAssets() {
   mkdirSync("dist/renderer", { recursive: true });
   cpSync("src/renderer/avatar.html", "dist/renderer/avatar.html");
-  for (const f of ["chat", "skills", "persona", "projects", "notes", "plan", "settings", "about"]) {
+  for (const f of ["chat", "skills", "persona", "projects", "notes", "routines", "plan", "settings", "about"]) {
     writeFileSync(`dist/renderer/${f}.html`, componentHtml(f));
   }
   for (const f of ["theme.css", "orb.css", "avatar-box.css", "shared.css", "bubble-menu.css", "drag-bloom.css"]) {

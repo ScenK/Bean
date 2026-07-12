@@ -1368,3 +1368,82 @@ button, input, textarea, select, a {
 .bean-skills-row--selected .bean-notes-snippet { color: rgba(255, 255, 255, 0.85); }
 .bean-skills-row--selected .bean-notes-meta { color: rgba(255, 255, 255, 0.7); }
 .bean-skills-row--selected .bean-notes-open { color: var(--bean-accent); background: #fff; border-color: transparent; }
+
+/* Routines */
+.bean-routines-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bean-text-dim);
+  opacity: 0.5;
+}
+.bean-routines-dot--running { background: var(--bean-accent); opacity: 1; animation: bean-console-blink 1.1s infinite; }
+.bean-routines-dot--ok { background: oklch(0.7 0.14 155); opacity: 1; }
+.bean-routines-dot--failed { background: #e5484d; opacity: 1; }
+.bean-routines-dot--missed { background: oklch(0.66 0.15 48); opacity: 1; }
+.bean-routines-dot--idle { background: var(--bean-text-dim); opacity: 0.5; }
+.bean-skills-row--selected .bean-routines-dot--idle { background: #fff; }
+
+.bean-routines-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--bean-text-dim);
+  margin-top: 6px;
+}
+.bean-routines-cadence-row { display: flex; gap: 8px; }
+.bean-routines-cadence-row .bean-input--boxed { flex: 1; }
+
+.bean-routines-step-card {
+  background: var(--bean-surface-2);
+  border: 1px solid var(--bean-border);
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bean-routines-pill-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bean-routines-step-index {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font: 700 11px ui-monospace, monospace;
+  color: var(--bean-accent-ink);
+  background: var(--bean-accent);
+  border-radius: 50%;
+}
+.bean-routines-pill-select, .bean-routines-pill-input {
+  font: 600 11.5px ui-monospace, monospace;
+  color: var(--bean-text);
+  background: var(--bean-surface);
+  border: 1px solid var(--bean-border);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+.bean-routines-pill-input { flex: 1; min-width: 90px; }
+.bean-routines-step-instruction { min-height: 70px; }
+.bean-routines-sink-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--bean-text-dim);
+}
+.bean-routines-history-entry { font-size: 12px; color: var(--bean-text-dim); }
+.bean-routines-history-digest {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 11.5px ui-monospace, monospace;
+  color: var(--bean-text);
+  background: var(--bean-surface);
+  border: 1px solid var(--bean-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 6px;
+}

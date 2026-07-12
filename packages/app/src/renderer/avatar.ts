@@ -23,12 +23,14 @@ const ICONS: Record<string, string> = {
   skills: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7z"/></svg>',
   projects: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>',
   notes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  routines: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/><path d="M12 7v5l3 3"/></svg>',
 };
 const QUICK_ACTIONS: { kind: ComponentKind; name: string; desc: string }[] = [
   { kind: "chat", name: "Chat", desc: "Ask Bean anything" },
   { kind: "skills", name: "Skills", desc: "Manage skills" },
   { kind: "projects", name: "Projects", desc: "Your projects" },
   { kind: "notes", name: "Notes", desc: "Saved talks & ideas" },
+  { kind: "routines", name: "Routines", desc: "Scheduled automations" },
 ];
 const color = (i: number): string => TILE_COLORS[i % TILE_COLORS.length]!;
 
