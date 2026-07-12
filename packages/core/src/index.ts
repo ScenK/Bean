@@ -31,3 +31,5 @@ export * from "./chatops/note-proposals.js";
 export * from "./chatops/memory-proposals.js";
 export * from "./chatops/runs.js";
 export * from "./chatops/resolve.js";
+export { parseCron, isValidCron, nextRun } from "./cron.js";
+export type { CronSpec } from "./cron.js";
