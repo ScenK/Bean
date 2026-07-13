@@ -48,7 +48,9 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
         return;
       }
       let lastErr = "";
-      const child = doSpawn("node", [entry], deps.repoRoot, { ...process.env, ...deps.extraEnv, PATH: deps.resolvedPath });
+      // Run under Electron's bundled Node (not a system "node") so the packaged app
+      // needs no local Node install — ELECTRON_RUN_AS_NODE makes execPath behave as `node <entry>`.
+      const child = doSpawn(process.execPath, [entry], deps.repoRoot, { ...process.env, ...deps.extraEnv, PATH: deps.resolvedPath, ELECTRON_RUN_AS_NODE: "1" });
       child.stderr?.on("data", (chunk) => { lastErr = chunk.toString().trim() || lastErr; });
       procs.set(bot, child);
       state[bot] = { running: true };
