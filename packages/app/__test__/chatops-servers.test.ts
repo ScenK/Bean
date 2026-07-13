@@ -32,10 +32,10 @@ function harness() {
 }
 
 describe("createChatopsServers", () => {
-  it("start spawns node on the built server entry and emits running", () => {
+  it("start spawns the built server entry under Electron's own node and emits running", () => {
     const h = harness();
     h.servers.start("discord");
-    expect(h.spawned).toEqual([{ command: "node", args: ["/repo/packages/discord/dist/server.js"], cwd: "/repo" }]);
+    expect(h.spawned).toEqual([{ command: process.execPath, args: ["/repo/packages/discord/dist/server.js"], cwd: "/repo" }]);
     expect(h.sent).toEqual([{ bot: "discord", running: true }]);
   });
 
@@ -57,7 +57,7 @@ describe("createChatopsServers", () => {
 
     servers.start("discord");
 
-    expect(spawned).toEqual([{ command: "node", args: ["/Resources/chatops/discord/server.js"], cwd: "/Resources", env: expect.objectContaining({ PATH: "/usr/bin", BEAN_BUILTIN_DIR: "/Resources/builtin" }) }]);
+    expect(spawned).toEqual([{ command: process.execPath, args: ["/Resources/chatops/discord/server.js"], cwd: "/Resources", env: expect.objectContaining({ PATH: "/usr/bin", BEAN_BUILTIN_DIR: "/Resources/builtin", ELECTRON_RUN_AS_NODE: "1" }) }]);
     expect(sent).toEqual([{ bot: "discord", running: true }]);
   });
 
