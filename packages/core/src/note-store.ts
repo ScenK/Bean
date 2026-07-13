@@ -119,7 +119,9 @@ export async function deleteNote(dir: string, slug: string): Promise<void> {
 }
 
 /** ActionTool letting converse() look up a saved note by title/topic — notes are otherwise
- * write-only from chat (propose_note). Plain case-insensitive substring match over title/body. */
+ * write-only from chat (propose_note). Case-insensitive per-word match over title/body, ranked
+ * by number of query words matched (not a whole-phrase match — "Bean roadmap" still finds a
+ * note titled just "Roadmap ..." on the shared word). */
 export function retrieveNoteTool(loadNotesFn: () => Promise<Note[]>): ActionTool {
   return {
     spec: {
@@ -136,13 +138,18 @@ export function retrieveNoteTool(loadNotesFn: () => Promise<Note[]>): ActionTool
     run: async (args) => {
       const { query } = (args ?? {}) as { query?: unknown };
       if (typeof query !== "string" || !query.trim()) return "error: retrieve_note needs { query }";
-      const q = query.trim().toLowerCase();
-      const matches = (await loadNotesFn()).filter(
-        (n) => n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q),
-      );
-      if (matches.length === 0) return `no saved notes matched "${query}"`;
-      const note = matches[0]!;
-      const others = matches.slice(1, 5).map((n) => n.title);
+      const words = query.trim().toLowerCase().split(/\s+/);
+      const scored = (await loadNotesFn())
+        .map((n) => {
+          const title = n.title.toLowerCase();
+          const body = n.body.toLowerCase();
+          return { n, score: words.filter((w) => title.includes(w) || body.includes(w)).length };
+        })
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score);
+      if (scored.length === 0) return `no saved notes matched "${query}"`;
+      const note = scored[0]!.n;
+      const others = scored.slice(1, 5).map((x) => x.n.title);
       return `# ${note.title}\n\n${note.body}` +
         (others.length > 0 ? `\n\n(other matches: ${others.join(", ")})` : "");
     },

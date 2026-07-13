@@ -103,3 +103,9 @@ test("retrieveNoteTool matches by title or body and returns the note's content",
   expect(await tool.run({ query: "nonexistent" })).toContain("no saved notes matched");
   expect(await tool.run({})).toContain("error");
 });
+
+test("retrieveNoteTool matches on shared words even when the full query phrase isn't in the note", async () => {
+  await saveNote(dir, { title: "Roadmap Phase 1 investigation", body: "deliver() and transports" }, t0);
+  const tool = retrieveNoteTool(() => loadNotes(dir));
+  expect(await tool.run({ query: "Bean roadmap" })).toContain("Roadmap Phase 1 investigation");
+});
