@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { execFile as execFileCb } from "node:child_process";
-import { mkdtemp as mkdtempCb, writeFile as writeFileCb } from "node:fs/promises";
+import { mkdtemp as mkdtempCb, writeFile as writeFileCb, rename as renameCb, rm as rmCb, cp as cpCb } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -57,4 +57,48 @@ export async function extractAndSign(zipBuffer: Buffer, deps: ExtractDeps = {}):
  * (".../Bean.app/Contents/MacOS/Bean" -> ".../Bean.app"). */
 export function currentAppBundlePath(execPath: string = app.getPath("exe")): string {
   return dirname(dirname(dirname(execPath)));
+}
+
+export interface InstallDeps {
+  currentAppPath?: string;
+  rename?: (from: string, to: string) => Promise<void>;
+  copyRecursive?: (from: string, to: string) => Promise<void>;
+  rm?: (path: string) => Promise<void>;
+  relaunch?: () => void;
+  exit?: () => void;
+}
+
+/** Swaps the extracted update bundle into the currently-running app's path — the same
+ * rename-dance Sparkle/Squirrel use — then relaunches. Rolls back if the swap itself fails,
+ * so the install path is never left without an app bundle. */
+export async function installAndRelaunch(extractedAppPath: string, deps: InstallDeps = {}): Promise<void> {
+  const currentAppPath = deps.currentAppPath ?? currentAppBundlePath();
+  const rename = deps.rename ?? ((from, to) => renameCb(from, to));
+  const copyRecursive = deps.copyRecursive ?? ((from, to) => cpCb(from, to, { recursive: true }));
+  const rm = deps.rm ?? ((p) => rmCb(p, { recursive: true, force: true }));
+  const relaunch = deps.relaunch ?? (() => app.relaunch());
+  const exit = deps.exit ?? (() => app.exit());
+
+  const backupPath = `${currentAppPath}.old`;
+  await rename(currentAppPath, backupPath);
+
+  try {
+    try {
+      await rename(extractedAppPath, currentAppPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EXDEV") {
+        await copyRecursive(extractedAppPath, currentAppPath);
+        await rm(extractedAppPath);
+      } else {
+        throw err;
+      }
+    }
+  } catch (err) {
+    await rename(backupPath, currentAppPath);
+    throw err;
+  }
+
+  await rm(backupPath).catch(() => {});
+  relaunch();
+  exit();
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { fetchLatestRelease, downloadAsset, extractAndSign, currentAppBundlePath } from "../src/updater.js";
+import { fetchLatestRelease, downloadAsset, extractAndSign, currentAppBundlePath, installAndRelaunch } from "../src/updater.js";
 
 function fakeResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -66,5 +66,68 @@ describe("extractAndSign", () => {
 describe("currentAppBundlePath", () => {
   test("walks up from the executable path to the .app bundle root", () => {
     expect(currentAppBundlePath("/Applications/Bean.app/Contents/MacOS/Bean")).toBe("/Applications/Bean.app");
+  });
+});
+
+describe("installAndRelaunch", () => {
+  function harness() {
+    const renamed: [string, string][] = [];
+    const copied: [string, string][] = [];
+    const removed: string[] = [];
+    let relaunched = false;
+    let exited = false;
+    const deps = {
+      currentAppPath: "/Applications/Bean.app",
+      rename: vi.fn(async (from: string, to: string) => { renamed.push([from, to]); }),
+      copyRecursive: vi.fn(async (from: string, to: string) => { copied.push([from, to]); }),
+      rm: vi.fn(async (p: string) => { removed.push(p); }),
+      relaunch: () => { relaunched = true; },
+      exit: () => { exited = true; },
+    };
+    return { deps, renamed, copied, removed, relaunched: () => relaunched, exited: () => exited };
+  }
+
+  test("renames the current bundle aside, the new one into place, cleans up, then relaunches", async () => {
+    const h = harness();
+    await installAndRelaunch("/tmp/bean-update-xyz/Bean.app", h.deps);
+    expect(h.renamed).toEqual([
+      ["/Applications/Bean.app", "/Applications/Bean.app.old"],
+      ["/tmp/bean-update-xyz/Bean.app", "/Applications/Bean.app"],
+    ]);
+    expect(h.removed).toEqual(["/Applications/Bean.app.old"]);
+    expect(h.copied).toEqual([]);
+    expect(h.relaunched()).toBe(true);
+    expect(h.exited()).toBe(true);
+  });
+
+  test("falls back to a recursive copy on a cross-device rename (EXDEV)", async () => {
+    const h = harness();
+    h.deps.rename = vi.fn(async (from: string, to: string) => {
+      if (from === "/tmp/bean-update-xyz/Bean.app") {
+        const err = new Error("cross-device") as NodeJS.ErrnoException;
+        err.code = "EXDEV";
+        throw err;
+      }
+      h.renamed.push([from, to]);
+    });
+    await installAndRelaunch("/tmp/bean-update-xyz/Bean.app", h.deps);
+    expect(h.copied).toEqual([["/tmp/bean-update-xyz/Bean.app", "/Applications/Bean.app"]]);
+    expect(h.removed).toEqual(["/tmp/bean-update-xyz/Bean.app", "/Applications/Bean.app.old"]);
+    expect(h.relaunched()).toBe(true);
+  });
+
+  test("rolls back and rethrows when swapping the new bundle into place fails", async () => {
+    const h = harness();
+    h.deps.rename = vi.fn(async (from: string, to: string) => {
+      if (from === "/tmp/bean-update-xyz/Bean.app") throw new Error("disk full");
+      h.renamed.push([from, to]);
+    });
+    await expect(installAndRelaunch("/tmp/bean-update-xyz/Bean.app", h.deps)).rejects.toThrow("disk full");
+    expect(h.renamed).toEqual([
+      ["/Applications/Bean.app", "/Applications/Bean.app.old"],
+      ["/Applications/Bean.app.old", "/Applications/Bean.app"],
+    ]);
+    expect(h.relaunched()).toBe(false);
+    expect(h.exited()).toBe(false);
   });
 });
