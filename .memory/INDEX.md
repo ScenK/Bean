@@ -22,6 +22,7 @@
 - [safety-chatops-no-propose-run.md](safety-chatops-no-propose-run.md) — chatops passes `runAvailable=false` to `converse()`: propose_run is offered only for `target: chat` skills (run on Bean's own model, in-conversation); terminal skills go through delegate only.
 - [safety-packaged-app-path-detection.md](safety-packaged-app-path-detection.md) — Finder-launched Bean gets launchd's minimal PATH, so `detectClis` misses CLIs installed via nvm/volta/pnpm/`~/.local/bin`; `loginShellPath()` asks the real login shell instead of hardcoding more directories.
 - [safety-memory-append-vs-replace.md](safety-memory-append-vs-replace.md) — `saveMemories` (whole-list replace) still loses a concurrent writer's addition even on SQLite — that race is at the JS read-modify-write level, not the storage engine. New-fact-adding call sites must use insert-only `appendMemories`, not `listMemories`+`saveMemories`.
+- [safety-mac-adhoc-signing.md](safety-mac-adhoc-signing.md) — `packages/app`'s electron-builder `afterSign` hook ad-hoc codesigns `Bean.app` so the packaged arm64 binary is executable and Gatekeeper shows Open/Cancel instead of the unsigned "damaged, Move to Trash only" dialog; does not replace notarization.
 
 ## convention — how we do things here
 
