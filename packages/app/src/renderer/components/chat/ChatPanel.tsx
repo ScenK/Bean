@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { ProposalCard, type PickableModel } from "../../shared/ProposalCard.js";
 import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
+import { SkillCard } from "./SkillCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { insertDroppedPath, type ChatItem } from "../../shared/chat-types.js";
-import type { CliName, LinkedNote, Project, ProposedNote, RouteSuggestion } from "@bean/core";
+import type { CliName, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion } from "@bean/core";
 
 export function ChatPanel({
   items,
@@ -22,6 +23,8 @@ export function ChatPanel({
   onCancel,
   onNoteSave,
   onNoteDismiss,
+  onSkillSave,
+  onSkillDismiss,
   onDelegateConfirm,
   onDelegateDismiss,
   onDelegateCancelTask,
@@ -53,6 +56,8 @@ export function ChatPanel({
   onCancel: (id: string) => void;
   onNoteSave: (id: string, edited: ProposedNote, asNew: boolean) => void;
   onNoteDismiss: (id: string) => void;
+  onSkillSave: (id: string, edited: ProposedSkill) => void;
+  onSkillDismiss: (id: string) => void;
   onDelegateConfirm: (id: string, editedPrompt: string, model?: string) => void;
   onDelegateDismiss: (id: string) => void;
   onDelegateCancelTask: (id: string) => void;
@@ -170,6 +175,17 @@ export function ChatPanel({
                 linkedVersion={it.note.slug !== undefined && it.note.slug === linkedNote?.slug ? linkedNote.version : undefined}
                 onSave={(edited, asNew) => onNoteSave(it.id, edited, asNew)}
                 onDismiss={() => onNoteDismiss(it.id)}
+              />
+            );
+          }
+          if (it.kind === "skill") {
+            return (
+              <SkillCard
+                key={it.id}
+                skill={it.skill}
+                state={it.state}
+                onSave={(edited) => onSkillSave(it.id, edited)}
+                onDismiss={() => onSkillDismiss(it.id)}
               />
             );
           }
