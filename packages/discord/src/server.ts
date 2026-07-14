@@ -166,7 +166,8 @@ client.on("error", (err) => console.error("client error:", err));
 // warning — mark any in-flight run interrupted (durable outbox notice to its conversation)
 // before this process disappears, instead of just dying mid-run with the requester left hanging.
 process.on("SIGTERM", () => {
-  void runs.interruptAll().finally(() => process.exit(0));
+  runs.interruptAll(); // synchronous — see its doc comment; safe to exit right after
+  process.exit(0);
 });
 
 client.once("clientReady", () => {

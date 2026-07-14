@@ -166,20 +166,15 @@ app.whenReady().then(async () => {
   let quitting = false;
   // Reassigned once delegateTasks exists (below); a quit requested before that point has
   // nothing in-flight to interrupt, so the no-op default is correct, not just a placeholder.
-  let interruptAllDelegates: () => Promise<void> = () => Promise.resolve();
-  // Electron doesn't await async work in a before-quit listener unless you preventDefault() —
-  // every other before-quit hook in this file is synchronous fire-and-forget, so marking a
-  // delegate "interrupted" (an async outbox write, see delegate-tasks.ts's interruptAll) needs
-  // this hold-then-requeue dance or the write can lose the race against process exit.
-  let quitConfirmed = false;
-  app.on("before-quit", (e) => {
+  // Synchronous (see delegate-tasks.ts's interruptAll doc comment) — deliberately NOT a
+  // preventDefault()-then-requeue dance: Electron's before-quit is known flaky around terminal
+  // signals on this menu-bar/tray app already (see the SIGINT/SIGTERM handlers above), and
+  // blocking the quit sequence on an async continuation is its own source of hangs. Every other
+  // before-quit hook in this file is plain synchronous fire-and-forget; this matches that.
+  let interruptAllDelegates: () => void = () => {};
+  app.on("before-quit", () => {
     quitting = true;
-    if (quitConfirmed) return;
-    e.preventDefault();
-    void interruptAllDelegates().finally(() => {
-      quitConfirmed = true;
-      app.quit();
-    });
+    interruptAllDelegates();
   });
   const allowClose = new WeakSet<BrowserWindow>();
   ipcMain.on(IPC.allowChatClose, (evt) => {

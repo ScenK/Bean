@@ -130,8 +130,13 @@ export class RunRegistry {
 
   /** Called only when this process is dying (bot subprocess SIGTERM). Unlike cancel(), doesn't
    * wait for confirmation or emit onCancelled — nothing is listening — and instead durably
-   * notifies the requesting conversation via the outbox so it survives the restart. */
-  async interruptAll(): Promise<number> {
+   * notifies the requesting conversation via the outbox so it survives the restart.
+   *
+   * Deliberately synchronous (releaseRun/enqueueOutbox are sync-internally, see their doc
+   * comments): a SIGTERM handler racing the process's own exit can't reliably wait on real
+   * async work, so this must be guaranteed to have written everything to disk by the time it
+   * returns, not just "eventually". */
+  interruptAll(): number {
     const paths = [...this.byProject.keys()];
     for (const p of paths) {
       const run = this.byProject.get(p)!;
@@ -139,9 +144,9 @@ export class RunRegistry {
       clearInterval(run.timer);
       this.byProject.delete(p);
       run.handle?.cancel(() => {});
-      await releaseRun(this.opts.dir, run.reservationId);
+      void releaseRun(this.opts.dir, run.reservationId);
       const { full, display } = interruptedRunNotice(p, run.meta.instruction);
-      await enqueueOutbox(
+      void enqueueOutbox(
         outboxDir(this.opts.dir),
         { transport: this.opts.botKind, channel: run.meta.conversationId, body: full, displayBody: display },
         () => this.newId(),

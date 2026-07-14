@@ -132,13 +132,19 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     // for the child to confirm termination or emit any chat event (the window is closing right
     // along with it); instead leaves a durable outbox notice so the chat window can report the
     // interruption next launch (see main.ts's startup claimOutbox("chat")).
-    async interruptAll(): Promise<void> {
+    //
+    // Deliberately synchronous (releaseRun/enqueueOutbox are sync-internally, see their doc
+    // comments): main.ts calls this directly from a plain `before-quit` listener with no
+    // preventDefault/async-gating — it must be guaranteed to have written everything to disk by
+    // the time it returns, not just "eventually" (Electron's before-quit doesn't reliably await
+    // async work, and a preventDefault-then-requeue dance is its own source of flakiness).
+    interruptAll(): void {
       for (const [, t] of [...tasks]) {
         t.cancelling = true;
         t.cancel(() => {});
-        await releaseRun(deps.dir, t.reservationId);
+        void releaseRun(deps.dir, t.reservationId);
         const { full, display } = interruptedRunNotice(t.projectPath, t.instruction);
-        await enqueueOutbox(outboxDir(deps.dir), { transport: "chat", body: full, displayBody: display }, deps.newId);
+        void enqueueOutbox(outboxDir(deps.dir), { transport: "chat", body: full, displayBody: display }, deps.newId);
       }
       tasks.clear();
     },

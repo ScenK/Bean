@@ -1,9 +1,19 @@
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** One queued chatops message (~/.bean/outbox/<transport>-<id>.json). The main app
  * enqueues routine digests; each bot server claims (reads + deletes) its own transport's
- * files on a short poll. Files survive bot restarts — messages queue until a bot runs. */
+ * files on a short poll. Files survive bot restarts — messages queue until a bot runs.
+ *
+ * Uses sync fs (tiny local JSON files, not a hot path) rather than fs/promises, like
+ * run-queue.ts: `enqueueOutbox` is called from `interruptAll()` (RunRegistry/delegate-tasks),
+ * which in turn is called from Electron's `before-quit` and a bare `process.on("SIGTERM")` —
+ * neither reliably supports awaiting real async work (before-quit needs a preventDefault/re-quit
+ * dance that's known to be fragile; a SIGTERM handler racing the process's own exit is worse).
+ * Sync fs means the write is guaranteed to have happened by the time the call returns, with no
+ * async gating needed in either caller. The exported functions stay `async`-declared for
+ * existing call-site compatibility (callers already `await` them) — with no internal `await`,
+ * calling one without awaiting still completes its fs work synchronously before returning. */
 export interface OutboxMessage {
   id: string;
   transport: "teams" | "discord" | "chat";
@@ -29,15 +39,15 @@ export async function enqueueOutbox(
   now: () => Date = () => new Date(),
 ): Promise<string> {
   const full: OutboxMessage = { ...msg, id: newId(), createdAt: now().toISOString() };
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `${full.transport}-${full.id}.json`), JSON.stringify(full, null, 2) + "\n", "utf8");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${full.transport}-${full.id}.json`), JSON.stringify(full, null, 2) + "\n", "utf8");
   return full.id;
 }
 
 export async function claimOutbox(dir: string, transport: "teams" | "discord" | "chat"): Promise<OutboxMessage[]> {
   let entries: string[];
   try {
-    entries = await readdir(dir);
+    entries = readdirSync(dir);
   } catch {
     return [];
   }
@@ -52,15 +62,15 @@ export async function claimOutbox(dir: string, transport: "teams" | "discord" | 
     if (isOrphan) {
       // unattributable to any transport — sweep it (matches "malformed files are deleted and
       // skipped"), but never return it: it's not a valid message for this or any poll loop.
-      await rm(path, { force: true });
+      rmSync(path, { force: true });
       continue;
     }
     let parsed: OutboxMessage;
     try {
-      parsed = JSON.parse(await readFile(path, "utf8")) as OutboxMessage;
+      parsed = JSON.parse(readFileSync(path, "utf8")) as OutboxMessage;
     } catch {
       // malformed — delete unconditionally so junk can't wedge *this transport's* own poll loop
-      await rm(path, { force: true });
+      rmSync(path, { force: true });
       continue;
     }
     // ponytail: only claim (and delete) files for this transport — leave other transports' files
@@ -71,11 +81,11 @@ export async function claimOutbox(dir: string, transport: "teams" | "discord" | 
       typeof parsed.body === "string"
     ) {
       out.push(parsed);
-      await rm(path, { force: true });
+      rmSync(path, { force: true });
     } else {
       // filename says this transport, but body disagrees (only via hand-editing) — same
       // treatment as a parse failure: delete rather than leave it stranded forever.
-      await rm(path, { force: true });
+      rmSync(path, { force: true });
     }
   }
   return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));

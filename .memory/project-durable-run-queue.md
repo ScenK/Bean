@@ -1,6 +1,6 @@
 ---
 name: project-durable-run-queue
-description: Cross-process delegate-run reservation (run-queue.ts) split from interrupted-run reporting (outbox.ts reuse); why RunRegistry/delegate-tasks stayed async but sync-internal; the before-quit preventDefault/requeue sequencing in main.ts.
+description: Cross-process delegate-run reservation (run-queue.ts) split from interrupted-run reporting (outbox.ts reuse); why interruptAll()/enqueueOutbox/releaseRun are all fully synchronous, and why main.ts's before-quit does NOT use preventDefault.
 metadata:
   type: project
 ---
@@ -35,38 +35,42 @@ wedge that project forever. `reserveRun` checks `process.kill(existingPid, 0)` (
 dead) before treating an existing reservation as busy — a dead pid's reservation is reclaimed
 instead of blocking. POSIX-only; revisit if Windows packaging is ever added.
 
-## Why `reserveRun`/`releaseRun` use sync fs despite the rest of core using `fs/promises`
+## Everything on the interrupt path is fully synchronous — `reserveRun`/`releaseRun`/`enqueueOutbox`
 
-`RunRegistry`'s and `delegate-tasks.ts`'s settle paths call `releaseRun` fire-and-forget from
-inside a synchronous callback (`onDone`/`onError`/`cancel`'s completion). With `fs/promises`, an
-unawaited release could still be mid-write when the *very next* `start()` call (same process, same
-tick — this bit a test) ran its busy-check and saw the stale-but-not-yet-deleted reservation as
-"still alive" (same pid). Since these are tiny local JSON files and not a hot path, `run-queue.ts`
-uses `node:fs` sync calls internally — the exported functions stay `async`-declared for call-site
-consistency, but with no internal `await`, the fs work completes synchronously before a
-fire-and-forget `void releaseRun(...)` call even returns, so no such race is possible.
+`RunRegistry.interruptAll()` and `delegate-tasks.ts`'s `interruptAll()` are plain synchronous
+functions (not `async`), and so are `outbox.ts`'s `enqueueOutbox`/`claimOutbox` and
+`run-queue.ts`'s `reserveRun`/`releaseRun` under the hood — all use `node:fs` sync calls
+(`readFileSync`/`writeFileSync`/`rmSync`/etc.) instead of `fs/promises`. `enqueueOutbox`/
+`reserveRun`/`releaseRun` stay `async`-declared (return a `Promise`) purely for call-site
+compatibility with existing `await`ers elsewhere (e.g. `RunRegistry.start()`'s cross-process
+busy-check genuinely wants to await); with no internal `await`, calling one without awaiting
+still runs its fs work to completion before the call returns.
 
-## `main.ts`'s before-quit sequencing
-
-Electron does not await async work in a `before-quit` listener unless you `preventDefault()` —
-every pre-existing listener in `main.ts` was synchronous fire-and-forget, so marking a delegate
-"interrupted" (an outbox write) needed new sequencing:
-
-```ts
-app.on("before-quit", (e) => {
-  quitting = true;
-  if (quitConfirmed) return;
-  e.preventDefault();
-  void interruptAllDelegates().finally(() => { quitConfirmed = true; app.quit(); });
-});
-```
-
-The first `before-quit` intercepts and drains delegate-tasks' `interruptAll()`; the second
-(self-triggered) `app.quit()` call is let through, and *by then* delegate-tasks' internal state is
-already empty — so the **existing** chat window `"closed"` handler's `cancelAllDelegates()` call
-needed no changes at all; it just iterates zero entries. Discord/Teams bot subprocesses get the
-equivalent via a `process.on("SIGTERM", ...)` handler (they had none before) since
-`chatopsServers.stopAll()` kills them with a bare `child.kill()`.
+Two independent reasons drove this, not just one:
+- **Same-process double-start.** `RunRegistry`'s/`delegate-tasks`' settle paths call `releaseRun`
+  fire-and-forget from inside a synchronous callback (`onDone`/`onError`/`cancel`'s completion).
+  With real `fs/promises`, an unawaited release could still be mid-write when the *very next*
+  `start()` call (same process, same tick — this bit a test) ran its busy-check and saw the
+  stale-but-not-yet-deleted reservation as "still alive" (same pid).
+- **`interruptAll()` can't rely on being awaited at all.** It's called from Electron's
+  `before-quit` and a bare `process.on("SIGTERM", ...)` (bot subprocesses) — neither reliably
+  supports waiting on real async work. An earlier version of this tried
+  `event.preventDefault()` + `await interruptAll()` + re-trigger `app.quit()` from `main.ts`'s
+  `before-quit`; that reintroduced exactly the fragility this file's own SIGINT/SIGTERM handlers
+  already exist to work around (see the comment above `if (!app.requestSingleInstanceLock())`) —
+  it manifested as Ctrl+C during `pnpm dev` sometimes never actually quitting the Electron
+  process (tray icon stayed alive) even though a subsequent manual "Exit" click worked fine.
+  Making the whole interrupt path synchronous end-to-end removes the async gating entirely, so
+  `before-quit` doesn't need `preventDefault()` at all — it now matches every *other* listener in
+  `main.ts`, which are all plain synchronous fire-and-forget:
+  ```ts
+  app.on("before-quit", () => {
+    quitting = true;
+    interruptAllDelegates(); // synchronous — fs work is done by the time this call returns
+  });
+  ```
+  Discord/Teams bot subprocesses follow the same shape: `runs.interruptAll(); process.exit(0);`
+  with no `.finally()`/promise chain needed.
 
 ## Explicitly out of scope
 
