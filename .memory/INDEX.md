@@ -21,6 +21,7 @@
 - [safety-tray-tahoe-placement.md](safety-tray-tahoe-placement.md) — macOS 26.5 (Tahoe) races tray placement and can park the icon off-screen in dev runs (packaged builds immune via LSUIElement); no workaround loop — dev keeps its Dock icon (`dock.hide()` only when packaged) and the `activate` handler re-summons a hidden bean.
 - [safety-chatops-no-propose-run.md](safety-chatops-no-propose-run.md) — chatops passes `runAvailable=false` to `converse()`: propose_run is offered only for `target: chat` skills (run on Bean's own model, in-conversation); terminal skills go through delegate only.
 - [safety-packaged-app-path-detection.md](safety-packaged-app-path-detection.md) — Finder-launched Bean gets launchd's minimal PATH, so `detectClis` misses CLIs installed via nvm/volta/pnpm/`~/.local/bin`; `loginShellPath()` asks the real login shell instead of hardcoding more directories.
+- [safety-memory-append-vs-replace.md](safety-memory-append-vs-replace.md) — `saveMemories` (whole-list replace) still loses a concurrent writer's addition even on SQLite — that race is at the JS read-modify-write level, not the storage engine. New-fact-adding call sites must use insert-only `appendMemories`, not `listMemories`+`saveMemories`.
 
 ## convention — how we do things here
 
@@ -35,11 +36,11 @@
 ## project — ongoing work context
 
 - [project-settings-about-context-menu.md](project-settings-about-context-menu.md) — Settings/Persona/About/Exit live only behind the tray's left-click (no right-click anywhere, on tray or avatar); live-reloading Settings over ~/.bean via runtime-config, and the no-fake-chrome window rule (match the chat window; register new windows in esbuild + windows.ts).
-- [project-notes-feature.md](project-notes-feature.md) — Notes (chat ⇄ note): confirm-first `propose_note`, `~/.bean/notes/*.md` with versions in `.history/`, linked-chat update-in-place rule, and why notes must stay explicit/inert vs memory.
-- [project-bean-memory.md](project-bean-memory.md) — Bean's memory: `~/.bean/memory.json`, extract-on-close (confirm), recall-into-converse, enabled-skill filter, persona-panel editing.
+- [project-notes-feature.md](project-notes-feature.md) — Notes (chat ⇄ note): confirm-first `propose_note`, SQLite-backed (`bean.db`'s `notes`/`notes_fts`/`notes_history` tables, migrated from the old `~/.bean/notes/*.md` + `.history/`), FTS5 `searchNotes` behind `retrieve_note`, linked-chat update-in-place rule, and why notes must stay explicit/inert vs memory.
+- [project-bean-memory.md](project-bean-memory.md) — Bean's memory: `~/.bean/bean.db` (migrated from `memory.json`), FTS5 top-K recall above 20 memories, extract-on-close (confirm) via `appendMemories`, enabled-skill filter, persona-panel editing, and the chatops-only consolidation (merge/drop) proposal.
 - [project-e2e-ipc-ready-race.md](project-e2e-ipc-ready-race.md) — pre-existing startup race: the avatar window can call `openComponent` before `registerIpc()` wires up its handler, surfacing as an intermittent "No handler registered for 'bean:open-component'" error, most visible under the Electron e2e suite's back-to-back launches. Advisory CI job absorbs it for now; two possible fixes noted.
 - [project-model-selection-and-no-project-runs.md](project-model-selection-and-no-project-runs.md) — the model picker (canonical names + per-CLI aliases + last-used-per-skill) and the merged "no project" scratch-workspace flow; Bean deliberately does *not* fetch/clone a URL seed itself (folded into the prompt, left to the delegated agent) — don't reintroduce that; `buildLaunchHandler` stays sync unless projectPath is "".
 - [project-teams-bot](project-teams-bot.md) — chatops brain in core + Teams/Discord adapters; model-memory key namespacing.
-- [project-chatops-memory-flow](project-chatops-memory-flow.md) — memory capture in Teams/Discord bots
+- [project-chatops-memory-flow](project-chatops-memory-flow.md) — memory capture in Teams/Discord bots; `ConversationStore` is now `bean.db`-backed (survives bot restarts) with a silent auto-compaction pass above 60 turns
 - [project-routines](project-routines.md) — cron-scheduled multi-step automations: storage, pure DI'd runner (routine-only `save_note`, no propose_*), scheduler (no catch-up), chatops digest fanout via `~/.bean/outbox/`
 - [project-durable-run-queue](project-durable-run-queue.md) — cross-process delegate-run reservation (`run-queue.ts`, pid-liveness crash recovery) split from interrupted-run reporting (reused `outbox.ts`); before-quit sequencing in `main.ts`.

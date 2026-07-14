@@ -73,6 +73,7 @@ export const IPC = {
   deleteNote: "bean:delete-note",
   listMemories: "bean:list-memories",
   saveMemories: "bean:save-memories",
+  appendMemories: "bean:append-memories",
   extractMemories: "bean:extract-memories",
   reviewBeforeClose: "bean:review-before-close",
   allowChatClose: "bean:allow-chat-close",

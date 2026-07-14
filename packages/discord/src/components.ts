@@ -1,6 +1,7 @@
 import type {
   CardBuilders, FinishedCardInput, MemoryProposalCardInput, MemoryResultCardInput,
   NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
+  ConsolidationProposalCardInput, ConsolidationResultCardInput,
 } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
@@ -147,6 +148,26 @@ function memoryResultCard(input: MemoryResultCardInput): object {
   return { embeds: [{ title }], components: [] };
 }
 
+function consolidationProposalCard(input: ConsolidationProposalCardInput): object {
+  const lines = [
+    ...input.merges.map((m) => `Merge ${m.count} → ${m.mergedText}`),
+    ...input.drops.map((d) => `Drop: ${d}`),
+  ];
+  return {
+    embeds: [{ title: "Bean suggests tidying up memory", description: lines.join("\n").slice(0, 4096) }],
+    components: [row([
+      { type: BUTTON, style: 3, label: "Apply", custom_id: `bean:confirm-consolidation:${input.proposalId}` },
+      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-consolidation:${input.proposalId}` },
+    ])],
+  };
+}
+
+function consolidationResultCard(input: ConsolidationResultCardInput): object {
+  const title = input.outcome === "applied" ? "Memory tidied up." : "Tidy-up cancelled.";
+  return { embeds: [{ title }], components: [] };
+}
+
 export const discordCards: CardBuilders = {
   proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
+  consolidationProposalCard, consolidationResultCard,
 };

@@ -391,7 +391,6 @@ export function ChatWindow() {
   const rememberSelected = async (): Promise<void> => {
     const picked = (closeFlow?.stage === "review" ? closeFlow.items : []).filter((r) => r.checked);
     if (picked.length > 0) {
-      const existing = await window.bean.listMemories();
       const now = new Date().toISOString();
       const additions: Memory[] = picked.map((r, i) => ({
         id: `${Date.now()}-${i}`,
@@ -399,7 +398,9 @@ export function ChatWindow() {
         projectPath: r.projectPath,
         createdAt: now,
       }));
-      await window.bean.saveMemories([...existing, ...additions]);
+      // Insert-only: a chatops bot could be remembering something else at the same moment —
+      // list-then-replace would silently lose whichever wrote second.
+      await window.bean.appendMemories(additions);
     }
     setCloseFlow(null);
     window.bean.allowChatClose();

@@ -20,6 +20,10 @@ export function projectsFile(dir: string): string { return join(dir, "projects.j
 export function configFile(dir: string): string { return join(dir, "config.json"); }
 export function personaFile(dir: string): string { return join(dir, "persona.json"); }
 export function memoryFile(dir: string): string { return join(dir, "memory.json"); }
+// SQLite store for memories/notes/chatops history (replaces memory.json + notes/*.md as of
+// the FTS5 migration — see .memory/project-bean-memory.md). One shared file: SQLite's own
+// WAL locking is the cross-process write serialization the old flat-file stores never had.
+export function dbFile(dir: string): string { return join(dir, "bean.db"); }
 export function remindersFile(dir: string): string { return join(dir, "reminders.json"); }
 export function notesDir(dir: string): string { return join(dir, "notes"); }
 export function routinesDir(dir: string): string { return join(dir, "routines"); }

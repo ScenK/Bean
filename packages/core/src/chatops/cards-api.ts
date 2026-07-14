@@ -55,6 +55,18 @@ export interface MemoryResultCardInput {
   outcome: "saved" | "cancelled";
 }
 
+export interface ConsolidationProposalCardInput {
+  proposalId: string;
+  /** Each merge group's combined text and how many facts it replaces. */
+  merges: { mergedText: string; count: number }[];
+  /** Text of each fact proposed for dropping. */
+  drops: string[];
+}
+
+export interface ConsolidationResultCardInput {
+  outcome: "applied" | "cancelled";
+}
+
 export interface CardBuilders {
   proposalCard: (input: ProposalCardInput) => object;
   runningCard: (input: RunningCardInput) => object;
@@ -63,4 +75,6 @@ export interface CardBuilders {
   noteResultCard: (input: NoteResultCardInput) => object;
   memoryProposalCard: (input: MemoryProposalCardInput) => object;
   memoryResultCard: (input: MemoryResultCardInput) => object;
+  consolidationProposalCard: (input: ConsolidationProposalCardInput) => object;
+  consolidationResultCard: (input: ConsolidationResultCardInput) => object;
 }

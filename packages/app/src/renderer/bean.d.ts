@@ -66,6 +66,7 @@ declare global {
       routinesRunNow(name: string): Promise<{ started: boolean; reason?: string }>;
       listMemories(): Promise<Memory[]>;
       saveMemories(memories: Memory[]): Promise<void>;
+      appendMemories(additions: Memory[]): Promise<void>;
       extractMemories(transcript: ChatTurn[]): Promise<MemoryCandidate[]>;
       onReviewBeforeClose(cb: () => void): void;
       allowChatClose(): void;

@@ -8,12 +8,12 @@ import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import {
-  beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, memoryFile, remindersFile,
+  beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
   modelMemoryFile,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
-  makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, saveMemories, extractMemories,
+  makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, saveMemories, appendMemories, extractMemories,
   loadReminders, saveReminders, dueReminders, extractPageText,
-  loadNotes, saveNote, deleteNote, notesDir, retrieveNoteTool, detectClis, loginShellPath, deliver,
+  loadNotes, saveNote, deleteNote, searchNotes, retrieveNoteTool, detectClis, loginShellPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate,
   composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS,
@@ -353,7 +353,7 @@ app.whenReady().then(async () => {
         return pending.length === 0 ? "no pending reminders" : JSON.stringify(pending);
       },
     },
-    retrieveNoteTool(() => loadNotes(notesDir(dir))),
+    retrieveNoteTool((q) => searchNotes(dbFile(dir), q)),
   ];
   actionTools.push({
     spec: {
@@ -507,7 +507,7 @@ app.whenReady().then(async () => {
       run: async (args) => {
         const { title, body } = (args ?? {}) as { title?: unknown; body?: unknown };
         if (typeof title !== "string" || typeof body !== "string") return "error: save_note needs { title, body }";
-        const slug = await saveNote(notesDir(dir), { title, body, source: "manual" });
+        const slug = await saveNote(dbFile(dir), { title, body, source: "manual" });
         return `note saved as ${slug}`;
       },
     };
@@ -525,7 +525,7 @@ app.whenReady().then(async () => {
 
     const deliverDigest = async (routine: Routine, result: RoutineRunResult): Promise<void> => {
       if (routine.sinks.note) {
-        await saveNote(notesDir(dir), {
+        await saveNote(dbFile(dir), {
           title: `routine: ${routine.name}`,
           body: result.digest,
           source: "manual",
@@ -555,9 +555,9 @@ app.whenReady().then(async () => {
 
     registerIpc(ipcMain, {
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
-      loadMemories, saveMemories, extractMemories,
+      loadMemories, saveMemories, appendMemories, extractMemories,
       loadNotes, saveNote, deleteNote,
-      notesDir: notesDir(dir),
+      dbFile: dbFile(dir),
       chat: runtime.chat,
       converse: runtime.converse,
       getModel: runtime.getModel,
@@ -566,7 +566,6 @@ app.whenReady().then(async () => {
       projectsFile: projectsFile(dir),
       personaFile: personaFile(dir),
       projectPersonaFile: personaFile(projectDir),
-      memoryFile: memoryFile(dir),
       actions: actionTools,
       getConfig: () => ({
         openaiApiKey: runtime.getApiKey(),

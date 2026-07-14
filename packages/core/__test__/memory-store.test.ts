@@ -2,40 +2,81 @@ import { expect, test, beforeEach, afterEach } from "vitest";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadMemories, saveMemories } from "../src/memory/store.js";
+import { loadMemories, saveMemories, appendMemories, selectRelevantMemories } from "../src/memory/store.js";
+import { closeDb } from "../src/db.js";
+import { dbFile } from "../src/config.js";
 import type { Memory } from "../src/memory/memory.js";
 
 let dir: string;
-beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "bean-memory-")); });
-afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+let file: string;
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), "bean-memory-"));
+  file = dbFile(dir);
+});
+afterEach(async () => {
+  closeDb(file);
+  await rm(dir, { recursive: true, force: true });
+});
 
 const m = (id: string, text: string): Memory => ({ id, text, createdAt: "2026-07-03T00:00:00.000Z" });
 
-test("missing file returns an empty array", async () => {
-  expect(await loadMemories(join(dir, "memory.json"))).toEqual([]);
-});
-
-test("invalid JSON returns an empty array", async () => {
-  const file = join(dir, "memory.json");
-  await writeFile(file, "{ not json");
+test("a fresh db returns an empty array", async () => {
   expect(await loadMemories(file)).toEqual([]);
-});
-
-test("a non-array payload returns an empty array", async () => {
-  const file = join(dir, "memory.json");
-  await writeFile(file, JSON.stringify({ id: "x" }));
-  expect(await loadMemories(file)).toEqual([]);
-});
-
-test("invalid entries are dropped, valid ones kept", async () => {
-  const file = join(dir, "memory.json");
-  await writeFile(file, JSON.stringify([m("a", "keep"), { id: "", text: "drop", createdAt: "z" }]));
-  expect(await loadMemories(file)).toEqual([m("a", "keep")]);
 });
 
 test("save then load round-trips and creates missing parent dirs", async () => {
-  const file = join(dir, "nested", "memory.json");
+  const nested = dbFile(join(dir, "nested"));
   const memories = [m("a", "prefers pnpm"), { ...m("b", "auth in core"), projectPath: "/work/api" }];
-  await saveMemories(file, memories);
-  expect(await loadMemories(file)).toEqual(memories);
+  await saveMemories(nested, memories);
+  expect(await loadMemories(nested)).toEqual(memories);
+  closeDb(nested);
+});
+
+test("saveMemories replaces the whole set, not an append", async () => {
+  await saveMemories(file, [m("a", "one")]);
+  await saveMemories(file, [m("b", "two")]);
+  expect(await loadMemories(file)).toEqual([m("b", "two")]);
+});
+
+test("appendMemories adds without touching existing rows, unlike saveMemories", async () => {
+  await saveMemories(file, [m("a", "one")]);
+  await appendMemories(file, [m("b", "two")]);
+  expect(await loadMemories(file)).toEqual([m("a", "one"), m("b", "two")]);
+});
+
+test("two concurrent appendMemories calls both survive (the race saveMemories loses)", async () => {
+  await saveMemories(file, [m("base", "existing fact")]);
+  await Promise.all([appendMemories(file, [m("a", "from A")]), appendMemories(file, [m("b", "from B")])]);
+  const ids = (await loadMemories(file)).map((mm) => mm.id).sort();
+  expect(ids).toEqual(["a", "b", "base"]);
+});
+
+test("legacy memory.json is migrated in on first open, invalid entries dropped", async () => {
+  await writeFile(
+    join(dir, "memory.json"),
+    JSON.stringify([m("a", "keep"), { id: "", text: "drop", createdAt: "z" }]),
+  );
+  expect(await loadMemories(file)).toEqual([m("a", "keep")]);
+});
+
+test("invalid legacy memory.json migrates to an empty db instead of crashing", async () => {
+  await writeFile(join(dir, "memory.json"), "{ not json");
+  expect(await loadMemories(file)).toEqual([]);
+});
+
+test("selectRelevantMemories returns everything at or below the skip threshold", () => {
+  const memories = Array.from({ length: 20 }, (_, i) => m(`id-${i}`, `fact ${i}`));
+  expect(selectRelevantMemories(memories, "anything")).toEqual(memories);
+});
+
+test("selectRelevantMemories ranks by relevance above the threshold and force-includes the current project", () => {
+  const memories = [
+    ...Array.from({ length: 25 }, (_, i) => m(`filler-${i}`, `unrelated filler fact number ${i}`)),
+    m("roadmap", "the Q3 roadmap ships auth work first"),
+    { ...m("scoped", "internal note about billing"), projectPath: "/work/billing" },
+  ];
+  const picked = selectRelevantMemories(memories, "what's the roadmap say", "/work/billing", 5, 20);
+  expect(picked.some((mm) => mm.id === "scoped")).toBe(true);
+  expect(picked.some((mm) => mm.id === "roadmap")).toBe(true);
+  expect(picked.length).toBeLessThanOrEqual(5);
 });

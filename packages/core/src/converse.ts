@@ -2,6 +2,7 @@ import { composePrompt } from "./prompt.js";
 import { composePersonaPrompt, type Persona } from "./persona.js";
 import type { Project, RouteSuggestion, Skill } from "./types.js";
 import type { Memory } from "./memory/memory.js";
+import { selectRelevantMemories } from "./memory/store.js";
 import type { CliName } from "./launcher.js";
 import { MODELS } from "./models.js";
 
@@ -9,7 +10,9 @@ export type ConvoMsg =
   | { role: "system" | "user"; content: string }
   | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
   | { role: "tool"; content: string; toolCallId: string };
-export interface ChatTurn { role: "user" | "assistant"; content: string; }
+// "system" backs chatops/compact.ts's rolling summary turn — ConvoMsg already accepts it, so
+// converse()'s history mapping needs no change, just this wider type.
+export interface ChatTurn { role: "user" | "assistant" | "system"; content: string; }
 export interface ToolSpec { name: string; description: string; parameters: object; }
 export interface ToolCall { id?: string; name: string; args: unknown; }
 // A tool Bean executes itself (in the Electron main process), unlike propose_run
@@ -240,7 +243,10 @@ export async function converse(
   ];
   // Local time so the model can resolve "in 20 minutes" / "at 5pm" into a concrete timestamp.
   if (actions.length > 0) systemParts.push(`Current date and time: ${now().toString()}`);
-  const recall = memoriesBlock(memories, projects);
+  // No per-chat "current project" signal exists here (LinkedNote doesn't carry one) — force-
+  // include is left unused from this call site, but selectRelevantMemories still supports it.
+  const relevant = selectRelevantMemories(memories, latestUserText);
+  const recall = memoriesBlock(relevant, projects);
   if (recall) systemParts.push(recall);
   if (linkedNote) {
     systemParts.push(

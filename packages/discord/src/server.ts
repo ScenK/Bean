@@ -1,9 +1,10 @@
 import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
-  skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile, notesDir,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, loadNotes, saveMemories,
+  skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir,
-  buildTeamsBot, mentionsBotName, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore, RunRegistry, type BotEffects,
+  buildTeamsBot, mentionsBotName, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
+  ConsolidationProposalStore, RunRegistry, type BotEffects,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, Partials,
@@ -24,24 +25,26 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "discord" });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this channel has no idea what it's retrying.
-const conversations = new ConversationStore();
+const conversations = new ConversationStore(dbFile(dir));
 const bot = buildTeamsBot({
   chat: makeOpenAIConverse(beanConfig.openaiApiKey),
   model: beanConfig.model,
   loadSkills: () => loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
   loadProjects: () => loadProjects(projectsFile(dir)),
   loadPersona: () => loadPersona(personaFile(dir), personaFile(builtinDir)),
-  loadMemories: () => loadMemories(memoryFile(dir)),
+  loadMemories: () => loadMemories(dbFile(dir)),
   loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
   saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),
   detectClis: () => clis,
   runs,
   proposals: new ProposalStore(),
   noteProposals: new NoteProposalStore(),
-  saveNote: (draft) => saveNote(notesDir(dir), draft),
-  loadNotes: () => loadNotes(notesDir(dir)),
+  saveNote: (draft) => saveNote(dbFile(dir), draft),
+  searchNotes: (query) => searchNotes(dbFile(dir), query),
   memoryProposals: new MemoryProposalStore(),
-  saveMemories: (m) => saveMemories(memoryFile(dir), m),
+  appendMemories: (m) => appendMemories(dbFile(dir), m),
+  saveMemories: (m) => saveMemories(dbFile(dir), m),
+  consolidationProposals: new ConsolidationProposalStore(),
   conversations,
   cards: discordCards,
 });
