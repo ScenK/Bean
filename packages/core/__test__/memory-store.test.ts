@@ -2,6 +2,7 @@ import { expect, test, beforeEach, afterEach } from "vitest";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { loadMemories, saveMemories, appendMemories, selectRelevantMemories } from "../src/memory/store.js";
 import { closeDb } from "../src/db.js";
 import { dbFile } from "../src/config.js";
@@ -49,6 +50,29 @@ test("two concurrent appendMemories calls both survive (the race saveMemories lo
   await Promise.all([appendMemories(file, [m("a", "from A")]), appendMemories(file, [m("b", "from B")])]);
   const ids = (await loadMemories(file)).map((mm) => mm.id).sort();
   expect(ids).toEqual(["a", "b", "base"]);
+});
+
+// Regression for a PR review finding: `id` is a SQLite PRIMARY KEY, so two processes that
+// generate an id from `${Date.now()}-${i}` in the same millisecond (same batch index) would
+// collide and throw on the second INSERT — silently losing that batch's save behind a caught
+// error, instead of the old JSON array's "duplicate id, no crash, no complaint" behavior.
+// bot.ts and ChatWindow.tsx now generate ids with randomUUID(); this proves both halves.
+test("a Date.now()-derived id collision throws (the vulnerability the PK constraint exposes)", async () => {
+  const now = "2026-07-14T00:00:00.000Z";
+  await appendMemories(file, [{ id: "1752451200000-0", text: "from process A", createdAt: now }]);
+  await expect(
+    appendMemories(file, [{ id: "1752451200000-0", text: "from process B", createdAt: now }]),
+  ).rejects.toThrow();
+});
+
+test("randomUUID()-derived ids never collide even under a frozen clock (the actual fix)", async () => {
+  const now = "2026-07-14T00:00:00.000Z";
+  await Promise.all([
+    appendMemories(file, [{ id: randomUUID(), text: "from process A", createdAt: now }]),
+    appendMemories(file, [{ id: randomUUID(), text: "from process B", createdAt: now }]),
+  ]);
+  const ids = (await loadMemories(file)).map((mm) => mm.id);
+  expect(new Set(ids).size).toBe(2);
 });
 
 test("legacy memory.json is migrated in on first open, invalid entries dropped", async () => {

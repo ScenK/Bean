@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { converse, type ConverseDeps } from "../converse.js";
 import { extractMemories } from "../memory/extract.js";
 import { proposeMemoryConsolidation } from "../memory/consolidate.js";
@@ -202,8 +203,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     try {
       const now = new Date().toISOString();
-      const additions: Memory[] = selected.map((c, i) => ({
-        id: `${Date.now()}-${i}`, text: c.text, projectPath: c.projectPath, createdAt: now,
+      // randomUUID, not Date.now()-based: `id` is a SQLite PRIMARY KEY, so two processes
+      // generating an id in the same millisecond would collide and fail the INSERT.
+      const additions: Memory[] = selected.map((c) => ({
+        id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: now,
       }));
       // Insert-only: never lose a concurrent writer's addition (see appendMemories's doc comment).
       await deps.appendMemories(additions);
@@ -251,9 +254,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       const droppedIds = new Set(pending.result.drops);
       const kept = existing.filter((m) => !mergedIds.has(m.id) && !droppedIds.has(m.id));
       const now = new Date().toISOString();
-      const merged: Memory[] = pending.result.merges.map((m, i) => {
+      const merged: Memory[] = pending.result.merges.map((m) => {
         const projectPath = existing.find((mm) => m.ids.includes(mm.id) && mm.projectPath)?.projectPath;
-        return { id: `${Date.now()}-merge-${i}`, text: m.mergedText, projectPath, createdAt: now };
+        return { id: randomUUID(), text: m.mergedText, projectPath, createdAt: now };
       });
       await deps.saveMemories([...kept, ...merged]);
       await updateTo(deps.cards.consolidationResultCard({ outcome: "applied" }));
