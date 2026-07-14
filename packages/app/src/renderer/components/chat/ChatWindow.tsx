@@ -3,7 +3,7 @@ import { ChatPanel } from "./ChatPanel.js";
 import { newId, type ChatItem } from "../../shared/chat-types.js";
 import type { PickableModel } from "../../shared/ProposalCard.js";
 import type {
-  ChatTurn, CliName, LinkedNote, MemoryCandidate, Memory, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion,
+  ChatTurn, CliName, LinkedNote, MemoryCandidate, Memory, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill,
 } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
 import type { InterruptedRunNotice } from "../../../ipc.js";
@@ -98,6 +98,9 @@ export function ChatWindow() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [runModels, setRunModels] = useState<PickableModel[]>([]);
   const [lastUsedModels, setLastUsedModels] = useState<Record<string, string>>({});
+  // Full current skill list — passed to SkillCard so its "replaces existing" chip tracks
+  // the user's live-edited name against real skills, not a stale server-computed flag.
+  const [skills, setSkills] = useState<Skill[]>([]);
   const itemsRef = useRef<ChatItem[]>([]);
   itemsRef.current = items;
   const busyRef = useRef(false);
@@ -127,6 +130,7 @@ export function ChatWindow() {
     window.bean.availableClis().then(setClis);
     window.bean.listProjects().then(setProjects);
     window.bean.availableModels().then(setRunModels);
+    window.bean.listSkills().then(setSkills);
     // Pull any URL dropped before this window's renderer finished mounting — the push below
     // (onComponentDroppedUrl) can arrive first and gets silently dropped, same race
     // getPendingPlan fixes for the Plan window.
@@ -491,6 +495,7 @@ export function ChatWindow() {
         projects={projects}
         runModels={runModels}
         lastUsedModels={lastUsedModels}
+        skills={skills}
         onSend={sendMessage}
         onConfirm={confirmProposal}
         onCancel={cancelProposal}
