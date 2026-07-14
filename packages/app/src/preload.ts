@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine,
@@ -72,6 +72,9 @@ contextBridge.exposeInMainWorld("bean", {
   saveConfig: (update: ConfigUpdate): Promise<void> => ipcRenderer.invoke(IPC.saveConfig, update),
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(IPC.getAppInfo),
   quitApp: (): void => ipcRenderer.send(IPC.quit),
+  checkForUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke(IPC.checkForUpdate),
+  installUpdate: (): Promise<InstallUpdateResult | undefined> => ipcRenderer.invoke(IPC.installUpdate),
+  openUpdateReleasePage: (): void => ipcRenderer.send(IPC.openUpdateReleasePage),
   listNotes: (): Promise<Note[]> => ipcRenderer.invoke(IPC.listNotes),
   saveNote: (draft: NoteDraft): Promise<string> => ipcRenderer.invoke(IPC.saveNote, draft),
   deleteNote: (slug: string): Promise<void> => ipcRenderer.invoke(IPC.deleteNote, slug),

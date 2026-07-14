@@ -25,14 +25,21 @@ jobs:
           # ponytail: unsigned build; add CSC_LINK/CSC_KEY_PASSWORD secrets when a
           # Developer ID cert exists.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - run: node packages/app/scripts/sign-release.mjs packages/app/release/*.zip
+        if: ${{ secrets.UPDATE_ED_PRIVATE_KEY != '' }}
+        env:
+          UPDATE_ED_PRIVATE_KEY: ${{ secrets.UPDATE_ED_PRIVATE_KEY }}
       - uses: actions/upload-artifact@v4
         with:
           name: bean-mac
           path: |
             packages/app/release/*.dmg
             packages/app/release/*.zip
+            packages/app/release/*.zip.sig
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" packages/app/release/*.dmg packages/app/release/*.zip --generate-notes
+        run: |
+          shopt -s nullglob
+          gh release create "${GITHUB_REF_NAME}" packages/app/release/*.dmg packages/app/release/*.zip packages/app/release/*.zip.sig --generate-notes
