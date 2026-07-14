@@ -7,6 +7,6 @@
 // .memory/project-manual-update-check.md for the one-time setup steps. The matching private
 // key for THIS placeholder was never stored anywhere and cannot sign real releases.
 export const UPDATE_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEACk091RlITM4UfITjtCeJS2Q7qzTNFbN6ts0ePlk3Nkk=
+MCowBQYDK2VwAyEA8LwtsND66zxC/IHQbGiErhdHrhOd8xxjNlYJw0PafjM=
 -----END PUBLIC KEY-----
 `;
