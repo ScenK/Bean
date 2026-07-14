@@ -26,7 +26,9 @@ jobs:
           # Developer ID cert exists.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
       - run: node packages/app/scripts/sign-release.mjs packages/app/release/*.zip
-        if: ${{ secrets.UPDATE_ED_PRIVATE_KEY != '' }}
+        # `secrets` isn't an allowed context in `if:` (GitHub Actions restricts it to
+        # env/with/run) — route it through `env` first, which `if:` can read.
+        if: ${{ env.UPDATE_ED_PRIVATE_KEY != '' }}
         env:
           UPDATE_ED_PRIVATE_KEY: ${{ secrets.UPDATE_ED_PRIVATE_KEY }}
       - uses: actions/upload-artifact@v4
