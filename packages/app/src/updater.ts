@@ -86,22 +86,29 @@ export async function installAndRelaunch(extractedAppPath: string, deps: Install
   await rename(currentAppPath, backupPath);
 
   try {
-    try {
-      await rename(extractedAppPath, currentAppPath);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "EXDEV") {
-        await copyRecursive(extractedAppPath, currentAppPath);
-        await rm(extractedAppPath);
-      } else {
-        throw err;
-      }
-    }
+    await rename(extractedAppPath, currentAppPath);
   } catch (err) {
-    await rename(backupPath, currentAppPath);
-    throw err;
+    if ((err as NodeJS.ErrnoException).code !== "EXDEV") {
+      // rename() failed before touching currentAppPath — it's still empty/nonexistent,
+      // so the restore is always safe.
+      await rename(backupPath, currentAppPath);
+      throw err;
+    }
+    try {
+      await copyRecursive(extractedAppPath, currentAppPath);
+    } catch (copyErr) {
+      // The copy may have partially populated currentAppPath — clear it before restoring
+      // the backup so the restore-rename can't collide with a non-empty/partial destination.
+      await rm(currentAppPath).catch(() => {});
+      await rename(backupPath, currentAppPath);
+      throw copyErr;
+    }
+    // Copy succeeded — the swap is done. Everything below is best-effort cleanup and must
+    // never roll back an already-successful install.
   }
 
   await rm(backupPath).catch(() => {});
+  await rm(dirname(extractedAppPath)).catch(() => {});
   relaunch();
   exit();
 }

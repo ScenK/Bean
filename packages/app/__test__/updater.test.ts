@@ -95,10 +95,16 @@ describe("installAndRelaunch", () => {
       ["/Applications/Bean.app", "/Applications/Bean.app.old"],
       ["/tmp/bean-update-xyz/Bean.app", "/Applications/Bean.app"],
     ]);
-    expect(h.removed).toEqual(["/Applications/Bean.app.old"]);
+    expect(h.removed).toEqual(["/Applications/Bean.app.old", "/tmp/bean-update-xyz"]);
     expect(h.copied).toEqual([]);
     expect(h.relaunched()).toBe(true);
     expect(h.exited()).toBe(true);
+  });
+
+  test("removes the whole temp parent directory (not just the backup) after a direct-rename swap", async () => {
+    const h = harness();
+    await installAndRelaunch("/tmp/bean-update-xyz/Bean.app", h.deps);
+    expect(h.removed).toContain("/tmp/bean-update-xyz");
   });
 
   test("falls back to a recursive copy on a cross-device rename (EXDEV)", async () => {
@@ -113,7 +119,7 @@ describe("installAndRelaunch", () => {
     });
     await installAndRelaunch("/tmp/bean-update-xyz/Bean.app", h.deps);
     expect(h.copied).toEqual([["/tmp/bean-update-xyz/Bean.app", "/Applications/Bean.app"]]);
-    expect(h.removed).toEqual(["/tmp/bean-update-xyz/Bean.app", "/Applications/Bean.app.old"]);
+    expect(h.removed).toEqual(["/Applications/Bean.app.old", "/tmp/bean-update-xyz"]);
     expect(h.relaunched()).toBe(true);
   });
 
@@ -128,8 +134,68 @@ describe("installAndRelaunch", () => {
       ["/Applications/Bean.app", "/Applications/Bean.app.old"],
       ["/Applications/Bean.app.old", "/Applications/Bean.app"],
     ]);
+    expect(h.removed).toEqual([]);
     expect(h.relaunched()).toBe(false);
     expect(h.exited()).toBe(false);
+  });
+
+  test("cleans up a partial copy before rolling back when the recursive copy itself fails (EXDEV)", async () => {
+    const sequence: string[] = [];
+    let relaunched = false;
+    let exited = false;
+    const deps = {
+      currentAppPath: "/Applications/Bean.app",
+      rename: vi.fn(async (from: string, to: string) => {
+        if (from === "/tmp/bean-update-xyz/Bean.app") {
+          const err = new Error("cross-device") as NodeJS.ErrnoException;
+          err.code = "EXDEV";
+          throw err;
+        }
+        sequence.push(`rename:${from}->${to}`);
+      }),
+      copyRecursive: vi.fn(async () => { throw new Error("copy failed"); }),
+      rm: vi.fn(async (p: string) => { sequence.push(`rm:${p}`); }),
+      relaunch: () => { relaunched = true; },
+      exit: () => { exited = true; },
+    };
+
+    await expect(installAndRelaunch("/tmp/bean-update-xyz/Bean.app", deps)).rejects.toThrow("copy failed");
+
+    // The copy error must be rethrown as-is (not masked), and currentAppPath must be
+    // cleared BEFORE the rollback rename, so the rollback can't collide with a partial copy.
+    expect(sequence).toEqual([
+      "rename:/Applications/Bean.app->/Applications/Bean.app.old",
+      "rm:/Applications/Bean.app",
+      "rename:/Applications/Bean.app.old->/Applications/Bean.app",
+    ]);
+    expect(relaunched).toBe(false);
+    expect(exited).toBe(false);
+  });
+
+  test("does not roll back a successful EXDEV copy even if temp-dir cleanup fails", async () => {
+    const h = harness();
+    h.deps.rename = vi.fn(async (from: string, to: string) => {
+      if (from === "/tmp/bean-update-xyz/Bean.app") {
+        const err = new Error("cross-device") as NodeJS.ErrnoException;
+        err.code = "EXDEV";
+        throw err;
+      }
+      h.renamed.push([from, to]);
+    });
+    h.deps.rm = vi.fn(async (p: string) => {
+      if (p === "/tmp/bean-update-xyz") throw new Error("cleanup failed");
+      h.removed.push(p);
+    });
+
+    await expect(installAndRelaunch("/tmp/bean-update-xyz/Bean.app", h.deps)).resolves.toBeUndefined();
+
+    expect(h.copied).toEqual([["/tmp/bean-update-xyz/Bean.app", "/Applications/Bean.app"]]);
+    expect(h.renamed).toEqual([
+      ["/Applications/Bean.app", "/Applications/Bean.app.old"],
+    ]);
+    expect(h.removed).toEqual(["/Applications/Bean.app.old"]);
+    expect(h.relaunched()).toBe(true);
+    expect(h.exited()).toBe(true);
   });
 });
 
