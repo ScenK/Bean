@@ -44,5 +44,5 @@ export { runRoutine, ROUTINE_STEP_TIMEOUT_MS } from "./routine-runner.js";
 export type { DelegateStepRequest, RoutineRunnerDeps, RoutineRunResult, StepResult } from "./routine-runner.js";
 export { claimOutbox, enqueueOutbox } from "./outbox.js";
 export type { OutboxMessage } from "./outbox.js";
-export { reserveRun, releaseRun, interruptedRunNotice } from "./run-queue.js";
+export { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice } from "./run-queue.js";
 export type { RunReservation } from "./run-queue.js";

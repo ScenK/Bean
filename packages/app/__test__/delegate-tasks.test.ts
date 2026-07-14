@@ -122,19 +122,38 @@ describe("createDelegateTasks", () => {
     expect(h.sent.filter((e) => e.type === "cancelled")).toEqual([]);
   });
 
-  it("interruptAll releases reservations, leaves a chat outbox notice per task, and clears state", async () => {
+  it("interruptAll leaves reservations in place, leaves a chat outbox notice per task, and clears in-memory state", async () => {
     const dir = tmp();
     const h = harness({ dir });
     await h.tasks.start({ projectPath: "/p", prompt: "one", instruction: "fix the bug" });
     await h.tasks.start({ projectPath: "/q", prompt: "two", instruction: "add the feature" });
-    await h.tasks.interruptAll();
+    h.tasks.interruptAll();
     expect(h.cancels).toEqual(["one", "two"]);
-    expect(readdirSync(join(dir, "runs"))).toEqual([]);
+    // The reservations are NOT released: this process is exiting with no confirmation the
+    // delegate children actually stopped, so releasing blind would let a relaunch double-run
+    // the same project. They stay busy (under each reservation's already-live pid) until reclaimed.
+    expect(readdirSync(join(dir, "runs"))).toHaveLength(2);
     const outboxFiles = readdirSync(join(dir, "outbox"));
     expect(outboxFiles).toHaveLength(2);
     expect(outboxFiles.every((f) => f.startsWith("chat-"))).toBe(true);
-    // Both projects are free again.
+    // A relaunch (simulated by a second harness sharing the same dir) still sees both as busy.
     const h2 = harness({ dir });
-    expect(await h2.tasks.start({ projectPath: "/p", prompt: "again", instruction: "retry" })).toBeTruthy();
+    const idAgain = await h2.tasks.start({ projectPath: "/p", prompt: "again", instruction: "retry" });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(h2.sent).toContainEqual({ taskId: idAgain, type: "failed", message: "A run is already going in that project — wait for it or cancel it first." });
+  });
+
+  it("cancel does not release the reservation until the handle confirms the child actually stopped", async () => {
+    const dir = tmp();
+    const h = harness({ dir });
+    await h.tasks.start({ projectPath: "/p", prompt: "one", instruction: "do it" });
+    h.tasks.cancel("task-1");
+    // SIGTERM sent (via h.cancels), but the confirmation callback hasn't fired yet — the
+    // project must still read as busy.
+    expect(readdirSync(join(dir, "runs"))).toHaveLength(1);
+    expect(h.sent.filter((e) => e.type === "cancelled")).toEqual([]);
+    h.cancelCallbacks[0]!();
+    expect(h.sent.filter((e) => e.type === "cancelled")).toHaveLength(1);
+    expect(readdirSync(join(dir, "runs"))).toEqual([]); // released only now
   });
 });

@@ -1,17 +1,17 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { runsDir } from "./config.js";
 
-/** Cross-process "is this project already claimed?" reservation (~/.bean/runs/<id>.json), one
- * file per active run — mirrors outbox.ts's file-per-message convention so writes never race a
- * shared file. Deliberately NOT a full run record: reporting (what happened, to whom) is handled
- * by the outbox instead — see .memory/project-durable-run-queue.md.
+/** Cross-process "is this project already claimed?" reservation (~/.bean/runs/<hash>.json), one
+ * deterministically-named file per project path — mirrors outbox.ts's file-per-message
+ * convention so writes never race a shared file. Deliberately NOT a full run record: reporting
+ * (what happened, to whom) is handled by the outbox instead — see
+ * .memory/project-durable-run-queue.md.
  *
- * Uses sync fs (tiny local JSON files, not a hot path) rather than fs/promises like the rest of
- * this package: release is called fire-and-forget from inside a synchronous settle callback
- * (RunRegistry/delegate-tasks), and an unawaited async write can still be on disk when the very
- * next start() call (same tick, same process) checks for a stale reservation — sync makes that
- * release atomic with the callback that triggers it, so no such race is possible. */
+ * Fully synchronous (node:fs, not fs/promises): called from settle callbacks and Electron's
+ * before-quit / a bare process.on("SIGTERM") — none of which reliably support awaiting real
+ * async work — so every write here must be guaranteed done by the time the call returns. */
 export interface RunReservation {
   id: string;
   projectPath: string;
@@ -27,6 +27,16 @@ function isLive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+// Deterministic, filesystem-safe name derived from the project path itself: every process
+// asking about the same project computes the same filename, so the file's own existence (via
+// an atomic O_EXCL create below) *is* the cross-process lock. A directory-scan-then-write-a-
+// new-unique-file scheme has a TOCTOU window — two processes can both see "no reservation yet"
+// and both write, defeating the whole point of this module.
+function reservationFile(dir: string, projectPath: string): string {
+  const hash = createHash("sha256").update(projectPath).digest("hex").slice(0, 32);
+  return join(runsDir(dir), `${hash}.json`);
 }
 
 function readReservation(path: string): RunReservation | undefined {
@@ -46,42 +56,54 @@ function readReservation(path: string): RunReservation | undefined {
   return undefined;
 }
 
-/** Reserve `projectPath` for the calling process, or return undefined if another live process
- * already holds it. A reservation left by a process that has since died (crash/kill -9/OOM —
- * none of which run our graceful-shutdown cleanup) is detected via pid liveness and reclaimed:
- * this is the whole crash-recovery story, no heartbeats/TTLs needed. */
-export async function reserveRun(
-  dir: string,
-  projectPath: string,
-  pid: number,
-  newId: () => string,
-): Promise<RunReservation | undefined> {
-  const runsPath = runsDir(dir);
-  let entries: string[];
+// `"wx"` = O_CREAT | O_EXCL: atomically fails with EEXIST if the file already exists, at the
+// kernel level — no separate check-then-write race at the JS level, unlike a plain existsSync
+// check would have.
+function writeReservation(path: string, reservation: RunReservation, flag: "wx" | "w"): boolean {
   try {
-    entries = readdirSync(runsPath);
-  } catch {
-    entries = [];
+    writeFileSync(path, JSON.stringify(reservation, null, 2) + "\n", { encoding: "utf8", flag });
+    return true;
+  } catch (err) {
+    if (flag === "wx" && (err as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw err;
   }
-  for (const file of entries.filter((f) => f.endsWith(".json"))) {
-    const path = join(runsPath, file);
-    const existing = readReservation(path);
-    if (!existing) {
-      rmSync(path, { force: true }); // malformed — sweep, same policy as outbox/routine loaders
-      continue;
-    }
-    if (existing.projectPath !== projectPath) continue;
-    if (isLive(existing.pid)) return undefined; // busy — a live process holds this project
-    rmSync(path, { force: true }); // stale — owning process is dead, reclaim
-  }
-  const reservation: RunReservation = { id: newId(), projectPath, pid, createdAt: new Date().toISOString() };
-  mkdirSync(runsPath, { recursive: true });
-  writeFileSync(join(runsPath, `${reservation.id}.json`), JSON.stringify(reservation, null, 2) + "\n", "utf8");
-  return reservation;
 }
 
-export async function releaseRun(dir: string, id: string): Promise<void> {
-  rmSync(join(runsDir(dir), `${id}.json`), { force: true });
+/** Reserve `projectPath` for the calling process, or return undefined if another live process
+ * already holds it. A reservation left by a process that has since died (crash/kill -9/OOM —
+ * none of which run our graceful-shutdown cleanup — or a graceful interrupt that deliberately
+ * leaves the reservation in place, see updateReservationPid below) is detected via pid liveness
+ * and reclaimed: this is the whole crash-recovery story, no heartbeats/TTLs needed. */
+export function reserveRun(dir: string, projectPath: string, pid: number, newId: () => string): RunReservation | undefined {
+  mkdirSync(runsDir(dir), { recursive: true });
+  const path = reservationFile(dir, projectPath);
+  const reservation: RunReservation = { id: newId(), projectPath, pid, createdAt: new Date().toISOString() };
+  if (writeReservation(path, reservation, "wx")) return reservation;
+
+  // Already reserved. Busy only if verifiably alive — malformed/unreadable is treated the same
+  // as "can't confirm it's live", same policy as any other malformed-file sweep in this codebase.
+  const existing = readReservation(path);
+  if (existing && isLive(existing.pid)) return undefined;
+  rmSync(path, { force: true });
+  return writeReservation(path, reservation, "wx") ? reservation : undefined;
+}
+
+/** Update a live reservation's tracked pid — called once a delegate's actual child process has
+ * spawned. The reservation is created against the *owning* process's pid before the child
+ * exists (nothing else to track yet); switching it to the child's own pid means an interrupt
+ * (see releaseRun's caller doc comments in RunRegistry/delegate-tasks) can leave the reservation
+ * in place instead of releasing it blind, and the next reserveRun's liveness check will
+ * correctly track whether *that child* — not the about-to-exit parent — is still running. No-op
+ * if the reservation is already gone (settled faster than this update landed). */
+export function updateReservationPid(dir: string, projectPath: string, pid: number): void {
+  const path = reservationFile(dir, projectPath);
+  const existing = readReservation(path);
+  if (!existing) return;
+  writeReservation(path, { ...existing, pid }, "w");
+}
+
+export function releaseRun(dir: string, projectPath: string): void {
+  rmSync(reservationFile(dir, projectPath), { force: true });
 }
 
 const MAX_DISPLAY_INSTRUCTION = 140;

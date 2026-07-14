@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DelegateCallbacks, DelegateHandle, DelegateRequest } from "../delegate.js";
 import { outboxDir } from "../config.js";
 import { enqueueOutbox } from "../outbox.js";
-import { reserveRun, releaseRun, interruptedRunNotice } from "../run-queue.js";
+import { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice } from "../run-queue.js";
 
 export type RunDelegateFn = (req: DelegateRequest, callbacks: DelegateCallbacks) => DelegateHandle;
 
@@ -37,7 +37,6 @@ interface ActiveRun {
    * callbacks that fire afterwards become no-ops instead of clobbering a newer
    * run on the same project path. */
   released: boolean;
-  reservationId: string;
   meta: RunMeta;
 }
 
@@ -65,12 +64,13 @@ export class RunRegistry {
   // before start() ever reaches its map insert — `run.released` guards that hole.
   async start(req: DelegateRequest, events: RunEvents, meta: RunMeta): Promise<boolean> {
     if (this.byProject.has(req.projectPath)) return false;
-    const reservation = await reserveRun(this.opts.dir, req.projectPath, process.pid, () => this.newId());
+    const reservation = reserveRun(this.opts.dir, req.projectPath, process.pid, () => this.newId());
     if (!reservation) return false;
-    // Lost an in-process race while awaiting the disk check above — release the now-redundant
-    // reservation and defer to whichever call already won the in-memory map.
+    // Lost an in-process race — release the now-redundant reservation and defer to whichever
+    // call already won the in-memory map. (byProject.has was already checked above; this
+    // second check exists for symmetry if start() is ever made to await something before here.)
     if (this.byProject.has(req.projectPath)) {
-      await releaseRun(this.opts.dir, reservation.id);
+      releaseRun(this.opts.dir, req.projectPath);
       return false;
     }
     const throttleMs = this.opts.throttleMs ?? 5_000;
@@ -81,16 +81,19 @@ export class RunRegistry {
       latest = undefined;
       events.onTail(line);
     }, throttleMs);
-    const run: ActiveRun = { handle: undefined, timer, events, released: false, reservationId: reservation.id, meta };
+    const run: ActiveRun = { handle: undefined, timer, events, released: false, meta };
     // Release this run only: mark it stale, stop its timer, release its reservation, and remove
-    // it from the registry only if it is still the run registered for this path.
+    // it from the registry only if it is still the run registered for this path. Only called
+    // once the delegate's own close event has actually fired (onDone/onError) — i.e. once the
+    // child process is *confirmed* dead, not just asked to stop (see cancel()/interruptAll()
+    // below, which intentionally do NOT go through this same-tick release).
     const free = (): void => {
       run.released = true;
       clearInterval(timer);
       if (this.byProject.get(req.projectPath) === run) {
         this.byProject.delete(req.projectPath);
       }
-      void releaseRun(this.opts.dir, run.reservationId);
+      releaseRun(this.opts.dir, req.projectPath);
     };
     run.handle = this.runDelegate(req, {
       onOutput: (line) => {
@@ -107,6 +110,13 @@ export class RunRegistry {
         events.onError(err.message);
       },
     });
+    // The reservation was created against this process's own pid (nothing else to track before
+    // the child exists); switch it to the child's real pid now so a later interruptAll() can
+    // leave the reservation in place and have the next reserveRun() correctly track *that
+    // child*, not this (possibly about-to-exit) process. See run-queue.ts's doc comment.
+    if (!run.released && run.handle.pid !== undefined) {
+      updateReservationPid(this.opts.dir, req.projectPath, run.handle.pid);
+    }
     if (!run.released) this.byProject.set(req.projectPath, run);
     return true;
   }
@@ -117,8 +127,14 @@ export class RunRegistry {
     run.released = true;
     clearInterval(run.timer);
     this.byProject.delete(projectPath);
-    void releaseRun(this.opts.dir, run.reservationId);
-    run.handle?.cancel(() => run.events.onCancelled());
+    // Release only once the handle confirms the child has actually stopped (onCancelled fires
+    // from the delegate's own close event) — releasing eagerly here would let a new run start
+    // on this project while the old child (sent SIGTERM, possibly still shutting down or
+    // ignoring it) is still alive.
+    run.handle?.cancel(() => {
+      releaseRun(this.opts.dir, projectPath);
+      run.events.onCancelled();
+    });
     return true;
   }
 
@@ -132,7 +148,15 @@ export class RunRegistry {
    * wait for confirmation or emit onCancelled — nothing is listening — and instead durably
    * notifies the requesting conversation via the outbox so it survives the restart.
    *
-   * Deliberately synchronous (releaseRun/enqueueOutbox are sync-internally, see their doc
+   * Deliberately does NOT release the reservation: this process is exiting right after, with no
+   * way to know whether the delegate child (sent SIGTERM below) has actually stopped by then —
+   * releasing blind would let a relaunch start a second run on the same project while the old
+   * child is still alive. The reservation already tracks the child's own pid (see start()), so
+   * it's left in place and the *next* reserveRun() for this project will correctly report busy
+   * until that child is verifiably gone (or reclaim it once it's not — same crash-recovery path
+   * as an ungraceful exit).
+   *
+   * Also deliberately synchronous (releaseRun/enqueueOutbox are sync-internally, see their doc
    * comments): a SIGTERM handler racing the process's own exit can't reliably wait on real
    * async work, so this must be guaranteed to have written everything to disk by the time it
    * returns, not just "eventually". */
@@ -144,7 +168,6 @@ export class RunRegistry {
       clearInterval(run.timer);
       this.byProject.delete(p);
       run.handle?.cancel(() => {});
-      void releaseRun(this.opts.dir, run.reservationId);
       const { full, display } = interruptedRunNotice(p, run.meta.instruction);
       void enqueueOutbox(
         outboxDir(this.opts.dir),

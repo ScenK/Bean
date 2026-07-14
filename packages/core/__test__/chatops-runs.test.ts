@@ -117,6 +117,23 @@ test("cancel cancels the underlying handle and fires onCancelled", async () => {
   expect(reg.cancel("/p")).toBe(false);
 });
 
+test("cancel does not release the reservation until the handle confirms the child actually stopped", async () => {
+  const dir = tmp();
+  let confirm: (() => void) | undefined;
+  const fn = () => ({ cancel: (done?: () => void) => { confirm = done; } });
+  const reg = new RunRegistry(fn, { dir, botKind: "discord" });
+  const ev = events();
+  await reg.start(req, ev, meta);
+  expect(reg.cancel("/p")).toBe(true);
+  // SIGTERM sent, but the child hasn't confirmed it stopped yet — the project must still read
+  // as busy, or a relaunch/other surface could start a second run on it right now.
+  expect(readdirSync(join(dir, "runs"))).toHaveLength(1);
+  expect(ev.onCancelled).not.toHaveBeenCalled();
+  confirm?.();
+  expect(ev.onCancelled).toHaveBeenCalled();
+  expect(readdirSync(join(dir, "runs"))).toEqual([]); // released only now
+});
+
 test("start reserves the project cross-process (a second RunRegistry sharing the same dir is refused)", async () => {
   const dir = tmp();
   const { fn: fnA } = fakeRun();
@@ -127,19 +144,38 @@ test("start reserves the project cross-process (a second RunRegistry sharing the
   expect(await regB.start(req, events(), meta)).toBe(false); // same projectPath, different process (simulated)
 });
 
-test("interruptAll releases reservations and leaves an outbox notice per run", async () => {
+test("interruptAll leaves the reservation in place (doesn't free the project) and leaves an outbox notice per run", async () => {
   const dir = tmp();
   const { fn, cancelled } = fakeRun();
   const reg = new RunRegistry(fn, { dir, botKind: "discord" });
   await reg.start(req, events(), meta);
-  const n = await reg.interruptAll();
+  const n = reg.interruptAll();
   expect(n).toBe(1);
   expect(cancelled).toHaveLength(1);
-  expect(reg.isRunning("/p")).toBe(false);
-  expect(readdirSync(join(dir, "runs"))).toEqual([]); // reservation released
+  expect(reg.isRunning("/p")).toBe(false); // no longer tracked in this process's memory
+  // The reservation is NOT released: this process is exiting with no confirmation the delegate
+  // child actually stopped, so releasing blind would let a relaunch double-run the same
+  // project. It stays busy (under the reservation's already-live pid) until reclaimed.
+  expect(readdirSync(join(dir, "runs"))).toHaveLength(1);
   const outboxFiles = readdirSync(join(dir, "outbox"));
   expect(outboxFiles).toHaveLength(1);
   expect(outboxFiles[0]).toMatch(/^discord-/);
-  // The freed project can be reserved again immediately.
-  expect(await reg.start(req, events(), meta)).toBe(true);
+  // A second RunRegistry (simulating a relaunch) sharing the same dir still sees it as busy.
+  const { fn: fn2 } = fakeRun();
+  const reg2 = new RunRegistry(fn2, { dir, botKind: "discord" });
+  expect(await reg2.start(req, events(), meta)).toBe(false);
+});
+
+test("start() tracks the delegate child's own pid, so a relaunch reclaims once that child is actually dead", async () => {
+  const dir = tmp();
+  // Simulates a delegate handle exposing a pid that's already gone by the time anyone checks —
+  // if the reservation stayed keyed to the *calling* process's pid (always alive here) instead
+  // of this, it would incorrectly stay "busy" forever after interruptAll().
+  const deadChildPid = 999_999;
+  const fn = () => ({ cancel: () => {}, pid: deadChildPid });
+  const reg = new RunRegistry(fn, { dir, botKind: "discord" });
+  await reg.start(req, events(), meta);
+  reg.interruptAll();
+  const reg2 = new RunRegistry(fn, { dir, botKind: "discord" });
+  expect(await reg2.start(req, events(), meta)).toBe(true);
 });

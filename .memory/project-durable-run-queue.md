@@ -1,6 +1,6 @@
 ---
 name: project-durable-run-queue
-description: Cross-process delegate-run reservation (run-queue.ts) split from interrupted-run reporting (outbox.ts reuse); why interruptAll()/enqueueOutbox/releaseRun are all fully synchronous, and why main.ts's before-quit does NOT use preventDefault.
+description: Cross-process delegate-run reservation (run-queue.ts, atomic O_EXCL keyed by project path, tracks the delegate CHILD's pid) split from interrupted-run reporting (outbox.ts reuse); why release is deferred until the child is confirmed dead; why everything on the interrupt path is fully synchronous and main.ts's before-quit does NOT use preventDefault.
 metadata:
   type: project
 ---
@@ -13,11 +13,19 @@ mid-run just killed the child and forgot about it.
 ## Reservation vs. reporting — deliberately two different mechanisms
 
 - **Reservation** ("is project X already claimed?") — `packages/core/src/run-queue.ts`,
-  `reserveRun`/`releaseRun`, one JSON file per active run under `~/.bean/runs/<id>.json`
-  (`{ id, projectPath, pid, createdAt }` — nothing else). Checked as a *second*, cross-process
-  layer after each caller's own existing synchronous in-memory guard (`RunRegistry.byProject`,
-  delegate-tasks' in-memory task map) — the in-memory check is still what prevents same-process,
-  same-tick double-starts; the disk check only extends that invariant across processes.
+  `reserveRun`/`releaseRun`, one JSON file per project path under
+  `~/.bean/runs/<sha256(projectPath)>.json` (`{ id, projectPath, pid, createdAt }` — nothing
+  else). The filename is *deterministic* (hash of the project path, not a random id) so every
+  process asking about the same project computes the same path, and the reservation is created
+  via `writeFileSync(path, data, { flag: "wx" })` (`O_CREAT|O_EXCL`) — an atomic kernel-level
+  create-if-not-exists, not a directory-scan-then-write-a-new-file. An earlier version scanned
+  the directory for any existing reservation on that path before writing a new uniquely-named
+  file; a code review caught the TOCTOU hole that left — two processes could both scan, both see
+  nothing, and both write, defeating the whole point of this module. Checked as a *second*,
+  cross-process layer after each caller's own existing synchronous in-memory guard
+  (`RunRegistry.byProject`, delegate-tasks' in-memory task map) — the in-memory check is still
+  what prevents same-process, same-tick double-starts; the disk check only extends that
+  invariant across processes.
 - **Reporting** ("tell the surface what happened") — reuses `outbox.ts` directly (added a
   `"chat"` transport alongside `"discord"`/`"teams"`) rather than inventing a
   `proposed→running→done|failed|interrupted→reported` state machine. "done"/"failed" already
@@ -35,16 +43,37 @@ wedge that project forever. `reserveRun` checks `process.kill(existingPid, 0)` (
 dead) before treating an existing reservation as busy — a dead pid's reservation is reclaimed
 instead of blocking. POSIX-only; revisit if Windows packaging is ever added.
 
-## Everything on the interrupt path is fully synchronous — `reserveRun`/`releaseRun`/`enqueueOutbox`
+## Release is deferred until the delegate CHILD is confirmed dead, not just asked to stop
 
-`RunRegistry.interruptAll()` and `delegate-tasks.ts`'s `interruptAll()` are plain synchronous
-functions (not `async`), and so are `outbox.ts`'s `enqueueOutbox`/`claimOutbox` and
-`run-queue.ts`'s `reserveRun`/`releaseRun` under the hood — all use `node:fs` sync calls
-(`readFileSync`/`writeFileSync`/`rmSync`/etc.) instead of `fs/promises`. `enqueueOutbox`/
-`reserveRun`/`releaseRun` stay `async`-declared (return a `Promise`) purely for call-site
-compatibility with existing `await`ers elsewhere (e.g. `RunRegistry.start()`'s cross-process
-busy-check genuinely wants to await); with no internal `await`, calling one without awaiting
-still runs its fs work to completion before the call returns.
+A second review finding: `interruptAll()`/`cancel()` used to release the reservation as soon as
+they *called* `handle.cancel()` (which only sends SIGTERM), not once the child actually exited.
+Two problems with that:
+- `cancel()`'s confirmation (`onCancelled`) only fires from the delegate's own `close` event
+  (see `delegate.ts`) — releasing before that let a *new* run start on the same project while
+  the old child (SIGTERM'd, possibly still shutting down or ignoring the signal) was still alive.
+- `interruptAll()` is worse: it's called right before the owning process exits, so
+  `delegate.ts`'s own SIGKILL-escalation `setTimeout` (5s after SIGTERM) never even gets a
+  chance to fire — it's scheduled on an event loop that's about to disappear. A relaunch could
+  race a child that's been sent only SIGTERM and might never actually die from it.
+
+Fix: `cancel()` now releases only inside the confirmation callback (delayed, same as before, just
+correctly ordered). `interruptAll()` doesn't release *at all* — instead:
+- The reservation is created against the *owning* process's pid (nothing else to track before
+  the child exists), then `start()` calls `updateReservationPid(dir, projectPath, handle.pid)`
+  once the delegate's real child process has spawned (`DelegateHandle` now exposes `pid`).
+- `interruptAll()` leaves that reservation in place. The *next* `reserveRun()` for the same
+  project checks liveness against the **child's** pid, not the (already-exited) owning process —
+  correctly reporting busy for as long as that child is actually running, and reclaiming
+  automatically once it's not (same crash-recovery path as an ungraceful exit, just against the
+  right pid).
+
+## Everything on the interrupt path is fully synchronous
+
+`RunRegistry.interruptAll()`/`cancel()` and `delegate-tasks.ts`'s equivalents, along with
+`run-queue.ts`'s `reserveRun`/`releaseRun`/`updateReservationPid`, are plain synchronous
+functions — no `async`, no `Promise` return type. `outbox.ts`'s `enqueueOutbox`/`claimOutbox`
+stay `async`-declared for call-site compatibility with existing `await`ers, but are sync
+internally (`node:fs`, not `fs/promises`) for the same reason.
 
 Two independent reasons drove this, not just one:
 - **Same-process double-start.** `RunRegistry`'s/`delegate-tasks`' settle paths call `releaseRun`

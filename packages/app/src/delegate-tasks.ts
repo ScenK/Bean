@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { runDelegate, reserveRun, releaseRun, enqueueOutbox, outboxDir, interruptedRunNotice } from "@bean/core";
+import { runDelegate, reserveRun, releaseRun, updateReservationPid, enqueueOutbox, outboxDir, interruptedRunNotice } from "@bean/core";
 import type { CliName, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
 
 export type DelegateEvent =
@@ -58,9 +58,6 @@ interface Task {
   cancelling: boolean;
   projectPath: string;
   instruction: string;
-  // Same id as the reservation file (run-queue.ts) — one task, one reservation, no need for a
-  // second generated id.
-  reservationId: string;
 }
 
 export function createDelegateTasks(deps: DelegateTasksDeps) {
@@ -68,12 +65,16 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
   const spawnFn = resolvedPathSpawnFn(deps.resolvedPath);
   const tasks = new Map<string, Task>();
 
+  // Release only once the delegate's own close event has actually fired (done/failed/cancelled
+  // all only reach here after that — see delegate.ts's settle()/onCancelled wiring) — i.e. once
+  // the child process is *confirmed* dead, not just asked to stop. interruptAll() below
+  // deliberately does NOT go through this path.
   const emit = (event: DelegateEvent): void => {
     const task = tasks.get(event.taskId);
     if (event.type !== "started" && !task) return;
     if (task?.cancelling && event.type !== "cancelled") return;
     if (isTerminal(event)) {
-      if (task) void releaseRun(deps.dir, task.reservationId);
+      if (task) releaseRun(deps.dir, task.projectPath);
       tasks.delete(event.taskId);
     }
     deps.send(event);
@@ -93,21 +94,34 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
         setImmediate(() => deps.send({ taskId, type: "failed", message: "No delegate CLI found — install claude or opencode." }));
         return taskId;
       }
-      const reservation = await reserveRun(deps.dir, req.projectPath, process.pid, () => taskId);
+      const reservation = reserveRun(deps.dir, req.projectPath, process.pid, () => taskId);
       if (!reservation) {
         setImmediate(() => deps.send({ taskId, type: "failed", message: ALREADY_RUNNING }));
         return taskId;
       }
+      // Set by onDone/onError if the delegate settles synchronously during spawn (e.g. an
+      // immediate failure) — before `tasks.set` below has run, so emit()'s terminal-release
+      // above finds no task yet and releases nothing; handled explicitly after `run()` returns.
+      let settled = false;
       const handle = run(
         { cli, projectPath: req.projectPath, prompt: req.prompt, model: req.model },
         {
           onOutput: (line) => emit({ taskId, type: "output", line }),
-          onDone: (result) => emit({ taskId, type: "done", result }),
-          onError: (err) => emit({ taskId, type: "failed", message: err.message }),
+          onDone: (result) => { settled = true; emit({ taskId, type: "done", result }); },
+          onError: (err) => { settled = true; emit({ taskId, type: "failed", message: err.message }); },
         },
         spawnFn,
       );
-      tasks.set(taskId, { cancel: handle.cancel, cancelling: false, projectPath: req.projectPath, instruction: req.instruction, reservationId: reservation.id });
+      if (settled) {
+        releaseRun(deps.dir, req.projectPath);
+        return taskId;
+      }
+      // The reservation was created against this process's own pid (nothing else to track
+      // before the child existed); switch it to the child's real pid so a later interruptAll()
+      // can leave the reservation in place and have the next reserveRun() correctly track *that
+      // child*, not this (possibly about-to-exit) process. See run-queue.ts's doc comment.
+      if (handle.pid !== undefined) updateReservationPid(deps.dir, req.projectPath, handle.pid);
+      tasks.set(taskId, { cancel: handle.cancel, cancelling: false, projectPath: req.projectPath, instruction: req.instruction });
       emit({ taskId, type: "started" });
       return taskId;
     },
@@ -133,7 +147,15 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     // along with it); instead leaves a durable outbox notice so the chat window can report the
     // interruption next launch (see main.ts's startup claimOutbox("chat")).
     //
-    // Deliberately synchronous (releaseRun/enqueueOutbox are sync-internally, see their doc
+    // Deliberately does NOT release the reservation: this process is about to exit, with no way
+    // to know whether the delegate child (sent SIGTERM below) has actually stopped by then —
+    // releasing blind would let a relaunch start a second run on the same project while the old
+    // child is still alive. The reservation already tracks the child's own pid (see start()), so
+    // it's left in place and the *next* reserveRun() for this project correctly reports busy
+    // until that child is verifiably gone (or reclaims it once it's not — same crash-recovery
+    // path as an ungraceful exit).
+    //
+    // Also deliberately synchronous (releaseRun/enqueueOutbox are sync-internally, see their doc
     // comments): main.ts calls this directly from a plain `before-quit` listener with no
     // preventDefault/async-gating — it must be guaranteed to have written everything to disk by
     // the time it returns, not just "eventually" (Electron's before-quit doesn't reliably await
@@ -142,7 +164,6 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       for (const [, t] of [...tasks]) {
         t.cancelling = true;
         t.cancel(() => {});
-        void releaseRun(deps.dir, t.reservationId);
         const { full, display } = interruptedRunNotice(t.projectPath, t.instruction);
         void enqueueOutbox(outboxDir(deps.dir), { transport: "chat", body: full, displayBody: display }, deps.newId);
       }
