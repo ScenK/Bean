@@ -5,9 +5,11 @@ import { expect, test, vi } from "vitest";
 import type { ConverseResult } from "../src/index.js";
 import { buildTeamsBot, type BotEffects, type TeamsBotDeps } from "../src/chatops/bot.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
+import { dbFile } from "../src/config.js";
 import { ProposalStore } from "../src/chatops/proposals.js";
 import { NoteProposalStore } from "../src/chatops/note-proposals.js";
 import { MemoryProposalStore } from "../src/chatops/memory-proposals.js";
+import { ConsolidationProposalStore } from "../src/chatops/consolidation-proposals.js";
 import { RunRegistry } from "../src/chatops/runs.js";
 import type { CardBuilders } from "../src/chatops/cards-api.js";
 import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index.js";
@@ -20,6 +22,8 @@ const fakeCards = {
   noteResultCard: (i: object) => ({ kind: "note-result", ...i }),
   memoryProposalCard: (i: object) => ({ kind: "memory-proposal", ...i }),
   memoryResultCard: (i: object) => ({ kind: "memory-result", ...i }),
+  consolidationProposalCard: (i: object) => ({ kind: "consolidation-proposal", ...i }),
+  consolidationResultCard: (i: object) => ({ kind: "consolidation-result", ...i }),
 };
 
 function fx(): BotEffects & { posted: string[]; cards: object[]; updates: { id: string; card: object }[] } {
@@ -71,10 +75,12 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     proposals: new ProposalStore(),
     noteProposals: new NoteProposalStore(),
     saveNote: async (draft) => { savedNotes.push(draft); return "our-chat"; },
-    loadNotes: async () => [],
+    searchNotes: async () => [],
     memoryProposals: new MemoryProposalStore(),
+    appendMemories: async (additions) => { savedMemories.push(additions); },
     saveMemories: async (mems) => { savedMemories.push(mems); },
-    conversations: new ConversationStore(),
+    consolidationProposals: new ConsolidationProposalStore(),
+    conversations: new ConversationStore(dbFile(runsBeanDir)),
     cards: fakeCards as CardBuilders,
     ...overrides,
   };
@@ -463,6 +469,97 @@ test("save-memories on an expired proposal posts a message and saves nothing", a
   );
   expect(savedMemories).toHaveLength(0);
   expect(effects.posted.some((p) => p.includes("expired"))).toBe(true);
+});
+
+// A stateful fake store (not the plain array makeDeps() defaults to): appendMemories/saveMemories
+// mutate the same underlying list that loadMemories reads back, so maybeProposeConsolidation's
+// post-append threshold check sees the real accumulated count — a static array would never
+// cross the threshold no matter how many facts get "added".
+function rememberDepsOverThreshold(consolidateToolCalls: { name: string; args: object }[]) {
+  let current = Array.from({ length: 30 }, (_, i) => ({
+    id: `e${i}`, text: `fact ${i}`, createdAt: "2026-01-01T00:00:00.000Z",
+  }));
+  let call = 0;
+  const chat: TeamsBotDeps["chat"] = async () => {
+    call++;
+    if (call === 1) return { content: "ok", toolCalls: [{ name: "propose_remember", args: {} }] };
+    if (call === 2) return { content: "", toolCalls: [{ name: "remember", args: { text: "new fact" } }] };
+    return { content: "", toolCalls: consolidateToolCalls };
+  };
+  const { deps } = makeDeps({
+    chat,
+    loadMemories: async () => current,
+    appendMemories: async (additions) => { current = [...current, ...additions]; },
+    saveMemories: async (mems) => { current = mems; },
+  });
+  return { deps, getCurrent: () => current };
+}
+
+test("save-memories past the consolidation threshold posts a follow-up tidy-up card", async () => {
+  const { deps } = rememberDepsOverThreshold([{ name: "drop_memory", args: { id: "e0" } }]);
+  const effects = fx();
+  const id = await proposeMemoryThenId(deps, effects);
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "save-memories", proposalId: id } },
+    effects,
+  );
+  expect(effects.cards).toHaveLength(2);
+  expect(JSON.stringify(effects.cards[1])).toContain("consolidation-proposal");
+});
+
+test("save-memories under the threshold or with an empty consolidation result posts no follow-up card", async () => {
+  const { deps } = rememberDepsOverThreshold([]); // model finds nothing to tidy
+  const effects = fx();
+  const id = await proposeMemoryThenId(deps, effects);
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "save-memories", proposalId: id } },
+    effects,
+  );
+  expect(effects.cards).toHaveLength(1);
+});
+
+test("confirm-consolidation applies drops and merges, then saves the reduced list", async () => {
+  const { deps, getCurrent } = rememberDepsOverThreshold([
+    { name: "merge_memories", args: { ids: ["e1", "e2"], mergedText: "facts 1 and 2 combined" } },
+    { name: "drop_memory", args: { id: "e3" } },
+  ]);
+  const effects = fx();
+  const memId = await proposeMemoryThenId(deps, effects);
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "save-memories", proposalId: memId } },
+    effects,
+  );
+  const card = JSON.stringify(effects.cards[1]);
+  const consId = /"proposalId":"(cons-\d+)"/.exec(card)?.[1];
+  expect(consId).toBeDefined();
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "confirm-consolidation", proposalId: consId } },
+    effects,
+  );
+  const finalSave = getCurrent();
+  expect(finalSave.some((m) => m.text === "facts 1 and 2 combined")).toBe(true);
+  expect(finalSave.some((m) => m.id === "e1" || m.id === "e2")).toBe(false);
+  expect(finalSave.some((m) => m.id === "e3")).toBe(false);
+  expect(effects.posted.some((p) => p.includes("tidied up"))).toBe(true);
+});
+
+test("cancel-consolidation updates the card and saves nothing further", async () => {
+  const { deps, getCurrent } = rememberDepsOverThreshold([{ name: "drop_memory", args: { id: "e0" } }]);
+  const effects = fx();
+  const memId = await proposeMemoryThenId(deps, effects);
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "save-memories", proposalId: memId } },
+    effects,
+  );
+  const countBefore = getCurrent().length;
+  const card = JSON.stringify(effects.cards[1]);
+  const consId = /"proposalId":"(cons-\d+)"/.exec(card)?.[1];
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "cancel-consolidation", proposalId: consId } },
+    effects,
+  );
+  expect(getCurrent()).toHaveLength(countBefore);
+  expect(JSON.stringify(effects.updates.at(-1)?.card)).toContain("cancelled");
 });
 
 test("proposedRemember with no extracted facts posts a message and no card", async () => {

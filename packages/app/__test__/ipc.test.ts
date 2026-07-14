@@ -62,7 +62,7 @@ test("chat handler wires skills/projects/persona into converse", async () => {
     personaFile: "/b/persona.json",
     projectPersonaFile: "/b/project-persona.json",
     loadMemories: async () => [],
-    memoryFile: "/b/memory.json",
+    dbFile: "/b/memory.json",
   });
   const out = await handler({ history: [], message: "review api", droppedUrl: undefined });
   expect(out.reply).toBe("on it");
@@ -95,7 +95,7 @@ test("chat handler drops disabled skills and injects recalled memories", async (
     personaFile: "/b/persona.json",
     projectPersonaFile: "/b/project-persona.json",
     loadMemories: async () => [{ id: "1", text: "prefers pnpm", createdAt: "2026-07-03T00:00:00.000Z" }],
-    memoryFile: "/b/memory.json",
+    dbFile: "/b/memory.json",
   });
   await handler({ history: [], message: "hi" });
   expect(systemContent).toContain("What you remember:");
@@ -119,7 +119,7 @@ test("chat handler passes the linked note through to converse (system prompt + p
     personaFile: "/b/persona.json",
     projectPersonaFile: "/b/project-persona.json",
     loadMemories: async () => [],
-    memoryFile: "/b/memory.json",
+    dbFile: "/b/memory.json",
   });
   const out = await handler({
     history: [], message: "continue",
@@ -146,7 +146,7 @@ test("chat handler passes delegate availability through to converse", async () =
     personaFile: "/b/persona.json",
     projectPersonaFile: "/b/project-persona.json",
     loadMemories: async () => [],
-    memoryFile: "/b/memory.json",
+    dbFile: "/b/memory.json",
     delegateAvailable: () => true,
   });
   await handler({ history: [], message: "delegate this" });
@@ -159,7 +159,7 @@ test("notes handlers pass the configured dir through to the injected store fns",
     loadNotes: async (dir) => { calls.push(["list", dir]); return []; },
     saveNote: async (dir, draft) => { calls.push(["save", dir, draft.title]); return "slug"; },
     deleteNote: async (dir, slug) => { calls.push(["delete", dir, slug]); },
-    notesDir: "/b/notes",
+    dbFile: "/b/notes",
   });
   await handlers.list();
   expect(await handlers.save({ title: "T", body: "B" })).toBe("slug");
@@ -185,7 +185,7 @@ test("chat handler passes action tools through to converse and executes them", a
     personaFile: "/b/persona.json",
     projectPersonaFile: "/b/project-persona.json",
     loadMemories: async () => [],
-    memoryFile: "/b/memory.json",
+    dbFile: "/b/memory.json",
     actions: [{
       spec: { name: "set_reminder", description: "d", parameters: { type: "object", properties: {} } },
       run: async (args) => { ran.push(args); return "saved"; },
@@ -350,12 +350,14 @@ test("dropped-url store lets a late subscriber pull the pending drop (same drop-
   expect(store.get()).toBeUndefined();
 });
 
-test("memory handlers list, save, and extract through injected deps", async () => {
+test("memory handlers list, save, append, and extract through injected deps", async () => {
   let saved: unknown[] = [];
+  let appended: unknown[] = [];
   const existing = [{ id: "1", text: "prefers pnpm", createdAt: "2026-07-03T00:00:00.000Z" }];
   const handlers = buildMemoryHandlers({
     loadMemories: async () => existing,
     saveMemories: async (_file, memories) => { saved = memories; },
+    appendMemories: async (_file, additions) => { appended = additions; },
     extractMemories: async (transcript, ex, projects) => {
       expect(ex).toEqual(existing);
       expect(projects).toEqual([{ name: "api", path: "/work/api" }]);
@@ -364,13 +366,15 @@ test("memory handlers list, save, and extract through injected deps", async () =
     loadProjects: async () => [{ name: "api", path: "/work/api" }],
     converse: async () => ({ content: "", toolCalls: [] }),
     getModel: () => "m",
-    memoryFile: "/b/memory.json",
+    dbFile: "/b/memory.json",
     projectsFile: "/b/projects.json",
   });
 
   expect(await handlers.list()).toEqual(existing);
   await handlers.save([{ id: "2", text: "x", createdAt: "2026-07-03T00:00:00.000Z" }]);
   expect(saved).toHaveLength(1);
+  await handlers.append([{ id: "3", text: "y", createdAt: "2026-07-03T00:00:00.000Z" }]);
+  expect(appended).toHaveLength(1);
   expect(await handlers.extract([{ role: "user", content: "hi" }])).toEqual([{ text: "new fact", projectPath: undefined }]);
 });
 

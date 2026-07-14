@@ -391,15 +391,19 @@ export function ChatWindow() {
   const rememberSelected = async (): Promise<void> => {
     const picked = (closeFlow?.stage === "review" ? closeFlow.items : []).filter((r) => r.checked);
     if (picked.length > 0) {
-      const existing = await window.bean.listMemories();
       const now = new Date().toISOString();
-      const additions: Memory[] = picked.map((r, i) => ({
-        id: `${Date.now()}-${i}`,
+      // randomUUID, not Date.now()-based: `id` is a SQLite PRIMARY KEY, so a chatops bot
+      // generating an id in the same millisecond (same picked-index) would collide and fail
+      // the INSERT instead of just saving alongside it.
+      const additions: Memory[] = picked.map((r) => ({
+        id: crypto.randomUUID(),
         text: r.text,
         projectPath: r.projectPath,
         createdAt: now,
       }));
-      await window.bean.saveMemories([...existing, ...additions]);
+      // Insert-only: a chatops bot could be remembering something else at the same moment —
+      // list-then-replace would silently lose whichever wrote second.
+      await window.bean.appendMemories(additions);
     }
     setCloseFlow(null);
     window.bean.allowChatClose();

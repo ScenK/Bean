@@ -106,7 +106,7 @@ export interface ChatHandlerDeps {
   projectsFile: string;
   personaFile: string;
   projectPersonaFile: string;
-  memoryFile: string;
+  dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
 }
@@ -117,7 +117,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       deps.loadSkills(deps.projectSkillsDir, deps.skillsDir),
       deps.loadProjects(deps.projectsFile),
       deps.loadPersona(deps.personaFile, deps.projectPersonaFile),
-      deps.loadMemories(deps.memoryFile),
+      deps.loadMemories(deps.dbFile),
     ]);
     const enabled = skills.filter((s) => s.enabled !== false);
     return converse(
@@ -256,23 +256,28 @@ export function buildPersonaHandlers(deps: PersonaHandlerDeps) {
 export interface MemoryHandlerDeps {
   loadMemories: (file: string) => Promise<Memory[]>;
   saveMemories: (file: string, memories: Memory[]) => Promise<void>;
+  // Insert-only add — unlike saveMemories (whole-list replace), this can't lose a concurrent
+  // writer's addition (e.g. a chatops bot remembering something at the same moment as this
+  // chat-close review). See @bean/core's memory/store.ts appendMemories doc comment.
+  appendMemories: (file: string, additions: Memory[]) => Promise<void>;
   extractMemories: (
     transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps,
   ) => Promise<MemoryCandidate[]>;
   loadProjects: (file: string) => Promise<Project[]>;
   converse: ConverseDeps["chat"];
   getModel: () => string;
-  memoryFile: string;
+  dbFile: string;
   projectsFile: string;
 }
 
 export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
   return {
-    list: (): Promise<Memory[]> => deps.loadMemories(deps.memoryFile),
-    save: (memories: Memory[]): Promise<void> => deps.saveMemories(deps.memoryFile, memories),
+    list: (): Promise<Memory[]> => deps.loadMemories(deps.dbFile),
+    save: (memories: Memory[]): Promise<void> => deps.saveMemories(deps.dbFile, memories),
+    append: (additions: Memory[]): Promise<void> => deps.appendMemories(deps.dbFile, additions),
     extract: async (transcript: ChatTurn[]): Promise<MemoryCandidate[]> => {
       const [existing, projects] = await Promise.all([
-        deps.loadMemories(deps.memoryFile),
+        deps.loadMemories(deps.dbFile),
         deps.loadProjects(deps.projectsFile),
       ]);
       return deps.extractMemories(transcript, existing, projects, { chat: deps.converse, model: deps.getModel() });
@@ -281,17 +286,17 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
 }
 
 export interface NotesHandlerDeps {
-  loadNotes: (dir: string) => Promise<Note[]>;
-  saveNote: (dir: string, draft: NoteDraft) => Promise<string>;
-  deleteNote: (dir: string, slug: string) => Promise<void>;
-  notesDir: string;
+  loadNotes: (file: string) => Promise<Note[]>;
+  saveNote: (file: string, draft: NoteDraft) => Promise<string>;
+  deleteNote: (file: string, slug: string) => Promise<void>;
+  dbFile: string;
 }
 
 export function buildNotesHandlers(deps: NotesHandlerDeps) {
   return {
-    list: (): Promise<Note[]> => deps.loadNotes(deps.notesDir),
-    save: (draft: NoteDraft): Promise<string> => deps.saveNote(deps.notesDir, draft),
-    delete: (slug: string): Promise<void> => deps.deleteNote(deps.notesDir, slug),
+    list: (): Promise<Note[]> => deps.loadNotes(deps.dbFile),
+    save: (draft: NoteDraft): Promise<string> => deps.saveNote(deps.dbFile, draft),
+    delete: (slug: string): Promise<void> => deps.deleteNote(deps.dbFile, slug),
   };
 }
 
@@ -376,12 +381,12 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   projectPersonaFile: string;
   loadMemories: (file: string) => Promise<Memory[]>;
   saveMemories: (file: string, memories: Memory[]) => Promise<void>;
+  appendMemories: MemoryHandlerDeps["appendMemories"];
   extractMemories: MemoryHandlerDeps["extractMemories"];
-  memoryFile: string;
   loadNotes: NotesHandlerDeps["loadNotes"];
   saveNote: NotesHandlerDeps["saveNote"];
   deleteNote: NotesHandlerDeps["deleteNote"];
-  notesDir: string;
+  dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
   broadcast: (channel: string, payload: unknown) => void;
@@ -492,6 +497,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   const memoryHandlers = buildMemoryHandlers(deps);
   ipcMain.handle(IPC.listMemories, () => memoryHandlers.list());
   ipcMain.handle(IPC.saveMemories, (_e, memories: Memory[]) => memoryHandlers.save(memories));
+  ipcMain.handle(IPC.appendMemories, (_e, additions: Memory[]) => memoryHandlers.append(additions));
   ipcMain.handle(IPC.extractMemories, (_e, transcript: ChatTurn[]) => memoryHandlers.extract(transcript));
 
   const notesHandlers = buildNotesHandlers(deps);

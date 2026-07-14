@@ -1,9 +1,10 @@
 import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
-  skillsDir, projectsFile, personaFile, memoryFile, modelMemoryFile, notesDir,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, loadNotes, saveMemories,
+  skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir,
-  buildTeamsBot, mentionsBotName, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore, RunRegistry,
+  buildTeamsBot, mentionsBotName, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
+  ConsolidationProposalStore, RunRegistry,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -13,7 +14,10 @@ import {
 import express from "express";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { finishedCard, memoryProposalCard, memoryResultCard, noteProposalCard, noteResultCard, proposalCard, runningCard } from "./cards.js";
+import {
+  finishedCard, memoryProposalCard, memoryResultCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
+  consolidationProposalCard, consolidationResultCard,
+} from "./cards.js";
 import { loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 
 const dir = beanDir();
@@ -62,26 +66,31 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "teams" });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this conversation has no idea what it's retrying.
-const conversations = new ConversationStore();
+const conversations = new ConversationStore(dbFile(dir));
 const bot = buildTeamsBot({
   chat: makeOpenAIConverse(beanConfig.openaiApiKey),
   model: beanConfig.model,
   loadSkills: () => loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
   loadProjects: () => loadProjects(projectsFile(dir)),
   loadPersona: () => loadPersona(personaFile(dir), personaFile(builtinDir)),
-  loadMemories: () => loadMemories(memoryFile(dir)),
+  loadMemories: () => loadMemories(dbFile(dir)),
   loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
   saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),
   detectClis: () => clis,
   runs,
   proposals: new ProposalStore(),
   noteProposals: new NoteProposalStore(),
-  saveNote: (draft) => saveNote(notesDir(dir), draft),
-  loadNotes: () => loadNotes(notesDir(dir)),
+  saveNote: (draft) => saveNote(dbFile(dir), draft),
+  searchNotes: (query) => searchNotes(dbFile(dir), query),
   memoryProposals: new MemoryProposalStore(),
-  saveMemories: (m) => saveMemories(memoryFile(dir), m),
+  appendMemories: (m) => appendMemories(dbFile(dir), m),
+  saveMemories: (m) => saveMemories(dbFile(dir), m),
+  consolidationProposals: new ConsolidationProposalStore(),
   conversations,
-  cards: { proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard },
+  cards: {
+    proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
+    consolidationProposalCard, consolidationResultCard,
+  },
 });
 
 // chatopsServers.stop() (packages/app/src/chatops-servers.ts) sends SIGTERM with no other

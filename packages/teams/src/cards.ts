@@ -1,6 +1,6 @@
 import type {
   ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
-  MemoryProposalCardInput, MemoryResultCardInput,
+  MemoryProposalCardInput, MemoryResultCardInput, ConsolidationProposalCardInput, ConsolidationResultCardInput,
 } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
@@ -151,6 +151,45 @@ export function memoryResultCard(input: MemoryResultCardInput): object {
   const text = input.outcome === "saved"
     ? `Memory saved: remembered ${input.count} fact(s) (by ${input.savedBy})`
     : `Memory cancelled (by ${input.savedBy})`;
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [{ type: "TextBlock", weight: "bolder", text }],
+    actions: [],
+  };
+}
+
+/** Follow-up card offered after a save-memories that pushed the list past the tidy-up
+ * threshold: proposed merges/drops, Apply/Cancel — same confirm-first shape as every other
+ * memory change. */
+export function consolidationProposalCard(input: ConsolidationProposalCardInput): object {
+  const factSets = [
+    ...input.merges.map((m) => ({ title: `Merge ${m.count}`, value: m.mergedText })),
+    ...input.drops.map((d) => ({ title: "Drop", value: d })),
+  ];
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", size: "medium", weight: "bolder", text: "Bean suggests tidying up memory" },
+      { type: "FactSet", facts: factSets },
+    ],
+    actions: [
+      {
+        type: "Action.Submit",
+        title: "Apply",
+        style: "positive",
+        data: { beanAction: "confirm-consolidation", proposalId: input.proposalId },
+      },
+      { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-consolidation", proposalId: input.proposalId } },
+    ],
+  };
+}
+
+export function consolidationResultCard(input: ConsolidationResultCardInput): object {
+  const text = input.outcome === "applied" ? "Memory tidied up." : "Tidy-up cancelled.";
   return {
     $schema: SCHEMA,
     type: "AdaptiveCard",

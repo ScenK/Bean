@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { converse, type ConverseDeps } from "../converse.js";
 import { extractMemories } from "../memory/extract.js";
+import { proposeMemoryConsolidation } from "../memory/consolidate.js";
 import { availableModels } from "../models.js";
 import type { Skill, Project } from "../types.js";
 import type { Persona } from "../persona.js";
@@ -10,11 +12,18 @@ import type { CardBuilders } from "./cards-api.js";
 import { formatAmbientBlock, type AmbientMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
+import { maybeCompact } from "./compact.js";
 import type { PendingProposal, ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
 import type { MemoryProposalStore } from "./memory-proposals.js";
+import type { ConsolidationProposalStore } from "./consolidation-proposals.js";
 import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
 import type { RunRegistry } from "./runs.js";
+
+// Above this many total memories, a successful save-memories also offers a tidy-up (merge
+// duplicates/drop stale) proposal — piggybacking on the existing extraction flow rather than
+// a separate scheduler, per .memory/project-bean-memory.md.
+const CONSOLIDATION_THRESHOLD = 30;
 
 export interface IncomingMessage {
   conversationId: string;
@@ -51,13 +60,18 @@ export interface TeamsBotDeps {
   runs: RunRegistry;
   proposals: ProposalStore;
   noteProposals: NoteProposalStore;
-  /** Persists a confirmed note to ~/.bean/notes (server injects the notes dir). */
+  /** Persists a confirmed note to the shared bean.db (server injects the db path). */
   saveNote: (draft: NoteDraft) => Promise<string>;
-  /** Reads back saved notes from ~/.bean/notes (server injects the notes dir); backs retrieve_note. */
-  loadNotes: () => Promise<Note[]>;
+  /** FTS5 search over saved notes (server injects the db path); backs retrieve_note. */
+  searchNotes: (query: string) => Promise<Note[]>;
   memoryProposals: MemoryProposalStore;
-  /** Persists the full memory list (server injects the memory file path). */
+  /** Insert-only add of new facts — never lose a concurrent writer's addition (see
+   * memory/store.ts's appendMemories doc comment). */
+  appendMemories: (additions: Memory[]) => Promise<void>;
+  /** Whole-list replace, only for consolidation's merge/drop apply (a genuine read-modify-write,
+   * gated behind a one-shot claimed proposal so it isn't the same race as free-form appends). */
   saveMemories: (memories: Memory[]) => Promise<void>;
+  consolidationProposals: ConsolidationProposalStore;
   conversations: ConversationStore;
   cards: CardBuilders;
 }
@@ -70,7 +84,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   onMessage: (msg: IncomingMessage, fx: BotEffects) => Promise<void>;
   onCardAction: (action: CardAction, fx: BotEffects) => Promise<void>;
 } {
-  const actions = [retrieveNoteTool(deps.loadNotes)];
+  const actions = [retrieveNoteTool(deps.searchNotes)];
 
   async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();
@@ -188,16 +202,67 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     try {
-      const existing = await deps.loadMemories();
       const now = new Date().toISOString();
-      const additions: Memory[] = selected.map((c, i) => ({
-        id: `${Date.now()}-${i}`, text: c.text, projectPath: c.projectPath, createdAt: now,
+      // randomUUID, not Date.now()-based: `id` is a SQLite PRIMARY KEY, so two processes
+      // generating an id in the same millisecond would collide and fail the INSERT.
+      const additions: Memory[] = selected.map((c) => ({
+        id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: now,
       }));
-      await deps.saveMemories([...existing, ...additions]);
+      // Insert-only: never lose a concurrent writer's addition (see appendMemories's doc comment).
+      await deps.appendMemories(additions);
       await updateTo(resultCard("saved", selected.length));
       await fx.post(`Remembered ${selected.length} fact(s).`);
+      const all = await deps.loadMemories();
+      await maybeProposeConsolidation(all, pending.conversationId, fx);
     } catch (err) {
       await fx.post(`Couldn't save memory: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async function maybeProposeConsolidation(memories: Memory[], conversationId: string, fx: BotEffects): Promise<void> {
+    if (memories.length <= CONSOLIDATION_THRESHOLD) return;
+    const result = await proposeMemoryConsolidation(memories, { chat: deps.chat, model: deps.model });
+    if (result.merges.length === 0 && result.drops.length === 0) return;
+    const pending = deps.consolidationProposals.add({ result, conversationId });
+    const merges = result.merges.map((m) => ({ mergedText: m.mergedText, count: m.ids.length }));
+    const drops = result.drops.map((id) => memories.find((m) => m.id === id)?.text ?? id);
+    const activityId = await fx.postCard(deps.cards.consolidationProposalCard({ proposalId: pending.id, merges, drops }));
+    deps.consolidationProposals.setCardActivityId(pending.id, activityId);
+  }
+
+  async function handleConsolidationAction(
+    kind: "confirm-consolidation" | "cancel-consolidation",
+    proposalId: string | undefined,
+    fx: BotEffects,
+  ): Promise<void> {
+    if (!proposalId) return;
+    const pending = deps.consolidationProposals.claim(proposalId);
+    if (!pending) {
+      await fx.post("That tidy-up suggestion expired.");
+      return;
+    }
+    const updateTo = async (card: object): Promise<void> => {
+      if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
+    };
+    if (kind === "cancel-consolidation") {
+      await updateTo(deps.cards.consolidationResultCard({ outcome: "cancelled" }));
+      return;
+    }
+    try {
+      const existing = await deps.loadMemories();
+      const mergedIds = new Set(pending.result.merges.flatMap((m) => m.ids));
+      const droppedIds = new Set(pending.result.drops);
+      const kept = existing.filter((m) => !mergedIds.has(m.id) && !droppedIds.has(m.id));
+      const now = new Date().toISOString();
+      const merged: Memory[] = pending.result.merges.map((m) => {
+        const projectPath = existing.find((mm) => m.ids.includes(mm.id) && mm.projectPath)?.projectPath;
+        return { id: randomUUID(), text: m.mergedText, projectPath, createdAt: now };
+      });
+      await deps.saveMemories([...kept, ...merged]);
+      await updateTo(deps.cards.consolidationResultCard({ outcome: "applied" }));
+      await fx.post("Memory tidied up.");
+    } catch (err) {
+      await fx.post(`Couldn't tidy up memory: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -234,6 +299,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps.conversations.append(msg.conversationId, { role: "assistant", content: result.reply });
           await fx.reply(result.reply);
         }
+        void maybeCompact(msg.conversationId, deps.conversations, { chat: deps.chat, model: deps.model });
         if (result.proposedRun) {
           // A `target: chat` skill runs on Bean's own model: resend the composed prompt
           // through this same conversation (mirrors ChatWindow's confirmProposal). No
@@ -325,6 +391,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (beanAction === "save-memories" || beanAction === "cancel-memories") {
         await handleMemoryAction(beanAction, proposalId, action.value.memoryPicks, action.fromName, fx);
+        return;
+      }
+      if (beanAction === "confirm-consolidation" || beanAction === "cancel-consolidation") {
+        await handleConsolidationAction(beanAction, proposalId, fx);
         return;
       }
       if (!proposalId) return;

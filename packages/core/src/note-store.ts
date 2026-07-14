@@ -1,15 +1,12 @@
-import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
-import { parseFrontmatter } from "./frontmatter.js";
+import { openDb } from "./db.js";
 import type { ActionTool } from "./converse.js";
 
 /** A saved note: conversation output parked for later. Unlike memories, notes are never
  * injected into prompts — they do nothing until the user explicitly continues one in chat. */
 export interface Note {
-  /** Stable id derived from filename without extension. */
   slug: string;
   title: string;
-  /** Markdown body below the frontmatter block. */
+  /** Markdown body. */
   body: string;
   /** Project path this note belongs to; absent = general. */
   project?: string;
@@ -26,7 +23,7 @@ export interface NoteDraft {
   body: string;
   project?: string;
   source?: "chat" | "manual";
-  /** Present = update that note in place (version bump, prior version kept in .history/). */
+  /** Present = update that note in place (version bump, prior version kept in notes_history). */
   slug?: string;
 }
 
@@ -39,90 +36,109 @@ function slugify(title: string): string {
   return s || "note";
 }
 
-function stripFrontmatter(text: string): string {
-  return text.replace(/^---\n[\s\S]*?\n---\n?/, "");
-}
-
 const traversal = /[/\\]|\.\./;
 
-export async function loadNotes(dir: string): Promise<Note[]> {
-  let entries: string[];
-  try {
-    entries = await readdir(dir);
-  } catch {
-    return [];
-  }
-  const notes: Note[] = [];
-  for (const file of entries.filter((f) => f.endsWith(".md")).sort()) {
-    const raw = await readFile(join(dir, file), "utf8");
-    const fm = parseFrontmatter(raw);
-    const body = stripFrontmatter(raw);
-    notes.push({
-      slug: basename(file, ".md"),
-      title: fm.title || basename(file, ".md"),
-      body,
-      project: fm.project || undefined,
-      updated: fm.updated ?? "",
-      version: Number(fm.version) >= 1 ? Number(fm.version) : 1,
-      source: fm.source === "manual" ? "manual" : "chat",
-      openCount: openQuestionCount(body),
-    });
-  }
-  // Most recently updated first.
-  return notes.sort((a, b) => b.updated.localeCompare(a.updated));
+interface NoteRow {
+  slug: string; title: string; body: string; project: string | null; updated: string; version: number; source: string;
 }
 
-/** Create (no slug) or update-in-place (slug given). On update the prior file is copied to
- * .history/<slug>.v<n>.md first — updates are never destructive. Returns the saved note's slug. */
+function toNote(row: NoteRow): Note {
+  return {
+    slug: row.slug, title: row.title, body: row.body, project: row.project ?? undefined,
+    updated: row.updated, version: row.version, source: row.source === "manual" ? "manual" : "chat",
+    openCount: openQuestionCount(row.body),
+  };
+}
+
+const SELECT_NOTE = "SELECT slug, title, body, project, updated, version, source FROM notes";
+
+export async function loadNotes(file: string): Promise<Note[]> {
+  const db = openDb(file);
+  // slug ASC as a tiebreaker: `updated` alone isn't unique (same-second saves), and without a
+  // secondary key SQLite's tie order is unspecified — this keeps ties deterministic.
+  const rows = db.prepare(`${SELECT_NOTE} ORDER BY updated DESC, slug ASC`).all() as unknown as NoteRow[];
+  return rows.map(toNote);
+}
+
+/** Prior versions of a note, oldest first — the notes_history counterpart to loadNotes. */
+export async function loadNoteHistory(file: string, slug: string): Promise<Note[]> {
+  const db = openDb(file);
+  const rows = db.prepare(
+    "SELECT slug, version, title, body, project, updated, source FROM notes_history WHERE slug = ? ORDER BY version",
+  ).all(slug) as unknown as NoteRow[];
+  return rows.map(toNote);
+}
+
+/** Create (no slug) or update-in-place (slug given). On update the prior row is copied into
+ * notes_history first — updates are never destructive. Returns the saved note's slug. */
 export async function saveNote(
-  dir: string,
+  file: string,
   draft: NoteDraft,
   now: () => Date = () => new Date(),
 ): Promise<string> {
   if (draft.slug !== undefined && traversal.test(draft.slug)) throw new Error(`invalid note slug: ${draft.slug}`);
   if (!draft.title.trim()) throw new Error("note title is required");
-  await mkdir(dir, { recursive: true });
+  const db = openDb(file);
 
   let slug = draft.slug;
   let version = 1;
-  if (slug) {
-    const prev = join(dir, `${slug}.md`);
-    try {
-      const fm = parseFrontmatter(await readFile(prev, "utf8"));
-      version = (Number(fm.version) >= 1 ? Number(fm.version) : 1) + 1;
-      await mkdir(join(dir, ".history"), { recursive: true });
-      await copyFile(prev, join(dir, ".history", `${slug}.v${version - 1}.md`));
-    } catch {
-      // slug given but file gone — treat as a fresh v1 create under that slug
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (slug) {
+      const prev = db.prepare(`${SELECT_NOTE} WHERE slug = ?`).get(slug) as NoteRow | undefined;
+      if (prev) {
+        version = prev.version + 1;
+        db.prepare(
+          "INSERT OR IGNORE INTO notes_history (slug, version, title, body, project, updated, source) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ).run(prev.slug, prev.version, prev.title, prev.body, prev.project, prev.updated, prev.source);
+      }
+      // slug given but no row (deleted or never existed) — treat as a fresh v1 create under that slug
+    } else {
+      slug = slugify(draft.title);
+      const taken = new Set(
+        (db.prepare("SELECT slug FROM notes").all() as unknown as { slug: string }[]).map((r) => r.slug),
+      );
+      for (let i = 2; taken.has(slug); i++) slug = `${slugify(draft.title)}-${i}`;
     }
-  } else {
-    slug = slugify(draft.title);
-    const taken = new Set((await loadNotes(dir)).map((n) => n.slug));
-    for (let i = 2; taken.has(slug); i++) slug = `${slugify(draft.title)}-${i}`;
+    db.prepare(
+      "INSERT INTO notes (slug, title, body, project, updated, version, source) VALUES (?, ?, ?, ?, ?, ?, ?) " +
+        "ON CONFLICT(slug) DO UPDATE SET title=excluded.title, body=excluded.body, project=excluded.project, " +
+        "updated=excluded.updated, version=excluded.version, source=excluded.source",
+    ).run(slug, draft.title.trim(), draft.body, draft.project ?? null, now().toISOString(), version, draft.source ?? "chat");
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
   }
-
-  const fmLines = [
-    `title: ${draft.title.trim()}`,
-    `updated: ${now().toISOString()}`,
-    `version: ${version}`,
-    `source: ${draft.source ?? "chat"}`,
-    ...(draft.project ? [`project: ${draft.project}`] : []),
-  ];
-  await writeFile(join(dir, `${slug}.md`), `---\n${fmLines.join("\n")}\n---\n${draft.body}`, "utf8");
   return slug;
 }
 
-/** Removes the note file; its .history/ versions are deliberately kept. */
-export async function deleteNote(dir: string, slug: string): Promise<void> {
+/** Removes the note row; notes_history versions are deliberately kept. */
+export async function deleteNote(file: string, slug: string): Promise<void> {
   if (traversal.test(slug)) throw new Error(`invalid note slug: ${slug}`);
-  await rm(join(dir, `${slug}.md`), { force: true });
+  const db = openDb(file);
+  db.prepare("DELETE FROM notes WHERE slug = ?").run(slug);
+}
+
+/** FTS5 search backing retrieve_note: an OR-of-prefix-words match over title+body, ranked by
+ * bm25 — preserves the old word-match's "any shared word surfaces the note" contract (not a
+ * whole-phrase match) while replacing its in-JS substring scoring. */
+export async function searchNotes(file: string, query: string, limit = 5): Promise<Note[]> {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  const db = openDb(file);
+  const matchQuery = words.map((w) => `"${w.replace(/"/g, '""')}"*`).join(" OR ");
+  const rows = db.prepare(
+    "SELECT n.slug, n.title, n.body, n.project, n.updated, n.version, n.source FROM notes_fts f " +
+      "JOIN notes n ON n.rowid = f.rowid WHERE notes_fts MATCH ? ORDER BY bm25(notes_fts) LIMIT ?",
+  ).all(matchQuery, limit) as unknown as NoteRow[];
+  return rows.map(toNote);
 }
 
 /** ActionTool letting converse() look up a saved note by title/topic — notes are otherwise
- * write-only from chat (propose_note). Case-insensitive per-word match over title/body, ranked
- * by number of query words matched (not a whole-phrase match — "Bean roadmap" still finds a
- * note titled just "Roadmap ..." on the shared word). */
-export function retrieveNoteTool(loadNotesFn: () => Promise<Note[]>): ActionTool {
+ * write-only from chat (propose_note). */
+export function retrieveNoteTool(searchNotesFn: (query: string) => Promise<Note[]>): ActionTool {
   return {
     spec: {
       name: "retrieve_note",
@@ -138,18 +154,10 @@ export function retrieveNoteTool(loadNotesFn: () => Promise<Note[]>): ActionTool
     run: async (args) => {
       const { query } = (args ?? {}) as { query?: unknown };
       if (typeof query !== "string" || !query.trim()) return "error: retrieve_note needs { query }";
-      const words = query.trim().toLowerCase().split(/\s+/);
-      const scored = (await loadNotesFn())
-        .map((n) => {
-          const title = n.title.toLowerCase();
-          const body = n.body.toLowerCase();
-          return { n, score: words.filter((w) => title.includes(w) || body.includes(w)).length };
-        })
-        .filter((x) => x.score > 0)
-        .sort((a, b) => b.score - a.score);
-      if (scored.length === 0) return `no saved notes matched "${query}"`;
-      const note = scored[0]!.n;
-      const others = scored.slice(1, 5).map((x) => x.n.title);
+      const matches = await searchNotesFn(query);
+      if (matches.length === 0) return `no saved notes matched "${query}"`;
+      const note = matches[0]!;
+      const others = matches.slice(1, 5).map((n) => n.title);
       return `# ${note.title}\n\n${note.body}` +
         (others.length > 0 ? `\n\n(other matches: ${others.join(", ")})` : "");
     },

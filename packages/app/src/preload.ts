@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld("bean", {
   routinesRunNow: (name: string): Promise<{ started: boolean; reason?: string }> => ipcRenderer.invoke(IPC.routinesRunNow, name),
   listMemories: (): Promise<Memory[]> => ipcRenderer.invoke(IPC.listMemories),
   saveMemories: (memories: Memory[]): Promise<void> => ipcRenderer.invoke(IPC.saveMemories, memories),
+  appendMemories: (additions: Memory[]): Promise<void> => ipcRenderer.invoke(IPC.appendMemories, additions),
   extractMemories: (transcript: ChatTurn[]): Promise<MemoryCandidate[]> =>
     ipcRenderer.invoke(IPC.extractMemories, transcript),
   onReviewBeforeClose: (cb: () => void) => ipcRenderer.on(IPC.reviewBeforeClose, () => cb()),
