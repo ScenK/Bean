@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
-import { fetchLatestRelease, downloadAsset, extractAndSign, currentAppBundlePath, installAndRelaunch } from "../src/updater.js";
+import { generateKeyPairSync, sign as cryptoSign } from "node:crypto";
+import { fetchLatestRelease, downloadAsset, extractAndSign, currentAppBundlePath, installAndRelaunch, checkAndDownloadUpdate } from "../src/updater.js";
 
 function fakeResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -129,5 +130,102 @@ describe("installAndRelaunch", () => {
     ]);
     expect(h.relaunched()).toBe(false);
     expect(h.exited()).toBe(false);
+  });
+});
+
+describe("checkAndDownloadUpdate", () => {
+  function keypair() {
+    return generateKeyPairSync("ed25519", {
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+  }
+
+  test("returns up-to-date without downloading anything when no newer release exists", async () => {
+    const download = vi.fn();
+    const outcome = await checkAndDownloadUpdate("9.9.9", {
+      fetchRelease: async () => ({ tagName: "v0.1.0", body: "", assets: [] }),
+      downloadAsset: download,
+    });
+    expect(outcome).toEqual({ result: { status: "up-to-date" } });
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  test("downloads, verifies, and extracts when a correctly signed newer release exists", async () => {
+    const { publicKey, privateKey } = keypair();
+    const zipBytes = Buffer.from("zip-bytes");
+    const signature = cryptoSign(null, zipBytes, privateKey).toString("base64");
+    const extract = vi.fn(async () => "/tmp/bean-update-xyz/Bean.app");
+
+    const outcome = await checkAndDownloadUpdate("0.8.12", {
+      fetchRelease: async () => ({
+        tagName: "v0.8.13",
+        body: "notes",
+        assets: [
+          { name: "Bean-0.8.13-arm64-mac.zip", browserDownloadUrl: "https://x/zip" },
+          { name: "Bean-0.8.13-arm64-mac.zip.sig", browserDownloadUrl: "https://x/sig" },
+        ],
+      }),
+      downloadAsset: async (url) => (url === "https://x/zip" ? zipBytes : Buffer.from(signature, "utf8")),
+      extract,
+      publicKeyPem: publicKey,
+    });
+
+    expect(outcome.result).toEqual({
+      status: "available", version: "0.8.13", notes: "notes",
+      zipUrl: "https://x/zip", sigUrl: "https://x/sig",
+    });
+    expect(outcome.extractedAppPath).toBe("/tmp/bean-update-xyz/Bean.app");
+    expect(extract).toHaveBeenCalledWith(zipBytes);
+  });
+
+  test("errors without extracting when the signature doesn't match", async () => {
+    const { privateKey } = keypair();
+    const { publicKey: unrelatedPublicKey } = keypair();
+    const zipBytes = Buffer.from("zip-bytes");
+    const signature = cryptoSign(null, zipBytes, privateKey).toString("base64");
+    const extract = vi.fn();
+
+    const outcome = await checkAndDownloadUpdate("0.8.12", {
+      fetchRelease: async () => ({
+        tagName: "v0.8.13",
+        body: "notes",
+        assets: [
+          { name: "Bean-0.8.13-arm64-mac.zip", browserDownloadUrl: "https://x/zip" },
+          { name: "Bean-0.8.13-arm64-mac.zip.sig", browserDownloadUrl: "https://x/sig" },
+        ],
+      }),
+      downloadAsset: async (url) => (url === "https://x/zip" ? zipBytes : Buffer.from(signature, "utf8")),
+      extract,
+      publicKeyPem: unrelatedPublicKey,
+    });
+
+    expect(outcome.result).toEqual({
+      status: "error",
+      message: "Update signature verification failed — this release may be corrupted or tampered with.",
+    });
+    expect(extract).not.toHaveBeenCalled();
+  });
+
+  test("surfaces a network error from fetchRelease without throwing", async () => {
+    const outcome = await checkAndDownloadUpdate("0.8.12", {
+      fetchRelease: async () => { throw new Error("ENOTFOUND"); },
+    });
+    expect(outcome).toEqual({ result: { status: "error", message: "Couldn't reach GitHub: ENOTFOUND" } });
+  });
+
+  test("surfaces a download error without throwing", async () => {
+    const outcome = await checkAndDownloadUpdate("0.8.12", {
+      fetchRelease: async () => ({
+        tagName: "v0.8.13",
+        body: "",
+        assets: [
+          { name: "Bean-0.8.13-arm64-mac.zip", browserDownloadUrl: "https://x/zip" },
+          { name: "Bean-0.8.13-arm64-mac.zip.sig", browserDownloadUrl: "https://x/sig" },
+        ],
+      }),
+      downloadAsset: async () => { throw new Error("ECONNRESET"); },
+    });
+    expect(outcome).toEqual({ result: { status: "error", message: "Download failed: ECONNRESET" } });
   });
 });

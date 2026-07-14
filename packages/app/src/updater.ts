@@ -4,7 +4,10 @@ import { mkdtemp as mkdtempCb, writeFile as writeFileCb, rename as renameCb, rm 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { GithubReleaseInfo } from "@bean/core";
+import {
+  checkForUpdate, verifyUpdateSignature, UPDATE_PUBLIC_KEY_PEM,
+  type GithubReleaseInfo, type UpdateCheckResult,
+} from "@bean/core";
 
 const execFile = promisify(execFileCb);
 const REPO = "ScenK/Bean";
@@ -101,4 +104,62 @@ export async function installAndRelaunch(extractedAppPath: string, deps: Install
   await rm(backupPath).catch(() => {});
   relaunch();
   exit();
+}
+
+export interface UpdateCheckOutcome {
+  result: UpdateCheckResult;
+  extractedAppPath?: string;
+}
+
+export interface CheckAndDownloadDeps {
+  fetchRelease?: () => Promise<GithubReleaseInfo>;
+  downloadAsset?: (url: string) => Promise<Buffer>;
+  extract?: (zipBuffer: Buffer) => Promise<string>;
+  publicKeyPem?: string;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Composes the full manual-update pipeline: fetch the latest release, decide if it's newer,
+ * download + verify the zip's signature, and extract+sign it — everything up to (not
+ * including) the actual install swap, which is a separate explicit user confirmation. */
+export async function checkAndDownloadUpdate(currentVersion: string, deps: CheckAndDownloadDeps = {}): Promise<UpdateCheckOutcome> {
+  const fetchRelease = deps.fetchRelease ?? fetchLatestRelease;
+  const download = deps.downloadAsset ?? downloadAsset;
+  const extract = deps.extract ?? extractAndSign;
+  const publicKeyPem = deps.publicKeyPem ?? UPDATE_PUBLIC_KEY_PEM;
+
+  let release: GithubReleaseInfo;
+  try {
+    release = await fetchRelease();
+  } catch (err) {
+    return { result: { status: "error", message: `Couldn't reach GitHub: ${errorMessage(err)}` } };
+  }
+
+  const check = checkForUpdate(currentVersion, release);
+  if (check.status !== "available") return { result: check };
+
+  let zipBuffer: Buffer;
+  let sigBuffer: Buffer;
+  try {
+    [zipBuffer, sigBuffer] = await Promise.all([download(check.zipUrl), download(check.sigUrl)]);
+  } catch (err) {
+    return { result: { status: "error", message: `Download failed: ${errorMessage(err)}` } };
+  }
+
+  const signatureBase64 = sigBuffer.toString("utf8").trim();
+  if (!verifyUpdateSignature(zipBuffer, signatureBase64, publicKeyPem)) {
+    return { result: { status: "error", message: "Update signature verification failed — this release may be corrupted or tampered with." } };
+  }
+
+  let extractedAppPath: string;
+  try {
+    extractedAppPath = await extract(zipBuffer);
+  } catch (err) {
+    return { result: { status: "error", message: `Couldn't prepare the update: ${errorMessage(err)}` } };
+  }
+
+  return { result: check, extractedAppPath };
 }
