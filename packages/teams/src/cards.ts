@@ -1,6 +1,7 @@
 import type {
   ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
   MemoryProposalCardInput, MemoryResultCardInput, ConsolidationProposalCardInput, ConsolidationResultCardInput,
+  SkillProposalCardInput, SkillResultCardInput,
 } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
@@ -112,6 +113,43 @@ export function noteResultCard(input: NoteResultCardInput): object {
     body: [
       { type: "TextBlock", weight: "bolder", text: `Note ${input.outcome} (by ${input.savedBy})` },
       { type: "TextBlock", text: input.title, wrap: true, isSubtle: true },
+    ],
+    actions: [],
+  };
+}
+
+/** Confirm-first skill draft: name, full markdown body, Save/Cancel.
+ * data comes back merged into the Action.Submit payload as beanAction + proposalId. */
+export function skillProposalCard(input: SkillProposalCardInput): object {
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", size: "medium", weight: "bolder", text: input.updating ? "Bean proposes a skill update" : "Bean proposes a new skill" },
+      { type: "FactSet", facts: [{ title: "Skill", value: input.updating ? `${input.name} (replaces existing)` : input.name }] },
+      { type: "TextBlock", text: input.body, wrap: true, fontType: "monospace" },
+    ],
+    actions: [
+      {
+        type: "Action.Submit",
+        title: input.updating ? "Update skill" : "Save skill",
+        style: "positive",
+        data: { beanAction: "save-skill", proposalId: input.proposalId },
+      },
+      { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-skill", proposalId: input.proposalId } },
+    ],
+  };
+}
+
+export function skillResultCard(input: SkillResultCardInput): object {
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", weight: "bolder", text: `Skill ${input.outcome} (by ${input.savedBy})` },
+      { type: "TextBlock", text: input.name, wrap: true, isSubtle: true },
     ],
     actions: [],
   };
