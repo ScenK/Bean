@@ -54,10 +54,12 @@
         "zip"
       ],
       "category": "public.app-category.productivity",
+      "identity": null,
       "extendInfo": {
         "LSUIElement": true
       }
-    }
+    },
+    "afterSign": "scripts/after-sign.mjs"
   },
   "devDependencies": {
     "@bean/core": "workspace:*",
