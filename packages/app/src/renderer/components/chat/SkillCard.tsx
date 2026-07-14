@@ -50,7 +50,7 @@ export function SkillCard({
         onInput={(e) => setBody((e.target as HTMLTextAreaElement).value)}
       />
       <div class="bean-card-actions">
-        <button type="button" class="bean-btn" disabled={done || nameInvalid} onClick={() => onSave({ ...skill, name, body })}>
+        <button type="button" class="bean-btn" disabled={done || nameInvalid} onClick={() => onSave({ ...skill, name: trimmedName, body })}>
           {state === "saved" ? "Saved" : collides ? "Update skill" : "Save skill"}
         </button>
         <button type="button" class="bean-btn bean-btn--ghost" disabled={done} onClick={onDismiss}>
