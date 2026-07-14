@@ -7,7 +7,7 @@ type UpdateUiState =
   | { phase: "up-to-date" }
   | { phase: "available"; version: string; notes: string }
   | { phase: "installing" }
-  | { phase: "error"; message: string };
+  | { phase: "error"; message: string; retry: "check" | "install" };
 
 export function AboutWindow() {
   const [theme, setTheme] = useState<Theme>("hearth");
@@ -28,14 +28,14 @@ export function AboutWindow() {
     const result: UpdateStatus = await window.bean.checkForUpdate();
     if (result.status === "up-to-date") setUpdate({ phase: "up-to-date" });
     else if (result.status === "available") setUpdate({ phase: "available", version: result.version, notes: result.notes });
-    else setUpdate({ phase: "error", message: result.message });
+    else setUpdate({ phase: "error", message: result.message, retry: "check" });
   };
 
   const installUpdate = async (): Promise<void> => {
     setUpdate({ phase: "installing" });
     const result = await window.bean.installUpdate();
     // On success the app exits before this resolves — only an error surfaces here.
-    if (result?.status === "error") setUpdate({ phase: "error", message: result.message });
+    if (result?.status === "error") setUpdate({ phase: "error", message: result.message, retry: "install" });
   };
 
   return (
@@ -78,7 +78,12 @@ export function AboutWindow() {
             {update.phase === "error" && (
               <>
                 <div class="bean-about-update-error">{update.message}</div>
-                <button class="bean-btn bean-btn--ghost" onClick={checkForUpdates}>Retry</button>
+                <button
+                  class="bean-btn bean-btn--ghost"
+                  onClick={() => (update.retry === "install" ? installUpdate() : checkForUpdates())}
+                >
+                  Retry
+                </button>
                 <a
                   class="bean-about-update-link"
                   href="#"
