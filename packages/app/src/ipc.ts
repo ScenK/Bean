@@ -90,15 +90,21 @@ export function buildPendingUpdateStore(): { set: (path: string) => void; get: (
 
 export interface UpdateHandlerDeps {
   currentVersion: string;
+  // Real check/install IO must be unreachable through this handler layer when running as
+  // `electron dist/main.js` (no packaged .app) — see .memory and the design spec's dev-build gate.
+  isPackaged: boolean;
   checkAndDownloadUpdate: (currentVersion: string) => Promise<UpdateCheckOutcome>;
   installUpdate: (extractedAppPath: string) => Promise<void>;
   pendingUpdateStore: ReturnType<typeof buildPendingUpdateStore>;
   openReleasesPage: () => void;
 }
 
+const DEV_BUILD_MESSAGE = "Updates aren't available in a dev build.";
+
 export function buildUpdateHandlers(deps: UpdateHandlerDeps) {
   return {
     check: async (): Promise<UpdateStatus> => {
+      if (!deps.isPackaged) return { status: "error", message: DEV_BUILD_MESSAGE };
       const outcome = await deps.checkAndDownloadUpdate(deps.currentVersion);
       if (outcome.result.status === "available") {
         if (outcome.extractedAppPath) deps.pendingUpdateStore.set(outcome.extractedAppPath);
@@ -107,6 +113,7 @@ export function buildUpdateHandlers(deps: UpdateHandlerDeps) {
       return outcome.result;
     },
     install: async (): Promise<InstallUpdateResult | undefined> => {
+      if (!deps.isPackaged) return { status: "error", message: DEV_BUILD_MESSAGE };
       const extractedAppPath = deps.pendingUpdateStore.get();
       if (!extractedAppPath) return { status: "error", message: "No update is ready to install — check for updates again." };
       try {

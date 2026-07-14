@@ -487,6 +487,7 @@ test("buildUpdateHandlers.check strips extractedAppPath/URLs before returning to
   const store = buildPendingUpdateStore();
   const handlers = buildUpdateHandlers({
     currentVersion: "0.8.12",
+    isPackaged: true,
     checkAndDownloadUpdate: async () => ({
       result: { status: "available", version: "0.8.13", notes: "notes", zipUrl: "https://x/zip", sigUrl: "https://x/sig" },
       extractedAppPath: "/tmp/bean-update-xyz/Bean.app",
@@ -503,6 +504,7 @@ test("buildUpdateHandlers.check strips extractedAppPath/URLs before returning to
 test("buildUpdateHandlers.check passes up-to-date/error results through unchanged", async () => {
   const handlers = buildUpdateHandlers({
     currentVersion: "0.8.12",
+    isPackaged: true,
     checkAndDownloadUpdate: async () => ({ result: { status: "up-to-date" } }),
     installUpdate: async () => {},
     pendingUpdateStore: buildPendingUpdateStore(),
@@ -515,6 +517,7 @@ test("buildUpdateHandlers.install errors when nothing has been checked/downloade
   const installed: string[] = [];
   const handlers = buildUpdateHandlers({
     currentVersion: "0.8.12",
+    isPackaged: true,
     checkAndDownloadUpdate: async () => ({ result: { status: "up-to-date" } }),
     installUpdate: async (path: string) => { installed.push(path); },
     pendingUpdateStore: buildPendingUpdateStore(),
@@ -532,6 +535,7 @@ test("buildUpdateHandlers.install calls installUpdate with the stored path", asy
   const store = buildPendingUpdateStore();
   const handlers = buildUpdateHandlers({
     currentVersion: "0.8.12",
+    isPackaged: true,
     checkAndDownloadUpdate: async () => ({
       result: { status: "available", version: "0.8.13", notes: "notes", zipUrl: "https://x/zip", sigUrl: "https://x/sig" },
       extractedAppPath: "/tmp/bean-update-xyz/Bean.app",
@@ -551,6 +555,7 @@ test("buildUpdateHandlers.install surfaces an error from installUpdate instead o
   store.set("/tmp/bean-update-xyz/Bean.app");
   const handlers = buildUpdateHandlers({
     currentVersion: "0.8.12",
+    isPackaged: true,
     checkAndDownloadUpdate: async () => ({ result: { status: "up-to-date" } }),
     installUpdate: async () => { throw new Error("EACCES"); },
     pendingUpdateStore: store,
@@ -563,6 +568,7 @@ test("buildUpdateHandlers.openReleasesPage delegates to the injected opener", ()
   const opened: boolean[] = [];
   const handlers = buildUpdateHandlers({
     currentVersion: "0.8.12",
+    isPackaged: true,
     checkAndDownloadUpdate: async () => ({ result: { status: "up-to-date" } }),
     installUpdate: async () => {},
     pendingUpdateStore: buildPendingUpdateStore(),
@@ -570,4 +576,34 @@ test("buildUpdateHandlers.openReleasesPage delegates to the injected opener", ()
   });
   handlers.openReleasesPage();
   expect(opened).toEqual([true]);
+});
+
+test("buildUpdateHandlers.check refuses in a dev build without calling checkAndDownloadUpdate", async () => {
+  const checked: string[] = [];
+  const handlers = buildUpdateHandlers({
+    currentVersion: "0.8.12",
+    isPackaged: false,
+    checkAndDownloadUpdate: async (v: string) => { checked.push(v); return { result: { status: "up-to-date" } }; },
+    installUpdate: async () => {},
+    pendingUpdateStore: buildPendingUpdateStore(),
+    openReleasesPage: () => {},
+  });
+  expect(await handlers.check()).toEqual({ status: "error", message: "Updates aren't available in a dev build." });
+  expect(checked).toEqual([]);
+});
+
+test("buildUpdateHandlers.install refuses in a dev build without calling installUpdate, even with a pending path", async () => {
+  const installed: string[] = [];
+  const store = buildPendingUpdateStore();
+  store.set("/tmp/bean-update-xyz/Bean.app");
+  const handlers = buildUpdateHandlers({
+    currentVersion: "0.8.12",
+    isPackaged: false,
+    checkAndDownloadUpdate: async () => ({ result: { status: "up-to-date" } }),
+    installUpdate: async (path: string) => { installed.push(path); },
+    pendingUpdateStore: store,
+    openReleasesPage: () => {},
+  });
+  expect(await handlers.install()).toEqual({ status: "error", message: "Updates aren't available in a dev build." });
+  expect(installed).toEqual([]);
 });

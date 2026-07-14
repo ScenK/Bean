@@ -601,6 +601,7 @@ app.whenReady().then(async () => {
         isPackaged: app.isPackaged,
       }),
       currentVersion: pkg.version,
+      isPackaged: app.isPackaged,
       checkAndDownloadUpdate: (currentVersion: string) => checkAndDownloadUpdate(currentVersion),
       installUpdate: (extractedAppPath: string) => installAndRelaunch(extractedAppPath),
       pendingUpdateStore,
