@@ -2,7 +2,7 @@ import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine,
 } from "@bean/core";
-import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo } from "../channels.js";
+import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
 import type { RoutineStateView, InterruptedRunNotice } from "../ipc.js";
@@ -56,6 +56,9 @@ declare global {
       saveConfig(update: ConfigUpdate): Promise<void>;
       getAppInfo(): Promise<AppInfo>;
       quitApp(): void;
+      checkForUpdate(): Promise<UpdateStatus>;
+      installUpdate(): Promise<InstallUpdateResult | undefined>;
+      openUpdateReleasePage(): void;
       listNotes(): Promise<Note[]>;
       saveNote(draft: NoteDraft): Promise<string>;
       deleteNote(slug: string): Promise<void>;
