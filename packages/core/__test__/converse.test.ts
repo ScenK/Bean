@@ -51,7 +51,7 @@ test("propose_run tool is enum-constrained to known skill names and project path
     chat: async ({ tools }) => { captured = tools; return { content: "ok", toolCalls: [] }; },
   };
   await converse([], "hi", skills, projects, DEFAULT_PERSONA, [], deps);
-  expect(captured.map((t) => t.name)).toEqual(["propose_run", "propose_note"]);
+  expect(captured.map((t) => t.name)).toEqual(["propose_run", "propose_note", "propose_skill"]);
   const props = (captured[0]!.parameters as { properties: Record<string, { enum?: string[] }> }).properties;
   expect(props.skill?.enum).toEqual(["review-code", "write-tests"]);
   expect(props.project?.enum).toEqual(["/work/api", "/dev/bean"]);
@@ -64,7 +64,7 @@ test("no propose_run tool is offered when there are no skills", async () => {
     chat: async ({ tools }) => { captured = tools; return { content: "hi", toolCalls: [] }; },
   };
   await converse([], "hi", [], projects, DEFAULT_PERSONA, [], deps);
-  expect(captured.map((t) => t.name)).toEqual(["propose_note"]);
+  expect(captured.map((t) => t.name)).toEqual(["propose_note", "propose_skill"]);
 });
 
 test("runAvailable=false (chatops) offers propose_run only for chat-target skills", async () => {
@@ -81,7 +81,7 @@ test("runAvailable=false (chatops) offers propose_run only for chat-target skill
     [], "summarize this", mixed, projects, DEFAULT_PERSONA, [], deps,
     undefined, [], undefined, undefined, true, [], false, false,
   );
-  expect(captured.map((t) => t.name)).toEqual(["propose_run", "propose_delegate", "propose_note"]);
+  expect(captured.map((t) => t.name)).toEqual(["propose_run", "propose_delegate", "propose_note", "propose_skill"]);
   const props = (captured[0]!.parameters as { properties: Record<string, { enum?: string[] }> }).properties;
   expect(props.skill?.enum).toEqual(["summarize"]);
   expect(captured[0]!.description).toContain("right here in this chat");
@@ -101,7 +101,7 @@ test("runAvailable=false with no chat-target skills drops propose_run and reject
     [], "run review-code on api", skills, projects, DEFAULT_PERSONA, [], deps,
     undefined, [], undefined, undefined, true, [], false, false,
   );
-  expect(captured.map((t) => t.name)).toEqual(["propose_delegate", "propose_note"]);
+  expect(captured.map((t) => t.name)).toEqual(["propose_delegate", "propose_note", "propose_skill"]);
   expect(res.proposedRun).toBeUndefined();
 });
 
@@ -112,7 +112,7 @@ test("propose_run is still offered with no configured projects — project is op
     chat: async ({ tools }) => { captured = tools; return { content: "hi", toolCalls: [] }; },
   };
   await converse([], "hi", skills, [], DEFAULT_PERSONA, [], deps);
-  expect(captured.map((t) => t.name)).toEqual(["propose_run", "propose_note"]);
+  expect(captured.map((t) => t.name)).toEqual(["propose_run", "propose_note", "propose_skill"]);
 });
 
 test("omitting project in propose_run proposes a no-project (scratch workspace) run", async () => {
@@ -378,7 +378,7 @@ test("action tool specs are offered alongside propose_run and current time is in
   };
   const now = new Date("2026-07-03T10:00:00.000Z");
   await converse([], "hi", skills, projects, DEFAULT_PERSONA, [], deps, undefined, [reminderAction([])], () => now);
-  expect(captured.map((t) => t.name)).toEqual(["propose_run", "propose_note", "set_reminder"]);
+  expect(captured.map((t) => t.name)).toEqual(["propose_run", "propose_note", "propose_skill", "set_reminder"]);
   expect(systemContent).toContain(`Current date and time: ${now.toString()}`);
 });
 
@@ -499,4 +499,40 @@ test("a propose_remember tool call short-circuits to proposedRemember", async ()
     undefined, [], undefined, undefined, false, [], true);
   expect(res.reply).toBe("Sure — which of these should I keep?");
   expect(res.proposedRemember).toBe(true);
+});
+
+test("valid propose_skill call yields a proposedSkill with updating=false for a new name", async () => {
+  const deps = depsReturning("Drafted it.", [
+    { name: "propose_skill", args: { name: "changelog", body: "---\ndescription: Write a changelog\n---\n\n# Changelog\n\nDo the thing." } },
+  ]);
+  const res = await converse([], "make me a changelog skill", skills, projects, DEFAULT_PERSONA, [], deps);
+  expect(res.reply).toBe("Drafted it.");
+  expect(res.proposedSkill).toEqual({
+    name: "changelog",
+    body: "---\ndescription: Write a changelog\n---\n\n# Changelog\n\nDo the thing.",
+    updating: false,
+  });
+});
+
+test("propose_skill naming an existing skill sets updating=true", async () => {
+  const deps = depsReturning("Updating.", [
+    { name: "propose_skill", args: { name: "review-code", body: "# Review\n\nNew body." } },
+  ]);
+  const res = await converse([], "improve the review skill", skills, projects, DEFAULT_PERSONA, [], deps);
+  expect(res.proposedSkill?.updating).toBe(true);
+});
+
+test("propose_skill with a traversal or empty name drops the proposal but keeps the reply", async () => {
+  for (const name of ["../evil", "a/b", "a\\b", "", "  "]) {
+    const deps = depsReturning("Hmm.", [{ name: "propose_skill", args: { name, body: "# X" } }]);
+    const res = await converse([], "make a skill", skills, projects, DEFAULT_PERSONA, [], deps);
+    expect(res.proposedSkill, name).toBeUndefined();
+    expect(res.reply).toBe("Hmm.");
+  }
+});
+
+test("propose_skill with a missing or empty body drops the proposal", async () => {
+  const deps = depsReturning("Hmm.", [{ name: "propose_skill", args: { name: "ok" } }]);
+  const res = await converse([], "make a skill", skills, projects, DEFAULT_PERSONA, [], deps);
+  expect(res.proposedSkill).toBeUndefined();
 });

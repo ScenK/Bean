@@ -1,4 +1,4 @@
-import type { ProposedDelegate, ProposedNote, ProposedRun } from "@bean/core";
+import type { ProposedDelegate, ProposedNote, ProposedRun, ProposedSkill } from "@bean/core";
 
 export type ChatItem =
   // `display` collapses a long auto-sent skill prompt to a short label in the transcript;
@@ -15,6 +15,8 @@ export type ChatItem =
       taskId?: string; tail: string[]; result?: string; error?: string }
   // A propose_note draft awaiting confirmation — notes are never saved silently.
   | { kind: "note"; id: string; note: ProposedNote; state: "pending" | "saved" | "dismissed" }
+  // A propose_skill draft awaiting confirmation — skills are never written silently.
+  | { kind: "skill"; id: string; skill: ProposedSkill; state: "pending" | "saved" | "dismissed" }
   | { kind: "status"; id: string; text: string; tone: "info" | "done" | "error" };
 
 let counter = 0;

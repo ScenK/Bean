@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { ProposalCard, type PickableModel } from "../../shared/ProposalCard.js";
 import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
+import { SkillCard } from "./SkillCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { insertDroppedPath, type ChatItem } from "../../shared/chat-types.js";
-import type { CliName, LinkedNote, Project, ProposedNote, RouteSuggestion } from "@bean/core";
+import type { CliName, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 
 export function ChatPanel({
   items,
@@ -17,11 +18,14 @@ export function ChatPanel({
   projects,
   runModels,
   lastUsedModels,
+  skills,
   onSend,
   onConfirm,
   onCancel,
   onNoteSave,
   onNoteDismiss,
+  onSkillSave,
+  onSkillDismiss,
   onDelegateConfirm,
   onDelegateDismiss,
   onDelegateCancelTask,
@@ -43,6 +47,9 @@ export function ChatPanel({
   projects: Project[];
   runModels: PickableModel[];
   lastUsedModels: Record<string, string>;
+  // Full current skill list — SkillCard uses it to live-recompute "replaces existing"
+  // against the user's edited name, not just the model's originally-proposed one.
+  skills: Skill[];
   onSend: (text: string) => void;
   onConfirm: (
     id: string,
@@ -53,6 +60,8 @@ export function ChatPanel({
   onCancel: (id: string) => void;
   onNoteSave: (id: string, edited: ProposedNote, asNew: boolean) => void;
   onNoteDismiss: (id: string) => void;
+  onSkillSave: (id: string, edited: ProposedSkill) => void;
+  onSkillDismiss: (id: string) => void;
   onDelegateConfirm: (id: string, editedPrompt: string, model?: string) => void;
   onDelegateDismiss: (id: string) => void;
   onDelegateCancelTask: (id: string) => void;
@@ -170,6 +179,18 @@ export function ChatPanel({
                 linkedVersion={it.note.slug !== undefined && it.note.slug === linkedNote?.slug ? linkedNote.version : undefined}
                 onSave={(edited, asNew) => onNoteSave(it.id, edited, asNew)}
                 onDismiss={() => onNoteDismiss(it.id)}
+              />
+            );
+          }
+          if (it.kind === "skill") {
+            return (
+              <SkillCard
+                key={it.id}
+                skill={it.skill}
+                skills={skills}
+                state={it.state}
+                onSave={(edited) => onSkillSave(it.id, edited)}
+                onDismiss={() => onSkillDismiss(it.id)}
               />
             );
           }

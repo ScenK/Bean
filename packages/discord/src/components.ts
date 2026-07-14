@@ -2,6 +2,7 @@ import type {
   CardBuilders, FinishedCardInput, MemoryProposalCardInput, MemoryResultCardInput,
   NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
   ConsolidationProposalCardInput, ConsolidationResultCardInput,
+  SkillProposalCardInput, SkillResultCardInput,
 } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
@@ -102,6 +103,27 @@ function noteResultCard(input: NoteResultCardInput): object {
   };
 }
 
+function skillProposalCard(input: SkillProposalCardInput): object {
+  return {
+    embeds: [{
+      title: input.updating ? "Bean proposes a skill update" : "Bean proposes a new skill",
+      description: noteDescription(input.name, `\`\`\`markdown\n${input.body}\n\`\`\``),
+      fields: [{ name: "Skill", value: input.updating ? `${input.name} (replaces existing)` : input.name, inline: true }],
+    }],
+    components: [row([
+      { type: BUTTON, style: 3, label: input.updating ? "Update skill" : "Save skill", custom_id: `bean:save-skill:${input.proposalId}` },
+      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-skill:${input.proposalId}` },
+    ])],
+  };
+}
+
+function skillResultCard(input: SkillResultCardInput): object {
+  return {
+    embeds: [{ title: `Skill ${input.outcome} (by ${input.savedBy})`, description: input.name }],
+    components: [],
+  };
+}
+
 // Discord select option labels are capped at 100 chars; the full fact is kept in the
 // MemoryProposalStore, so Remember still saves the untruncated text.
 const OPTION_LABEL_LIMIT = 100;
@@ -169,5 +191,5 @@ function consolidationResultCard(input: ConsolidationResultCardInput): object {
 
 export const discordCards: CardBuilders = {
   proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
-  consolidationProposalCard, consolidationResultCard,
+  consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard,
 };

@@ -3,7 +3,7 @@ import { ChatPanel } from "./ChatPanel.js";
 import { newId, type ChatItem } from "../../shared/chat-types.js";
 import type { PickableModel } from "../../shared/ProposalCard.js";
 import type {
-  ChatTurn, CliName, LinkedNote, MemoryCandidate, Memory, Project, ProposedDelegate, ProposedNote, RouteSuggestion,
+  ChatTurn, CliName, LinkedNote, MemoryCandidate, Memory, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill,
 } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
 import type { InterruptedRunNotice } from "../../../ipc.js";
@@ -98,6 +98,9 @@ export function ChatWindow() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [runModels, setRunModels] = useState<PickableModel[]>([]);
   const [lastUsedModels, setLastUsedModels] = useState<Record<string, string>>({});
+  // Full current skill list — passed to SkillCard so its "replaces existing" chip tracks
+  // the user's live-edited name against real skills, not a stale server-computed flag.
+  const [skills, setSkills] = useState<Skill[]>([]);
   const itemsRef = useRef<ChatItem[]>([]);
   itemsRef.current = items;
   const busyRef = useRef(false);
@@ -127,6 +130,7 @@ export function ChatWindow() {
     window.bean.availableClis().then(setClis);
     window.bean.listProjects().then(setProjects);
     window.bean.availableModels().then(setRunModels);
+    window.bean.listSkills().then(setSkills);
     // Pull any URL dropped before this window's renderer finished mounting — the push below
     // (onComponentDroppedUrl) can arrive first and gets silently dropped, same race
     // getPendingPlan fixes for the Plan window.
@@ -219,6 +223,7 @@ export function ChatWindow() {
           });
         }
         if (res.proposedNote) next.push({ kind: "note", id: newId(), note: res.proposedNote, state: "pending" });
+        if (res.proposedSkill) next.push({ kind: "skill", id: newId(), skill: res.proposedSkill, state: "pending" });
         if (res.proposedDelegate) next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
         return next;
       });
@@ -326,6 +331,22 @@ export function ChatWindow() {
 
   const dismissNote = (id: string): void => {
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "note" ? { ...it, state: "dismissed" } : it)));
+  };
+
+  const saveSkill = async (id: string, edited: ProposedSkill): Promise<void> => {
+    try {
+      await window.bean.saveSkill(edited.name, edited.body);
+      setItems((prev) => [
+        ...prev.map((it) => (it.id === id && it.kind === "skill" ? { ...it, state: "saved" as const } : it)),
+        { kind: "status", id: newId(), text: `✓ Saved skill — "${edited.name}"`, tone: "done" },
+      ]);
+    } catch (err) {
+      setItems((prev) => [...prev, { kind: "status", id: newId(), text: `Couldn't save the skill: ${err instanceof Error ? err.message : String(err)}`, tone: "error" }]);
+    }
+  };
+
+  const dismissSkill = (id: string): void => {
+    setItems((prev) => prev.map((it) => (it.id === id && it.kind === "skill" ? { ...it, state: "dismissed" } : it)));
   };
 
   // Composer's 📝 button: an explicit ask, so the model drafts the confirm card even when it
@@ -474,11 +495,14 @@ export function ChatWindow() {
         projects={projects}
         runModels={runModels}
         lastUsedModels={lastUsedModels}
+        skills={skills}
         onSend={sendMessage}
         onConfirm={confirmProposal}
         onCancel={cancelProposal}
         onNoteSave={(id, edited, asNew) => void saveNote(id, edited, asNew)}
         onNoteDismiss={dismissNote}
+        onSkillSave={(id, edited) => void saveSkill(id, edited)}
+        onSkillDismiss={dismissSkill}
         onDelegateConfirm={(id, edited, model) => void confirmDelegate(id, edited, model)}
         onDelegateDismiss={dismissDelegate}
         onDelegateCancelTask={cancelDelegateTask}

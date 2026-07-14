@@ -2,9 +2,9 @@ import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
-  detectClis, runDelegate, claimOutbox, outboxDir,
+  detectClis, runDelegate, claimOutbox, outboxDir, saveSkill,
   buildTeamsBot, mentionsBotName, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
-  ConsolidationProposalStore, RunRegistry, type BotEffects,
+  ConsolidationProposalStore, RunRegistry, SkillProposalStore, type BotEffects,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, Partials,
@@ -41,6 +41,8 @@ const bot = buildTeamsBot({
   noteProposals: new NoteProposalStore(),
   saveNote: (draft) => saveNote(dbFile(dir), draft),
   searchNotes: (query) => searchNotes(dbFile(dir), query),
+  skillProposals: new SkillProposalStore(),
+  saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
   memoryProposals: new MemoryProposalStore(),
   appendMemories: (m) => appendMemories(dbFile(dir), m),
   saveMemories: (m) => saveMemories(dbFile(dir), m),
