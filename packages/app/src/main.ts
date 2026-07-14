@@ -5,7 +5,7 @@ import { join, dirname } from "node:path";
 import { createChatopsServers } from "./chatops-servers.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
-import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage } from "electron";
+import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
@@ -22,7 +22,7 @@ import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routi
 import { createAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
-  buildRoutineHandlers, type ChatPromptPayload,
+  buildRoutineHandlers, buildPendingUpdateStore, type ChatPromptPayload,
 } from "./ipc.js";
 import { IPC, type Theme, type ComponentKind } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
@@ -33,6 +33,7 @@ import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
 import { createDelegateTasks, resolvedPathSpawnFn } from "./delegate-tasks.js";
 import { createRoutineScheduler } from "./routine-scheduler.js";
+import { checkAndDownloadUpdate, installAndRelaunch } from "./updater.js";
 
 // dist/main.js sits next to package.json (esbuild output isn't relocated).
 const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"));
@@ -254,6 +255,7 @@ app.whenReady().then(async () => {
   // planStore) and open/focus the chat window; an already-mounted chat also gets the push.
   const chatPromptStore = buildChatPromptStore();
   const interruptedRunStore = buildInterruptedRunStore();
+  const pendingUpdateStore = buildPendingUpdateStore();
   const runInChat = (payload: ChatPromptPayload): void => {
     chatPromptStore.set(payload);
     openComponent("chat");
@@ -596,7 +598,13 @@ app.whenReady().then(async () => {
         version: pkg.version,
         author: pkg.author,
         description: pkg.description,
+        isPackaged: app.isPackaged,
       }),
+      currentVersion: pkg.version,
+      checkAndDownloadUpdate: (currentVersion: string) => checkAndDownloadUpdate(currentVersion),
+      installUpdate: (extractedAppPath: string) => installAndRelaunch(extractedAppPath),
+      pendingUpdateStore,
+      openReleasesPage: () => { void shell.openExternal("https://github.com/ScenK/Bean/releases"); },
       chatopsStatus: chatopsServers.status,
       chatopsStart: chatopsServers.start,
       chatopsStop: chatopsServers.stop,
