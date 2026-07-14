@@ -15,12 +15,15 @@ import {
   loadReminders, saveReminders, dueReminders, extractPageText,
   loadNotes, saveNote, deleteNote, notesDir, retrieveNoteTool, detectClis, loginShellPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
-  routinesDir, routineStateFile, outboxDir, enqueueOutbox, runRoutine, runDelegate,
+  routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate,
   composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult } from "@bean/core";
 import { createAvatarWindow, createComponentWindow } from "./windows.js";
-import { registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildRoutineHandlers, type ChatPromptPayload } from "./ipc.js";
+import {
+  registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
+  buildRoutineHandlers, type ChatPromptPayload,
+} from "./ipc.js";
 import { IPC, type Theme, type ComponentKind } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import {
@@ -161,7 +164,18 @@ app.whenReady().then(async () => {
   });
 
   let quitting = false;
-  app.on("before-quit", () => { quitting = true; });
+  // Reassigned once delegateTasks exists (below); a quit requested before that point has
+  // nothing in-flight to interrupt, so the no-op default is correct, not just a placeholder.
+  // Synchronous (see delegate-tasks.ts's interruptAll doc comment) — deliberately NOT a
+  // preventDefault()-then-requeue dance: Electron's before-quit is known flaky around terminal
+  // signals on this menu-bar/tray app already (see the SIGINT/SIGTERM handlers above), and
+  // blocking the quit sequence on an async continuation is its own source of hangs. Every other
+  // before-quit hook in this file is plain synchronous fire-and-forget; this matches that.
+  let interruptAllDelegates: () => void = () => {};
+  app.on("before-quit", () => {
+    quitting = true;
+    interruptAllDelegates();
+  });
   const allowClose = new WeakSet<BrowserWindow>();
   ipcMain.on(IPC.allowChatClose, (evt) => {
     const w = BrowserWindow.fromWebContents(evt.sender);
@@ -239,6 +253,7 @@ app.whenReady().then(async () => {
   // Chat-target skill runs: stash the composed prompt (pull-on-mount, same race fix as
   // planStore) and open/focus the chat window; an already-mounted chat also gets the push.
   const chatPromptStore = buildChatPromptStore();
+  const interruptedRunStore = buildInterruptedRunStore();
   const runInChat = (payload: ChatPromptPayload): void => {
     chatPromptStore.set(payload);
     openComponent("chat");
@@ -422,6 +437,7 @@ app.whenReady().then(async () => {
 
     const delegateTasks = createDelegateTasks({
       resolvedPath,
+      dir,
       resolveCli: resolveDelegateCli,
       send: (event) => {
         const chat = componentWindows.get("chat");
@@ -430,6 +446,7 @@ app.whenReady().then(async () => {
       newId: () => randomUUID(),
     });
     cancelAllDelegates = delegateTasks.cancelAll;
+    interruptAllDelegates = delegateTasks.interruptAll;
 
     const chatopsRoot = app.isPackaged ? process.resourcesPath : dirname(projectBeanDir());
     chatopsServers = createChatopsServers({
@@ -589,6 +606,7 @@ app.whenReady().then(async () => {
       getPendingDroppedUrl: droppedUrlStore.get,
       runInChat,
       getPendingChatPrompt: chatPromptStore.get,
+      getPendingInterruptedRunNotices: interruptedRunStore.get,
       routineHandlers: buildRoutineHandlers({
         loadRoutines: () => loadRoutines(routinesPath),
         saveRoutine: (r) => saveRoutine(routinesPath, r),
@@ -598,6 +616,19 @@ app.whenReady().then(async () => {
         runNow: (name) => routineScheduler.runNow(name),
       }),
     });
+
+    // Report any delegate run interrupted by the previous quit (delegate-tasks.ts's
+    // interruptAll()/main.ts's own before-quit handler leave one outbox notice per run). A
+    // one-shot claim, not a poll loop: main.ts is the only possible producer for the "chat"
+    // transport, and only while it's dying — see .memory/project-durable-run-queue.md.
+    const chatNotices = await claimOutbox(outboxDir(dir), "chat");
+    if (chatNotices.length > 0) {
+      const notices = chatNotices.map((m) => ({ text: m.body, display: m.displayBody ?? m.body }));
+      interruptedRunStore.set(notices);
+      openComponent("chat");
+      const chat = componentWindows.get("chat");
+      if (chat) sendToWindow(chat, IPC.interruptedRunNotice, notices);
+    }
   } catch (err) {
     dialog.showErrorBox("Bean", err instanceof Error ? err.message : String(err));
   }

@@ -85,30 +85,34 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const updateTo = async (card: object): Promise<void> => {
       if (cardId !== undefined) await fx.updateCard(cardId, card);
     };
-    const started = deps.runs.start(req, {
-      onTail: (line) => {
-        void updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, tail: line, projectPath: req.projectPath }));
+    const started = await deps.runs.start(
+      req,
+      {
+        onTail: (line) => {
+          void updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, tail: line, projectPath: req.projectPath }));
+        },
+        onDone: (result) => {
+          void (async () => {
+            deps.conversations.append(p.conversationId, { role: "assistant", content: `[delegate result] ${result}` });
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done" }));
+            await fx.post(result);
+          })();
+        },
+        onError: (message) => {
+          void (async () => {
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error" }));
+            await fx.post(`Delegate run failed: ${message}`);
+          })();
+        },
+        onCancelled: () => {
+          void (async () => {
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled" }));
+            await fx.post("Run cancelled.");
+          })();
+        },
       },
-      onDone: (result) => {
-        void (async () => {
-          deps.conversations.append(p.conversationId, { role: "assistant", content: `[delegate result] ${result}` });
-          await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done" }));
-          await fx.post(result);
-        })();
-      },
-      onError: (message) => {
-        void (async () => {
-          await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error" }));
-          await fx.post(`Delegate run failed: ${message}`);
-        })();
-      },
-      onCancelled: () => {
-        void (async () => {
-          await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled" }));
-          await fx.post("Run cancelled.");
-        })();
-      },
-    });
+      { instruction: p.proposal.instruction, conversationId: p.conversationId },
+    );
     if (!started) {
       await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled" }));
       await fx.post("A run is already going in that project — wait for it or cancel it first.");

@@ -6,7 +6,7 @@ import type {
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
-import type { RoutineStateView } from "./ipc.js";
+import type { RoutineStateView, InterruptedRunNotice } from "./ipc.js";
 
 contextBridge.exposeInMainWorld("bean", {
   route: (input: RouteInput): Promise<RouteSuggestion> => ipcRenderer.invoke(IPC.route, input),
@@ -53,6 +53,10 @@ contextBridge.exposeInMainWorld("bean", {
     ipcRenderer.invoke(IPC.getPendingChatPrompt),
   onChatPrompt: (cb: (p: { prompt: string; label: string; noteSlug?: string }) => void) =>
     ipcRenderer.on(IPC.chatPrompt, (_e, p: { prompt: string; label: string; noteSlug?: string }) => cb(p)),
+  getPendingInterruptedRunNotices: (): Promise<InterruptedRunNotice[] | undefined> =>
+    ipcRenderer.invoke(IPC.getPendingInterruptedRunNotices),
+  onInterruptedRunNotice: (cb: (notices: InterruptedRunNotice[]) => void) =>
+    ipcRenderer.on(IPC.interruptedRunNotice, (_e, notices: InterruptedRunNotice[]) => cb(notices)),
   listSkills: (): Promise<Skill[]> => ipcRenderer.invoke(IPC.listSkills),
   listProjects: (): Promise<Project[]> => ipcRenderer.invoke(IPC.listProjects),
   saveProjects: (projects: Project[]): Promise<void> => ipcRenderer.invoke(IPC.saveProjects, projects),

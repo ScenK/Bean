@@ -53,6 +53,11 @@ export interface DelegateCallbacks {
 
 export interface DelegateHandle {
   cancel: (onCancelled?: () => void) => void;
+  // The spawned child's pid, once known (undefined only if spawnFn's process object never got
+  // one — practically always defined). Lets a caller track *this specific process*, not just
+  // "whoever was calling runDelegate", for cross-restart liveness checks (see run-queue.ts's
+  // updateReservationPid / .memory/project-durable-run-queue.md).
+  pid: number | undefined;
 }
 
 export type DelegateSpawnFn = (command: string, args: string[], cwd: string) => ChildProcess;
@@ -160,6 +165,7 @@ export function runDelegate(
   });
 
   return {
+    pid: child.pid,
     cancel: (done) => {
       if (settled || cancelling) return;
       cancelling = true;

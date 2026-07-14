@@ -62,4 +62,24 @@ describe("outbox", () => {
     expect(discord[0]).toMatchObject({ body: "dm me" });
     expect(discord[0]!.channel).toBeUndefined();
   });
+
+  it("the desktop chat transport round-trips and isn't swept as an orphan by another transport's claim", async () => {
+    const dir = await tmp();
+    await enqueueOutbox(dir, { transport: "chat", body: "interrupted" }, newId);
+    expect(await claimOutbox(dir, "discord")).toEqual([]); // not this transport's file
+    expect(await readdir(dir)).toEqual([expect.stringMatching(/^chat-/)]); // left untouched, not swept
+    const chat = await claimOutbox(dir, "chat");
+    expect(chat.map((m) => m.body)).toEqual(["interrupted"]);
+    expect(await readdir(dir)).toEqual([]);
+  });
+
+  it("displayBody round-trips alongside body when present, and is absent for plain messages", async () => {
+    const dir = await tmp();
+    await enqueueOutbox(dir, { transport: "chat", body: "full instruction here", displayBody: "short version" }, newId);
+    await enqueueOutbox(dir, { transport: "discord", channel: "c1", body: "plain digest" }, newId);
+    const chat = await claimOutbox(dir, "chat");
+    expect(chat[0]).toMatchObject({ body: "full instruction here", displayBody: "short version" });
+    const discord = await claimOutbox(dir, "discord");
+    expect(discord[0]!.displayBody).toBeUndefined();
+  });
 });

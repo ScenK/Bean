@@ -20,6 +20,11 @@ const beanConfig = await loadConfig(configFile(dir), dir);
 if (!beanConfig.openaiApiKey) throw new Error("openaiApiKey missing in ~/.bean/config.json");
 
 const clis = detectClis();
+const runs = new RunRegistry(runDelegate, { dir, botKind: "discord" });
+// Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
+// loop below can append an interrupted-run notice to the same history bot.onMessage reads —
+// otherwise a later "retry" in this channel has no idea what it's retrying.
+const conversations = new ConversationStore();
 const bot = buildTeamsBot({
   chat: makeOpenAIConverse(beanConfig.openaiApiKey),
   model: beanConfig.model,
@@ -30,14 +35,14 @@ const bot = buildTeamsBot({
   loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
   saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),
   detectClis: () => clis,
-  runs: new RunRegistry(runDelegate),
+  runs,
   proposals: new ProposalStore(),
   noteProposals: new NoteProposalStore(),
   saveNote: (draft) => saveNote(notesDir(dir), draft),
   loadNotes: () => loadNotes(notesDir(dir)),
   memoryProposals: new MemoryProposalStore(),
   saveMemories: (m) => saveMemories(memoryFile(dir), m),
-  conversations: new ConversationStore(),
+  conversations,
   cards: discordCards,
 });
 
@@ -157,6 +162,14 @@ client.on("interactionCreate", async (interaction: Interaction) => {
 
 client.on("error", (err) => console.error("client error:", err));
 
+// chatopsServers.stop() (packages/app/src/chatops-servers.ts) sends SIGTERM with no other
+// warning — mark any in-flight run interrupted (durable outbox notice to its conversation)
+// before this process disappears, instead of just dying mid-run with the requester left hanging.
+process.on("SIGTERM", () => {
+  runs.interruptAll(); // synchronous — see its doc comment; safe to exit right after
+  process.exit(0);
+});
+
 client.once("clientReady", () => {
   console.log(`@bean/discord logged in as ${client.user?.tag} (clis: ${clis.join(", ") || "none"})`);
 });
@@ -166,7 +179,11 @@ const OUTBOX_POLL_MS = 5_000;
 setInterval(() => {
   void (async () => {
     for (const msg of await claimOutbox(outboxDir(beanDir()), "discord")) {
-      const text = msg.title ? `**${msg.title}**\n${msg.body}` : msg.body;
+      // displayBody present = an interrupted-run notice: msg.body carries the full instruction
+      // (needed below so a later "retry" has context), too long to post as-is — show the short
+      // version instead. Absent for plain messages (routine digests), which already are the
+      // display text.
+      const text = msg.displayBody ?? (msg.title ? `**${msg.title}**\n${msg.body}` : msg.body);
       if (!msg.channel) {
         // No channel = DM every allowed user directly (the default delivery mode).
         for (const userId of discordConfig.allowedUserIds) {
@@ -186,6 +203,7 @@ setInterval(() => {
           continue;
         }
         for (const chunk of chunkText(text)) await channel.send(chunk);
+        if (msg.displayBody) conversations.append(msg.channel, { role: "assistant", content: msg.body });
       } catch (err) {
         console.error("outbox: discord send failed", err);
       }

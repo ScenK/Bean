@@ -5,7 +5,7 @@ import type {
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
-import type { RoutineStateView } from "../ipc.js";
+import type { RoutineStateView, InterruptedRunNotice } from "../ipc.js";
 
 declare global {
   interface Window {
@@ -39,6 +39,8 @@ declare global {
       runInChat(prompt: string, label: string, noteSlug?: string): void;
       getPendingChatPrompt(): Promise<{ prompt: string; label: string; noteSlug?: string } | undefined>;
       onChatPrompt(cb: (p: { prompt: string; label: string; noteSlug?: string }) => void): void;
+      getPendingInterruptedRunNotices(): Promise<InterruptedRunNotice[] | undefined>;
+      onInterruptedRunNotice(cb: (notices: InterruptedRunNotice[]) => void): void;
       listSkills(): Promise<Skill[]>;
       listProjects(): Promise<Project[]>;
       saveProjects(projects: Project[]): Promise<void>;

@@ -66,6 +66,8 @@ export const IPC = {
   runInChat: "bean:run-in-chat",
   chatPrompt: "bean:chat-prompt",
   getPendingChatPrompt: "bean:get-pending-chat-prompt",
+  interruptedRunNotice: "bean:interrupted-run-notice",
+  getPendingInterruptedRunNotices: "bean:get-pending-interrupted-run-notices",
   listNotes: "bean:list-notes",
   saveNote: "bean:save-note",
   deleteNote: "bean:delete-note",

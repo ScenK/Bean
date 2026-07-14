@@ -6,6 +6,7 @@ import type {
   ChatTurn, CliName, LinkedNote, MemoryCandidate, Memory, Project, ProposedDelegate, ProposedNote, RouteSuggestion,
 } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
+import type { InterruptedRunNotice } from "../../../ipc.js";
 
 // Extraction is a real LLM call — a reasoning model (e.g. gpt-5-mini) routinely takes ~5s and
 // longer for bigger transcripts. This is only a backstop against a genuinely hung request, so it
@@ -150,6 +151,18 @@ export function ChatWindow() {
     };
     window.bean.getPendingChatPrompt().then((p) => { if (p) runPrompt(p); });
     window.bean.onChatPrompt(runPrompt);
+    // A delegate run that was still going when Bean last quit gets reported here — pull +
+    // push, same race fix as the dropped URL/chat prompt above. Rendered as a `reply` (not
+    // `status`) so it enters conversation history: a later "retry" needs the full instruction
+    // (notice.text) in context, not just the short bubble text (notice.display) shown on screen.
+    const showInterruptedRunNotices = (notices: InterruptedRunNotice[]): void => {
+      setItems((prev) => [
+        ...prev,
+        ...notices.map((n) => ({ kind: "reply" as const, id: newId(), text: n.text, display: n.display })),
+      ]);
+    };
+    window.bean.getPendingInterruptedRunNotices().then((notices) => { if (notices?.length) showInterruptedRunNotices(notices); });
+    window.bean.onInterruptedRunNotice(showInterruptedRunNotices);
     window.bean.onDelegateEvent(applyDelegateEvent);
     window.bean.onReviewBeforeClose(() => {
       const transcript: ChatTurn[] = itemsRef.current
@@ -250,9 +263,9 @@ export function ChatWindow() {
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "proposal" ? { ...it, state: "cancelled" } : it)));
   };
 
-  const startDelegate = async (id: string, projectPath: string, prompt: string, model?: string): Promise<void> => {
+  const startDelegate = async (id: string, projectPath: string, prompt: string, instruction: string, model?: string): Promise<void> => {
     if (pendingDelegateStartsRef.current.has(id)) return;
-    const start = window.bean.delegateStart({ projectPath, prompt, model });
+    const start = window.bean.delegateStart({ projectPath, prompt, instruction, model });
     pendingDelegateStartsRef.current.set(id, start);
     setItems((prev) => markDelegateStarting(prev, id));
     try {
@@ -273,7 +286,7 @@ export function ChatWindow() {
       (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
     );
     if (!item || (item.state !== "pending" && item.state !== "starting")) return;
-    return startDelegate(id, item.proposal.projectPath, editedPrompt, model);
+    return startDelegate(id, item.proposal.projectPath, editedPrompt, item.proposal.instruction, model);
   };
 
   const dismissDelegate = (id: string): void => {
