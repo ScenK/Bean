@@ -72,4 +72,14 @@ describe("outbox", () => {
     expect(chat.map((m) => m.body)).toEqual(["interrupted"]);
     expect(await readdir(dir)).toEqual([]);
   });
+
+  it("displayBody round-trips alongside body when present, and is absent for plain messages", async () => {
+    const dir = await tmp();
+    await enqueueOutbox(dir, { transport: "chat", body: "full instruction here", displayBody: "short version" }, newId);
+    await enqueueOutbox(dir, { transport: "discord", channel: "c1", body: "plain digest" }, newId);
+    const chat = await claimOutbox(dir, "chat");
+    expect(chat[0]).toMatchObject({ body: "full instruction here", displayBody: "short version" });
+    const discord = await claimOutbox(dir, "discord");
+    expect(discord[0]!.displayBody).toBeUndefined();
+  });
 });

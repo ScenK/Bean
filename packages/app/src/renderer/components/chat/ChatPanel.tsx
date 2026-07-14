@@ -158,7 +158,7 @@ export function ChatPanel({
         ) : null}
         {items.map((it) => {
           if (it.kind === "user") return <div key={it.id} class="bean-bubble bean-bubble--user">{it.display ?? it.text}</div>;
-          if (it.kind === "reply") return <div key={it.id} class="bean-bubble bean-bubble--bean"><Markdown text={it.text} /></div>;
+          if (it.kind === "reply") return <div key={it.id} class="bean-bubble bean-bubble--bean"><Markdown text={it.display ?? it.text} /></div>;
           if (it.kind === "working") return <div key={it.id} class="bean-bubble bean-bubble--bean bean-bubble--working">{it.text}<span class="bean-dots"><span /><span /><span /></span></div>;
           if (it.kind === "status") return <div key={it.id} class={`bean-status bean-status--${it.tone}`}>{it.text}</div>;
           if (it.kind === "note") {

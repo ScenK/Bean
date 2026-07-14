@@ -1,5 +1,5 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { runsDir } from "./config.js";
 
 /** Cross-process "is this project already claimed?" reservation (~/.bean/runs/<id>.json), one
@@ -82,4 +82,21 @@ export async function reserveRun(
 
 export async function releaseRun(dir: string, id: string): Promise<void> {
   rmSync(join(runsDir(dir), `${id}.json`), { force: true });
+}
+
+const MAX_DISPLAY_INSTRUCTION = 140;
+
+/** The message an interrupted run leaves for whichever surface requested it. `full` keeps the
+ * complete instruction — it's what a later chat/conversation turn needs so "retry" actually has
+ * something to act on — while `display` is a short, human-readable version for the channel/chat
+ * bubble itself (the full instruction can be a multi-paragraph composed prompt, not fit for a
+ * one-line notice or a status pill). */
+export function interruptedRunNotice(projectPath: string, instruction: string): { full: string; display: string } {
+  const full = `Run on ${projectPath} ("${instruction}") was interrupted when Bean closed. Ask me again to retry.`;
+  const projectName = basename(projectPath) || projectPath;
+  const shortInstruction = instruction.length > MAX_DISPLAY_INSTRUCTION
+    ? `${instruction.slice(0, MAX_DISPLAY_INSTRUCTION).trimEnd()}…`
+    : instruction;
+  const display = `⚠️ A run on **${projectName}** ("${shortInstruction}") was interrupted when Bean closed. Say "retry" and I'll pick it back up.`;
+  return { full, display };
 }

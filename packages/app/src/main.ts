@@ -628,7 +628,7 @@ app.whenReady().then(async () => {
     // transport, and only while it's dying — see .memory/project-durable-run-queue.md.
     const chatNotices = await claimOutbox(outboxDir(dir), "chat");
     if (chatNotices.length > 0) {
-      const notices = chatNotices.map((m) => m.body);
+      const notices = chatNotices.map((m) => ({ text: m.body, display: m.displayBody ?? m.body }));
       interruptedRunStore.set(notices);
       openComponent("chat");
       const chat = componentWindows.get("chat");

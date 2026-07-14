@@ -4,7 +4,10 @@ export type ChatItem =
   // `display` collapses a long auto-sent skill prompt to a short label in the transcript;
   // `text` (what the model gets) still drives the history.
   | { kind: "user"; id: string; text: string; display?: string }
-  | { kind: "reply"; id: string; text: string }
+  // Same `display`/`text` split as above, in the other direction: an interrupted-run notice
+  // needs its full instruction in `text` so a later "retry" has context (it drives history the
+  // same as any other reply), but shows a short `display` instead of dumping that wall of text.
+  | { kind: "reply"; id: string; text: string; display?: string }
   | { kind: "working"; id: string; text: string }
   | { kind: "proposal"; id: string; run: ProposedRun; state: "pending" | "confirmed" | "cancelled" }
   | { kind: "delegate"; id: string; proposal: ProposedDelegate;

@@ -56,11 +56,18 @@ export function buildChatPromptStore(): { set: (p: ChatPromptPayload) => void; g
   };
 }
 
+// `text` is the full notice (instruction included) — fed into chat history so a later "retry"
+// has context; `display` is the short version actually shown in the chat bubble.
+export interface InterruptedRunNotice { text: string; display: string; }
+
 // Same drop-race fix as the stores above, for the "your run was interrupted" notices claimed
 // from the outbox at startup (main.ts): the chat window may not be mounted yet when they're
 // found, so they're pulled on mount as well as pushed to an already-open window.
-export function buildInterruptedRunStore(): { set: (notices: string[]) => void; get: () => string[] | undefined } {
-  let pending: string[] | undefined;
+export function buildInterruptedRunStore(): {
+  set: (notices: InterruptedRunNotice[]) => void;
+  get: () => InterruptedRunNotice[] | undefined;
+} {
+  let pending: InterruptedRunNotice[] | undefined;
   return {
     set: (notices) => { pending = notices; },
     get: () => { const n = pending; pending = undefined; return n; },
@@ -384,7 +391,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   getPendingDroppedUrl: () => string | undefined;
   runInChat: (payload: ChatPromptPayload) => void;
   getPendingChatPrompt: () => ChatPromptPayload | undefined;
-  getPendingInterruptedRunNotices: () => string[] | undefined;
+  getPendingInterruptedRunNotices: () => InterruptedRunNotice[] | undefined;
   planFromDrop: (skillName: string, droppedUrl: string) => void;
   getConfig: () => ConfigView;
   applyConfig: (update: ConfigUpdate) => Promise<void>;

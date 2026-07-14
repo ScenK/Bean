@@ -13,6 +13,12 @@ export interface OutboxMessage {
   channel?: string;
   title?: string;
   body: string;
+  // A shorter, human-facing rendering of `body` — set only when `body` itself is meant for
+  // model/context consumption (e.g. an interrupted-run notice, which needs the full original
+  // instruction preserved for a later "retry" to have context) and would be too long to post
+  // as-is. Consumers show `displayBody ?? body`; `body` is always what a follow-up chat turn
+  // should see. Absent for plain messages (routine digests) — those already are the display text.
+  displayBody?: string;
   createdAt: string; // ISO
 }
 

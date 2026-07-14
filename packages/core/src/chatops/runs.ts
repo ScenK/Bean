@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DelegateCallbacks, DelegateHandle, DelegateRequest } from "../delegate.js";
 import { outboxDir } from "../config.js";
 import { enqueueOutbox } from "../outbox.js";
-import { reserveRun, releaseRun } from "../run-queue.js";
+import { reserveRun, releaseRun, interruptedRunNotice } from "../run-queue.js";
 
 export type RunDelegateFn = (req: DelegateRequest, callbacks: DelegateCallbacks) => DelegateHandle;
 
@@ -140,13 +140,10 @@ export class RunRegistry {
       this.byProject.delete(p);
       run.handle?.cancel(() => {});
       await releaseRun(this.opts.dir, run.reservationId);
+      const { full, display } = interruptedRunNotice(p, run.meta.instruction);
       await enqueueOutbox(
         outboxDir(this.opts.dir),
-        {
-          transport: this.opts.botKind,
-          channel: run.meta.conversationId,
-          body: `Run on ${p} ("${run.meta.instruction}") was interrupted when Bean closed. Ask me again to retry.`,
-        },
+        { transport: this.opts.botKind, channel: run.meta.conversationId, body: full, displayBody: display },
         () => this.newId(),
       );
     }

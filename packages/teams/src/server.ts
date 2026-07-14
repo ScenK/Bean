@@ -59,6 +59,10 @@ adapter.onTurnError = async (context, error) => {
 
 const clis = detectClis();
 const runs = new RunRegistry(runDelegate, { dir, botKind: "teams" });
+// Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
+// loop below can append an interrupted-run notice to the same history bot.onMessage reads —
+// otherwise a later "retry" in this conversation has no idea what it's retrying.
+const conversations = new ConversationStore();
 const bot = buildTeamsBot({
   chat: makeOpenAIConverse(beanConfig.openaiApiKey),
   model: beanConfig.model,
@@ -76,7 +80,7 @@ const bot = buildTeamsBot({
   loadNotes: () => loadNotes(notesDir(dir)),
   memoryProposals: new MemoryProposalStore(),
   saveMemories: (m) => saveMemories(memoryFile(dir), m),
-  conversations: new ConversationStore(),
+  conversations,
   cards: { proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard },
 });
 
@@ -189,7 +193,11 @@ const OUTBOX_POLL_MS = 5_000;
 setInterval(() => {
   void (async () => {
     for (const msg of await claimOutbox(outboxDir(beanDir()), "teams")) {
-      const text = msg.title ? `**${msg.title}**\n\n${msg.body}` : msg.body;
+      // displayBody present = an interrupted-run notice: msg.body carries the full instruction
+      // (needed below so a later "retry" has context), too long to post as-is — show the short
+      // version instead. Absent for plain messages (routine digests), which already are the
+      // display text.
+      const text = msg.displayBody ?? (msg.title ? `**${msg.title}**\n\n${msg.body}` : msg.body);
       // No channel = DM the user directly: every personal (1:1) conversation we've seen so
       // far (the default delivery mode). A specific channel targets one known conversation.
       const targets = msg.channel
@@ -201,15 +209,18 @@ setInterval(() => {
           : "outbox: no known personal Teams conversation yet — message dropped (DM the bot once first)");
         continue;
       }
+      let delivered = false;
       for (const ref of targets) {
         try {
           await adapter.continueConversationAsync(teamsConfig.botAppId, ref, async (context) => {
             await context.sendActivity(text);
           });
+          delivered = true;
         } catch (err) {
           console.error("outbox: teams send failed", err);
         }
       }
+      if (delivered && msg.displayBody && msg.channel) conversations.append(msg.channel, { role: "assistant", content: msg.body });
     }
   })();
 }, OUTBOX_POLL_MS);

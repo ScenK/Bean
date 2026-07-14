@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { reserveRun, releaseRun } from "../src/run-queue.js";
+import { reserveRun, releaseRun, interruptedRunNotice } from "../src/run-queue.js";
 import { runsDir } from "../src/config.js";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "bean-runqueue-"));
@@ -68,5 +68,27 @@ describe("run-queue", () => {
     const onDisk = JSON.parse(readFileSync(join(runsDir(dir), `${r!.id}.json`), "utf8"));
     expect(onDisk).toMatchObject({ id: r!.id, projectPath: "/p", pid: process.pid });
     expect(typeof onDisk.createdAt).toBe("string");
+  });
+});
+
+describe("interruptedRunNotice", () => {
+  it("full keeps the complete instruction; display uses the project's basename and quotes it verbatim when short", () => {
+    const { full, display } = interruptedRunNotice("/Users/scenk/Develop/Bean", "fix the bug");
+    expect(full).toBe('Run on /Users/scenk/Develop/Bean ("fix the bug") was interrupted when Bean closed. Ask me again to retry.');
+    expect(display).toBe('⚠️ A run on **Bean** ("fix the bug") was interrupted when Bean closed. Say "retry" and I\'ll pick it back up.');
+  });
+
+  it("display truncates a long instruction; full is unaffected", () => {
+    const longInstruction = "Review GitHub PR #45: ".padEnd(200, "x");
+    const { full, display } = interruptedRunNotice("/p/bean", longInstruction);
+    expect(full).toContain(longInstruction); // nothing trimmed from the model-facing text
+    expect(display.length).toBeLessThan(full.length);
+    expect(display).toContain("…");
+    expect(display).not.toContain(longInstruction);
+  });
+
+  it("a bare project name with no path separators is used as-is", () => {
+    const { display } = interruptedRunNotice("bean", "do it");
+    expect(display).toContain("**bean**");
   });
 });

@@ -6,6 +6,7 @@ import type {
   ChatTurn, CliName, LinkedNote, MemoryCandidate, Memory, Project, ProposedDelegate, ProposedNote, RouteSuggestion,
 } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
+import type { InterruptedRunNotice } from "../../../ipc.js";
 
 // Extraction is a real LLM call — a reasoning model (e.g. gpt-5-mini) routinely takes ~5s and
 // longer for bigger transcripts. This is only a backstop against a genuinely hung request, so it
@@ -151,11 +152,13 @@ export function ChatWindow() {
     window.bean.getPendingChatPrompt().then((p) => { if (p) runPrompt(p); });
     window.bean.onChatPrompt(runPrompt);
     // A delegate run that was still going when Bean last quit gets reported here — pull +
-    // push, same race fix as the dropped URL/chat prompt above.
-    const showInterruptedRunNotices = (notices: string[]): void => {
+    // push, same race fix as the dropped URL/chat prompt above. Rendered as a `reply` (not
+    // `status`) so it enters conversation history: a later "retry" needs the full instruction
+    // (notice.text) in context, not just the short bubble text (notice.display) shown on screen.
+    const showInterruptedRunNotices = (notices: InterruptedRunNotice[]): void => {
       setItems((prev) => [
         ...prev,
-        ...notices.map((text) => ({ kind: "status" as const, id: newId(), text, tone: "info" as const })),
+        ...notices.map((n) => ({ kind: "reply" as const, id: newId(), text: n.text, display: n.display })),
       ]);
     };
     window.bean.getPendingInterruptedRunNotices().then((notices) => { if (notices?.length) showInterruptedRunNotices(notices); });

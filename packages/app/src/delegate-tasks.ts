@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { runDelegate, reserveRun, releaseRun, enqueueOutbox, outboxDir } from "@bean/core";
+import { runDelegate, reserveRun, releaseRun, enqueueOutbox, outboxDir, interruptedRunNotice } from "@bean/core";
 import type { CliName, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
 
 export type DelegateEvent =
@@ -12,8 +12,10 @@ export type DelegateEvent =
 export interface DelegateStartRequest {
   projectPath: string;
   prompt: string;
-  // Short human-readable label (ProposedDelegate.instruction) — carried only for reporting an
-  // interrupted run back to chat after a restart; never sent to the delegated CLI itself.
+  // ProposedDelegate.instruction — can be a full multi-step composed prompt, not just a short
+  // label. Carried only for reporting an interrupted run back to chat after a restart (see
+  // interruptedRunNotice, which builds a short display version from it); never sent to the
+  // delegated CLI itself.
   instruction: string;
   model?: string; // canonical model id (models.ts)
 }
@@ -135,11 +137,8 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
         t.cancelling = true;
         t.cancel(() => {});
         await releaseRun(deps.dir, t.reservationId);
-        await enqueueOutbox(
-          outboxDir(deps.dir),
-          { transport: "chat", body: `Run on ${t.projectPath} ("${t.instruction}") was interrupted when Bean closed. Ask me again to retry.` },
-          deps.newId,
-        );
+        const { full, display } = interruptedRunNotice(t.projectPath, t.instruction);
+        await enqueueOutbox(outboxDir(deps.dir), { transport: "chat", body: full, displayBody: display }, deps.newId);
       }
       tasks.clear();
     },
