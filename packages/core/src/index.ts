@@ -22,6 +22,7 @@ export * from "./openai-chat.js";
 export * from "./launcher.js";
 export * from "./delegate.js";
 export * from "./drop-plan.js";
+export * from "./updater.js";
 export * from "./chatops/addressing.js";
 export * from "./chatops/ambient.js";
 export * from "./chatops/bot.js";
