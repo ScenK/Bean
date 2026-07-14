@@ -30,6 +30,10 @@ export type ProposedRun = RouteSuggestion;
 /** A note draft awaiting user confirmation in the chat — notes are never saved silently.
  * `slug` present = update that existing note in place (chat linked to a note). */
 export interface ProposedNote { title: string; body: string; project?: string; slug?: string; }
+/** A skill draft awaiting user confirmation — skills are never written silently.
+ * `updating` = a skill with this name already exists (user or built-in; confirming
+ * writes/overrides the user copy in ~/.bean/skills). */
+export interface ProposedSkill { name: string; body: string; updating: boolean; }
 // A confirm-first background coding task that reports its final result back to this chat.
 export interface ProposedDelegate {
   projectPath: string;
@@ -44,7 +48,7 @@ export interface ProposedDelegate {
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */
 export interface LinkedNote { slug: string; title: string; version: number; body: string; }
-export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedRemember?: boolean; }
+export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedRemember?: boolean; proposedSkill?: ProposedSkill; }
 export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?: string; linkedNote?: LinkedNote; }
 
 // runAvailable=false (chatops: Discord/Teams) — no terminal exists there, so propose_run
@@ -83,7 +87,9 @@ const behaviorInstructions = (runAvailable: boolean): string =>
       "kick off work is a propose_delegate call. Delegates are confirm-first via the card " +
       "shown after you propose — not by asking permission in chat text.") +
   " When the user explicitly asks you to remember or save durable facts from this chat, call " +
-  "propose_remember — the user then confirms which facts are kept; never save memory silently.";
+  "propose_remember — the user then confirms which facts are kept; never save memory silently. " +
+  "When the user asks you to create a new skill or change an existing one, call propose_skill " +
+  "with the complete markdown — the user confirms the card before anything is written.";
   
 
 function proposeNoteTool(projects: Project[], linkedNote?: LinkedNote): ToolSpec {
@@ -112,6 +118,30 @@ function proposeNoteTool(projects: Project[], linkedNote?: LinkedNote): ToolSpec
         "The user confirms before saving."
       : "Draft a note capturing this conversation's output for the user to confirm and save.",
     parameters: { type: "object", properties, required: ["title", "body"] },
+  };
+}
+
+// Mirrors saveSkill's traversal guard — converse() must reject what the writer would reject,
+// so an invalid model-supplied name dies here instead of as a save-time error on the card.
+const INVALID_SKILL_NAME = /[/\\]|\.\./;
+
+function proposeSkillTool(): ToolSpec {
+  return {
+    name: "propose_skill",
+    description:
+      "Draft a new skill, or a new version of an existing one, for the user to confirm and save. " +
+      "A skill is a markdown file: optional frontmatter (`description:` — the one-line summary " +
+      "shown in catalogs; `target: chat` if it should run right in the chat instead of a " +
+      "terminal coding agent), then the full instructions as the body. Reusing an existing " +
+      "skill's name replaces that skill. Nothing is written until the user confirms the card.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "kebab-case skill name; becomes the filename <name>.md" },
+        body: { type: "string", description: "the complete markdown file content, frontmatter included" },
+      },
+      required: ["name", "body"],
+    },
   };
 }
 
@@ -271,6 +301,7 @@ export async function converse(
     ...(runnableSkills.length > 0 ? [proposeRunTool(runnableSkills, projects, !runAvailable)] : []),
     ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects, availableClis)] : []),
     proposeNoteTool(projects, linkedNote),
+    proposeSkillTool(),
     ...(rememberAvailable ? [proposeRememberTool()] : []),
     ...actions.map((a) => a.spec),
   ];
@@ -346,6 +377,20 @@ export async function converse(
         reply: content,
         model: deps.model,
         proposedNote: { title: args.title.trim(), body: args.body, project, slug: linkedNote?.slug },
+      };
+    }
+
+    const skillCall = toolCalls.find((c) => c.name === "propose_skill");
+    if (skillCall) {
+      const args = (skillCall.args ?? {}) as { name?: unknown; body?: unknown };
+      const name = typeof args.name === "string" ? args.name.trim() : "";
+      if (!name || INVALID_SKILL_NAME.test(name) || typeof args.body !== "string" || !args.body.trim()) {
+        return { reply: content, model: deps.model };
+      }
+      return {
+        reply: content,
+        model: deps.model,
+        proposedSkill: { name, body: args.body, updating: skills.some((s) => s.name === name) },
       };
     }
 

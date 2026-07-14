@@ -67,6 +67,20 @@ export interface ConsolidationResultCardInput {
   outcome: "applied" | "cancelled";
 }
 
+export interface SkillProposalCardInput {
+  proposalId: string;
+  name: string;
+  body: string;
+  /** True when a skill with this name already exists (save replaces/overrides it). */
+  updating: boolean;
+}
+
+export interface SkillResultCardInput {
+  name: string;
+  savedBy: string;
+  outcome: "saved" | "cancelled";
+}
+
 export interface CardBuilders {
   proposalCard: (input: ProposalCardInput) => object;
   runningCard: (input: RunningCardInput) => object;
@@ -77,4 +91,6 @@ export interface CardBuilders {
   memoryResultCard: (input: MemoryResultCardInput) => object;
   consolidationProposalCard: (input: ConsolidationProposalCardInput) => object;
   consolidationResultCard: (input: ConsolidationResultCardInput) => object;
+  skillProposalCard: (input: SkillProposalCardInput) => object;
+  skillResultCard: (input: SkillResultCardInput) => object;
 }

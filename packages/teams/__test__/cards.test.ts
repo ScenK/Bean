@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import {
   finishedCard, memoryProposalCard, memoryResultCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
+  skillProposalCard, skillResultCard,
 } from "../src/cards.js";
 
 const models = [
@@ -91,4 +92,26 @@ test("memory result card states the count/outcome and has no actions", () => {
   const s = flatten(card);
   expect(s).toContain("saved");
   expect(s).toContain("2");
+});
+
+test("skill proposal card shows name and body and wires save/cancel data", () => {
+  const card = skillProposalCard({ proposalId: "skill-1", name: "changelog", body: "# Changelog\n\nDo it.", updating: false });
+  const s = flatten(card);
+  expect(s).toContain("changelog");
+  expect(s).toContain("Do it.");
+  expect(s).toContain('"beanAction":"save-skill"');
+  expect(s).toContain('"beanAction":"cancel-skill"');
+  expect(s).toContain('"proposalId":"skill-1"');
+  expect(s).not.toContain("replaces existing");
+});
+
+test("skill proposal card badges an update to an existing skill", () => {
+  const s = flatten(skillProposalCard({ proposalId: "p", name: "summarize", body: "# S", updating: true }));
+  expect(s).toContain("replaces existing");
+});
+
+test("skill result card reports outcome and actor", () => {
+  const s = flatten(skillResultCard({ name: "changelog", savedBy: "alice", outcome: "saved" }));
+  expect(s).toContain("Skill saved");
+  expect(s).toContain("alice");
 });

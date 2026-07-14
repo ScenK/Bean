@@ -13,6 +13,7 @@ import { ConsolidationProposalStore } from "../src/chatops/consolidation-proposa
 import { RunRegistry } from "../src/chatops/runs.js";
 import type { CardBuilders } from "../src/chatops/cards-api.js";
 import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index.js";
+import { SkillProposalStore } from "../src/chatops/skill-proposals.js";
 
 const fakeCards = {
   proposalCard: (i: object) => ({ kind: "proposal", ...i }),
@@ -24,6 +25,8 @@ const fakeCards = {
   memoryResultCard: (i: object) => ({ kind: "memory-result", ...i }),
   consolidationProposalCard: (i: object) => ({ kind: "consolidation-proposal", ...i }),
   consolidationResultCard: (i: object) => ({ kind: "consolidation-result", ...i }),
+  skillProposalCard: (i: object) => ({ kind: "skill-proposal", ...i }),
+  skillResultCard: (i: object) => ({ kind: "skill-result", ...i }),
 };
 
 function fx(): BotEffects & { posted: string[]; cards: object[]; updates: { id: string; card: object }[] } {
@@ -52,17 +55,24 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
   const saved: Record<string, string>[] = [];
   const savedNotes: NoteDraft[] = [];
   const savedMemories: import("../src/memory/memory.js").Memory[][] = [];
+  const savedSkills: { name: string; body: string }[] = [];
   const result = overrides.converseResult ?? { reply: "hello there" };
   const deps: TeamsBotDeps = {
     // bot.ts calls converse() internally; we exercise it through a chat fn that
     // triggers the delegate tool path only when the test wants a proposal.
-    chat: async () =>
-      result.proposedDelegate
+    chat: async () => {
+      if (result.proposedSkill) {
+        return { content: result.reply, toolCalls: [{ name: "propose_skill", args: {
+          name: result.proposedSkill.name, body: result.proposedSkill.body,
+        } }] };
+      }
+      return result.proposedDelegate
         ? { content: result.reply, toolCalls: [{ name: "propose_delegate", args: {
             project: result.proposedDelegate.projectPath,
             instruction: result.proposedDelegate.instruction,
           } }] }
-        : { content: result.reply, toolCalls: [] },
+        : { content: result.reply, toolCalls: [] };
+    },
     model: "m",
     loadSkills: async () => [{ name: "fix-bug", description: "d", body: "b", enabled: true }],
     loadProjects: async () => [{ name: "bean", path: "/p/bean" }],
@@ -82,9 +92,11 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     consolidationProposals: new ConsolidationProposalStore(),
     conversations: new ConversationStore(dbFile(runsBeanDir)),
     cards: fakeCards as CardBuilders,
+    skillProposals: new SkillProposalStore(),
+    saveSkill: async (name, body) => { savedSkills.push({ name, body }); },
     ...overrides,
   };
-  return { deps, delegateCalls, saved, savedNotes, savedMemories };
+  return { deps, delegateCalls, saved, savedNotes, savedMemories, savedSkills };
 }
 
 const msg = { conversationId: "c1", text: "hi bean", fromId: "u1", fromName: "alice" };
@@ -633,4 +645,54 @@ test("'Cancel' message cancels active runs without calling converse", async () =
   await bot.onMessage({ ...msg, text: "Cancel" }, effects);
   expect(effects.posted).toContain("Cancelled 1 run(s).");
   expect(chatSpy).not.toHaveBeenCalled();
+});
+
+test("proposedSkill posts a skill proposal card and stores the pending draft", async () => {
+  const { deps } = makeDeps({
+    converseResult: { reply: "Drafted.", proposedSkill: { name: "changelog", body: "# C", updating: false } },
+  });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onMessage(msg, effects);
+  const card = effects.cards[0] as { kind: string; name: string; updating: boolean; proposalId: string };
+  expect(card.kind).toBe("skill-proposal");
+  expect(card.name).toBe("changelog");
+  expect(card.updating).toBe(false);
+  expect(card.proposalId).toBeTruthy();
+});
+
+test("save-skill action persists the skill and updates the card to saved", async () => {
+  const { deps, savedSkills } = makeDeps();
+  const bot = buildTeamsBot(deps);
+  const pending = deps.skillProposals.add({
+    skill: { name: "changelog", body: "# C", updating: false }, conversationId: "c1", proposedBy: "alice",
+  });
+  deps.skillProposals.setCardActivityId(pending.id, "act-1");
+  const effects = fx();
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "save-skill", proposalId: pending.id } }, effects);
+  expect(savedSkills).toEqual([{ name: "changelog", body: "# C" }]);
+  expect(effects.updates[0]?.card).toMatchObject({ kind: "skill-result", outcome: "saved", savedBy: "bob" });
+  expect(effects.posted[0]).toContain("changelog");
+});
+
+test("cancel-skill action updates the card to cancelled without saving", async () => {
+  const { deps, savedSkills } = makeDeps();
+  const bot = buildTeamsBot(deps);
+  const pending = deps.skillProposals.add({
+    skill: { name: "changelog", body: "# C", updating: false }, conversationId: "c1", proposedBy: "alice",
+  });
+  deps.skillProposals.setCardActivityId(pending.id, "act-1");
+  const effects = fx();
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "cancel-skill", proposalId: pending.id } }, effects);
+  expect(savedSkills).toEqual([]);
+  expect(effects.updates[0]?.card).toMatchObject({ kind: "skill-result", outcome: "cancelled" });
+});
+
+test("save-skill on an expired/unknown proposal posts an expiry message", async () => {
+  const { deps, savedSkills } = makeDeps();
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "save-skill", proposalId: "nope" } }, effects);
+  expect(savedSkills).toEqual([]);
+  expect(effects.posted[0]).toContain("expired");
 });

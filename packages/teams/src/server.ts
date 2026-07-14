@@ -2,9 +2,9 @@ import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
-  detectClis, runDelegate, claimOutbox, outboxDir,
+  detectClis, runDelegate, claimOutbox, outboxDir, saveSkill,
   buildTeamsBot, mentionsBotName, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
-  ConsolidationProposalStore, RunRegistry,
+  ConsolidationProposalStore, RunRegistry, SkillProposalStore,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -16,7 +16,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   finishedCard, memoryProposalCard, memoryResultCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
-  consolidationProposalCard, consolidationResultCard,
+  consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard,
 } from "./cards.js";
 import { loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 
@@ -82,6 +82,8 @@ const bot = buildTeamsBot({
   noteProposals: new NoteProposalStore(),
   saveNote: (draft) => saveNote(dbFile(dir), draft),
   searchNotes: (query) => searchNotes(dbFile(dir), query),
+  skillProposals: new SkillProposalStore(),
+  saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
   memoryProposals: new MemoryProposalStore(),
   appendMemories: (m) => appendMemories(dbFile(dir), m),
   saveMemories: (m) => saveMemories(dbFile(dir), m),
@@ -89,7 +91,7 @@ const bot = buildTeamsBot({
   conversations,
   cards: {
     proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
-    consolidationProposalCard, consolidationResultCard,
+    consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard,
   },
 });
 
