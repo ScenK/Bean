@@ -45,3 +45,4 @@
 - [project-chatops-memory-flow](project-chatops-memory-flow.md) — memory capture in Teams/Discord bots; `ConversationStore` is now `bean.db`-backed (survives bot restarts) with a silent auto-compaction pass above 60 turns
 - [project-routines](project-routines.md) — cron-scheduled multi-step automations: storage, pure DI'd runner (routine-only `save_note`, no propose_*), scheduler (no catch-up), chatops digest fanout via `~/.bean/outbox/`
 - [project-durable-run-queue](project-durable-run-queue.md) — cross-process delegate-run reservation (`run-queue.ts`, pid-liveness crash recovery) split from interrupted-run reporting (reused `outbox.ts`); before-quit sequencing in `main.ts`.
+- [project-manual-update-check](project-manual-update-check.md) — Ed25519-signed manual update flow (no Sparkle/electron-updater); see the design spec for why.
