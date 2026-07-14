@@ -113,6 +113,19 @@ export async function installAndRelaunch(extractedAppPath: string, deps: Install
   exit();
 }
 
+export interface CleanupDeps {
+  rm?: (path: string) => Promise<void>;
+}
+
+/** Best-effort removes the temp directory `extractAndSign` created for a downloaded update
+ * (the extracted app plus the zip it came from) — call this when a previously-downloaded,
+ * not-yet-installed update is superseded by a newer check, so repeated "Check for Updates"
+ * clicks don't silently accumulate ~125MB of orphaned /tmp directories. Never throws. */
+export async function cleanupExtractedBundle(extractedAppPath: string, deps: CleanupDeps = {}): Promise<void> {
+  const rm = deps.rm ?? ((p) => rmCb(p, { recursive: true, force: true }));
+  await rm(dirname(extractedAppPath)).catch(() => {});
+}
+
 export interface UpdateCheckOutcome {
   result: UpdateCheckResult;
   extractedAppPath?: string;

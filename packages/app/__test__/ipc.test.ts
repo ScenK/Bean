@@ -495,6 +495,7 @@ test("buildUpdateHandlers.check strips extractedAppPath/URLs before returning to
     installUpdate: async () => {},
     pendingUpdateStore: store,
     openReleasesPage: () => {},
+    cleanupExtractedBundle: async () => {},
   });
   const status = await handlers.check();
   expect(status).toEqual({ status: "available", version: "0.8.13", notes: "notes" });
@@ -509,6 +510,7 @@ test("buildUpdateHandlers.check passes up-to-date/error results through unchange
     installUpdate: async () => {},
     pendingUpdateStore: buildPendingUpdateStore(),
     openReleasesPage: () => {},
+    cleanupExtractedBundle: async () => {},
   });
   expect(await handlers.check()).toEqual({ status: "up-to-date" });
 });
@@ -522,6 +524,7 @@ test("buildUpdateHandlers.install errors when nothing has been checked/downloade
     installUpdate: async (path: string) => { installed.push(path); },
     pendingUpdateStore: buildPendingUpdateStore(),
     openReleasesPage: () => {},
+    cleanupExtractedBundle: async () => {},
   });
   expect(await handlers.install()).toEqual({
     status: "error",
@@ -543,6 +546,7 @@ test("buildUpdateHandlers.install calls installUpdate with the stored path", asy
     installUpdate: async (path: string) => { installed.push(path); },
     pendingUpdateStore: store,
     openReleasesPage: () => {},
+    cleanupExtractedBundle: async () => {},
   });
   await handlers.check();
   const outcome = await handlers.install();
@@ -560,6 +564,7 @@ test("buildUpdateHandlers.install surfaces an error from installUpdate instead o
     installUpdate: async () => { throw new Error("EACCES"); },
     pendingUpdateStore: store,
     openReleasesPage: () => {},
+    cleanupExtractedBundle: async () => {},
   });
   expect(await handlers.install()).toEqual({ status: "error", message: "EACCES" });
 });
@@ -573,6 +578,7 @@ test("buildUpdateHandlers.openReleasesPage delegates to the injected opener", ()
     installUpdate: async () => {},
     pendingUpdateStore: buildPendingUpdateStore(),
     openReleasesPage: () => { opened.push(true); },
+    cleanupExtractedBundle: async () => {},
   });
   handlers.openReleasesPage();
   expect(opened).toEqual([true]);
@@ -587,6 +593,7 @@ test("buildUpdateHandlers.check refuses in a dev build without calling checkAndD
     installUpdate: async () => {},
     pendingUpdateStore: buildPendingUpdateStore(),
     openReleasesPage: () => {},
+    cleanupExtractedBundle: async () => {},
   });
   expect(await handlers.check()).toEqual({ status: "error", message: "Updates aren't available in a dev build." });
   expect(checked).toEqual([]);
@@ -603,7 +610,55 @@ test("buildUpdateHandlers.install refuses in a dev build without calling install
     installUpdate: async (path: string) => { installed.push(path); },
     pendingUpdateStore: store,
     openReleasesPage: () => {},
+    cleanupExtractedBundle: async () => {},
   });
   expect(await handlers.install()).toEqual({ status: "error", message: "Updates aren't available in a dev build." });
   expect(installed).toEqual([]);
+});
+
+test("buildUpdateHandlers.check cleans up the previous extracted bundle when a second check supersedes it", async () => {
+  const store = buildPendingUpdateStore();
+  const cleanedUp: string[] = [];
+  let call = 0;
+  const handlers = buildUpdateHandlers({
+    currentVersion: "0.8.12",
+    isPackaged: true,
+    checkAndDownloadUpdate: async () => {
+      call += 1;
+      return {
+        result: { status: "available", version: `0.8.1${call + 2}`, notes: "notes", zipUrl: "https://x/zip", sigUrl: "https://x/sig" },
+        extractedAppPath: `/tmp/bean-update-${call}/Bean.app`,
+      };
+    },
+    installUpdate: async () => {},
+    pendingUpdateStore: store,
+    openReleasesPage: () => {},
+    cleanupExtractedBundle: async (path: string) => { cleanedUp.push(path); },
+  });
+
+  await handlers.check();
+  expect(cleanedUp).toEqual([]);
+
+  await handlers.check();
+  expect(cleanedUp).toEqual(["/tmp/bean-update-1/Bean.app"]);
+  expect(store.get()).toBe("/tmp/bean-update-2/Bean.app");
+});
+
+test("buildUpdateHandlers.check does not clean up when the new result has no extracted bundle (up-to-date/error)", async () => {
+  const store = buildPendingUpdateStore();
+  store.set("/tmp/bean-update-1/Bean.app");
+  const cleanedUp: string[] = [];
+  const handlers = buildUpdateHandlers({
+    currentVersion: "0.8.12",
+    isPackaged: true,
+    checkAndDownloadUpdate: async () => ({ result: { status: "up-to-date" } }),
+    installUpdate: async () => {},
+    pendingUpdateStore: store,
+    openReleasesPage: () => {},
+    cleanupExtractedBundle: async (path: string) => { cleanedUp.push(path); },
+  });
+
+  await handlers.check();
+  expect(cleanedUp).toEqual([]);
+  expect(store.get()).toBe("/tmp/bean-update-1/Bean.app");
 });

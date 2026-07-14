@@ -97,6 +97,10 @@ export interface UpdateHandlerDeps {
   installUpdate: (extractedAppPath: string) => Promise<void>;
   pendingUpdateStore: ReturnType<typeof buildPendingUpdateStore>;
   openReleasesPage: () => void;
+  // Removes a previously-downloaded, not-yet-installed update's temp dir when a later check
+  // supersedes it with a new one — otherwise each repeated "Check for Updates" orphans the
+  // prior ~125MB extracted bundle forever. See updater.ts's cleanupExtractedBundle.
+  cleanupExtractedBundle: (extractedAppPath: string) => Promise<void>;
 }
 
 const DEV_BUILD_MESSAGE = "Updates aren't available in a dev build.";
@@ -107,7 +111,13 @@ export function buildUpdateHandlers(deps: UpdateHandlerDeps) {
       if (!deps.isPackaged) return { status: "error", message: DEV_BUILD_MESSAGE };
       const outcome = await deps.checkAndDownloadUpdate(deps.currentVersion);
       if (outcome.result.status === "available") {
-        if (outcome.extractedAppPath) deps.pendingUpdateStore.set(outcome.extractedAppPath);
+        if (outcome.extractedAppPath) {
+          const previous = deps.pendingUpdateStore.get();
+          if (previous && previous !== outcome.extractedAppPath) {
+            await deps.cleanupExtractedBundle(previous);
+          }
+          deps.pendingUpdateStore.set(outcome.extractedAppPath);
+        }
         return { status: "available", version: outcome.result.version, notes: outcome.result.notes };
       }
       return outcome.result;

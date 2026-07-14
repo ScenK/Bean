@@ -33,7 +33,7 @@ import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
 import { createDelegateTasks, resolvedPathSpawnFn } from "./delegate-tasks.js";
 import { createRoutineScheduler } from "./routine-scheduler.js";
-import { checkAndDownloadUpdate, installAndRelaunch } from "./updater.js";
+import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
 
 // dist/main.js sits next to package.json (esbuild output isn't relocated).
 const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"));
@@ -605,6 +605,7 @@ app.whenReady().then(async () => {
       checkAndDownloadUpdate: (currentVersion: string) => checkAndDownloadUpdate(currentVersion),
       installUpdate: (extractedAppPath: string) => installAndRelaunch(extractedAppPath),
       pendingUpdateStore,
+      cleanupExtractedBundle: (extractedAppPath: string) => cleanupExtractedBundle(extractedAppPath),
       openReleasesPage: () => { void shell.openExternal("https://github.com/ScenK/Bean/releases"); },
       chatopsStatus: chatopsServers.status,
       chatopsStart: chatopsServers.start,
