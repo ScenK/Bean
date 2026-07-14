@@ -58,6 +58,7 @@ adapter.onTurnError = async (context, error) => {
 };
 
 const clis = detectClis();
+const runs = new RunRegistry(runDelegate, { dir, botKind: "teams" });
 const bot = buildTeamsBot({
   chat: makeOpenAIConverse(beanConfig.openaiApiKey),
   model: beanConfig.model,
@@ -68,7 +69,7 @@ const bot = buildTeamsBot({
   loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
   saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),
   detectClis: () => clis,
-  runs: new RunRegistry(runDelegate),
+  runs,
   proposals: new ProposalStore(),
   noteProposals: new NoteProposalStore(),
   saveNote: (draft) => saveNote(notesDir(dir), draft),
@@ -77,6 +78,13 @@ const bot = buildTeamsBot({
   saveMemories: (m) => saveMemories(memoryFile(dir), m),
   conversations: new ConversationStore(),
   cards: { proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard },
+});
+
+// chatopsServers.stop() (packages/app/src/chatops-servers.ts) sends SIGTERM with no other
+// warning — mark any in-flight run interrupted (durable outbox notice to its conversation)
+// before this process disappears, instead of just dying mid-run with the requester left hanging.
+process.on("SIGTERM", () => {
+  void runs.interruptAll().finally(() => process.exit(0));
 });
 
 // Ambient (non-mention) channel messages only reach /api/messages if the Teams app manifest

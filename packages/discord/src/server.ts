@@ -20,6 +20,7 @@ const beanConfig = await loadConfig(configFile(dir), dir);
 if (!beanConfig.openaiApiKey) throw new Error("openaiApiKey missing in ~/.bean/config.json");
 
 const clis = detectClis();
+const runs = new RunRegistry(runDelegate, { dir, botKind: "discord" });
 const bot = buildTeamsBot({
   chat: makeOpenAIConverse(beanConfig.openaiApiKey),
   model: beanConfig.model,
@@ -30,7 +31,7 @@ const bot = buildTeamsBot({
   loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
   saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),
   detectClis: () => clis,
-  runs: new RunRegistry(runDelegate),
+  runs,
   proposals: new ProposalStore(),
   noteProposals: new NoteProposalStore(),
   saveNote: (draft) => saveNote(notesDir(dir), draft),
@@ -156,6 +157,13 @@ client.on("interactionCreate", async (interaction: Interaction) => {
 });
 
 client.on("error", (err) => console.error("client error:", err));
+
+// chatopsServers.stop() (packages/app/src/chatops-servers.ts) sends SIGTERM with no other
+// warning — mark any in-flight run interrupted (durable outbox notice to its conversation)
+// before this process disappears, instead of just dying mid-run with the requester left hanging.
+process.on("SIGTERM", () => {
+  void runs.interruptAll().finally(() => process.exit(0));
+});
 
 client.once("clientReady", () => {
   console.log(`@bean/discord logged in as ${client.user?.tag} (clis: ${clis.join(", ") || "none"})`);

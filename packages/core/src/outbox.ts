@@ -6,7 +6,7 @@ import { join } from "node:path";
  * files on a short poll. Files survive bot restarts — messages queue until a bot runs. */
 export interface OutboxMessage {
   id: string;
-  transport: "teams" | "discord";
+  transport: "teams" | "discord" | "chat";
   // Absent = DM the user directly (discord: allowed user(s); teams: known personal
   // conversation(s)) — the default delivery mode. Present = a specific channel id (discord)
   // or conversation id (teams).
@@ -28,7 +28,7 @@ export async function enqueueOutbox(
   return full.id;
 }
 
-export async function claimOutbox(dir: string, transport: "teams" | "discord"): Promise<OutboxMessage[]> {
+export async function claimOutbox(dir: string, transport: "teams" | "discord" | "chat"): Promise<OutboxMessage[]> {
   let entries: string[];
   try {
     entries = await readdir(dir);
@@ -39,8 +39,8 @@ export async function claimOutbox(dir: string, transport: "teams" | "discord"): 
   for (const file of entries.filter((f) => f.endsWith(".json"))) {
     const path = join(dir, file);
     const isOwnTransport = file.startsWith(`${transport}-`);
-    // orphan: doesn't belong to either known transport, so no poll loop owns cleaning it up
-    const isOrphan = !file.startsWith("teams-") && !file.startsWith("discord-");
+    // orphan: doesn't belong to any known transport, so no poll/claim loop owns cleaning it up
+    const isOrphan = !file.startsWith("teams-") && !file.startsWith("discord-") && !file.startsWith("chat-");
     if (!isOwnTransport && !isOrphan) continue; // other transport's file — leave it untouched
 
     if (isOrphan) {

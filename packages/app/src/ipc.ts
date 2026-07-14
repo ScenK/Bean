@@ -56,6 +56,17 @@ export function buildChatPromptStore(): { set: (p: ChatPromptPayload) => void; g
   };
 }
 
+// Same drop-race fix as the stores above, for the "your run was interrupted" notices claimed
+// from the outbox at startup (main.ts): the chat window may not be mounted yet when they're
+// found, so they're pulled on mount as well as pushed to an already-open window.
+export function buildInterruptedRunStore(): { set: (notices: string[]) => void; get: () => string[] | undefined } {
+  let pending: string[] | undefined;
+  return {
+    set: (notices) => { pending = notices; },
+    get: () => { const n = pending; pending = undefined; return n; },
+  };
+}
+
 export interface RouteHandlerDeps {
   loadSkills: (projectDir: string, userDir: string) => Promise<Skill[]>;
   loadProjects: (file: string) => Promise<Project[]>;
@@ -373,6 +384,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   getPendingDroppedUrl: () => string | undefined;
   runInChat: (payload: ChatPromptPayload) => void;
   getPendingChatPrompt: () => ChatPromptPayload | undefined;
+  getPendingInterruptedRunNotices: () => string[] | undefined;
   planFromDrop: (skillName: string, droppedUrl: string) => void;
   getConfig: () => ConfigView;
   applyConfig: (update: ConfigUpdate) => Promise<void>;
@@ -384,7 +396,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   beanDirPath: string;
   modelMemoryFile: string;
   delegateTasks: {
-    start: (req: DelegateStartRequest) => string;
+    start: (req: DelegateStartRequest) => Promise<string>;
     cancel: (taskId: string) => void;
   };
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
@@ -510,6 +522,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.on(IPC.planFromDrop, (_e, skillName: string, droppedUrl: string) => deps.planFromDrop(skillName, droppedUrl));
   ipcMain.on(IPC.runInChat, (_e, payload: ChatPromptPayload) => deps.runInChat(payload));
   ipcMain.handle(IPC.getPendingChatPrompt, () => deps.getPendingChatPrompt());
+  ipcMain.handle(IPC.getPendingInterruptedRunNotices, () => deps.getPendingInterruptedRunNotices());
 
   // Avatar window growth: one shared mode (normal/menu/drag) drives its bounds. The bubble
   // menu grows symmetrically (centered on the bean). The drag bloom instead anchors on the

@@ -150,6 +150,16 @@ export function ChatWindow() {
     };
     window.bean.getPendingChatPrompt().then((p) => { if (p) runPrompt(p); });
     window.bean.onChatPrompt(runPrompt);
+    // A delegate run that was still going when Bean last quit gets reported here — pull +
+    // push, same race fix as the dropped URL/chat prompt above.
+    const showInterruptedRunNotices = (notices: string[]): void => {
+      setItems((prev) => [
+        ...prev,
+        ...notices.map((text) => ({ kind: "status" as const, id: newId(), text, tone: "info" as const })),
+      ]);
+    };
+    window.bean.getPendingInterruptedRunNotices().then((notices) => { if (notices?.length) showInterruptedRunNotices(notices); });
+    window.bean.onInterruptedRunNotice(showInterruptedRunNotices);
     window.bean.onDelegateEvent(applyDelegateEvent);
     window.bean.onReviewBeforeClose(() => {
       const transcript: ChatTurn[] = itemsRef.current
@@ -250,9 +260,9 @@ export function ChatWindow() {
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "proposal" ? { ...it, state: "cancelled" } : it)));
   };
 
-  const startDelegate = async (id: string, projectPath: string, prompt: string, model?: string): Promise<void> => {
+  const startDelegate = async (id: string, projectPath: string, prompt: string, instruction: string, model?: string): Promise<void> => {
     if (pendingDelegateStartsRef.current.has(id)) return;
-    const start = window.bean.delegateStart({ projectPath, prompt, model });
+    const start = window.bean.delegateStart({ projectPath, prompt, instruction, model });
     pendingDelegateStartsRef.current.set(id, start);
     setItems((prev) => markDelegateStarting(prev, id));
     try {
@@ -273,7 +283,7 @@ export function ChatWindow() {
       (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
     );
     if (!item || (item.state !== "pending" && item.state !== "starting")) return;
-    return startDelegate(id, item.proposal.projectPath, editedPrompt, model);
+    return startDelegate(id, item.proposal.projectPath, editedPrompt, item.proposal.instruction, model);
   };
 
   const dismissDelegate = (id: string): void => {

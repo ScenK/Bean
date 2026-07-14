@@ -53,6 +53,10 @@ contextBridge.exposeInMainWorld("bean", {
     ipcRenderer.invoke(IPC.getPendingChatPrompt),
   onChatPrompt: (cb: (p: { prompt: string; label: string; noteSlug?: string }) => void) =>
     ipcRenderer.on(IPC.chatPrompt, (_e, p: { prompt: string; label: string; noteSlug?: string }) => cb(p)),
+  getPendingInterruptedRunNotices: (): Promise<string[] | undefined> =>
+    ipcRenderer.invoke(IPC.getPendingInterruptedRunNotices),
+  onInterruptedRunNotice: (cb: (notices: string[]) => void) =>
+    ipcRenderer.on(IPC.interruptedRunNotice, (_e, notices: string[]) => cb(notices)),
   listSkills: (): Promise<Skill[]> => ipcRenderer.invoke(IPC.listSkills),
   listProjects: (): Promise<Project[]> => ipcRenderer.invoke(IPC.listProjects),
   saveProjects: (projects: Project[]): Promise<void> => ipcRenderer.invoke(IPC.saveProjects, projects),

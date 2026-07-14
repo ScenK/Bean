@@ -39,6 +39,8 @@ declare global {
       runInChat(prompt: string, label: string, noteSlug?: string): void;
       getPendingChatPrompt(): Promise<{ prompt: string; label: string; noteSlug?: string } | undefined>;
       onChatPrompt(cb: (p: { prompt: string; label: string; noteSlug?: string }) => void): void;
+      getPendingInterruptedRunNotices(): Promise<string[] | undefined>;
+      onInterruptedRunNotice(cb: (notices: string[]) => void): void;
       listSkills(): Promise<Skill[]>;
       listProjects(): Promise<Project[]>;
       saveProjects(projects: Project[]): Promise<void>;

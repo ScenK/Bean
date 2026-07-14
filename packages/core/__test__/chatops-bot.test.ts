@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import type { ConverseResult } from "../src/index.js";
 import { buildTeamsBot, type BotEffects, type TeamsBotDeps } from "../src/chatops/bot.js";
@@ -34,10 +37,14 @@ function fx(): BotEffects & { posted: string[]; cards: object[]; updates: { id: 
 
 function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: ConverseResult } = {}) {
   const delegateCalls: { req: DelegateRequest; cb: DelegateCallbacks }[] = [];
+  // Fresh tmp dir per makeDeps() call: reserveRun's pid-liveness check would otherwise see a
+  // stale reservation from an earlier test as "still alive" (same vitest worker pid) and
+  // wrongly refuse to start.
+  const runsBeanDir = mkdtempSync(join(tmpdir(), "bean-bot-"));
   const runs = new RunRegistry((req, cb) => {
     delegateCalls.push({ req, cb });
     return { cancel: (done?: () => void) => done?.() };
-  });
+  }, { dir: runsBeanDir, botKind: "discord" });
   const saved: Record<string, string>[] = [];
   const savedNotes: NoteDraft[] = [];
   const savedMemories: import("../src/memory/memory.js").Memory[][] = [];
