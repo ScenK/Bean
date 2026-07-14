@@ -9,10 +9,11 @@ import {
 import { mkdir } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";
 import { BrowserWindow, dialog, screen, shell, type IpcMain } from "electron";
-import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import { avatarSizeForMode, dragBloomLayout, nextAvatarBounds, type Bounds } from "./avatar-menu.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
+import type { UpdateCheckOutcome } from "./updater.js";
 
 export { IPC };
 
@@ -71,6 +72,51 @@ export function buildInterruptedRunStore(): {
   return {
     set: (notices) => { pending = notices; },
     get: () => { const n = pending; pending = undefined; return n; },
+  };
+}
+
+// Bridges the two-step manual update flow (check-and-download, then a separate confirmed
+// install) across two IPC calls. Unlike the drop-race stores above, there's no push/pull
+// race here — just a plain slot passing the extracted bundle's path from one invoke to the
+// next in the same About-panel session. Not consumed on get: a failed install can be retried
+// against the same already-downloaded bundle without re-checking.
+export function buildPendingUpdateStore(): { set: (path: string) => void; get: () => string | undefined } {
+  let pending: string | undefined;
+  return {
+    set: (path) => { pending = path; },
+    get: () => pending,
+  };
+}
+
+export interface UpdateHandlerDeps {
+  currentVersion: string;
+  checkAndDownloadUpdate: (currentVersion: string) => Promise<UpdateCheckOutcome>;
+  installUpdate: (extractedAppPath: string) => Promise<void>;
+  pendingUpdateStore: ReturnType<typeof buildPendingUpdateStore>;
+  openReleasesPage: () => void;
+}
+
+export function buildUpdateHandlers(deps: UpdateHandlerDeps) {
+  return {
+    check: async (): Promise<UpdateStatus> => {
+      const outcome = await deps.checkAndDownloadUpdate(deps.currentVersion);
+      if (outcome.result.status === "available") {
+        if (outcome.extractedAppPath) deps.pendingUpdateStore.set(outcome.extractedAppPath);
+        return { status: "available", version: outcome.result.version, notes: outcome.result.notes };
+      }
+      return outcome.result;
+    },
+    install: async (): Promise<InstallUpdateResult | undefined> => {
+      const extractedAppPath = deps.pendingUpdateStore.get();
+      if (!extractedAppPath) return { status: "error", message: "No update is ready to install — check for updates again." };
+      try {
+        await deps.installUpdate(extractedAppPath);
+        return undefined; // unreachable in practice: installUpdate exits the process on success
+      } catch (err) {
+        return { status: "error", message: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    openReleasesPage: (): void => deps.openReleasesPage(),
   };
 }
 
@@ -370,7 +416,7 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
   };
 }
 
-export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, ChatopsHandlerDeps {
+export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, ChatopsHandlerDeps, UpdateHandlerDeps {
   converse: ConverseDeps["chat"];
   saveSkill: (dir: string, name: string, body: string) => Promise<void>;
   deleteSkill: (dir: string, name: string) => Promise<void>;
@@ -521,6 +567,11 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.chatopsStatus, () => chatopsHandlers.status());
   ipcMain.on(IPC.chatopsStart, (_e, bot: ChatopsBot) => chatopsHandlers.start(bot));
   ipcMain.on(IPC.chatopsStop, (_e, bot: ChatopsBot) => chatopsHandlers.stop(bot));
+
+  const updateHandlers = buildUpdateHandlers(deps);
+  ipcMain.handle(IPC.checkForUpdate, () => updateHandlers.check());
+  ipcMain.handle(IPC.installUpdate, () => updateHandlers.install());
+  ipcMain.on(IPC.openUpdateReleasePage, () => updateHandlers.openReleasesPage());
 
   ipcMain.handle(IPC.routinesList, () => deps.routineHandlers.list());
   ipcMain.handle(IPC.routinesSave, (_e, routine: Routine) => deps.routineHandlers.save(routine));

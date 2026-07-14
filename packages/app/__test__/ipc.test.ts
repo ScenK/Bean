@@ -6,6 +6,7 @@ import {
   buildPersonaHandlers, buildLaunchHandler, buildConfigHandlers, buildPlanStore, buildMemoryHandlers,
   buildDroppedUrlStore, buildChatPromptStore, buildNotesHandlers,
   buildModelsHandler, buildModelMemoryHandlers, buildRoutineHandlers,
+  buildPendingUpdateStore, buildUpdateHandlers,
 } from "../src/ipc.js";
 import type { ConfigView, ConfigUpdate } from "../src/channels.js";
 import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate, Routine } from "@bean/core";
@@ -472,4 +473,101 @@ test("routine handlers save validates and delegates; delete and runNow pass thro
   await expect(h.save({ ...routine, cron: "bad" })).rejects.toThrow();
   await h.runNow("r");
   expect(runNow).toHaveBeenCalledWith("r");
+});
+
+test("buildPendingUpdateStore returns undefined until set, then the same value on repeated get (not consumed)", () => {
+  const store = buildPendingUpdateStore();
+  expect(store.get()).toBeUndefined();
+  store.set("/tmp/bean-update-xyz/Bean.app");
+  expect(store.get()).toBe("/tmp/bean-update-xyz/Bean.app");
+  expect(store.get()).toBe("/tmp/bean-update-xyz/Bean.app");
+});
+
+test("buildUpdateHandlers.check strips extractedAppPath/URLs before returning to the renderer, and stores the path for install", async () => {
+  const store = buildPendingUpdateStore();
+  const handlers = buildUpdateHandlers({
+    currentVersion: "0.8.12",
+    checkAndDownloadUpdate: async () => ({
+      result: { status: "available", version: "0.8.13", notes: "notes", zipUrl: "https://x/zip", sigUrl: "https://x/sig" },
+      extractedAppPath: "/tmp/bean-update-xyz/Bean.app",
+    }),
+    installUpdate: async () => {},
+    pendingUpdateStore: store,
+    openReleasesPage: () => {},
+  });
+  const status = await handlers.check();
+  expect(status).toEqual({ status: "available", version: "0.8.13", notes: "notes" });
+  expect(store.get()).toBe("/tmp/bean-update-xyz/Bean.app");
+});
+
+test("buildUpdateHandlers.check passes up-to-date/error results through unchanged", async () => {
+  const handlers = buildUpdateHandlers({
+    currentVersion: "0.8.12",
+    checkAndDownloadUpdate: async () => ({ result: { status: "up-to-date" } }),
+    installUpdate: async () => {},
+    pendingUpdateStore: buildPendingUpdateStore(),
+    openReleasesPage: () => {},
+  });
+  expect(await handlers.check()).toEqual({ status: "up-to-date" });
+});
+
+test("buildUpdateHandlers.install errors when nothing has been checked/downloaded yet", async () => {
+  const installed: string[] = [];
+  const handlers = buildUpdateHandlers({
+    currentVersion: "0.8.12",
+    checkAndDownloadUpdate: async () => ({ result: { status: "up-to-date" } }),
+    installUpdate: async (path: string) => { installed.push(path); },
+    pendingUpdateStore: buildPendingUpdateStore(),
+    openReleasesPage: () => {},
+  });
+  expect(await handlers.install()).toEqual({
+    status: "error",
+    message: "No update is ready to install — check for updates again.",
+  });
+  expect(installed).toEqual([]);
+});
+
+test("buildUpdateHandlers.install calls installUpdate with the stored path", async () => {
+  const installed: string[] = [];
+  const store = buildPendingUpdateStore();
+  const handlers = buildUpdateHandlers({
+    currentVersion: "0.8.12",
+    checkAndDownloadUpdate: async () => ({
+      result: { status: "available", version: "0.8.13", notes: "notes", zipUrl: "https://x/zip", sigUrl: "https://x/sig" },
+      extractedAppPath: "/tmp/bean-update-xyz/Bean.app",
+    }),
+    installUpdate: async (path: string) => { installed.push(path); },
+    pendingUpdateStore: store,
+    openReleasesPage: () => {},
+  });
+  await handlers.check();
+  const outcome = await handlers.install();
+  expect(installed).toEqual(["/tmp/bean-update-xyz/Bean.app"]);
+  expect(outcome).toBeUndefined();
+});
+
+test("buildUpdateHandlers.install surfaces an error from installUpdate instead of throwing", async () => {
+  const store = buildPendingUpdateStore();
+  store.set("/tmp/bean-update-xyz/Bean.app");
+  const handlers = buildUpdateHandlers({
+    currentVersion: "0.8.12",
+    checkAndDownloadUpdate: async () => ({ result: { status: "up-to-date" } }),
+    installUpdate: async () => { throw new Error("EACCES"); },
+    pendingUpdateStore: store,
+    openReleasesPage: () => {},
+  });
+  expect(await handlers.install()).toEqual({ status: "error", message: "EACCES" });
+});
+
+test("buildUpdateHandlers.openReleasesPage delegates to the injected opener", () => {
+  const opened: boolean[] = [];
+  const handlers = buildUpdateHandlers({
+    currentVersion: "0.8.12",
+    checkAndDownloadUpdate: async () => ({ result: { status: "up-to-date" } }),
+    installUpdate: async () => {},
+    pendingUpdateStore: buildPendingUpdateStore(),
+    openReleasesPage: () => { opened.push(true); },
+  });
+  handlers.openReleasesPage();
+  expect(opened).toEqual([true]);
 });

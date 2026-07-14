@@ -21,7 +21,15 @@ export interface AppInfo {
   version: string;
   author: string;
   description: string;
+  isPackaged: boolean;
 }
+
+export type UpdateStatus =
+  | { status: "up-to-date" }
+  | { status: "available"; version: string; notes: string }
+  | { status: "error"; message: string };
+
+export interface InstallUpdateResult { status: "error"; message: string }
 
 export const IPC = {
   route: "bean:route",
@@ -86,4 +94,7 @@ export const IPC = {
   routinesDelete: "bean:routines-delete",
   routinesRunNow: "bean:routines-run-now",
   routinesState: "bean:routines-state",
+  checkForUpdate: "bean:check-for-update",
+  installUpdate: "bean:install-update",
+  openUpdateReleasePage: "bean:open-update-release-page",
 } as const;
