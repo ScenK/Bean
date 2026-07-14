@@ -6,9 +6,9 @@
 import { createPrivateKey, sign } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 
-const [, , filePath] = process.argv;
-if (!filePath) {
-  console.error("usage: sign-release.mjs <file>");
+const filePaths = process.argv.slice(2);
+if (filePaths.length === 0) {
+  console.error("usage: sign-release.mjs <file> [file...]");
   process.exit(1);
 }
 
@@ -19,7 +19,9 @@ if (!privateKeyPem) {
 }
 
 const privateKey = createPrivateKey(privateKeyPem);
-const data = readFileSync(filePath);
-const signature = sign(null, data, privateKey);
-writeFileSync(`${filePath}.sig`, signature.toString("base64"), "utf8");
-console.log(`signed ${filePath} -> ${filePath}.sig`);
+for (const filePath of filePaths) {
+  const data = readFileSync(filePath);
+  const signature = sign(null, data, privateKey);
+  writeFileSync(`${filePath}.sig`, signature.toString("base64"), "utf8");
+  console.log(`signed ${filePath} -> ${filePath}.sig`);
+}
