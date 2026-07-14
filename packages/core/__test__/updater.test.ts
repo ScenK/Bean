@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { compareVersions, checkForUpdate } from "../src/updater.js";
+import { generateKeyPairSync, sign as cryptoSign } from "node:crypto";
+import { compareVersions, checkForUpdate, verifyUpdateSignature } from "../src/updater.js";
 import type { GithubReleaseInfo } from "../src/updater.js";
 
 test("compareVersions orders by major, then minor, then patch", () => {
@@ -56,4 +57,36 @@ test("checkForUpdate errors when the zip has no matching .sig asset", () => {
     status: "error",
     message: "Release v0.8.13 is missing its update signature.",
   });
+});
+
+function testKeypair() {
+  return generateKeyPairSync("ed25519", {
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  });
+}
+
+test("verifyUpdateSignature accepts a signature made with the matching private key", () => {
+  const { publicKey, privateKey } = testKeypair();
+  const data = Buffer.from("Bean update payload");
+  const signature = cryptoSign(null, data, privateKey).toString("base64");
+  expect(verifyUpdateSignature(data, signature, publicKey)).toBe(true);
+});
+
+test("verifyUpdateSignature rejects a signature made with a different private key", () => {
+  const { publicKey } = testKeypair();
+  const { privateKey: otherPrivateKey } = testKeypair();
+  const data = Buffer.from("Bean update payload");
+  const signature = cryptoSign(null, data, otherPrivateKey).toString("base64");
+  expect(verifyUpdateSignature(data, signature, publicKey)).toBe(false);
+});
+
+test("verifyUpdateSignature rejects tampered data", () => {
+  const { publicKey, privateKey } = testKeypair();
+  const signature = cryptoSign(null, Buffer.from("original"), privateKey).toString("base64");
+  expect(verifyUpdateSignature(Buffer.from("tampered"), signature, publicKey)).toBe(false);
+});
+
+test("verifyUpdateSignature returns false instead of throwing on a malformed public key", () => {
+  expect(verifyUpdateSignature(Buffer.from("x"), "not-base64!!", "not a pem key")).toBe(false);
 });

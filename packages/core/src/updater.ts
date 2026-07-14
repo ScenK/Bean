@@ -1,3 +1,5 @@
+import { createPublicKey, verify } from "node:crypto";
+
 export interface GithubReleaseAsset {
   name: string;
   browserDownloadUrl: string;
@@ -46,4 +48,16 @@ export function checkForUpdate(currentVersion: string, release: GithubReleaseInf
     zipUrl: zipAsset.browserDownloadUrl,
     sigUrl: sigAsset.browserDownloadUrl,
   };
+}
+
+/** Verifies an update's Ed25519 signature against the committed public key. Never throws —
+ * a malformed key/signature/data combination is just an invalid signature. */
+export function verifyUpdateSignature(data: Buffer, signatureBase64: string, publicKeyPem: string): boolean {
+  try {
+    const publicKey = createPublicKey(publicKeyPem);
+    const signature = Buffer.from(signatureBase64, "base64");
+    return verify(null, data, publicKey, signature);
+  } catch {
+    return false;
+  }
 }
