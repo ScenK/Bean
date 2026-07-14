@@ -17,6 +17,7 @@ import type { PendingProposal, ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
 import type { MemoryProposalStore } from "./memory-proposals.js";
 import type { ConsolidationProposalStore } from "./consolidation-proposals.js";
+import type { SkillProposalStore } from "./skill-proposals.js";
 import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
 import type { RunRegistry } from "./runs.js";
 
@@ -64,6 +65,9 @@ export interface TeamsBotDeps {
   saveNote: (draft: NoteDraft) => Promise<string>;
   /** FTS5 search over saved notes (server injects the db path); backs retrieve_note. */
   searchNotes: (query: string) => Promise<Note[]>;
+  skillProposals: SkillProposalStore;
+  /** Persists a confirmed skill draft to the user's ~/.bean/skills (server injects the dir). */
+  saveSkill: (name: string, body: string) => Promise<void>;
   memoryProposals: MemoryProposalStore;
   /** Insert-only add of new facts — never lose a concurrent writer's addition (see
    * memory/store.ts's appendMemories doc comment). */
@@ -167,6 +171,36 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await fx.post(`Saved note "${pending.note.title}".`);
     } catch (err) {
       await fx.post(`Couldn't save the note: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async function handleSkillAction(
+    kind: "save-skill" | "cancel-skill",
+    proposalId: string | undefined,
+    actor: string,
+    fx: BotEffects,
+  ): Promise<void> {
+    if (!proposalId) return;
+    const pending = deps.skillProposals.claim(proposalId);
+    if (!pending) {
+      await fx.post("That skill draft expired — ask me to draft it again.");
+      return;
+    }
+    const resultCard = (outcome: "saved" | "cancelled"): object =>
+      deps.cards.skillResultCard({ name: pending.skill.name, savedBy: actor, outcome });
+    const updateTo = async (card: object): Promise<void> => {
+      if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
+    };
+    if (kind === "cancel-skill") {
+      await updateTo(resultCard("cancelled"));
+      return;
+    }
+    try {
+      await deps.saveSkill(pending.skill.name, pending.skill.body);
+      await updateTo(resultCard("saved"));
+      await fx.post(`Saved skill "${pending.skill.name}".`);
+    } catch (err) {
+      await fx.post(`Couldn't save the skill: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -338,6 +372,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps.noteProposals.setCardActivityId(pending.id, activityId);
           return;
         }
+        if (result.proposedSkill) {
+          const skill = result.proposedSkill;
+          const pending = deps.skillProposals.add({ skill, conversationId: msg.conversationId, proposedBy: msg.fromName });
+          const activityId = await fx.postCard(deps.cards.skillProposalCard({
+            proposalId: pending.id, name: skill.name, body: skill.body, updating: skill.updating,
+          }));
+          deps.skillProposals.setCardActivityId(pending.id, activityId);
+          return;
+        }
         if (result.proposedRemember) {
           const transcript = [...history, { role: "user" as const, content: msg.text }];
           const candidates = await extractMemories(
@@ -387,6 +430,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (beanAction === "save-note" || beanAction === "cancel-note") {
         await handleNoteAction(beanAction, proposalId, action.fromName, fx);
+        return;
+      }
+      if (beanAction === "save-skill" || beanAction === "cancel-skill") {
+        await handleSkillAction(beanAction, proposalId, action.fromName, fx);
         return;
       }
       if (beanAction === "save-memories" || beanAction === "cancel-memories") {
