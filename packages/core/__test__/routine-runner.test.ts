@@ -4,6 +4,7 @@ import { runRoutine, type RoutineRunnerDeps } from "../src/routine-runner.js";
 import type { Routine } from "../src/routine-store.js";
 import type { ActionTool, ConvoMsg, ToolSpec } from "../src/converse.js";
 import type { Skill } from "../src/types.js";
+import type { TodoItem, TodoStatus } from "../src/index.js";
 
 const skill = (name: string, target: "chat" | "terminal" = "terminal"): Skill =>
   ({ name, description: `${name} desc`, body: `# ${name} instructions`, target });
@@ -142,5 +143,128 @@ describe("runRoutine", () => {
     const res = await runRoutine(routine([{ kind: "chat", instruction: "x" }]), baseDeps(flaky));
     expect(res.digest).toContain("step out");
     expect(res.digest).toContain("r"); // routine name present
+  });
+});
+
+describe("todo-driven routines", () => {
+  const routine: Routine = {
+    name: "nightly", enabled: true, cron: "0 2 * * *", todoDriven: true,
+    steps: [
+      { kind: "delegate", skill: "plan", instruction: "plan it" },
+      { kind: "delegate", skill: "implement", instruction: "build it" },
+    ],
+    sinks: {},
+  };
+
+  function fakeTodos(items: TodoItem[]) {
+    const statusLog: { id: string; status: TodoStatus; resultSummary?: string }[] = [];
+    return {
+      statusLog,
+      dep: {
+        listPending: async (r: string) => items.filter((t) => t.routine === r && t.status === "pending"),
+        setStatus: async (id: string, status: TodoStatus, resultSummary?: string) => {
+          statusLog.push({ id, status, resultSummary });
+        },
+      },
+    };
+  }
+
+  const todo = (id: string, text: string): TodoItem => ({
+    id, routine: "nightly", text, status: "pending", createdAt: "2026-07-15T00:00:00Z", order: Number(id),
+  });
+
+  it("runs the whole pipeline per todo, in order, and marks each done", async () => {
+    const calls: string[] = [];
+    const todos = fakeTodos([todo("1", "task A"), todo("2", "task B")]);
+    const result = await runRoutine(routine, {
+      chat: async () => ({ content: "digest", toolCalls: [] }),
+      model: "m",
+      delegate: async (req) => { calls.push(req.instruction); return `ok: ${req.instruction}`; },
+      tools: [], findSkill: () => undefined,
+      todos: todos.dep,
+    });
+    // whole-pipeline-per-todo: A/plan, A/implement, B/plan, B/implement
+    expect(calls).toHaveLength(4);
+    expect(calls[0]).toContain("plan it");
+    expect(calls[0]).toContain("task A");
+    expect(calls[1]).toContain("build it");
+    expect(calls[1]).toContain("task A");
+    expect(calls[2]).toContain("task B"); // B starts only after A's full pipeline
+    expect(todos.statusLog).toEqual([
+      { id: "1", status: "running", resultSummary: undefined },
+      { id: "1", status: "done", resultSummary: expect.stringContaining("ok:") },
+      { id: "2", status: "running", resultSummary: undefined },
+      { id: "2", status: "done", resultSummary: expect.stringContaining("ok:") },
+    ]);
+    expect(result.record.status).toBe("ok");
+    expect(result.results).toHaveLength(4);
+  });
+
+  it("scopes prior outputs to the current todo", async () => {
+    const priors: string[] = [];
+    const todos = fakeTodos([todo("1", "task A"), todo("2", "task B")]);
+    await runRoutine(routine, {
+      chat: async () => ({ content: "digest", toolCalls: [] }),
+      model: "m",
+      delegate: async (req) => { priors.push(req.priorOutputs); return "out"; },
+      tools: [], findSkill: () => undefined,
+      todos: todos.dep,
+    });
+    expect(priors[0]).toBe("");           // A step 1: nothing prior
+    expect(priors[1]).toContain("out");   // A step 2: sees A step 1
+    expect(priors[2]).toBe("");           // B step 1: does NOT see A's outputs
+  });
+
+  it("a failing step fails that todo, skips its remaining steps, and continues to the next todo", async () => {
+    const calls: string[] = [];
+    const todos = fakeTodos([todo("1", "task A"), todo("2", "task B")]);
+    const result = await runRoutine(routine, {
+      chat: async () => ({ content: "digest", toolCalls: [] }),
+      model: "m",
+      delegate: async (req) => {
+        calls.push(req.instruction);
+        if (req.instruction.includes("task A")) throw new Error("boom");
+        return "ok";
+      },
+      tools: [], findSkill: () => undefined,
+      todos: todos.dep,
+    });
+    expect(calls).toHaveLength(3); // A/plan (fails), B/plan, B/implement — A/implement skipped
+    expect(todos.statusLog).toEqual([
+      { id: "1", status: "running", resultSummary: undefined },
+      { id: "1", status: "failed", resultSummary: expect.stringContaining("boom") },
+      { id: "2", status: "running", resultSummary: undefined },
+      { id: "2", status: "done", resultSummary: "ok" },
+    ]);
+    expect(result.record.status).toBe("failed");
+  });
+
+  it("empty queue is a successful no-op run", async () => {
+    const todos = fakeTodos([]);
+    const result = await runRoutine(routine, {
+      chat: async () => ({ content: "should not be needed", toolCalls: [] }),
+      model: "m",
+      delegate: async () => { throw new Error("must not run"); },
+      tools: [], findSkill: () => undefined,
+      todos: todos.dep,
+    });
+    expect(result.record.status).toBe("ok");
+    expect(result.results).toHaveLength(0);
+    expect(result.digest).toContain("No pending todos");
+  });
+
+  it("non-todo-driven routines are byte-for-byte unaffected by a todos dep", async () => {
+    const plain: Routine = { ...routine, todoDriven: undefined };
+    const todos = fakeTodos([todo("1", "task A")]);
+    const calls: string[] = [];
+    await runRoutine(plain, {
+      chat: async () => ({ content: "digest", toolCalls: [] }),
+      model: "m",
+      delegate: async (req) => { calls.push(req.instruction); return "ok"; },
+      tools: [], findSkill: () => undefined,
+      todos: todos.dep,
+    });
+    expect(calls).toHaveLength(2); // one per step, no todo loop
+    expect(todos.statusLog).toHaveLength(0);
   });
 });
