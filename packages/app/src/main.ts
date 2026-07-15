@@ -18,8 +18,9 @@ import {
   routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate,
   composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
+  updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult } from "@bean/core";
+import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult, TodoStatus } from "@bean/core";
 import { createAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
@@ -470,6 +471,10 @@ app.whenReady().then(async () => {
     const routinesPath = routinesDir(dir);
     const routineStatePath = routineStateFile(dir);
 
+    // Anything stuck `running` was interrupted by the previous quit — fail it visibly (retryable).
+    const recovered = await recoverInterruptedTodos(dbFile(dir));
+    if (recovered > 0) console.warn(`bean: marked ${recovered} interrupted todo(s) as failed`);
+
     // Delegate step adapter: runDelegate's callback shape → a promise, prior outputs folded
     // into the prompt, scratch workspace when the step has no project. Reuses the same
     // resolved login-shell PATH spawn as delegate-tasks (safety-packaged-app-path-detection)
@@ -523,6 +528,11 @@ app.whenReady().then(async () => {
         delegate: delegateStep,
         tools: [...actionTools, saveNoteTool],
         findSkill: (name) => skills.find((s) => s.name === name),
+        todos: {
+          listPending: async (r) => (await listTodos(dbFile(dir), r)).filter((t) => t.status === "pending"),
+          setStatus: (id, status: TodoStatus, resultSummary?: string) =>
+            updateTodoStatus(dbFile(dir), id, status, resultSummary),
+        },
       });
     };
 
@@ -552,6 +562,7 @@ app.whenReady().then(async () => {
       saveStates: (s) => saveRoutineStates(routineStatePath, s),
       runRoutine: runOneRoutine,
       deliverDigest,
+      hasPendingTodos: async (r) => (await listTodos(dbFile(dir), r)).some((t) => t.status === "pending"),
     });
     routineScheduler.start();
     app.on("before-quit", () => routineScheduler.stop());
@@ -617,6 +628,7 @@ app.whenReady().then(async () => {
       runInChat,
       getPendingChatPrompt: chatPromptStore.get,
       getPendingInterruptedRunNotices: interruptedRunStore.get,
+      loadRoutines: () => loadRoutines(routinesPath),
       routineHandlers: buildRoutineHandlers({
         loadRoutines: () => loadRoutines(routinesPath),
         saveRoutine: (r) => saveRoutine(routinesPath, r),
@@ -624,6 +636,7 @@ app.whenReady().then(async () => {
         loadStates: () => loadRoutineStates(routineStatePath),
         isRunning: (name) => routineScheduler.isRunning(name),
         runNow: (name) => routineScheduler.runNow(name),
+        onRoutineDeleted: (name) => deleteTodosForRoutine(dbFile(dir), name),
       }),
       todoHandlers: buildTodoHandlers({
         dbFile: dbFile(dir),

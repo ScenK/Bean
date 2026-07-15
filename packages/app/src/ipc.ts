@@ -173,21 +173,25 @@ export interface ChatHandlerDeps {
   dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
+  loadRoutines?: () => Promise<Routine[]>;
 }
 
 export function buildChatHandler(deps: ChatHandlerDeps) {
   return async (req: ChatRequest): Promise<ConverseResult> => {
-    const [skills, projects, persona, memories] = await Promise.all([
+    const [skills, projects, persona, memories, routines] = await Promise.all([
       deps.loadSkills(deps.projectSkillsDir, deps.skillsDir),
       deps.loadProjects(deps.projectsFile),
       deps.loadPersona(deps.personaFile, deps.projectPersonaFile),
       deps.loadMemories(deps.dbFile),
+      deps.loadRoutines?.() ?? Promise.resolve([] as Routine[]),
     ]);
     const enabled = skills.filter((s) => s.enabled !== false);
+    const todoRoutines = routines.filter((r) => r.todoDriven).map((r) => r.name);
     return converse(
       req.history, req.message, enabled, projects, persona, memories,
       { chat: deps.converse, model: deps.getModel() }, req.droppedUrl, deps.actions,
       undefined, req.linkedNote, deps.delegateAvailable?.() ?? false,
+      [], false, true, todoRoutines,
     );
   };
 }
@@ -414,6 +418,7 @@ export interface RoutineHandlerDeps {
   loadStates: () => Promise<Record<string, RoutineState>>;
   isRunning: (name: string) => boolean;
   runNow: (name: string) => Promise<{ started: boolean; reason?: string }>;
+  onRoutineDeleted?: (name: string) => Promise<void>;
 }
 
 export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
@@ -423,7 +428,10 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
       if (!isValidRoutine(routine)) throw new Error("invalid routine");
       await deps.saveRoutine(routine);
     },
-    remove: (name: string): Promise<void> => deps.deleteRoutine(name),
+    remove: async (name: string): Promise<void> => {
+      await deps.deleteRoutine(name);
+      await deps.onRoutineDeleted?.(name);
+    },
     state: async (): Promise<Record<string, RoutineStateView>> => {
       const [routines, states] = await Promise.all([deps.loadRoutines(), deps.loadStates()]);
       const out: Record<string, RoutineStateView> = {};
@@ -511,6 +519,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
     cancel: (taskId: string) => void;
   };
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
+  loadRoutines?: () => Promise<Routine[]>;
   routineHandlers: ReturnType<typeof buildRoutineHandlers>;
   todoHandlers: ReturnType<typeof buildTodoHandlers>;
 }
