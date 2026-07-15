@@ -33,6 +33,7 @@
 - [convention-delegate-loopback.md](convention-delegate-loopback.md) — `propose_delegate` → headless `claude -p`/`opencode run` via core `runDelegate()`; tracked tasks bound to the chat window's lifetime (Keep/Stop close prompt + `cancelAll()` backstop), result loops back into chat. The deliberate exception to launch-hands-off-to-terminal.
 - [convention-action-tools.md](convention-action-tools.md) — action tools (execute-in-main, tool loop in `converse()`) vs confirm-first `propose_run`; reminders + `fetch_url` are the first; also covers `target: chat` skills that run in Bean's chat instead of the terminal.
 - [convention-project-skills-vs-default-skill.md](convention-project-skills-vs-default-skill.md) — `Project.skills` (many-to-many skill-group assignment, powers the Skills panel's General/project grouping) vs `Project.defaultSkill` (unrelated router/drop-plan/avatar fallback heuristic) — don't conflate them, and don't drop `skills` when rebuilding a `Project` object from an edit form.
+- [convention-hidden-skills.md](convention-hidden-skills.md) — `hidden: true` frontmatter (distinct from `enabled: false`) removes a skill from every renderer UI via the single `buildListSkillsHandler` IPC filter, while `converse()` still routes against it; the built-in `bean` self-intro skill is the first user, and is already undeletable since `deleteSkill` never touches `.bean/skills/`.
 
 ## project — ongoing work context
 

@@ -35,6 +35,14 @@ test("parses target frontmatter; only 'chat' is recognized, absent stays undefin
   expect(c!.target).toBeUndefined();
 });
 
+test("parses hidden frontmatter; defaults to hidden=false", async () => {
+  await writeFile(join(dir, "a.md"), "---\ndescription: d\n---\nbody");
+  await writeFile(join(dir, "b.md"), "---\nhidden: true\n---\nbody");
+  const [a, b] = await loadSkills(dir);
+  expect(a!.hidden).toBe(false);
+  expect(b!.hidden).toBe(true);
+});
+
 test("setFrontmatter upserts, removes, and creates a block", async () => {
   // upsert into existing block
   expect(setFrontmatter("---\ndescription: d\n---\nbody", "enabled", "false"))

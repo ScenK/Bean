@@ -7,6 +7,11 @@ export interface Skill {
   body: string;
   /** `enabled: false` frontmatter hides the skill from the drag quick-launch. Absent = shown. */
   enabled?: boolean;
+  /** `hidden: true` frontmatter fully hides the skill from every user-facing UI (Skills panel,
+   * quick-launch, project default-skill picker, chat skill list) while keeping it in the
+   * catalog `converse()` routes against. Filtered out only at the `listSkills` IPC boundary —
+   * unlike `enabled`, there's no toggle for it. Absent = shown. */
+  hidden?: boolean;
   /** Which layer's copy is currently in effect — set only by loadLayeredSkills(). Absent when
    * loaded via plain loadSkills() from a single dir. */
   source?: "project" | "user";

@@ -1,5 +1,6 @@
 ---
 target: chat
+hidden: true
 description: Introduce Bean itself — what it can do and how it works behind the scenes — when someone asks about Bean's abilities or internals
 ---
 

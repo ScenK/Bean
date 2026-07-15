@@ -24,6 +24,7 @@ export async function loadSkills(dir: string): Promise<Skill[]> {
       body,
       enabled: fm.enabled?.toLowerCase() !== "false",
       target: fm.target?.toLowerCase() === "chat" ? "chat" : undefined,
+      hidden: fm.hidden?.toLowerCase() === "true",
     });
   }
   return skills;
