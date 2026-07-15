@@ -59,6 +59,12 @@ describe("isValidRoutine", () => {
     expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "discord", channel: 5 }] } }))).toBe(false);
     expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "slack" }] } }))).toBe(false);
   });
+  it("accepts todoDriven boolean and rejects non-boolean", () => {
+    expect(isValidRoutine(routine({ todoDriven: true }))).toBe(true);
+    expect(isValidRoutine(routine({ todoDriven: false }))).toBe(true);
+    expect(isValidRoutine(routine())).toBe(true); // old files: field absent
+    expect(isValidRoutine({ ...routine(), todoDriven: "yes" })).toBe(false);
+  });
 });
 
 describe("routine state", () => {

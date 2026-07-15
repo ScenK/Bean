@@ -19,6 +19,9 @@ export interface Routine {
   description?: string;
   enabled: boolean;
   cron: string; // 5-field cron, local time
+  /** true = the steps are a pipeline run once per queued todo; the scheduled run is
+   * skipped entirely while the routine's queue has no pending items. */
+  todoDriven?: boolean;
   steps: RoutineStep[];
   sinks: RoutineSinks;
 }
@@ -59,6 +62,7 @@ export function isValidRoutine(v: unknown): v is Routine {
   if (!str(r.name) || badName.test(r.name)) return false;
   if (r.description !== undefined && !str(r.description)) return false;
   if (typeof r.enabled !== "boolean" || !str(r.cron) || !isValidCron(r.cron)) return false;
+  if (r.todoDriven !== undefined && typeof r.todoDriven !== "boolean") return false;
   if (!Array.isArray(r.steps) || r.steps.length === 0 || !r.steps.every(isValidStep)) return false;
   if (typeof r.sinks !== "object" || r.sinks === null) return false;
   const sinks = r.sinks as Record<string, unknown>;
