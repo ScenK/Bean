@@ -208,7 +208,18 @@ test("listSkills handler loads skills from both the project and user skills dirs
     projectSkillsDir: "/b/project-skills",
     skillsDir: "/b/skills",
   });
-  expect(await handler()).toBe(skills);
+  expect(await handler()).toEqual(skills);
+});
+
+test("listSkills handler filters out hidden skills", async () => {
+  const visible: Skill = { name: "review-code", description: "r", body: "BODY" };
+  const hidden: Skill = { name: "bean", description: "intro", body: "BODY", hidden: true };
+  const handler = buildListSkillsHandler({
+    loadSkills: async () => [visible, hidden],
+    projectSkillsDir: "/b/project-skills",
+    skillsDir: "/b/skills",
+  });
+  expect(await handler()).toEqual([visible]);
 });
 
 test("listProjects handler loads projects from the configured projects file", async () => {

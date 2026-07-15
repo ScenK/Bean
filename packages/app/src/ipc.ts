@@ -198,7 +198,10 @@ export interface ListSkillsHandlerDeps {
 }
 
 export function buildListSkillsHandler(deps: ListSkillsHandlerDeps) {
-  return (): Promise<Skill[]> => deps.loadSkills(deps.projectSkillsDir, deps.skillsDir);
+  // `hidden: true` skills (e.g. the built-in self-intro skill) stay in converse()'s routing
+  // catalog (buildChatHandler loads skills separately) but never reach any UI surface — every
+  // renderer skill list/picker/quick-launch goes through this one IPC call.
+  return async (): Promise<Skill[]> => (await deps.loadSkills(deps.projectSkillsDir, deps.skillsDir)).filter((s) => !s.hidden);
 }
 
 export interface ListProjectsHandlerDeps {
