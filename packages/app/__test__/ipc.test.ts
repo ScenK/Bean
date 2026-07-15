@@ -1,4 +1,4 @@
-import { expect, test, vi } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import {
   buildRouteHandler, buildThemeHandlers, buildChatHandler,
   buildListSkillsHandler, buildListProjectsHandler, buildSaveProjectsHandler, buildSaveSkillHandler,
@@ -6,7 +6,7 @@ import {
   buildPersonaHandlers, buildLaunchHandler, buildConfigHandlers, buildPlanStore, buildMemoryHandlers,
   buildDroppedUrlStore, buildChatPromptStore, buildNotesHandlers,
   buildModelsHandler, buildModelMemoryHandlers, buildRoutineHandlers,
-  buildPendingUpdateStore, buildUpdateHandlers,
+  buildPendingUpdateStore, buildUpdateHandlers, buildTodoHandlers,
 } from "../src/ipc.js";
 import type { ConfigView, ConfigUpdate } from "../src/channels.js";
 import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate, Routine } from "@bean/core";
@@ -672,4 +672,42 @@ test("buildUpdateHandlers.check does not clean up when the new result has no ext
   await handlers.check();
   expect(cleanedUp).toEqual([]);
   expect(store.get()).toBe("/tmp/bean-update-1/Bean.app");
+});
+
+describe("buildTodoHandlers", () => {
+  const routines = [
+    { name: "nightly", enabled: true, cron: "0 2 * * *", todoDriven: true, steps: [{ kind: "chat" as const, instruction: "x" }], sinks: {} },
+    { name: "plain", enabled: true, cron: "0 8 * * *", steps: [{ kind: "chat" as const, instruction: "x" }], sinks: {} },
+  ];
+  const makeDeps = () => {
+    const added: { routine: string; text: string }[] = [];
+    return {
+      added,
+      deps: {
+        dbFile: "/tmp/unused.db",
+        loadRoutines: async () => routines,
+        addTodo: async (_f: string, routine: string, text: string) => {
+          added.push({ routine, text });
+          return { id: "1", routine, text, status: "pending" as const, createdAt: "", order: 1 };
+        },
+        listTodos: async () => [], listAllTodos: async () => [],
+        editTodoText: async () => {}, deleteTodo: async () => {}, reorderTodo: async () => {},
+        clearFinishedTodos: async () => {}, retryTodo: async () => {},
+      },
+    };
+  };
+
+  it("add inserts into a todo-driven routine's queue", async () => {
+    const { deps, added } = makeDeps();
+    const h = buildTodoHandlers(deps);
+    await h.add("nightly", "do the thing");
+    expect(added).toEqual([{ routine: "nightly", text: "do the thing" }]);
+  });
+
+  it("add rejects unknown and non-todo-driven routines", async () => {
+    const { deps } = makeDeps();
+    const h = buildTodoHandlers(deps);
+    await expect(h.add("ghost", "x")).rejects.toThrow();
+    await expect(h.add("plain", "x")).rejects.toThrow();
+  });
 });

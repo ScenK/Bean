@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
-  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine,
+  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine, TodoItem,
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
@@ -84,6 +84,14 @@ contextBridge.exposeInMainWorld("bean", {
   routinesDelete: (name: string): Promise<void> => ipcRenderer.invoke(IPC.routinesDelete, name),
   routinesState: (): Promise<Record<string, RoutineStateView>> => ipcRenderer.invoke(IPC.routinesState),
   routinesRunNow: (name: string): Promise<{ started: boolean; reason?: string }> => ipcRenderer.invoke(IPC.routinesRunNow, name),
+  todosList: (routine: string): Promise<TodoItem[]> => ipcRenderer.invoke(IPC.todosList, routine),
+  todosListAll: (): Promise<TodoItem[]> => ipcRenderer.invoke(IPC.todosListAll),
+  todosAdd: (routine: string, text: string): Promise<TodoItem> => ipcRenderer.invoke(IPC.todosAdd, routine, text),
+  todosEdit: (id: string, text: string): Promise<void> => ipcRenderer.invoke(IPC.todosEdit, id, text),
+  todosDelete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.todosDelete, id),
+  todosReorder: (id: string, newOrder: number): Promise<void> => ipcRenderer.invoke(IPC.todosReorder, id, newOrder),
+  todosClearFinished: (routine: string): Promise<void> => ipcRenderer.invoke(IPC.todosClearFinished, routine),
+  todosRetry: (id: string): Promise<void> => ipcRenderer.invoke(IPC.todosRetry, id),
   listMemories: (): Promise<Memory[]> => ipcRenderer.invoke(IPC.listMemories),
   saveMemories: (memories: Memory[]): Promise<void> => ipcRenderer.invoke(IPC.saveMemories, memories),
   appendMemories: (additions: Memory[]): Promise<void> => ipcRenderer.invoke(IPC.appendMemories, additions),

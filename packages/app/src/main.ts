@@ -17,12 +17,13 @@ import {
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate,
   composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS,
+  addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult } from "@bean/core";
 import { createAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
-  buildRoutineHandlers, buildPendingUpdateStore, type ChatPromptPayload,
+  buildRoutineHandlers, buildTodoHandlers, buildPendingUpdateStore, type ChatPromptPayload,
 } from "./ipc.js";
 import { IPC, type Theme, type ComponentKind } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
@@ -623,6 +624,11 @@ app.whenReady().then(async () => {
         loadStates: () => loadRoutineStates(routineStatePath),
         isRunning: (name) => routineScheduler.isRunning(name),
         runNow: (name) => routineScheduler.runNow(name),
+      }),
+      todoHandlers: buildTodoHandlers({
+        dbFile: dbFile(dir),
+        loadRoutines: () => loadRoutines(routinesPath),
+        addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
       }),
     });
 

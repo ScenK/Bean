@@ -5,6 +5,7 @@ import {
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
   type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
+  type TodoItem,
 } from "@bean/core";
 import { mkdir } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";
@@ -436,6 +437,38 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
   };
 }
 
+export interface TodoHandlerDeps {
+  dbFile: string;
+  loadRoutines: () => Promise<Routine[]>;
+  addTodo: (file: string, routine: string, text: string) => Promise<TodoItem>;
+  listTodos: (file: string, routine: string) => Promise<TodoItem[]>;
+  listAllTodos: (file: string) => Promise<TodoItem[]>;
+  editTodoText: (file: string, id: string, text: string) => Promise<void>;
+  deleteTodo: (file: string, id: string) => Promise<void>;
+  reorderTodo: (file: string, id: string, newOrder: number) => Promise<void>;
+  clearFinishedTodos: (file: string, routine: string) => Promise<void>;
+  retryTodo: (file: string, id: string) => Promise<void>;
+}
+
+export function buildTodoHandlers(deps: TodoHandlerDeps) {
+  return {
+    list: (routine: string): Promise<TodoItem[]> => deps.listTodos(deps.dbFile, routine),
+    listAll: (): Promise<TodoItem[]> => deps.listAllTodos(deps.dbFile),
+    // Routine existence/type is enforced here, not in the store (store stays dumb, per spec).
+    add: async (routine: string, text: string): Promise<TodoItem> => {
+      const target = (await deps.loadRoutines()).find((r) => r.name === routine);
+      if (!target) throw new Error(`no routine named "${routine}"`);
+      if (!target.todoDriven) throw new Error(`routine "${routine}" is not todo-driven`);
+      return deps.addTodo(deps.dbFile, routine, text);
+    },
+    edit: (id: string, text: string): Promise<void> => deps.editTodoText(deps.dbFile, id, text),
+    remove: (id: string): Promise<void> => deps.deleteTodo(deps.dbFile, id),
+    reorder: (id: string, newOrder: number): Promise<void> => deps.reorderTodo(deps.dbFile, id, newOrder),
+    clearFinished: (routine: string): Promise<void> => deps.clearFinishedTodos(deps.dbFile, routine),
+    retry: (id: string): Promise<void> => deps.retryTodo(deps.dbFile, id),
+  };
+}
+
 export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, ChatopsHandlerDeps, UpdateHandlerDeps {
   converse: ConverseDeps["chat"];
   saveSkill: (dir: string, name: string, body: string) => Promise<void>;
@@ -479,6 +512,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   };
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
   routineHandlers: ReturnType<typeof buildRoutineHandlers>;
+  todoHandlers: ReturnType<typeof buildTodoHandlers>;
 }
 
 export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
@@ -598,6 +632,15 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.routinesDelete, (_e, name: string) => deps.routineHandlers.remove(name));
   ipcMain.handle(IPC.routinesState, () => deps.routineHandlers.state());
   ipcMain.handle(IPC.routinesRunNow, (_e, name: string) => deps.routineHandlers.runNow(name));
+
+  ipcMain.handle(IPC.todosList, (_e, routine: string) => deps.todoHandlers.list(routine));
+  ipcMain.handle(IPC.todosListAll, () => deps.todoHandlers.listAll());
+  ipcMain.handle(IPC.todosAdd, (_e, routine: string, text: string) => deps.todoHandlers.add(routine, text));
+  ipcMain.handle(IPC.todosEdit, (_e, id: string, text: string) => deps.todoHandlers.edit(id, text));
+  ipcMain.handle(IPC.todosDelete, (_e, id: string) => deps.todoHandlers.remove(id));
+  ipcMain.handle(IPC.todosReorder, (_e, id: string, newOrder: number) => deps.todoHandlers.reorder(id, newOrder));
+  ipcMain.handle(IPC.todosClearFinished, (_e, routine: string) => deps.todoHandlers.clearFinished(routine));
+  ipcMain.handle(IPC.todosRetry, (_e, id: string) => deps.todoHandlers.retry(id));
 
   ipcMain.handle(IPC.openComponent, (_e, kind: ComponentKind, droppedUrl?: string) => deps.openComponent(kind, droppedUrl));
   ipcMain.on(IPC.proposeRun, (_e, suggestion: RouteSuggestion) => deps.proposeRun(suggestion));

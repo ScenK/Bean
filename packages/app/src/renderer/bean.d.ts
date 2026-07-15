@@ -1,6 +1,6 @@
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
-  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine,
+  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine, TodoItem,
 } from "@bean/core";
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
@@ -68,6 +68,14 @@ declare global {
       routinesDelete(name: string): Promise<void>;
       routinesState(): Promise<Record<string, RoutineStateView>>;
       routinesRunNow(name: string): Promise<{ started: boolean; reason?: string }>;
+      todosList(routine: string): Promise<TodoItem[]>;
+      todosListAll(): Promise<TodoItem[]>;
+      todosAdd(routine: string, text: string): Promise<TodoItem>;
+      todosEdit(id: string, text: string): Promise<void>;
+      todosDelete(id: string): Promise<void>;
+      todosReorder(id: string, newOrder: number): Promise<void>;
+      todosClearFinished(routine: string): Promise<void>;
+      todosRetry(id: string): Promise<void>;
       listMemories(): Promise<Memory[]>;
       saveMemories(memories: Memory[]): Promise<void>;
       appendMemories(additions: Memory[]): Promise<void>;
