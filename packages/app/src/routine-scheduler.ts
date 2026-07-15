@@ -9,6 +9,8 @@ export interface RoutineSchedulerDeps {
   runRoutine: (routine: Routine) => Promise<RoutineRunResult>;
   deliverDigest: (routine: Routine, result: RoutineRunResult) => Promise<void>;
   now?: () => Date;
+  /** Todo-driven gate: false = skip this fire (advance lastRun, record nothing). Absent = never skip. */
+  hasPendingTodos?: (routine: string) => Promise<boolean>;
 }
 
 const TICK_MS = 30_000;
@@ -86,6 +88,18 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         continue; // unparseable cron in a hand-edited file — skip, panel save validates
       }
       if (due.getTime() <= nowT.getTime()) {
+        if (routine.todoDriven && deps.hasPendingTodos && !(await deps.hasPendingTodos(routine.name))) {
+          // Empty queue: consume the slot without a run — otherwise this stale due time
+          // refires every tick forever (same shape as the missed/no-catch-up rule).
+          const before = await deps.loadStates();
+          const prior = before[routine.name];
+          await deps.saveStates({
+            ...before,
+            [routine.name]: { ...(prior ?? { history: [] }), lastRun: now().toISOString(), missed: undefined },
+          });
+          running.delete(routine.name);
+          continue;
+        }
         await execute(routine);
       } else {
         running.delete(routine.name);

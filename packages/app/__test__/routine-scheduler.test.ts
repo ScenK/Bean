@@ -96,6 +96,31 @@ describe("routine scheduler", () => {
     expect(deps.runRoutine).toHaveBeenCalledTimes(1);
   });
 
+  it("skips a due todo-driven routine with an empty queue: lastRun advances, no run recorded", async () => {
+    const { deps, getStates } = makeDeps({
+      loadRoutines: async () => [routine({ todoDriven: true })],
+      loadStates: async () => ({ morning: { lastRun: d(6, 30, 11).toISOString(), history: [] } }),
+      hasPendingTodos: async () => false,
+    });
+    const sched = createRoutineScheduler(deps);
+    await sched.tick();
+    expect(deps.runRoutine).not.toHaveBeenCalled();
+    expect(deps.deliverDigest).not.toHaveBeenCalled();
+    expect(getStates().morning?.history).toHaveLength(0);
+    expect(getStates().morning?.lastRun).toBe(d(6, 31).toISOString());
+  });
+
+  it("runs a due todo-driven routine when the queue has items", async () => {
+    const { deps } = makeDeps({
+      loadRoutines: async () => [routine({ todoDriven: true })],
+      loadStates: async () => ({ morning: { lastRun: d(6, 30, 11).toISOString(), history: [] } }),
+      hasPendingTodos: async () => true,
+    });
+    const sched = createRoutineScheduler(deps);
+    await sched.tick();
+    expect(deps.runRoutine).toHaveBeenCalledOnce();
+  });
+
   it("a failed manual re-run of a previously-missed routine still clears the missed-guard for later ticks", async () => {
     let currentTime = d(9, 0, 12); // scheduler start
     let states: Record<string, RoutineState> = { morning: { lastRun: d(6, 30, 10).toISOString(), history: [] } };
