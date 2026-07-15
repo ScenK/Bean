@@ -66,6 +66,22 @@ test("note result message has no components and states the outcome", () => {
   expect(JSON.stringify(card)).toContain("saved");
 });
 
+test("todo proposal message shows the routine/text and wires queue/cancel customIds", () => {
+  const s = JSON.stringify(discordCards.todoProposalCard({ proposalId: "todo-1", routine: "morning-triage", text: "check CI" }));
+  expect(s).toContain('Queue a todo on \\"morning-triage\\"');
+  expect(s).toContain("check CI");
+  expect(s).toContain("bean:queue-todo:todo-1");
+  expect(s).toContain("bean:cancel-todo:todo-1");
+});
+
+test("todo result message has no components and states the outcome", () => {
+  const card = discordCards.todoResultCard({ routine: "morning-triage", queuedBy: "scen", outcome: "queued" }) as {
+    components: unknown[];
+  };
+  expect(card.components).toEqual([]);
+  expect(JSON.stringify(card)).toContain("Queued by scen");
+});
+
 test("note proposal clamps a long body to Discord's 4096-char embed description limit", () => {
   const card = discordCards.noteProposalCard({
     proposalId: "note-1", title: "T", body: "x".repeat(5000), updating: false,

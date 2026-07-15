@@ -1,10 +1,11 @@
 import {
   route, converse, launchInTerminal, scratchDir,
-  availableModels, loadModelMemory, saveModelMemory, isValidRoutine,
+  availableModels, loadModelMemory, saveModelMemory, resolveTodoRoutine,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
   type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
+  type TodoItem,
 } from "@bean/core";
 import { mkdir } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";
@@ -172,21 +173,25 @@ export interface ChatHandlerDeps {
   dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
+  loadRoutines?: () => Promise<Routine[]>;
 }
 
 export function buildChatHandler(deps: ChatHandlerDeps) {
   return async (req: ChatRequest): Promise<ConverseResult> => {
-    const [skills, projects, persona, memories] = await Promise.all([
+    const [skills, projects, persona, memories, routines] = await Promise.all([
       deps.loadSkills(deps.projectSkillsDir, deps.skillsDir),
       deps.loadProjects(deps.projectsFile),
       deps.loadPersona(deps.personaFile, deps.projectPersonaFile),
       deps.loadMemories(deps.dbFile),
+      deps.loadRoutines?.() ?? Promise.resolve([] as Routine[]),
     ]);
     const enabled = skills.filter((s) => s.enabled !== false);
+    const todoRoutines = routines.filter((r) => r.todoDriven).map((r) => r.name);
     return converse(
       req.history, req.message, enabled, projects, persona, memories,
       { chat: deps.converse, model: deps.getModel() }, req.droppedUrl, deps.actions,
       undefined, req.linkedNote, deps.delegateAvailable?.() ?? false,
+      [], false, true, todoRoutines,
     );
   };
 }
@@ -413,16 +418,19 @@ export interface RoutineHandlerDeps {
   loadStates: () => Promise<Record<string, RoutineState>>;
   isRunning: (name: string) => boolean;
   runNow: (name: string) => Promise<{ started: boolean; reason?: string }>;
+  onRoutineDeleted?: (name: string) => Promise<void>;
 }
 
 export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
   return {
     list: (): Promise<Routine[]> => deps.loadRoutines(),
     save: async (routine: Routine): Promise<void> => {
-      if (!isValidRoutine(routine)) throw new Error("invalid routine");
       await deps.saveRoutine(routine);
     },
-    remove: (name: string): Promise<void> => deps.deleteRoutine(name),
+    remove: async (name: string): Promise<void> => {
+      await deps.deleteRoutine(name);
+      await deps.onRoutineDeleted?.(name);
+    },
     state: async (): Promise<Record<string, RoutineStateView>> => {
       const [routines, states] = await Promise.all([deps.loadRoutines(), deps.loadStates()]);
       const out: Record<string, RoutineStateView> = {};
@@ -433,6 +441,36 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
       return out;
     },
     runNow: (name: string): Promise<{ started: boolean; reason?: string }> => deps.runNow(name),
+  };
+}
+
+export interface TodoHandlerDeps {
+  dbFile: string;
+  loadRoutines: () => Promise<Routine[]>;
+  addTodo: (file: string, routine: string, text: string) => Promise<TodoItem>;
+  listTodos: (file: string, routine: string) => Promise<TodoItem[]>;
+  listAllTodos: (file: string) => Promise<TodoItem[]>;
+  editTodoText: (file: string, id: string, text: string) => Promise<void>;
+  deleteTodo: (file: string, id: string) => Promise<void>;
+  reorderTodo: (file: string, id: string, newOrder: number) => Promise<void>;
+  clearFinishedTodos: (file: string, routine: string) => Promise<void>;
+  retryTodo: (file: string, id: string) => Promise<void>;
+}
+
+export function buildTodoHandlers(deps: TodoHandlerDeps) {
+  return {
+    list: (routine: string): Promise<TodoItem[]> => deps.listTodos(deps.dbFile, routine),
+    listAll: (): Promise<TodoItem[]> => deps.listAllTodos(deps.dbFile),
+    // Routine existence/type is enforced here, not in the store (store stays dumb, per spec).
+    add: async (routine: string, text: string): Promise<TodoItem> => {
+      resolveTodoRoutine(await deps.loadRoutines(), routine);
+      return deps.addTodo(deps.dbFile, routine, text);
+    },
+    edit: (id: string, text: string): Promise<void> => deps.editTodoText(deps.dbFile, id, text),
+    remove: (id: string): Promise<void> => deps.deleteTodo(deps.dbFile, id),
+    reorder: (id: string, newOrder: number): Promise<void> => deps.reorderTodo(deps.dbFile, id, newOrder),
+    clearFinished: (routine: string): Promise<void> => deps.clearFinishedTodos(deps.dbFile, routine),
+    retry: (id: string): Promise<void> => deps.retryTodo(deps.dbFile, id),
   };
 }
 
@@ -478,7 +516,9 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
     cancel: (taskId: string) => void;
   };
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
+  loadRoutines?: () => Promise<Routine[]>;
   routineHandlers: ReturnType<typeof buildRoutineHandlers>;
+  todoHandlers: ReturnType<typeof buildTodoHandlers>;
 }
 
 export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
@@ -598,6 +638,15 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.routinesDelete, (_e, name: string) => deps.routineHandlers.remove(name));
   ipcMain.handle(IPC.routinesState, () => deps.routineHandlers.state());
   ipcMain.handle(IPC.routinesRunNow, (_e, name: string) => deps.routineHandlers.runNow(name));
+
+  ipcMain.handle(IPC.todosList, (_e, routine: string) => deps.todoHandlers.list(routine));
+  ipcMain.handle(IPC.todosListAll, () => deps.todoHandlers.listAll());
+  ipcMain.handle(IPC.todosAdd, (_e, routine: string, text: string) => deps.todoHandlers.add(routine, text));
+  ipcMain.handle(IPC.todosEdit, (_e, id: string, text: string) => deps.todoHandlers.edit(id, text));
+  ipcMain.handle(IPC.todosDelete, (_e, id: string) => deps.todoHandlers.remove(id));
+  ipcMain.handle(IPC.todosReorder, (_e, id: string, newOrder: number) => deps.todoHandlers.reorder(id, newOrder));
+  ipcMain.handle(IPC.todosClearFinished, (_e, routine: string) => deps.todoHandlers.clearFinished(routine));
+  ipcMain.handle(IPC.todosRetry, (_e, id: string) => deps.todoHandlers.retry(id));
 
   ipcMain.handle(IPC.openComponent, (_e, kind: ComponentKind, droppedUrl?: string) => deps.openComponent(kind, droppedUrl));
   ipcMain.on(IPC.proposeRun, (_e, suggestion: RouteSuggestion) => deps.proposeRun(suggestion));

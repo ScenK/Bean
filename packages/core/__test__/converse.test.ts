@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import { converse, type ActionTool, type ConverseDeps, type ConvoMsg, type ToolSpec } from "../src/converse.js";
 import { composePersonaPrompt, DEFAULT_PERSONA, type Persona } from "../src/persona.js";
 import type { Project, Skill } from "../src/types.js";
@@ -535,4 +535,38 @@ test("propose_skill with a missing or empty body drops the proposal", async () =
   const deps = depsReturning("Hmm.", [{ name: "propose_skill", args: { name: "ok" } }]);
   const res = await converse([], "make a skill", skills, projects, DEFAULT_PERSONA, [], deps);
   expect(res.proposedSkill).toBeUndefined();
+});
+
+describe("propose_todo", () => {
+  it("is not offered when no todo-driven routines exist", async () => {
+    let offered: string[] = [];
+    await converse([], "queue this", [], [], DEFAULT_PERSONA, [], {
+      model: "m",
+      chat: async ({ tools }) => { offered = tools.map((t) => t.name); return { content: "ok", toolCalls: [] }; },
+    });
+    expect(offered).not.toContain("propose_todo");
+  });
+
+  it("returns proposedTodo on a valid call", async () => {
+    const res = await converse([], "queue this", [], [], DEFAULT_PERSONA, [], {
+      model: "m",
+      chat: async () => ({
+        content: "queued a draft",
+        toolCalls: [{ name: "propose_todo", args: { routine: "nightly", text: "Fix the flaky spec" } }],
+      }),
+    }, undefined, [], undefined, undefined, false, [], false, true, ["nightly"]);
+    expect(res.proposedTodo).toEqual({ routine: "nightly", text: "Fix the flaky spec" });
+    expect(res.reply).toBe("queued a draft");
+  });
+
+  it("drops the proposal on an unknown routine or empty text", async () => {
+    const res = await converse([], "queue this", [], [], DEFAULT_PERSONA, [], {
+      model: "m",
+      chat: async () => ({
+        content: "hm",
+        toolCalls: [{ name: "propose_todo", args: { routine: "nope", text: "x" } }],
+      }),
+    }, undefined, [], undefined, undefined, false, [], false, true, ["nightly"]);
+    expect(res.proposedTodo).toBeUndefined();
+  });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { Routine, RoutineStep, Skill, Project, AvailableModel } from "@bean/core";
+import type { Routine, RoutineStep, Skill, Project, AvailableModel, TodoItem } from "@bean/core";
 import { nextRun, parseCron } from "@bean/core/cron";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
@@ -7,6 +7,15 @@ import type { RoutineStateView } from "../../../ipc.js";
 
 const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const pad2 = (n: number): string => String(n).padStart(2, "0");
+
+// Electron's ipcRenderer.invoke wraps a thrown main-process Error as
+// `Error invoking remote method '<channel>': Error: <message>` — peel that boilerplate off so
+// the specific reason (e.g. which step/field failed validation) reaches the user directly.
+function ipcErrorMessage(e: unknown): string | undefined {
+  if (!(e instanceof Error)) return undefined;
+  const m = /^Error invoking remote method '[^']*': (?:Error: )?([\s\S]*)$/.exec(e.message);
+  return m ? m[1] : e.message;
+}
 
 const emptyRoutine = (): Routine => ({
   name: "",
@@ -173,11 +182,27 @@ export function RoutinesPanel() {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const [triggering, setTriggering] = useState(false);
+  // The todo queue for a todo-driven routine — only loaded when there's a saved routine
+  // selected and it's todo-driven; empty otherwise (mirrors refreshTodos()'s own guard).
+  const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [newTodo, setNewTodo] = useState("");
+  // Inline edit is pending-items-only; editingId gates which row (if any) shows the input
+  // in place of its static text.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  // Drag-to-reorder for pending todos — same interaction as the steps list's ⠿ handle
+  // (separate state since the two lists reorder independently).
+  const [todoDragId, setTodoDragId] = useState<string | null>(null);
+  const [todoOverId, setTodoOverId] = useState<string | null>(null);
 
   const refresh = async (): Promise<void> => {
     const [list, st] = await Promise.all([window.bean.routinesList(), window.bean.routinesState()]);
     setRoutines(list);
     setStates(st);
+  };
+
+  const refreshTodos = async (): Promise<void> => {
+    setTodos(selected && draft.todoDriven ? await window.bean.todosList(selected) : []);
   };
 
   useEffect(() => { void refresh(); }, []);
@@ -186,14 +211,20 @@ export function RoutinesPanel() {
       .then(([sk, pr, md]) => { setSkills(sk); setProjects(pr); setModels(md); });
   }, []);
   useEffect(() => {
-    const t = setInterval(() => void window.bean.routinesState().then(setStates), 5000);
+    // Piggyback on the same 5s poll so "running now" chips update live while a todo-driven
+    // routine is open.
+    const t = setInterval(() => {
+      void window.bean.routinesState().then(setStates);
+      void refreshTodos();
+    }, 5000);
     return () => clearInterval(t);
-  }, []);
+  }, [selected, draft.todoDriven]);
   useEffect(() => {
     setDraft(routines.find((r) => r.name === selected) ?? emptyRoutine());
     setError("");
     setCustomCron(false);
   }, [selected, routines]);
+  useEffect(() => { void refreshTodos(); }, [selected, draft.todoDriven]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -247,6 +278,24 @@ export function RoutinesPanel() {
     }
   };
 
+  // Same reasoning as toggleDraftEnabled just above: for an already-saved routine, flipping
+  // TYPE must persist right away. The Queue section (and its add/edit/reorder calls) is gated
+  // on the local draft's todoDriven, but the backend validates todo actions against the
+  // on-disk routine — so without this, the queue appears to work but every action against it
+  // fails silently until "Save routine" is clicked.
+  const setTodoDriven = async (on: boolean): Promise<void> => {
+    const next = { ...draft, todoDriven: on || undefined };
+    setDraft(next);
+    if (selected) {
+      try {
+        await window.bean.routinesSave(next);
+        await refresh();
+      } catch (e) {
+        setError(ipcErrorMessage(e) ?? "couldn't save the type change");
+      }
+    }
+  };
+
   const save = async (): Promise<void> => {
     try {
       await window.bean.routinesSave(draft);
@@ -255,7 +304,7 @@ export function RoutinesPanel() {
       setSelected(draft.name);
       setCreating(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "save failed — check name, cadence, and steps");
+      setError(ipcErrorMessage(e) ?? "save failed — check name, cadence, and steps");
     }
   };
 
@@ -326,6 +375,7 @@ export function RoutinesPanel() {
         <div class="bean-skills-row-name">{r.name}</div>
         <div class="bean-routines-row-sub">
           {humanCadence(r.cron)} · {r.enabled ? `${r.steps.length} step${r.steps.length === 1 ? "" : "s"}` : "paused"}
+          {r.todoDriven ? " · ⚡ todo-driven" : ""}
         </div>
       </div>
       <span class={`bean-routines-dot bean-routines-dot--${dotKind(r.enabled, states[r.name])}`} />
@@ -334,6 +384,8 @@ export function RoutinesPanel() {
 
   const selectedState = selected ? states[selected] : undefined;
   const isRunningSelected = triggering || Boolean(selectedState?.running);
+  const pendingCount = todos.filter((t) => t.status === "pending").length;
+  const emptyTodoQueue = Boolean(draft.todoDriven) && pendingCount === 0;
 
   return (
     <div class="bean-skills">
@@ -448,7 +500,7 @@ export function RoutinesPanel() {
           <div class="bean-routines-cadence-meta">
             <span class="bean-routines-cron-cap">cron&nbsp;&nbsp;{draft.cron}</span>
             <span class={`bean-routines-next${nrv.ok ? "" : " bean-routines-next--bad"}`}>
-              <span class="bean-routines-next-dot" />{nrv.text}
+              <span class="bean-routines-next-dot" />{nrv.text}{draft.todoDriven ? " · only if the queue has items" : ""}
             </span>
           </div>
         </div>
@@ -457,9 +509,177 @@ export function RoutinesPanel() {
 
         <div class="bean-skills-projects">
           <div class="bean-routines-section-head">
+            <div class="bean-field-label">TYPE</div>
+          </div>
+          <div class="bean-routines-type-row">
+            <div class="bean-routines-type-buttons">
+              <button
+                type="button"
+                class={`bean-btn bean-btn--ghost bean-routines-type-btn${draft.todoDriven ? "" : " bean-routines-type-btn--on"}`}
+                onClick={() => void setTodoDriven(false)}
+              >Always runs</button>
+              <button
+                type="button"
+                class={`bean-btn bean-btn--ghost bean-routines-type-btn${draft.todoDriven ? " bean-routines-type-btn--on" : ""}`}
+                onClick={() => void setTodoDriven(true)}
+              >⚡ Todo-driven</button>
+            </div>
+            <span class="bean-routines-section-note">
+              {draft.todoDriven
+                ? "runs the steps below on each queued todo — skips the run when the queue is empty"
+                : "runs the steps below on every scheduled fire"}
+            </span>
+          </div>
+        </div>
+
+        {draft.todoDriven && !selected ? (
+          // Queue needs a saved routine name to attach todos to (Task 8's original design) —
+          // but showing nothing here is indistinguishable from the feature being missing
+          // (reported: "there isn't a place I can add any todo items"). Say why instead.
+          <div class="bean-skills-projects">
+            <div class="bean-routines-section-head">
+              <div class="bean-field-label">QUEUE</div>
+            </div>
+            <span class="bean-routines-section-note">Save this routine to start queuing todos.</span>
+          </div>
+        ) : null}
+
+        {draft.todoDriven && selected ? (
+          <div class="bean-skills-projects">
+            <div class="bean-routines-section-head">
+              <div class="bean-field-label">QUEUE</div>
+              <span class="bean-routines-section-note">
+                a backlog you fill — each pending item runs through the steps below
+              </span>
+            </div>
+            <div class="bean-routines-queue-meta">
+              {pendingCount} pending · gates this routine
+            </div>
+            {(() => {
+              // Reorder targets: pending items already arrive order-ASC from todosList, so this
+              // is the drag-drop sequence as-is — no re-sort.
+              const pendingOrdered = todos.filter((t) => t.status === "pending");
+              // Same splice-and-reassign shape as reorderStep, generalized to any drag distance
+              // (not just adjacent swaps) and persisted: after splicing the dragged id into its
+              // drop position, re-assign each pending item's `order` from the existing ascending
+              // sequence by position — no new integers needed, no collision risk.
+              const reorderTodoDrag = (fromId: string, toId: string): void => {
+                if (fromId === toId) return;
+                const ids = pendingOrdered.map((t) => t.id);
+                const fromIdx = ids.indexOf(fromId);
+                const toIdx = ids.indexOf(toId);
+                if (fromIdx < 0 || toIdx < 0) return;
+                const reordered = [...ids];
+                const [moved] = reordered.splice(fromIdx, 1);
+                reordered.splice(toIdx, 0, moved!);
+                const orderValues = pendingOrdered.map((t) => t.order); // already ascending
+                void Promise.all(reordered.map((id, idx) => window.bean.todosReorder(id, orderValues[idx]!)))
+                  .then(refreshTodos)
+                  .catch((e) => setError(ipcErrorMessage(e) ?? "couldn't reorder the queue"));
+              };
+              return [...todos]
+                .sort((a, b) => Number(a.status === "done" || a.status === "failed") - Number(b.status === "done" || b.status === "failed"))
+                .map((t) => {
+                  const editing = editingId === t.id;
+                  const isPending = t.status === "pending";
+                  const commitEdit = (): void => {
+                    const text = editText.trim();
+                    if (!text) return;
+                    void window.bean.todosEdit(t.id, text)
+                      .then(() => { setEditingId(null); void refreshTodos(); })
+                      .catch((e) => setError(ipcErrorMessage(e) ?? "couldn't save the edit"));
+                  };
+                  return (
+                    <div
+                      key={t.id}
+                      class={`bean-routines-todo bean-routines-todo--${t.status}${todoDragId === t.id ? " bean-routines-todo--dragging" : ""}${todoOverId === t.id && todoDragId !== null && todoDragId !== t.id ? " bean-routines-todo--drop" : ""}`}
+                      onDragOver={(e) => { if (todoDragId !== null && isPending) { e.preventDefault(); setTodoOverId(t.id); } }}
+                      onDragLeave={() => setTodoOverId((v) => (v === t.id ? null : v))}
+                      onDrop={(e) => { e.preventDefault(); if (todoDragId !== null) reorderTodoDrag(todoDragId, t.id); setTodoDragId(null); setTodoOverId(null); }}
+                    >
+                      {editing ? (
+                        <input
+                          class="bean-input bean-input--boxed"
+                          value={editText}
+                          onInput={(e) => setEditText((e.target as HTMLInputElement).value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitEdit();
+                            else if (e.key === "Escape") setEditingId(null);
+                          }}
+                        />
+                      ) : (
+                        <span class="bean-routines-todo-text">{t.text}</span>
+                      )}
+                      <span class="bean-routines-todo-chip">{t.status === "running" ? "running now" : t.status}</span>
+                      {!editing && t.status === "failed" ? (
+                        <button
+                          type="button"
+                          class="bean-skills-delete-link"
+                          title={t.resultSummary}
+                          onClick={() => void window.bean.todosRetry(t.id).then(refreshTodos)
+                            .catch((e) => setError(ipcErrorMessage(e) ?? "couldn't retry the todo"))}
+                        >Retry</button>
+                      ) : null}
+                      {!editing && isPending ? (
+                        <>
+                          <button
+                            type="button"
+                            class="bean-routines-todo-link"
+                            onClick={() => { setEditingId(t.id); setEditText(t.text); }}
+                          >Edit</button>
+                          <button
+                            type="button"
+                            class="bean-skills-delete-link"
+                            onClick={() => void window.bean.todosDelete(t.id).then(refreshTodos)
+                              .catch((e) => setError(ipcErrorMessage(e) ?? "couldn't remove the todo"))}
+                          >Remove</button>
+                          <span
+                            class="bean-routines-handle"
+                            title="Drag to reorder"
+                            draggable
+                            onDragStart={(e) => { setTodoDragId(t.id); e.dataTransfer?.setData("text/plain", t.id); }}
+                            onDragEnd={() => { setTodoDragId(null); setTodoOverId(null); }}
+                          >⠿</span>
+                        </>
+                      ) : null}
+                    </div>
+                  );
+                });
+            })()}
+            <div class="bean-routines-todo-add">
+              <input
+                class="bean-input bean-routines-todo-add-input"
+                placeholder="+ Queue a todo"
+                value={newTodo}
+                onInput={(e) => setNewTodo((e.target as HTMLInputElement).value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newTodo.trim() && selected) {
+                    void window.bean.todosAdd(selected, newTodo)
+                      .then(() => { setNewTodo(""); void refreshTodos(); })
+                      .catch((e2) => setError(e2 instanceof Error ? e2.message : "couldn't queue the todo"));
+                  }
+                }}
+              />
+            </div>
+            {todos.some((t) => t.status === "done" || t.status === "failed") ? (
+              <button
+                type="button"
+                class="bean-skills-delete-link"
+                onClick={() => { if (selected) void window.bean.todosClearFinished(selected).then(refreshTodos)
+                  .catch((e) => setError(ipcErrorMessage(e) ?? "couldn't clear finished todos")); }}
+              >Clear finished</button>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div class="bean-routines-divider" />
+
+        <div class="bean-skills-projects">
+          <div class="bean-routines-section-head">
             <div class="bean-field-label">WHAT BEAN DOES</div>
             <span class="bean-routines-section-note">
-              {draft.steps.length} step{draft.steps.length === 1 ? "" : "s"} · run in order · one digest at the end
+              {draft.steps.length} step{draft.steps.length === 1 ? "" : "s"}
+              {draft.todoDriven ? " · run in order on each queued todo · one digest at the end" : " · run in order · one digest at the end"}
             </span>
           </div>
           <div class="bean-routines-steps">
@@ -714,14 +934,17 @@ export function RoutinesPanel() {
           </span>
           <span class="bean-skills-spacer" />
           {selected ? (
-            <button
-              type="button"
-              class="bean-btn bean-btn--ghost"
-              disabled={isRunningSelected}
-              onClick={() => void runNow()}
-            >
-              {isRunningSelected ? "Running…" : "Run now"}
-            </button>
+            <>
+              <button
+                type="button"
+                class="bean-btn bean-btn--ghost"
+                disabled={isRunningSelected || emptyTodoQueue}
+                onClick={() => void runNow()}
+              >
+                {isRunningSelected ? "Running…" : "Run now"}
+              </button>
+              {emptyTodoQueue ? <span class="bean-routines-section-note">queue a todo first</span> : null}
+            </>
           ) : null}
           <button type="button" class="bean-btn" onClick={() => void save()}>Save routine</button>
         </div>

@@ -34,6 +34,8 @@ export interface ProposedNote { title: string; body: string; project?: string; s
  * `updating` = a skill with this name already exists (user or built-in; confirming
  * writes/overrides the user copy in ~/.bean/skills). */
 export interface ProposedSkill { name: string; body: string; updating: boolean; }
+/** A queue item draft awaiting user confirmation — todos are never queued silently. */
+export interface ProposedTodo { routine: string; text: string; }
 // A confirm-first background coding task that reports its final result back to this chat.
 export interface ProposedDelegate {
   projectPath: string;
@@ -48,7 +50,7 @@ export interface ProposedDelegate {
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */
 export interface LinkedNote { slug: string; title: string; version: number; body: string; }
-export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedRemember?: boolean; proposedSkill?: ProposedSkill; }
+export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedRemember?: boolean; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo; }
 export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?: string; linkedNote?: LinkedNote; }
 
 // runAvailable=false (chatops: Discord/Teams) — no terminal exists there, so propose_run
@@ -89,7 +91,9 @@ const behaviorInstructions = (runAvailable: boolean): string =>
   " When the user explicitly asks you to remember or save durable facts from this chat, call " +
   "propose_remember — the user then confirms which facts are kept; never save memory silently. " +
   "When the user asks you to create a new skill or change an existing one, call propose_skill " +
-  "with the complete markdown — the user confirms the card before anything is written.";
+  "with the complete markdown — the user confirms the card before anything is written. " +
+  "If you are given a propose_todo tool, use it when the user wants a task queued for later " +
+  "instead of done now — the routine runs it on its own schedule; the card is the confirmation.";
   
 
 function proposeNoteTool(projects: Project[], linkedNote?: LinkedNote): ToolSpec {
@@ -141,6 +145,26 @@ function proposeSkillTool(): ToolSpec {
         body: { type: "string", description: "the complete markdown file content, frontmatter included" },
       },
       required: ["name", "body"],
+    },
+  };
+}
+
+// Enum-constrained to the caller's todo-driven routine names, same trick as propose_run's
+// skill/project enums — the model can't invent a queue that doesn't exist.
+function proposeTodoTool(todoRoutines: string[]): ToolSpec {
+  return {
+    name: "propose_todo",
+    description:
+      "Queue a task on one of the user's todo-driven routines — the routine works through its " +
+      "queue on its own schedule (e.g. overnight). Use when the user wants a task queued for " +
+      "later rather than done now. The user confirms a card before anything is queued.",
+    parameters: {
+      type: "object",
+      properties: {
+        routine: { type: "string", enum: todoRoutines, description: "which routine's queue to add to" },
+        text: { type: "string", description: "the task as one self-contained sentence or short paragraph" },
+      },
+      required: ["routine", "text"],
     },
   };
 }
@@ -265,6 +289,7 @@ export async function converse(
   rememberAvailable = false,
   // false where confirming a run couldn't execute anything (chatops — no desktop, no terminal).
   runAvailable = true,
+  todoRoutines: string[] = [],
 ): Promise<ConverseResult> {
   const systemParts = [
     composePersonaPrompt(persona),
@@ -302,6 +327,7 @@ export async function converse(
     ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects, availableClis)] : []),
     proposeNoteTool(projects, linkedNote),
     proposeSkillTool(),
+    ...(todoRoutines.length > 0 ? [proposeTodoTool(todoRoutines)] : []),
     ...(rememberAvailable ? [proposeRememberTool()] : []),
     ...actions.map((a) => a.spec),
   ];
@@ -392,6 +418,16 @@ export async function converse(
         model: deps.model,
         proposedSkill: { name, body: args.body, updating: skills.some((s) => s.name === name) },
       };
+    }
+
+    const todoCall = toolCalls.find((c) => c.name === "propose_todo");
+    if (todoCall) {
+      const args = (todoCall.args ?? {}) as { routine?: unknown; text?: unknown };
+      const text = typeof args.text === "string" ? args.text.trim() : "";
+      if (!text || typeof args.routine !== "string" || !todoRoutines.includes(args.routine)) {
+        return { reply: content, model: deps.model };
+      }
+      return { reply: content, model: deps.model, proposedTodo: { routine: args.routine, text } };
     }
 
     const rememberCall = toolCalls.find((c) => c.name === "propose_remember");

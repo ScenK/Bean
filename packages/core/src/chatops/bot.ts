@@ -15,6 +15,7 @@ import type { ConversationStore } from "./conversation.js";
 import { maybeCompact } from "./compact.js";
 import type { PendingProposal, ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
+import type { TodoProposalStore } from "./todo-proposals.js";
 import type { MemoryProposalStore } from "./memory-proposals.js";
 import type { ConsolidationProposalStore } from "./consolidation-proposals.js";
 import type { SkillProposalStore } from "./skill-proposals.js";
@@ -65,6 +66,11 @@ export interface TeamsBotDeps {
   saveNote: (draft: NoteDraft) => Promise<string>;
   /** FTS5 search over saved notes (server injects the db path); backs retrieve_note. */
   searchNotes: (query: string) => Promise<Note[]>;
+  todoProposals: TodoProposalStore;
+  /** Queues a confirmed todo (server injects the db path + routine validation). */
+  queueTodo: (routine: string, text: string) => Promise<void>;
+  /** Names of routines with todoDriven=true — gates the propose_todo tool. */
+  listTodoRoutines: () => Promise<string[]>;
   skillProposals: SkillProposalStore;
   /** Persists a confirmed skill draft to the user's ~/.bean/skills (server injects the dir). */
   saveSkill: (name: string, body: string) => Promise<void>;
@@ -171,6 +177,36 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await fx.post(`Saved note "${pending.note.title}".`);
     } catch (err) {
       await fx.post(`Couldn't save the note: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async function handleTodoAction(
+    kind: "queue-todo" | "cancel-todo",
+    proposalId: string | undefined,
+    actor: string,
+    fx: BotEffects,
+  ): Promise<void> {
+    if (!proposalId) return;
+    const pending = deps.todoProposals.claim(proposalId);
+    if (!pending) {
+      await fx.post("That todo draft expired — ask me to queue it again.");
+      return;
+    }
+    const resultCard = (outcome: "queued" | "cancelled"): object =>
+      deps.cards.todoResultCard({ routine: pending.todo.routine, queuedBy: actor, outcome });
+    const updateTo = async (card: object): Promise<void> => {
+      if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
+    };
+    if (kind === "cancel-todo") {
+      await updateTo(resultCard("cancelled"));
+      return;
+    }
+    try {
+      await deps.queueTodo(pending.todo.routine, pending.todo.text);
+      await updateTo(resultCard("queued"));
+      await fx.post(`Queued on "${pending.todo.routine}".`);
+    } catch (err) {
+      await fx.post(`Couldn't queue the todo: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -308,8 +344,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           await fx.reply(n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.");
           return;
         }
-        const [skills, projects, persona, memories, modelMemory] = await Promise.all([
+        const [skills, projects, persona, memories, modelMemory, todoRoutines] = await Promise.all([
           deps.loadSkills(), deps.loadProjects(), deps.loadPersona(), deps.loadMemories(), deps.loadModelMemory(),
+          deps.listTodoRoutines(),
         ]);
         const detected = deps.detectClis();
         let history = deps.conversations.history(msg.conversationId);
@@ -326,7 +363,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const result = await converse(
           history, msg.text, skills, projects, persona, memories,
           { chat: deps.chat, model: deps.model },
-          undefined, actions, undefined, undefined, true, detected, true, false,
+          undefined, actions, undefined, undefined, true, detected, true, false, todoRoutines,
         );
         deps.conversations.append(msg.conversationId, { role: "user", content: msg.text });
         if (result.reply) {
@@ -344,7 +381,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               deps.conversations.history(msg.conversationId), run.composedPrompt,
               skills, projects, persona, memories,
               { chat: deps.chat, model: deps.model },
-              undefined, actions, undefined, undefined, true, detected, true, false,
+              undefined, actions, undefined, undefined, true, detected, true, false, todoRoutines,
             );
             deps.conversations.append(msg.conversationId, { role: "user", content: run.composedPrompt });
             // Nested proposals from the skill prompt are deliberately ignored — one hop only.
@@ -379,6 +416,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             proposalId: pending.id, name: skill.name, body: skill.body, updating: skill.updating,
           }));
           deps.skillProposals.setCardActivityId(pending.id, activityId);
+          return;
+        }
+        if (result.proposedTodo) {
+          const todo = result.proposedTodo;
+          const pending = deps.todoProposals.add({ todo, conversationId: msg.conversationId, proposedBy: msg.fromName });
+          const activityId = await fx.postCard(deps.cards.todoProposalCard({
+            proposalId: pending.id, routine: todo.routine, text: todo.text,
+          }));
+          deps.todoProposals.setCardActivityId(pending.id, activityId);
           return;
         }
         if (result.proposedRemember) {
@@ -434,6 +480,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (beanAction === "save-skill" || beanAction === "cancel-skill") {
         await handleSkillAction(beanAction, proposalId, action.fromName, fx);
+        return;
+      }
+      if (beanAction === "queue-todo" || beanAction === "cancel-todo") {
+        await handleTodoAction(beanAction, proposalId, action.fromName, fx);
         return;
       }
       if (beanAction === "save-memories" || beanAction === "cancel-memories") {

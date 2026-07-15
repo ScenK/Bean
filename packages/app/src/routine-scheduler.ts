@@ -9,6 +9,8 @@ export interface RoutineSchedulerDeps {
   runRoutine: (routine: Routine) => Promise<RoutineRunResult>;
   deliverDigest: (routine: Routine, result: RoutineRunResult) => Promise<void>;
   now?: () => Date;
+  /** Todo-driven gate: false = skip this fire (advance lastRun, record nothing). Absent = never skip. */
+  hasPendingTodos?: (routine: string) => Promise<boolean>;
 }
 
 const TICK_MS = 30_000;
@@ -86,6 +88,18 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         continue; // unparseable cron in a hand-edited file — skip, panel save validates
       }
       if (due.getTime() <= nowT.getTime()) {
+        if (routine.todoDriven && deps.hasPendingTodos && !(await deps.hasPendingTodos(routine.name))) {
+          // Empty queue: consume the slot without a run — otherwise this stale due time
+          // refires every tick forever (same shape as the missed/no-catch-up rule).
+          const before = await deps.loadStates();
+          const prior = before[routine.name];
+          await deps.saveStates({
+            ...before,
+            [routine.name]: { ...(prior ?? { history: [] }), lastRun: now().toISOString(), missed: undefined },
+          });
+          running.delete(routine.name);
+          continue;
+        }
         await execute(routine);
       } else {
         running.delete(routine.name);
@@ -103,6 +117,12 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       if (!routine.enabled || !state?.lastRun || state.missed) continue;
       try {
         if (nextRun(routine.cron, new Date(state.lastRun)).getTime() < startedAt.getTime()) {
+          // A todo-driven routine's missed fire is only a real problem if there's still
+          // pending work to catch up on — an empty queue means tick()'s own hasPendingTodos
+          // gate would have silently skipped that fire anyway, so flagging it missed here
+          // would be a false alarm the user can't act on (and it'd get stuck: missedNames
+          // makes tick() skip re-checking due-ness until someone manually runs it).
+          if (routine.todoDriven && deps.hasPendingTodos && !(await deps.hasPendingTodos(routine.name))) continue;
           next[routine.name] = { ...state, missed: true };
           missedNames.add(routine.name);
           changed = true;

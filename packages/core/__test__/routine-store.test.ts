@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  appendRunRecord, deleteRoutine, isValidRoutine, loadRoutines, loadRoutineStates,
-  saveRoutine, saveRoutineStates, type Routine, type RunRecord,
+  appendRunRecord, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines,
+  loadRoutineStates, resolveTodoRoutine, saveRoutine, saveRoutineStates, type Routine, type RunRecord,
 } from "../src/routine-store.js";
 
 const routine = (over: Partial<Routine> = {}): Routine => ({
@@ -43,6 +43,20 @@ describe("save/load/delete routines", () => {
   });
 });
 
+describe("describeRoutineError", () => {
+  it("names the specific field/step at fault instead of a generic message", () => {
+    expect(describeRoutineError(routine())).toBeNull();
+    expect(describeRoutineError(routine({ name: "../evil" }))).toMatch(/can't contain/);
+    expect(describeRoutineError(routine({ cron: "not cron" }))).toMatch(/not a valid 5-field cron/);
+    expect(describeRoutineError(routine({ steps: [] }))).toMatch(/at least one step/);
+    expect(describeRoutineError(routine({ steps: [{ kind: "chat", instruction: "" }] }))).toMatch(/step 1 needs an instruction/);
+    expect(describeRoutineError(routine({
+      steps: [{ kind: "delegate", skill: "", instruction: "go" }],
+    }))).toMatch(/step 1 \(delegate\) needs a skill/);
+    expect(describeRoutineError(routine({ sinks: { chatops: [{ transport: "slack" }] } }))).toMatch(/chatops sink 1 needs transport/);
+  });
+});
+
 describe("isValidRoutine", () => {
   it("accepts both step kinds and rejects unknown kinds / empty steps", () => {
     expect(isValidRoutine(routine({ steps: [
@@ -58,6 +72,12 @@ describe("isValidRoutine", () => {
     expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "teams", channel: "conv1" }] } }))).toBe(true);
     expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "discord", channel: 5 }] } }))).toBe(false);
     expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "slack" }] } }))).toBe(false);
+  });
+  it("accepts todoDriven boolean and rejects non-boolean", () => {
+    expect(isValidRoutine(routine({ todoDriven: true }))).toBe(true);
+    expect(isValidRoutine(routine({ todoDriven: false }))).toBe(true);
+    expect(isValidRoutine(routine())).toBe(true); // old files: field absent
+    expect(isValidRoutine({ ...routine(), todoDriven: "yes" })).toBe(false);
   });
 });
 
@@ -78,5 +98,19 @@ describe("routine state", () => {
     expect(state.history).toHaveLength(20);
     expect(state.history[0]!.digest).toBe("run 24"); // newest first
     expect(state.missed).toBe(false);
+  });
+});
+
+describe("resolveTodoRoutine", () => {
+  it("returns the routine when it exists and is todo-driven", () => {
+    const routines = [routine({ name: "queue-me", todoDriven: true })];
+    expect(resolveTodoRoutine(routines, "queue-me")).toEqual(routine({ name: "queue-me", todoDriven: true }));
+  });
+  it("throws 'no routine named' when absent", () => {
+    expect(() => resolveTodoRoutine([routine()], "missing")).toThrow('no routine named "missing"');
+  });
+  it("throws 'is not todo-driven' when present but not todo-driven", () => {
+    const routines = [routine({ name: "morning-triage" })];
+    expect(() => resolveTodoRoutine(routines, "morning-triage")).toThrow('routine "morning-triage" is not todo-driven');
   });
 });

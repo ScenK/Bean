@@ -1,7 +1,7 @@
 import type {
   ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
   MemoryProposalCardInput, MemoryResultCardInput, ConsolidationProposalCardInput, ConsolidationResultCardInput,
-  SkillProposalCardInput, SkillResultCardInput,
+  SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
 } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
@@ -113,6 +113,45 @@ export function noteResultCard(input: NoteResultCardInput): object {
     body: [
       { type: "TextBlock", weight: "bolder", text: `Note ${input.outcome} (by ${input.savedBy})` },
       { type: "TextBlock", text: input.title, wrap: true, isSubtle: true },
+    ],
+    actions: [],
+  };
+}
+
+/** Confirm-first todo draft: which routine's queue, the todo text, Queue/Cancel.
+ * data ids come back merged into the Action.Submit payload as beanAction + proposalId. */
+export function todoProposalCard(input: TodoProposalCardInput): object {
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", size: "medium", weight: "bolder", text: `Queue a todo on "${input.routine}"` },
+      { type: "TextBlock", text: input.text, wrap: true },
+    ],
+    actions: [
+      {
+        type: "Action.Submit",
+        title: "Queue",
+        style: "positive",
+        data: { beanAction: "queue-todo", proposalId: input.proposalId },
+      },
+      { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-todo", proposalId: input.proposalId } },
+    ],
+  };
+}
+
+export function todoResultCard(input: TodoResultCardInput): object {
+  const text = input.outcome === "queued"
+    ? `Queued by ${input.queuedBy}`
+    : "Cancelled";
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", weight: "bolder", text },
+      { type: "TextBlock", text: input.routine, wrap: true, isSubtle: true },
     ],
     actions: [],
   };

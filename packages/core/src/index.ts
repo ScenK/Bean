@@ -7,6 +7,7 @@ export * from "./config.js";
 export * from "./persona.js";
 export * from "./persona-store.js";
 export * from "./note-store.js";
+export * from "./todo-store.js";
 export * from "./memory/memory.js";
 export * from "./memory/store.js";
 export * from "./memory/extract.js";
@@ -31,6 +32,7 @@ export * from "./chatops/cards-api.js";
 export * from "./chatops/conversation.js";
 export * from "./chatops/proposals.js";
 export * from "./chatops/note-proposals.js";
+export * from "./chatops/todo-proposals.js";
 export * from "./chatops/skill-proposals.js";
 export * from "./chatops/memory-proposals.js";
 export * from "./chatops/consolidation-proposals.js";
@@ -40,7 +42,7 @@ export { parseCron, isValidCron, nextRun } from "./cron.js";
 export type { CronSpec } from "./cron.js";
 export {
   appendRunRecord, deleteRoutine, isValidRoutine, loadRoutines,
-  loadRoutineStates, saveRoutine, saveRoutineStates,
+  loadRoutineStates, resolveTodoRoutine, saveRoutine, saveRoutineStates,
 } from "./routine-store.js";
 export type {
   Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RunRecord,

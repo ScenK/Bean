@@ -1,10 +1,10 @@
 import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
-  skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile,
+  skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
-  detectClis, runDelegate, claimOutbox, outboxDir, saveSkill,
+  detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, mentionsBotName, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
-  ConsolidationProposalStore, RunRegistry, SkillProposalStore,
+  ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -16,7 +16,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   finishedCard, memoryProposalCard, memoryResultCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
-  consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard,
+  consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
 } from "./cards.js";
 import { loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 
@@ -82,6 +82,12 @@ const bot = buildTeamsBot({
   noteProposals: new NoteProposalStore(),
   saveNote: (draft) => saveNote(dbFile(dir), draft),
   searchNotes: (query) => searchNotes(dbFile(dir), query),
+  todoProposals: new TodoProposalStore(),
+  queueTodo: async (routine, text) => {
+    resolveTodoRoutine(await loadRoutines(routinesDir(dir)), routine);
+    await addTodo(dbFile(dir), routine, text);
+  },
+  listTodoRoutines: async () => (await loadRoutines(routinesDir(dir))).filter((r) => r.todoDriven).map((r) => r.name),
   skillProposals: new SkillProposalStore(),
   saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
   memoryProposals: new MemoryProposalStore(),
@@ -91,7 +97,7 @@ const bot = buildTeamsBot({
   conversations,
   cards: {
     proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
-    consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard,
+    consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
   },
 });
 

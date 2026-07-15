@@ -1573,6 +1573,80 @@ button, input, textarea, select, a {
 .bean-routines-next--bad { color: #e5484d; }
 .bean-routines-next--bad .bean-routines-next-dot { background: #e5484d; }
 
+/* Type toggle: Always runs / Todo-driven segmented buttons */
+.bean-routines-type-row { display: flex; flex-direction: column; gap: 8px; }
+.bean-routines-type-buttons { display: flex; align-items: center; gap: 8px; }
+.bean-routines-type-btn {
+  min-width: 128px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.bean-routines-type-btn--on {
+  color: var(--bean-accent-ink);
+  background: var(--bean-accent);
+  border-color: var(--bean-accent);
+}
+
+/* Queue: the todo backlog for a todo-driven routine */
+.bean-routines-queue-meta { font-size: 12.5px; color: var(--bean-text-dim); }
+.bean-routines-todo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bean-surface);
+  border: 1px solid var(--bean-border);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.bean-routines-todo-text { flex: 1; min-width: 0; font-size: 13px; color: var(--bean-text); }
+.bean-routines-todo--done .bean-routines-todo-text { text-decoration: line-through; opacity: 0.6; }
+/* Inline edit swaps the text span for a boxed input, sized to fill the same row. */
+.bean-routines-todo .bean-input--boxed { flex: 1; min-width: 0; padding: 5px 9px; }
+.bean-routines-todo-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bean-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+.bean-routines-todo-link:disabled { opacity: 0.35; cursor: default; }
+.bean-routines-todo--running {
+  background: color-mix(in oklch, var(--bean-accent) 9%, var(--bean-surface));
+  border-color: color-mix(in oklch, var(--bean-accent) 35%, var(--bean-border));
+}
+.bean-routines-todo-chip {
+  font: 600 11px ui-monospace, monospace;
+  color: var(--bean-text-dim);
+  background: var(--bean-surface-2);
+  border: 1px solid var(--bean-border);
+  border-radius: 999px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+.bean-routines-todo-add {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1.5px dashed var(--bean-border);
+  border-radius: 13px;
+  padding: 11px 15px;
+}
+.bean-routines-todo-add:focus-within { border-color: var(--bean-accent); }
+.bean-routines-todo-add-input {
+  font-size: 13px;
+  font-weight: 600;
+  color: oklch(0.55 0.1 48);
+}
+.bean-routines-todo-add-input::placeholder { color: oklch(0.55 0.1 48); font-weight: 600; }
+.bean-routines-todo--dragging { opacity: 0.45; }
+.bean-routines-todo--drop { border-color: var(--bean-accent); box-shadow: 0 0 0 1px var(--bean-accent); }
+
 /* Steps: numbered timeline of delegate cards */
 .bean-routines-section-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .bean-routines-section-note { font-size: 12.5px; color: var(--bean-text-dim); }
@@ -1668,7 +1742,7 @@ button, input, textarea, select, a {
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
-  color: var(--bean-accent);
+  color: oklch(0.55 0.1 48);
 }
 .bean-routines-add:hover { border-color: var(--bean-accent); }
 .bean-routines-add-plus { font-size: 15px; }

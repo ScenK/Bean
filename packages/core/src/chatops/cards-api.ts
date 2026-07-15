@@ -43,6 +43,18 @@ export interface NoteResultCardInput {
   outcome: "saved" | "cancelled";
 }
 
+export interface TodoProposalCardInput {
+  proposalId: string;
+  routine: string;
+  text: string;
+}
+
+export interface TodoResultCardInput {
+  routine: string;
+  queuedBy: string;
+  outcome: "queued" | "cancelled";
+}
+
 export interface MemoryProposalCardInput {
   proposalId: string;
   /** Candidate facts to confirm; projectName is the resolved display name or absent for global. */
@@ -87,6 +99,8 @@ export interface CardBuilders {
   finishedCard: (input: FinishedCardInput) => object;
   noteProposalCard: (input: NoteProposalCardInput) => object;
   noteResultCard: (input: NoteResultCardInput) => object;
+  todoProposalCard: (input: TodoProposalCardInput) => object;
+  todoResultCard: (input: TodoResultCardInput) => object;
   memoryProposalCard: (input: MemoryProposalCardInput) => object;
   memoryResultCard: (input: MemoryResultCardInput) => object;
   consolidationProposalCard: (input: ConsolidationProposalCardInput) => object;

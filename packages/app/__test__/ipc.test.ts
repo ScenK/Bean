@@ -1,4 +1,4 @@
-import { expect, test, vi } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import {
   buildRouteHandler, buildThemeHandlers, buildChatHandler,
   buildListSkillsHandler, buildListProjectsHandler, buildSaveProjectsHandler, buildSaveSkillHandler,
@@ -6,7 +6,7 @@ import {
   buildPersonaHandlers, buildLaunchHandler, buildConfigHandlers, buildPlanStore, buildMemoryHandlers,
   buildDroppedUrlStore, buildChatPromptStore, buildNotesHandlers,
   buildModelsHandler, buildModelMemoryHandlers, buildRoutineHandlers,
-  buildPendingUpdateStore, buildUpdateHandlers,
+  buildPendingUpdateStore, buildUpdateHandlers, buildTodoHandlers,
 } from "../src/ipc.js";
 import type { ConfigView, ConfigUpdate } from "../src/channels.js";
 import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate, Routine } from "@bean/core";
@@ -152,6 +152,38 @@ test("chat handler passes delegate availability through to converse", async () =
   });
   await handler({ history: [], message: "delegate this" });
   expect(seenTools).toContain("propose_delegate");
+});
+
+test("buildChatHandler passes todo-driven routine names into converse", async () => {
+  const nightlyTodoDriven: Routine = {
+    name: "nightly", enabled: true, cron: "0 2 * * *", todoDriven: true,
+    steps: [{ kind: "chat", instruction: "x" }], sinks: {},
+  };
+  const plainRoutine: Routine = {
+    name: "plain", enabled: true, cron: "0 8 * * *",
+    steps: [{ kind: "chat", instruction: "x" }], sinks: {},
+  };
+  let seenTools: string[] = [];
+  const handler = buildChatHandler({
+    loadSkills: async () => [{ name: "review-code", description: "r", body: "BODY" }] as Skill[],
+    loadProjects: async () => [{ name: "api", path: "/work/api" }] as Project[],
+    loadPersona: async () => ({ name: "Bean", tags: ["Warm"] }) as Persona,
+    converse: async ({ tools }) => {
+      seenTools = tools.map((t) => t.name);
+      return { content: "ok", toolCalls: [] };
+    },
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills",
+    skillsDir: "/b/skills",
+    projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json",
+    projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [],
+    dbFile: "/b/memory.json",
+    loadRoutines: async () => [nightlyTodoDriven, plainRoutine],
+  });
+  await handler({ history: [], message: "queue a task" });
+  expect(seenTools).toContain("propose_todo");
 });
 
 test("notes handlers pass the configured dir through to the injected store fns", async () => {
@@ -472,7 +504,7 @@ test("routine handlers merge in-memory running state into the state view", async
   expect(state.r).toMatchObject({ lastRun: "2026-07-12T06:30:00.000Z", running: true });
 });
 
-test("routine handlers save validates and delegates; delete and runNow pass through", async () => {
+test("routine handlers save delegates (validation is core saveRoutine's job); delete and runNow pass through", async () => {
   const saveRoutine = vi.fn(async () => {});
   const runNow = vi.fn(async () => ({ started: true }) as const);
   const h = buildRoutineHandlers({
@@ -481,9 +513,27 @@ test("routine handlers save validates and delegates; delete and runNow pass thro
   });
   await h.save(routine);
   expect(saveRoutine).toHaveBeenCalledWith(routine);
-  await expect(h.save({ ...routine, cron: "bad" })).rejects.toThrow();
+  // A rejection from the real (core) saveRoutine — e.g. an invalid-cron error — propagates
+  // unchanged, so the renderer sees the specific reason rather than a generic message.
+  saveRoutine.mockRejectedValueOnce(new Error(`cron schedule "bad" is not a valid 5-field cron expression`));
+  await expect(h.save({ ...routine, cron: "bad" })).rejects.toThrow("is not a valid 5-field cron expression");
   await h.runNow("r");
   expect(runNow).toHaveBeenCalledWith("r");
+});
+
+it("buildRoutineHandlers.remove cascades to onRoutineDeleted", async () => {
+  const deleted: string[] = [];
+  const h = buildRoutineHandlers({
+    loadRoutines: async () => [],
+    saveRoutine: async () => {},
+    deleteRoutine: async () => {},
+    loadStates: async () => ({}),
+    isRunning: () => false,
+    runNow: async () => ({ started: true }),
+    onRoutineDeleted: async (name) => { deleted.push(name); },
+  });
+  await h.remove("nightly");
+  expect(deleted).toEqual(["nightly"]);
 });
 
 test("buildPendingUpdateStore returns undefined until set, then the same value on repeated get (not consumed)", () => {
@@ -672,4 +722,42 @@ test("buildUpdateHandlers.check does not clean up when the new result has no ext
   await handlers.check();
   expect(cleanedUp).toEqual([]);
   expect(store.get()).toBe("/tmp/bean-update-1/Bean.app");
+});
+
+describe("buildTodoHandlers", () => {
+  const routines = [
+    { name: "nightly", enabled: true, cron: "0 2 * * *", todoDriven: true, steps: [{ kind: "chat" as const, instruction: "x" }], sinks: {} },
+    { name: "plain", enabled: true, cron: "0 8 * * *", steps: [{ kind: "chat" as const, instruction: "x" }], sinks: {} },
+  ];
+  const makeDeps = () => {
+    const added: { routine: string; text: string }[] = [];
+    return {
+      added,
+      deps: {
+        dbFile: "/tmp/unused.db",
+        loadRoutines: async () => routines,
+        addTodo: async (_f: string, routine: string, text: string) => {
+          added.push({ routine, text });
+          return { id: "1", routine, text, status: "pending" as const, createdAt: "", order: 1 };
+        },
+        listTodos: async () => [], listAllTodos: async () => [],
+        editTodoText: async () => {}, deleteTodo: async () => {}, reorderTodo: async () => {},
+        clearFinishedTodos: async () => {}, retryTodo: async () => {},
+      },
+    };
+  };
+
+  it("add inserts into a todo-driven routine's queue", async () => {
+    const { deps, added } = makeDeps();
+    const h = buildTodoHandlers(deps);
+    await h.add("nightly", "do the thing");
+    expect(added).toEqual([{ routine: "nightly", text: "do the thing" }]);
+  });
+
+  it("add rejects unknown and non-todo-driven routines", async () => {
+    const { deps } = makeDeps();
+    const h = buildTodoHandlers(deps);
+    await expect(h.add("ghost", "x")).rejects.toThrow();
+    await expect(h.add("plain", "x")).rejects.toThrow();
+  });
 });
