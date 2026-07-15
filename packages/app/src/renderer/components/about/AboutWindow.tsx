@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { AppInfo, Theme, UpdateStatus } from "../../../channels.js";
 
 type UpdateUiState =
@@ -14,6 +14,7 @@ export function AboutWindow() {
   const [info, setInfo] = useState<AppInfo | undefined>(undefined);
   const [update, setUpdate] = useState<UpdateUiState>({ phase: "idle" });
   const year = new Date().getFullYear();
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     window.bean.getTheme().then(setTheme);
@@ -22,6 +23,18 @@ export function AboutWindow() {
   }, []);
 
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+
+  // Grow the window to fit content instead of clipping it (e.g. once an update notice appears
+  // and pushes the install button below the fixed window height).
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) window.bean.resizeWindowToContent(entry.target.scrollHeight);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const checkForUpdates = async (): Promise<void> => {
     setUpdate({ phase: "checking" });
@@ -39,7 +52,7 @@ export function AboutWindow() {
   };
 
   return (
-    <div class="bean-dashboard">
+    <div class="bean-dashboard" ref={rootRef}>
       <div class="bean-about">
         <div class="bean-about-name">Bean</div>
         <div class="bean-about-version">v{info?.version ?? "…"}</div>

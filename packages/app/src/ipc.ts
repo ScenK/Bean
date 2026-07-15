@@ -627,6 +627,17 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
     if (dragAnchor) dragAnchor = { x: dragAnchor.x + dx, y: dragAnchor.y + dy };
     if (menuAnchor) menuAnchor = { x: menuAnchor.x + dx, y: menuAnchor.y + dy };
   });
+
+  // Lets a component window grow to fit its own content (e.g. About growing when an update
+  // notice appears) instead of clipping it. Width is left alone; height only grows/shrinks to
+  // what the renderer measured, clamped to the display's work area.
+  ipcMain.on(IPC.resizeWindowToContent, (e, height: number) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win) return;
+    const [width] = win.getContentSize();
+    const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
+    win.setContentSize(width ?? 0, Math.min(Math.round(height), workArea.height), true);
+  });
   let menuPoll: ReturnType<typeof setInterval> | undefined;
   let menuOutsideSince: number | undefined;
   const stopMenuPoll = (): void => {

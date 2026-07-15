@@ -32,6 +32,7 @@ declare global {
       getPendingPlan(): Promise<RouteSuggestion | undefined>;
       onProposeRun(cb: (suggestion: RouteSuggestion) => void): void;
       moveWindowBy(dx: number, dy: number): void;
+      resizeWindowToContent(height: number): void;
       setAvatarMode(mode: AvatarMode): void;
       onAvatarFoldMenu(cb: () => void): void;
       onAvatarDragLayout(cb: (p: { x: number; y: number }) => void): void;
