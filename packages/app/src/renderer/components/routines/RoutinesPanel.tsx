@@ -814,16 +814,18 @@ export function RoutinesPanel() {
           </span>
           <span class="bean-skills-spacer" />
           {selected ? (
-            <button
-              type="button"
-              class="bean-btn bean-btn--ghost"
-              disabled={isRunningSelected || emptyTodoQueue}
-              onClick={() => void runNow()}
-            >
-              {isRunningSelected ? "Running…" : "Run now"}
-            </button>
+            <>
+              <button
+                type="button"
+                class="bean-btn bean-btn--ghost"
+                disabled={isRunningSelected || emptyTodoQueue}
+                onClick={() => void runNow()}
+              >
+                {isRunningSelected ? "Running…" : "Run now"}
+              </button>
+              {emptyTodoQueue ? <span class="bean-routines-section-note">queue a todo first</span> : null}
+            </>
           ) : null}
-          {emptyTodoQueue ? <span class="bean-routines-section-note">queue a todo first</span> : null}
           <button type="button" class="bean-btn" onClick={() => void save()}>Save routine</button>
         </div>
         {selected ? (
