@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   appendRunRecord, deleteRoutine, isValidRoutine, loadRoutines, loadRoutineStates,
-  saveRoutine, saveRoutineStates, type Routine, type RunRecord,
+  resolveTodoRoutine, saveRoutine, saveRoutineStates, type Routine, type RunRecord,
 } from "../src/routine-store.js";
 
 const routine = (over: Partial<Routine> = {}): Routine => ({
@@ -84,5 +84,19 @@ describe("routine state", () => {
     expect(state.history).toHaveLength(20);
     expect(state.history[0]!.digest).toBe("run 24"); // newest first
     expect(state.missed).toBe(false);
+  });
+});
+
+describe("resolveTodoRoutine", () => {
+  it("returns the routine when it exists and is todo-driven", () => {
+    const routines = [routine({ name: "queue-me", todoDriven: true })];
+    expect(resolveTodoRoutine(routines, "queue-me")).toEqual(routine({ name: "queue-me", todoDriven: true }));
+  });
+  it("throws 'no routine named' when absent", () => {
+    expect(() => resolveTodoRoutine([routine()], "missing")).toThrow('no routine named "missing"');
+  });
+  it("throws 'is not todo-driven' when present but not todo-driven", () => {
+    const routines = [routine({ name: "morning-triage" })];
+    expect(() => resolveTodoRoutine(routines, "morning-triage")).toThrow('routine "morning-triage" is not todo-driven');
   });
 });

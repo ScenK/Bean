@@ -80,6 +80,15 @@ export function isValidRoutine(v: unknown): v is Routine {
   return true;
 }
 
+/** Resolves `name` to a todo-driven routine in `routines`, or throws with the same two
+ * error messages every todo-queueing caller (app IPC, Teams, Discord) needs. */
+export function resolveTodoRoutine(routines: Routine[], name: string): Routine {
+  const target = routines.find((r) => r.name === name);
+  if (!target) throw new Error(`no routine named "${name}"`);
+  if (!target.todoDriven) throw new Error(`routine "${name}" is not todo-driven`);
+  return target;
+}
+
 export async function loadRoutines(dir: string): Promise<Routine[]> {
   let entries: string[];
   try {

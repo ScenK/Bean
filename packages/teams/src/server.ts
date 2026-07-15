@@ -2,7 +2,7 @@ import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
-  detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines,
+  detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, mentionsBotName, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore,
 } from "@bean/core";
@@ -84,9 +84,7 @@ const bot = buildTeamsBot({
   searchNotes: (query) => searchNotes(dbFile(dir), query),
   todoProposals: new TodoProposalStore(),
   queueTodo: async (routine, text) => {
-    const target = (await loadRoutines(routinesDir(dir))).find((r) => r.name === routine);
-    if (!target) throw new Error(`no routine named "${routine}"`);
-    if (!target.todoDriven) throw new Error(`routine "${routine}" is not todo-driven`);
+    resolveTodoRoutine(await loadRoutines(routinesDir(dir)), routine);
     await addTodo(dbFile(dir), routine, text);
   },
   listTodoRoutines: async () => (await loadRoutines(routinesDir(dir))).filter((r) => r.todoDriven).map((r) => r.name),

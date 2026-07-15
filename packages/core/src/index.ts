@@ -42,7 +42,7 @@ export { parseCron, isValidCron, nextRun } from "./cron.js";
 export type { CronSpec } from "./cron.js";
 export {
   appendRunRecord, deleteRoutine, isValidRoutine, loadRoutines,
-  loadRoutineStates, saveRoutine, saveRoutineStates,
+  loadRoutineStates, resolveTodoRoutine, saveRoutine, saveRoutineStates,
 } from "./routine-store.js";
 export type {
   Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RunRecord,

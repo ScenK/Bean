@@ -1,6 +1,6 @@
 import {
   route, converse, launchInTerminal, scratchDir,
-  availableModels, loadModelMemory, saveModelMemory, isValidRoutine,
+  availableModels, loadModelMemory, saveModelMemory, isValidRoutine, resolveTodoRoutine,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
@@ -464,9 +464,7 @@ export function buildTodoHandlers(deps: TodoHandlerDeps) {
     listAll: (): Promise<TodoItem[]> => deps.listAllTodos(deps.dbFile),
     // Routine existence/type is enforced here, not in the store (store stays dumb, per spec).
     add: async (routine: string, text: string): Promise<TodoItem> => {
-      const target = (await deps.loadRoutines()).find((r) => r.name === routine);
-      if (!target) throw new Error(`no routine named "${routine}"`);
-      if (!target.todoDriven) throw new Error(`routine "${routine}" is not todo-driven`);
+      resolveTodoRoutine(await deps.loadRoutines(), routine);
       return deps.addTodo(deps.dbFile, routine, text);
     },
     edit: (id: string, text: string): Promise<void> => deps.editTodoText(deps.dbFile, id, text),
