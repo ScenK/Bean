@@ -1574,8 +1574,16 @@ button, input, textarea, select, a {
 .bean-routines-next--bad .bean-routines-next-dot { background: #e5484d; }
 
 /* Type toggle: Always runs / Todo-driven segmented buttons */
-.bean-routines-type-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.bean-routines-type-btn { min-width: 128px; text-align: center; }
+.bean-routines-type-row { display: flex; flex-direction: column; gap: 8px; }
+.bean-routines-type-buttons { display: flex; align-items: center; gap: 8px; }
+.bean-routines-type-btn {
+  min-width: 128px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
 .bean-routines-type-btn--on {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
@@ -1620,7 +1628,22 @@ button, input, textarea, select, a {
   padding: 3px 9px;
   white-space: nowrap;
 }
-.bean-routines-todo-add { margin-top: 2px; }
+.bean-routines-todo-add {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1.5px dashed var(--bean-border);
+  border-radius: 13px;
+  padding: 11px 15px;
+}
+.bean-routines-todo-add:focus-within { border-color: var(--bean-accent); }
+.bean-routines-todo-add-input {
+  font-size: 13px;
+  font-weight: 600;
+  color: oklch(0.55 0.1 48);
+}
+.bean-routines-todo-add-input::placeholder { color: oklch(0.55 0.1 48); font-weight: 600; }
 .bean-routines-todo--dragging { opacity: 0.45; }
 .bean-routines-todo--drop { border-color: var(--bean-accent); box-shadow: 0 0 0 1px var(--bean-accent); }
 
@@ -1719,7 +1742,7 @@ button, input, textarea, select, a {
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
-  color: var(--bean-accent);
+  color: oklch(0.55 0.1 48);
 }
 .bean-routines-add:hover { border-color: var(--bean-accent); }
 .bean-routines-add-plus { font-size: 15px; }

@@ -503,16 +503,18 @@ export function RoutinesPanel() {
             <div class="bean-field-label">TYPE</div>
           </div>
           <div class="bean-routines-type-row">
-            <button
-              type="button"
-              class={`bean-btn bean-btn--ghost bean-routines-type-btn${draft.todoDriven ? "" : " bean-routines-type-btn--on"}`}
-              onClick={() => void setTodoDriven(false)}
-            >Always runs</button>
-            <button
-              type="button"
-              class={`bean-btn bean-btn--ghost bean-routines-type-btn${draft.todoDriven ? " bean-routines-type-btn--on" : ""}`}
-              onClick={() => void setTodoDriven(true)}
-            >⚡ Todo-driven</button>
+            <div class="bean-routines-type-buttons">
+              <button
+                type="button"
+                class={`bean-btn bean-btn--ghost bean-routines-type-btn${draft.todoDriven ? "" : " bean-routines-type-btn--on"}`}
+                onClick={() => void setTodoDriven(false)}
+              >Always runs</button>
+              <button
+                type="button"
+                class={`bean-btn bean-btn--ghost bean-routines-type-btn${draft.todoDriven ? " bean-routines-type-btn--on" : ""}`}
+                onClick={() => void setTodoDriven(true)}
+              >⚡ Todo-driven</button>
+            </div>
             <span class="bean-routines-section-note">
               {draft.todoDriven
                 ? "runs the steps below on each queued todo — skips the run when the queue is empty"
@@ -611,13 +613,6 @@ export function RoutinesPanel() {
                       ) : null}
                       {!editing && isPending ? (
                         <>
-                          <span
-                            class="bean-routines-handle"
-                            title="Drag to reorder"
-                            draggable
-                            onDragStart={(e) => { setTodoDragId(t.id); e.dataTransfer?.setData("text/plain", t.id); }}
-                            onDragEnd={() => { setTodoDragId(null); setTodoOverId(null); }}
-                          >⠿</span>
                           <button
                             type="button"
                             class="bean-routines-todo-link"
@@ -629,6 +624,13 @@ export function RoutinesPanel() {
                             onClick={() => void window.bean.todosDelete(t.id).then(refreshTodos)
                               .catch((e) => setError(e instanceof Error ? e.message : "couldn't remove the todo"))}
                           >Remove</button>
+                          <span
+                            class="bean-routines-handle"
+                            title="Drag to reorder"
+                            draggable
+                            onDragStart={(e) => { setTodoDragId(t.id); e.dataTransfer?.setData("text/plain", t.id); }}
+                            onDragEnd={() => { setTodoDragId(null); setTodoOverId(null); }}
+                          >⠿</span>
                         </>
                       ) : null}
                     </div>
@@ -637,8 +639,8 @@ export function RoutinesPanel() {
             })()}
             <div class="bean-routines-todo-add">
               <input
-                class="bean-input bean-input--boxed"
-                placeholder="＋ Queue a todo — runs through the steps on the next run"
+                class="bean-input bean-routines-todo-add-input"
+                placeholder="+ Queue a todo"
                 value={newTodo}
                 onInput={(e) => setNewTodo((e.target as HTMLInputElement).value)}
                 onKeyDown={(e) => {
