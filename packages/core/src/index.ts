@@ -7,6 +7,7 @@ export * from "./config.js";
 export * from "./persona.js";
 export * from "./persona-store.js";
 export * from "./note-store.js";
+export * from "./todo-store.js";
 export * from "./memory/memory.js";
 export * from "./memory/store.js";
 export * from "./memory/extract.js";

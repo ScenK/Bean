@@ -66,6 +66,18 @@ CREATE TABLE IF NOT EXISTS chatops_turns (
   PRIMARY KEY (conversation_id, seq)
 );
 CREATE INDEX IF NOT EXISTS chatops_turns_conv ON chatops_turns(conversation_id);
+
+CREATE TABLE IF NOT EXISTS todos (
+  id             TEXT PRIMARY KEY,
+  routine        TEXT NOT NULL,
+  text           TEXT NOT NULL,
+  status         TEXT NOT NULL,
+  created_at     TEXT NOT NULL,
+  finished_at    TEXT,
+  result_summary TEXT,
+  ord            INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS todos_routine ON todos(routine);
 `;
 
 const cache = new Map<string, DatabaseSync>();
