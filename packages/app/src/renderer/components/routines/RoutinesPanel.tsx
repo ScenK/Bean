@@ -8,6 +8,15 @@ import type { RoutineStateView } from "../../../ipc.js";
 const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 
+// Electron's ipcRenderer.invoke wraps a thrown main-process Error as
+// `Error invoking remote method '<channel>': Error: <message>` — peel that boilerplate off so
+// the specific reason (e.g. which step/field failed validation) reaches the user directly.
+function ipcErrorMessage(e: unknown): string | undefined {
+  if (!(e instanceof Error)) return undefined;
+  const m = /^Error invoking remote method '[^']*': (?:Error: )?([\s\S]*)$/.exec(e.message);
+  return m ? m[1] : e.message;
+}
+
 const emptyRoutine = (): Routine => ({
   name: "",
   enabled: true,
@@ -282,7 +291,7 @@ export function RoutinesPanel() {
         await window.bean.routinesSave(next);
         await refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "couldn't save the type change");
+        setError(ipcErrorMessage(e) ?? "couldn't save the type change");
       }
     }
   };
@@ -295,7 +304,7 @@ export function RoutinesPanel() {
       setSelected(draft.name);
       setCreating(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "save failed — check name, cadence, and steps");
+      setError(ipcErrorMessage(e) ?? "save failed — check name, cadence, and steps");
     }
   };
 
@@ -566,7 +575,7 @@ export function RoutinesPanel() {
                 const orderValues = pendingOrdered.map((t) => t.order); // already ascending
                 void Promise.all(reordered.map((id, idx) => window.bean.todosReorder(id, orderValues[idx]!)))
                   .then(refreshTodos)
-                  .catch((e) => setError(e instanceof Error ? e.message : "couldn't reorder the queue"));
+                  .catch((e) => setError(ipcErrorMessage(e) ?? "couldn't reorder the queue"));
               };
               return [...todos]
                 .sort((a, b) => Number(a.status === "done" || a.status === "failed") - Number(b.status === "done" || b.status === "failed"))
@@ -578,7 +587,7 @@ export function RoutinesPanel() {
                     if (!text) return;
                     void window.bean.todosEdit(t.id, text)
                       .then(() => { setEditingId(null); void refreshTodos(); })
-                      .catch((e) => setError(e instanceof Error ? e.message : "couldn't save the edit"));
+                      .catch((e) => setError(ipcErrorMessage(e) ?? "couldn't save the edit"));
                   };
                   return (
                     <div
@@ -608,7 +617,7 @@ export function RoutinesPanel() {
                           class="bean-skills-delete-link"
                           title={t.resultSummary}
                           onClick={() => void window.bean.todosRetry(t.id).then(refreshTodos)
-                            .catch((e) => setError(e instanceof Error ? e.message : "couldn't retry the todo"))}
+                            .catch((e) => setError(ipcErrorMessage(e) ?? "couldn't retry the todo"))}
                         >Retry</button>
                       ) : null}
                       {!editing && isPending ? (
@@ -622,7 +631,7 @@ export function RoutinesPanel() {
                             type="button"
                             class="bean-skills-delete-link"
                             onClick={() => void window.bean.todosDelete(t.id).then(refreshTodos)
-                              .catch((e) => setError(e instanceof Error ? e.message : "couldn't remove the todo"))}
+                              .catch((e) => setError(ipcErrorMessage(e) ?? "couldn't remove the todo"))}
                           >Remove</button>
                           <span
                             class="bean-routines-handle"
@@ -657,7 +666,7 @@ export function RoutinesPanel() {
                 type="button"
                 class="bean-skills-delete-link"
                 onClick={() => { if (selected) void window.bean.todosClearFinished(selected).then(refreshTodos)
-                  .catch((e) => setError(e instanceof Error ? e.message : "couldn't clear finished todos")); }}
+                  .catch((e) => setError(ipcErrorMessage(e) ?? "couldn't clear finished todos")); }}
               >Clear finished</button>
             ) : null}
           </div>

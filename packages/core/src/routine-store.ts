@@ -44,40 +44,61 @@ const HISTORY_CAP = 20;
 const badName = /[/\\]|\.\.|^$/;
 const str = (v: unknown): v is string => typeof v === "string";
 
-function isValidStep(v: unknown): v is RoutineStep {
-  if (typeof v !== "object" || v === null) return false;
+function describeStepError(v: unknown, index: number): string | null {
+  const at = `step ${index + 1}`;
+  if (typeof v !== "object" || v === null) return `${at} is malformed`;
   const s = v as Record<string, unknown>;
-  if (!str(s.instruction) || !s.instruction.trim()) return false;
-  if (s.model !== undefined && !str(s.model)) return false;
+  if (!str(s.instruction) || !s.instruction.trim()) return `${at} needs an instruction`;
+  if (s.model !== undefined && !str(s.model)) return `${at} has an invalid model`;
   if (s.kind === "delegate") {
-    return str(s.skill) && (s.project === undefined || str(s.project));
+    if (!str(s.skill) || !s.skill) return `${at} (delegate) needs a skill`;
+    if (s.project !== undefined && !str(s.project)) return `${at} has an invalid project`;
+    return null;
   }
-  if (s.kind === "chat") return s.skill === undefined || str(s.skill);
-  return false;
+  if (s.kind === "chat") {
+    if (s.skill !== undefined && !str(s.skill)) return `${at} has an invalid skill`;
+    return null;
+  }
+  return `${at} has an unknown kind`;
+}
+
+/** Validates a routine and describes the first problem found, or null if valid. Used both to
+ * decide validity (isValidRoutine) and to give the save-time error a specific, actionable
+ * reason instead of a bare "invalid routine". */
+export function describeRoutineError(v: unknown): string | null {
+  if (typeof v !== "object" || v === null) return "routine must be an object";
+  const r = v as Record<string, unknown>;
+  if (!str(r.name) || !r.name) return "routine needs a name";
+  if (badName.test(r.name)) return `routine name ${JSON.stringify(r.name)} can't contain "/", "\\", or ".."`;
+  if (r.description !== undefined && !str(r.description)) return "description must be text";
+  if (typeof r.enabled !== "boolean") return "enabled must be true or false";
+  if (!str(r.cron)) return "cron schedule is required";
+  if (!isValidCron(r.cron)) return `cron schedule ${JSON.stringify(r.cron)} is not a valid 5-field cron expression`;
+  if (r.todoDriven !== undefined && typeof r.todoDriven !== "boolean") return "todoDriven must be true or false";
+  if (!Array.isArray(r.steps) || r.steps.length === 0) return "add at least one step";
+  for (let i = 0; i < r.steps.length; i++) {
+    const stepError = describeStepError(r.steps[i], i);
+    if (stepError) return stepError;
+  }
+  if (typeof r.sinks !== "object" || r.sinks === null) return "sinks must be an object";
+  const sinks = r.sinks as Record<string, unknown>;
+  if (sinks.note !== undefined && typeof sinks.note !== "boolean") return "the note sink must be true or false";
+  if (sinks.notify !== undefined && typeof sinks.notify !== "boolean") return "the notify sink must be true or false";
+  if (sinks.chatops !== undefined) {
+    if (!Array.isArray(sinks.chatops)) return "the chatops sink must be a list";
+    for (let i = 0; i < sinks.chatops.length; i++) {
+      const cs = sinks.chatops[i] as Record<string, unknown> | null;
+      const at = `chatops sink ${i + 1}`;
+      if (typeof cs !== "object" || cs === null) return `${at} is malformed`;
+      if (cs.transport !== "teams" && cs.transport !== "discord") return `${at} needs transport "teams" or "discord"`;
+      if (cs.channel !== undefined && !str(cs.channel)) return `${at} has an invalid channel`;
+    }
+  }
+  return null;
 }
 
 export function isValidRoutine(v: unknown): v is Routine {
-  if (typeof v !== "object" || v === null) return false;
-  const r = v as Record<string, unknown>;
-  if (!str(r.name) || badName.test(r.name)) return false;
-  if (r.description !== undefined && !str(r.description)) return false;
-  if (typeof r.enabled !== "boolean" || !str(r.cron) || !isValidCron(r.cron)) return false;
-  if (r.todoDriven !== undefined && typeof r.todoDriven !== "boolean") return false;
-  if (!Array.isArray(r.steps) || r.steps.length === 0 || !r.steps.every(isValidStep)) return false;
-  if (typeof r.sinks !== "object" || r.sinks === null) return false;
-  const sinks = r.sinks as Record<string, unknown>;
-  if (sinks.note !== undefined && typeof sinks.note !== "boolean") return false;
-  if (sinks.notify !== undefined && typeof sinks.notify !== "boolean") return false;
-  if (sinks.chatops !== undefined) {
-    if (!Array.isArray(sinks.chatops)) return false;
-    for (const c of sinks.chatops as unknown[]) {
-      const cs = c as Record<string, unknown> | null;
-      if (typeof cs !== "object" || cs === null) return false;
-      if (cs.transport !== "teams" && cs.transport !== "discord") return false;
-      if (cs.channel !== undefined && !str(cs.channel)) return false;
-    }
-  }
-  return true;
+  return describeRoutineError(v) === null;
 }
 
 /** Resolves `name` to a todo-driven routine in `routines`, or throws with the same two
@@ -109,7 +130,8 @@ export async function loadRoutines(dir: string): Promise<Routine[]> {
 }
 
 export async function saveRoutine(dir: string, routine: Routine): Promise<void> {
-  if (!isValidRoutine(routine as unknown)) throw new Error(`invalid routine: ${JSON.stringify(routine.name)}`);
+  const error = describeRoutineError(routine as unknown);
+  if (error) throw new Error(error);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, `${routine.name}.json`), JSON.stringify(routine, null, 2) + "\n", "utf8");
 }

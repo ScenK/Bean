@@ -504,7 +504,7 @@ test("routine handlers merge in-memory running state into the state view", async
   expect(state.r).toMatchObject({ lastRun: "2026-07-12T06:30:00.000Z", running: true });
 });
 
-test("routine handlers save validates and delegates; delete and runNow pass through", async () => {
+test("routine handlers save delegates (validation is core saveRoutine's job); delete and runNow pass through", async () => {
   const saveRoutine = vi.fn(async () => {});
   const runNow = vi.fn(async () => ({ started: true }) as const);
   const h = buildRoutineHandlers({
@@ -513,7 +513,10 @@ test("routine handlers save validates and delegates; delete and runNow pass thro
   });
   await h.save(routine);
   expect(saveRoutine).toHaveBeenCalledWith(routine);
-  await expect(h.save({ ...routine, cron: "bad" })).rejects.toThrow();
+  // A rejection from the real (core) saveRoutine — e.g. an invalid-cron error — propagates
+  // unchanged, so the renderer sees the specific reason rather than a generic message.
+  saveRoutine.mockRejectedValueOnce(new Error(`cron schedule "bad" is not a valid 5-field cron expression`));
+  await expect(h.save({ ...routine, cron: "bad" })).rejects.toThrow("is not a valid 5-field cron expression");
   await h.runNow("r");
   expect(runNow).toHaveBeenCalledWith("r");
 });

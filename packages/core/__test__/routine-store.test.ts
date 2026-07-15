@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  appendRunRecord, deleteRoutine, isValidRoutine, loadRoutines, loadRoutineStates,
-  resolveTodoRoutine, saveRoutine, saveRoutineStates, type Routine, type RunRecord,
+  appendRunRecord, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines,
+  loadRoutineStates, resolveTodoRoutine, saveRoutine, saveRoutineStates, type Routine, type RunRecord,
 } from "../src/routine-store.js";
 
 const routine = (over: Partial<Routine> = {}): Routine => ({
@@ -40,6 +40,20 @@ describe("save/load/delete routines", () => {
     await expect(saveRoutine(dir, routine({ name: "../evil" }))).rejects.toThrow();
     await expect(saveRoutine(dir, routine({ cron: "not cron" }))).rejects.toThrow();
     await expect(deleteRoutine(dir, "../evil")).rejects.toThrow();
+  });
+});
+
+describe("describeRoutineError", () => {
+  it("names the specific field/step at fault instead of a generic message", () => {
+    expect(describeRoutineError(routine())).toBeNull();
+    expect(describeRoutineError(routine({ name: "../evil" }))).toMatch(/can't contain/);
+    expect(describeRoutineError(routine({ cron: "not cron" }))).toMatch(/not a valid 5-field cron/);
+    expect(describeRoutineError(routine({ steps: [] }))).toMatch(/at least one step/);
+    expect(describeRoutineError(routine({ steps: [{ kind: "chat", instruction: "" }] }))).toMatch(/step 1 needs an instruction/);
+    expect(describeRoutineError(routine({
+      steps: [{ kind: "delegate", skill: "", instruction: "go" }],
+    }))).toMatch(/step 1 \(delegate\) needs a skill/);
+    expect(describeRoutineError(routine({ sinks: { chatops: [{ transport: "slack" }] } }))).toMatch(/chatops sink 1 needs transport/);
   });
 });
 

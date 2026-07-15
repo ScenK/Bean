@@ -1,6 +1,6 @@
 import {
   route, converse, launchInTerminal, scratchDir,
-  availableModels, loadModelMemory, saveModelMemory, isValidRoutine, resolveTodoRoutine,
+  availableModels, loadModelMemory, saveModelMemory, resolveTodoRoutine,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
@@ -425,7 +425,6 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
   return {
     list: (): Promise<Routine[]> => deps.loadRoutines(),
     save: async (routine: Routine): Promise<void> => {
-      if (!isValidRoutine(routine)) throw new Error("invalid routine");
       await deps.saveRoutine(routine);
     },
     remove: async (name: string): Promise<void> => {
