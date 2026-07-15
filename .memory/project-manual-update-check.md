@@ -31,12 +31,14 @@ doesn't substitute for the EdDSA check.
 **Install mechanism:** `installAndRelaunch` (`packages/app/src/updater.ts`) does the same
 rename-dance Sparkle/Squirrel use — current `Bean.app` → `.old`, extracted bundle → the live
 path (EXDEV falls back to a recursive copy), roll back on failure — then `app.relaunch();
-app.exit()`. Gated on `app.isPackaged`, but the gate itself lives one layer up — in
-`buildUpdateHandlers` (`packages/app/src/ipc.ts`), not inside `updater.ts`'s functions.
-`check()`/`install()` short-circuit with a dev-build error before ever calling
-`checkAndDownloadUpdate`/`installAndRelaunch` or touching the pending-update store, so dev
-builds can't trigger real IO through any caller of the IPC surface (not just the visible
-About-panel button).
+app.exit()`. Before the backup rename it always removes any pre-existing `.old` (best-effort):
+a leftover from a previous install (cleanup failed, or the process died mid-swap) makes
+`rename(Bean.app → Bean.app.old)` throw `ENOTEMPTY: directory not empty` on macOS. Gated on
+`app.isPackaged`, but the gate itself lives one layer up — in `buildUpdateHandlers`
+(`packages/app/src/ipc.ts`), not inside `updater.ts`'s functions. `check()`/`install()`
+short-circuit with a dev-build error before ever calling `checkAndDownloadUpdate`/
+`installAndRelaunch` or touching the pending-update store, so dev builds can't trigger real
+IO through any caller of the IPC surface (not just the visible About-panel button).
 
 **Key rotation:** losing the private key strands existing installs — they can't verify
 future updates against a new key. Recovery is a new build with a new public key that

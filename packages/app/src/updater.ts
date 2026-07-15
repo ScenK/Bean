@@ -72,8 +72,9 @@ export interface InstallDeps {
 }
 
 /** Swaps the extracted update bundle into the currently-running app's path — the same
- * rename-dance Sparkle/Squirrel use — then relaunches. Rolls back if the swap itself fails,
- * so the install path is never left without an app bundle. */
+ * rename-dance Sparkle/Squirrel use — then relaunches. Clears any leftover `.old` backup
+ * first (avoids ENOTEMPTY on macOS), and rolls back if the swap itself fails so the
+ * install path is never left without an app bundle. */
 export async function installAndRelaunch(extractedAppPath: string, deps: InstallDeps = {}): Promise<void> {
   const currentAppPath = deps.currentAppPath ?? currentAppBundlePath();
   const rename = deps.rename ?? ((from, to) => renameCb(from, to));
@@ -83,6 +84,10 @@ export async function installAndRelaunch(extractedAppPath: string, deps: Install
   const exit = deps.exit ?? (() => app.exit());
 
   const backupPath = `${currentAppPath}.old`;
+  // A leftover .old from a previous install (cleanup failed, or the process died mid-swap)
+  // makes rename(current → .old) throw ENOTEMPTY on macOS. Clear it first so the backup
+  // rename always has a free destination.
+  await rm(backupPath).catch(() => {});
   await rename(currentAppPath, backupPath);
 
   try {
