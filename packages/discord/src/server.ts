@@ -1,10 +1,10 @@
 import {
   beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
-  skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile,
+  skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
-  detectClis, runDelegate, claimOutbox, outboxDir, saveSkill,
+  detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines,
   buildTeamsBot, mentionsBotName, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
-  ConsolidationProposalStore, RunRegistry, SkillProposalStore, type BotEffects,
+  ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, Partials,
@@ -41,6 +41,14 @@ const bot = buildTeamsBot({
   noteProposals: new NoteProposalStore(),
   saveNote: (draft) => saveNote(dbFile(dir), draft),
   searchNotes: (query) => searchNotes(dbFile(dir), query),
+  todoProposals: new TodoProposalStore(),
+  queueTodo: async (routine, text) => {
+    const target = (await loadRoutines(routinesDir(dir))).find((r) => r.name === routine);
+    if (!target) throw new Error(`no routine named "${routine}"`);
+    if (!target.todoDriven) throw new Error(`routine "${routine}" is not todo-driven`);
+    await addTodo(dbFile(dir), routine, text);
+  },
+  listTodoRoutines: async () => (await loadRoutines(routinesDir(dir))).filter((r) => r.todoDriven).map((r) => r.name),
   skillProposals: new SkillProposalStore(),
   saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
   memoryProposals: new MemoryProposalStore(),

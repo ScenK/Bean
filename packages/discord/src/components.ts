@@ -2,7 +2,7 @@ import type {
   CardBuilders, FinishedCardInput, MemoryProposalCardInput, MemoryResultCardInput,
   NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
   ConsolidationProposalCardInput, ConsolidationResultCardInput,
-  SkillProposalCardInput, SkillResultCardInput,
+  SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
 } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
@@ -103,6 +103,24 @@ function noteResultCard(input: NoteResultCardInput): object {
   };
 }
 
+function todoProposalCard(input: TodoProposalCardInput): object {
+  return {
+    embeds: [{
+      title: `Queue a todo on "${input.routine}"`,
+      description: input.text,
+    }],
+    components: [row([
+      { type: BUTTON, style: 3, label: "Queue", custom_id: `bean:queue-todo:${input.proposalId}` },
+      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-todo:${input.proposalId}` },
+    ])],
+  };
+}
+
+function todoResultCard(input: TodoResultCardInput): object {
+  const title = input.outcome === "queued" ? `Queued by ${input.queuedBy}` : "Cancelled";
+  return { embeds: [{ title, description: input.routine }], components: [] };
+}
+
 function skillProposalCard(input: SkillProposalCardInput): object {
   return {
     embeds: [{
@@ -191,5 +209,5 @@ function consolidationResultCard(input: ConsolidationResultCardInput): object {
 
 export const discordCards: CardBuilders = {
   proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
-  consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard,
+  consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
 };

@@ -8,6 +8,7 @@ import { ConversationStore } from "../src/chatops/conversation.js";
 import { dbFile } from "../src/config.js";
 import { ProposalStore } from "../src/chatops/proposals.js";
 import { NoteProposalStore } from "../src/chatops/note-proposals.js";
+import { TodoProposalStore } from "../src/chatops/todo-proposals.js";
 import { MemoryProposalStore } from "../src/chatops/memory-proposals.js";
 import { ConsolidationProposalStore } from "../src/chatops/consolidation-proposals.js";
 import { RunRegistry } from "../src/chatops/runs.js";
@@ -21,6 +22,8 @@ const fakeCards = {
   finishedCard: (i: object) => ({ kind: "finished", ...i }),
   noteProposalCard: (i: object) => ({ kind: "note-proposal", ...i }),
   noteResultCard: (i: object) => ({ kind: "note-result", ...i }),
+  todoProposalCard: (i: object) => ({ kind: "todo-proposal", ...i }),
+  todoResultCard: (i: object) => ({ kind: "todo-result", ...i }),
   memoryProposalCard: (i: object) => ({ kind: "memory-proposal", ...i }),
   memoryResultCard: (i: object) => ({ kind: "memory-result", ...i }),
   consolidationProposalCard: (i: object) => ({ kind: "consolidation-proposal", ...i }),
@@ -56,6 +59,7 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
   const savedNotes: NoteDraft[] = [];
   const savedMemories: import("../src/memory/memory.js").Memory[][] = [];
   const savedSkills: { name: string; body: string }[] = [];
+  const queuedTodos: { routine: string; text: string }[] = [];
   const result = overrides.converseResult ?? { reply: "hello there" };
   const deps: TeamsBotDeps = {
     // bot.ts calls converse() internally; we exercise it through a chat fn that
@@ -86,6 +90,9 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     noteProposals: new NoteProposalStore(),
     saveNote: async (draft) => { savedNotes.push(draft); return "our-chat"; },
     searchNotes: async () => [],
+    todoProposals: new TodoProposalStore(),
+    queueTodo: async (routine, text) => { queuedTodos.push({ routine, text }); },
+    listTodoRoutines: async () => [],
     memoryProposals: new MemoryProposalStore(),
     appendMemories: async (additions) => { savedMemories.push(additions); },
     saveMemories: async (mems) => { savedMemories.push(mems); },
@@ -96,7 +103,7 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     saveSkill: async (name, body) => { savedSkills.push({ name, body }); },
     ...overrides,
   };
-  return { deps, delegateCalls, saved, savedNotes, savedMemories, savedSkills };
+  return { deps, delegateCalls, saved, savedNotes, savedMemories, savedSkills, queuedTodos };
 }
 
 const msg = { conversationId: "c1", text: "hi bean", fromId: "u1", fromName: "alice" };
@@ -386,7 +393,58 @@ test("save-note on an expired draft posts a message and saves nothing", async ()
   expect(effects.posted.some((p) => p.includes("expired"))).toBe(true);
 });
 
-// First call (converse) → propose_remember; second call (extractMemories) → two facts.
+// propose_todo fires when the model calls the tool with a routine + text; requires
+// deps.listTodoRoutines to include that routine name for converse() to accept it.
+const todoChat: TeamsBotDeps["chat"] = async () => ({
+  content: "",
+  toolCalls: [{ name: "propose_todo", args: { routine: "nightly", text: "fix it" } }],
+});
+
+async function proposeTodoThenId(deps: TeamsBotDeps, effects: ReturnType<typeof fx>): Promise<string> {
+  const bot = buildTeamsBot(deps);
+  await bot.onMessage(msg, effects);
+  const card = JSON.stringify(effects.cards[0]);
+  const match = /"proposalId":"(todo-\d+)"/.exec(card);
+  if (!match?.[1]) throw new Error("no todo proposal id in card");
+  return match[1];
+}
+
+test("posts a todo proposal card when converse proposes a todo", async () => {
+  const { deps } = makeDeps({ chat: todoChat, listTodoRoutines: async () => ["nightly"] });
+  const effects = fx();
+  await buildTeamsBot(deps).onMessage(msg, effects);
+  expect(effects.cards).toHaveLength(1);
+  const s = JSON.stringify(effects.cards[0]);
+  expect(s).toContain("todo-proposal");
+  expect(s).toContain("nightly");
+  expect(s).toContain("fix it");
+});
+
+test("queue-todo card action queues via deps.queueTodo; cancel-todo does not", async () => {
+  const { deps, queuedTodos } = makeDeps({ chat: todoChat, listTodoRoutines: async () => ["nightly"] });
+  const effects = fx();
+  const id = await proposeTodoThenId(deps, effects);
+  const bot = buildTeamsBot(deps);
+  await bot.onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "queue-todo", proposalId: id } },
+    effects,
+  );
+  expect(queuedTodos).toEqual([{ routine: "nightly", text: "fix it" }]);
+  expect(JSON.stringify(effects.updates.at(-1)?.card)).toContain("todo-result");
+
+  const { deps: deps2, queuedTodos: queuedTodos2 } = makeDeps({ chat: todoChat, listTodoRoutines: async () => ["nightly"] });
+  const effects2 = fx();
+  const id2 = await proposeTodoThenId(deps2, effects2);
+  const bot2 = buildTeamsBot(deps2);
+  await bot2.onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "cancel-todo", proposalId: id2 } },
+    effects2,
+  );
+  expect(queuedTodos2).toHaveLength(0);
+  expect(JSON.stringify(effects2.updates.at(-1)?.card)).toContain("cancelled");
+});
+
+
 function rememberDeps() {
   let call = 0;
   const chat: TeamsBotDeps["chat"] = async () => {
