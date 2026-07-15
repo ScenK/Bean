@@ -265,6 +265,24 @@ export function RoutinesPanel() {
     }
   };
 
+  // Same reasoning as toggleDraftEnabled just above: for an already-saved routine, flipping
+  // TYPE must persist right away. The Queue section (and its add/edit/reorder calls) is gated
+  // on the local draft's todoDriven, but the backend validates todo actions against the
+  // on-disk routine — so without this, the queue appears to work but every action against it
+  // fails silently until "Save routine" is clicked.
+  const setTodoDriven = async (on: boolean): Promise<void> => {
+    const next = { ...draft, todoDriven: on || undefined };
+    setDraft(next);
+    if (selected) {
+      try {
+        await window.bean.routinesSave(next);
+        await refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "couldn't save the type change");
+      }
+    }
+  };
+
   const save = async (): Promise<void> => {
     try {
       await window.bean.routinesSave(draft);
@@ -484,12 +502,12 @@ export function RoutinesPanel() {
             <button
               type="button"
               class={`bean-btn bean-btn--ghost bean-routines-type-btn${draft.todoDriven ? "" : " bean-routines-type-btn--on"}`}
-              onClick={() => setDraft({ ...draft, todoDriven: undefined })}
+              onClick={() => void setTodoDriven(false)}
             >Always runs</button>
             <button
               type="button"
               class={`bean-btn bean-btn--ghost bean-routines-type-btn${draft.todoDriven ? " bean-routines-type-btn--on" : ""}`}
-              onClick={() => setDraft({ ...draft, todoDriven: true })}
+              onClick={() => void setTodoDriven(true)}
             >⚡ Todo-driven</button>
             <span class="bean-routines-section-note">
               {draft.todoDriven
@@ -518,7 +536,7 @@ export function RoutinesPanel() {
                 void Promise.all([
                   window.bean.todosReorder(a.id, b.order),
                   window.bean.todosReorder(b.id, a.order),
-                ]).then(refreshTodos);
+                ]).then(refreshTodos).catch((e) => setError(e instanceof Error ? e.message : "couldn't reorder the queue"));
               };
               return [...todos]
                 .sort((a, b) => Number(a.status === "done" || a.status === "failed") - Number(b.status === "done" || b.status === "failed"))
@@ -528,7 +546,9 @@ export function RoutinesPanel() {
                   const commitEdit = (): void => {
                     const text = editText.trim();
                     if (!text) return;
-                    void window.bean.todosEdit(t.id, text).then(() => { setEditingId(null); void refreshTodos(); });
+                    void window.bean.todosEdit(t.id, text)
+                      .then(() => { setEditingId(null); void refreshTodos(); })
+                      .catch((e) => setError(e instanceof Error ? e.message : "couldn't save the edit"));
                   };
                   return (
                     <div key={t.id} class={`bean-routines-todo bean-routines-todo--${t.status}`}>
@@ -551,7 +571,8 @@ export function RoutinesPanel() {
                           type="button"
                           class="bean-skills-delete-link"
                           title={t.resultSummary}
-                          onClick={() => void window.bean.todosRetry(t.id).then(refreshTodos)}
+                          onClick={() => void window.bean.todosRetry(t.id).then(refreshTodos)
+                            .catch((e) => setError(e instanceof Error ? e.message : "couldn't retry the todo"))}
                         >Retry</button>
                       ) : null}
                       {!editing && t.status === "pending" ? (
@@ -576,7 +597,8 @@ export function RoutinesPanel() {
                           <button
                             type="button"
                             class="bean-skills-delete-link"
-                            onClick={() => void window.bean.todosDelete(t.id).then(refreshTodos)}
+                            onClick={() => void window.bean.todosDelete(t.id).then(refreshTodos)
+                              .catch((e) => setError(e instanceof Error ? e.message : "couldn't remove the todo"))}
                           >Remove</button>
                         </>
                       ) : null}
@@ -592,7 +614,9 @@ export function RoutinesPanel() {
                 onInput={(e) => setNewTodo((e.target as HTMLInputElement).value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && newTodo.trim() && selected) {
-                    void window.bean.todosAdd(selected, newTodo).then(() => { setNewTodo(""); void refreshTodos(); });
+                    void window.bean.todosAdd(selected, newTodo)
+                      .then(() => { setNewTodo(""); void refreshTodos(); })
+                      .catch((e2) => setError(e2 instanceof Error ? e2.message : "couldn't queue the todo"));
                   }
                 }}
               />
@@ -601,7 +625,8 @@ export function RoutinesPanel() {
               <button
                 type="button"
                 class="bean-skills-delete-link"
-                onClick={() => { if (selected) void window.bean.todosClearFinished(selected).then(refreshTodos); }}
+                onClick={() => { if (selected) void window.bean.todosClearFinished(selected).then(refreshTodos)
+                  .catch((e) => setError(e instanceof Error ? e.message : "couldn't clear finished todos")); }}
               >Clear finished</button>
             ) : null}
           </div>
