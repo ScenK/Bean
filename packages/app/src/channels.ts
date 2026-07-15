@@ -63,6 +63,7 @@ export const IPC = {
   proposeRun: "bean:propose-run",
   getPendingPlan: "bean:get-pending-plan",
   moveWindowBy: "bean:move-window-by",
+  resizeWindowToContent: "bean:resize-window-to-content",
   setAvatarMode: "bean:set-avatar-mode",
   avatarFoldMenu: "bean:avatar-fold-menu",
   avatarDragLayout: "bean:avatar-drag-layout",

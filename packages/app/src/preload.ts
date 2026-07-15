@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld("bean", {
   onProposeRun: (cb: (suggestion: RouteSuggestion) => void) =>
     ipcRenderer.on(IPC.proposeRun, (_e, suggestion: RouteSuggestion) => cb(suggestion)),
   moveWindowBy: (dx: number, dy: number): void => ipcRenderer.send(IPC.moveWindowBy, dx, dy),
+  resizeWindowToContent: (height: number): void => ipcRenderer.send(IPC.resizeWindowToContent, height),
   setAvatarMode: (mode: AvatarMode): void => ipcRenderer.send(IPC.setAvatarMode, mode),
   onAvatarFoldMenu: (cb: () => void) =>
     ipcRenderer.on(IPC.avatarFoldMenu, () => cb()),
