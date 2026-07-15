@@ -1594,6 +1594,18 @@ button, input, textarea, select, a {
 }
 .bean-routines-todo-text { flex: 1; min-width: 0; font-size: 13px; color: var(--bean-text); }
 .bean-routines-todo--done .bean-routines-todo-text { text-decoration: line-through; opacity: 0.6; }
+/* Inline edit swaps the text span for a boxed input, sized to fill the same row. */
+.bean-routines-todo .bean-input--boxed { flex: 1; min-width: 0; padding: 5px 9px; }
+.bean-routines-todo-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bean-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+.bean-routines-todo-link:disabled { opacity: 0.35; cursor: default; }
 .bean-routines-todo--running {
   background: color-mix(in oklch, var(--bean-accent) 9%, var(--bean-surface));
   border-color: color-mix(in oklch, var(--bean-accent) 35%, var(--bean-border));

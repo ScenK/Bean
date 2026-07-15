@@ -177,6 +177,10 @@ export function RoutinesPanel() {
   // selected and it's todo-driven; empty otherwise (mirrors refreshTodos()'s own guard).
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [newTodo, setNewTodo] = useState("");
+  // Inline edit is pending-items-only; editingId gates which row (if any) shows the input
+  // in place of its static text.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
 
   const refresh = async (): Promise<void> => {
     const [list, st] = await Promise.all([window.bean.routinesList(), window.bean.routinesState()]);
@@ -506,29 +510,80 @@ export function RoutinesPanel() {
             <div class="bean-routines-queue-meta">
               {pendingCount} pending · gates this routine
             </div>
-            {[...todos]
-              .sort((a, b) => Number(a.status === "done" || a.status === "failed") - Number(b.status === "done" || b.status === "failed"))
-              .map((t) => (
-                <div key={t.id} class={`bean-routines-todo bean-routines-todo--${t.status}`}>
-                  <span class="bean-routines-todo-text">{t.text}</span>
-                  <span class="bean-routines-todo-chip">{t.status === "running" ? "running now" : t.status}</span>
-                  {t.status === "failed" ? (
-                    <button
-                      type="button"
-                      class="bean-skills-delete-link"
-                      title={t.resultSummary}
-                      onClick={() => void window.bean.todosRetry(t.id).then(refreshTodos)}
-                    >Retry</button>
-                  ) : null}
-                  {t.status === "pending" ? (
-                    <button
-                      type="button"
-                      class="bean-skills-delete-link"
-                      onClick={() => void window.bean.todosDelete(t.id).then(refreshTodos)}
-                    >Remove</button>
-                  ) : null}
-                </div>
-              ))}
+            {(() => {
+              // Reorder targets: pending items already arrive order-ASC from todosList, so this
+              // filter is the up/down neighbor list as-is — no re-sort.
+              const pendingOrdered = todos.filter((t) => t.status === "pending");
+              const swap = (a: TodoItem, b: TodoItem): void => {
+                void Promise.all([
+                  window.bean.todosReorder(a.id, b.order),
+                  window.bean.todosReorder(b.id, a.order),
+                ]).then(refreshTodos);
+              };
+              return [...todos]
+                .sort((a, b) => Number(a.status === "done" || a.status === "failed") - Number(b.status === "done" || b.status === "failed"))
+                .map((t) => {
+                  const editing = editingId === t.id;
+                  const pIdx = t.status === "pending" ? pendingOrdered.findIndex((p) => p.id === t.id) : -1;
+                  const commitEdit = (): void => {
+                    const text = editText.trim();
+                    if (!text) return;
+                    void window.bean.todosEdit(t.id, text).then(() => { setEditingId(null); void refreshTodos(); });
+                  };
+                  return (
+                    <div key={t.id} class={`bean-routines-todo bean-routines-todo--${t.status}`}>
+                      {editing ? (
+                        <input
+                          class="bean-input bean-input--boxed"
+                          value={editText}
+                          onInput={(e) => setEditText((e.target as HTMLInputElement).value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitEdit();
+                            else if (e.key === "Escape") setEditingId(null);
+                          }}
+                        />
+                      ) : (
+                        <span class="bean-routines-todo-text">{t.text}</span>
+                      )}
+                      <span class="bean-routines-todo-chip">{t.status === "running" ? "running now" : t.status}</span>
+                      {!editing && t.status === "failed" ? (
+                        <button
+                          type="button"
+                          class="bean-skills-delete-link"
+                          title={t.resultSummary}
+                          onClick={() => void window.bean.todosRetry(t.id).then(refreshTodos)}
+                        >Retry</button>
+                      ) : null}
+                      {!editing && t.status === "pending" ? (
+                        <>
+                          <button
+                            type="button"
+                            class="bean-routines-todo-link"
+                            disabled={pIdx <= 0}
+                            onClick={() => { const other = pendingOrdered[pIdx - 1]; if (other) swap(t, other); }}
+                          >↑</button>
+                          <button
+                            type="button"
+                            class="bean-routines-todo-link"
+                            disabled={pIdx < 0 || pIdx >= pendingOrdered.length - 1}
+                            onClick={() => { const other = pendingOrdered[pIdx + 1]; if (other) swap(t, other); }}
+                          >↓</button>
+                          <button
+                            type="button"
+                            class="bean-routines-todo-link"
+                            onClick={() => { setEditingId(t.id); setEditText(t.text); }}
+                          >Edit</button>
+                          <button
+                            type="button"
+                            class="bean-skills-delete-link"
+                            onClick={() => void window.bean.todosDelete(t.id).then(refreshTodos)}
+                          >Remove</button>
+                        </>
+                      ) : null}
+                    </div>
+                  );
+                });
+            })()}
             <div class="bean-routines-todo-add">
               <input
                 class="bean-input bean-input--boxed"
