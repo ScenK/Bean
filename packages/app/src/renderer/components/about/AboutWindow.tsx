@@ -14,7 +14,7 @@ export function AboutWindow() {
   const [info, setInfo] = useState<AppInfo | undefined>(undefined);
   const [update, setUpdate] = useState<UpdateUiState>({ phase: "idle" });
   const year = new Date().getFullYear();
-  const rootRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     window.bean.getTheme().then(setTheme);
@@ -25,12 +25,16 @@ export function AboutWindow() {
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
 
   // Grow the window to fit content instead of clipping it (e.g. once an update notice appears
-  // and pushes the install button below the fixed window height).
+  // and pushes the install button below the fixed window height). Observes .bean-about, not the
+  // outer .bean-dashboard: the dashboard is pinned to height:100vh + overflow:hidden (shared.css)
+  // so its own box never changes size as children grow — .bean-about has no fixed height, so its
+  // box (and thus scrollHeight) reflects the real content height even while the dashboard clips it.
+  const DASHBOARD_TOP_INSET = 32; // .bean-dashboard's padding-top (the drag-bar strip)
   useEffect(() => {
-    const el = rootRef.current;
+    const el = contentRef.current;
     if (!el) return;
     const observer = new ResizeObserver(([entry]) => {
-      if (entry) window.bean.resizeWindowToContent(entry.target.scrollHeight);
+      if (entry) window.bean.resizeWindowToContent(entry.target.scrollHeight + DASHBOARD_TOP_INSET);
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -52,8 +56,8 @@ export function AboutWindow() {
   };
 
   return (
-    <div class="bean-dashboard" ref={rootRef}>
-      <div class="bean-about">
+    <div class="bean-dashboard">
+      <div class="bean-about" ref={contentRef}>
         <div class="bean-about-name">Bean</div>
         <div class="bean-about-version">v{info?.version ?? "…"}</div>
         <p class="bean-about-desc">{info?.description ?? ""}</p>
