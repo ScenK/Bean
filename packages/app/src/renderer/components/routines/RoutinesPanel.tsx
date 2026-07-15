@@ -517,6 +517,18 @@ export function RoutinesPanel() {
           </div>
         </div>
 
+        {draft.todoDriven && !selected ? (
+          // Queue needs a saved routine name to attach todos to (Task 8's original design) —
+          // but showing nothing here is indistinguishable from the feature being missing
+          // (reported: "there isn't a place I can add any todo items"). Say why instead.
+          <div class="bean-skills-projects">
+            <div class="bean-routines-section-head">
+              <div class="bean-field-label">QUEUE</div>
+            </div>
+            <span class="bean-routines-section-note">Save this routine to start queuing todos.</span>
+          </div>
+        ) : null}
+
         {draft.todoDriven && selected ? (
           <div class="bean-skills-projects">
             <div class="bean-routines-section-head">
