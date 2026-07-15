@@ -117,6 +117,12 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       if (!routine.enabled || !state?.lastRun || state.missed) continue;
       try {
         if (nextRun(routine.cron, new Date(state.lastRun)).getTime() < startedAt.getTime()) {
+          // A todo-driven routine's missed fire is only a real problem if there's still
+          // pending work to catch up on — an empty queue means tick()'s own hasPendingTodos
+          // gate would have silently skipped that fire anyway, so flagging it missed here
+          // would be a false alarm the user can't act on (and it'd get stuck: missedNames
+          // makes tick() skip re-checking due-ness until someone manually runs it).
+          if (routine.todoDriven && deps.hasPendingTodos && !(await deps.hasPendingTodos(routine.name))) continue;
           next[routine.name] = { ...state, missed: true };
           missedNames.add(routine.name);
           changed = true;
