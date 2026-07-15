@@ -224,6 +224,7 @@ export function ChatWindow() {
         }
         if (res.proposedNote) next.push({ kind: "note", id: newId(), note: res.proposedNote, state: "pending" });
         if (res.proposedSkill) next.push({ kind: "skill", id: newId(), skill: res.proposedSkill, state: "pending" });
+        if (res.proposedTodo) next.push({ kind: "todo", id: newId(), todo: res.proposedTodo, state: "pending" });
         if (res.proposedDelegate) next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
         return next;
       });
@@ -347,6 +348,24 @@ export function ChatWindow() {
 
   const dismissSkill = (id: string): void => {
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "skill" ? { ...it, state: "dismissed" } : it)));
+  };
+
+  const queueTodo = async (id: string): Promise<void> => {
+    const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "todo" }> => it.kind === "todo" && it.id === id);
+    if (!item) return;
+    try {
+      await window.bean.todosAdd(item.todo.routine, item.todo.text);
+      setItems((prev) => [
+        ...prev.map((it) => (it.id === id && it.kind === "todo" ? { ...it, state: "queued" as const } : it)),
+        { kind: "status", id: newId(), text: `✓ Queued on "${item.todo.routine}"`, tone: "done" },
+      ]);
+    } catch (err) {
+      setItems((prev) => [...prev, { kind: "status", id: newId(), text: `Couldn't queue the todo: ${err instanceof Error ? err.message : String(err)}`, tone: "error" }]);
+    }
+  };
+
+  const dismissTodo = (id: string): void => {
+    setItems((prev) => prev.map((it) => (it.id === id && it.kind === "todo" ? { ...it, state: "dismissed" } : it)));
   };
 
   // Composer's 📝 button: an explicit ask, so the model drafts the confirm card even when it
@@ -503,6 +522,8 @@ export function ChatWindow() {
         onNoteDismiss={dismissNote}
         onSkillSave={(id, edited) => void saveSkill(id, edited)}
         onSkillDismiss={dismissSkill}
+        onTodoQueue={(id) => void queueTodo(id)}
+        onTodoDismiss={dismissTodo}
         onDelegateConfirm={(id, edited, model) => void confirmDelegate(id, edited, model)}
         onDelegateDismiss={dismissDelegate}
         onDelegateCancelTask={cancelDelegateTask}

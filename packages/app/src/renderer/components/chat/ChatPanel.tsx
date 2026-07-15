@@ -3,6 +3,7 @@ import { ProposalCard, type PickableModel } from "../../shared/ProposalCard.js";
 import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
 import { SkillCard } from "./SkillCard.js";
+import { TodoCard } from "./TodoCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { insertDroppedPath, type ChatItem } from "../../shared/chat-types.js";
 import type { CliName, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
@@ -26,6 +27,8 @@ export function ChatPanel({
   onNoteDismiss,
   onSkillSave,
   onSkillDismiss,
+  onTodoQueue,
+  onTodoDismiss,
   onDelegateConfirm,
   onDelegateDismiss,
   onDelegateCancelTask,
@@ -62,6 +65,8 @@ export function ChatPanel({
   onNoteDismiss: (id: string) => void;
   onSkillSave: (id: string, edited: ProposedSkill) => void;
   onSkillDismiss: (id: string) => void;
+  onTodoQueue: (id: string) => void;
+  onTodoDismiss: (id: string) => void;
   onDelegateConfirm: (id: string, editedPrompt: string, model?: string) => void;
   onDelegateDismiss: (id: string) => void;
   onDelegateCancelTask: (id: string) => void;
@@ -191,6 +196,17 @@ export function ChatPanel({
                 state={it.state}
                 onSave={(edited) => onSkillSave(it.id, edited)}
                 onDismiss={() => onSkillDismiss(it.id)}
+              />
+            );
+          }
+          if (it.kind === "todo") {
+            return (
+              <TodoCard
+                key={it.id}
+                todo={it.todo}
+                state={it.state}
+                onQueue={() => onTodoQueue(it.id)}
+                onDismiss={() => onTodoDismiss(it.id)}
               />
             );
           }
