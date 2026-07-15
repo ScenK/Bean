@@ -181,6 +181,10 @@ export function RoutinesPanel() {
   // in place of its static text.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  // Drag-to-reorder for pending todos — same interaction as the steps list's ⠿ handle
+  // (separate state since the two lists reorder independently).
+  const [todoDragId, setTodoDragId] = useState<string | null>(null);
+  const [todoOverId, setTodoOverId] = useState<string | null>(null);
 
   const refresh = async (): Promise<void> => {
     const [list, st] = await Promise.all([window.bean.routinesList(), window.bean.routinesState()]);
@@ -542,19 +546,31 @@ export function RoutinesPanel() {
             </div>
             {(() => {
               // Reorder targets: pending items already arrive order-ASC from todosList, so this
-              // filter is the up/down neighbor list as-is — no re-sort.
+              // is the drag-drop sequence as-is — no re-sort.
               const pendingOrdered = todos.filter((t) => t.status === "pending");
-              const swap = (a: TodoItem, b: TodoItem): void => {
-                void Promise.all([
-                  window.bean.todosReorder(a.id, b.order),
-                  window.bean.todosReorder(b.id, a.order),
-                ]).then(refreshTodos).catch((e) => setError(e instanceof Error ? e.message : "couldn't reorder the queue"));
+              // Same splice-and-reassign shape as reorderStep, generalized to any drag distance
+              // (not just adjacent swaps) and persisted: after splicing the dragged id into its
+              // drop position, re-assign each pending item's `order` from the existing ascending
+              // sequence by position — no new integers needed, no collision risk.
+              const reorderTodoDrag = (fromId: string, toId: string): void => {
+                if (fromId === toId) return;
+                const ids = pendingOrdered.map((t) => t.id);
+                const fromIdx = ids.indexOf(fromId);
+                const toIdx = ids.indexOf(toId);
+                if (fromIdx < 0 || toIdx < 0) return;
+                const reordered = [...ids];
+                const [moved] = reordered.splice(fromIdx, 1);
+                reordered.splice(toIdx, 0, moved!);
+                const orderValues = pendingOrdered.map((t) => t.order); // already ascending
+                void Promise.all(reordered.map((id, idx) => window.bean.todosReorder(id, orderValues[idx]!)))
+                  .then(refreshTodos)
+                  .catch((e) => setError(e instanceof Error ? e.message : "couldn't reorder the queue"));
               };
               return [...todos]
                 .sort((a, b) => Number(a.status === "done" || a.status === "failed") - Number(b.status === "done" || b.status === "failed"))
                 .map((t) => {
                   const editing = editingId === t.id;
-                  const pIdx = t.status === "pending" ? pendingOrdered.findIndex((p) => p.id === t.id) : -1;
+                  const isPending = t.status === "pending";
                   const commitEdit = (): void => {
                     const text = editText.trim();
                     if (!text) return;
@@ -563,7 +579,13 @@ export function RoutinesPanel() {
                       .catch((e) => setError(e instanceof Error ? e.message : "couldn't save the edit"));
                   };
                   return (
-                    <div key={t.id} class={`bean-routines-todo bean-routines-todo--${t.status}`}>
+                    <div
+                      key={t.id}
+                      class={`bean-routines-todo bean-routines-todo--${t.status}${todoDragId === t.id ? " bean-routines-todo--dragging" : ""}${todoOverId === t.id && todoDragId !== null && todoDragId !== t.id ? " bean-routines-todo--drop" : ""}`}
+                      onDragOver={(e) => { if (todoDragId !== null && isPending) { e.preventDefault(); setTodoOverId(t.id); } }}
+                      onDragLeave={() => setTodoOverId((v) => (v === t.id ? null : v))}
+                      onDrop={(e) => { e.preventDefault(); if (todoDragId !== null) reorderTodoDrag(todoDragId, t.id); setTodoDragId(null); setTodoOverId(null); }}
+                    >
                       {editing ? (
                         <input
                           class="bean-input bean-input--boxed"
@@ -587,20 +609,15 @@ export function RoutinesPanel() {
                             .catch((e) => setError(e instanceof Error ? e.message : "couldn't retry the todo"))}
                         >Retry</button>
                       ) : null}
-                      {!editing && t.status === "pending" ? (
+                      {!editing && isPending ? (
                         <>
-                          <button
-                            type="button"
-                            class="bean-routines-todo-link"
-                            disabled={pIdx <= 0}
-                            onClick={() => { const other = pendingOrdered[pIdx - 1]; if (other) swap(t, other); }}
-                          >↑</button>
-                          <button
-                            type="button"
-                            class="bean-routines-todo-link"
-                            disabled={pIdx < 0 || pIdx >= pendingOrdered.length - 1}
-                            onClick={() => { const other = pendingOrdered[pIdx + 1]; if (other) swap(t, other); }}
-                          >↓</button>
+                          <span
+                            class="bean-routines-handle"
+                            title="Drag to reorder"
+                            draggable
+                            onDragStart={(e) => { setTodoDragId(t.id); e.dataTransfer?.setData("text/plain", t.id); }}
+                            onDragEnd={() => { setTodoDragId(null); setTodoOverId(null); }}
+                          >⠿</span>
                           <button
                             type="button"
                             class="bean-routines-todo-link"

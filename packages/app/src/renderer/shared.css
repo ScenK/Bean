@@ -1575,6 +1575,7 @@ button, input, textarea, select, a {
 
 /* Type toggle: Always runs / Todo-driven segmented buttons */
 .bean-routines-type-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bean-routines-type-btn { min-width: 128px; text-align: center; }
 .bean-routines-type-btn--on {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
@@ -1620,6 +1621,8 @@ button, input, textarea, select, a {
   white-space: nowrap;
 }
 .bean-routines-todo-add { margin-top: 2px; }
+.bean-routines-todo--dragging { opacity: 0.45; }
+.bean-routines-todo--drop { border-color: var(--bean-accent); box-shadow: 0 0 0 1px var(--bean-accent); }
 
 /* Steps: numbered timeline of delegate cards */
 .bean-routines-section-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
