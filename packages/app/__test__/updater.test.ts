@@ -95,7 +95,12 @@ describe("installAndRelaunch", () => {
       ["/Applications/Bean.app", "/Applications/Bean.app.old"],
       ["/tmp/bean-update-xyz/Bean.app", "/Applications/Bean.app"],
     ]);
-    expect(h.removed).toEqual(["/Applications/Bean.app.old", "/tmp/bean-update-xyz"]);
+    // Pre-clear any leftover .old, then remove the backup + temp dir after the swap.
+    expect(h.removed).toEqual([
+      "/Applications/Bean.app.old",
+      "/Applications/Bean.app.old",
+      "/tmp/bean-update-xyz",
+    ]);
     expect(h.copied).toEqual([]);
     expect(h.relaunched()).toBe(true);
     expect(h.exited()).toBe(true);
@@ -105,6 +110,15 @@ describe("installAndRelaunch", () => {
     const h = harness();
     await installAndRelaunch("/tmp/bean-update-xyz/Bean.app", h.deps);
     expect(h.removed).toContain("/tmp/bean-update-xyz");
+  });
+
+  test("clears a leftover .old backup before renaming the current bundle aside", async () => {
+    // Without the pre-clear, rename(Bean.app → Bean.app.old) throws ENOTEMPTY when a
+    // previous install left a non-empty .old behind (cleanup failed or process died mid-swap).
+    const h = harness();
+    await installAndRelaunch("/tmp/bean-update-xyz/Bean.app", h.deps);
+    expect(h.removed[0]).toBe("/Applications/Bean.app.old");
+    expect(h.renamed[0]).toEqual(["/Applications/Bean.app", "/Applications/Bean.app.old"]);
   });
 
   test("falls back to a recursive copy on a cross-device rename (EXDEV)", async () => {
@@ -119,7 +133,11 @@ describe("installAndRelaunch", () => {
     });
     await installAndRelaunch("/tmp/bean-update-xyz/Bean.app", h.deps);
     expect(h.copied).toEqual([["/tmp/bean-update-xyz/Bean.app", "/Applications/Bean.app"]]);
-    expect(h.removed).toEqual(["/Applications/Bean.app.old", "/tmp/bean-update-xyz"]);
+    expect(h.removed).toEqual([
+      "/Applications/Bean.app.old",
+      "/Applications/Bean.app.old",
+      "/tmp/bean-update-xyz",
+    ]);
     expect(h.relaunched()).toBe(true);
   });
 
@@ -134,7 +152,8 @@ describe("installAndRelaunch", () => {
       ["/Applications/Bean.app", "/Applications/Bean.app.old"],
       ["/Applications/Bean.app.old", "/Applications/Bean.app"],
     ]);
-    expect(h.removed).toEqual([]);
+    // Only the pre-clear of a leftover .old — no post-success cleanup on the rollback path.
+    expect(h.removed).toEqual(["/Applications/Bean.app.old"]);
     expect(h.relaunched()).toBe(false);
     expect(h.exited()).toBe(false);
   });
@@ -164,6 +183,7 @@ describe("installAndRelaunch", () => {
     // The copy error must be rethrown as-is (not masked), and currentAppPath must be
     // cleared BEFORE the rollback rename, so the rollback can't collide with a partial copy.
     expect(sequence).toEqual([
+      "rm:/Applications/Bean.app.old",
       "rename:/Applications/Bean.app->/Applications/Bean.app.old",
       "rm:/Applications/Bean.app",
       "rename:/Applications/Bean.app.old->/Applications/Bean.app",
@@ -193,7 +213,8 @@ describe("installAndRelaunch", () => {
     expect(h.renamed).toEqual([
       ["/Applications/Bean.app", "/Applications/Bean.app.old"],
     ]);
-    expect(h.removed).toEqual(["/Applications/Bean.app.old"]);
+    // Pre-clear + post-swap removal of the backup; temp-dir cleanup failure is swallowed.
+    expect(h.removed).toEqual(["/Applications/Bean.app.old", "/Applications/Bean.app.old"]);
     expect(h.relaunched()).toBe(true);
     expect(h.exited()).toBe(true);
   });
