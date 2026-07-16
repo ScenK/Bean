@@ -40,7 +40,7 @@ const SUMMARY_CAP = 200;
 function priorOutputsBlock(results: StepResult[]): string {
   if (results.length === 0) return "";
   return results
-    .map((r) => `--- step ${r.index + 1} (${r.kind}, ${r.ok ? "ok" : "FAILED"}) ---\n${r.output.slice(0, PRIOR_OUTPUT_CAP)}`)
+    .map((r) => `--- step ${r.index + 1} (${r.kind}, ${r.ok ? "ok" : "FAILED"}) ---\n${r.output.slice(-PRIOR_OUTPUT_CAP)}`)
     .join("\n\n");
 }
 
