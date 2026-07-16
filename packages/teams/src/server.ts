@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
-  buildTeamsBot, mentionsBotName, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
+  buildTeamsBot, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore,
 } from "@bean/core";
 import {
@@ -113,15 +113,15 @@ process.on("SIGTERM", () => {
 // grants the RSC permission ChannelMessage.Read.Group — see packages/teams/README.md.
 const ambient = new AmbientStore();
 
-/** True when the message @mentions the bot or names it in the text; personal (1:1)
- * chats always count as addressed. Untagged channel messages only arrive at all
- * with the RSC permission above. */
+/** True only when the message @mentions the bot; personal (1:1) chats always count.
+ * Naming the bot in passing ("we should add x to bean") deliberately does NOT count —
+ * that message is about Bean, not to it, and becomes ambient context instead. Untagged
+ * channel messages only arrive at all with the RSC permission above. */
 function addressedToBot(a: Activity): boolean {
   if (a.conversation.conversationType === "personal") return true;
-  const mentioned = (a.entities ?? []).some(
+  return (a.entities ?? []).some(
     (e) => e.type === "mention" && (e as { mentioned?: { id?: string } }).mentioned?.id === a.recipient.id,
   );
-  return mentioned || mentionsBotName(a.text ?? "", a.recipient.name ?? "");
 }
 
 /** Effects bound to the incoming turn's conversation; posts after the turn ends go

@@ -27,6 +27,8 @@ import type { RunRegistry } from "./runs.js";
 // a separate scheduler, per .memory/project-bean-memory.md.
 const CONSOLIDATION_THRESHOLD = 30;
 
+/** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
+ * onMessage — surfaces keep untagged channel chatter as ambient context instead. */
 export interface IncomingMessage {
   conversationId: string;
   text: string;
@@ -344,6 +346,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           await fx.reply(n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.");
           return;
         }
+        if (msg.text.trim().toLowerCase() === "/new") {
+          deps.conversations.clear(msg.conversationId);
+          // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
+          deps.conversations.setAmbientCutoff(msg.conversationId, Date.now());
+          await fx.reply("Fresh start — I've cleared this conversation's context.");
+          return;
+        }
         const [skills, projects, persona, memories, modelMemory, todoRoutines] = await Promise.all([
           deps.loadSkills(), deps.loadProjects(), deps.loadPersona(), deps.loadMemories(), deps.loadModelMemory(),
           deps.listTodoRoutines(),
@@ -353,9 +362,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (fx.fetchRecent) {
           // ponytail: fixed 15-min window; the block carries timestamps so the model can
           // scope "the last 10 minutes" itself — parse the user's timeframe if it matters.
-          const ambient = (await fx.fetchRecent(Date.now() - 15 * 60_000)).slice(-50);
+          // The cutoff floor keeps repeat mentions from re-injecting chatter already persisted;
+          // it lives in the db so it survives a bot restart alongside the history it guards.
+          const now = Date.now();
+          const sinceMs = Math.max(now - 15 * 60_000, deps.conversations.ambientCutoff(msg.conversationId));
+          const ambient = (await fx.fetchRecent(sinceMs)).slice(-50);
           if (ambient.length > 0) {
-            history = [{ role: "user", content: formatAmbientBlock(ambient) }, ...history];
+            deps.conversations.setAmbientCutoff(msg.conversationId, ambient[ambient.length - 1]!.at + 1);
+            const block = formatAmbientBlock(ambient, now);
+            // Persist what Bean acted on so follow-up mentions read a coherent history;
+            // appended after stored turns because the chatter is newer than they are.
+            deps.conversations.append(msg.conversationId, { role: "user", content: block });
+            history = [...history, { role: "user", content: block }];
           }
         }
         // runAvailable=false: propose_run is never offered here — confirming one couldn't

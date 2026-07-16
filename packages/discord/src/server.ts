@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
-  buildTeamsBot, mentionsBotName, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
+  buildTeamsBot, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects,
 } from "@bean/core";
 import {
@@ -92,7 +92,11 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string): Bo
       if (!("messages" in channel)) return [];
       const fetched = await channel.messages.fetch({ limit: 50 });
       return [...fetched.values()]
-        .filter((m) => m.createdTimestamp >= sinceMs && !m.author.bot && m.id !== triggeringMessageId && m.content)
+        // Messages addressed to Bean are already in the conversation history — only
+        // genuine bystander chatter counts as ambient.
+        .filter((m) =>
+          m.createdTimestamp >= sinceMs && !m.author.bot && m.id !== triggeringMessageId &&
+          m.content && !m.mentions.users.has(client.user?.id ?? ""))
         .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
         .map((m) => ({ fromName: m.author.displayName, text: m.content, at: m.createdTimestamp }));
     },
@@ -103,11 +107,12 @@ client.on("messageCreate", async (message) => {
   try {
     if (message.author.bot || !allowed(message.author.id)) return;
     const isDm = message.channel.type === ChannelType.DM;
+    // Only an explicit address (DM, @mention, reply-to-Bean) gets a turn. Naming the bot in
+    // passing ("we should add x to bean") is about Bean, not to it — it stays ambient context.
     const addressed =
       isDm ||
       message.mentions.users.has(client.user?.id ?? "") ||
-      message.mentions.repliedUser?.id === client.user?.id ||
-      mentionsBotName(message.content, client.user?.username ?? "");
+      message.mentions.repliedUser?.id === client.user?.id;
     if (!addressed) return;
     const text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
     if (!text) return;

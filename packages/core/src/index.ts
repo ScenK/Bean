@@ -26,7 +26,6 @@ export * from "./delegate.js";
 export * from "./drop-plan.js";
 export * from "./updater.js";
 export * from "./update-public-key.js";
-export * from "./chatops/addressing.js";
 export * from "./chatops/ambient.js";
 export * from "./chatops/bot.js";
 export * from "./chatops/cards-api.js";

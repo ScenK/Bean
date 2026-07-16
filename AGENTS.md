@@ -150,9 +150,10 @@ worktrees — each checkout needs its own.
     `runRoutine()` executes a routine and delivers to its sinks; `cron.ts` schedules them.
   - `system-control.ts` — the `system_control` action tool. The model never writes AppleScript;
     it picks a verb from a closed union and each maps to a fixed, validated `execFile` argv.
-  - `chatops/` — the shared bot layer behind the Discord/Teams surfaces: `bot.ts`, addressing,
-    conversation state, and the one-shot `*ProposalStore` claim stores that back confirm-first
-    cards. `db.ts` is the SQLite (FTS5) store for memory/notes/chatops history.
+  - `chatops/` — the shared bot layer behind the Discord/Teams surfaces: `bot.ts`, conversation
+    state, `ambient.ts` (untagged channel chatter kept as context — only an explicit @mention,
+    reply, or DM gets a turn), and the one-shot `*ProposalStore` claim stores that back
+    confirm-first cards. `db.ts` is the SQLite (FTS5) store for memory/notes/chatops history.
   - `openai-chat.ts` is the only place the real `openai` SDK is touched; it adapts the client
     to the `deps.chat` shape. `makeOpenAIChatWithClient` exists so tests inject a fake client.
   - `config.ts` / `skill-library.ts` / `project-registry.ts` are pure loaders taking explicit
