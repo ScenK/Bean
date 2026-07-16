@@ -71,6 +71,25 @@ describe("currentAppBundlePath", () => {
 });
 
 describe("installAndRelaunch", () => {
+  // Real fs.rename throws ENOENT renaming a path that doesn't exist — simulate that for the
+  // very first rename call (the pre-clear of a leftover Bean.app.old) so tests default to "no
+  // leftover from a previous install". Only the first call is checked: a later rename FROM
+  // Bean.app.old is the legitimate backup/restore step, by which point it genuinely exists.
+  function noLeftoverRename(push: (from: string, to: string) => void) {
+    let checkedPreClear = false;
+    return vi.fn(async (from: string, to: string) => {
+      if (!checkedPreClear) {
+        checkedPreClear = true;
+        if (from === "/Applications/Bean.app.old") {
+          const err = new Error("no such file") as NodeJS.ErrnoException;
+          err.code = "ENOENT";
+          throw err;
+        }
+      }
+      push(from, to);
+    });
+  }
+
   function harness() {
     const renamed: [string, string][] = [];
     const copied: [string, string][] = [];
@@ -79,7 +98,7 @@ describe("installAndRelaunch", () => {
     let exited = false;
     const deps = {
       currentAppPath: "/Applications/Bean.app",
-      rename: vi.fn(async (from: string, to: string) => { renamed.push([from, to]); }),
+      rename: noLeftoverRename((from, to) => renamed.push([from, to])),
       copyRecursive: vi.fn(async (from: string, to: string) => { copied.push([from, to]); }),
       rm: vi.fn(async (p: string) => { removed.push(p); }),
       relaunch: () => { relaunched = true; },
@@ -95,9 +114,8 @@ describe("installAndRelaunch", () => {
       ["/Applications/Bean.app", "/Applications/Bean.app.old"],
       ["/tmp/bean-update-xyz/Bean.app", "/Applications/Bean.app"],
     ]);
-    // Pre-clear any leftover .old, then remove the backup + temp dir after the swap.
+    // No leftover .old to pre-clear here — just the post-swap backup + temp-dir removal.
     expect(h.removed).toEqual([
-      "/Applications/Bean.app.old",
       "/Applications/Bean.app.old",
       "/tmp/bean-update-xyz",
     ]);
@@ -113,17 +131,23 @@ describe("installAndRelaunch", () => {
   });
 
   test("clears a leftover .old backup before renaming the current bundle aside", async () => {
-    // Without the pre-clear, rename(Bean.app → Bean.app.old) throws ENOTEMPTY when a
-    // previous install left a non-empty .old behind (cleanup failed or process died mid-swap).
+    // Renaming the leftover aside (not deleting it in place) is what fixes ENOTEMPTY when a
+    // previous install left a non-empty, partially-permission-locked .old behind — a plain
+    // recursive delete can itself fail deep inside such a leftover, silently leaving the
+    // destination occupied. Simulate a leftover existing: rename never throws here.
     const h = harness();
+    h.deps.rename = vi.fn(async (from: string, to: string) => { h.renamed.push([from, to]); });
     await installAndRelaunch("/tmp/bean-update-xyz/Bean.app", h.deps);
-    expect(h.removed[0]).toBe("/Applications/Bean.app.old");
-    expect(h.renamed[0]).toEqual(["/Applications/Bean.app", "/Applications/Bean.app.old"]);
+    expect(h.renamed[0]?.[0]).toBe("/Applications/Bean.app.old");
+    expect(h.renamed[0]?.[1]).toMatch(/^\/Applications\/Bean\.app\.old\.stale-/);
+    // The displaced stale copy is then deleted best-effort.
+    expect(h.removed).toContain(h.renamed[0]?.[1]);
+    expect(h.renamed[1]).toEqual(["/Applications/Bean.app", "/Applications/Bean.app.old"]);
   });
 
   test("falls back to a recursive copy on a cross-device rename (EXDEV)", async () => {
     const h = harness();
-    h.deps.rename = vi.fn(async (from: string, to: string) => {
+    h.deps.rename = noLeftoverRename((from, to) => {
       if (from === "/tmp/bean-update-xyz/Bean.app") {
         const err = new Error("cross-device") as NodeJS.ErrnoException;
         err.code = "EXDEV";
@@ -135,7 +159,6 @@ describe("installAndRelaunch", () => {
     expect(h.copied).toEqual([["/tmp/bean-update-xyz/Bean.app", "/Applications/Bean.app"]]);
     expect(h.removed).toEqual([
       "/Applications/Bean.app.old",
-      "/Applications/Bean.app.old",
       "/tmp/bean-update-xyz",
     ]);
     expect(h.relaunched()).toBe(true);
@@ -143,7 +166,7 @@ describe("installAndRelaunch", () => {
 
   test("rolls back and rethrows when swapping the new bundle into place fails", async () => {
     const h = harness();
-    h.deps.rename = vi.fn(async (from: string, to: string) => {
+    h.deps.rename = noLeftoverRename((from, to) => {
       if (from === "/tmp/bean-update-xyz/Bean.app") throw new Error("disk full");
       h.renamed.push([from, to]);
     });
@@ -152,8 +175,8 @@ describe("installAndRelaunch", () => {
       ["/Applications/Bean.app", "/Applications/Bean.app.old"],
       ["/Applications/Bean.app.old", "/Applications/Bean.app"],
     ]);
-    // Only the pre-clear of a leftover .old — no post-success cleanup on the rollback path.
-    expect(h.removed).toEqual(["/Applications/Bean.app.old"]);
+    // No leftover .old, and the swap failed before reaching post-success cleanup.
+    expect(h.removed).toEqual([]);
     expect(h.relaunched()).toBe(false);
     expect(h.exited()).toBe(false);
   });
@@ -164,7 +187,7 @@ describe("installAndRelaunch", () => {
     let exited = false;
     const deps = {
       currentAppPath: "/Applications/Bean.app",
-      rename: vi.fn(async (from: string, to: string) => {
+      rename: noLeftoverRename((from, to) => {
         if (from === "/tmp/bean-update-xyz/Bean.app") {
           const err = new Error("cross-device") as NodeJS.ErrnoException;
           err.code = "EXDEV";
@@ -183,7 +206,6 @@ describe("installAndRelaunch", () => {
     // The copy error must be rethrown as-is (not masked), and currentAppPath must be
     // cleared BEFORE the rollback rename, so the rollback can't collide with a partial copy.
     expect(sequence).toEqual([
-      "rm:/Applications/Bean.app.old",
       "rename:/Applications/Bean.app->/Applications/Bean.app.old",
       "rm:/Applications/Bean.app",
       "rename:/Applications/Bean.app.old->/Applications/Bean.app",
@@ -194,7 +216,7 @@ describe("installAndRelaunch", () => {
 
   test("does not roll back a successful EXDEV copy even if temp-dir cleanup fails", async () => {
     const h = harness();
-    h.deps.rename = vi.fn(async (from: string, to: string) => {
+    h.deps.rename = noLeftoverRename((from, to) => {
       if (from === "/tmp/bean-update-xyz/Bean.app") {
         const err = new Error("cross-device") as NodeJS.ErrnoException;
         err.code = "EXDEV";
@@ -213,8 +235,9 @@ describe("installAndRelaunch", () => {
     expect(h.renamed).toEqual([
       ["/Applications/Bean.app", "/Applications/Bean.app.old"],
     ]);
-    // Pre-clear + post-swap removal of the backup; temp-dir cleanup failure is swallowed.
-    expect(h.removed).toEqual(["/Applications/Bean.app.old", "/Applications/Bean.app.old"]);
+    // No leftover .old to pre-clear; post-swap removal of the backup; temp-dir cleanup
+    // failure is swallowed.
+    expect(h.removed).toEqual(["/Applications/Bean.app.old"]);
     expect(h.relaunched()).toBe(true);
     expect(h.exited()).toBe(true);
   });

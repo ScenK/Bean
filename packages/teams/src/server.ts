@@ -99,6 +99,7 @@ const bot = buildTeamsBot({
     proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
     consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
   },
+  systemControlsEnabled: () => beanConfig.systemControls,
 });
 
 // chatopsServers.stop() (packages/app/src/chatops-servers.ts) sends SIGTERM with no other
