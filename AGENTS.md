@@ -41,12 +41,26 @@ open mode). Bean does not stream or track the launched process's output. The exc
 `claude -p` / `opencode run` that Bean spawns, streams, and cancels via core's `delegate.ts` +
 app's `delegate-tasks.ts`, with the result fed back into the chat when it finishes.
 
-It's a **pnpm-workspace monorepo** with two packages:
+The desktop app is one of **three surfaces**, all sharing the same core brain:
+
+- **Remote chatops** — `@bean/discord` and `@bean/teams` are standalone Node bot servers
+  (`node dist/server.js`) that let you drive Bean from a Discord server/DM or a Teams chat.
+  They render the same confirm-first cards (run / note / memory / skill) through core's shared
+  `chatops/` layer; the per-surface `*-config.ts` holds tokens/IDs.
+- **Routines** — scheduled work. A routine (`~/.bean/routines/<name>.json`) is a cron-fired
+  pipeline of `delegate`/`chat` steps with optional todo-queue draining; `routine-runner.ts`
+  runs it and fans results to sinks (chatops channel / note / desktop notification).
+- **System control** — `system-control.ts` lets `converse()` drive the Mac (volume, mute,
+  media playback, launch/quit apps) via a closed verb union, opt-in behind a Settings toggle.
+
+It's a **pnpm-workspace monorepo** with four packages:
 
 | Package | Path | Purpose |
 |---------|------|---------|
 | **`@bean/core`** | `packages/core/` | Routing + IO logic. Pure ESM, zero Electron, `tsc`-built. |
 | **`@bean/app`** | `packages/app/` | Electron shell (main + preload + renderer). esbuild-bundled. |
+| **`@bean/discord`** | `packages/discord/` | Discord bot server. Node, tsc+esbuild-built. |
+| **`@bean/teams`** | `packages/teams/` | Teams bot server. Node, tsc+esbuild-built. |
 
 Per-user runtime data lives in `~/.bean/` (not in the repo) — see [Runtime config](#runtime-config-bean).
 
@@ -131,6 +145,14 @@ worktrees — each checkout needs its own.
   - `delegate.ts` `runDelegate()` is the tracked counterpart to the launcher: it spawns a
     headless CLI (`delegateCommand()` maps claude/opencode flags), streams a parsed tail,
     collects the final result, and can cancel the process group. Pure and DI'd like the rest.
+  - `routine-store.ts` / `routine-runner.ts` — routines are cron-scheduled pipelines of
+    `delegate`/`chat` steps saved as `~/.bean/routines/*.json` (state in `.state.json`).
+    `runRoutine()` executes a routine and delivers to its sinks; `cron.ts` schedules them.
+  - `system-control.ts` — the `system_control` action tool. The model never writes AppleScript;
+    it picks a verb from a closed union and each maps to a fixed, validated `execFile` argv.
+  - `chatops/` — the shared bot layer behind the Discord/Teams surfaces: `bot.ts`, addressing,
+    conversation state, and the one-shot `*ProposalStore` claim stores that back confirm-first
+    cards. `db.ts` is the SQLite (FTS5) store for memory/notes/chatops history.
   - `openai-chat.ts` is the only place the real `openai` SDK is touched; it adapts the client
     to the `deps.chat` shape. `makeOpenAIChatWithClient` exists so tests inject a fake client.
   - `config.ts` / `skill-library.ts` / `project-registry.ts` are pure loaders taking explicit
@@ -141,8 +163,12 @@ worktrees — each checkout needs its own.
   layer: loads `~/.bean` config via core, builds the real OpenAI chat fn, opens windows, calls
   `registerIpc`. `ipc.ts` keeps handlers thin and testable (`buildChatHandler`/`buildLaunchHandler`
   are separable from Electron). The renderer is `avatar.ts`/`orb.ts` plus component windows
-  under `renderer/components/` (`chat`, `plan`, `projects`, `skills`, `persona`, `settings`,
-  `about`) — there is no `intake`/`console` page anymore.
+  under `renderer/components/` (`chat`, `plan`, `projects`, `skills`, `persona`, `routines`,
+  `settings`, `about`) — there is no `intake`/`console` page anymore.
+
+- **`@bean/discord` / `@bean/teams`** — standalone Node bot servers (not Electron), each a
+  thin surface that wires its platform SDK to core's `chatops/` layer and reads its own
+  `*-config.ts`. They share the core brain; adding a surface shouldn't touch core logic.
 
 Control flow: `ChatWindow` → `window.bean.chat()` (preload bridge) → IPC `bean:chat` →
 `buildChatHandler()` → `converse()` → optional `proposedRun` rendered as a `ProposalCard` →
@@ -192,13 +218,21 @@ Two layers:
 
 Per-user, outside the repo. Path helpers live in `core/src/config.ts`.
 
-- `~/.bean/config.json` → `{ "openaiApiKey": "sk-...", "model": "gpt-4o-mini" }` (`model`
-  optional, defaults to `gpt-4o-mini`). A missing config throws; an empty `openaiApiKey`
-  shows an error dialog but the app still opens.
+- `~/.bean/config.json` → `{ "openaiApiKey", "model", "terminalApp", "editorApp",
+  "delegateCli", "systemControls" }`. Only `openaiApiKey`/`model` are load-bearing (`model`
+  defaults to `gpt-4o-mini`); the rest default to `""`/`false`. A missing config throws; an
+  empty `openaiApiKey` shows an error dialog but the app still opens.
 - `~/.bean/skills/*.md` → one markdown file per skill. `description:` frontmatter is the
   router-visible summary; otherwise the first heading is used. The full body composes the prompt.
 - `~/.bean/projects.json` → `[{ "name": "...", "path": "/abs/path", "defaultSkill": "..." }]`
   (`defaultSkill` optional; the first project + its default skill is the router fallback).
+- `~/.bean/routines/*.json` → one routine per file; runtime state (last run, history) lives
+  beside them in `.state.json` so definitions stay clean and shareable.
+- `~/.bean/bean.db` → SQLite (FTS5) store for memories, notes, and chatops history — replaces
+  the old flat `memory.json` + `notes/*.md`. Other files: `persona.json`, `reminders.json`.
+
+All path helpers live in `core/src/config.ts` — check there for the current set, don't
+hand-maintain the list here.
 
 <!-- CODEGRAPH_START -->
 ## CodeGraph
