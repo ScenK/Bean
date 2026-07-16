@@ -14,5 +14,19 @@ splits its prompt in two:
   context belongs here.
 
 `makeOpenAIConverseWithClient` also sends `prompt_cache_key: "bean-converse"` as a cache-routing
-hint (all converse calls share the same prefix start). Regression guard: the
-"leading system message is byte-stable across turns" test in `packages/core/__test__/converse.test.ts`.
+hint (all callers of the adapter — converse and routine chat steps — share it; fine at Bean's
+volume). Regression guard: the "leading system message is byte-stable across turns" test in
+`packages/core/__test__/converse.test.ts`.
+
+Evaluated and deliberately left alone:
+
+- **Routine chat steps** (`routine-runner.ts` `runChatStep`) already order their one system
+  message stable-first (role line, skill body) with the volatile parts (prior step outputs,
+  clock) last, so the stable prefix caches across cron runs; only the short static instruction
+  after the clock re-bills. Not worth reordering.
+- **Chatops compaction** (`chatops/compact.ts`) rewrites the history head (oldest 40 → 1
+  summary) and necessarily busts the whole prefix — but only once per ~40 turns, and the
+  alternative (unbounded history) costs more than the periodic bust. Inherent tradeoff.
+- **Ambient channel blocks** (`chatops/bot.ts`) are persisted into history as ordinary turns,
+  so their time anchors freeze and the prefix stays append-only — keep it that way; injecting
+  them per-request instead would churn the prefix.
