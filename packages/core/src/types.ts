@@ -63,6 +63,7 @@ export interface BeanConfig {
   terminalApp: string; // "" = use the system default handler for .command files
   editorApp: string; // "" = no editor configured — "Open in Editor" prompts the user to set one
   delegateCli: string; // "" = auto: first detected CLI; else "claude"/"opencode"
+  systemControls: boolean; // opt-in: expose the system_control tool (volume/media/app) to chat
   beanDir: string; // resolved absolute path to ~/.bean
 }
 

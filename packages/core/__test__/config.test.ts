@@ -47,7 +47,7 @@ test("saveConfig writes only persisted config fields (no beanDir)", async () => 
   const file = join(dir, "config.json");
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m", terminalApp: "" });
   const parsed = JSON.parse(await readFile(file, "utf8"));
-  expect(Object.keys(parsed).sort()).toEqual(["delegateCli", "editorApp", "model", "openaiApiKey", "terminalApp"]);
+  expect(Object.keys(parsed).sort()).toEqual(["delegateCli", "editorApp", "model", "openaiApiKey", "systemControls", "terminalApp"]);
 });
 
 test("loads config and defaults terminalApp to empty string", async () => {

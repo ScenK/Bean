@@ -34,6 +34,7 @@ export function SettingsWindow() {
   const [terminalApp, setTerminalApp] = useState("");
   const [editorApp, setEditorApp] = useState("");
   const [delegateCli, setDelegateCli] = useState("");
+  const [systemControls, setSystemControls] = useState(false);
   const [clis, setClis] = useState<CliName[]>([]);
   const [paths, setPaths] = useState<ConfigView["paths"] | undefined>(undefined);
   const [save, setSave] = useState<SaveState>("idle");
@@ -64,6 +65,7 @@ export function SettingsWindow() {
       setTerminalApp(c.terminalApp);
       setEditorApp(c.editorApp);
       setDelegateCli(c.delegateCli);
+      setSystemControls(c.systemControls);
       setPaths(c.paths);
     });
     window.bean.chatopsStatus().then((status) => {
@@ -84,7 +86,7 @@ export function SettingsWindow() {
     try {
       await window.bean.saveConfig({
         openaiApiKey: apiKey.trim(), model: model.trim(),
-        terminalApp: terminalApp.trim(), editorApp: editorApp.trim(), delegateCli,
+        terminalApp: terminalApp.trim(), editorApp: editorApp.trim(), delegateCli, systemControls,
       });
       setSave("saved");
     } catch (err) {
@@ -180,6 +182,19 @@ export function SettingsWindow() {
                 onInput={(e) => { setTerminalApp((e.target as HTMLInputElement).value); setSave("idle"); }}
               />
               <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void browseTerminalApp()}>Browse…</button>
+            </div>
+          </div>
+          <div class="bean-settings-row">
+            <span class="bean-settings-row-label">System controls</span>
+            <div class="bean-settings-row-control">
+              <label class="bean-chatops-row" title="Lets Bean's chat set volume, control music, and launch/quit apps via a fixed set of macOS commands.">
+                <input
+                  type="checkbox"
+                  checked={systemControls}
+                  onChange={(e) => { setSystemControls((e.target as HTMLInputElement).checked); setSave("idle"); }}
+                />
+                <span class="bean-chatops-label">Allow volume / media / app control from chat</span>
+              </label>
             </div>
           </div>
           <div class="bean-settings-row">

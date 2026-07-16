@@ -8,6 +8,7 @@ export interface ConfigView {
   terminalApp: string;
   editorApp: string;
   delegateCli: string;
+  systemControls: boolean;
   paths: { config: string; skills: string; projects: string; persona: string };
 }
 export interface ConfigUpdate {
@@ -16,6 +17,7 @@ export interface ConfigUpdate {
   terminalApp: string;
   editorApp: string;
   delegateCli: string;
+  systemControls: boolean;
 }
 export interface AppInfo {
   version: string;

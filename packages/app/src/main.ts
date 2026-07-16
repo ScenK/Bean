@@ -16,7 +16,7 @@ import {
   loadNotes, saveNote, deleteNote, searchNotes, retrieveNoteTool, detectClis, loginShellPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate,
-  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS,
+  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
 } from "@bean/core";
@@ -419,17 +419,19 @@ app.whenReady().then(async () => {
     const cfgPath = configFile(dir);
     // ponytail: first launch has no ~/.bean yet — bootstrap an empty-key config so
     // loadConfig (which throws on missing file) has something to read instead of crashing.
-    if (!existsSync(cfgPath)) await saveConfig(cfgPath, { openaiApiKey: "", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "" });
+    if (!existsSync(cfgPath)) await saveConfig(cfgPath, { openaiApiKey: "", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false });
     const cfg = await loadConfig(cfgPath, dir);
 
     const runtime = createRuntimeConfig(
-      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli },
+      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls },
       {
         makeChat: makeOpenAIChat,
         makeConverse: makeOpenAIConverse,
         saveConfigFile: (update) => saveConfig(configFile(dir), update),
       },
     );
+    // Gated per call on the live Settings toggle, so flipping it needs no restart.
+    actionTools.push(systemControlTool(() => runtime.getSystemControls()));
 
     // Shared by createDelegateTasks (chat window's delegate button) and the routine
     // delegate-step adapter below — one resolver, not two copies of this preference logic.
@@ -587,6 +589,7 @@ app.whenReady().then(async () => {
         terminalApp: runtime.getTerminalApp(),
         editorApp: runtime.getEditorApp(),
         delegateCli: runtime.getDelegateCli(),
+        systemControls: runtime.getSystemControls(),
         paths: {
           config: configFile(dir),
           skills: skillsDir(dir),
