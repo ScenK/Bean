@@ -31,9 +31,15 @@ doesn't substitute for the EdDSA check.
 **Install mechanism:** `installAndRelaunch` (`packages/app/src/updater.ts`) does the same
 rename-dance Sparkle/Squirrel use — current `Bean.app` → `.old`, extracted bundle → the live
 path (EXDEV falls back to a recursive copy), roll back on failure — then `app.relaunch();
-app.exit()`. Before the backup rename it always removes any pre-existing `.old` (best-effort):
-a leftover from a previous install (cleanup failed, or the process died mid-swap) makes
-`rename(Bean.app → Bean.app.old)` throw `ENOTEMPTY: directory not empty` on macOS. Gated on
+app.exit()`. Before the backup rename it clears any pre-existing `.old` by renaming it aside
+to a `.stale-<uuid>` path (best-effort `rm` after, discarded either way) rather than deleting
+it in place: a leftover from a previous install (cleanup failed, or the process died mid-swap)
+makes `rename(Bean.app → Bean.app.old)` throw `ENOTEMPTY: directory not empty` on macOS, and a
+recursive `rm` of that leftover can itself silently fail on a permission-restricted file deep
+inside — needs write access to every descendant, unlike a rename which only needs it on the
+directory entry — leaving the destination still occupied and the exact same ENOTEMPTY error a
+first fix (#55) tried to prevent (its `rm(backupPath).catch(() => {})` swallowed that error
+too, so the pre-clear silently no-opped on a real install). Gated on
 `app.isPackaged`, but the gate itself lives one layer up — in `buildUpdateHandlers`
 (`packages/app/src/ipc.ts`), not inside `updater.ts`'s functions. `check()`/`install()`
 short-circuit with a dev-build error before ever calling `checkAndDownloadUpdate`/

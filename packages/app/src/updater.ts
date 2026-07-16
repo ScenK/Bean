@@ -1,5 +1,6 @@
 import { app } from "electron";
 import { execFile as execFileCb } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp as mkdtempCb, writeFile as writeFileCb, rename as renameCb, rm as rmCb, cp as cpCb } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -85,9 +86,21 @@ export async function installAndRelaunch(extractedAppPath: string, deps: Install
 
   const backupPath = `${currentAppPath}.old`;
   // A leftover .old from a previous install (cleanup failed, or the process died mid-swap)
-  // makes rename(current → .old) throw ENOTEMPTY on macOS. Clear it first so the backup
-  // rename always has a free destination.
-  await rm(backupPath).catch(() => {});
+  // makes rename(current → .old) throw ENOTEMPTY on macOS. A recursive `rm` in place can
+  // itself silently fail on a leftover with a permission-restricted file deep inside (needs
+  // write access to every descendant) — swallowing that error left the destination still
+  // occupied and the rename below threw the same ENOTEMPTY anyway. Renaming the leftover
+  // aside first only needs permission on the directory entry itself, so it always frees the
+  // destination; the displaced copy is then deleted best-effort since nothing depends on it.
+  const staleBackupPath = `${backupPath}.stale-${randomUUID()}`;
+  let hadStaleBackup = true;
+  try {
+    await rename(backupPath, staleBackupPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    hadStaleBackup = false;
+  }
+  if (hadStaleBackup) await rm(staleBackupPath).catch(() => {});
   await rename(currentAppPath, backupPath);
 
   try {

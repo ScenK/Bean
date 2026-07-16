@@ -20,6 +20,7 @@ import type { MemoryProposalStore } from "./memory-proposals.js";
 import type { ConsolidationProposalStore } from "./consolidation-proposals.js";
 import type { SkillProposalStore } from "./skill-proposals.js";
 import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
+import { systemControlTool } from "../system-control.js";
 import type { RunRegistry } from "./runs.js";
 
 // Above this many total memories, a successful save-memories also offers a tidy-up (merge
@@ -86,6 +87,8 @@ export interface TeamsBotDeps {
   consolidationProposals: ConsolidationProposalStore;
   conversations: ConversationStore;
   cards: CardBuilders;
+  /** Gates the system_control action tool, same as main.ts's desktop wiring. */
+  systemControlsEnabled: () => boolean;
 }
 
 const DESKTOP_ONLY =
@@ -96,7 +99,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   onMessage: (msg: IncomingMessage, fx: BotEffects) => Promise<void>;
   onCardAction: (action: CardAction, fx: BotEffects) => Promise<void>;
 } {
-  const actions = [retrieveNoteTool(deps.searchNotes)];
+  const actions = [retrieveNoteTool(deps.searchNotes), systemControlTool(deps.systemControlsEnabled)];
 
   async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();

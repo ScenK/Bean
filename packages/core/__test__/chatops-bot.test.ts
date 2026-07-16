@@ -101,6 +101,7 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     cards: fakeCards as CardBuilders,
     skillProposals: new SkillProposalStore(),
     saveSkill: async (name, body) => { savedSkills.push({ name, body }); },
+    systemControlsEnabled: () => false,
     ...overrides,
   };
   return { deps, delegateCalls, saved, savedNotes, savedMemories, savedSkills, queuedTodos };

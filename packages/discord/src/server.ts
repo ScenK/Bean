@@ -55,6 +55,7 @@ const bot = buildTeamsBot({
   consolidationProposals: new ConsolidationProposalStore(),
   conversations,
   cards: discordCards,
+  systemControlsEnabled: () => beanConfig.systemControls,
 });
 
 // Partials.Channel is REQUIRED for DM message events in discord.js v14 (DM channels
