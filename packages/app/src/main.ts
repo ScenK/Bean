@@ -178,6 +178,11 @@ app.whenReady().then(async () => {
   app.on("before-quit", () => {
     quitting = true;
     interruptAllDelegates();
+    // Spawned chatops servers do NOT die with us — without this they survive as launchd-owned
+    // orphans, holding port 3978 and answering webhooks with whatever build they booted with.
+    // The servers' own exitWhenOrphaned() watchdog covers the paths that never reach here
+    // (crash, force-quit, SIGKILL).
+    chatopsServers?.stopAll();
   });
   const allowClose = new WeakSet<BrowserWindow>();
   ipcMain.on(IPC.allowChatClose, (evt) => {
