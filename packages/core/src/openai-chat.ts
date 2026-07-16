@@ -36,6 +36,7 @@ interface ToolChatClient {
         >;
         tools?: Array<{ type: "function"; function: { name: string; description: string; parameters: object } }>;
         tool_choice?: "auto";
+        prompt_cache_key?: string;
       }) => Promise<{
         choices: Array<{
           message?: {
@@ -75,6 +76,9 @@ export function makeOpenAIConverseWithClient(client: ToolChatClient): ConverseDe
       messages: messages.map(toOpenAIMessage),
       tools: tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })),
       tool_choice: "auto",
+      // Routing hint for OpenAI's prefix cache: all converse() calls share the same stable
+      // system-prompt prefix, so pinning them to one key raises cache-hit odds under load.
+      prompt_cache_key: "bean-converse",
     });
     const msg = res.choices[0]?.message;
     const content = msg?.content ?? "";

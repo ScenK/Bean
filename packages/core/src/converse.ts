@@ -311,18 +311,15 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     runAvailable = true,
     todoRoutines = [],
   } = input;
+  // The leading system message must stay byte-stable for the life of a chat: OpenAI prompt
+  // caching is exact-prefix, so anything per-turn here (a clock, per-message memory ranking)
+  // re-bills the entire conversation uncached on every turn. Volatile context goes in a
+  // second system message after history instead — only the tail misses the cache.
   const systemParts = [
     composePersonaPrompt(persona),
     behaviorInstructions(runAvailable),
     catalog(skills, projects),
   ];
-  // Local time so the model can resolve "in 20 minutes" / "at 5pm" into a concrete timestamp.
-  if (actions.length > 0) systemParts.push(`Current date and time: ${now().toString()}`);
-  // No per-chat "current project" signal exists here (LinkedNote doesn't carry one) — force-
-  // include is left unused from this call site, but selectRelevantMemories still supports it.
-  const relevant = selectRelevantMemories(memories, latestUserText);
-  const recall = memoriesBlock(relevant, projects);
-  if (recall) systemParts.push(recall);
   if (linkedNote) {
     systemParts.push(
       `This chat continues from the note "${linkedNote.title}" (v${linkedNote.version}). Its current ` +
@@ -331,9 +328,21 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     );
   }
 
+  const contextParts: string[] = [];
+  // Local time so the model can resolve "in 20 minutes" / "at 5pm" into a concrete timestamp.
+  if (actions.length > 0) contextParts.push(`Current date and time: ${now().toString()}`);
+  // No per-chat "current project" signal exists here (LinkedNote doesn't carry one) — force-
+  // include is left unused from this call site, but selectRelevantMemories still supports it.
+  const relevant = selectRelevantMemories(memories, latestUserText);
+  const recall = memoriesBlock(relevant, projects);
+  if (recall) contextParts.push(recall);
+
   const messages: ConvoMsg[] = [
     { role: "system", content: systemParts.join("\n\n") },
     ...history.map((t): ConvoMsg => ({ role: t.role, content: t.content })),
+    ...(contextParts.length > 0
+      ? [{ role: "system", content: contextParts.join("\n\n") } satisfies ConvoMsg]
+      : []),
     { role: "user", content: latestUserText },
   ];
 

@@ -84,7 +84,7 @@ test("chat handler drops disabled skills and injects recalled memories", async (
     loadProjects: async () => projects,
     loadPersona: async () => ({ name: "Bean", tags: ["Warm"] }) as Persona,
     converse: async ({ messages, tools }) => {
-      systemContent = messages[0]!.content;
+      systemContent = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
       const props = (tools[0]!.parameters as { properties: Record<string, { enum?: string[] }> }).properties;
       expect(props.skill?.enum).toEqual(["review-code"]); // "hidden" excluded
       return { content: "ok", toolCalls: [] };
