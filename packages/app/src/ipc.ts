@@ -187,12 +187,20 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
     ]);
     const enabled = skills.filter((s) => s.enabled !== false);
     const todoRoutines = routines.filter((r) => r.todoDriven).map((r) => r.name);
-    return converse(
-      req.history, req.message, enabled, projects, persona, memories,
-      { chat: deps.converse, model: deps.getModel() }, req.droppedUrl, deps.actions,
-      undefined, req.linkedNote, deps.delegateAvailable?.() ?? false,
-      [], false, true, todoRoutines,
-    );
+    return converse({
+      history: req.history,
+      latestUserText: req.message,
+      skills: enabled,
+      projects,
+      persona,
+      memories,
+      deps: { chat: deps.converse, model: deps.getModel() },
+      droppedUrl: req.droppedUrl,
+      actions: deps.actions,
+      linkedNote: req.linkedNote,
+      delegateAvailable: deps.delegateAvailable?.() ?? false,
+      todoRoutines,
+    });
   };
 }
 

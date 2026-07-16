@@ -360,11 +360,17 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }
         // runAvailable=false: propose_run is never offered here — confirming one couldn't
         // execute anything from Teams/Discord; propose_delegate is the only run path.
-        const result = await converse(
-          history, msg.text, skills, projects, persona, memories,
-          { chat: deps.chat, model: deps.model },
-          undefined, actions, undefined, undefined, true, detected, true, false, todoRoutines,
-        );
+        const converseBase = {
+          skills, projects, persona, memories,
+          deps: { chat: deps.chat, model: deps.model },
+          actions,
+          delegateAvailable: true,
+          availableClis: detected,
+          rememberAvailable: true,
+          runAvailable: false,
+          todoRoutines,
+        };
+        const result = await converse({ ...converseBase, history, latestUserText: msg.text });
         deps.conversations.append(msg.conversationId, { role: "user", content: msg.text });
         if (result.reply) {
           deps.conversations.append(msg.conversationId, { role: "assistant", content: result.reply });
@@ -377,12 +383,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           // confirm card — it's just another chat reply, no agent harness or side effects.
           if (result.proposedRun.target === "chat") {
             const run = result.proposedRun;
-            const followup = await converse(
-              deps.conversations.history(msg.conversationId), run.composedPrompt,
-              skills, projects, persona, memories,
-              { chat: deps.chat, model: deps.model },
-              undefined, actions, undefined, undefined, true, detected, true, false, todoRoutines,
-            );
+            const followup = await converse({
+              ...converseBase,
+              history: deps.conversations.history(msg.conversationId),
+              latestUserText: run.composedPrompt,
+            });
             deps.conversations.append(msg.conversationId, { role: "user", content: run.composedPrompt });
             // Nested proposals from the skill prompt are deliberately ignored — one hop only.
             // A pure tool-use second hop leaves reply empty; never answer with silence.
