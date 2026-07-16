@@ -56,18 +56,20 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
     terminalApp: parsed.terminalApp ?? "",
     editorApp: parsed.editorApp ?? "",
     delegateCli: parsed.delegateCli ?? "",
+    systemControls: parsed.systemControls ?? false,
     beanDir: beanDirPath,
   };
 }
 
 export async function saveConfig(
   file: string,
-  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string },
+  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean },
 ): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   const out = {
     openaiApiKey: config.openaiApiKey, model: config.model,
     terminalApp: config.terminalApp ?? "", editorApp: config.editorApp ?? "", delegateCli: config.delegateCli ?? "",
+    systemControls: config.systemControls ?? false,
   };
   await writeFile(file, JSON.stringify(out, null, 2) + "\n", "utf8");
 }
