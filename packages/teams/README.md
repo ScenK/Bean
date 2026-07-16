@@ -99,9 +99,14 @@ Three ways to validate the bot without touching your employer's tenant or IT pol
     pnpm build
     pnpm --filter @bean/teams start
 
-Then @mention the bot in the group chat. Saying which CLI/model to use ("with opencode on
-GPT-5.5") is honored; otherwise Bean uses the last-used or first-detected CLI. Delegate
-results post back to the thread when the run finishes.
+Then @mention the bot in the group chat (a 1:1 chat needs no mention). Merely naming it ("we
+should add x to bean") is deliberately not an address — that message is kept as ambient
+context, not answered. Saying which CLI/model to use ("with opencode on GPT-5.5") is honored;
+otherwise Bean uses the last-used or first-detected CLI. Delegate results post back to the
+thread when the run finishes.
+
+Two plain-text commands: `cancel` stops in-flight runs, and `/new` clears the conversation's
+chat context (including ambient chatter) so the next message starts fresh.
 
 In the packaged desktop app, the tray menu's **Teams** toggle spawns this exact same built
 `dist/server.js` (via Electron's bundled Node) — don't also run `pnpm --filter @bean/teams
@@ -137,3 +142,5 @@ silently with the same generic Teams error and guessing wastes a round trip:
 - [ ] A proposal left >10 min → "expired" on confirm.
 - [ ] (RSC granted) chat without mentioning Bean, then "@Bean summarize the last 10 minutes"
       → summary references the ambient messages; the non-mention messages got no reply.
+- [ ] (RSC granted) an untagged message naming Bean ("bean is slow today") → no reply at all.
+- [ ] "@Bean /new" → "Fresh start"; a follow-up shows no memory of the prior chat or ambient.
