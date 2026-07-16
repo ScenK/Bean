@@ -92,7 +92,11 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string): Bo
       if (!("messages" in channel)) return [];
       const fetched = await channel.messages.fetch({ limit: 50 });
       return [...fetched.values()]
-        .filter((m) => m.createdTimestamp >= sinceMs && !m.author.bot && m.id !== triggeringMessageId && m.content)
+        // Messages addressed to Bean are already in the conversation history — only
+        // genuine bystander chatter counts as ambient.
+        .filter((m) =>
+          m.createdTimestamp >= sinceMs && !m.author.bot && m.id !== triggeringMessageId &&
+          m.content && !m.mentions.users.has(client.user?.id ?? ""))
         .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
         .map((m) => ({ fromName: m.author.displayName, text: m.content, at: m.createdTimestamp }));
     },
@@ -103,11 +107,13 @@ client.on("messageCreate", async (message) => {
   try {
     if (message.author.bot || !allowed(message.author.id)) return;
     const isDm = message.channel.type === ChannelType.DM;
-    const addressed =
+    // Explicit (DM, @mention, reply-to-Bean) gets the full toolset; a message that merely
+    // names the bot ("we could use bean for this") gets a text-only reply, no proposals.
+    const explicit =
       isDm ||
       message.mentions.users.has(client.user?.id ?? "") ||
-      message.mentions.repliedUser?.id === client.user?.id ||
-      mentionsBotName(message.content, client.user?.username ?? "");
+      message.mentions.repliedUser?.id === client.user?.id;
+    const addressed = explicit || mentionsBotName(message.content, client.user?.username ?? "");
     if (!addressed) return;
     const text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
     if (!text) return;
@@ -118,7 +124,10 @@ client.on("messageCreate", async (message) => {
       : undefined;
     try {
       await bot.onMessage(
-        { conversationId: message.channelId, text, fromId: message.author.id, fromName: message.author.displayName },
+        {
+          conversationId: message.channelId, text, fromId: message.author.id,
+          fromName: message.author.displayName, addressedExplicitly: explicit,
+        },
         effectsFor(message.channel, message.id),
       );
     } finally {

@@ -120,7 +120,7 @@ test("plain message: replies with converse text and records history", async () =
   ]);
 });
 
-test("fetchRecent messages are injected as an ambient context block", async () => {
+test("fetchRecent messages are injected after stored history and persisted into it", async () => {
   const seen: { role: string; content: string }[][] = [];
   const { deps } = makeDeps({
     chat: async ({ messages }) => {
@@ -128,14 +128,90 @@ test("fetchRecent messages are injected as an ambient context block", async () =
       return { content: "summary", toolCalls: [] };
     },
   });
+  deps.conversations.append("c1", { role: "user", content: "earlier question" });
+  deps.conversations.append("c1", { role: "assistant", content: "earlier answer" });
   const bot = buildTeamsBot(deps);
   const effects = { ...fx(), fetchRecent: async () => [{ fromName: "alice", text: "ship it", at: Date.now() }] };
   await bot.onMessage(msg, effects);
-  const block = seen[0]?.find((m) => m.content.includes("not addressed to you"));
-  expect(block?.role).toBe("user");
-  expect(block?.content).toContain("alice: ship it");
-  // context block is per-turn, not persisted into the conversation history
-  expect(deps.conversations.history("c1").some((t) => t.content.includes("alice"))).toBe(false);
+  const contents = seen[0]!.map((m) => m.content);
+  const blockIdx = contents.findIndex((c) => c.includes("not addressed to you"));
+  // system, earlier question, earlier answer, ambient block, latest message —
+  // the ambient messages are newer than stored history, so the block comes after it.
+  expect(blockIdx).toBe(3);
+  expect(seen[0]![blockIdx]!.role).toBe("user");
+  expect(contents[blockIdx]).toContain("alice: ship it");
+  // the block Bean acted on is persisted so follow-up mentions stay coherent
+  const history = deps.conversations.history("c1").map((t) => t.content);
+  expect(history.findIndex((c) => c.includes("alice: ship it"))).toBe(2);
+  // block sits right before the mention that triggered it, then Bean's reply
+  expect(history.at(-2)).toBe("hi bean");
+});
+
+test("a second mention does not re-inject ambient messages already seen", async () => {
+  const sinceSeen: number[] = [];
+  const ambientAt = Date.now() - 60_000;
+  const { deps } = makeDeps();
+  const effects = {
+    ...fx(),
+    fetchRecent: async (sinceMs: number) => {
+      sinceSeen.push(sinceMs);
+      return [{ fromName: "alice", text: "ship it", at: ambientAt }].filter((m) => m.at >= sinceMs);
+    },
+  };
+  const bot = buildTeamsBot(deps);
+  await bot.onMessage(msg, effects);
+  await bot.onMessage(msg, effects);
+  expect(sinceSeen[1]).toBeGreaterThan(ambientAt);
+  const blocks = deps.conversations.history("c1").filter((t) => t.content.includes("alice: ship it"));
+  expect(blocks).toHaveLength(1);
+});
+
+test("'/new' clears the conversation history without calling converse", async () => {
+  const { deps } = makeDeps();
+  const chatSpy = vi.fn(deps.chat);
+  const bot = buildTeamsBot({ ...deps, chat: chatSpy });
+  const effects = fx();
+  await bot.onMessage(msg, effects);
+  expect(deps.conversations.history("c1")).not.toEqual([]);
+  chatSpy.mockClear();
+  await bot.onMessage({ ...msg, text: "/new" }, effects);
+  expect(deps.conversations.history("c1")).toEqual([]);
+  expect(chatSpy).not.toHaveBeenCalled();
+  expect(effects.posted.some((p) => p.toLowerCase().includes("fresh"))).toBe(true);
+});
+
+test("after '/new', ambient messages from before the reset are not re-injected", async () => {
+  const seen: string[][] = [];
+  const { deps } = makeDeps({
+    chat: async ({ messages }) => {
+      seen.push(messages.map((m) => String(m.content)));
+      return { content: "ok", toolCalls: [] };
+    },
+  });
+  const staleAt = Date.now() - 1000; // recent enough for the 15-min window
+  const effects = {
+    ...fx(),
+    fetchRecent: async (sinceMs: number) =>
+      [{ fromName: "alice", text: "old chatter", at: staleAt }].filter((m) => m.at >= sinceMs),
+  };
+  const bot = buildTeamsBot(deps);
+  await bot.onMessage({ ...msg, text: "/new" }, effects);
+  await bot.onMessage(msg, effects);
+  expect(seen[0]!.some((c) => c.includes("old chatter"))).toBe(false);
+});
+
+test("a casual name-mention (addressedExplicitly=false) is offered no proposal tools", async () => {
+  let captured: string[] = [];
+  const { deps } = makeDeps({
+    chat: async ({ tools }) => {
+      captured = tools.map((t) => t.name);
+      return { content: "hi", toolCalls: [] };
+    },
+    listTodoRoutines: async () => ["nightly"],
+  });
+  await buildTeamsBot(deps).onMessage({ ...msg, addressedExplicitly: false }, fx());
+  expect(captured.some((n) => n.startsWith("propose_"))).toBe(false);
+  expect(captured).toContain("retrieve_note");
 });
 
 test("empty or absent fetchRecent injects nothing", async () => {

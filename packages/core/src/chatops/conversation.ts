@@ -36,6 +36,11 @@ export class ConversationStore {
     ).run(conversationId, seq, turn.role, turn.content, new Date().toISOString());
   }
 
+  /** Deletes a conversation's entire history — backs the "/new" fresh-start command. */
+  clear(conversationId: string): void {
+    this.db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ?").run(conversationId);
+  }
+
   turnCount(conversationId: string): number {
     const row = this.db.prepare(
       "SELECT COUNT(*) as c FROM chatops_turns WHERE conversation_id = ?",

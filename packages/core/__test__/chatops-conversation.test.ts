@@ -46,6 +46,16 @@ test("turnCount and oldest back the compaction pass", () => {
   expect(oldest3.map((t) => t.content)).toEqual(["m0", "m1", "m2"]);
 });
 
+test("clear() wipes one conversation's history without touching others", () => {
+  const s = new ConversationStore(file);
+  s.append("c1", { role: "user", content: "hi" });
+  s.append("c1", { role: "assistant", content: "hello" });
+  s.append("c2", { role: "user", content: "other" });
+  s.clear("c1");
+  expect(s.history("c1")).toEqual([]);
+  expect(s.history("c2")).toEqual([{ role: "user", content: "other" }]);
+});
+
 test("replaceOldest collapses the oldest n turns into one summary turn, keeping the rest", () => {
   const s = new ConversationStore(file);
   for (let i = 0; i < 10; i++) s.append("c1", { role: "user", content: `m${i}` });

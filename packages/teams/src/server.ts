@@ -113,15 +113,17 @@ process.on("SIGTERM", () => {
 // grants the RSC permission ChannelMessage.Read.Group — see packages/teams/README.md.
 const ambient = new AmbientStore();
 
-/** True when the message @mentions the bot or names it in the text; personal (1:1)
- * chats always count as addressed. Untagged channel messages only arrive at all
- * with the RSC permission above. */
-function addressedToBot(a: Activity): boolean {
-  if (a.conversation.conversationType === "personal") return true;
+/** How a channel message addresses the bot. "explicit" (personal 1:1 chat or a platform
+ * @mention) gets the full toolset; "casual" (the text merely names the bot) gets a
+ * text-only reply with proposals withheld; "none" is kept as ambient context only.
+ * Untagged channel messages only arrive at all with the RSC permission above. */
+function addressingFor(a: Activity): "explicit" | "casual" | "none" {
+  if (a.conversation.conversationType === "personal") return "explicit";
   const mentioned = (a.entities ?? []).some(
     (e) => e.type === "mention" && (e as { mentioned?: { id?: string } }).mentioned?.id === a.recipient.id,
   );
-  return mentioned || mentionsBotName(a.text ?? "", a.recipient.name ?? "");
+  if (mentioned) return "explicit";
+  return mentionsBotName(a.text ?? "", a.recipient.name ?? "") ? "casual" : "none";
 }
 
 /** Effects bound to the incoming turn's conversation; posts after the turn ends go
@@ -182,7 +184,8 @@ app.post("/api/messages", (req, res) => {
     }
     const text = TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "";
     if (!text) return;
-    if (!addressedToBot(a)) {
+    const addressing = addressingFor(a);
+    if (addressing === "none") {
       // Not for Bean — remember it as context for a later mention, but don't reply.
       ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
       return;
@@ -193,7 +196,10 @@ app.post("/api/messages", (req, res) => {
     const typing = setInterval(() => { void context.sendActivity({ type: ActivityTypes.Typing }); }, 5000);
     try {
       await bot.onMessage(
-        { conversationId: a.conversation.id, text, fromId: a.from.id, fromName: a.from.name ?? "someone" },
+        {
+          conversationId: a.conversation.id, text, fromId: a.from.id, fromName: a.from.name ?? "someone",
+          addressedExplicitly: addressing === "explicit",
+        },
         fx,
       );
     } finally {

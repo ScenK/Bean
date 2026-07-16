@@ -32,6 +32,10 @@ export interface IncomingMessage {
   text: string;
   fromId: string;
   fromName: string;
+  /** false when the message only named the bot in passing (bare name-match in a channel)
+   * rather than @-mentioning it — Bean replies in text but withholds every proposal tool.
+   * Absent means explicitly addressed. */
+  addressedExplicitly?: boolean;
 }
 
 export interface CardAction {
@@ -95,6 +99,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   onCardAction: (action: CardAction, fx: BotEffects) => Promise<void>;
 } {
   const actions = [retrieveNoteTool(deps.searchNotes)];
+  // Newest ambient timestamp already injected per conversation — the next mention only
+  // fetches newer chatter, so the persisted ambient blocks never repeat themselves.
+  const ambientCutoff = new Map<string, number>();
 
   async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();
@@ -344,6 +351,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           await fx.reply(n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.");
           return;
         }
+        if (msg.text.trim().toLowerCase() === "/new") {
+          deps.conversations.clear(msg.conversationId);
+          // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
+          ambientCutoff.set(msg.conversationId, Date.now());
+          await fx.reply("Fresh start — I've cleared this conversation's context.");
+          return;
+        }
         const [skills, projects, persona, memories, modelMemory, todoRoutines] = await Promise.all([
           deps.loadSkills(), deps.loadProjects(), deps.loadPersona(), deps.loadMemories(), deps.loadModelMemory(),
           deps.listTodoRoutines(),
@@ -353,9 +367,17 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (fx.fetchRecent) {
           // ponytail: fixed 15-min window; the block carries timestamps so the model can
           // scope "the last 10 minutes" itself — parse the user's timeframe if it matters.
-          const ambient = (await fx.fetchRecent(Date.now() - 15 * 60_000)).slice(-50);
+          // The cutoff floor keeps repeat mentions from re-injecting chatter already persisted.
+          const now = Date.now();
+          const sinceMs = Math.max(now - 15 * 60_000, ambientCutoff.get(msg.conversationId) ?? 0);
+          const ambient = (await fx.fetchRecent(sinceMs)).slice(-50);
           if (ambient.length > 0) {
-            history = [{ role: "user", content: formatAmbientBlock(ambient) }, ...history];
+            ambientCutoff.set(msg.conversationId, ambient[ambient.length - 1]!.at + 1);
+            const block = formatAmbientBlock(ambient, now);
+            // Persist what Bean acted on so follow-up mentions read a coherent history;
+            // appended after stored turns because the chatter is newer than they are.
+            deps.conversations.append(msg.conversationId, { role: "user", content: block });
+            history = [...history, { role: "user", content: block }];
           }
         }
         // runAvailable=false: propose_run is never offered here — confirming one couldn't
@@ -369,6 +391,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           rememberAvailable: true,
           runAvailable: false,
           todoRoutines,
+          // Passing name-mentions get a text-only reply — no proposal tools at all.
+          proposalsAvailable: msg.addressedExplicitly !== false,
         };
         const result = await converse({ ...converseBase, history, latestUserText: msg.text });
         deps.conversations.append(msg.conversationId, { role: "user", content: msg.text });
