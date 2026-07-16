@@ -7,6 +7,7 @@ import {
   claudeResult,
   runDelegate,
   DELEGATE_TIMEOUT_MS,
+  GIT_TRAILER_INSTRUCTION,
   type DelegateCallbacks,
 } from "../src/delegate.js";
 
@@ -42,7 +43,7 @@ describe("delegateCommand", () => {
     const { command, args } = delegateCommand({ cli: "claude", projectPath: "/p", prompt: "fix the bug" });
     expect(command).toBe("claude");
     expect(args).toEqual([
-      "-p", "fix the bug",
+      "-p", "fix the bug" + GIT_TRAILER_INSTRUCTION,
       "--output-format", "stream-json",
       "--verbose",
       "--allowedTools", "Bash,Edit,Write,Read,Glob,Grep",
@@ -52,18 +53,18 @@ describe("delegateCommand", () => {
   it("maps opencode to headless run with auto approval", () => {
     const { command, args } = delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "fix the bug" });
     expect(command).toBe("opencode");
-    expect(args).toEqual(["run", "--auto", "fix the bug"]);
+    expect(args).toEqual(["run", "--auto", "fix the bug" + GIT_TRAILER_INSTRUCTION]);
   });
 
   it("appends --model when the chosen model has an alias for the CLI", () => {
     const { args } = delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "fix", model: "claude-sonnet-5" });
-    expect(args).toEqual(["run", "--auto", "--model", "github-copilot/claude-sonnet-5", "fix"]);
+    expect(args).toEqual(["run", "--auto", "--model", "github-copilot/claude-sonnet-5", "fix" + GIT_TRAILER_INSTRUCTION]);
   });
 
   it("omits --model when the chosen model has no alias for the CLI", () => {
     const { args } = delegateCommand({ cli: "claude", projectPath: "/p", prompt: "fix", model: "gpt-5-5" });
     expect(args).toEqual([
-      "-p", "fix",
+      "-p", "fix" + GIT_TRAILER_INSTRUCTION,
       "--output-format", "stream-json",
       "--verbose",
       "--allowedTools", "Bash,Edit,Write,Read,Glob,Grep",
@@ -120,7 +121,7 @@ describe("runDelegate", () => {
       collect().cbs,
       (command, args, cwd) => { seen.push({ command, args, cwd }); return asChild(child); },
     );
-    expect(seen).toEqual([{ command: "opencode", args: ["run", "--auto", "go"], cwd: "/my/project" }]);
+    expect(seen).toEqual([{ command: "opencode", args: ["run", "--auto", "go" + GIT_TRAILER_INSTRUCTION], cwd: "/my/project" }]);
   });
 
   it("claude: streams tail lines and resolves onDone with the result event", () => {
