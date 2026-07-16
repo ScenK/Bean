@@ -76,6 +76,7 @@ test("converse adapter sends assistant tool calls and tool result messages", asy
     },
     { role: "tool", content: "reminder saved", tool_call_id: "call_1" },
   ]);
+  expect((createdArgs as { prompt_cache_key?: string }).prompt_cache_key).toBe("bean-converse");
 });
 
 test("converse adapter skips a tool call with malformed arguments", async () => {

@@ -213,32 +213,53 @@ test("delegate guidance tells the model to propose directly, not ask permission 
   expect(delegateDescription).toContain("don't ask the user for permission in chat text first");
 });
 
-test("recalled memories are injected after the catalog, labeled global vs project", async () => {
-  let systemContent = "";
+test("recalled memories ride a trailing system message, labeled global vs project", async () => {
+  let captured: ConvoMsg[] = [];
   const deps: ConverseDeps = {
     model: "m",
-    chat: async ({ messages }) => { systemContent = messages[0]!.content; return { content: "ok", toolCalls: [] }; },
+    chat: async ({ messages }) => { captured = messages; return { content: "ok", toolCalls: [] }; },
   };
   const memories = [
     { id: "1", text: "prefers pnpm", createdAt: "2026-07-03T00:00:00.000Z" },
     { id: "2", text: "preload must stay CJS", projectPath: "/dev/bean", createdAt: "2026-07-03T00:00:00.000Z" },
   ];
-  await conv({ latestUserText: "hi", memories, deps });
-  const catalogIdx = systemContent.indexOf("Skills:");
-  const memIdx = systemContent.indexOf("What you remember:");
-  expect(memIdx).toBeGreaterThan(catalogIdx);
-  expect(systemContent).toContain("- (about the user) prefers pnpm");
-  expect(systemContent).toContain("- (project bean) preload must stay CJS");
+  await conv({ history: [{ role: "user", content: "earlier" }], latestUserText: "hi", memories, deps });
+  // Leading system message stays memory-free (stable prompt-cache prefix); the recall block
+  // sits in a second system message between history and the latest user message.
+  expect(captured[0]!.content).not.toContain("What you remember:");
+  const context = captured[captured.length - 2]!;
+  expect(context.role).toBe("system");
+  expect(context.content).toContain("What you remember:");
+  expect(context.content).toContain("- (about the user) prefers pnpm");
+  expect(context.content).toContain("- (project bean) preload must stay CJS");
+  expect(captured[captured.length - 1]).toEqual({ role: "user", content: "hi" });
 });
 
 test("no memory block is added when memories is empty", async () => {
-  let systemContent = "";
+  let captured: ConvoMsg[] = [];
   const deps: ConverseDeps = {
     model: "m",
-    chat: async ({ messages }) => { systemContent = messages[0]!.content; return { content: "ok", toolCalls: [] }; },
+    chat: async ({ messages }) => { captured = messages; return { content: "ok", toolCalls: [] }; },
   };
   await conv({ latestUserText: "hi", deps });
-  expect(systemContent).not.toContain("What you remember:");
+  expect(captured.some((m) => m.content.includes("What you remember:"))).toBe(false);
+});
+
+test("leading system message is byte-stable across turns (prompt-cache prefix)", async () => {
+  const systems: string[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages }) => { systems.push(messages[0]!.content); return { content: "ok", toolCalls: [] }; },
+  };
+  const memories = [{ id: "1", text: "prefers pnpm", createdAt: "2026-07-03T00:00:00.000Z" }];
+  const action = { spec: { name: "noop", description: "d", parameters: {} }, run: async () => "ok" };
+  await conv({ latestUserText: "first message", memories, deps, actions: [action], now: () => new Date("2026-07-03T10:00:00.000Z") });
+  await conv({
+    history: [{ role: "user", content: "first message" }, { role: "assistant", content: "ok" }],
+    latestUserText: "totally different follow-up",
+    memories, deps, actions: [action], now: () => new Date("2026-07-04T22:31:07.000Z"),
+  });
+  expect(systems[1]).toBe(systems[0]);
 });
 
 test("history turns are accepted and the function never throws on chat failure", async () => {
@@ -367,18 +388,22 @@ test("a throwing action feeds an error string back instead of crashing", async (
 
 test("action tool specs are offered alongside propose_run and current time is in the prompt", async () => {
   let captured: ToolSpec[] = [];
-  let systemContent = "";
+  let messagesSeen: ConvoMsg[] = [];
   const deps: ConverseDeps = {
     model: "m",
     chat: async ({ tools, messages }) => {
-      captured = tools; systemContent = messages[0]!.content;
+      captured = tools; messagesSeen = messages;
       return { content: "ok", toolCalls: [] };
     },
   };
   const now = new Date("2026-07-03T10:00:00.000Z");
   await conv({ latestUserText: "hi", deps, actions: [reminderAction([])], now: () => now });
   expect(captured.map((t) => t.name)).toEqual(["propose_run", "propose_note", "propose_skill", "set_reminder"]);
-  expect(systemContent).toContain(`Current date and time: ${now.toString()}`);
+  // The clock lives in the trailing context message, not the cached leading system prefix.
+  expect(messagesSeen[0]!.content).not.toContain("Current date and time:");
+  const context = messagesSeen[messagesSeen.length - 2]!;
+  expect(context.role).toBe("system");
+  expect(context.content).toContain(`Current date and time: ${now.toString()}`);
 });
 
 test("propose_note yields a confirmed-later draft; project validated against known paths", async () => {

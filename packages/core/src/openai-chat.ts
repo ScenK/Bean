@@ -36,6 +36,7 @@ interface ToolChatClient {
         >;
         tools?: Array<{ type: "function"; function: { name: string; description: string; parameters: object } }>;
         tool_choice?: "auto";
+        prompt_cache_key?: string;
       }) => Promise<{
         choices: Array<{
           message?: {
@@ -75,6 +76,11 @@ export function makeOpenAIConverseWithClient(client: ToolChatClient): ConverseDe
       messages: messages.map(toOpenAIMessage),
       tools: tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })),
       tool_choice: "auto",
+      // Routing hint for OpenAI's prefix cache: converse() calls (and routine chat steps,
+      // which share this adapter) reuse stable prompt prefixes, so pinning them to one key
+      // raises cache-hit odds under load. Bean's volume stays far below the per-key rate
+      // where a shared key would hurt routing.
+      prompt_cache_key: "bean-converse",
     });
     const msg = res.choices[0]?.message;
     const content = msg?.content ?? "";
