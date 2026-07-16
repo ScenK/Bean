@@ -88,31 +88,6 @@ test("runAvailable=false (chatops) offers propose_run only for chat-target skill
   expect(captured[0]!.description).toContain("right here in this chat");
 });
 
-test("proposalsAvailable=false drops every propose_* tool but keeps action tools, and instructs text-only replies", async () => {
-  let captured: ToolSpec[] = [];
-  let system = "";
-  const deps: ConverseDeps = {
-    model: "m",
-    chat: async ({ tools, messages }) => {
-      captured = tools;
-      system = messages[0]!.content;
-      return { content: "hi", toolCalls: [] };
-    },
-  };
-  const echo: ActionTool = { spec: { name: "echo", description: "", parameters: {} }, run: async () => "ok" };
-  await conv({
-    latestUserText: "someone said bean in passing",
-    deps,
-    actions: [echo],
-    delegateAvailable: true,
-    rememberAvailable: true,
-    todoRoutines: ["nightly"],
-    proposalsAvailable: false,
-  });
-  expect(captured.map((t) => t.name)).toEqual(["echo"]);
-  expect(system).toContain("mentioned in passing");
-});
-
 test("runAvailable=false with no chat-target skills drops propose_run and rejects stray calls", async () => {
   let captured: ToolSpec[] = [];
   const deps: ConverseDeps = {

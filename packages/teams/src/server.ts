@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
-  buildTeamsBot, mentionsBotName, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
+  buildTeamsBot, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore,
 } from "@bean/core";
 import {
@@ -113,17 +113,15 @@ process.on("SIGTERM", () => {
 // grants the RSC permission ChannelMessage.Read.Group — see packages/teams/README.md.
 const ambient = new AmbientStore();
 
-/** How a channel message addresses the bot. "explicit" (personal 1:1 chat or a platform
- * @mention) gets the full toolset; "casual" (the text merely names the bot) gets a
- * text-only reply with proposals withheld; "none" is kept as ambient context only.
- * Untagged channel messages only arrive at all with the RSC permission above. */
-function addressingFor(a: Activity): "explicit" | "casual" | "none" {
-  if (a.conversation.conversationType === "personal") return "explicit";
-  const mentioned = (a.entities ?? []).some(
+/** True only when the message @mentions the bot; personal (1:1) chats always count.
+ * Naming the bot in passing ("we should add x to bean") deliberately does NOT count —
+ * that message is about Bean, not to it, and becomes ambient context instead. Untagged
+ * channel messages only arrive at all with the RSC permission above. */
+function addressedToBot(a: Activity): boolean {
+  if (a.conversation.conversationType === "personal") return true;
+  return (a.entities ?? []).some(
     (e) => e.type === "mention" && (e as { mentioned?: { id?: string } }).mentioned?.id === a.recipient.id,
   );
-  if (mentioned) return "explicit";
-  return mentionsBotName(a.text ?? "", a.recipient.name ?? "") ? "casual" : "none";
 }
 
 /** Effects bound to the incoming turn's conversation; posts after the turn ends go
@@ -184,8 +182,7 @@ app.post("/api/messages", (req, res) => {
     }
     const text = TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "";
     if (!text) return;
-    const addressing = addressingFor(a);
-    if (addressing === "none") {
+    if (!addressedToBot(a)) {
       // Not for Bean — remember it as context for a later mention, but don't reply.
       ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
       return;
@@ -196,10 +193,7 @@ app.post("/api/messages", (req, res) => {
     const typing = setInterval(() => { void context.sendActivity({ type: ActivityTypes.Typing }); }, 5000);
     try {
       await bot.onMessage(
-        {
-          conversationId: a.conversation.id, text, fromId: a.from.id, fromName: a.from.name ?? "someone",
-          addressedExplicitly: addressing === "explicit",
-        },
+        { conversationId: a.conversation.id, text, fromId: a.from.id, fromName: a.from.name ?? "someone" },
         fx,
       );
     } finally {

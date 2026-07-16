@@ -290,9 +290,6 @@ export interface ConverseInput {
   /** false where confirming a run couldn't execute anything (chatops — no desktop, no terminal). */
   runAvailable?: boolean;
   todoRoutines?: string[];
-  /** false when the message only named Bean in passing (channel name-match, not a direct
-   * @mention): reply in text only — every propose_* tool is withheld. Default true. */
-  proposalsAvailable?: boolean;
 }
 
 export async function converse(input: ConverseInput): Promise<ConverseResult> {
@@ -313,16 +310,10 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     rememberAvailable = false,
     runAvailable = true,
     todoRoutines = [],
-    proposalsAvailable = true,
   } = input;
   const systemParts = [
     composePersonaPrompt(persona),
-    proposalsAvailable
-      ? behaviorInstructions(runAvailable)
-      : "You cannot do project work yourself. You were mentioned in passing rather than " +
-        "addressed directly — reply briefly in text only; do not propose, start, or offer to " +
-        "run any work this turn. Any tools you are given you may call directly when the " +
-        "message clearly asks for them.",
+    behaviorInstructions(runAvailable),
     catalog(skills, projects),
   ];
   // Local time so the model can resolve "in 20 minutes" / "at 5pm" into a concrete timestamp.
@@ -351,17 +342,15 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   // Without a terminal (chatops), only `target: chat` skills are runnable via propose_run —
   // they execute on Bean's own model; terminal skills there go through propose_delegate.
   const runnableSkills = runAvailable ? skills : skills.filter((s) => s.target === "chat");
-  const proposalTools = proposalsAvailable
-    ? [
-        ...(runnableSkills.length > 0 ? [proposeRunTool(runnableSkills, projects, !runAvailable)] : []),
-        ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects, availableClis)] : []),
-        proposeNoteTool(projects, linkedNote),
-        proposeSkillTool(),
-        ...(todoRoutines.length > 0 ? [proposeTodoTool(todoRoutines)] : []),
-        ...(rememberAvailable ? [proposeRememberTool()] : []),
-      ]
-    : [];
-  const tools = [...proposalTools, ...actions.map((a) => a.spec)];
+  const tools = [
+    ...(runnableSkills.length > 0 ? [proposeRunTool(runnableSkills, projects, !runAvailable)] : []),
+    ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects, availableClis)] : []),
+    proposeNoteTool(projects, linkedNote),
+    proposeSkillTool(),
+    ...(todoRoutines.length > 0 ? [proposeTodoTool(todoRoutines)] : []),
+    ...(rememberAvailable ? [proposeRememberTool()] : []),
+    ...actions.map((a) => a.spec),
+  ];
   const actionByName = new Map(actions.map((a) => [a.spec.name, a]));
 
   // Tool-execution loop: action tools run here and their result goes back to the model

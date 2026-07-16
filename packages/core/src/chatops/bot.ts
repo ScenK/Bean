@@ -27,15 +27,13 @@ import type { RunRegistry } from "./runs.js";
 // a separate scheduler, per .memory/project-bean-memory.md.
 const CONSOLIDATION_THRESHOLD = 30;
 
+/** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
+ * onMessage — surfaces keep untagged channel chatter as ambient context instead. */
 export interface IncomingMessage {
   conversationId: string;
   text: string;
   fromId: string;
   fromName: string;
-  /** false when the message only named the bot in passing (bare name-match in a channel)
-   * rather than @-mentioning it — Bean replies in text but withholds every proposal tool.
-   * Absent means explicitly addressed. */
-  addressedExplicitly?: boolean;
 }
 
 export interface CardAction {
@@ -389,8 +387,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           rememberAvailable: true,
           runAvailable: false,
           todoRoutines,
-          // Passing name-mentions get a text-only reply — no proposal tools at all.
-          proposalsAvailable: msg.addressedExplicitly !== false,
         };
         const result = await converse({ ...converseBase, history, latestUserText: msg.text });
         deps.conversations.append(msg.conversationId, { role: "user", content: msg.text });

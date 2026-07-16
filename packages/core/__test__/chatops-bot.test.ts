@@ -215,19 +215,6 @@ test("after '/new', ambient messages from before the reset are not re-injected",
   expect(seen[0]!.some((c) => c.includes("old chatter"))).toBe(false);
 });
 
-test("a casual name-mention (addressedExplicitly=false) is offered no proposal tools", async () => {
-  let captured: string[] = [];
-  const { deps } = makeDeps({
-    chat: async ({ tools }) => {
-      captured = tools.map((t) => t.name);
-      return { content: "hi", toolCalls: [] };
-    },
-    listTodoRoutines: async () => ["nightly"],
-  });
-  await buildTeamsBot(deps).onMessage({ ...msg, addressedExplicitly: false }, fx());
-  expect(captured.some((n) => n.startsWith("propose_"))).toBe(false);
-  expect(captured).toContain("retrieve_note");
-});
 
 test("empty or absent fetchRecent injects nothing", async () => {
   const seen: string[][] = [];

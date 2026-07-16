@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
-  buildTeamsBot, mentionsBotName, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
+  buildTeamsBot, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects,
 } from "@bean/core";
 import {
@@ -107,13 +107,12 @@ client.on("messageCreate", async (message) => {
   try {
     if (message.author.bot || !allowed(message.author.id)) return;
     const isDm = message.channel.type === ChannelType.DM;
-    // Explicit (DM, @mention, reply-to-Bean) gets the full toolset; a message that merely
-    // names the bot ("we could use bean for this") gets a text-only reply, no proposals.
-    const explicit =
+    // Only an explicit address (DM, @mention, reply-to-Bean) gets a turn. Naming the bot in
+    // passing ("we should add x to bean") is about Bean, not to it — it stays ambient context.
+    const addressed =
       isDm ||
       message.mentions.users.has(client.user?.id ?? "") ||
       message.mentions.repliedUser?.id === client.user?.id;
-    const addressed = explicit || mentionsBotName(message.content, client.user?.username ?? "");
     if (!addressed) return;
     const text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
     if (!text) return;
@@ -124,10 +123,7 @@ client.on("messageCreate", async (message) => {
       : undefined;
     try {
       await bot.onMessage(
-        {
-          conversationId: message.channelId, text, fromId: message.author.id,
-          fromName: message.author.displayName, addressedExplicitly: explicit,
-        },
+        { conversationId: message.channelId, text, fromId: message.author.id, fromName: message.author.displayName },
         effectsFor(message.channel, message.id),
       );
     } finally {
