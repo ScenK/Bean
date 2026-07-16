@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
-  buildTeamsBot, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
+  buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore,
 } from "@bean/core";
 import {
@@ -202,8 +202,30 @@ app.post("/api/messages", (req, res) => {
   });
 });
 
-app.listen(teamsConfig.port, () => {
-  console.log(`@bean/teams listening on :${teamsConfig.port} (clis: ${clis.join(", ") || "none"})`);
+// Die with the desktop app that spawned us — see exitWhenOrphaned's doc comment.
+exitWhenOrphaned();
+
+let bindFailed = false;
+const server = app.listen(teamsConfig.port, () => {
+  // Deferred, and guarded: node runs this callback even when the bind is about to fail with
+  // EADDRINUSE (it emits "listening" first, then "error"), so logging synchronously here
+  // claims we're serving when we're seconds from exiting. The error lands before this
+  // setImmediate, so bindFailed is already true by then.
+  setImmediate(() => {
+    if (bindFailed) return;
+    console.log(`@bean/teams listening on :${teamsConfig.port} (clis: ${clis.join(", ") || "none"})`);
+  });
+});
+// Without this the bind failure is invisible: the tray still shows Teams "running" while an
+// older server owns the port and answers every message with whatever code it booted with.
+server.on("error", (err: NodeJS.ErrnoException) => {
+  bindFailed = true;
+  console.error(
+    err.code === "EADDRINUSE"
+      ? `port ${teamsConfig.port} is already in use — another Bean Teams server is still running.`
+      : `server error: ${err.message}`,
+  );
+  process.exit(1);
 });
 
 // Routine digests: the main app enqueues outbox files; deliver them via a proactive message.

@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
-  buildTeamsBot, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
+  buildTeamsBot, exitWhenOrphaned, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects,
 } from "@bean/core";
 import {
@@ -226,5 +226,10 @@ setInterval(() => {
     }
   })();
 }, OUTBOX_POLL_MS);
+
+// Die with the desktop app that spawned us — see exitWhenOrphaned's doc comment. Discord
+// binds no port, so a stale orphan doesn't announce itself with EADDRINUSE: it just stays
+// logged in and answers alongside the new one.
+exitWhenOrphaned();
 
 await client.login(discordConfig.botToken);
