@@ -41,6 +41,23 @@ export class ConversationStore {
     this.db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ?").run(conversationId);
   }
 
+  /** Epoch ms of the newest ambient message already injected here; 0 when none. Durable
+   * (not per-process) so a restarted bot doesn't re-inject chatter Discord still returns
+   * from live channel history — see the table's comment in db.ts. */
+  ambientCutoff(conversationId: string): number {
+    const row = this.db.prepare(
+      "SELECT cutoff_ms FROM chatops_ambient_cutoff WHERE conversation_id = ?",
+    ).get(conversationId) as { cutoff_ms: number } | undefined;
+    return row?.cutoff_ms ?? 0;
+  }
+
+  setAmbientCutoff(conversationId: string, cutoffMs: number): void {
+    this.db.prepare(
+      "INSERT INTO chatops_ambient_cutoff (conversation_id, cutoff_ms) VALUES (?, ?) " +
+        "ON CONFLICT(conversation_id) DO UPDATE SET cutoff_ms = excluded.cutoff_ms",
+    ).run(conversationId, cutoffMs);
+  }
+
   turnCount(conversationId: string): number {
     const row = this.db.prepare(
       "SELECT COUNT(*) as c FROM chatops_turns WHERE conversation_id = ?",

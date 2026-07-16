@@ -99,9 +99,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   onCardAction: (action: CardAction, fx: BotEffects) => Promise<void>;
 } {
   const actions = [retrieveNoteTool(deps.searchNotes)];
-  // Newest ambient timestamp already injected per conversation — the next mention only
-  // fetches newer chatter, so the persisted ambient blocks never repeat themselves.
-  const ambientCutoff = new Map<string, number>();
 
   async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();
@@ -354,7 +351,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (msg.text.trim().toLowerCase() === "/new") {
           deps.conversations.clear(msg.conversationId);
           // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
-          ambientCutoff.set(msg.conversationId, Date.now());
+          deps.conversations.setAmbientCutoff(msg.conversationId, Date.now());
           await fx.reply("Fresh start — I've cleared this conversation's context.");
           return;
         }
@@ -367,12 +364,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (fx.fetchRecent) {
           // ponytail: fixed 15-min window; the block carries timestamps so the model can
           // scope "the last 10 minutes" itself — parse the user's timeframe if it matters.
-          // The cutoff floor keeps repeat mentions from re-injecting chatter already persisted.
+          // The cutoff floor keeps repeat mentions from re-injecting chatter already persisted;
+          // it lives in the db so it survives a bot restart alongside the history it guards.
           const now = Date.now();
-          const sinceMs = Math.max(now - 15 * 60_000, ambientCutoff.get(msg.conversationId) ?? 0);
+          const sinceMs = Math.max(now - 15 * 60_000, deps.conversations.ambientCutoff(msg.conversationId));
           const ambient = (await fx.fetchRecent(sinceMs)).slice(-50);
           if (ambient.length > 0) {
-            ambientCutoff.set(msg.conversationId, ambient[ambient.length - 1]!.at + 1);
+            deps.conversations.setAmbientCutoff(msg.conversationId, ambient[ambient.length - 1]!.at + 1);
             const block = formatAmbientBlock(ambient, now);
             // Persist what Bean acted on so follow-up mentions read a coherent history;
             // appended after stored turns because the chatter is newer than they are.

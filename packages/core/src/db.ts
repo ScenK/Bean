@@ -67,6 +67,15 @@ CREATE TABLE IF NOT EXISTS chatops_turns (
 );
 CREATE INDEX IF NOT EXISTS chatops_turns_conv ON chatops_turns(conversation_id);
 
+-- Watermark of the newest ambient (non-mention) message already injected into a
+-- conversation. Lives beside chatops_turns rather than in bot memory: Discord re-reads
+-- live channel history on every mention, so a restart with an in-memory cutoff would
+-- re-inject chatter that is still persisted in chatops_turns.
+CREATE TABLE IF NOT EXISTS chatops_ambient_cutoff (
+  conversation_id TEXT PRIMARY KEY,
+  cutoff_ms       INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS todos (
   id             TEXT PRIMARY KEY,
   routine        TEXT NOT NULL,

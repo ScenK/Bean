@@ -166,6 +166,21 @@ test("a second mention does not re-inject ambient messages already seen", async 
   expect(blocks).toHaveLength(1);
 });
 
+// The cutoff must live in the db, not in buildTeamsBot's memory: Discord's fetchRecent
+// re-reads live channel history, so a bot restart would otherwise re-inject (and re-persist)
+// ambient chatter that is already in the conversation.
+test("a restarted bot does not re-inject ambient chatter already persisted to the db", async () => {
+  const ambientAt = Date.now() - 60_000;
+  const { deps } = makeDeps();
+  const fetchRecent = async (sinceMs: number) =>
+    [{ fromName: "alice", text: "ship it", at: ambientAt }].filter((m) => m.at >= sinceMs);
+  await buildTeamsBot(deps).onMessage(msg, { ...fx(), fetchRecent });
+  // fresh bot instance, same deps/db — simulates a bot process restart
+  await buildTeamsBot(deps).onMessage(msg, { ...fx(), fetchRecent });
+  const blocks = deps.conversations.history("c1").filter((t) => t.content.includes("alice: ship it"));
+  expect(blocks).toHaveLength(1);
+});
+
 test("'/new' clears the conversation history without calling converse", async () => {
   const { deps } = makeDeps();
   const chatSpy = vi.fn(deps.chat);
