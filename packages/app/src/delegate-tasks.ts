@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { runDelegate, reserveRun, releaseRun, updateReservationPid, enqueueOutbox, outboxDir, interruptedRunNotice } from "@bean/core";
+import { runDelegate, reserveRun, releaseRun, updateReservationPid, enqueueOutbox, outboxDir, interruptedRunNotice, BEAN_GIT_IDENTITY } from "@bean/core";
 import type { CliName, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
 
 export type DelegateEvent =
@@ -48,7 +48,7 @@ export function resolvedPathSpawnFn(resolvedPath: string | undefined): DelegateS
           cwd,
           stdio: ["ignore", "pipe", "pipe"],
           detached: true,
-          env: { ...process.env, PATH: resolvedPath },
+          env: { ...process.env, PATH: resolvedPath, ...BEAN_GIT_IDENTITY },
         })
     : undefined;
 }

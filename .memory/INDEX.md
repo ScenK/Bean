@@ -28,6 +28,7 @@
 
 - [convention-ipc-channels.md](convention-ipc-channels.md) — IPC channel names are defined once in `app/src/channels.ts`; never string-literal them.
 - [convention-core-is-electron-free.md](convention-core-is-electron-free.md) — keep `@bean/core` pure and dependency-injected so it tests without Electron.
+- [convention-delegate-git-identity.md](convention-delegate-git-identity.md) — delegate spawns inject `GIT_AUTHOR_NAME`/`GIT_EMAIL` (Bean) so headless commits/PRs attribute to Bean, not the local user.
 - [convention-renderer-imports-node-free-subpaths.md](convention-renderer-imports-node-free-subpaths.md) — renderer imports core *values* only from node-free subpaths (`@bean/core/prompt|project-select|frontmatter`), never the barrel (pulls `node:fs` into the browser bundle); type-only barrel imports are fine. Fails only at `pnpm dev`/`build`, not test/typecheck.
 - [convention-launch-hands-off-to-terminal.md](convention-launch-hands-off-to-terminal.md) — Bean is a pure trigger: `launchInTerminal()` hands a run off to Terminal.app (`.command` script + `open`) fire-and-forget; it doesn't spawn/stream/track the process itself. Obsoletes the old stdin-hang note and the task-status-tracking UI.
 - [convention-delegate-loopback.md](convention-delegate-loopback.md) — `propose_delegate` → headless `claude -p`/`opencode run` via core `runDelegate()`; tracked tasks bound to the chat window's lifetime (Keep/Stop close prompt + `cancelAll()` backstop), result loops back into chat. The deliberate exception to launch-hands-off-to-terminal.

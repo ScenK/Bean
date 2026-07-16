@@ -10,14 +10,31 @@ export interface DelegateRequest {
   model?: string; // canonical model id (models.ts); flag omitted if the model has no alias on this CLI
 }
 
+// Bean commits under its own identity, not the local user's — see .memory (git identity for delegate commits).
+export const BEAN_GIT_IDENTITY = {
+  GIT_AUTHOR_NAME: "Bean",
+  GIT_AUTHOR_EMAIL: "bean@localhost",
+  GIT_COMMITTER_NAME: "Bean",
+  GIT_COMMITTER_EMAIL: "bean@localhost",
+};
+
+// GIT_AUTHOR/COMMITTER env vars (see BEAN_GIT_IDENTITY) set the commit's identity fields, but
+// GitHub only renders a contributor badge for a name that also appears in the message body —
+// same reason Claude Code's own commits carry a Co-Authored-By trailer. The delegated CLI writes
+// the commit message itself, so the only way to get the trailer in is to ask for it in the prompt.
+export const GIT_TRAILER_INSTRUCTION =
+  "\n\nIf this task involves a git commit, append this trailer to the commit message: " +
+  `Co-Authored-By: ${BEAN_GIT_IDENTITY.GIT_AUTHOR_NAME} <${BEAN_GIT_IDENTITY.GIT_AUTHOR_EMAIL}>`;
+
 // Headless one-shot delegation, unlike launcher.ts's interactive TUI launches.
 export function delegateCommand(req: DelegateRequest): { command: string; args: string[] } {
   const alias = req.model ? resolveModelAlias(req.model, req.cli) : undefined;
+  const prompt = req.prompt + GIT_TRAILER_INSTRUCTION;
   if (req.cli === "claude") {
     return {
       command: "claude",
       args: [
-        "-p", req.prompt,
+        "-p", prompt,
         "--output-format", "stream-json",
         "--verbose",
         "--allowedTools", "Bash,Edit,Write,Read,Glob,Grep",
@@ -25,7 +42,7 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
       ],
     };
   }
-  return { command: "opencode", args: ["run", "--auto", ...(alias ? ["--model", alias] : []), req.prompt] };
+  return { command: "opencode", args: ["run", "--auto", ...(alias ? ["--model", alias] : []), prompt] };
 }
 
 export function claudeTailLine(event: unknown): string | undefined {
@@ -63,7 +80,7 @@ export interface DelegateHandle {
 export type DelegateSpawnFn = (command: string, args: string[], cwd: string) => ChildProcess;
 
 const defaultDelegateSpawn: DelegateSpawnFn = (command, args, cwd) =>
-  spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], detached: true });
+  spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], detached: true, env: { ...process.env, ...BEAN_GIT_IDENTITY } });
 
 export const DELEGATE_TIMEOUT_MS = 30 * 60_000;
 
