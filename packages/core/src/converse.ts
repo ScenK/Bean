@@ -272,25 +272,45 @@ function memoriesBlock(memories: Memory[], projects: Project[]): string {
   return `What you remember:\n${lines.join("\n")}`;
 }
 
-export async function converse(
-  history: ChatTurn[],
-  latestUserText: string,
-  skills: Skill[],
-  projects: Project[],
-  persona: Persona,
-  memories: Memory[],
-  deps: ConverseDeps,
-  droppedUrl?: string,
-  actions: ActionTool[] = [],
-  now: () => Date = () => new Date(),
-  linkedNote?: LinkedNote,
-  delegateAvailable = false,
-  availableClis: CliName[] = [],
-  rememberAvailable = false,
-  // false where confirming a run couldn't execute anything (chatops — no desktop, no terminal).
-  runAvailable = true,
-  todoRoutines: string[] = [],
-): Promise<ConverseResult> {
+export interface ConverseInput {
+  history: ChatTurn[];
+  latestUserText: string;
+  skills: Skill[];
+  projects: Project[];
+  persona: Persona;
+  memories: Memory[];
+  deps: ConverseDeps;
+  droppedUrl?: string;
+  actions?: ActionTool[];
+  now?: () => Date;
+  linkedNote?: LinkedNote;
+  delegateAvailable?: boolean;
+  availableClis?: CliName[];
+  rememberAvailable?: boolean;
+  /** false where confirming a run couldn't execute anything (chatops — no desktop, no terminal). */
+  runAvailable?: boolean;
+  todoRoutines?: string[];
+}
+
+export async function converse(input: ConverseInput): Promise<ConverseResult> {
+  const {
+    history,
+    latestUserText,
+    skills,
+    projects,
+    persona,
+    memories,
+    deps,
+    droppedUrl,
+    actions = [],
+    now = () => new Date(),
+    linkedNote,
+    delegateAvailable = false,
+    availableClis = [],
+    rememberAvailable = false,
+    runAvailable = true,
+    todoRoutines = [],
+  } = input;
   const systemParts = [
     composePersonaPrompt(persona),
     behaviorInstructions(runAvailable),
