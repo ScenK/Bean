@@ -116,6 +116,27 @@ export function NotesPanel() {
     }
   };
 
+  const toggleTask = async (index: number): Promise<void> => {
+    if (!selected) return;
+    let seen = -1;
+    const lines = selected.body.split("\n").map((line) => {
+      const m = line.match(/^(\s*[-*]\s+)\[([ xX])\]/);
+      if (!m) return line;
+      seen += 1;
+      if (seen !== index) return line;
+      return line.replace(/\[[ xX]\]/, m[2] === " " ? "[x]" : "[ ]");
+    });
+    try {
+      const slug = await window.bean.saveNote({
+        title: selected.title, body: lines.join("\n"), project: selected.project, slug: selected.slug, source: selected.source,
+      });
+      await refresh();
+      setSelectedSlug(slug);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const continueInChat = (): void => {
     if (!selected) return;
     window.bean.runInChat(
@@ -236,7 +257,7 @@ export function NotesPanel() {
             </div>
 
             <div class="bean-skills-preview-box bean-notes-body">
-              <Markdown text={selected.body} />
+              <Markdown text={selected.body} onToggleTask={(i) => void toggleTask(i)} />
             </div>
 
             {saveError ? <div class="bean-status bean-status--error">{saveError}</div> : null}

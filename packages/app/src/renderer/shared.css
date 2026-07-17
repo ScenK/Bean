@@ -1399,7 +1399,8 @@ button, input, textarea, select, a {
 .bean-md pre { background: var(--bean-surface-2); border-radius: 8px; padding: 8px 10px; overflow-x: auto; }
 .bean-md pre code { background: transparent; padding: 0; }
 .bean-md blockquote { border-left: 3px solid var(--bean-border); padding-left: 10px; color: var(--bean-text-dim); }
-.bean-md input[type="checkbox"] { margin-right: 6px; }
+.bean-md input[type="checkbox"] { margin-right: 6px; accent-color: var(--bean-accent); }
+.bean-md input[type="checkbox"]:not([disabled]) { cursor: pointer; }
 
 /* Selected (accent) rows: keep snippet/meta legible on the orange background. */
 .bean-skills-row--selected .bean-notes-row-text { color: var(--bean-accent-ink); }
