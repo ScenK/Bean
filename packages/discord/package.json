@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@bean/core": "workspace:*",
-    "discord.js": "^14.26.5"
+    "discord.js": "^14.27.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
