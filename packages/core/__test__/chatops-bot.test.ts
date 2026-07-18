@@ -949,3 +949,35 @@ test("channel messages route to an active session instead of converse, and stop 
   await bot.onMessage({ conversationId: "c1", text: "stop", fromId: "u", fromName: "sam" }, effects);
   expect(deps.liveSessions.has("c1")).toBe(false);
 });
+
+// Locks in the contract packages/discord/src/server.ts's messageCreate gate relies on: onMessage
+// itself has no addressed/unaddressed concept — it captures ANY text for a channel with an
+// active session, whether or not it looks like it was aimed at Bean. The bug this guarded
+// against (unaddressed channel chatter silently dropped instead of steering the live session)
+// was entirely in the Discord adapter's own "if (!addressed) return" gate, not in this capture
+// logic — a full adapter-level test isn't practical here since server.ts performs real config
+// loading and a live discord.js client login as top-level side effects on import, with no
+// existing harness in packages/discord/__test__/ to fake a Client/Message for it.
+test("onMessage captures plain, unaddressed-looking text for an active session — no @mention needed", async () => {
+  const { bot, fx: effects, deps, chatCalls } = makeBotWithActiveLiveSession("c1");
+  await bot.onMessage(
+    { conversationId: "c1", text: "just some plain hint, no mention of bean at all", fromId: "u", fromName: "sam" },
+    effects,
+  );
+  expect(chatCalls()).toBe(0); // captured by the live session, converse() never invoked
+  expect(deps.liveSessions.has("c1")).toBe(true);
+});
+
+test("start-live re-checks liveSessionsEnabled at claim time and refuses if the feature was disabled meanwhile", async () => {
+  // The proposal is offered while enabled, but a flag flip (or claude CLI going undetected)
+  // can land before the operator taps the card — the gate must be re-checked where the
+  // permissions-bypassed process actually launches, not just when the proposal was made.
+  const { bot, fx: effects, deps } = makeBotWithLiveSessionProposal();
+  await bot.onMessage({ conversationId: "c1", text: "start live session", fromId: "u", fromName: "sam" }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  deps.liveSessionsEnabled = () => false; // flag flips off after the card was posted
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId } }, effects);
+  expect(deps.liveSessions.has("c1")).toBe(false);
+  expect(JSON.stringify(effects.updates.at(-1)?.card)).toContain("cancelled");
+  expect(effects.posted.some((p) => p.toLowerCase().includes("disabled"))).toBe(true);
+});

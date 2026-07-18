@@ -121,7 +121,10 @@ client.on("messageCreate", async (message) => {
       isDm ||
       message.mentions.users.has(client.user?.id ?? "") ||
       message.mentions.repliedUser?.id === client.user?.id;
-    if (!addressed) return;
+    // An active live session in this channel captures every message, addressed or not —
+    // that's the whole point of channel-wide steering without an @mention per turn.
+    const capturing = liveSessions.has(message.channelId);
+    if (!addressed && !capturing) return;
     const text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
     if (!text) return;
     if ("sendTyping" in message.channel) await message.channel.sendTyping();

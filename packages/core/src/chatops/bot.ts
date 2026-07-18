@@ -599,6 +599,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           }
           return;
         }
+        // The proposal was only offered while live sessions were enabled, but it can sit
+        // unclaimed for up to 10 minutes — re-check the gate here, the one place that
+        // actually launches the permissions-bypassed process.
+        if (!deps.liveSessionsEnabled()) {
+          const projects = await deps.loadProjects();
+          const projectName = projects.find((p) => p.path === pending.proposal.projectPath)?.name ?? pending.proposal.projectPath;
+          if (pending.cardActivityId !== undefined) {
+            await fx.updateCard(pending.cardActivityId, deps.cards.liveSessionResultCard({ projectName, startedBy: action.fromName, outcome: "cancelled" }));
+          }
+          await fx.post("Live sessions are disabled — this session wasn't started.");
+          return;
+        }
         await startLiveSessionAction(pending, action.fromName, fx);
         return;
       }
