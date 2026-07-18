@@ -124,7 +124,10 @@ app.whenReady().then(async () => {
         label: `${row.dot} ${row.label}`,
         type: "checkbox",
         checked: row.checked,
-        click: () => (row.checked ? chatopsServers?.stop(row.bot) : chatopsServers?.start(row.bot)),
+        click: () => {
+          shell.beep();
+          row.checked ? chatopsServers?.stop(row.bot) : chatopsServers?.start(row.bot);
+        },
       });
       if (row.error) items.push({ label: `⚠️ ${row.error}`, enabled: false });
     }
