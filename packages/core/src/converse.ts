@@ -59,7 +59,7 @@ export interface ProposedLiveSession {
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */
 export interface LinkedNote { slug: string; title: string; version: number; body: string; }
-export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedRemember?: boolean; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo; }
+export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedRemember?: boolean; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo; }
 export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?: string; linkedNote?: LinkedNote; }
 
 // runAvailable=false (chatops: Discord/Teams) — no terminal exists there, so propose_run
@@ -265,6 +265,37 @@ function proposeDelegateTool(skills: Skill[], projects: Project[], availableClis
   };
 }
 
+// Only offered where the caller can actually host a live session (Discord chatops with
+// the feature flag on and claude detected). Model values pass through verbatim to --model.
+function proposeLiveSessionTool(projects: Project[], models: AvailableModel[]): ToolSpec {
+  const properties: Record<string, unknown> = {
+    project: { type: "string", enum: projects.map((p) => p.path), description: "the project path to work in" },
+    instruction: {
+      type: "string",
+      description: "the opening instruction for the live agent — include all context it needs to start",
+    },
+  };
+  const modelIds = models.filter((m) => m.availableOn.includes("claude")).map((m) => m.id);
+  if (modelIds.length > 0) {
+    properties.model = {
+      type: "string",
+      enum: modelIds,
+      description: "only when the user explicitly asked for a specific model; omit otherwise",
+    };
+  }
+  return {
+    name: "propose_live_session",
+    description:
+      "Start a live, multi-turn interactive coding-agent session bound to THIS channel: the agent's " +
+      "output streams here in real time and every further channel message becomes its next " +
+      "instruction, until someone says 'stop'. Use it when the user wants an interactive working " +
+      "session they can steer (e.g. live debugging together) rather than a one-shot background " +
+      "task — for fire-and-forget tasks use propose_delegate instead. Confirm-first via the card " +
+      "shown after you propose.",
+    parameters: { type: "object", properties, required: ["project", "instruction"] },
+  };
+}
+
 function catalog(skills: Skill[], projects: Project[]): string {
   const skillList = skills.map((s) => `- ${s.name}: ${s.description}`).join("\n");
   const projectList = projects.map((p) => `- ${p.name} (${p.path})`).join("\n");
@@ -294,6 +325,7 @@ export interface ConverseInput {
   now?: () => Date;
   linkedNote?: LinkedNote;
   delegateAvailable?: boolean;
+  liveSessionAvailable?: boolean;
   availableClis?: CliName[];
   models?: AvailableModel[]; // configured models (clis.json) for the propose_delegate enum; [] = no model param offered
   rememberAvailable?: boolean;
@@ -316,6 +348,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     now = () => new Date(),
     linkedNote,
     delegateAvailable = false,
+    liveSessionAvailable = false,
     availableClis = [],
     models = [],
     rememberAvailable = false,
@@ -365,6 +398,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   const tools = [
     ...(runnableSkills.length > 0 ? [proposeRunTool(runnableSkills, projects, !runAvailable)] : []),
     ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects, availableClis, models)] : []),
+    ...(liveSessionAvailable && projects.length > 0 ? [proposeLiveSessionTool(projects, models)] : []),
     proposeNoteTool(projects, linkedNote),
     proposeSkillTool(),
     ...(todoRoutines.length > 0 ? [proposeTodoTool(todoRoutines)] : []),
@@ -430,6 +464,26 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
           // Same availableOn filter as the tool's enum (line ~239) — a model listed in
           // config but not offered on any detected CLI was never a valid choice for the model.
           model: models.some((m) => m.id === args.model && m.availableOn.length > 0)
+            ? (args.model as string)
+            : undefined,
+        },
+      };
+    }
+
+    const liveCall = toolCalls.find((c) => c.name === "propose_live_session");
+    if (liveCall) {
+      const args = (liveCall.args ?? {}) as { project?: unknown; instruction?: unknown; model?: unknown };
+      const project = projects.find((p) => p.path === args.project);
+      if (!project || typeof args.instruction !== "string" || !args.instruction.trim()) {
+        return { reply: content, model: deps.model };
+      }
+      return {
+        reply: content,
+        model: deps.model,
+        proposedLiveSession: {
+          projectPath: project.path,
+          instruction: args.instruction,
+          model: models.some((m) => m.id === args.model && m.availableOn.includes("claude"))
             ? (args.model as string)
             : undefined,
         },

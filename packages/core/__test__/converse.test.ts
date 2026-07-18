@@ -507,6 +507,68 @@ test("propose_delegate tool schema includes cli/model enums when clis are availa
   expect(props.model?.enum).not.toContain("github-copilot/gpt-5.5"); // opencode-only model, claude-only session
 });
 
+test("propose_live_session tool is offered only when liveSessionAvailable and projects exist", async () => {
+  let captured: ToolSpec[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => { captured = tools; return { content: "ok", toolCalls: [] }; },
+  };
+  await conv({ latestUserText: "hi", deps });
+  expect(captured.map((t) => t.name)).not.toContain("propose_live_session");
+  await conv({ latestUserText: "hi", deps, liveSessionAvailable: true });
+  expect(captured.map((t) => t.name)).toContain("propose_live_session");
+  await conv({ latestUserText: "hi", deps, liveSessionAvailable: true, projects: [] });
+  expect(captured.map((t) => t.name)).not.toContain("propose_live_session");
+});
+
+test("valid propose_live_session returns a proposedLiveSession", async () => {
+  const deps = depsReturning("Starting a live session.", [
+    { name: "propose_live_session", args: { project: "/work/api", instruction: "debug the outage", model: "sonnet" } },
+  ]);
+  const res = await conv({
+    latestUserText: "start a live session", deps, liveSessionAvailable: true,
+    models: availableModels(TEST_CLI_MODELS, ["claude"]),
+  });
+  expect(res.proposedLiveSession).toEqual({ projectPath: "/work/api", instruction: "debug the outage", model: "sonnet" });
+});
+
+test("propose_live_session drops an unknown project or blank instruction, keeping the reply", async () => {
+  for (const args of [{ project: "/nope", instruction: "x" }, { project: "/work/api", instruction: "  " }]) {
+    const deps = depsReturning("hm", [{ name: "propose_live_session", args }]);
+    const res = await conv({ latestUserText: "go", deps, liveSessionAvailable: true });
+    expect(res.proposedLiveSession).toBeUndefined();
+    expect(res.reply).toBe("hm");
+  }
+});
+
+test("propose_live_session drops a model not offered on claude", async () => {
+  const deps = depsReturning("On it.", [
+    { name: "propose_live_session", args: { project: "/work/api", instruction: "debug", model: "github-copilot/gpt-5.5" } },
+  ]);
+  const res = await conv({
+    latestUserText: "start a live session", deps, liveSessionAvailable: true,
+    models: availableModels(TEST_CLI_MODELS, ["opencode"]),
+  });
+  expect(res.proposedLiveSession?.model).toBeUndefined();
+  expect(res.proposedLiveSession?.projectPath).toBe("/work/api");
+});
+
+test("propose_live_session tool schema only enums models available on claude", async () => {
+  let seenTools: ToolSpec[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => { seenTools = tools; return { content: "ok", toolCalls: [] }; },
+  };
+  await conv({
+    latestUserText: "hi", deps, liveSessionAvailable: true,
+    models: availableModels(TEST_CLI_MODELS, ["claude"]),
+  });
+  const tool = seenTools.find((t) => t.name === "propose_live_session");
+  const props = (tool?.parameters as { properties: Record<string, { enum?: string[] }> }).properties;
+  expect(props.model?.enum).toContain("sonnet");
+  expect(props.model?.enum).not.toContain("github-copilot/gpt-5.5");
+});
+
 test("propose_remember tool is only offered when rememberAvailable is true", async () => {
   let captured: ToolSpec[] = [];
   const deps: ConverseDeps = {
