@@ -1,7 +1,7 @@
 {
   "name": "bean",
   "private": true,
-  "packageManager": "pnpm@11.11.0",
+  "packageManager": "pnpm@11.14.0",
   "engines": {
     "node": ">=24"
   },
