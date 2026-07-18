@@ -246,7 +246,7 @@ export function NotesPanel() {
         )}
         <span class="bean-skills-spacer" />
         <button type="button" class="bean-btn" onClick={startAdd}>+ New note</button>
-        <div class="bean-skills-path">~/.bean/notes/*.md — plain markdown, yours to edit</div>
+        <div class="bean-skills-path">Stored in ~/.bean/bean.db — searchable, yours to edit</div>
       </div>
       <div class="bean-skills-detail">
         {mode === "add" ? editor : null}
