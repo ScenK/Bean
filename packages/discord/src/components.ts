@@ -3,6 +3,7 @@ import type {
   NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
   ConsolidationProposalCardInput, ConsolidationResultCardInput,
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
+  LiveSessionProposalCardInput, LiveSessionResultCardInput,
 } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
@@ -207,7 +208,35 @@ function consolidationResultCard(input: ConsolidationResultCardInput): object {
   return { embeds: [{ title }], components: [] };
 }
 
+function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
+  return {
+    embeds: [{
+      title: "Bean proposes a live agent session",
+      description: input.instruction,
+      fields: [
+        { name: "Project", value: input.projectName, inline: true },
+        ...(input.model ? [{ name: "Model", value: input.model, inline: true }] : []),
+        { name: "How it works", value: "Output streams here; every message in this channel becomes the agent's next turn. Say `stop` to end it." },
+      ],
+    }],
+    components: [row([
+      { type: BUTTON, style: 3, label: "Start session", custom_id: `bean:start-live:${input.proposalId}` },
+      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-live:${input.proposalId}` },
+    ])],
+  };
+}
+
+function liveSessionResultCard(input: LiveSessionResultCardInput): object {
+  const title = input.outcome === "started"
+    ? `Live session started in ${input.projectName} (by ${input.startedBy})`
+    : input.outcome === "cancelled"
+      ? `Live session cancelled (by ${input.startedBy})`
+      : `Live session in ${input.projectName} ended`;
+  return { embeds: [{ title }], components: [] };
+}
+
 export const discordCards: CardBuilders = {
   proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
   consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+  liveSessionProposalCard, liveSessionResultCard,
 };

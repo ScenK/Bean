@@ -1,7 +1,8 @@
 import type {
-  ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
+  CardBuilders, ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
   MemoryProposalCardInput, MemoryResultCardInput, ConsolidationProposalCardInput, ConsolidationResultCardInput,
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
+  LiveSessionProposalCardInput, LiveSessionResultCardInput,
 } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
@@ -275,3 +276,33 @@ export function consolidationResultCard(input: ConsolidationResultCardInput): ob
     actions: [],
   };
 }
+
+export function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
+  return {
+    type: "AdaptiveCard", version: "1.4",
+    body: [
+      { type: "TextBlock", text: "Bean proposes a live agent session", weight: "Bolder" },
+      { type: "TextBlock", text: input.instruction, wrap: true },
+      { type: "TextBlock", text: `Project: ${input.projectName}${input.model ? ` · Model: ${input.model}` : ""}`, isSubtle: true },
+    ],
+    actions: [
+      { type: "Action.Submit", title: "Start session", data: { beanAction: "start-live", proposalId: input.proposalId } },
+      { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-live", proposalId: input.proposalId } },
+    ],
+  };
+}
+
+export function liveSessionResultCard(input: LiveSessionResultCardInput): object {
+  const text = input.outcome === "started"
+    ? `Live session started in ${input.projectName} (by ${input.startedBy})`
+    : input.outcome === "cancelled"
+      ? `Live session cancelled (by ${input.startedBy})`
+      : `Live session in ${input.projectName} ended`;
+  return { type: "AdaptiveCard", version: "1.4", body: [{ type: "TextBlock", text, weight: "Bolder" }] };
+}
+
+export const teamsCards: CardBuilders = {
+  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
+  consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+  liveSessionProposalCard, liveSessionResultCard,
+};
