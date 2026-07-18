@@ -4,7 +4,7 @@ import type { Project, RouteSuggestion, Skill } from "./types.js";
 import type { Memory } from "./memory/memory.js";
 import { selectRelevantMemories } from "./memory/store.js";
 import type { CliName } from "./launcher.js";
-import { MODELS } from "./models.js";
+import type { AvailableModel } from "./models.js";
 
 export type ConvoMsg =
   | { role: "system" | "user"; content: string }
@@ -44,7 +44,7 @@ export interface ProposedDelegate {
   composedPrompt: string;
   /** CLI the user explicitly asked for in chat, validated against the caller's detected CLIs. */
   cli?: CliName;
-  /** Canonical model id (models.ts) the user explicitly asked for. */
+  /** Literal --model value (clis.json) the user explicitly asked for. */
   model?: string;
 }
 /** The note this chat was continued from: its body goes into the system prompt and a
@@ -215,7 +215,7 @@ function proposeRunTool(skills: Skill[], projects: Project[], inChatOnly = false
   };
 }
 
-function proposeDelegateTool(skills: Skill[], projects: Project[], availableClis: CliName[]): ToolSpec {
+function proposeDelegateTool(skills: Skill[], projects: Project[], availableClis: CliName[], models: AvailableModel[]): ToolSpec {
   const properties: Record<string, unknown> = {
     project: { type: "string", enum: projects.map((p) => p.path), description: "the project path to work in" },
     instruction: {
@@ -236,7 +236,7 @@ function proposeDelegateTool(skills: Skill[], projects: Project[], availableClis
       enum: availableClis,
       description: "only when the user explicitly asked for a specific CLI; omit otherwise",
     };
-    const modelIds = MODELS.filter((m) => availableClis.some((cli) => m.aliases[cli] !== undefined)).map((m) => m.id);
+    const modelIds = models.filter((m) => m.availableOn.length > 0).map((m) => m.id);
     if (modelIds.length > 0) {
       properties.model = {
         type: "string",
@@ -286,6 +286,7 @@ export interface ConverseInput {
   linkedNote?: LinkedNote;
   delegateAvailable?: boolean;
   availableClis?: CliName[];
+  models?: AvailableModel[]; // configured models (clis.json) for the propose_delegate enum; [] = no model param offered
   rememberAvailable?: boolean;
   /** false where confirming a run couldn't execute anything (chatops — no desktop, no terminal). */
   runAvailable?: boolean;
@@ -307,6 +308,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     linkedNote,
     delegateAvailable = false,
     availableClis = [],
+    models = [],
     rememberAvailable = false,
     runAvailable = true,
     todoRoutines = [],
@@ -353,7 +355,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   const runnableSkills = runAvailable ? skills : skills.filter((s) => s.target === "chat");
   const tools = [
     ...(runnableSkills.length > 0 ? [proposeRunTool(runnableSkills, projects, !runAvailable)] : []),
-    ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects, availableClis)] : []),
+    ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects, availableClis, models)] : []),
     proposeNoteTool(projects, linkedNote),
     proposeSkillTool(),
     ...(todoRoutines.length > 0 ? [proposeTodoTool(todoRoutines)] : []),
@@ -416,7 +418,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
           skillName: skill?.name,
           composedPrompt: skill ? composePrompt(skill, args.instruction, droppedUrl) : args.instruction,
           cli: availableClis.includes(args.cli as CliName) ? (args.cli as CliName) : undefined,
-          model: MODELS.some((m) => m.id === args.model) ? (args.model as string) : undefined,
+          model: models.some((m) => m.id === args.model) ? (args.model as string) : undefined,
         },
       };
     }

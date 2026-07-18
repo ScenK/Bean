@@ -1,45 +1,59 @@
 import { expect, test } from "vitest";
-import { availableModels, pickModel, resolveModelAlias, MODELS } from "../src/models.js";
+import { availableModels, pickModel } from "../src/models.js";
+import type { CliModels } from "../src/cli-models.js";
 
-test("resolveModelAlias returns the CLI-specific flag value", () => {
-  expect(resolveModelAlias("sonnet", "claude")).toBe("sonnet");
-  expect(resolveModelAlias("claude-sonnet-5", "opencode")).toBe("github-copilot/claude-sonnet-5");
+const CLI_MODELS: CliModels[] = [
+  { provider: "claude", models: ["sonnet", "opus", "haiku"] },
+  { provider: "opencode", models: ["github-copilot/gpt-5.5", "github-copilot/claude-sonnet-5"] },
+];
+
+test("availableModels lists every configured model, marking undetected providers unavailable", () => {
+  const result = availableModels(CLI_MODELS, ["claude"]);
+  expect(result).toHaveLength(5);
+  expect(result.find((m) => m.id === "sonnet")?.availableOn).toEqual(["claude"]);
+  expect(result.find((m) => m.id === "github-copilot/gpt-5.5")?.availableOn).toEqual([]);
 });
 
-test("resolveModelAlias returns undefined for an unknown model or a CLI with no alias", () => {
-  expect(resolveModelAlias("does-not-exist", "opencode")).toBeUndefined();
-  // sonnet is a claude-only model — no opencode alias, since the two CLIs' catalogs don't overlap.
-  expect(resolveModelAlias("sonnet", "opencode")).toBeUndefined();
-});
-
-test("availableModels annotates each model with which detected CLIs actually support it", () => {
-  const result = availableModels(["claude"]);
-  expect(result).toHaveLength(MODELS.length);
-  const sonnet = result.find((m) => m.id === "sonnet");
-  expect(sonnet?.availableOn).toEqual(["claude"]);
-  const gpt = result.find((m) => m.id === "gpt-5-5");
-  expect(gpt?.availableOn).toEqual([]);
+test("availableModels derives the label from the last path segment", () => {
+  const result = availableModels(CLI_MODELS, ["claude", "opencode"]);
+  expect(result.find((m) => m.id === "github-copilot/gpt-5.5")?.label).toBe("gpt-5.5");
+  expect(result.find((m) => m.id === "sonnet")?.label).toBe("sonnet");
 });
 
 test("availableModels with no detected CLIs marks every model unavailable", () => {
-  expect(availableModels([]).every((m) => m.availableOn.length === 0)).toBe(true);
+  expect(availableModels(CLI_MODELS, []).every((m) => m.availableOn.length === 0)).toBe(true);
+});
+
+test("a model listed under both providers gets both in availableOn", () => {
+  const shared: CliModels[] = [
+    { provider: "claude", models: ["sonnet"] },
+    { provider: "opencode", models: ["sonnet"] },
+  ];
+  const result = availableModels(shared, ["claude", "opencode"]);
+  expect(result).toHaveLength(1);
+  expect(result[0]?.availableOn).toEqual(["claude", "opencode"]);
 });
 
 test("pickModel keeps an explicit pick the current CLI supports", () => {
-  expect(pickModel(availableModels(["opencode", "claude"]), "opencode", "claude-sonnet-5")).toBe("claude-sonnet-5");
+  const models = availableModels(CLI_MODELS, ["opencode", "claude"]);
+  expect(pickModel(models, "opencode", "github-copilot/claude-sonnet-5")).toBe("github-copilot/claude-sonnet-5");
 });
 
 test("pickModel drops a pick unsupported by the current CLI and falls back to a supported one", () => {
-  // claude-sonnet-5 is opencode-only — switching CLI to claude must not launch it silently.
-  const picked = pickModel(availableModels(["opencode", "claude"]), "claude", "claude-sonnet-5");
-  expect(picked).toBe("sonnet");
-  expect(resolveModelAlias(picked!, "claude")).toBeDefined();
+  const models = availableModels(CLI_MODELS, ["opencode", "claude"]);
+  expect(pickModel(models, "claude", "github-copilot/claude-sonnet-5")).toBe("sonnet");
 });
 
 test("pickModel ignores a last-used model the current CLI can't run", () => {
-  expect(pickModel(availableModels(["claude"]), "claude", undefined, "claude-sonnet-5")).toBe("sonnet");
+  const models = availableModels(CLI_MODELS, ["claude"]);
+  expect(pickModel(models, "claude", undefined, "github-copilot/claude-sonnet-5")).toBe("sonnet");
 });
 
 test("pickModel prefers a supported last-used model when there's no explicit pick", () => {
-  expect(pickModel(availableModels(["opencode", "claude"]), "opencode", undefined, "claude-sonnet-5")).toBe("claude-sonnet-5");
+  const models = availableModels(CLI_MODELS, ["opencode", "claude"]);
+  expect(pickModel(models, "opencode", undefined, "github-copilot/claude-sonnet-5")).toBe("github-copilot/claude-sonnet-5");
+});
+
+test("pickModel with an empty models list returns undefined", () => {
+  expect(pickModel([], "claude")).toBeUndefined();
 });

@@ -1,13 +1,12 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import type { CliName } from "./launcher.js";
-import { resolveModelAlias } from "./models.js";
 
 export interface DelegateRequest {
   cli: CliName;
   projectPath: string;
   prompt: string;
-  model?: string; // canonical model id (models.ts); flag omitted if the model has no alias on this CLI
+  model?: string; // literal --model value (clis.json); flag omitted when unset
 }
 
 // Bean commits under its own identity, not the local user's — see .memory (git identity for delegate commits).
@@ -28,7 +27,7 @@ export const GIT_TRAILER_INSTRUCTION =
 
 // Headless one-shot delegation, unlike launcher.ts's interactive TUI launches.
 export function delegateCommand(req: DelegateRequest): { command: string; args: string[] } {
-  const alias = req.model ? resolveModelAlias(req.model, req.cli) : undefined;
+  const modelArgs = req.model ? ["--model", req.model] : [];
   const prompt = req.prompt + GIT_TRAILER_INSTRUCTION;
   if (req.cli === "claude") {
     return {
@@ -38,11 +37,11 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
         "--output-format", "stream-json",
         "--verbose",
         "--allowedTools", "Bash,Edit,Write,Read,Glob,Grep",
-        ...(alias ? ["--model", alias] : []),
+        ...modelArgs,
       ],
     };
   }
-  return { command: "opencode", args: ["run", "--auto", ...(alias ? ["--model", alias] : []), prompt] };
+  return { command: "opencode", args: ["run", "--auto", ...modelArgs, prompt] };
 }
 
 export function claudeTailLine(event: unknown): string | undefined {

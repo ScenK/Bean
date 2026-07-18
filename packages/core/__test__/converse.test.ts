@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "vitest";
 import { converse, type ActionTool, type ConverseDeps, type ConverseInput, type ConvoMsg, type ToolSpec } from "../src/converse.js";
 import { composePersonaPrompt, DEFAULT_PERSONA, type Persona } from "../src/persona.js";
+import { availableModels } from "../src/models.js";
 import type { Project, Skill } from "../src/types.js";
 
 const skills: Skill[] = [
@@ -459,20 +460,31 @@ test("composePersonaPrompt reflects a custom persona's name and tags", () => {
   );
 });
 
+const TEST_CLI_MODELS = [
+  { provider: "claude" as const, models: ["sonnet", "opus", "haiku"] },
+  { provider: "opencode" as const, models: ["github-copilot/gpt-5.5"] },
+];
+
 test("propose_delegate carries a stated cli and model into the proposal", async () => {
   const deps = depsReturning("On it.", [
-    { name: "propose_delegate", args: { project: "/work/api", instruction: "do it", cli: "opencode", model: "gpt-5-5" } },
+    { name: "propose_delegate", args: { project: "/work/api", instruction: "do it", cli: "opencode", model: "github-copilot/gpt-5.5" } },
   ]);
-  const res = await conv({ latestUserText: "delegate this", deps, delegateAvailable: true, availableClis: ["claude", "opencode"] });
+  const res = await conv({
+    latestUserText: "delegate this", deps, delegateAvailable: true, availableClis: ["claude", "opencode"],
+    models: availableModels(TEST_CLI_MODELS, ["opencode"]),
+  });
   expect(res.proposedDelegate?.cli).toBe("opencode");
-  expect(res.proposedDelegate?.model).toBe("gpt-5-5");
+  expect(res.proposedDelegate?.model).toBe("github-copilot/gpt-5.5");
 });
 
 test("propose_delegate drops a cli not in availableClis and an unknown model", async () => {
   const deps = depsReturning("On it.", [
     { name: "propose_delegate", args: { project: "/work/api", instruction: "do it", cli: "opencode", model: "not-a-model" } },
   ]);
-  const res = await conv({ latestUserText: "delegate this", deps, delegateAvailable: true, availableClis: ["claude"] });
+  const res = await conv({
+    latestUserText: "delegate this", deps, delegateAvailable: true, availableClis: ["claude"],
+    models: availableModels(TEST_CLI_MODELS, ["opencode"]),
+  });
   expect(res.proposedDelegate?.cli).toBeUndefined();
   expect(res.proposedDelegate?.model).toBeUndefined();
   expect(res.proposedDelegate?.projectPath).toBe("/work/api");
@@ -484,12 +496,15 @@ test("propose_delegate tool schema includes cli/model enums when clis are availa
     model: "m",
     chat: async ({ tools }) => { seenTools = tools; return { content: "ok", toolCalls: [] }; },
   };
-  await conv({ latestUserText: "hi", deps, delegateAvailable: true, availableClis: ["claude"] });
+  await conv({
+    latestUserText: "hi", deps, delegateAvailable: true, availableClis: ["claude"],
+    models: availableModels(TEST_CLI_MODELS, ["claude"]),
+  });
   const tool = seenTools.find((t) => t.name === "propose_delegate");
   const props = (tool?.parameters as { properties: Record<string, { enum?: string[] }> }).properties;
   expect(props.cli?.enum).toEqual(["claude"]);
   expect(props.model?.enum).toContain("sonnet");
-  expect(props.model?.enum).not.toContain("gpt-5-5"); // opencode-only model, claude-only session
+  expect(props.model?.enum).not.toContain("github-copilot/gpt-5.5"); // opencode-only model, claude-only session
 });
 
 test("propose_remember tool is only offered when rememberAvailable is true", async () => {

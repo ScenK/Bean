@@ -56,19 +56,14 @@ describe("delegateCommand", () => {
     expect(args).toEqual(["run", "--auto", "fix the bug" + GIT_TRAILER_INSTRUCTION]);
   });
 
-  it("appends --model when the chosen model has an alias for the CLI", () => {
-    const { args } = delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "fix", model: "claude-sonnet-5" });
+  it("appends --model with the verbatim model string", () => {
+    const { args } = delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "fix", model: "github-copilot/claude-sonnet-5" });
     expect(args).toEqual(["run", "--auto", "--model", "github-copilot/claude-sonnet-5", "fix" + GIT_TRAILER_INSTRUCTION]);
   });
 
-  it("omits --model when the chosen model has no alias for the CLI", () => {
-    const { args } = delegateCommand({ cli: "claude", projectPath: "/p", prompt: "fix", model: "gpt-5-5" });
-    expect(args).toEqual([
-      "-p", "fix" + GIT_TRAILER_INSTRUCTION,
-      "--output-format", "stream-json",
-      "--verbose",
-      "--allowedTools", "Bash,Edit,Write,Read,Glob,Grep",
-    ]);
+  it("omits --model when no model was picked", () => {
+    const { args } = delegateCommand({ cli: "claude", projectPath: "/p", prompt: "fix" });
+    expect(args).not.toContain("--model");
   });
 });
 

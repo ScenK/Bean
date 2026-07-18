@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { resolveModelAlias } from "./models.js";
 
 export type LaunchMode = "opencode" | "claude" | "open";
 export type CliName = "opencode" | "claude";
@@ -56,7 +55,7 @@ export interface LaunchRequest {
   // `prompt` instead, and the launched agent fetches/clones it itself if it needs to.
   projectPath: string;
   prompt?: string; // required for "opencode"/"claude", ignored for "open"
-  model?: string; // canonical model id (models.ts); ignored for "open" or a model with no alias on this CLI
+  model?: string; // literal --model value (clis.json); ignored for "open"
 }
 
 export function launchCommand(req: LaunchRequest, editorApp?: string): { command: string; args: string[] } {
@@ -65,18 +64,15 @@ export function launchCommand(req: LaunchRequest, editorApp?: string): { command
     // which reply once and exit. This drops the user into the normal TUI/REPL with the message
     // pre-sent, so they can keep working after it replies.
     case "opencode": {
-      const alias = req.model ? resolveModelAlias(req.model, "opencode") : undefined;
       // --prompt=… as one token: a prompt starting with "-" (e.g. leftover frontmatter "---")
       // would otherwise be eaten by opencode's flag parser, launching the TUI with no prompt.
       return {
         command: "opencode",
-        args: [req.projectPath, `--prompt=${req.prompt ?? ""}`, ...(alias ? ["--model", alias] : [])],
+        args: [req.projectPath, `--prompt=${req.prompt ?? ""}`, ...(req.model ? ["--model", req.model] : [])],
       };
     }
-    case "claude": {
-      const alias = req.model ? resolveModelAlias(req.model, "claude") : undefined;
-      return { command: "claude", args: [...(alias ? ["--model", alias] : []), req.prompt ?? ""] };
-    }
+    case "claude":
+      return { command: "claude", args: [...(req.model ? ["--model", req.model] : []), req.prompt ?? ""] };
     case "open":
       // editorApp is the user-configured editor .app (Settings); empty = not configured yet,
       // caught by launchInTerminal before ever spawning. `.app` bundles aren't executables

@@ -85,6 +85,10 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     loadModelMemory: async () => ({}),
     saveModelMemory: async (m) => { saved.push(m); },
     detectClis: () => ["claude"],
+    cliModels: [
+      { provider: "claude", models: ["sonnet", "opus", "haiku"] },
+      { provider: "opencode", models: ["github-copilot/gpt-5.5"] },
+    ],
     runs,
     proposals: new ProposalStore(),
     noteProposals: new NoteProposalStore(),
