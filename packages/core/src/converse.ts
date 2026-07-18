@@ -418,7 +418,11 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
           skillName: skill?.name,
           composedPrompt: skill ? composePrompt(skill, args.instruction, droppedUrl) : args.instruction,
           cli: availableClis.includes(args.cli as CliName) ? (args.cli as CliName) : undefined,
-          model: models.some((m) => m.id === args.model) ? (args.model as string) : undefined,
+          // Same availableOn filter as the tool's enum (line ~239) — a model listed in
+          // config but not offered on any detected CLI was never a valid choice for the model.
+          model: models.some((m) => m.id === args.model && m.availableOn.length > 0)
+            ? (args.model as string)
+            : undefined,
         },
       };
     }
