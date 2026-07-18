@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import {
   finishedCard, memoryProposalCard, memoryResultCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
   consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+  liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
 import { loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 
@@ -100,6 +101,7 @@ const bot = buildTeamsBot({
   cards: {
     proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
     consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+    liveSessionProposalCard, liveSessionResultCard,
   },
   systemControlsEnabled: () => beanConfig.systemControls,
 });

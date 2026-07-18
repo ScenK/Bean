@@ -1,5 +1,5 @@
 import type {
-  CardBuilders, ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
+  ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
   MemoryProposalCardInput, MemoryResultCardInput, ConsolidationProposalCardInput, ConsolidationResultCardInput,
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput,
@@ -300,9 +300,3 @@ export function liveSessionResultCard(input: LiveSessionResultCardInput): object
       : `Live session in ${input.projectName} ended`;
   return { type: "AdaptiveCard", version: "1.4", body: [{ type: "TextBlock", text, weight: "Bolder" }] };
 }
-
-export const teamsCards: CardBuilders = {
-  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
-  consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
-  liveSessionProposalCard, liveSessionResultCard,
-};
