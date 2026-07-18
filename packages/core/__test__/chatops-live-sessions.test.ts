@@ -231,4 +231,32 @@ describe("LiveSessionRegistry", () => {
     await flushTicks(reg, 1001);
     expect(posts[1]).toBe("turn two output");
   });
+
+  it("forceKillAll SIGKILLs every active session's process group immediately", () => {
+    let nextPid = 100;
+    const startFn = (): LiveSessionHandle => ({ pid: nextPid++, send: () => {}, stop: () => {} });
+    const reg = new LiveSessionRegistry(startFn as never);
+    const { sink } = fakeSink();
+    reg.start({ channelId: "a", projectPath: "/p", instruction: "go", sink });
+    reg.start({ channelId: "b", projectPath: "/p", instruction: "go", sink });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    reg.forceKillAll();
+
+    expect(killSpy).toHaveBeenCalledWith(-100, "SIGKILL");
+    expect(killSpy).toHaveBeenCalledWith(-101, "SIGKILL");
+    expect(killSpy).toHaveBeenCalledTimes(2);
+    killSpy.mockRestore();
+  });
+
+  it("forceKillAll tolerates a kill on an already-dead process", () => {
+    const startFn = (): LiveSessionHandle => ({ pid: 42, send: () => {}, stop: () => {} });
+    const reg = new LiveSessionRegistry(startFn as never);
+    const { sink } = fakeSink();
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => { throw new Error("ESRCH"); });
+
+    expect(() => reg.forceKillAll()).not.toThrow();
+    killSpy.mockRestore();
+  });
 });

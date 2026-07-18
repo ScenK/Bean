@@ -53,8 +53,22 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   for it and would otherwise silently reset it to `false` on every save — a real, PR-review-
   caught bug). Launch is always confirm-first via a card even though the session itself runs
   with permissions bypassed once started.
+- On Discord, `allowedUserIds` gates all normal chat with Bean — but **an active live session
+  in a channel is itself the authorization boundary for steering it**: any non-bot message in
+  a capturing channel reaches the session regardless of the allowlist (explicit decision —
+  matches the spec's "anyone in the bound channel" pitch literally, not just allowlisted
+  operators). This bypass is scoped to `messageCreate` only; `interactionCreate` (the
+  start-live/cancel-live card buttons — i.e. who can *launch* a session) still requires the
+  allowlist unconditionally. Don't accidentally widen the interaction-handler gate to match.
+- Discord's SIGTERM shutdown handler calls `liveSessions.forceKillAll()`, not `stopAll()` —
+  `stop()`'s graceful SIGTERM-then-SIGKILL-after-5s escalation relies on a `setTimeout` that
+  would never fire before `process.exit()` runs immediately after, orphaning a
+  permissions-bypassed child that ignores SIGTERM. `forceKillAll()` sends SIGKILL to every
+  active session's process group synchronously, no grace period — correct specifically
+  because the bot process itself is about to disappear anyway.
 - Manual end-to-end smoke test (real Discord bot + real `claude` CLI) was not run as part of
   the implementation — it needs live Discord credentials and a test server that weren't
   available in the implementing session. Full monorepo test/typecheck gate is green; the
-  interactive loop (proposal card → start → streaming → steer → stop → crash-path) still
-  needs a human to drive once against a real bot.
+  interactive loop (proposal card → start → streaming → steer with a non-allowlisted user →
+  stop → crash-path → bot restart while a session is active) still needs a human to drive
+  once against a real bot.

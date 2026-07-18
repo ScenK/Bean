@@ -118,6 +118,22 @@ export class LiveSessionRegistry {
     for (const [, s] of this.byChannel) s.handle.stop();
   }
 
+  /** Immediately SIGKILLs every active session's process group — for a process-exit shutdown
+   * path, where there's no time to wait for stop()'s graceful SIGTERM-then-escalate dance (the
+   * setTimeout it schedules for the SIGKILL fallback would never get to fire before this
+   * process itself exits, leaving the child permissions-bypassed and orphaned). */
+  forceKillAll(): void {
+    for (const [, s] of this.byChannel) {
+      if (typeof s.handle.pid === "number") {
+        try {
+          process.kill(-s.handle.pid, "SIGKILL");
+        } catch {
+          // Already dead — nothing to do.
+        }
+      }
+    }
+  }
+
   private teardown(channelId: string, err?: Error): void {
     const s = this.byChannel.get(channelId);
     if (!s) return;
