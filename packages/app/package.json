@@ -65,7 +65,7 @@
     "@bean/core": "workspace:*",
     "@playwright/test": "^1.61.1",
     "@types/node": "^26.1.1",
-    "dompurify": "^3.4.11",
+    "dompurify": "^3.4.12",
     "electron": "^43.1.1",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
