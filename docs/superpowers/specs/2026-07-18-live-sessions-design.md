@@ -35,7 +35,7 @@ scope here.
 | Interaction shape | Chat-turn bridge in chatops (not web terminal) |
 | Agent CLI | Claude Code first; provider interface leaves seam for opencode later |
 | Surface | Discord first; bridge lives in shared `chatops/` so Teams follows nearly free |
-| Permissions | Full auto (`--dangerously-skip-permissions`); launch stays confirm-first; feature gated behind opt-in config flag |
+| Permissions | True bypass (`--dangerously-skip-permissions`) — deliberately stronger than the UI's "Auto" mode, which still prompts on dangerous actions. Alternatives (acceptEdits with auto-deny; a permission-prompt-to-confirm-card bridge) were considered and rejected. Launch stays confirm-first; feature gated behind opt-in config flag |
 | Steering | Anyone in the bound channel can post turns |
 
 ## User flow
@@ -148,4 +148,6 @@ calls; no core changes expected.
 - Opencode provider (seam only).
 - Teams adapter (follows Discord).
 - Web-terminal / PTY streaming mode (possible future solo-mode add-on).
-- Per-action permission cards (rejected in favor of full auto).
+- Per-action permission handling (acceptEdits auto-deny, or a
+  `--permission-prompt-tool` MCP bridge to confirm cards) — rejected in favor of
+  true bypass.
