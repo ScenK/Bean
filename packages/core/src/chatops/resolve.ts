@@ -1,4 +1,5 @@
 import { availableModels, pickModel } from "../models.js";
+import type { CliModels } from "../cli-models.js";
 import type { CliName } from "../launcher.js";
 
 export interface CliModelChoice {
@@ -15,6 +16,7 @@ export function resolveCliModel(
   detected: CliName[],
   stated: { cli?: CliName; model?: string },
   memory: Record<string, string>,
+  cliModels: CliModels[],
 ): CliModelChoice | undefined {
   const remembered = memory[CLI_KEY] as CliName | undefined;
   const cli =
@@ -22,7 +24,7 @@ export function resolveCliModel(
     : remembered && detected.includes(remembered) ? remembered
     : detected[0];
   if (cli === undefined) return undefined;
-  const model = pickModel(availableModels(detected), cli, stated.model, memory[modelKey(cli)]);
+  const model = pickModel(availableModels(cliModels, detected), cli, stated.model, memory[modelKey(cli)]);
   return { cli, model };
 }
 

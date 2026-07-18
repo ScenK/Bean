@@ -4,7 +4,7 @@ import {
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
-  ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore,
+  ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -62,6 +62,7 @@ adapter.onTurnError = async (context, error) => {
 };
 
 const clis = detectClis();
+const cliModels = await loadCliModels(clisFile(builtinDir), clisFile(dir));
 const runs = new RunRegistry(runDelegate, { dir, botKind: "teams" });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
@@ -77,6 +78,7 @@ const bot = buildTeamsBot({
   loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
   saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),
   detectClis: () => clis,
+  cliModels,
   runs,
   proposals: new ProposalStore(),
   noteProposals: new NoteProposalStore(),

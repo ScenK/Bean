@@ -5,7 +5,7 @@ import {
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
   type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
-  type TodoItem,
+  type TodoItem, type CliModels,
 } from "@bean/core";
 import { mkdir } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";
@@ -294,10 +294,11 @@ export function buildLaunchHandler(deps: LaunchHandlerDeps) {
 
 export interface ModelsHandlerDeps {
   getAvailableClis: () => CliName[];
+  getCliModels: () => CliModels[];
 }
 
 export function buildModelsHandler(deps: ModelsHandlerDeps) {
-  return (): AvailableModel[] => availableModels(deps.getAvailableClis());
+  return (): AvailableModel[] => availableModels(deps.getCliModels(), deps.getAvailableClis());
 }
 
 export interface ModelMemoryHandlerDeps {
@@ -517,6 +518,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   getTerminalApp: () => string;
   getEditorApp: () => string;
   getAvailableClis: () => CliName[];
+  getCliModels: () => CliModels[];
   beanDirPath: string;
   modelMemoryFile: string;
   delegateTasks: {

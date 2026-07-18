@@ -14,10 +14,10 @@ function urlHostLabel(url: string): string {
   }
 }
 
-// Every CLI alias a model has, as "<alias> · <cli>" captions — shown regardless of which CLI
-// is currently picked, so switching CLI later doesn't hide what a model resolves to elsewhere.
+// Which CLIs offer a model, as the row caption — shown regardless of which CLI is
+// currently picked, so switching CLI later doesn't hide where a model is available.
 function aliasCaption(m: PickableModel): string {
-  return Object.entries(m.aliases).map(([cli, alias]) => `${alias} · ${cli}`).join("  /  ");
+  return m.availableOn.join("  /  ");
 }
 
 export function ProposalCard({
@@ -65,7 +65,7 @@ export function ProposalCard({
   // CLI follows from the model — each model resolves to exactly one CLI, so picking a model
   // already answers "which CLI." Falls back to the no-model picker's explicit choice.
   const cli: CliName =
-    (modelObj && cliOptions?.find((c) => modelObj.aliases[c] !== undefined)) ??
+    (modelObj && cliOptions?.find((c) => modelObj.availableOn.includes(c))) ??
     cliChoice ?? cliOptions?.[0] ?? "opencode";
   const hasModelMenu = !isChat && models.length > 0;
   const showCliOnlyPicker = !isChat && !hasModelMenu && (cliOptions?.length ?? 0) > 1;

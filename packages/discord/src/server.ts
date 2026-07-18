@@ -4,7 +4,7 @@ import {
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
-  ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects,
+  ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, Partials,
@@ -21,6 +21,7 @@ const beanConfig = await loadConfig(configFile(dir), dir);
 if (!beanConfig.openaiApiKey) throw new Error("openaiApiKey missing in ~/.bean/config.json");
 
 const clis = detectClis();
+const cliModels = await loadCliModels(clisFile(builtinDir), clisFile(dir));
 const runs = new RunRegistry(runDelegate, { dir, botKind: "discord" });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
@@ -36,6 +37,7 @@ const bot = buildTeamsBot({
   loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
   saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),
   detectClis: () => clis,
+  cliModels,
   runs,
   proposals: new ProposalStore(),
   noteProposals: new NoteProposalStore(),

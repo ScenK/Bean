@@ -80,7 +80,7 @@ export function DelegateCard({
                     >
                       <span class="bean-chip-menu-row-title">{model === m.id ? "✓ " : ""}{m.label}</span>
                       <span class="bean-chip-menu-caption">
-                        {Object.entries(m.aliases).map(([cli, alias]) => `${alias} · ${cli}`).join("  /  ") || "no CLI support"}
+                        {m.availableOn.join("  /  ") || "no CLI support"}
                       </span>
                     </button>
                   );

@@ -18,18 +18,18 @@ test("launchCommand builds the claude interactive command with a pre-sent prompt
   expect(launchCommand(req)).toEqual({ command: "claude", args: ["do it"] });
 });
 
-test("launchCommand appends --model when the chosen model has an alias for opencode", () => {
-  const req: LaunchRequest = { mode: "opencode", projectPath: "/p", prompt: "go", model: "claude-sonnet-5" };
+test("launchCommand appends --model with the verbatim model string for opencode", () => {
+  const req: LaunchRequest = { mode: "opencode", projectPath: "/p", prompt: "go", model: "github-copilot/claude-sonnet-5" };
   expect(launchCommand(req).args).toEqual(["/p", "--prompt=go", "--model", "github-copilot/claude-sonnet-5"]);
 });
 
-test("launchCommand appends --model when the chosen model has an alias for claude", () => {
+test("launchCommand appends --model with the verbatim model string for claude", () => {
   const req: LaunchRequest = { mode: "claude", projectPath: "/p", prompt: "go", model: "sonnet" };
   expect(launchCommand(req).args).toEqual(["--model", "sonnet", "go"]);
 });
 
-test("launchCommand omits --model when the chosen model has no alias for this CLI", () => {
-  const req: LaunchRequest = { mode: "claude", projectPath: "/p", prompt: "go", model: "gpt-5-5" };
+test("launchCommand omits --model when no model was picked", () => {
+  const req: LaunchRequest = { mode: "claude", projectPath: "/p", prompt: "go" };
   expect(launchCommand(req).args).toEqual(["go"]);
 });
 

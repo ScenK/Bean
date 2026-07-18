@@ -53,3 +53,4 @@
 - [project-manual-update-check](project-manual-update-check.md) — Ed25519-signed manual update flow (no Sparkle/electron-updater); see the design spec for why.
 - [project-skill-self-authoring](project-skill-self-authoring.md) — confirm-first `propose_skill` in `converse()` (all channels) → SkillCard/skillProposalCard → `saveSkill()`; built-in `generate-skill` chat skill; keep converse's name-traversal guard and test tool-lists in sync when touching this.
 - [project-todo-driven-routines](project-todo-driven-routines.md) — per-routine consume-once todo queues: `todos` table, per-todo pipeline in the runner, empty-queue skip semantics, confirm-first `propose_todo`.
+- [project-config-driven-cli-models](project-config-driven-cli-models.md) — `clis.json` (repo default + `~/.bean` override) replaces the hardcoded `MODELS`/`resolveModelAlias` canonical-id table; model strings are the literal `--model` value, providers stay code.

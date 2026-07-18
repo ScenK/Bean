@@ -7,6 +7,7 @@ import type { Skill, Project } from "../types.js";
 import type { Persona } from "../persona.js";
 import type { Memory, MemoryCandidate } from "../memory/memory.js";
 import type { CliName } from "../launcher.js";
+import type { CliModels } from "../cli-models.js";
 import type { DelegateRequest } from "../delegate.js";
 import type { CardBuilders } from "./cards-api.js";
 import { formatAmbientBlock, type AmbientMessage } from "./ambient.js";
@@ -62,6 +63,7 @@ export interface TeamsBotDeps {
   loadModelMemory: () => Promise<Record<string, string>>;
   saveModelMemory: (m: Record<string, string>) => Promise<void>;
   detectClis: () => CliName[];
+  cliModels: CliModels[]; // loaded once at boot from clis.json (repo default + ~/.bean override)
   runs: RunRegistry;
   proposals: ProposalStore;
   noteProposals: NoteProposalStore;
@@ -387,6 +389,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           actions,
           delegateAvailable: true,
           availableClis: detected,
+          models: availableModels(deps.cliModels, detected),
           rememberAvailable: true,
           runAvailable: false,
           todoRoutines,
@@ -473,7 +476,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }
         const proposal = result.proposedDelegate;
         if (!proposal) return;
-        const choice = resolveCliModel(detected, { cli: proposal.cli, model: proposal.model }, modelMemory);
+        const choice = resolveCliModel(detected, { cli: proposal.cli, model: proposal.model }, modelMemory, deps.cliModels);
         if (!choice) {
           await fx.post(NO_CLI);
           return;
@@ -486,7 +489,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const activityId = await fx.postCard(deps.cards.proposalCard({
           proposalId: pending.id, projectName, skillName: proposal.skillName,
           instruction: proposal.instruction, clis: detected,
-          models: availableModels(detected), defaultCli: choice.cli, defaultModel: choice.model,
+          models: availableModels(deps.cliModels, detected), defaultCli: choice.cli, defaultModel: choice.model,
         }));
         deps.proposals.setCardActivityId(pending.id, activityId);
       } catch (err) {
@@ -544,6 +547,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         detected,
         { cli: action.value.cli as CliName | undefined, model: action.value.model },
         memory,
+        deps.cliModels,
       );
       if (!choice) {
         await fx.post(NO_CLI);
