@@ -369,6 +369,7 @@ export interface NotesHandlerDeps {
   loadNotes: (file: string) => Promise<Note[]>;
   saveNote: (file: string, draft: NoteDraft) => Promise<string>;
   deleteNote: (file: string, slug: string) => Promise<void>;
+  loadNoteHistory: (file: string, slug: string) => Promise<Note[]>;
   dbFile: string;
 }
 
@@ -377,6 +378,7 @@ export function buildNotesHandlers(deps: NotesHandlerDeps) {
     list: (): Promise<Note[]> => deps.loadNotes(deps.dbFile),
     save: (draft: NoteDraft): Promise<string> => deps.saveNote(deps.dbFile, draft),
     delete: (slug: string): Promise<void> => deps.deleteNote(deps.dbFile, slug),
+    history: (slug: string): Promise<Note[]> => deps.loadNoteHistory(deps.dbFile, slug),
   };
 }
 
@@ -499,6 +501,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   loadNotes: NotesHandlerDeps["loadNotes"];
   saveNote: NotesHandlerDeps["saveNote"];
   deleteNote: NotesHandlerDeps["deleteNote"];
+  loadNoteHistory: NotesHandlerDeps["loadNoteHistory"];
   dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
@@ -620,6 +623,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.listNotes, () => notesHandlers.list());
   ipcMain.handle(IPC.saveNote, (_e, draft: NoteDraft) => notesHandlers.save(draft));
   ipcMain.handle(IPC.deleteNote, (_e, slug: string) => notesHandlers.delete(slug));
+  ipcMain.handle(IPC.noteHistory, (_e, slug: string) => notesHandlers.history(slug));
 
   const configHandlers = buildConfigHandlers({ getConfig: deps.getConfig, applyConfig: deps.applyConfig });
   ipcMain.handle(IPC.getConfig, () => configHandlers.get());

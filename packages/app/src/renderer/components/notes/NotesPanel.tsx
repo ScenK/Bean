@@ -15,6 +15,8 @@ export function NotesPanel() {
   const [draftTitle, setDraftTitle] = useState("");
   const [draftBody, setDraftBody] = useState("");
   const [saveError, setSaveError] = useState<string | undefined>(undefined);
+  const [history, setHistory] = useState<Note[] | undefined>(undefined);
+  const [viewVersion, setViewVersion] = useState<Note | undefined>(undefined);
 
   const refresh = async (): Promise<void> => {
     const [nextNotes, nextProjects] = await Promise.all([
@@ -59,7 +61,38 @@ export function NotesPanel() {
     return [day, `v${n.version}`, n.source === "chat" ? "from chat" : "yours"].filter(Boolean).join(" · ");
   };
 
-  const select = (slug: string): void => { setSelectedSlug(slug); setMode("view"); setSaveError(undefined); };
+  const select = (slug: string): void => {
+    setSelectedSlug(slug); setMode("view"); setSaveError(undefined);
+    setHistory(undefined); setViewVersion(undefined);
+  };
+
+  const openHistory = async (): Promise<void> => {
+    if (!selected) return;
+    if (history) { setHistory(undefined); setViewVersion(undefined); return; }
+    try {
+      const versions = await window.bean.noteHistory(selected.slug);
+      setHistory(versions.reverse()); // newest first
+      setViewVersion(undefined);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const restoreVersion = async (v: Note): Promise<void> => {
+    if (!selected) return;
+    try {
+      // Rollback = save the old content as a new version; nothing is destroyed.
+      await window.bean.saveNote({
+        title: v.title, body: v.body, project: selected.project, slug: selected.slug, source: selected.source,
+      });
+      setHistory(undefined);
+      setViewVersion(undefined);
+      await refresh();
+      setSelectedSlug(selected.slug);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const startEdit = (): void => {
     if (!selected) return;
@@ -227,7 +260,16 @@ export function NotesPanel() {
                   {selected.project ? <span class="bean-skills-tag">{projectName(selected.project)}</span> : null}
                 </div>
                 <div class="bean-skills-description">
-                  {selected.source === "chat" ? "Saved from chat" : "Written by you"} · v{selected.version} · {metaLine(selected)}
+                  {selected.source === "chat" ? "Saved from chat" : "Written by you"} ·{" "}
+                  <a
+                    href="#"
+                    class="bean-notes-version-link"
+                    title={selected.version > 1 ? "Show version history" : "No prior versions"}
+                    onClick={(e) => { e.preventDefault(); void openHistory(); }}
+                  >
+                    v{selected.version}
+                  </a>
+                  {selected.updated ? ` · ${new Date(selected.updated).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}
                 </div>
               </div>
               <button type="button" class="bean-btn" onClick={continueInChat}>💬 Continue in chat</button>
@@ -256,9 +298,50 @@ export function NotesPanel() {
               )}
             </div>
 
-            <div class="bean-skills-preview-box bean-notes-body">
-              <Markdown text={selected.body} onToggleTask={(i) => void toggleTask(i)} />
-            </div>
+            {history ? (
+              <div class="bean-skills-projects">
+                <div class="bean-field-label">VERSIONS</div>
+                {history.length === 0 ? (
+                  <div class="bean-skills-description">No prior versions.</div>
+                ) : (
+                  <div class="bean-skills-project-chips">
+                    {history.map((v) => (
+                      <button
+                        key={v.version}
+                        type="button"
+                        class={`bean-skills-project-chip${viewVersion?.version === v.version ? " bean-skills-project-chip--on" : ""}`}
+                        onClick={() => setViewVersion(viewVersion?.version === v.version ? undefined : v)}
+                      >
+                        v{v.version} · {v.updated ? new Date(v.updated).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            {viewVersion ? (
+              <>
+                <div class="bean-skills-description">
+                  Viewing v{viewVersion.version} — "{viewVersion.title}"
+                </div>
+                <div class="bean-skills-preview-box bean-notes-body">
+                  <Markdown text={viewVersion.body} />
+                </div>
+                <div class="bean-card-actions">
+                  <button type="button" class="bean-btn" onClick={() => void restoreVersion(viewVersion)}>
+                    Restore this version
+                  </button>
+                  <button type="button" class="bean-btn bean-btn--ghost" onClick={() => setViewVersion(undefined)}>
+                    Back to current
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div class="bean-skills-preview-box bean-notes-body">
+                <Markdown text={selected.body} onToggleTask={(i) => void toggleTask(i)} />
+              </div>
+            )}
 
             {saveError ? <div class="bean-status bean-status--error">{saveError}</div> : null}
             <div class="bean-card-actions">

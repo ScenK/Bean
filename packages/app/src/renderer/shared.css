@@ -1305,6 +1305,7 @@ button, input, textarea, select, a {
 
 /* Notes */
 .bean-notes-meta { font-size: 11px; opacity: 0.55; margin-top: 3px; }
+.bean-notes-version-link { color: var(--bean-accent); text-decoration: underline; cursor: pointer; }
 
 .bean-notes-body { flex: 1; overflow-y: auto; font-size: 13px; line-height: 1.55; }
 .bean-notes-body .bean-md h1, .bean-notes-body .bean-md h2, .bean-notes-body .bean-md h3 {
