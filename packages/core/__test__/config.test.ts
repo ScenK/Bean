@@ -103,13 +103,30 @@ test("projectBeanDir resolves to <repo-root>/.bean", () => {
   expect(projectBeanDir()).toBe(join(repoRoot, ".bean"));
 });
 
-test("defaults liveSessions to false and round-trips it through saveConfig", async () => {
+test("defaults liveSessions to true when absent, and round-trips it through saveConfig", async () => {
   const file = join(dir, "config.json");
   await writeFile(file, JSON.stringify({ openaiApiKey: "k", model: "m" }), "utf8");
   const cfg = await loadConfig(file, dir);
-  expect(cfg.liveSessions).toBe(false);
+  expect(cfg.liveSessions).toBe(true);
 
-  await saveConfig(file, { openaiApiKey: "k", model: "m", liveSessions: true });
+  await saveConfig(file, { openaiApiKey: "k", model: "m", liveSessions: false });
   const cfg2 = await loadConfig(file, dir);
-  expect(cfg2.liveSessions).toBe(true);
+  expect(cfg2.liveSessions).toBe(false);
+});
+
+test("saveConfig preserves an existing liveSessions value when the caller omits it (e.g. a Settings save)", async () => {
+  const file = join(dir, "config.json");
+  await saveConfig(file, { openaiApiKey: "k", model: "m", liveSessions: false });
+  // A caller that doesn't know about liveSessions (the desktop Settings save has no toggle
+  // for it) must not silently flip it back on when it re-saves the fields it does know about.
+  await saveConfig(file, { openaiApiKey: "k", model: "m2" });
+  const cfg = await loadConfig(file, dir);
+  expect(cfg.liveSessions).toBe(false);
+});
+
+test("saveConfig defaults liveSessions to true on a brand-new file when the caller omits it", async () => {
+  const file = join(dir, "config.json");
+  await saveConfig(file, { openaiApiKey: "k", model: "m" });
+  const cfg = await loadConfig(file, dir);
+  expect(cfg.liveSessions).toBe(true);
 });

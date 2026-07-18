@@ -16,14 +16,26 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   `converse()` entirely) until someone says `stop` or the 30-minute idle timeout fires. The
   render buffer is the source of truth: a failed Discord post/edit retries on the next
   ~1.5s tick without losing content — but this took a real bug fix to get right (see below).
-- **Two real concurrency bugs found by review, now fixed**: (1) the rollover-split loop used
-  to truncate the buffer *before* the network call that persisted the truncated chunk
-  succeeded, so a rejected send (rate limit) permanently dropped up to ~1900 chars; (2)
-  `teardown()` could fire `onEnded` while a flush was still in-flight, because
-  `flushSession`'s own `rendering` guard made the teardown-triggered call a silent no-op.
-  Both fixed by tracking the in-flight flush as a promise (`ActiveSession.inFlight`) and
-  never truncating the buffer until the corresponding send resolves. If you touch
-  `flushSession`/`teardown` again, re-derive these invariants — they're easy to reintroduce.
+- **Three real concurrency bugs found by review, now fixed** — all in the same class (async
+  work racing new output arriving mid-flight):
+  1. The rollover-split loop truncated the buffer *before* the network call that persisted
+     the truncated chunk succeeded, so a rejected send (rate limit) permanently dropped up
+     to ~1900 chars.
+  2. `teardown()` could fire `onEnded` while a flush was still in-flight, because
+     `flushSession`'s own `rendering` guard made the teardown-triggered call a silent no-op.
+  3. (Found post-merge by an automated PR reviewer.) On a turn-closing send
+     (`closeAfterFlush`), any output that arrived *while that send was still awaited* got
+     silently wiped by a blind `s.buf = ""` reset once the send resolved — the reset assumed
+     `s.buf` still equaled what was just sent, which isn't true if the next turn's first
+     token arrived in the meantime.
+  Fixed by: tracking the in-flight flush as a promise (`ActiveSession.inFlight`); never
+  truncating the buffer until the corresponding send resolves; and, for the turn-closing
+  reset specifically, slicing off only the sent-length prefix (captured right before that
+  send) instead of resetting to `""`. **Important asymmetry to preserve if you touch
+  `flushSession` again**: `s.buf` for a *continuing* (non-closing) send is the message's full
+  cumulative content and must NOT be truncated after an ordinary send — only the rollover
+  loop (each chunk becomes its own finalized message) and the `closeAfterFlush` reset (the
+  message is actually ending) ever remove sent content from it.
 - The stream sink rides `BotEffects`: `postCard({content})` / `updateCard(id, {content})`.
   This works on Discord (plain `MessageCreateOptions`) but NOT on Teams (adaptive-card
   attachment shape) — which is why Teams wires the feature but hard-disables it
@@ -35,9 +47,14 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   exported `discordCards: CardBuilders`). Don't assume one pattern when touching the other
   surface's card file — this exact mismatch caused a broken typecheck mid-build (see git
   history around commit range `482d173..c7c0050`).
-- Feature is invisible unless `~/.bean/config.json` has `"liveSessions": true` AND `claude`
-  is detected on PATH (`liveSessionsEnabled` checks both). Launch is always confirm-first via
-  a card even though the session itself runs with permissions bypassed once started.
+- Feature defaults to **on** (`liveSessions` defaults to `true` in `loadConfig` — changed
+  from the original opt-in/`false` design by explicit request after the initial build), and
+  still requires `claude` to be detected on PATH (`liveSessionsEnabled` checks both). An
+  explicit opt-out is respected: `saveConfig` preserves the on-disk `liveSessions` value when
+  a caller omits the field (the desktop Settings save has no toggle for it and would
+  otherwise silently reset it on every save — this was a real, review-caught bug). Launch is
+  always confirm-first via a card even though the session itself runs with permissions
+  bypassed once started.
 - Manual end-to-end smoke test (real Discord bot + real `claude` CLI) was not run as part of
   the implementation — it needs live Discord credentials and a test server that weren't
   available in the implementing session. Full monorepo test/typecheck gate is green; the

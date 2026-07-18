@@ -149,25 +149,38 @@ export class LiveSessionRegistry {
           const cut = s.buf.lastIndexOf("\n", MSG_LIMIT);
           const at = cut > 0 ? cut : MSG_LIMIT;
           const head = s.buf.slice(0, at);
-          const remainder = s.buf.slice(at).replace(/^\n/, "");
           if (s.msgId !== undefined) {
             await s.sink.edit(s.msgId, head);
             s.msgId = undefined;
           } else {
             await s.sink.post(head);
           }
-          // Only commit the truncation once the send actually succeeded — a rejected
-          // sink call above throws before this line, leaving `head` still in s.buf for retry.
-          s.buf = remainder;
+          // Re-slice from s.buf (not a pre-await snapshot) after the send succeeds: new
+          // output can be appended (the agent is still streaming) while this await is in
+          // flight, and `at` — a fixed offset from the start — still correctly excludes
+          // exactly what was just sent regardless of what's since been appended past it.
+          s.buf = s.buf.slice(at).replace(/^\n/, "");
         }
         if (s.buf) {
+          // s.buf holds the CURRENT message's full cumulative content — every tick resends
+          // it whole (post the first time, edit thereafter), so it must NOT be truncated
+          // after an ordinary send; only closeAfterFlush below ever resets it, and only to
+          // what's left over after this specific send.
+          const sentLength = s.buf.length;
           if (s.msgId !== undefined) await s.sink.edit(s.msgId, s.buf);
           else s.msgId = await s.sink.post(s.buf);
-        }
-        if (s.closeAfterFlush) {
+          if (s.closeAfterFlush) {
+            s.closeAfterFlush = false;
+            s.msgId = undefined;
+            // Drop only what was actually sent — output appended during this await (the
+            // next turn starting early) must survive as the start of the next message,
+            // not be wiped by a blind reset to "".
+            s.buf = s.buf.slice(sentLength).replace(/^\n/, "");
+          }
+        } else if (s.closeAfterFlush) {
+          // Nothing queued to send this tick, but the turn still needs closing out.
           s.closeAfterFlush = false;
           s.msgId = undefined;
-          s.buf = "";
         }
       } catch {
         // Rate limit or transient send failure: buffer is the source of truth — retry next tick.

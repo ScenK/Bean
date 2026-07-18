@@ -189,4 +189,46 @@ describe("LiveSessionRegistry", () => {
     expect(notices).toHaveLength(1);
     expect([...posts, ...edits].join("\n")).toContain("second chunk arrived mid-flush");
   });
+
+  it("preserves output that arrives while a turn-closing send is in flight (bug 3 regression)", async () => {
+    const f = fakeStart();
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const posts: string[] = [];
+    let postCallCount = 0;
+    let resolveFirstPost!: () => void;
+    const sink: LiveSessionSink = {
+      post: async (text) => {
+        postCallCount++;
+        if (postCallCount === 1) {
+          await new Promise<void>((resolve) => { resolveFirstPost = resolve; });
+        }
+        posts.push(text);
+        return `msg-${posts.length}`;
+      },
+      edit: async () => {},
+    };
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink });
+
+    f.cbs().onOutput("turn one output");
+    f.cbs().onTurnComplete({ result: "done", durationMs: 100 }); // sets closeAfterFlush = true
+
+    // Throttle tick dispatches the turn-closing send, which hangs.
+    await flushTicks(reg, 1001);
+    expect(postCallCount).toBe(1);
+
+    // The next turn's first output arrives while that closing send is still in flight.
+    f.cbs().onOutput("turn two output");
+
+    resolveFirstPost();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    // The turn-one send must contain exactly turn one's content, uncorrupted by the append.
+    expect(posts[0]).toContain("turn one output");
+    expect(posts[0]).not.toContain("turn two output");
+
+    // Turn two's output must not be silently dropped by the turn-close reset — the next
+    // tick delivers it as a fresh message (closeAfterFlush already reset msgId).
+    await flushTicks(reg, 1001);
+    expect(posts[1]).toBe("turn two output");
+  });
 });
