@@ -9,7 +9,7 @@ import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, M
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
-  modelMemoryFile,
+  modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, saveMemories, appendMemories, extractMemories,
   loadReminders, saveReminders, dueReminders, extractPageText,
@@ -404,6 +404,10 @@ app.whenReady().then(async () => {
   const resolvedPath = [process.env.PATH ?? "", loginShellPath(), "/opt/homebrew/bin", "/usr/local/bin"].join(":");
   const availableClis = detectClis(resolvedPath);
 
+  // Same repo-default + ~/.bean override layering as skills/persona; loaded once at boot
+  // (no live reload — restart Bean after editing clis.json).
+  const cliModels: CliModels[] = await loadCliModels(clisFile(projectDir), clisFile(dir));
+
   setInterval(() => {
     void (async () => {
       const reminders = await loadReminders(remindersPath);
@@ -606,6 +610,7 @@ app.whenReady().then(async () => {
       getTerminalApp: () => runtime.getTerminalApp(),
       getEditorApp: () => runtime.getEditorApp(),
       getAvailableClis: () => availableClis,
+      getCliModels: () => cliModels,
       beanDirPath: dir,
       modelMemoryFile: modelMemoryFile(dir),
       delegateTasks,

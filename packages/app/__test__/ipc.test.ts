@@ -442,7 +442,13 @@ test("chat-prompt store lets a late-mounting chat window pull the pending prompt
 });
 
 test("models handler returns the canonical list annotated for the detected CLIs", () => {
-  const handler = buildModelsHandler({ getAvailableClis: () => ["claude"] });
+  const handler = buildModelsHandler({
+    getAvailableClis: () => ["claude"],
+    getCliModels: () => [
+      { provider: "claude", models: ["sonnet", "opus", "haiku"] },
+      { provider: "opencode", models: ["gpt-5-5"] },
+    ],
+  });
   const models = handler();
   expect(models.find((m) => m.id === "sonnet")?.availableOn).toEqual(["claude"]);
   expect(models.find((m) => m.id === "gpt-5-5")?.availableOn).toEqual([]);
