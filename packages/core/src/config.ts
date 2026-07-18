@@ -58,10 +58,7 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
     editorApp: parsed.editorApp ?? "",
     delegateCli: parsed.delegateCli ?? "",
     systemControls: parsed.systemControls ?? false,
-    // Live sessions default ON — unlike systemControls, this isn't a desktop-only opt-in;
-    // it only ever activates when a chatops surface enables it AND claude is detected, so
-    // the default here is "don't get in the way," not "safe by default."
-    liveSessions: parsed.liveSessions ?? true,
+    liveSessions: parsed.liveSessions ?? false,
     beanDir: beanDirPath,
   };
 }
@@ -73,8 +70,8 @@ export async function saveConfig(
   await mkdir(dirname(file), { recursive: true });
   // No Settings UI toggle exists for liveSessions, so a desktop Settings save calls this with
   // the field omitted entirely — falling back to a fixed default here would silently overwrite
-  // whatever the user (or a future toggle) had set. Preserve the on-disk value across saves that
-  // don't know about this field; only a fresh file with no prior value falls back to the default.
+  // whatever the user (or a future toggle) had set. Preserve the on-disk value across saves
+  // that don't know about this field; only a brand-new file falls back to the default.
   let existingLiveSessions: boolean | undefined;
   try {
     const raw = await readFile(file, "utf8");
@@ -86,7 +83,7 @@ export async function saveConfig(
     openaiApiKey: config.openaiApiKey, model: config.model,
     terminalApp: config.terminalApp ?? "", editorApp: config.editorApp ?? "", delegateCli: config.delegateCli ?? "",
     systemControls: config.systemControls ?? false,
-    liveSessions: config.liveSessions ?? existingLiveSessions ?? true,
+    liveSessions: config.liveSessions ?? existingLiveSessions ?? false,
   };
   await writeFile(file, JSON.stringify(out, null, 2) + "\n", "utf8");
 }

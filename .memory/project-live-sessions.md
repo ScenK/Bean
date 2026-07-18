@@ -47,14 +47,12 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   exported `discordCards: CardBuilders`). Don't assume one pattern when touching the other
   surface's card file — this exact mismatch caused a broken typecheck mid-build (see git
   history around commit range `482d173..c7c0050`).
-- Feature defaults to **on** (`liveSessions` defaults to `true` in `loadConfig` — changed
-  from the original opt-in/`false` design by explicit request after the initial build), and
-  still requires `claude` to be detected on PATH (`liveSessionsEnabled` checks both). An
-  explicit opt-out is respected: `saveConfig` preserves the on-disk `liveSessions` value when
-  a caller omits the field (the desktop Settings save has no toggle for it and would
-  otherwise silently reset it on every save — this was a real, review-caught bug). Launch is
-  always confirm-first via a card even though the session itself runs with permissions
-  bypassed once started.
+- Feature is invisible unless `~/.bean/config.json` has `"liveSessions": true` AND `claude`
+  is detected on PATH (`liveSessionsEnabled` checks both). `saveConfig` preserves the on-disk
+  `liveSessions` value when a caller omits the field (the desktop Settings save has no toggle
+  for it and would otherwise silently reset it to `false` on every save — a real, PR-review-
+  caught bug). Launch is always confirm-first via a card even though the session itself runs
+  with permissions bypassed once started.
 - Manual end-to-end smoke test (real Discord bot + real `claude` CLI) was not run as part of
   the implementation — it needs live Discord credentials and a test server that weren't
   available in the implementing session. Full monorepo test/typecheck gate is green; the

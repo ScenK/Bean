@@ -35,7 +35,7 @@ scope here.
 | Interaction shape | Chat-turn bridge in chatops (not web terminal) |
 | Agent CLI | Claude Code first; provider interface leaves seam for opencode later |
 | Surface | Discord first; bridge lives in shared `chatops/` so Teams follows nearly free |
-| Permissions | True bypass (`--dangerously-skip-permissions`) — deliberately stronger than the UI's "Auto" mode, which still prompts on dangerous actions. Alternatives (acceptEdits with auto-deny; a permission-prompt-to-confirm-card bridge) were considered and rejected. Launch stays confirm-first; feature gated behind a config flag (originally opt-in/off, later flipped to default-on by explicit request — see Config & safety) |
+| Permissions | True bypass (`--dangerously-skip-permissions`) — deliberately stronger than the UI's "Auto" mode, which still prompts on dangerous actions. Alternatives (acceptEdits with auto-deny; a permission-prompt-to-confirm-card bridge) were considered and rejected. Launch stays confirm-first; feature gated behind opt-in config flag |
 | Steering | Anyone in the bound channel can post turns |
 
 ## User flow
@@ -103,21 +103,19 @@ calls; no core changes expected.
 
 ## Config & safety
 
-- `~/.bean/config.json` gains `liveSessions`, defaulting to `true` (revised after initial
-  build — originally shipped opt-in/`false` like `systemControls`, then flipped to
-  default-on by explicit request). The flag still exists as an off-switch: still gated
-  behind Discord actually detecting `claude` on PATH, and `saveConfig` preserves whatever
-  value is already on disk when a caller (e.g. a future Settings save) doesn't know about
-  the field, so an explicit opt-out isn't silently reverted.
+- `~/.bean/config.json` gains `liveSessions: false` (default). The feature is
+  invisible until opted in — same pattern as `systemControls`. `saveConfig` preserves
+  whatever value is already on disk when a caller (e.g. a desktop Settings save, which has
+  no toggle for this field) doesn't know about it — a real bug caught in PR review would
+  otherwise have silently reset it to `false` on every Settings save.
 - Launch is always confirm-first via the proposal card, even though the session itself
   runs with permissions bypassed.
 - The working directory must be a registered project from `~/.bean/projects.json` —
   arbitrary paths from chat are rejected.
 - Known accepted risk (explicitly chosen): full-auto permissions plus
   anyone-in-channel steering means anyone in a bound channel can drive a
-  shell-capable agent on the host Mac. Mitigations are the confirm-first launch and the
-  registered-project constraint — the config flag is now default-on, so it is no longer
-  a meaningful gate unless a user explicitly turns it off.
+  shell-capable agent on the host Mac. Mitigations are the opt-in flag, the
+  confirm-first launch, and the registered-project constraint.
 
 ## Cost model
 
