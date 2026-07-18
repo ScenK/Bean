@@ -23,6 +23,8 @@ import type { SkillProposalStore } from "./skill-proposals.js";
 import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
 import { systemControlTool } from "../system-control.js";
 import type { RunRegistry } from "./runs.js";
+import { LiveSessionProposalStore, type PendingLiveSession } from "./live-session-proposals.js";
+import { LiveSessionRegistry, type LiveSessionSink } from "./live-sessions.js";
 
 // Above this many total memories, a successful save-memories also offers a tidy-up (merge
 // duplicates/drop stale) proposal — piggybacking on the existing extraction flow rather than
@@ -91,6 +93,11 @@ export interface TeamsBotDeps {
   cards: CardBuilders;
   /** Gates the system_control action tool, same as main.ts's desktop wiring. */
   systemControlsEnabled: () => boolean;
+  /** Active chat-bridged agent sessions; while a channel is bound, its messages bypass converse. */
+  liveSessions: LiveSessionRegistry;
+  liveSessionProposals: LiveSessionProposalStore;
+  /** Gates the propose_live_session tool (config liveSessions flag + surface support). */
+  liveSessionsEnabled: () => boolean;
 }
 
 const DESKTOP_ONLY =
@@ -152,6 +159,40 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     await updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, projectPath: req.projectPath }));
     const memory = await deps.loadModelMemory();
     await deps.saveModelMemory({ ...memory, ...memoryUpdatesFor({ cli, model }) });
+  }
+
+  async function startLiveSessionAction(p: PendingLiveSession, startedBy: string, fx: BotEffects): Promise<void> {
+    const projects = await deps.loadProjects();
+    const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? p.proposal.projectPath;
+    const updateTo = async (card: object): Promise<void> => {
+      if (p.cardActivityId !== undefined) await fx.updateCard(p.cardActivityId, card);
+    };
+    // Plain-text stream messages ride the card channel: postCard({content}) / updateCard(id, {content}).
+    const sink: LiveSessionSink = {
+      post: (text) => fx.postCard({ content: text }),
+      edit: (id, text) => fx.updateCard(id, { content: text }),
+    };
+    const started = deps.liveSessions.start({
+      channelId: p.conversationId,
+      projectPath: p.proposal.projectPath,
+      instruction: p.proposal.instruction,
+      model: p.proposal.model,
+      sink,
+      onTurnResult: (result) =>
+        deps.conversations.append(p.conversationId, { role: "assistant", content: `[live session] ${result}` }),
+      onEnded: (notice) => {
+        void updateToEnded();
+        void fx.post(notice);
+      },
+    });
+    async function updateToEnded(): Promise<void> {
+      await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "ended" }));
+    }
+    if (!started) {
+      await fx.post("A live session is already running in this channel — say `stop` to end it first.");
+      return;
+    }
+    await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started" }));
   }
 
   async function handleNoteAction(
@@ -346,6 +387,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   return {
     async onMessage(msg: IncomingMessage, fx: BotEffects): Promise<void> {
       try {
+        if (deps.liveSessions.has(msg.conversationId)) {
+          if (msg.text.trim().toLowerCase() === "stop") {
+            deps.liveSessions.stop(msg.conversationId);
+            return; // the registry's onEnded posts the end notice
+          }
+          deps.conversations.append(msg.conversationId, { role: "user", content: msg.text });
+          deps.liveSessions.send(msg.conversationId, msg.text);
+          return;
+        }
         if (msg.text.trim().toLowerCase() === "cancel") {
           const n = deps.runs.cancelAll();
           await fx.reply(n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.");
@@ -388,6 +438,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps: { chat: deps.chat, model: deps.model },
           actions,
           delegateAvailable: true,
+          liveSessionAvailable: deps.liveSessionsEnabled() && detected.includes("claude"),
           availableClis: detected,
           models: availableModels(deps.cliModels, detected),
           rememberAvailable: true,
@@ -424,6 +475,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           // Backstop only: terminal-target propose_run isn't offered from chatops, so this
           // can't fire from a well-behaved model — but if it does, point at what works.
           await fx.post(DESKTOP_ONLY);
+          return;
+        }
+        if (result.proposedLiveSession) {
+          const live = result.proposedLiveSession;
+          const projectName = projects.find((p) => p.path === live.projectPath)?.name ?? live.projectPath;
+          const pending = deps.liveSessionProposals.add({ proposal: live, conversationId: msg.conversationId, proposedBy: msg.fromName });
+          const activityId = await fx.postCard(deps.cards.liveSessionProposalCard({
+            proposalId: pending.id, projectName, instruction: live.instruction, model: live.model,
+          }));
+          deps.liveSessionProposals.setCardActivityId(pending.id, activityId);
           return;
         }
         if (result.proposedNote) {
@@ -521,6 +582,24 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (beanAction === "confirm-consolidation" || beanAction === "cancel-consolidation") {
         await handleConsolidationAction(beanAction, proposalId, fx);
+        return;
+      }
+      if (beanAction === "start-live" || beanAction === "cancel-live") {
+        if (!proposalId) return;
+        const pending = deps.liveSessionProposals.claim(proposalId);
+        if (!pending) {
+          await fx.post("That live-session proposal expired — ask me to start one again.");
+          return;
+        }
+        if (beanAction === "cancel-live") {
+          const projects = await deps.loadProjects();
+          const projectName = projects.find((p) => p.path === pending.proposal.projectPath)?.name ?? pending.proposal.projectPath;
+          if (pending.cardActivityId !== undefined) {
+            await fx.updateCard(pending.cardActivityId, deps.cards.liveSessionResultCard({ projectName, startedBy: action.fromName, outcome: "cancelled" }));
+          }
+          return;
+        }
+        await startLiveSessionAction(pending, action.fromName, fx);
         return;
       }
       if (!proposalId) return;
