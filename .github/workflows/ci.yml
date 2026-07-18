@@ -5,23 +5,45 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
+      # Dependabot bumps package.json but can't always regenerate pnpm-lock.yaml
+      # itself (e.g. very-recently-published versions). Do it here instead of
+      # rejecting the PR outright.
+      - name: Sync lockfile for dependabot PRs
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+        run: |
+          pnpm install --lockfile-only --no-frozen-lockfile
+          if ! git diff --quiet -- pnpm-lock.yaml; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add pnpm-lock.yaml
+            git commit -m "chore: sync pnpm-lock.yaml"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
       - run: pnpm install --frozen-lockfile
       - run: pnpm test && pnpm typecheck
 
   e2e:
+    needs: test
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
