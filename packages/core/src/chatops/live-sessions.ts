@@ -50,6 +50,9 @@ interface ActiveSession {
   msgId: string | undefined;
   dirty: boolean;
   rendering: boolean;
+  /** The currently in-flight flushSession() run, if any — teardown awaits this before its
+   * own final flush so an in-progress send isn't silently dropped by the rendering guard. */
+  inFlight?: Promise<void>;
   /** Set on turn completion: after the next successful flush, reset for a fresh message. */
   closeAfterFlush: boolean;
   onEnded?: (notice: string) => void;
@@ -120,8 +123,13 @@ export class LiveSessionRegistry {
     if (!s) return;
     clearInterval(s.timer);
     this.byChannel.delete(channelId);
-    // Final flush of anything buffered, then the end notice.
-    void this.flushSession(s).then(() => {
+    // Wait for any flush already in flight before the final flush — otherwise flushSession's
+    // own rendering guard makes this a no-op and content buffered during that window is lost.
+    const wait = s.inFlight ?? Promise.resolve();
+    void wait.then(() => {
+      if (s.buf) s.dirty = true; // force a final flush of anything still unsent
+      return this.flushSession(s);
+    }).then(() => {
       s.onEnded?.(err ? `Live session died: ${err.message}` : "Live session ended.");
     });
   }
@@ -131,37 +139,44 @@ export class LiveSessionRegistry {
     if (s) await this.flushSession(s);
   }
 
-  private async flushSession(s: ActiveSession): Promise<void> {
-    if (!s.dirty || s.rendering) return;
+  private flushSession(s: ActiveSession): Promise<void> {
+    if (!s.dirty || s.rendering) return s.inFlight ?? Promise.resolve();
     s.rendering = true;
     s.dirty = false;
-    try {
-      while (s.buf.length > MSG_LIMIT) {
-        const cut = s.buf.lastIndexOf("\n", MSG_LIMIT);
-        const at = cut > 0 ? cut : MSG_LIMIT;
-        const head = s.buf.slice(0, at);
-        s.buf = s.buf.slice(at).replace(/^\n/, "");
-        if (s.msgId !== undefined) {
-          await s.sink.edit(s.msgId, head);
-          s.msgId = undefined;
-        } else {
-          await s.sink.post(head);
+    const run = (async () => {
+      try {
+        while (s.buf.length > MSG_LIMIT) {
+          const cut = s.buf.lastIndexOf("\n", MSG_LIMIT);
+          const at = cut > 0 ? cut : MSG_LIMIT;
+          const head = s.buf.slice(0, at);
+          const remainder = s.buf.slice(at).replace(/^\n/, "");
+          if (s.msgId !== undefined) {
+            await s.sink.edit(s.msgId, head);
+            s.msgId = undefined;
+          } else {
+            await s.sink.post(head);
+          }
+          // Only commit the truncation once the send actually succeeded — a rejected
+          // sink call above throws before this line, leaving `head` still in s.buf for retry.
+          s.buf = remainder;
         }
+        if (s.buf) {
+          if (s.msgId !== undefined) await s.sink.edit(s.msgId, s.buf);
+          else s.msgId = await s.sink.post(s.buf);
+        }
+        if (s.closeAfterFlush) {
+          s.closeAfterFlush = false;
+          s.msgId = undefined;
+          s.buf = "";
+        }
+      } catch {
+        // Rate limit or transient send failure: buffer is the source of truth — retry next tick.
+        s.dirty = true;
+      } finally {
+        s.rendering = false;
       }
-      if (s.buf) {
-        if (s.msgId !== undefined) await s.sink.edit(s.msgId, s.buf);
-        else s.msgId = await s.sink.post(s.buf);
-      }
-      if (s.closeAfterFlush) {
-        s.closeAfterFlush = false;
-        s.msgId = undefined;
-        s.buf = "";
-      }
-    } catch {
-      // Rate limit or transient send failure: buffer is the source of truth — retry next tick.
-      s.dirty = true;
-    } finally {
-      s.rendering = false;
-    }
+    })();
+    s.inFlight = run;
+    return run;
   }
 }

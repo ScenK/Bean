@@ -117,4 +117,76 @@ describe("LiveSessionRegistry", () => {
     expect(reg.has("c")).toBe(false);
     expect(notices[0]).toContain("code 1");
   });
+
+  it("retries a rolled-over chunk without losing it when the sink rejects once (bug 1 regression)", async () => {
+    const f = fakeStart();
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const posts: string[] = [];
+    let postCallCount = 0;
+    const sink: LiveSessionSink = {
+      post: async (text) => {
+        postCallCount++;
+        if (postCallCount === 1) throw new Error("rate limited");
+        posts.push(text);
+        return `msg-${posts.length}`;
+      },
+      edit: async () => {},
+    };
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink });
+    // Buffer exceeds MSG_LIMIT (1900), forcing a rollover split at the newline.
+    const original = `${"a".repeat(1500)}\n${"b".repeat(1500)}`;
+    f.cbs().onOutput(original);
+    await flushTicks(reg, 1001); // first attempt: post() rejects — head must survive for retry
+    await flushTicks(reg, 1001); // second attempt: post() succeeds, rollover completes
+    // Nothing lost: the posted chunks rejoin into the exact original content.
+    expect(posts.join("\n")).toBe(original);
+    expect(postCallCount).toBeGreaterThan(1); // confirms a retry actually happened
+  });
+
+  it("teardown waits for an in-flight flush before firing onEnded (bug 2 regression)", async () => {
+    const f = fakeStart();
+    const notices: string[] = [];
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const posts: string[] = [];
+    const edits: string[] = [];
+    let postCallCount = 0;
+    let resolveFirstPost!: () => void;
+    const sink: LiveSessionSink = {
+      post: async (text) => {
+        postCallCount++;
+        if (postCallCount === 1) {
+          // A controllable deferred: this call stays pending until we resolve it below,
+          // simulating a real network post that's in flight when the process exits.
+          await new Promise<void>((resolve) => { resolveFirstPost = resolve; });
+        }
+        posts.push(text);
+        return `msg-${posts.length}`;
+      },
+      edit: async (_id, text) => { edits.push(text); },
+    };
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink, onEnded: (n) => notices.push(n) });
+
+    f.cbs().onOutput("first chunk");
+    // Throttle tick fires: flushSession calls sink.post("first chunk"), which now hangs.
+    await flushTicks(reg, 1001);
+    expect(postCallCount).toBe(1);
+
+    // More output arrives while that post is still in flight.
+    f.cbs().onOutput("second chunk arrived mid-flush");
+
+    // The process exits right now — onExit is driven independently of the throttle timer.
+    f.cbs().onExit(undefined);
+
+    // The in-flight flush hasn't resolved yet, so onEnded must not have fired.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(notices).toHaveLength(0);
+
+    // Let the in-flight sink.post resolve; teardown should then force a final flush of the
+    // content that arrived mid-flush before firing onEnded.
+    resolveFirstPost();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(notices).toHaveLength(1);
+    expect([...posts, ...edits].join("\n")).toContain("second chunk arrived mid-flush");
+  });
 });
