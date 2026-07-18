@@ -47,6 +47,15 @@ export interface ProposedDelegate {
   /** Literal --model value (clis.json) the user explicitly asked for. */
   model?: string;
 }
+/** A confirm-first live interactive agent session bound to this chat channel:
+ * a long-lived claude process whose output streams into the channel and whose next
+ * turns come from channel messages. Spec: live-sessions design. */
+export interface ProposedLiveSession {
+  projectPath: string;
+  instruction: string;
+  /** Literal --model value (clis.json) the user explicitly asked for. */
+  model?: string;
+}
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */
 export interface LinkedNote { slug: string; title: string; version: number; body: string; }
