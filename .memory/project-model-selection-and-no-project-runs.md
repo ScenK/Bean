@@ -3,13 +3,13 @@
 `ProposalCard`/`DelegateCard` gained a model picker and a merged project/no-project menu
 (design source: the Claude Design "Bean" project, `Proposal Panel.dc.html`, mockups 3a + 2a).
 
-**Model selection (3a):** `packages/core/src/models.ts` is a hardcoded canonical-model table
-(`MODELS`), each entry mapping to per-CLI alias strings (`aliases: Partial<Record<CliName,
-string>>`). `resolveModelAlias(modelId, cli)` looks up the flag value; `availableModels(clis)`
-annotates each with `availableOn` for the picker's dimmed rows. `launchCommand`/`delegateCommand`
-append `--model <alias>` only when an alias exists for the chosen CLI — otherwise the flag is
-silently omitted (that model just isn't selectable for that CLI in the UI). Last-used-per-skill
-is a flat `Record<skillName, modelId>` at `~/.bean/model-memory.json`
+**Model selection (3a):** as of [[project-config-driven-cli-models]], the model list is no
+longer a hardcoded table — `packages/core/src/models.ts`'s `availableModels(cliModels, detected)`
+derives `AvailableModel { id, label, availableOn }` from `clis.json` (loaded via
+`loadCliModels`). A model `id` is the literal `--model` flag string (no canonical-id/alias
+layer); `label` is derived from it (last `/` segment). `launchCommand`/`delegateCommand` pass
+`req.model` straight through to `--model` when set, omitted otherwise. Last-used-per-skill is
+a flat `Record<skillName, modelId>` at `~/.bean/model-memory.json`
 (`loadModelMemory`/`saveModelMemory`, same swallow-errors-to-default shape as `memory/store.ts`).
 
 **No-project runs (2a):** `RouteSuggestion.projectPath` is now **optional** — absent means
