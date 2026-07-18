@@ -15,6 +15,7 @@ export * from "./memory/consolidate.js";
 export * from "./reminders.js";
 export * from "./deliver.js";
 export * from "./models.js";
+export * from "./cli-models.js";
 export * from "./model-memory.js";
 export * from "./web-page.js";
 export * from "./router.js";

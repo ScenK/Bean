@@ -18,6 +18,7 @@ export function projectBeanDir(): string {
 export function skillsDir(dir: string): string { return join(dir, "skills"); }
 export function projectsFile(dir: string): string { return join(dir, "projects.json"); }
 export function configFile(dir: string): string { return join(dir, "config.json"); }
+export function clisFile(dir: string): string { return join(dir, "clis.json"); }
 export function personaFile(dir: string): string { return join(dir, "persona.json"); }
 export function memoryFile(dir: string): string { return join(dir, "memory.json"); }
 // SQLite store for memories/notes/chatops history (replaces memory.json + notes/*.md as of
