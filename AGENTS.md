@@ -223,6 +223,10 @@ Per-user, outside the repo. Path helpers live in `core/src/config.ts`.
   "delegateCli", "systemControls" }`. Only `openaiApiKey`/`model` are load-bearing (`model`
   defaults to `gpt-4o-mini`); the rest default to `""`/`false`. A missing config throws; an
   empty `openaiApiKey` shows an error dialog but the app still opens.
+- `~/.bean/clis.json` → optional per-provider model lists overriding the repo default
+  `.bean/clis.json`: `[{ "provider": "claude", "models": ["sonnet", ...] }]`. A user entry
+  replaces that provider's default list; model strings are passed verbatim to `--model`.
+  Providers are still code (`opencode`, `claude`) — only their model lists are config.
 - `~/.bean/skills/*.md` → one markdown file per skill. `description:` frontmatter is the
   router-visible summary; otherwise the first heading is used. The full body composes the prompt.
 - `~/.bean/projects.json` → `[{ "name": "...", "path": "/abs/path", "defaultSkill": "..." }]`
