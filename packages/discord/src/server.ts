@@ -22,7 +22,7 @@ const discordConfig = await loadDiscordConfig(discordConfigFile(dir));
 const beanConfig = await loadConfig(configFile(dir), dir);
 if (!beanConfig.openaiApiKey) throw new Error("openaiApiKey missing in ~/.bean/config.json");
 
-const clis = detectClis();
+const clis = detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
 const cliModels = await loadCliModels(clisFile(builtinDir), clisFile(dir));
 const runs = new RunRegistry(runDelegate, { dir, botKind: "discord" });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery

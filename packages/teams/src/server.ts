@@ -63,7 +63,7 @@ adapter.onTurnError = async (context, error) => {
   await context.sendActivity("Something went wrong handling that message.");
 };
 
-const clis = detectClis();
+const clis = detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
 const cliModels = await loadCliModels(clisFile(builtinDir), clisFile(dir));
 const runs = new RunRegistry(runDelegate, { dir, botKind: "teams" });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery

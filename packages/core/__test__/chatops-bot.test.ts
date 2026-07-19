@@ -766,7 +766,7 @@ test("proposedDelegate with no CLI detected posts an error and no card", async (
   const effects = fx();
   await bot.onMessage(msg, effects);
   expect(effects.cards).toHaveLength(0);
-  expect(effects.posted.some((p) => p.includes("PATH"))).toBe(true);
+  expect(effects.posted.some((p) => p.includes("`claude`, `opencode`, or `codex`"))).toBe(true);
 });
 
 test("run onError posts the failure message and updates the card", async () => {
