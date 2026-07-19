@@ -45,11 +45,19 @@ test("invalid JSON in the user file degrades to defaults", async () => {
 test("unknown providers are skipped, non-string models filtered", async () => {
   const d = await dir();
   await writeFile(join(d, "default.json"), JSON.stringify([
-    { provider: "codex", models: ["gpt-5"] },
+    { provider: "unknown", models: ["gpt-5"] },
     { provider: "claude", models: ["sonnet", 42, ""] },
   ]));
   const result = await loadCliModels(join(d, "default.json"), join(d, "nope.json"));
   expect(result).toEqual([{ provider: "claude", models: ["sonnet"] }]);
+});
+
+test("codex is a known provider", async () => {
+  const d = await dir();
+  const defaults = join(d, "default.json");
+  await writeFile(defaults, JSON.stringify([{ provider: "codex", models: ["gpt-5.6-sol"] }]));
+  const models = await loadCliModels(defaults, "/nonexistent/clis.json");
+  expect(models).toEqual([{ provider: "codex", models: ["gpt-5.6-sol"] }]);
 });
 
 test("missing default file yields an empty list", async () => {
