@@ -6,8 +6,9 @@ import { chmodSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
-export type LaunchMode = "opencode" | "claude" | "open";
-export type CliName = "opencode" | "claude";
+export const CLI_NAMES = ["opencode", "claude", "codex"] as const;
+export type CliName = (typeof CLI_NAMES)[number];
+export type LaunchMode = CliName | "open";
 
 const defaultIsExecutable = (p: string): boolean => {
   try {
@@ -26,7 +27,7 @@ export function detectClis(
 ): CliName[] {
   const dirs = pathEnv.split(delimiter).filter(Boolean);
   const onPath = (cmd: CliName): boolean => dirs.some((d) => isExecutable(join(d, cmd)));
-  return (["opencode", "claude"] as const).filter(onPath);
+  return CLI_NAMES.filter(onPath);
 }
 
 export type SpawnSyncFn = (command: string, args: string[]) => { stdout?: string };
@@ -54,7 +55,7 @@ export interface LaunchRequest {
   // seeds this dir itself (no git clone/page fetch) — a URL the user typed is folded into
   // `prompt` instead, and the launched agent fetches/clones it itself if it needs to.
   projectPath: string;
-  prompt?: string; // required for "opencode"/"claude", ignored for "open"
+  prompt?: string; // required for "opencode"/"claude"/"codex", ignored for "open"
   model?: string; // literal --model value (clis.json); ignored for "open"
 }
 
@@ -73,6 +74,8 @@ export function launchCommand(req: LaunchRequest, editorApp?: string): { command
     }
     case "claude":
       return { command: "claude", args: [...(req.model ? ["--model", req.model] : []), req.prompt ?? ""] };
+    case "codex":
+      return { command: "codex", args: [...(req.model ? ["--model", req.model] : []), req.prompt ?? ""] };
     case "open":
       // editorApp is the user-configured editor .app (Settings); empty = not configured yet,
       // caught by launchInTerminal before ever spawning. `.app` bundles aren't executables
