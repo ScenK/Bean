@@ -938,6 +938,22 @@ test("proposeLiveSession refuses when disabled, with no card", async () => {
   expect(fxOff.cards).toHaveLength(0);
 });
 
+test("a disabled Claude CLI keeps the Claude-only live-session tool unavailable", async () => {
+  let toolNames: string[] = [];
+  const { deps } = makeDeps({
+    detectClis: () => ["codex"],
+    liveSessionsEnabled: () => true,
+    chat: async ({ tools }) => {
+      toolNames = tools.map((tool) => tool.name);
+      return { content: "no live session", toolCalls: [] };
+    },
+  });
+
+  await buildTeamsBot(deps).onMessage(msg, fx());
+
+  expect(toolNames).not.toContain("propose_live_session");
+});
+
 test("start-live composes the picked skill's body into the opening prompt", async () => {
   const prompts: string[] = [];
   const startFn = (req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => {

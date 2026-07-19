@@ -1,6 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { loadCliModels } from "../src/cli-models.js";
 
@@ -58,6 +59,16 @@ test("codex is a known provider", async () => {
   await writeFile(defaults, JSON.stringify([{ provider: "codex", models: ["gpt-5.6-sol"] }]));
   const models = await loadCliModels(defaults, "/nonexistent/clis.json");
   expect(models).toEqual([{ provider: "codex", models: ["gpt-5.6-sol"] }]);
+});
+
+test("the shipped Codex defaults contain sol, terra, and luna in catalog order", async () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const models = await loadCliModels(join(repoRoot, ".bean/clis.json"), "/nonexistent/clis.json");
+  expect(models.find((entry) => entry.provider === "codex")?.models).toEqual([
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+  ]);
 });
 
 test("missing default file yields an empty list", async () => {

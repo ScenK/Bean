@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { Project, LaunchMode, Skill } from "@bean/core";
 import { truncateMiddle } from "./truncate-path.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
+import { useCliAvailability } from "../../shared/cli-availability.js";
 
 const LAUNCH_CHIPS: { mode: LaunchMode; label: string; needsPrompt: boolean }[] = [
   { mode: "opencode", label: "opencode", needsPrompt: true },
@@ -21,7 +22,7 @@ export function ProjectsPanel({
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
-  const [clis, setClis] = useState<string[]>([]);
+  const { clis } = useCliAvailability();
   const [selected, setSelected] = useState<string | undefined>(undefined);
   const [formMode, setFormMode] = useState<LaunchMode | undefined>(undefined);
   const [prompt, setPrompt] = useState("");
@@ -41,7 +42,6 @@ export function ProjectsPanel({
 
   useEffect(() => {
     void refresh();
-    void window.bean.availableClis().then(setClis);
   }, []);
 
   const selectedProject = projects.find((p) => p.path === selected);

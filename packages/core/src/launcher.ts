@@ -101,7 +101,7 @@ const defaultScriptWriter: ScriptWriter = (path, content) => {
 };
 
 function fireAndForget(child: ChildProcess, onError: (err: Error) => void): void {
-  // Without this, an ENOENT (opencode/claude/editor/open not on PATH) would surface as an
+  // Without this, an ENOENT (opencode/claude/codex/editor/open not on PATH) would surface as an
   // unhandled 'error' event and crash the Electron main process.
   child.on("error", onError);
 }

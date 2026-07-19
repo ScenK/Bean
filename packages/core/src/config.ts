@@ -36,7 +36,7 @@ export function runsDir(dir: string): string { return join(dir, "runs"); }
 export function modelMemoryFile(dir: string): string { return join(dir, "model-memory.json"); }
 // A "no project" run's working directory (2a) — the launched CLI's cwd when no real project
 // was picked. Bean never seeds it (no git clone/page fetch): if the user typed an optional
-// URL, it's folded into the composed prompt instead, and the launched agent (opencode/claude,
+// URL, it's folded into the composed prompt instead, and the launched agent (opencode/claude/codex,
 // a full coding agent with its own shell/git access) fetches or clones it itself if needed.
 export function scratchDir(dir: string): string { return join(dir, "workspace"); }
 
@@ -73,11 +73,10 @@ export async function saveConfig(
   config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; liveSessions?: boolean; disabledClis?: string[] },
 ): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
-  // No Settings UI toggle exists for liveSessions or disabledClis, so a desktop Settings save
-  // calls this with the fields omitted entirely — falling back to fixed defaults here would
-  // silently overwrite whatever the user (or a future toggle) had set. Preserve the on-disk
-  // values across saves that don't know about these fields; only a brand-new file falls back
-  // to the defaults.
+  // No Settings UI toggle exists for liveSessions, so a desktop Settings save calls this with
+  // that field omitted entirely. Preserve either optional field when a caller does not know
+  // about it; only a brand-new file falls back to defaults. (Current Settings does send
+  // disabledClis, while older callers and first-launch bootstrap may omit it.)
   let existing: Partial<BeanConfig> = {};
   try {
     existing = JSON.parse(await readFile(file, "utf8")) as Partial<BeanConfig>;

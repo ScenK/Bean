@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { runDelegate, reserveRun, releaseRun, updateReservationPid, enqueueOutbox, outboxDir, interruptedRunNotice, BEAN_GIT_IDENTITY } from "@bean/core";
-import type { CliName, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
+import type { CliModelSelection, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
 
 export type DelegateEvent =
   | { taskId: string; type: "started" }
@@ -17,16 +17,16 @@ export interface DelegateStartRequest {
   // interruptedRunNotice, which builds a short display version from it); never sent to the
   // delegated CLI itself.
   instruction: string;
-  model?: string; // canonical model id (models.ts)
+  model?: string; // literal configured model id (models.ts)
 }
 
 export interface DelegateTasksDeps {
-  resolveCli: () => CliName | undefined;
+  resolveCli: (model?: string) => CliModelSelection | undefined;
   send: (event: DelegateEvent) => void;
   newId: () => string;
   // Finder-launched Electron gets launchd's minimal PATH; detectClis already resolves the
   // login shell's real PATH for CLI detection — reuse that same string here so the actual
-  // spawn can find claude/opencode too (see .memory/safety-packaged-app-path-detection.md).
+  // spawn can find claude/opencode/codex too (see .memory/safety-packaged-app-path-detection.md).
   resolvedPath?: string;
   // ~/.bean — for the cross-process project-path reservation (run-queue.ts) and the outbox
   // notice an interrupted run leaves for the chat window to pick up after a restart.
@@ -38,7 +38,7 @@ const isTerminal = (e: DelegateEvent): boolean => e.type === "done" || e.type ==
 const ALREADY_RUNNING = "A run is already going in that project — wait for it or cancel it first.";
 
 // Finder-launched Electron gets launchd's minimal PATH; pass the login shell's resolved PATH
-// (see .memory/safety-packaged-app-path-detection.md) so a spawned claude/opencode can find
+// (see .memory/safety-packaged-app-path-detection.md) so a spawned claude/opencode/codex can find
 // its own dependencies. Exported so main.ts's routine delegate-step adapter reuses the exact
 // same spawn instead of duplicating this PATH-injection logic.
 export function resolvedPathSpawnFn(resolvedPath: string | undefined): DelegateSpawnFn | undefined {
@@ -89,9 +89,9 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
         setImmediate(() => deps.send({ taskId, type: "failed", message: ALREADY_RUNNING }));
         return taskId;
       }
-      const cli = deps.resolveCli();
-      if (!cli) {
-        setImmediate(() => deps.send({ taskId, type: "failed", message: "No delegate CLI found — install claude or opencode." }));
+      const choice = deps.resolveCli(req.model);
+      if (!choice) {
+        setImmediate(() => deps.send({ taskId, type: "failed", message: "No enabled delegate CLI found — enable one in Settings." }));
         return taskId;
       }
       const reservation = reserveRun(deps.dir, req.projectPath, process.pid, () => taskId);
@@ -104,7 +104,12 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       // above finds no task yet and releases nothing; handled explicitly after `run()` returns.
       let settled = false;
       const handle = run(
-        { cli, projectPath: req.projectPath, prompt: req.prompt, model: req.model },
+        {
+          cli: choice.cli,
+          projectPath: req.projectPath,
+          prompt: req.prompt,
+          ...(choice.model ? { model: choice.model } : {}),
+        },
         {
           onOutput: (line) => emit({ taskId, type: "output", line }),
           onDone: (result) => { settled = true; emit({ taskId, type: "done", result }); },

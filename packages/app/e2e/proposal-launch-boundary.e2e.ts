@@ -24,6 +24,21 @@ test("proposal (terminal target): confirming calls window.bean.launch, never a r
     const card = chat.locator(".bean-card");
     await expect(card).toContainText("review-pr");
 
+    // Derive the deterministic expected pair from Bean's own enabled catalog instead of
+    // assuming the CI host has opencode (rather than Claude or Codex) installed. The first
+    // configured model whose provider is enabled is the card's default.
+    const expected = await chat.evaluate(async () => {
+      const bean = (window as unknown as { bean: {
+        availableClis: () => Promise<string[]>;
+        availableModels: () => Promise<{ id: string; availableOn: string[] }[]>;
+      } }).bean;
+      const [clis, models] = await Promise.all([bean.availableClis(), bean.availableModels()]);
+      const model = models.find((candidate) => candidate.availableOn.some((cli) => clis.includes(cli)));
+      const cli = model?.availableOn.find((candidate) => clis.includes(candidate));
+      return { cli, model: model?.id };
+    });
+    expect(expected.cli).toBeTruthy();
+
     // `contextBridge.exposeInMainWorld` deep-freezes the exposed `window.bean` api object
     // (verified: its own property descriptor and `.launch`'s are both non-configurable,
     // non-writable), so spying by reassigning anything on `window.bean` from the renderer is
@@ -40,7 +55,7 @@ test("proposal (terminal target): confirming calls window.bean.launch, never a r
 
     await expect
       .poll(() => app.evaluate(() => (globalThis as unknown as { __lastLaunch?: unknown }).__lastLaunch))
-      .toMatchObject({ mode: "opencode", projectPath: home.projectPath });
+      .toMatchObject({ mode: expected.cli, model: expected.model, projectPath: home.projectPath });
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }

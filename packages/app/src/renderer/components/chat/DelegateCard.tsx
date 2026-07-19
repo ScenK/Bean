@@ -2,7 +2,8 @@ import { useEffect, useState } from "preact/hooks";
 import type { ChatItem } from "../../shared/chat-types.js";
 import type { PickableModel } from "../../shared/ProposalCard.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
-import type { Project } from "@bean/core";
+import type { CliName, Project } from "@bean/core";
+import { resolveCliModelSelection } from "@bean/core/models";
 
 type DelegateItem = Extract<ChatItem, { kind: "delegate" }>;
 
@@ -21,6 +22,7 @@ export function DelegateCard({
   onConfirm,
   onDismiss,
   onCancelTask,
+  cliOptions,
   modelOptions,
   projectOptions,
 }: {
@@ -28,9 +30,9 @@ export function DelegateCard({
   onConfirm: (editedPrompt: string, model?: string) => void;
   onDismiss: () => void;
   onCancelTask: () => void;
-  /** Canonical models, annotated with which detected CLIs support each — the delegate's own
-   * CLI is resolved server-side (delegate-tasks.ts), so this dims a model only when NO
-   * detected CLI supports it at all, rather than against one picked CLI. */
+  cliOptions?: CliName[];
+  /** Configured models annotated with which enabled CLIs support each. The chosen model and
+   * compatible CLI are resolved as one pair in main before the delegate starts. */
   modelOptions?: PickableModel[];
   /** Projects this delegate's skill can run in — same "assigned, else every project" list
    * ChatPanel already builds for the sibling ProposalCard — used to show the project's name
@@ -42,7 +44,8 @@ export function DelegateCard({
   const [elapsed, setElapsed] = useState(0);
   const [modelChoice, setModelChoice] = useState<string | undefined>(undefined);
   const models = modelOptions ?? [];
-  const model = modelChoice ?? models[0]?.id;
+  const selection = resolveCliModelSelection(models, cliOptions ?? [], { model: modelChoice });
+  const model = selection?.model;
   const modelLabel = models.find((m) => m.id === model)?.label ?? model;
   const projectName =
     projectOptions?.find((p) => p.path === item.proposal.projectPath)?.name ?? item.proposal.projectPath;
@@ -65,11 +68,13 @@ export function DelegateCard({
         <span class="bean-chip">project · {projectName}</span>
         {item.proposal.skillName ? <span class="bean-chip">skill · {item.proposal.skillName}</span> : null}
         {pending && models.length > 0 ? (
-          <ChipMenu chipLabel={<>{modelLabel}</>}>
+          <ChipMenu chipLabel={selection
+            ? <>{modelLabel ?? `Default model · ${selection.cli}`}</>
+            : <>No CLI enabled · Settings</>}>
             {(close) => (
               <div class="bean-chip-menu-list">
                 {models.map((m) => {
-                  const available = m.availableOn.length > 0;
+                  const available = m.availableOn.some((candidate) => cliOptions?.includes(candidate));
                   return (
                     <button
                       key={m.id}
@@ -88,8 +93,10 @@ export function DelegateCard({
               </div>
             )}
           </ChipMenu>
-        ) : model ? (
-          <span class="bean-chip">{modelLabel}</span>
+        ) : selection ? (
+          <span class="bean-chip">{modelLabel ?? `Default model · ${selection.cli}`}</span>
+        ) : pending ? (
+          <span class="bean-chip">no CLI enabled · Settings</span>
         ) : null}
       </div>
       {pending ? (
@@ -117,8 +124,10 @@ export function DelegateCard({
       ) : null}
       {item.state === "failed" && item.error ? <div class="bean-status bean-status--error">{item.error}</div> : null}
       <div class="bean-card-actions">
-        <button type="button" class="bean-btn" disabled={!pending} onClick={() => onConfirm(prompt, model)}>
-          {running || starting ? `${STATE_LABEL[item.state]} ${mmss}` : STATE_LABEL[item.state]}
+        <button type="button" class="bean-btn" disabled={!pending || !selection} onClick={() => onConfirm(prompt, model)}>
+          {running || starting
+            ? `${STATE_LABEL[item.state]} ${mmss}`
+            : pending && !selection ? "Enable a CLI in Settings" : STATE_LABEL[item.state]}
         </button>
         {pending ? <button type="button" class="bean-btn bean-btn--ghost" onClick={onDismiss}>Dismiss</button> : null}
         {running ? <button type="button" class="bean-btn bean-btn--ghost" onClick={onCancelTask}>Cancel</button> : null}

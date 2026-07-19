@@ -1,5 +1,6 @@
 import { useState } from "preact/hooks";
 import type { AvailableModel, CliName, Project, ProposedRun } from "@bean/core";
+import { resolveCliModelSelection } from "@bean/core/models";
 import { ChipMenu } from "./ChipMenu.js";
 
 export type PickableModel = AvailableModel;
@@ -34,14 +35,14 @@ export function ProposalCard({
   state: "pending" | "confirmed" | "cancelled";
   onConfirm: (
     editedPrompt: string,
-    choice: { cli: CliName; projectPath?: string; model?: string },
+    choice: { cli?: CliName; projectPath?: string; model?: string },
   ) => void;
   onCancel: () => void;
   /** CLIs found on this machine — a picker shows only when there's a real choice (2+, terminal target). */
   cliOptions?: CliName[];
   /** Projects this skill can run in. "No project" (scratch workspace) is always offered alongside these. */
   projectOptions?: Project[];
-  /** Canonical models, annotated with which detected CLIs actually support each. */
+  /** Configured models, annotated with which enabled CLIs actually support each. */
   modelOptions?: PickableModel[];
   /** The model last confirmed for this skill, if any — drives the "LAST USED" badge. */
   lastUsedModel?: string;
@@ -58,28 +59,30 @@ export function ProposalCard({
   const done = state !== "pending";
   const isChat = run.target === "chat";
   const models = modelOptions ?? [];
-  // Effective model: explicit pick, else the remembered last-used model (if it's still in the
-  // list), else the first model offered.
-  const model = modelChoice ?? (models.some((m) => m.id === lastUsedModel) ? lastUsedModel : undefined) ?? models[0]?.id;
-  const modelObj = models.find((m) => m.id === model);
-  // CLI follows from the model — each model resolves to exactly one CLI, so picking a model
-  // already answers "which CLI." Falls back to the no-model picker's explicit choice.
-  const cli: CliName =
-    (modelObj && cliOptions?.find((c) => modelObj.availableOn.includes(c))) ??
-    cliChoice ?? cliOptions?.[0] ?? "opencode";
+  // A chat-target run never needs a terminal pair. Terminal choices resolve together so a
+  // disabled provider's dimmed model can never get paired with an unrelated enabled CLI.
+  const selection = isChat ? undefined : resolveCliModelSelection(models, cliOptions ?? [], {
+    cli: cliChoice,
+    model: modelChoice,
+    lastUsed: lastUsedModel,
+  });
+  const model = selection?.model;
+  const cli = selection?.cli;
   const hasModelMenu = !isChat && models.length > 0;
   const showCliOnlyPicker = !isChat && !hasModelMenu && (cliOptions?.length ?? 0) > 1;
+  const canConfirm = isChat || selection !== undefined;
 
   // ponytail: same "## Task" convention core's composePrompt() uses, applied here so users
   // can add instructions without editing the skill's own template text in the box above. An
   // optional "no project" URL seed is folded in the same way — Bean doesn't fetch/clone it
-  // itself, the launched agent (opencode/claude) has its own shell/git access to do that.
+  // itself, the launched agent (opencode/claude/codex) has its own shell/git access to do that.
   const runFinalPrompt = (): void => {
+    if (!canConfirm) return;
     const task = extra.trim();
     const withTask = task ? `${prompt}\n\n## Task\n${task}` : prompt;
     const url = projectPath === undefined ? sourceUrl.trim() : "";
     const finalPrompt = url ? `${withTask}\n\n## Source\n${url}` : withTask;
-    onConfirm(finalPrompt, { cli, projectPath, model });
+    onConfirm(finalPrompt, { ...(cli ? { cli } : {}), projectPath, ...(model ? { model } : {}) });
   };
 
   const projectName = projectOptions?.find((p) => p.path === projectPath)?.name ?? projectPath;
@@ -141,14 +144,16 @@ export function ProposalCard({
         )}
         {hasModelMenu ? (
           <ChipMenu
-            chipLabel={<>{modelLabel} <span class="bean-chip-menu-sub">via {cli}</span></>}
+            chipLabel={selection
+              ? <>{modelLabel ?? "Default model"} <span class="bean-chip-menu-sub">via {cli}</span></>
+              : <>No CLI enabled <span class="bean-chip-menu-sub">· Settings</span></>}
             disabled={done}
             menuWidth={360}
           >
             {(close) => (
               <div class="bean-chip-menu-list">
                 {models.map((m) => {
-                  const available = m.availableOn.length > 0;
+                  const available = m.availableOn.some((candidate) => cliOptions?.includes(candidate));
                   return (
                     <button
                       key={m.id}
@@ -171,7 +176,7 @@ export function ProposalCard({
             )}
           </ChipMenu>
         ) : !isChat && !showCliOnlyPicker ? (
-          <span class="bean-chip">cli · {cli}</span>
+          <span class="bean-chip">{cli ? `cli · ${cli}` : "no CLI enabled · Settings"}</span>
         ) : null}
       </div>
       {showCliOnlyPicker ? (
@@ -207,8 +212,10 @@ export function ProposalCard({
         onInput={(e) => setExtra((e.target as HTMLInputElement).value)}
       />
       <div class="bean-card-actions">
-        <button type="button" class="bean-btn" disabled={done} onClick={runFinalPrompt}>
-          {state === "confirmed" ? (run.target === "chat" ? "Running in chat" : "Launched in Terminal") : "Confirm & run"}
+        <button type="button" class="bean-btn" disabled={done || !canConfirm} onClick={runFinalPrompt}>
+          {state === "confirmed"
+            ? (run.target === "chat" ? "Running in chat" : "Launched in Terminal")
+            : !canConfirm ? "Enable a CLI in Settings" : "Confirm & run"}
         </button>
         <button type="button" class="bean-btn bean-btn--ghost" disabled={done} onClick={onCancel}>
           {state === "cancelled" ? "Cancelled" : "Cancel"}

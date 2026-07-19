@@ -58,7 +58,7 @@ export function ChatPanel({
     id: string,
     editedPrompt: string,
     run: RouteSuggestion,
-    choice: { cli: CliName; projectPath?: string; model?: string },
+    choice: { cli?: CliName; projectPath?: string; model?: string },
   ) => void;
   onCancel: (id: string) => void;
   onNoteSave: (id: string, edited: ProposedNote, asNew: boolean) => void;
@@ -220,6 +220,7 @@ export function ChatPanel({
               <DelegateCard
                 key={it.id}
                 item={it}
+                cliOptions={clis}
                 modelOptions={runModels}
                 projectOptions={assignedDelegate.length > 0 ? assignedDelegate : projects}
                 onConfirm={(edited, model) => onDelegateConfirm(it.id, edited, model)}

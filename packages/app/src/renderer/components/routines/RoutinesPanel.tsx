@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { Routine, RoutineStep, Skill, Project, AvailableModel, TodoItem } from "@bean/core";
+import type { Routine, RoutineStep, Skill, Project, TodoItem } from "@bean/core";
 import { nextRun, parseCron } from "@bean/core/cron";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
+import { useCliAvailability } from "../../shared/cli-availability.js";
 import type { RoutineStateView } from "../../../ipc.js";
 
 const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -178,7 +179,7 @@ export function RoutinesPanel() {
   // assigned to a step that already references it, it just can't be newly picked.
   const enabledSkills = useMemo(() => skills.filter((s) => s.enabled !== false), [skills]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [models, setModels] = useState<AvailableModel[]>([]);
+  const { clis, models } = useCliAvailability();
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const [triggering, setTriggering] = useState(false);
@@ -207,8 +208,8 @@ export function RoutinesPanel() {
 
   useEffect(() => { void refresh(); }, []);
   useEffect(() => {
-    void Promise.all([window.bean.listSkills(), window.bean.listProjects(), window.bean.availableModels()])
-      .then(([sk, pr, md]) => { setSkills(sk); setProjects(pr); setModels(md); });
+    void Promise.all([window.bean.listSkills(), window.bean.listProjects()])
+      .then(([sk, pr]) => { setSkills(sk); setProjects(pr); });
   }, []);
   useEffect(() => {
     // Piggyback on the same 5s poll so "running now" chips update live while a todo-driven
@@ -713,7 +714,7 @@ export function RoutinesPanel() {
                               >
                                 <span class="bean-chip-menu-row-title">{step.kind === k ? "✓ " : ""}{k}</span>
                                 <span class="bean-chip-menu-caption">
-                                  {k === "delegate" ? "coding agent (opencode / claude)" : "Bean's own model + tools, in chat"}
+                                  {k === "delegate" ? "coding agent (opencode / claude / codex)" : "Bean's own model + tools, in chat"}
                                 </span>
                               </button>
                             ))}
@@ -785,19 +786,23 @@ export function RoutinesPanel() {
                               onClick={() => { setModel(i, step, undefined); close(); }}
                             >{step.model ? "" : "✓ "}Bean picks the model</button>
                             <div class="bean-chip-menu-divider" />
-                            {models.map((m) => (
-                              <button
-                                key={m.id}
-                                type="button"
-                                class={`bean-chip-menu-row bean-chip-menu-row--model${step.model === m.id ? " bean-chip-menu-row--on" : ""}`}
-                                onClick={() => { setModel(i, step, m.id); close(); }}
-                              >
-                                <span class="bean-chip-menu-row-title">{step.model === m.id ? "✓ " : ""}{m.label}</span>
-                                <span class="bean-chip-menu-caption">
-                                  {m.availableOn.join("  /  ") || "no CLI support"}
-                                </span>
-                              </button>
-                            ))}
+                            {models.map((m) => {
+                              const available = m.availableOn.some((candidate) => clis.includes(candidate));
+                              return (
+                                <button
+                                  key={m.id}
+                                  type="button"
+                                  disabled={!available}
+                                  class={`bean-chip-menu-row bean-chip-menu-row--model${step.model === m.id ? " bean-chip-menu-row--on" : ""}${available ? "" : " bean-chip-menu-row--dimmed"}`}
+                                  onClick={() => { if (available) { setModel(i, step, m.id); close(); } }}
+                                >
+                                  <span class="bean-chip-menu-row-title">{step.model === m.id ? "✓ " : ""}{m.label}</span>
+                                  <span class="bean-chip-menu-caption">
+                                    {m.availableOn.join("  /  ") || "no CLI support"}
+                                  </span>
+                                </button>
+                              );
+                            })}
                           </div>
                         )}
                       </ChipMenu>

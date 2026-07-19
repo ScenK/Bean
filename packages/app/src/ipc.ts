@@ -1,6 +1,6 @@
 import {
   route, converse, launchInTerminal, scratchDir,
-  availableModels, loadModelMemory, saveModelMemory, resolveTodoRoutine,
+  availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
@@ -258,6 +258,10 @@ export interface LaunchHandlerDeps {
   getTerminalApp?: () => string;
   getEditorApp?: () => string;
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
+  /** Live Settings-filtered CLIs/models. Optional only for narrow launcher unit seams; main
+   * always supplies both, making this the stale-renderer defense boundary. */
+  getAvailableClis?: () => CliName[];
+  getCliModels?: () => CliModels[];
   // Resolve a "" (no-project) run into a real (bare, always-empty) scratch dir before
   // launchCommand ever sees it. Injectable so tests don't hit the filesystem.
   beanDirPath?: string;
@@ -275,18 +279,32 @@ async function resolveProjectPath(req: LaunchRequest, deps: LaunchHandlerDeps): 
 export function buildLaunchHandler(deps: LaunchHandlerDeps) {
   return (req: LaunchRequest): void => {
     const onError = deps.onLaunchError ? (err: Error) => deps.onLaunchError!(req, err) : ((err: Error) => { console.error("bean: launch failed", err); });
+    let checked = req;
+    if (req.mode !== "open" && deps.getAvailableClis) {
+      const enabled = deps.getAvailableClis();
+      if (!enabled.includes(req.mode)) {
+        onError(new Error(`CLI "${req.mode}" is disabled or unavailable — enable it in Settings.`));
+        return;
+      }
+      if (req.model && deps.getCliModels) {
+        checked = {
+          ...req,
+          model: pickModel(availableModels(deps.getCliModels(), enabled), req.mode, req.model),
+        };
+      }
+    }
     const fire = (resolved: LaunchRequest): void => {
       launchInTerminal(resolved, deps.spawnLaunch, undefined, deps.getTerminalApp?.(), deps.getEditorApp?.(), onError);
     };
     // A real projectPath (or "open" mode, which never uses one) launches synchronously exactly
     // like before this feature — only a "" (no-project) run needs the async scratch-workspace
     // detour, so existing callers/tests see no behavior change.
-    if (req.projectPath || req.mode === "open") {
-      fire(req);
+    if (checked.projectPath || checked.mode === "open") {
+      fire(checked);
       return;
     }
-    void resolveProjectPath(req, deps).then(
-      (projectPath) => fire({ ...req, projectPath }),
+    void resolveProjectPath(checked, deps).then(
+      (projectPath) => fire({ ...checked, projectPath }),
       (err: unknown) => onError(err instanceof Error ? err : new Error(String(err))),
     );
   };
@@ -385,12 +403,16 @@ export function buildNotesHandlers(deps: NotesHandlerDeps) {
 export interface ConfigHandlerDeps {
   getConfig: () => ConfigView;
   applyConfig: (update: ConfigUpdate) => Promise<void>;
+  onApplied?: () => void;
 }
 
 export function buildConfigHandlers(deps: ConfigHandlerDeps) {
   return {
     get: (): ConfigView => deps.getConfig(),
-    save: (update: ConfigUpdate): Promise<void> => deps.applyConfig(update),
+    save: async (update: ConfigUpdate): Promise<void> => {
+      await deps.applyConfig(update);
+      deps.onApplied?.();
+    },
   };
 }
 
@@ -627,7 +649,11 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.deleteNote, (_e, slug: string) => notesHandlers.delete(slug));
   ipcMain.handle(IPC.noteHistory, (_e, slug: string) => notesHandlers.history(slug));
 
-  const configHandlers = buildConfigHandlers({ getConfig: deps.getConfig, applyConfig: deps.applyConfig });
+  const configHandlers = buildConfigHandlers({
+    getConfig: deps.getConfig,
+    applyConfig: deps.applyConfig,
+    onApplied: () => deps.broadcast(IPC.cliAvailabilityChanged, undefined),
+  });
   ipcMain.handle(IPC.getConfig, () => configHandlers.get());
   ipcMain.handle(IPC.saveConfig, (_e, update: ConfigUpdate) => configHandlers.save(update));
   ipcMain.handle(IPC.getAppInfo, () => deps.getAppInfo());

@@ -16,7 +16,7 @@ import {
   loadNotes, saveNote, deleteNote, loadNoteHistory, searchNotes, retrieveNoteTool, detectClis, loginShellPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate,
-  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool,
+  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, availableModels, resolveCliModelSelection,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
 } from "@bean/core";
@@ -448,11 +448,13 @@ app.whenReady().then(async () => {
 
     // Shared by createDelegateTasks (chat window's delegate button) and the routine
     // delegate-step adapter below — one resolver, not two copies of this preference logic.
-    const resolveDelegateCli = (): CliName | undefined => {
+    const resolveDelegateCli = (model?: string) => {
       const enabled = enabledClis();
       const preferred = runtime.getDelegateCli();
-      if (enabled.includes(preferred as CliName)) return preferred as CliName;
-      return enabled[0];
+      return resolveCliModelSelection(availableModels(cliModels, enabled), enabled, {
+        ...(enabled.includes(preferred as CliName) ? { cli: preferred as CliName } : {}),
+        ...(model ? { model } : {}),
+      });
     };
 
     const delegateTasks = createDelegateTasks({
@@ -498,13 +500,18 @@ app.whenReady().then(async () => {
     // is 30 minutes, meant for the interactive chat delegate button, not routines).
     const delegateStep = (req: DelegateStepRequest): Promise<string> =>
       new Promise((resolve, reject) => {
-        const cli = resolveDelegateCli();
-        if (!cli) { reject(new Error("No delegate CLI found — install claude or opencode.")); return; }
+        const choice = resolveDelegateCli(req.model);
+        if (!choice) { reject(new Error("No enabled delegate CLI found — enable one in Settings.")); return; }
         const prompt =
           (req.skill ? composePrompt(req.skill, req.instruction) : req.instruction) +
           (req.priorOutputs ? `\n\nOutput of this routine's earlier steps:\n${req.priorOutputs}` : "");
         runDelegate(
-          { cli, projectPath: req.projectPath ?? scratchDir(dir), prompt, model: req.model },
+          {
+            cli: choice.cli,
+            projectPath: req.projectPath ?? scratchDir(dir),
+            prompt,
+            ...(choice.model ? { model: choice.model } : {}),
+          },
           { onOutput: () => {}, onDone: resolve, onError: reject },
           resolvedPathSpawnFn(resolvedPath),
           ROUTINE_STEP_TIMEOUT_MS,

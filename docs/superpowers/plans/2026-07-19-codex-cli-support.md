@@ -351,7 +351,7 @@ In `.bean/clis.json`, add the codex entry (model verified present on the maintai
       "github-copilot/claude-opus-4.8"
     ]
   },
-  { "provider": "codex", "models": ["gpt-5.6-sol"] }
+  { "provider": "codex", "models": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] }
 ]
 ```
 

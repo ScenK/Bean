@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { availableModels, pickModel } from "../src/models.js";
+import { availableModels, pickModel, resolveCliModelSelection } from "../src/models.js";
 import type { CliModels } from "../src/cli-models.js";
 
 const CLI_MODELS: CliModels[] = [
@@ -56,4 +56,35 @@ test("pickModel prefers a supported last-used model when there's no explicit pic
 
 test("pickModel with an empty models list returns undefined", () => {
   expect(pickModel([], "claude")).toBeUndefined();
+});
+
+test("pickModel omits --model when the selected CLI has no configured supported model", () => {
+  const models = availableModels(CLI_MODELS, ["claude"]);
+  expect(pickModel(models, "codex", "sonnet")).toBeUndefined();
+});
+
+test("default CLI/model selection skips models whose provider is disabled", () => {
+  const models = availableModels(CLI_MODELS, ["opencode"]);
+  expect(resolveCliModelSelection(models, ["opencode"])).toEqual({
+    cli: "opencode",
+    model: "github-copilot/gpt-5.5",
+  });
+});
+
+test("CLI/model selection returns undefined when every CLI is disabled", () => {
+  const models = availableModels(CLI_MODELS, []);
+  expect(resolveCliModelSelection(models, [])).toBeUndefined();
+});
+
+test("an explicit model selects a compatible enabled CLI instead of an unrelated preferred CLI", () => {
+  const models = availableModels(CLI_MODELS, ["claude", "opencode"]);
+  expect(resolveCliModelSelection(models, ["claude", "opencode"], {
+    cli: "claude",
+    model: "github-copilot/gpt-5.5",
+  })).toEqual({ cli: "opencode", model: "github-copilot/gpt-5.5" });
+});
+
+test("a CLI with no configured models remains selectable without passing another provider's model", () => {
+  const models = availableModels(CLI_MODELS, ["codex"]);
+  expect(resolveCliModelSelection(models, ["codex"], { cli: "codex" })).toEqual({ cli: "codex" });
 });

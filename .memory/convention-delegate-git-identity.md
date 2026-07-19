@@ -1,6 +1,6 @@
 ---
 name: convention-delegate-git-identity
-description: delegate spawns inject GIT_AUTHOR_NAME/EMAIL so headless claude/opencode commits are attributed to Bean, not the local user
+description: delegate spawns inject GIT_AUTHOR_NAME/EMAIL so headless CLI commits are attributed to Bean, not the local user
 metadata:
   type: convention
 ---

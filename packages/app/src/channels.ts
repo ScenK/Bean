@@ -44,6 +44,7 @@ export const IPC = {
   availableClis: "bean:available-clis",
   detectedClis: "bean:detected-clis",
   availableModels: "bean:available-models",
+  cliAvailabilityChanged: "bean:cli-availability-changed",
   getModelMemory: "bean:get-model-memory",
   setModelMemory: "bean:set-model-memory",
   chat: "bean:chat",

@@ -6,6 +6,7 @@ import type { CliModels } from "./cli-models.js";
  * derived (last `/` segment); `availableOn` lists the detected CLIs whose config offers it
  * (empty = shown dimmed in the picker). */
 export type AvailableModel = { id: string; label: string; availableOn: CliName[] };
+export type CliModelSelection = { cli: CliName; model?: string };
 
 function modelLabel(id: string): string {
   const seg = id.split("/").pop();
@@ -46,5 +47,44 @@ export function pickModel(
   const remembered = lastUsed !== undefined && models.some((m) => m.id === lastUsed) ? lastUsed : undefined;
   const preferred = choice ?? remembered;
   if (supportsCli(preferred)) return preferred;
-  return models.find((m) => m.availableOn.includes(cli))?.id ?? models[0]?.id;
+  return models.find((m) => m.availableOn.includes(cli))?.id;
+}
+
+/** Resolve one compatible CLI/model pair for desktop proposals, delegates, and routines.
+ * An explicit/remembered model chooses an enabled CLI that actually offers it. Otherwise an
+ * enabled CLI preference wins and gets its first supported model; with no preference, the
+ * first model offered by any enabled CLI is the default. A CLI whose config has no models is
+ * still valid and intentionally returns without `model`, letting that CLI use its own default. */
+export function resolveCliModelSelection(
+  models: AvailableModel[],
+  clis: CliName[],
+  preferred: { cli?: CliName; model?: string; lastUsed?: string } = {},
+): CliModelSelection | undefined {
+  if (clis.length === 0) return undefined;
+
+  const enabled = new Set(clis);
+  const supportedCli = (model: AvailableModel | undefined): CliName | undefined => {
+    if (!model) return undefined;
+    if (preferred.cli && enabled.has(preferred.cli) && model.availableOn.includes(preferred.cli)) {
+      return preferred.cli;
+    }
+    return clis.find((cli) => model.availableOn.includes(cli));
+  };
+
+  for (const id of [preferred.model, preferred.lastUsed]) {
+    if (!id) continue;
+    const model = models.find((candidate) => candidate.id === id);
+    const cli = supportedCli(model);
+    if (cli) return { cli, model: id };
+  }
+
+  if (preferred.cli && enabled.has(preferred.cli)) {
+    const model = pickModel(models, preferred.cli);
+    return { cli: preferred.cli, ...(model ? { model } : {}) };
+  }
+
+  const model = models.find((candidate) => candidate.availableOn.some((cli) => enabled.has(cli)));
+  const cli = supportedCli(model) ?? clis[0];
+  if (!cli) return undefined;
+  return { cli, ...(model ? { model: model.id } : {}) };
 }

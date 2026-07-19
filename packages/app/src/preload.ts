@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld("bean", {
   availableClis: (): Promise<CliName[]> => ipcRenderer.invoke(IPC.availableClis),
   detectedClis: (): Promise<CliName[]> => ipcRenderer.invoke(IPC.detectedClis),
   availableModels: (): Promise<AvailableModel[]> => ipcRenderer.invoke(IPC.availableModels),
+  onCliAvailabilityChanged: (cb: () => void) =>
+    ipcRenderer.on(IPC.cliAvailabilityChanged, () => cb()),
   getModelMemory: (skillName: string): Promise<string | undefined> => ipcRenderer.invoke(IPC.getModelMemory, skillName),
   setModelMemory: (skillName: string, modelId: string): Promise<void> =>
     ipcRenderer.invoke(IPC.setModelMemory, skillName, modelId),

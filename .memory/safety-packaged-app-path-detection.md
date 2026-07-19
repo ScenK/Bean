@@ -1,11 +1,11 @@
 # Packaged (Finder-launched) Bean gets a minimal PATH — `detectClis` needs the login shell's real one
 
 `detectClis()` (`packages/core/src/launcher.ts`) scans `process.env.PATH` to find `opencode`/
-`claude` for the Plan window's CLI picker. In dev (`pnpm dev`), Electron inherits the launching
+`claude`/`codex` for desktop CLI pickers. In dev (`pnpm dev`), Electron inherits the launching
 terminal's full shell PATH. Packaged and launched via Finder/Dock/Login Items, macOS's `launchd`
 gives the process a minimal PATH (roughly `/usr/bin:/bin:/usr/sbin:/sbin`) with none of what a
 login shell profile (`.zshrc`/`.zprofile`) adds — nvm, volta, npm/pnpm global bins, `~/.local/bin`,
-etc. Since `claude`/`opencode` are commonly installed into exactly those user-profile-managed
+etc. Since these CLIs are commonly installed into exactly those user-profile-managed
 locations (not just Homebrew), a hardcoded extra-dirs list (`/opt/homebrew/bin`, `/usr/local/bin`)
 catches Homebrew installs but misses the rest — this is why "installed but Bean says it isn't"
 only reproduces in the packaged app, never in dev.
@@ -21,7 +21,7 @@ hardcoding can only ever cover the ones we thought of. Verify PATH-detection cha
 shell runner and can't catch a real launchd-environment regression.
 
 **Follow-up bug (fixed):** this PATH fix originally only reached CLI *detection*. The
-delegate-spawn path (`core/src/delegate.ts`'s `defaultDelegateSpawn`) spawned `claude`/`opencode`
+delegate-spawn path (`core/src/delegate.ts`'s `defaultDelegateSpawn`) spawned the selected CLI
 with no `env` override, so it inherited the packaged app's raw `process.env` — same minimal
 launchd PATH — even though `detectClis` had already found the CLI using the login-shell-augmented
 PATH. Symptom: "spawn claude ENOENT" when running a delegate task in the packaged app, despite the

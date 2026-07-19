@@ -18,6 +18,7 @@ declare global {
       availableClis(): Promise<CliName[]>;
       detectedClis(): Promise<CliName[]>;
       availableModels(): Promise<AvailableModel[]>;
+      onCliAvailabilityChanged(cb: () => void): void;
       getModelMemory(skillName: string): Promise<string | undefined>;
       setModelMemory(skillName: string, modelId: string): Promise<void>;
       chat(req: ChatRequest): Promise<ConverseResult>;
