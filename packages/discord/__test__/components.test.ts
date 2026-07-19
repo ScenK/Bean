@@ -120,3 +120,48 @@ test("memory proposal clamps a long fact label to Discord's 100-char option limi
   const label = card.components[0]!.components[0]!.options![0]!.label;
   expect(label.length).toBeLessThanOrEqual(100);
 });
+
+test("live-session card renders project/skill/cli/model dropdowns, edit+start+cancel, defaults selected", () => {
+  const card = discordCards.liveSessionProposalCard({
+    proposalId: "live-1", projectName: "bean", instruction: "investigate the auth bug",
+    model: "opus", skillName: "review",
+    projects: [{ name: "bean", path: "/p/bean" }, { name: "web", path: "/p/web" }],
+    models: [{ id: "sonnet", label: "sonnet" }, { id: "opus", label: "opus" }],
+    skills: [{ name: "review" }, { name: "fix-bug" }], clis: ["claude"],
+  }) as { components: { components: { custom_id: string; options?: { value: string; default?: boolean }[] }[] }[] };
+  const s = JSON.stringify(card);
+  expect(s).toContain("investigate the auth bug");
+  expect(s).toContain("bean:live-project:live-1");
+  expect(s).toContain("bean:live-skill:live-1");
+  expect(s).toContain("bean:live-cli:live-1");
+  expect(s).toContain("bean:live-model:live-1");
+  expect(s).toContain("bean:live-edit:live-1");
+  expect(s).toContain("bean:start-live:live-1");
+  expect(s).toContain("bean:cancel-live:live-1");
+  const selects = card.components.flatMap((r) => r.components).filter((c) => c.options);
+  expect(selects.find((c) => c.custom_id === "bean:live-project:live-1")?.options?.find((o) => o.default)?.value).toBe("/p/bean");
+  expect(selects.find((c) => c.custom_id === "bean:live-model:live-1")?.options?.find((o) => o.default)?.value).toBe("opus");
+  expect(selects.find((c) => c.custom_id === "bean:live-skill:live-1")?.options?.find((o) => o.default)?.value).toBe("review");
+  // 5-row cap: project, skill, cli, model, buttons.
+  expect(card.components).toHaveLength(5);
+});
+
+test("live-session skill picker defaults to the no-skill sentinel when none is chosen", () => {
+  const card = discordCards.liveSessionProposalCard({
+    proposalId: "live-3", projectName: "bean", instruction: "go",
+    projects: [{ name: "bean", path: "/p/bean" }], models: [], skills: [{ name: "review" }], clis: ["claude"],
+  }) as { components: { components: { custom_id: string; options?: { value: string; default?: boolean }[] }[] }[] };
+  const skill = card.components.flatMap((r) => r.components).find((c) => c.custom_id === "bean:live-skill:live-3");
+  expect(skill?.options?.find((o) => o.default)?.value).toBe("__none__");
+});
+
+test("live-session card omits model/skill/cli dropdowns when none are configured", () => {
+  const card = discordCards.liveSessionProposalCard({
+    proposalId: "live-2", projectName: "bean", instruction: "go",
+    projects: [{ name: "bean", path: "/p/bean" }], models: [], skills: [], clis: [],
+  });
+  const s = JSON.stringify(card);
+  expect(s).not.toContain("bean:live-model:");
+  expect(s).not.toContain("bean:live-skill:");
+  expect(s).not.toContain("bean:live-cli:");
+});

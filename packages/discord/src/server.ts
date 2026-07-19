@@ -8,7 +8,8 @@ import {
   LiveSessionProposalStore, LiveSessionRegistry,
 } from "@bean/core";
 import {
-  ChannelType, Client, GatewayIntentBits, Partials,
+  ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials,
+  type ApplicationCommandDataResolvable,
   type Interaction, type Message, type MessageCreateOptions, type TextBasedChannel,
 } from "discord.js";
 import { chunkText } from "./chunk.js";
@@ -29,6 +30,9 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "discord" });
 // otherwise a later "retry" in this channel has no idea what it's retrying.
 const conversations = new ConversationStore(dbFile(dir));
 const liveSessions = new LiveSessionRegistry(undefined, { dir });
+// Hoisted (not inline in deps) so the /live-session card's project/model dropdowns and the
+// edit-prompt modal can read and mutate the pending proposal before Start claims it.
+const liveSessionProposals = new LiveSessionProposalStore();
 const bot = buildTeamsBot({
   chat: makeOpenAIConverse(beanConfig.openaiApiKey),
   model: beanConfig.model,
@@ -59,8 +63,10 @@ const bot = buildTeamsBot({
   consolidationProposals: new ConsolidationProposalStore(),
   conversations,
   liveSessions,
-  liveSessionProposals: new LiveSessionProposalStore(),
-  liveSessionsEnabled: () => beanConfig.liveSessions && clis.includes("claude"),
+  liveSessionProposals,
+  // Always on for Discord (no `liveSessions` config opt-in) — only gated by claude being on
+  // PATH, since the live-session engine is claude-specific. Still confirm-first via the card.
+  liveSessionsEnabled: () => clis.includes("claude"),
   cards: discordCards,
   systemControlsEnabled: () => beanConfig.systemControls,
 });
@@ -81,6 +87,24 @@ const client = new Client({
 const selections = new Map<string, { cli?: string; model?: string; memoryPicks?: string[] }>();
 
 const allowed = (userId: string): boolean => discordConfig.allowedUserIds.includes(userId);
+
+// Rebuild the live-session proposal card from the current (possibly edited) proposal — used to
+// re-render in place after the Edit-prompt modal changes the text.
+async function liveSessionCardFor(
+  proposalId: string, proposal: { projectPath: string; instruction: string; model?: string; skillName?: string },
+): Promise<object> {
+  const [projects, skills] = await Promise.all([
+    loadProjects(projectsFile(dir)),
+    loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
+  ]);
+  const projectName = projects.find((p) => p.path === proposal.projectPath)?.name ?? proposal.projectPath;
+  const models = (cliModels.find((e) => e.provider === "claude")?.models ?? []).map((id) => ({ id, label: id.split("/").pop() || id }));
+  return discordCards.liveSessionProposalCard({
+    proposalId, projectName, instruction: proposal.instruction, model: proposal.model, skillName: proposal.skillName,
+    projects: projects.map((p) => ({ name: p.name, path: p.path })), models,
+    skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name })), clis: clis.filter((c) => c === "claude"),
+  });
+}
 
 function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string): BotEffects {
   const send = async (options: string | MessageCreateOptions): Promise<Message> => {
@@ -151,6 +175,68 @@ client.on("messageCreate", async (message) => {
 
 client.on("interactionCreate", async (interaction: Interaction) => {
   try {
+    if (interaction.isChatInputCommand()) {
+      if (!allowed(interaction.user.id)) {
+        await interaction.reply({ content: "You're not on this bot's allow-list.", ephemeral: true });
+        return;
+      }
+      const channelId = interaction.channelId;
+      if (interaction.commandName === "new") {
+        conversations.clear(channelId);
+        conversations.setAmbientCutoff(channelId, Date.now()); // fence pre-reset chatter out of ambient
+        await interaction.reply({ content: "Fresh start — I've cleared this conversation's context.", ephemeral: true });
+        return;
+      }
+      if (interaction.commandName === "cancel") {
+        const n = runs.cancelAll();
+        await interaction.reply({ content: n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.", ephemeral: true });
+        return;
+      }
+      if (interaction.commandName === "stop") {
+        const stopped = liveSessions.stop(channelId);
+        await interaction.reply({ content: stopped ? "Stopping the live session." : "No live session running in this channel.", ephemeral: true });
+        return;
+      }
+      if (interaction.commandName === "live-session" && interaction.channel) {
+        await interaction.deferReply({ ephemeral: true }); // proposeLiveSession posts to the channel; ack within 3s
+        const reply = await bot.proposeLiveSession(
+          { conversationId: channelId, instruction: interaction.options.getString("prompt", true), proposedBy: interaction.user.displayName },
+          effectsFor(interaction.channel),
+        );
+        await interaction.editReply(reply);
+      }
+      return;
+    }
+    // Edit-prompt modal submit: apply the new text, then re-render the card in place.
+    if (interaction.isModalSubmit()) {
+      if (!allowed(interaction.user.id)) return;
+      const m = /^bean:live-editsubmit:(.*)$/.exec(interaction.customId);
+      if (!m?.[1] || !interaction.isFromMessage()) return;
+      const proposalId = m[1];
+      const text = interaction.fields.getTextInputValue("prompt").trim();
+      if (text) liveSessionProposals.update(proposalId, { instruction: text });
+      const pending = liveSessionProposals.get(proposalId);
+      if (!pending) { await interaction.deferUpdate(); return; }
+      await interaction.update(await liveSessionCardFor(proposalId, pending.proposal));
+      return;
+    }
+    // Edit-prompt button: open the modal prefilled with the current prompt. MUST run before any
+    // deferUpdate below — showModal has to be the interaction's first response.
+    if (interaction.isButton() && interaction.customId.startsWith("bean:live-edit:")) {
+      if (!allowed(interaction.user.id)) return;
+      const proposalId = interaction.customId.slice("bean:live-edit:".length);
+      const pending = liveSessionProposals.get(proposalId);
+      if (!pending) { await interaction.reply({ content: "That live-session proposal expired.", ephemeral: true }); return; }
+      await interaction.showModal({
+        custom_id: `bean:live-editsubmit:${proposalId}`,
+        title: "Edit the prompt",
+        components: [{ type: 1, components: [{
+          type: 4, custom_id: "prompt", label: "Prompt sent to the agent",
+          style: 2, required: true, max_length: 4000, value: pending.proposal.instruction.slice(0, 4000),
+        }] }],
+      });
+      return;
+    }
     if (!allowed(interaction.user.id)) return;
     if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
     const match = /^bean:([a-z-]+):(.*)$/.exec(interaction.customId);
@@ -159,6 +245,13 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     await interaction.deferUpdate(); // ack within Discord's 3s window before slow work
 
     if (interaction.isStringSelectMenu()) {
+      // Live-session project/model dropdowns write straight to the pending proposal (Start reads
+      // it), unlike the delegate card's cli/model which stay in the per-message selections map.
+      const liveValue = interaction.values[0];
+      if (action === "live-project" && liveValue) { liveSessionProposals.update(payload, { projectPath: liveValue }); return; }
+      if (action === "live-model" && liveValue) { liveSessionProposals.update(payload, { model: liveValue }); return; }
+      if (action === "live-skill" && liveValue) { liveSessionProposals.update(payload, { skillName: liveValue === "__none__" ? undefined : liveValue }); return; }
+      if (action === "live-cli") return; // claude-only today; the dropdown is informational
       const sel = selections.get(interaction.message.id) ?? {};
       if (action === "cli") sel.cli = interaction.values[0];
       if (action === "model") sel.model = interaction.values[0];
@@ -205,8 +298,38 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
-client.once("clientReady", () => {
+client.once("clientReady", async () => {
   console.log(`@bean/discord logged in as ${client.user?.tag} (clis: ${clis.join(", ") || "none"})`);
+  // Control commands map to Bean's existing text commands; /live-session is added only when
+  // usable (config flag + claude on PATH). Project/model/skill are picked on its card, so the
+  // command itself carries just the opening prompt.
+  const liveEnabled = clis.includes("claude");
+  const liveCmd: ApplicationCommandDataResolvable = {
+    name: "live-session",
+    description: "Start a chat-bridged live coding session",
+    dmPermission: true,
+    options: [
+      { type: ApplicationCommandOptionType.String, name: "prompt", description: "What the agent should start on (editable before you Start)", required: true },
+    ],
+  };
+  const commands: ApplicationCommandDataResolvable[] = [
+    { name: "new", description: "Clear this conversation's context (fresh start)", dmPermission: true },
+    { name: "cancel", description: "Cancel any running background task(s)", dmPermission: true },
+    { name: "stop", description: "Stop the live session bound to this channel", dmPermission: true },
+    ...(liveEnabled ? [liveCmd] : []),
+  ];
+  const app = client.application;
+  if (!app) return;
+  // guildId set → register to that one server (instant); else global (all guilds Bean is in,
+  // ~1h first propagation). Registration silently no-ops if the bot lacks the
+  // `applications.commands` OAuth scope — re-invite with that scope if commands never appear.
+  if (discordConfig.guildId) {
+    await app.commands.set(commands, discordConfig.guildId);
+    console.log(`@bean/discord registered ${commands.length} slash command(s) to guild ${discordConfig.guildId}`);
+  } else {
+    await app.commands.set(commands);
+    console.log(`@bean/discord registered ${commands.length} global slash command(s) (first propagation can take ~1h)`);
+  }
 });
 
 // Routine digests: the main app enqueues outbox files; deliver them to their channel.

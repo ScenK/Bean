@@ -916,6 +916,65 @@ test("cancel-live card action updates the card to cancelled without starting a s
   expect(JSON.stringify(effects.updates.at(-1)?.card)).toContain("cancelled");
 });
 
+test("proposeLiveSession posts the confirm card, defaulting to the first project", async () => {
+  const { deps } = makeDeps({ liveSessionsEnabled: () => true });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  const reply = await bot.proposeLiveSession(
+    { conversationId: "c1", instruction: "look at auth", proposedBy: "sam" }, effects,
+  );
+  expect(reply).toContain("Start");
+  const card = JSON.stringify(effects.cards.at(-1));
+  expect(card).toContain("start-live");
+  expect(card).toContain("look at auth");
+});
+
+test("proposeLiveSession refuses when disabled, with no card", async () => {
+  const off = makeDeps({ liveSessionsEnabled: () => false });
+  const botOff = buildTeamsBot(off.deps);
+  const fxOff = fx();
+  expect(await botOff.proposeLiveSession({ conversationId: "c1", instruction: "x", proposedBy: "s" }, fxOff))
+    .toContain("disabled");
+  expect(fxOff.cards).toHaveLength(0);
+});
+
+test("start-live composes the picked skill's body into the opening prompt", async () => {
+  const prompts: string[] = [];
+  const startFn = (req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => {
+    prompts.push(req.prompt);
+    return { pid: 1, send: () => {}, stop: () => cbs.onExit(undefined) };
+  };
+  const { deps } = makeDeps({
+    liveSessionsEnabled: () => true,
+    loadSkills: async () => [{ name: "review", description: "d", body: "REVIEW SKILL BODY", enabled: true }],
+    liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+  });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.proposeLiveSession({ conversationId: "c1", instruction: "check the login flow", proposedBy: "sam" }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  deps.liveSessionProposals.update(proposalId, { skillName: "review" }); // simulates the skill dropdown pick
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId } }, effects);
+  expect(prompts).toHaveLength(1);
+  expect(prompts[0]).toContain("REVIEW SKILL BODY");
+  expect(prompts[0]).toContain("check the login flow");
+});
+
+test("literal /live-session message routes verbatim, never touching converse", async () => {
+  const chatSpy = vi.fn(async () => ({ content: "SHOULD NOT BE CALLED", toolCalls: [] }));
+  const { deps } = makeDeps({ chat: chatSpy, liveSessionsEnabled: () => true });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onMessage(
+    { conversationId: "c1", text: "/live-session for bean project, do we have codex support?", fromId: "u", fromName: "sam" },
+    effects,
+  );
+  expect(chatSpy).not.toHaveBeenCalled();
+  const card = JSON.stringify(effects.cards.at(-1));
+  expect(card).toContain("start-live");
+  expect(card).toContain("for bean project, do we have codex support?"); // verbatim, not an LLM rewrite
+});
+
 test("start-live on an expired/unknown proposal posts an expiry message", async () => {
   const { deps } = makeDeps({ liveSessionsEnabled: () => true });
   const bot = buildTeamsBot(deps);

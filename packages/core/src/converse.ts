@@ -55,6 +55,8 @@ export interface ProposedLiveSession {
   instruction: string;
   /** Literal --model value (clis.json) the user explicitly asked for. */
   model?: string;
+  /** Picked skill (on-card dropdown); its body is composed into the opening prompt at launch. */
+  skillName?: string;
 }
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */

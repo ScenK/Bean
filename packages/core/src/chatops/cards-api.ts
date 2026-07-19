@@ -98,6 +98,17 @@ export interface LiveSessionProposalCardInput {
   projectName: string;
   instruction: string;
   model?: string;
+  /** Picked skill name (default in the skill picker); absent = no skill. */
+  skillName?: string;
+  /** Selectable projects for the on-card project picker; the one matching projectName is default. */
+  projects: { name: string; path: string }[];
+  /** Selectable claude models for the on-card model picker; empty = no picker (claude's default). */
+  models: { id: string; label: string }[];
+  /** Selectable skills for the on-card skill picker; empty = no picker. */
+  skills: { name: string }[];
+  /** Live-capable CLIs for the on-card CLI picker — only claude today (live-session.ts is
+   * claude-specific), but rendered so the surface matches the delegate card. */
+  clis: string[];
 }
 
 export interface LiveSessionResultCardInput {

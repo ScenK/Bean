@@ -20,6 +20,13 @@ test("loads a valid config", async () => {
   expect(await loadDiscordConfig(file)).toEqual({ botToken: "t", allowedUserIds: ["123"] });
 });
 
+test("optional guildId is parsed when present and omitted otherwise", async () => {
+  expect(await loadDiscordConfig(await write({ botToken: "t", allowedUserIds: ["1"], guildId: "999" })))
+    .toEqual({ botToken: "t", allowedUserIds: ["1"], guildId: "999" });
+  expect(await loadDiscordConfig(await write({ botToken: "t", allowedUserIds: ["1"], guildId: "" })))
+    .toEqual({ botToken: "t", allowedUserIds: ["1"] });
+});
+
 test("missing file throws with a setup hint", async () => {
   await expect(loadDiscordConfig("/nope/discord.json")).rejects.toThrow(/Discord config missing/);
 });

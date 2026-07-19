@@ -8,12 +8,16 @@ endpoint. Design: `docs/superpowers/specs/2026-07-10-discord-adapter-design.md`.
 
 1. **Create the bot**: discord.com/developers → New Application → Bot. Copy the **bot token**.
    Under *Privileged Gateway Intents*, enable **Message Content Intent**.
-2. **Invite it**: OAuth2 → URL Generator → scope `bot` → permissions: View Channels,
-   Send Messages, Read Message History → open the URL, add to your private server.
+2. **Invite it**: OAuth2 → URL Generator → scopes `bot` **and `applications.commands`**
+   (the second is required for slash commands to register — without it Bean's `/` menu stays
+   empty) → permissions: View Channels, Send Messages, Read Message History → open the URL,
+   add to your private server.
 3. **Your user id**: Discord settings → Advanced → enable Developer Mode, then right-click
    your name → "Copy User ID".
 4. **Config**: create `~/.bean/discord.json`:
    `{ "botToken": "<token>", "allowedUserIds": ["<your user id>"] }`
+   Optional `"guildId": "<server id>"` registers slash commands to that one server instantly;
+   without it they register globally (every server Bean is in, but ~1h first propagation).
 
 ## Run
 
@@ -27,8 +31,11 @@ responses; everyone else is silently ignored. Saying a CLI/model in the message 
 opencode on GPT-5.5") is honored; delegate runs are confirm-first via buttons and execute on
 THIS machine.
 
-Two plain-text commands: `cancel` stops in-flight runs, and `/new` clears the channel's chat
-context (including ambient chatter) so the next message starts fresh.
+Slash commands (Discord `/` menu): `/new` (clear this conversation's context), `/cancel`
+(stop in-flight runs), `/stop` (end the channel's live session), and — when live sessions are
+enabled — `/live-session <prompt>`. The same words also work as plain text (`cancel`, `stop`,
+`/new`, `/live-session …`), so an `@bean /live-session …` message routes the same as the slash
+command (verbatim, not reworded by the model).
 
 ## Manual verification checklist
 

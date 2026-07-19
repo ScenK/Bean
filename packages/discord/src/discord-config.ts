@@ -5,6 +5,9 @@ export interface DiscordConfig {
   botToken: string;
   /** Discord user ids allowed to talk to Bean and confirm runs. Everyone else is silently ignored. */
   allowedUserIds: string[];
+  /** Optional: register slash commands to this one guild (appears instantly) instead of globally
+   * (every guild Bean is in, but ~1h first propagation). Handy for dev/single-server setups. */
+  guildId?: string;
 }
 
 export function discordConfigFile(dir: string): string {
@@ -34,5 +37,6 @@ export async function loadDiscordConfig(file: string): Promise<DiscordConfig> {
   if (!parsed.botToken || ids.length === 0) {
     throw new Error(`Discord config incomplete: ${file} needs botToken and a non-empty allowedUserIds`);
   }
-  return { botToken: parsed.botToken, allowedUserIds: ids };
+  const guildId = typeof parsed.guildId === "string" && parsed.guildId ? parsed.guildId : undefined;
+  return { botToken: parsed.botToken, allowedUserIds: ids, ...(guildId ? { guildId } : {}) };
 }
