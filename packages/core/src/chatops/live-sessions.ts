@@ -148,7 +148,9 @@ export class LiveSessionRegistry {
       handle: undefined as unknown as LiveSessionHandle,
       projectPath: input.projectPath,
       starterId: input.starterId ?? "",
-      steering: input.steering ?? "open",
+      // A restricted session with no owner would lock everyone out (no id can match ""), so
+      // downgrade to open — the surface didn't supply an identity to gate on.
+      steering: input.steering === "restricted" && !input.starterId ? "open" : (input.steering ?? "open"),
       coDrivers: new Set(),
       sink: input.sink,
       timer: setInterval(() => void this.flush(input.channelId), this.opts.throttleMs ?? DEFAULT_THROTTLE_MS),

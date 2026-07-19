@@ -78,6 +78,11 @@ describe("LiveSessionRegistry", () => {
 
     expect(reg.canSteer("gone", "owner")).toBe(false); // no session
     expect(reg.isStarter("r", "")).toBe(false); // empty owner never matches
+
+    // Restricted but no starterId → downgrade to open, else nobody could steer.
+    reg.start({ channelId: "noowner", projectPath: "/c", instruction: "go", sink, steering: "restricted" });
+    expect(reg.canSteer("noowner", "anyone")).toBe(true);
+    expect(reg.isStarter("noowner", "")).toBe(false);
   });
 
   it("start refuses a second channel targeting the same project (cross-process reservation)", () => {
