@@ -269,8 +269,8 @@ function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
       ...cliRows,
       ...modelRows,
       row([
-        // Toggles restricted ⇄ war-room; label shows what a tap switches TO.
-        { type: BUTTON, style: 2, label: restricted ? "→ War-room" : "→ Restricted", custom_id: `bean:live-mode:${input.proposalId}` },
+        // Label shows the CURRENT mode; tapping toggles restricted ⇄ war-room.
+        { type: BUTTON, style: 2, label: restricted ? "Mode: Restricted" : "Mode: War-room", custom_id: `bean:live-mode:${input.proposalId}` },
         { type: BUTTON, style: 1, label: "Edit prompt", custom_id: `bean:live-edit:${input.proposalId}` },
         { type: BUTTON, style: 3, label: "Start session", custom_id: `bean:start-live:${input.proposalId}` },
         { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-live:${input.proposalId}` },
