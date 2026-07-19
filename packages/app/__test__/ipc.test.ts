@@ -448,7 +448,7 @@ test("chat-prompt store lets a late-mounting chat window pull the pending prompt
   expect(store.get()).toBeUndefined();
 });
 
-test("models handler returns the configured list annotated for the enabled CLIs", () => {
+test("models handler returns only models the enabled CLIs offer", () => {
   const handler = buildModelsHandler({
     getAvailableClis: () => ["claude"],
     getCliModels: () => [
@@ -458,7 +458,7 @@ test("models handler returns the configured list annotated for the enabled CLIs"
   });
   const models = handler();
   expect(models.find((m) => m.id === "sonnet")?.availableOn).toEqual(["claude"]);
-  expect(models.find((m) => m.id === "gpt-5-5")?.availableOn).toEqual([]);
+  expect(models.find((m) => m.id === "gpt-5-5")).toBeUndefined();
 });
 
 test("model memory handlers get/set through the injected store fns against the configured file", async () => {

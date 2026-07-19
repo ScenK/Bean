@@ -7,11 +7,11 @@ const CLI_MODELS: CliModels[] = [
   { provider: "opencode", models: ["github-copilot/gpt-5.5", "github-copilot/claude-sonnet-5"] },
 ];
 
-test("availableModels lists every configured model, marking undetected providers unavailable", () => {
+test("availableModels omits models only a disabled/undetected provider offers", () => {
   const result = availableModels(CLI_MODELS, ["claude"]);
-  expect(result).toHaveLength(5);
+  expect(result).toHaveLength(3);
   expect(result.find((m) => m.id === "sonnet")?.availableOn).toEqual(["claude"]);
-  expect(result.find((m) => m.id === "github-copilot/gpt-5.5")?.availableOn).toEqual([]);
+  expect(result.find((m) => m.id === "github-copilot/gpt-5.5")).toBeUndefined();
 });
 
 test("availableModels derives the label from the last path segment", () => {
@@ -20,8 +20,8 @@ test("availableModels derives the label from the last path segment", () => {
   expect(result.find((m) => m.id === "sonnet")?.label).toBe("sonnet");
 });
 
-test("availableModels with no detected CLIs marks every model unavailable", () => {
-  expect(availableModels(CLI_MODELS, []).every((m) => m.availableOn.length === 0)).toBe(true);
+test("availableModels with no detected CLIs returns nothing", () => {
+  expect(availableModels(CLI_MODELS, [])).toEqual([]);
 });
 
 test("a model listed under both providers gets both in availableOn", () => {
