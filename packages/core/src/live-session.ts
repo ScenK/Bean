@@ -157,12 +157,15 @@ export function startLiveSession(
   };
 
   child.on("error", (err: Error) => settle(err));
-  child.on("close", (code: number | null) => {
-    if (stopping || code === 0 || code === null) settle();
-    else {
-      const tail = stderrBuf.trim().split("\n").slice(-5).join("\n");
-      settle(new Error(`claude exited with code ${code}${tail ? ` - ${tail}` : ""}`));
-    }
+  child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+    // code === null means a signal killed it — that's the EXPECTED shape of our own
+    // stop()/idle-timeout path (SIGTERM, or SIGKILL escalation), but NOT of an external kill
+    // (an operator's `kill -9`, an OOM reaper): only `stopping` tells them apart, so check it
+    // rather than treating every null code as a clean end.
+    if (stopping || code === 0) { settle(); return; }
+    const tail = stderrBuf.trim().split("\n").slice(-5).join("\n");
+    const reason = code === null ? `signal ${signal ?? "unknown"}` : `code ${code}`;
+    settle(new Error(`claude exited with ${reason}${tail ? ` - ${tail}` : ""}`));
   });
 
   child.stdin?.write(userTurnLine(req.prompt + GIT_TRAILER_INSTRUCTION));

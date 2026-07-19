@@ -388,6 +388,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     async onMessage(msg: IncomingMessage, fx: BotEffects): Promise<void> {
       try {
         if (deps.liveSessions.has(msg.conversationId)) {
+          // Fence this message out of a later ambient replay: fetchRecent's 15-min window is
+          // keyed off this same cutoff, so without advancing it here, the next addressed
+          // message after the session ends would re-fetch these already-captured messages
+          // from Discord history and hand them to converse() a second time.
+          deps.conversations.setAmbientCutoff(msg.conversationId, Date.now());
           if (msg.text.trim().toLowerCase() === "stop") {
             deps.liveSessions.stop(msg.conversationId);
             return; // the registry's onEnded posts the end notice

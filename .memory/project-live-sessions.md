@@ -93,6 +93,16 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   `process.kill(pid, 0)` throws `EPERM` (not `ESRCH`) for a system pid you can't signal, and
   the liveness check currently treats both the same way (dead), which silently defeats the
   reservation in tests. Use `process.pid` (the test process itself) instead.
+- `bot.ts`'s live-session capture block advances `deps.conversations.setAmbientCutoff(...)` to
+  `Date.now()` on every captured message (including `stop`) — without this, the ambient-chatter
+  fetch (`fetchRecent`'s 15-min window, keyed off that same cutoff) would re-pull those same
+  already-captured messages from Discord history after the session ends and hand them to
+  `converse()` a second time as duplicate ambient context.
+- `startLiveSession`'s `close` handler distinguishes an external signal kill (operator `kill
+  -9`, an OOM reaper) from our own `stop()`/idle-timeout path: Node reports both as `code:
+  null`, so only the `stopping` flag tells them apart — check it explicitly rather than
+  treating every `code === null` as a clean end, or a session someone else killed gets
+  reported as "ended" instead of "died".
 - Manual end-to-end smoke test (real Discord bot + real `claude` CLI) was not run as part of
   the implementation — it needs live Discord credentials and a test server that weren't
   available in the implementing session. Full monorepo test/typecheck gate is green; the

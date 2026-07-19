@@ -950,6 +950,15 @@ test("channel messages route to an active session instead of converse, and stop 
   expect(deps.liveSessions.has("c1")).toBe(false);
 });
 
+test("capturing a live-session message advances the ambient cutoff, so it isn't replayed after the session ends", async () => {
+  const { bot, fx: effects, deps } = makeBotWithActiveLiveSession("c1");
+  const before = deps.conversations.ambientCutoff("c1");
+  await bot.onMessage({ conversationId: "c1", text: "look at the auth module", fromId: "u", fromName: "sam" }, effects);
+  // Without this, a later addressed message's fetchRecent(sinceMs) would re-fetch this same
+  // channel history and hand it to converse() a second time as ambient chatter.
+  expect(deps.conversations.ambientCutoff("c1")).toBeGreaterThan(before);
+});
+
 // Locks in the contract packages/discord/src/server.ts's messageCreate gate relies on: onMessage
 // itself has no addressed/unaddressed concept — it captures ANY text for a channel with an
 // active session, whether or not it looks like it was aimed at Bean. The bug this guarded

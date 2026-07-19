@@ -112,6 +112,18 @@ describe("startLiveSession", () => {
     expect(exitErr?.message).toContain("code 1");
   });
 
+  it("a signal-killed exit with no stop() call reports an error, not a clean end", () => {
+    const f = fakeChild();
+    let exitErr: Error | undefined | null = null;
+    startLiveSession({ projectPath: "/p", prompt: "go" }, { onOutput: () => {}, onTurnComplete: () => {}, onExit: (e) => { exitErr = e; } }, () => f.child);
+    // An external kill (an operator's `kill -9`, an OOM reaper) — not our own stop() path.
+    // Node reports this the same way (code: null) as our own SIGTERM/SIGKILL escalation;
+    // only `stopping` tells them apart.
+    f.emit("close", null, "SIGKILL");
+    expect(exitErr).toBeInstanceOf(Error);
+    expect(exitErr?.message).toContain("SIGKILL");
+  });
+
   it("drains stderr and includes its tail in a non-zero exit's error", () => {
     const f = fakeChild();
     let exitErr: Error | undefined;
