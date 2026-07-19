@@ -35,8 +35,8 @@ export function SettingsWindow() {
   const [editorApp, setEditorApp] = useState("");
   const [delegateCli, setDelegateCli] = useState("");
   const [systemControls, setSystemControls] = useState(false);
+  const [detectedClis, setDetectedClis] = useState<CliName[]>([]);
   const [disabledClis, setDisabledClis] = useState<string[]>([]);
-  const [clis, setClis] = useState<CliName[]>([]);
   const [paths, setPaths] = useState<ConfigView["paths"] | undefined>(undefined);
   const [save, setSave] = useState<SaveState>("idle");
   const [error, setError] = useState<string | undefined>(undefined);
@@ -59,7 +59,7 @@ export function SettingsWindow() {
   useEffect(() => {
     window.bean.getTheme().then(setTheme);
     window.bean.onThemeChanged(setTheme);
-    window.bean.availableClis().then(setClis);
+    window.bean.detectedClis().then(setDetectedClis);
     window.bean.getConfig().then((c: ConfigView) => {
       setApiKey(c.openaiApiKey);
       setModel(c.model);
@@ -114,6 +114,7 @@ export function SettingsWindow() {
   };
 
   const runningCount = CHATOPS_BOTS.filter(({ key }) => chatops[key].running).length;
+  const enabledClis = detectedClis.filter((c) => !disabledClis.includes(c));
 
   return (
     <div class="bean-dashboard">
@@ -157,6 +158,27 @@ export function SettingsWindow() {
               />
             </div>
           </div>
+          {detectedClis.length > 0 && (
+            <div class="bean-settings-row">
+              <span class="bean-settings-row-label">CLIs</span>
+              <div class="bean-settings-row-control">
+                {detectedClis.map((c) => (
+                  <label key={c} class="bean-chatops-row" title="Unchecked CLIs disappear from every launch and delegate picker.">
+                    <input
+                      type="checkbox"
+                      checked={!disabledClis.includes(c)}
+                      onChange={(e) => {
+                        const on = (e.target as HTMLInputElement).checked;
+                        setDisabledClis((prev) => (on ? prev.filter((x) => x !== c) : [...prev, c]));
+                        setSave("idle");
+                      }}
+                    />
+                    <span class="bean-chatops-label">{c}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <div class="bean-settings-row">
             <span class="bean-settings-row-label">Delegate CLI</span>
             <div class="bean-settings-row-control">
@@ -165,8 +187,8 @@ export function SettingsWindow() {
                 value={delegateCli}
                 onChange={(e) => { setDelegateCli((e.target as HTMLSelectElement).value); setSave("idle"); }}
               >
-                <option value="">Auto (first detected{clis[0] ? `: ${clis[0]}` : ""})</option>
-                {clis.map((c) => <option key={c} value={c}>{c}</option>)}
+                <option value="">Auto (first enabled{enabledClis[0] ? `: ${enabledClis[0]}` : ""})</option>
+                {enabledClis.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
           </div>
