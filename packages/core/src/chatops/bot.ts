@@ -481,14 +481,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               return;
             }
           }
+          // Bystanders in restricted mode: kept out of the agent, but their message is still
+          // fenced from ambient replay above so it can't leak back in after the session ends.
+          if (!deps.liveSessions.canSteer(conv, msg.fromId)) return;
           if (lower === "drivers") {
             const co = deps.liveSessions.coDrivers(conv);
             await fx.reply(co.length === 0 ? "No co-drivers yet." : `Co-drivers: ${co.length}.`);
             return;
           }
-          // Bystanders in restricted mode: kept out of the agent, but their message is still
-          // fenced from ambient replay above so it can't leak back in after the session ends.
-          if (!deps.liveSessions.canSteer(conv, msg.fromId)) return;
           if (lower === "stop") {
             deps.liveSessions.stop(conv);
             return; // the registry's onEnded posts the end notice
