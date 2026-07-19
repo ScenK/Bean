@@ -36,7 +36,10 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
         "-p", prompt,
         "--output-format", "stream-json",
         "--verbose",
-        "--allowedTools", "Bash,Edit,Write,Read,Glob,Grep",
+        // True bypass, same as live-session.ts: headless runs can't answer permission prompts,
+        // and `--permission-mode auto`'s classifier doesn't run headless (verified 2026-07,
+        // v2.1.214 — every would-ask action is denied), so an allowlist stalls night routines.
+        "--dangerously-skip-permissions",
         ...modelArgs,
       ],
     };
