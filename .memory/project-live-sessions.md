@@ -77,6 +77,22 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   there's no later tick left to catch a transient Discord failure on the very last flush.
   Gives up gracefully (notice says output "may be incomplete") rather than retrying forever,
   since a genuinely broken sink (revoked token, deleted channel) must not hang teardown.
+- `LiveSessionRegistry` now reserves the **project path**, not just the channel — the same
+  cross-process file lock (`run-queue.ts`'s `reserveRun`/`releaseRun`/`updateReservationPid`,
+  `~/.bean/runs/<hash>.json`) delegate runs (`RunRegistry`) already use. Before this fix, two
+  different Discord channels (or a channel + a delegate run) targeting the same project could
+  each spawn their own permissions-bypassed `claude` process into the same working directory
+  concurrently. `LiveSessionRegistry`'s constructor now REQUIRES `{ dir }` (no default) —
+  every test construction needs a temp `dir` (`mkdtempSync`, fresh per test/call, same
+  convention as `chatops-runs.test.ts`), and both server.ts files pass their real `beanDir()`.
+  Reservation is released in `teardown()` (only ever reached once the child is confirmed
+  dead) — NOT in `forceKillAll()`, which deliberately leaves it in place, mirroring
+  `RunRegistry.interruptAll()`'s exact reasoning (can't confirm the SIGKILL landed before the
+  bot process exits; a future `reserveRun` pid-liveness-reclaims it once verifiably gone).
+  Gotcha if you write a test for this: don't use pid `1` as a fake "alive" pid — `isLive()`'s
+  `process.kill(pid, 0)` throws `EPERM` (not `ESRCH`) for a system pid you can't signal, and
+  the liveness check currently treats both the same way (dead), which silently defeats the
+  reservation in tests. Use `process.pid` (the test process itself) instead.
 - Manual end-to-end smoke test (real Discord bot + real `claude` CLI) was not run as part of
   the implementation — it needs live Discord credentials and a test server that weren't
   available in the implementing session. Full monorepo test/typecheck gate is green; the

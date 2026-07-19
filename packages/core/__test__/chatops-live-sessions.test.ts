@@ -1,6 +1,15 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-sessions.js";
 import type { LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest } from "../src/live-session.js";
+
+// Fresh temp dir per call — reserveRun's file lock is per-`dir`, so this keeps each test's
+// project-path reservation isolated from every other test (matches chatops-runs.test.ts).
+function tmp(): string {
+  return mkdtempSync(join(tmpdir(), "bean-live-sessions-"));
+}
 
 function fakeStart() {
   const sent: string[] = [];
@@ -38,16 +47,46 @@ const flushTicks = async (reg: { /* just to satisfy lint */ } | unknown, ms: num
 describe("LiveSessionRegistry", () => {
   it("start binds the channel; a second start on the same channel is refused", () => {
     const f = fakeStart();
-    const reg = new LiveSessionRegistry(f.startFn as never);
+    const reg = new LiveSessionRegistry(f.startFn as never, { dir: tmp() });
     const { sink } = fakeSink();
     expect(reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink })).toBe(true);
     expect(reg.has("c")).toBe(true);
     expect(reg.start({ channelId: "c", projectPath: "/p", instruction: "again", sink })).toBe(false);
   });
 
+  it("start refuses a second channel targeting the same project (cross-process reservation)", () => {
+    const dir = tmp();
+    // pid: process.pid (this test process — always live and self-signalable), not fakeStart's
+    // hardcoded pid 1 (a reserved system pid `isLive()`'s liveness probe can't signal).
+    const aliveStart = (): LiveSessionHandle => ({ pid: process.pid, send: () => {}, stop: () => {} });
+    const regA = new LiveSessionRegistry(aliveStart as never, { dir });
+    const regB = new LiveSessionRegistry(aliveStart as never, { dir });
+    const { sink } = fakeSink();
+    expect(regA.start({ channelId: "a", projectPath: "/p", instruction: "go", sink })).toBe(true);
+    // Different channel, different registry instance, same project — refused.
+    expect(regB.start({ channelId: "b", projectPath: "/p", instruction: "go", sink })).toBe(false);
+    expect(regB.has("b")).toBe(false);
+    // A different project on the same registry sharing the same dir is unaffected.
+    expect(regB.start({ channelId: "b", projectPath: "/other", instruction: "go", sink })).toBe(true);
+  });
+
+  it("releases the project reservation once the session ends, allowing a new one on it", async () => {
+    const dir = tmp();
+    const f = fakeStart();
+    const reg = new LiveSessionRegistry(f.startFn as never, { dir });
+    const { sink } = fakeSink();
+    reg.start({ channelId: "a", projectPath: "/p", instruction: "go", sink });
+    f.cbs().onExit(undefined);
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+
+    const f2 = fakeStart();
+    const reg2 = new LiveSessionRegistry(f2.startFn as never, { dir });
+    expect(reg2.start({ channelId: "b", projectPath: "/p", instruction: "go", sink })).toBe(true);
+  });
+
   it("posts buffered output on the throttle tick, then edits the same message", async () => {
     const f = fakeStart();
-    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
     const s = fakeSink();
     reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: s.sink });
     f.cbs().onOutput("line one");
@@ -60,7 +99,7 @@ describe("LiveSessionRegistry", () => {
 
   it("rolls over to a new message when the buffer exceeds the limit", async () => {
     const f = fakeStart();
-    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
     const s = fakeSink();
     reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: s.sink });
     f.cbs().onOutput("a".repeat(1500));
@@ -76,7 +115,7 @@ describe("LiveSessionRegistry", () => {
   it("turn completion appends a footer, reports the result, and the next turn starts a fresh message", async () => {
     const f = fakeStart();
     const results: string[] = [];
-    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
     const s = fakeSink();
     reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: s.sink, onTurnResult: (r) => results.push(r) });
     f.cbs().onOutput("working");
@@ -93,7 +132,7 @@ describe("LiveSessionRegistry", () => {
   it("send forwards to the handle; stop tears down and fires onEnded once", async () => {
     const f = fakeStart();
     const notices: string[] = [];
-    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
     const s = fakeSink();
     reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: s.sink, onEnded: (n) => notices.push(n) });
     reg.send("c", "a hint");
@@ -109,7 +148,7 @@ describe("LiveSessionRegistry", () => {
   it("a crash exit produces an error notice", async () => {
     const f = fakeStart();
     const notices: string[] = [];
-    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
     const s = fakeSink();
     reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: s.sink, onEnded: (n) => notices.push(n) });
     f.cbs().onExit(new Error("claude exited with code 1"));
@@ -120,7 +159,7 @@ describe("LiveSessionRegistry", () => {
 
   it("retries a rolled-over chunk without losing it when the sink rejects once (bug 1 regression)", async () => {
     const f = fakeStart();
-    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
     const posts: string[] = [];
     let postCallCount = 0;
     const sink: LiveSessionSink = {
@@ -146,7 +185,7 @@ describe("LiveSessionRegistry", () => {
   it("teardown waits for an in-flight flush before firing onEnded (bug 2 regression)", async () => {
     const f = fakeStart();
     const notices: string[] = [];
-    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
     const posts: string[] = [];
     const edits: string[] = [];
     let postCallCount = 0;
@@ -192,7 +231,7 @@ describe("LiveSessionRegistry", () => {
 
   it("preserves output that arrives while a turn-closing send is in flight (bug 3 regression)", async () => {
     const f = fakeStart();
-    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
     const posts: string[] = [];
     let postCallCount = 0;
     let resolveFirstPost!: () => void;
@@ -235,7 +274,7 @@ describe("LiveSessionRegistry", () => {
   it("forceKillAll SIGKILLs every active session's process group immediately", () => {
     let nextPid = 100;
     const startFn = (): LiveSessionHandle => ({ pid: nextPid++, send: () => {}, stop: () => {} });
-    const reg = new LiveSessionRegistry(startFn as never);
+    const reg = new LiveSessionRegistry(startFn as never, { dir: tmp() });
     const { sink } = fakeSink();
     reg.start({ channelId: "a", projectPath: "/p", instruction: "go", sink });
     reg.start({ channelId: "b", projectPath: "/p", instruction: "go", sink });
@@ -251,7 +290,7 @@ describe("LiveSessionRegistry", () => {
 
   it("forceKillAll tolerates a kill on an already-dead process", () => {
     const startFn = (): LiveSessionHandle => ({ pid: 42, send: () => {}, stop: () => {} });
-    const reg = new LiveSessionRegistry(startFn as never);
+    const reg = new LiveSessionRegistry(startFn as never, { dir: tmp() });
     const { sink } = fakeSink();
     reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink });
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => { throw new Error("ESRCH"); });
@@ -263,7 +302,7 @@ describe("LiveSessionRegistry", () => {
   it("retries the final teardown flush on transient failure, delivering the content once it succeeds", async () => {
     const f = fakeStart();
     const notices: string[] = [];
-    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
     const posts: string[] = [];
     let attempt = 0;
     const sink: LiveSessionSink = {
@@ -293,7 +332,7 @@ describe("LiveSessionRegistry", () => {
   it("gives up after bounded retries and reports the final output may be incomplete", async () => {
     const f = fakeStart();
     const notices: string[] = [];
-    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
     const sink: LiveSessionSink = {
       post: async () => { throw new Error("always fails"); },
       edit: async () => {},

@@ -99,7 +99,7 @@ const bot = buildTeamsBot({
   saveMemories: (m) => saveMemories(dbFile(dir), m),
   consolidationProposals: new ConsolidationProposalStore(),
   conversations,
-  liveSessions: new LiveSessionRegistry(),
+  liveSessions: new LiveSessionRegistry(undefined, { dir }),
   liveSessionProposals: new LiveSessionProposalStore(),
   liveSessionsEnabled: () => false, // live sessions are Discord-first; Teams sink untested (spec: out of scope)
   cards: {

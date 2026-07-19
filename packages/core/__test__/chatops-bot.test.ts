@@ -134,7 +134,7 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     skillProposals: new SkillProposalStore(),
     saveSkill: async (name, body) => { savedSkills.push({ name, body }); },
     systemControlsEnabled: () => false,
-    liveSessions: new LiveSessionRegistry(fakeLiveStartFn().startFn as never),
+    liveSessions: new LiveSessionRegistry(fakeLiveStartFn().startFn as never, { dir: runsBeanDir }),
     liveSessionProposals: new LiveSessionProposalStore(),
     liveSessionsEnabled: () => false,
     ...overrides,
@@ -933,7 +933,7 @@ function makeBotWithActiveLiveSession(channelId: string) {
   const { deps } = makeDeps({
     chat: chatSpy,
     liveSessionsEnabled: () => true,
-    liveSessions: new LiveSessionRegistry(startFn as never),
+    liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
   });
   const sink: LiveSessionSink = { post: async () => "m1", edit: async () => {} };
   deps.liveSessions.start({ channelId, projectPath: "/p/bean", instruction: "go", sink });

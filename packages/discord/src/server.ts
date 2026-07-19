@@ -28,7 +28,7 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "discord" });
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this channel has no idea what it's retrying.
 const conversations = new ConversationStore(dbFile(dir));
-const liveSessions = new LiveSessionRegistry();
+const liveSessions = new LiveSessionRegistry(undefined, { dir });
 const bot = buildTeamsBot({
   chat: makeOpenAIConverse(beanConfig.openaiApiKey),
   model: beanConfig.model,
