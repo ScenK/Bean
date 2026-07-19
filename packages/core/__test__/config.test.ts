@@ -47,7 +47,7 @@ test("saveConfig writes only persisted config fields (no beanDir)", async () => 
   const file = join(dir, "config.json");
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m", terminalApp: "" });
   const parsed = JSON.parse(await readFile(file, "utf8"));
-  expect(Object.keys(parsed).sort()).toEqual(["delegateCli", "editorApp", "liveSessions", "model", "openaiApiKey", "systemControls", "terminalApp"]);
+  expect(Object.keys(parsed).sort()).toEqual(["delegateCli", "disabledClis", "editorApp", "liveSessions", "model", "openaiApiKey", "systemControls", "terminalApp"]);
 });
 
 test("loads config and defaults terminalApp to empty string", async () => {
@@ -129,4 +129,27 @@ test("saveConfig defaults liveSessions to false on a brand-new file when the cal
   await saveConfig(file, { openaiApiKey: "k", model: "m" });
   const cfg = await loadConfig(file, dir);
   expect(cfg.liveSessions).toBe(false);
+});
+
+test("defaults disabledClis to [] and drops unknown CLI names on load", async () => {
+  const file = join(dir, "config.json");
+  await writeFile(file, JSON.stringify({ openaiApiKey: "k", disabledClis: ["codex", "vim", 42] }), "utf8");
+  const cfg = await loadConfig(file, dir);
+  expect(cfg.disabledClis).toEqual(["codex"]);
+
+  await writeFile(file, JSON.stringify({ openaiApiKey: "k" }), "utf8");
+  expect((await loadConfig(file, dir)).disabledClis).toEqual([]);
+
+  await writeFile(file, JSON.stringify({ openaiApiKey: "k", disabledClis: "nope" }), "utf8");
+  expect((await loadConfig(file, dir)).disabledClis).toEqual([]);
+});
+
+test("saveConfig round-trips disabledClis and preserves it when the caller omits it", async () => {
+  const file = join(dir, "config.json");
+  await saveConfig(file, { openaiApiKey: "k", model: "m", disabledClis: ["opencode"] });
+  expect((await loadConfig(file, dir)).disabledClis).toEqual(["opencode"]);
+
+  // A save that doesn't know about the field must not wipe it.
+  await saveConfig(file, { openaiApiKey: "k", model: "m" });
+  expect((await loadConfig(file, dir)).disabledClis).toEqual(["opencode"]);
 });
