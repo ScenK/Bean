@@ -3,8 +3,8 @@ import type { CliModels } from "./cli-models.js";
 
 /** A model id is the literal --model flag string from clis.json (e.g. "sonnet",
  * "github-copilot/gpt-5.5") — launchCommand/delegateCommand pass it verbatim. `label` is
- * derived (last `/` segment); `availableOn` lists the detected CLIs whose config offers it
- * (empty = shown dimmed in the picker). */
+ * derived (last `/` segment); `availableOn` lists the enabled CLIs whose config offers it
+ * (never empty — availableModels drops models no enabled CLI can run). */
 export type AvailableModel = { id: string; label: string; availableOn: CliName[] };
 export type CliModelSelection = { cli: CliName; model?: string };
 
@@ -13,19 +13,19 @@ function modelLabel(id: string): string {
   return seg !== undefined && seg.trim() !== "" ? seg : id;
 }
 
-/** Every configured model annotated with which of the detected CLIs offers it — drives
- * the model picker's dimmed/reason-captioned rows. Undetected providers' models are kept
- * (dimmed) so the picker shows what would be available if that CLI were installed. */
+/** Every model offered by an enabled (detected and not Settings-disabled) CLI, annotated with
+ * which of them offers it. Models only an undetected/disabled provider lists are omitted
+ * entirely, not dimmed — disabling a CLI in Settings removes its models from every picker. */
 export function availableModels(cliModels: CliModels[], detected: CliName[]): AvailableModel[] {
   const out: AvailableModel[] = [];
   for (const entry of cliModels) {
+    if (!detected.includes(entry.provider)) continue;
     for (const id of entry.models) {
-      const offered = detected.includes(entry.provider);
       const existing = out.find((m) => m.id === id);
       if (existing) {
-        if (offered && !existing.availableOn.includes(entry.provider)) existing.availableOn.push(entry.provider);
+        if (!existing.availableOn.includes(entry.provider)) existing.availableOn.push(entry.provider);
       } else {
-        out.push({ id, label: modelLabel(id), availableOn: offered ? [entry.provider] : [] });
+        out.push({ id, label: modelLabel(id), availableOn: [entry.provider] });
       }
     }
   }
