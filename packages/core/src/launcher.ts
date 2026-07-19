@@ -75,7 +75,9 @@ export function launchCommand(req: LaunchRequest, editorApp?: string): { command
     case "claude":
       return { command: "claude", args: [...(req.model ? ["--model", req.model] : []), req.prompt ?? ""] };
     case "codex":
-      return { command: "codex", args: [...(req.model ? ["--model", req.model] : []), req.prompt ?? ""] };
+      // `--` terminates option parsing: a prompt starting with "-"/"--" (a markdown bullet,
+      // leftover "---" frontmatter, "--help") would otherwise be parsed as a codex flag.
+      return { command: "codex", args: [...(req.model ? ["--model", req.model] : []), "--", req.prompt ?? ""] };
     case "open":
       // editorApp is the user-configured editor .app (Settings); empty = not configured yet,
       // caught by launchInTerminal before ever spawning. `.app` bundles aren't executables

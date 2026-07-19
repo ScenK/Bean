@@ -73,8 +73,14 @@ describe("delegateCommand codex", () => {
   it("maps codex to exec with json, sandbox bypass, and git-repo-check skip", () => {
     expect(delegateCommand({ cli: "codex", projectPath: "/p", prompt: "fix it" })).toEqual({
       command: "codex",
-      args: ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "fix it" + GIT_TRAILER_INSTRUCTION],
+      args: ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "--", "fix it" + GIT_TRAILER_INSTRUCTION],
     });
+  });
+
+  it("passes the prompt after -- so a dash-leading task is not parsed as a flag", () => {
+    const { args } = delegateCommand({ cli: "codex", projectPath: "/p", prompt: "--help me" });
+    expect(args[args.length - 2]).toBe("--");
+    expect(args[args.length - 1]).toBe("--help me" + GIT_TRAILER_INSTRUCTION);
   });
 
   it("appends --model with the verbatim model string", () => {

@@ -56,6 +56,9 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
         // codex exec refuses non-git dirs; Bean's scratch workspace isn't a repo.
         "--skip-git-repo-check",
         ...modelArgs,
+        // `--` terminates option parsing so a prompt starting with "-"/"--" (a markdown
+        // bullet, "---" frontmatter, "--help") is read as text, not parsed as a codex flag.
+        "--",
         prompt,
       ],
     };

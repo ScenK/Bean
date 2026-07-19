@@ -28,14 +28,19 @@ test("launchCommand appends --model with the verbatim model string for claude", 
   expect(launchCommand(req).args).toEqual(["--model", "sonnet", "go"]);
 });
 
-test("launchCommand builds the codex interactive command with a pre-sent prompt", () => {
+test("launchCommand builds the codex interactive command with a pre-sent prompt after --", () => {
   const req: LaunchRequest = { mode: "codex", projectPath: "/dev/acme", prompt: "do it" };
-  expect(launchCommand(req)).toEqual({ command: "codex", args: ["do it"] });
+  expect(launchCommand(req)).toEqual({ command: "codex", args: ["--", "do it"] });
 });
 
 test("launchCommand appends --model with the verbatim model string for codex", () => {
   const req: LaunchRequest = { mode: "codex", projectPath: "/p", prompt: "go", model: "gpt-5.6-sol" };
-  expect(launchCommand(req).args).toEqual(["--model", "gpt-5.6-sol", "go"]);
+  expect(launchCommand(req).args).toEqual(["--model", "gpt-5.6-sol", "--", "go"]);
+});
+
+test("launchCommand keeps a dash-leading codex prompt as text via the -- terminator", () => {
+  const req: LaunchRequest = { mode: "codex", projectPath: "/p", prompt: "--- frontmatter-looking text" };
+  expect(launchCommand(req).args).toEqual(["--", "--- frontmatter-looking text"]);
 });
 
 test("launchCommand omits --model when no model was picked", () => {
