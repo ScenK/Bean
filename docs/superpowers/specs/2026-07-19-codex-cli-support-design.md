@@ -70,7 +70,38 @@ codex exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-che
 - Settings dropdown, ProposalCard, DelegateCard, RoutinesPanel, chatops resolve: **no changes**
   — all derived from `detectClis()`/`CliModels`.
 
-### 6. Out of scope
+### 6. CLI enable/disable
+
+Users choose which detected CLIs Bean offers; a disabled CLI disappears from every dropdown
+(proposal cards, delegate cards, routines, chatops, Settings delegate picker, launch chips).
+
+- **Config:** `disabledClis?: CliName[]` in `~/.bean/config.json`, default `[]`. A **denylist**,
+  not a whitelist: a newly detected CLI is enabled by default (auto-detect sets the initial
+  status) with no migration or sync step. `loadConfig` degrades invalid values to `[]` and drops
+  entries that aren't known `CliName`s.
+- **Effective list:** `enabled = detectClis().filter(c => !disabledClis.includes(c))`, computed
+  at the three existing wiring points — app `main.ts:408` (`availableClis`), discord
+  `server.ts:25`, teams `server.ts:66`. Everything downstream already consumes those lists
+  (IPC `availableClis`, `availableModels`→`availableOn` feeding ProposalCard/DelegateCard/
+  RoutinesPanel model pickers, `delegateAvailable`, delegateCli auto-resolve, chatops model
+  resolution, live-session gates, Settings delegate dropdown), so no per-dropdown changes.
+- **Settings UI:** new rows in the MODEL card — one enable checkbox per *detected* CLI
+  (undetected CLIs aren't shown). Unchecking saves to `disabledClis`. The Delegate CLI dropdown
+  lists enabled CLIs only; a saved `delegateCli` that gets disabled falls back through the
+  existing auto-resolve.
+- **ProjectsPanel launch chips:** currently hardcoded — filter the CLI chips by
+  `window.bean.availableClis()` ("Open in Editor" always shown).
+- **Refresh semantics:** desktop — `getAvailableClis` recomputes from the current saved config
+  per IPC call, so toggles apply without restart. Bots — read config at boot; restart the bot
+  (already driven from Settings) to apply.
+- **Live-session interaction:** all live-session gates check the enabled list for `"claude"`
+  (discord `server.ts:69`, `bot.ts:550`, `bot.ts:738`), so disabling claude disables live
+  sessions automatically — same as claude not being installed. One wording tweak: when claude is
+  detected but disabled, the refusal message says "claude CLI is disabled in Bean's settings —
+  enable it to use live sessions" instead of the not-on-PATH message.
+- **Edge:** all CLIs disabled → existing `delegateAvailable === false` / `NO_CLI` paths cover it.
+
+### 7. Out of scope
 
 - Live-session stays claude-only: it depends on claude's `--input-format stream-json` stdin
   turn-injection, which codex lacks. Chatops' claude-only live-session filters
@@ -88,6 +119,8 @@ error machinery.
 - `delegate.test.ts`: codex `delegateCommand` argv; `codexTailLine`/`codexResult` against real
   captured JSONL fixtures; `runDelegate` end-to-end with a fake spawn emitting codex events.
 - `cli-models.test.ts`: codex provider accepted by `parseCliModels`.
+- Enablement: config test (`disabledClis` parsing/degrade); filtered-list test at one wiring
+  point; live-session gate test with claude disabled.
 - Gate: `pnpm test && pnpm typecheck`, plus dev **and** packaged (`pnpm dist:mac`) smoke tests
   per AGENTS.md — this touches spawned CLIs and PATH handling.
 
