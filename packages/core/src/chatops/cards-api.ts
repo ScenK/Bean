@@ -93,6 +93,19 @@ export interface SkillResultCardInput {
   outcome: "saved" | "cancelled";
 }
 
+export interface LiveSessionProposalCardInput {
+  proposalId: string;
+  projectName: string;
+  instruction: string;
+  model?: string;
+}
+
+export interface LiveSessionResultCardInput {
+  projectName: string;
+  startedBy: string;
+  outcome: "started" | "cancelled" | "ended";
+}
+
 export interface CardBuilders {
   proposalCard: (input: ProposalCardInput) => object;
   runningCard: (input: RunningCardInput) => object;
@@ -107,4 +120,6 @@ export interface CardBuilders {
   consolidationResultCard: (input: ConsolidationResultCardInput) => object;
   skillProposalCard: (input: SkillProposalCardInput) => object;
   skillResultCard: (input: SkillResultCardInput) => object;
+  liveSessionProposalCard: (input: LiveSessionProposalCardInput) => object;
+  liveSessionResultCard: (input: LiveSessionResultCardInput) => object;
 }

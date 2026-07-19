@@ -64,6 +64,8 @@ export interface BeanConfig {
   editorApp: string; // "" = no editor configured — "Open in Editor" prompts the user to set one
   delegateCli: string; // "" = auto: first detected CLI; else "claude"/"opencode"
   systemControls: boolean; // opt-in: expose the system_control tool (volume/media/app) to chat
+  /** Opt-in for chat-launched live coding-agent sessions (spec: live-sessions). */
+  liveSessions: boolean;
   beanDir: string; // resolved absolute path to ~/.bean
 }
 

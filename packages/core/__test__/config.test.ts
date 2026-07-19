@@ -47,7 +47,7 @@ test("saveConfig writes only persisted config fields (no beanDir)", async () => 
   const file = join(dir, "config.json");
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m", terminalApp: "" });
   const parsed = JSON.parse(await readFile(file, "utf8"));
-  expect(Object.keys(parsed).sort()).toEqual(["delegateCli", "editorApp", "model", "openaiApiKey", "systemControls", "terminalApp"]);
+  expect(Object.keys(parsed).sort()).toEqual(["delegateCli", "editorApp", "liveSessions", "model", "openaiApiKey", "systemControls", "terminalApp"]);
 });
 
 test("loads config and defaults terminalApp to empty string", async () => {
@@ -101,4 +101,32 @@ test("projectBeanDir resolves to <repo-root>/.bean", () => {
   // under packages/core — three directories up from any of the three reaches the repo root.
   const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
   expect(projectBeanDir()).toBe(join(repoRoot, ".bean"));
+});
+
+test("defaults liveSessions to false and round-trips it through saveConfig", async () => {
+  const file = join(dir, "config.json");
+  await writeFile(file, JSON.stringify({ openaiApiKey: "k", model: "m" }), "utf8");
+  const cfg = await loadConfig(file, dir);
+  expect(cfg.liveSessions).toBe(false);
+
+  await saveConfig(file, { openaiApiKey: "k", model: "m", liveSessions: true });
+  const cfg2 = await loadConfig(file, dir);
+  expect(cfg2.liveSessions).toBe(true);
+});
+
+test("saveConfig preserves an existing liveSessions value when the caller omits it (e.g. a Settings save)", async () => {
+  const file = join(dir, "config.json");
+  await saveConfig(file, { openaiApiKey: "k", model: "m", liveSessions: true });
+  // A caller that doesn't know about liveSessions (the desktop Settings save has no toggle
+  // for it) must not silently flip it back off when it re-saves the fields it does know about.
+  await saveConfig(file, { openaiApiKey: "k", model: "m2" });
+  const cfg = await loadConfig(file, dir);
+  expect(cfg.liveSessions).toBe(true);
+});
+
+test("saveConfig defaults liveSessions to false on a brand-new file when the caller omits it", async () => {
+  const file = join(dir, "config.json");
+  await saveConfig(file, { openaiApiKey: "k", model: "m" });
+  const cfg = await loadConfig(file, dir);
+  expect(cfg.liveSessions).toBe(false);
 });

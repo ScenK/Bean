@@ -5,6 +5,7 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
+  LiveSessionProposalStore, LiveSessionRegistry,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, Partials,
@@ -27,6 +28,7 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "discord" });
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this channel has no idea what it's retrying.
 const conversations = new ConversationStore(dbFile(dir));
+const liveSessions = new LiveSessionRegistry(undefined, { dir });
 const bot = buildTeamsBot({
   chat: makeOpenAIConverse(beanConfig.openaiApiKey),
   model: beanConfig.model,
@@ -56,6 +58,9 @@ const bot = buildTeamsBot({
   saveMemories: (m) => saveMemories(dbFile(dir), m),
   consolidationProposals: new ConsolidationProposalStore(),
   conversations,
+  liveSessions,
+  liveSessionProposals: new LiveSessionProposalStore(),
+  liveSessionsEnabled: () => beanConfig.liveSessions && clis.includes("claude"),
   cards: discordCards,
   systemControlsEnabled: () => beanConfig.systemControls,
 });
@@ -108,7 +113,14 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string): Bo
 
 client.on("messageCreate", async (message) => {
   try {
-    if (message.author.bot || !allowed(message.author.id)) return;
+    if (message.author.bot) return;
+    // A live session already running in this channel is itself the authorization boundary
+    // for steering it — anyone who can post in a channel someone else bound a session in can
+    // send it a turn or say `stop`, allowlisted or not (this is the whole point of war-room,
+    // whole-channel steering). Outside an active session, allowedUserIds still gates all
+    // normal chat with Bean exactly as before.
+    const capturing = liveSessions.has(message.channelId);
+    if (!capturing && !allowed(message.author.id)) return;
     const isDm = message.channel.type === ChannelType.DM;
     // Only an explicit address (DM, @mention, reply-to-Bean) gets a turn. Naming the bot in
     // passing ("we should add x to bean") is about Bean, not to it — it stays ambient context.
@@ -116,7 +128,7 @@ client.on("messageCreate", async (message) => {
       isDm ||
       message.mentions.users.has(client.user?.id ?? "") ||
       message.mentions.repliedUser?.id === client.user?.id;
-    if (!addressed) return;
+    if (!addressed && !capturing) return;
     const text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
     if (!text) return;
     if ("sendTyping" in message.channel) await message.channel.sendTyping();
@@ -186,6 +198,10 @@ client.on("error", (err) => console.error("client error:", err));
 // before this process disappears, instead of just dying mid-run with the requester left hanging.
 process.on("SIGTERM", () => {
   runs.interruptAll(); // synchronous — see its doc comment; safe to exit right after
+  // forceKillAll(), not stopAll(): stop()'s graceful SIGTERM-then-escalate dance schedules its
+  // SIGKILL fallback on a setTimeout that would never fire before process.exit below runs,
+  // leaving a permissions-bypassed child orphaned if it doesn't honor SIGTERM promptly.
+  liveSessions.forceKillAll();
   process.exit(0);
 });
 

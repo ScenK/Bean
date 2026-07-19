@@ -15,6 +15,9 @@ import { RunRegistry } from "../src/chatops/runs.js";
 import type { CardBuilders } from "../src/chatops/cards-api.js";
 import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index.js";
 import { SkillProposalStore } from "../src/chatops/skill-proposals.js";
+import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-sessions.js";
+import { LiveSessionProposalStore } from "../src/chatops/live-session-proposals.js";
+import type { LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest } from "../src/live-session.js";
 
 const fakeCards = {
   proposalCard: (i: object) => ({ kind: "proposal", ...i }),
@@ -30,7 +33,32 @@ const fakeCards = {
   consolidationResultCard: (i: object) => ({ kind: "consolidation-result", ...i }),
   skillProposalCard: (i: object) => ({ kind: "skill-proposal", ...i }),
   skillResultCard: (i: object) => ({ kind: "skill-result", ...i }),
+  // Mirrors the real discord/teams builders: a "start-live"/"cancel-live" beanAction lives
+  // in each card's actions, not just a flat field, so tests can assert on it the same way
+  // a real Start-session button's custom_id/data would surface it.
+  liveSessionProposalCard: (i: object) => ({
+    kind: "live-session-proposal",
+    ...i,
+    actions: [
+      { beanAction: "start-live", proposalId: (i as { proposalId: string }).proposalId },
+      { beanAction: "cancel-live", proposalId: (i as { proposalId: string }).proposalId },
+    ],
+  }),
+  liveSessionResultCard: (i: object) => ({ kind: "live-session-result", ...i }),
 };
+
+/** Controllable fake for LiveSessionRegistry's StartFn — stop() fires onExit synchronously
+ * so registry teardown (and the has() flip to false) is observable without awaiting a tick,
+ * matching the synchronous-looking flow bot.ts's onMessage capture path expects. */
+function fakeLiveStartFn(): { startFn: (req: LiveSessionRequest, cbs: LiveSessionCallbacks) => LiveSessionHandle; sent: string[] } {
+  const sent: string[] = [];
+  const startFn = (_req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => ({
+    pid: 1,
+    send: (t: string) => { sent.push(t); },
+    stop: () => cbs.onExit(undefined),
+  });
+  return { startFn, sent };
+}
 
 function fx(): BotEffects & { posted: string[]; cards: object[]; updates: { id: string; card: object }[] } {
   const posted: string[] = [];
@@ -106,6 +134,9 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     skillProposals: new SkillProposalStore(),
     saveSkill: async (name, body) => { savedSkills.push({ name, body }); },
     systemControlsEnabled: () => false,
+    liveSessions: new LiveSessionRegistry(fakeLiveStartFn().startFn as never, { dir: runsBeanDir }),
+    liveSessionProposals: new LiveSessionProposalStore(),
+    liveSessionsEnabled: () => false,
     ...overrides,
   };
   return { deps, delegateCalls, saved, savedNotes, savedMemories, savedSkills, queuedTodos };
@@ -836,4 +867,126 @@ test("save-skill on an expired/unknown proposal posts an expiry message", async 
   await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "save-skill", proposalId: "nope" } }, effects);
   expect(savedSkills).toEqual([]);
   expect(effects.posted[0]).toContain("expired");
+});
+
+// propose_live_session fires when the model calls the tool with a project + instruction;
+// converse() validates project against the enum and returns proposedLiveSession regardless
+// of whether the tool was actually offered (same as the other propose_* fakes above), so the
+// fake chat fn can return the toolCall unconditionally.
+function makeBotWithLiveSessionProposal() {
+  const { deps } = makeDeps({
+    liveSessionsEnabled: () => true,
+    chat: async () => ({
+      content: "Let's start a live session.",
+      toolCalls: [{ name: "propose_live_session", args: { project: "/p/bean", instruction: "look at the auth module" } }],
+    }),
+  });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  return { bot, fx: effects, deps };
+}
+
+function latestLiveProposalId(cards: object[]): string {
+  const card = JSON.stringify(cards.at(-1));
+  const match = /"proposalId":"(live-\d+)"/.exec(card);
+  if (!match?.[1]) throw new Error("no live-session proposal id in card");
+  return match[1];
+}
+
+test("posts a live-session proposal card when converse proposes one", async () => {
+  const { bot, fx: effects } = makeBotWithLiveSessionProposal();
+  await bot.onMessage({ conversationId: "c1", text: "start live session", fromId: "u", fromName: "sam" }, effects);
+  expect(effects.cards.some((c) => JSON.stringify(c).includes("start-live"))).toBe(true);
+});
+
+test("start-live card action starts the session and binds the channel", async () => {
+  const { bot, fx: effects, deps } = makeBotWithLiveSessionProposal();
+  await bot.onMessage({ conversationId: "c1", text: "start live session", fromId: "u", fromName: "sam" }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId } }, effects);
+  expect(deps.liveSessions.has("c1")).toBe(true);
+});
+
+test("cancel-live card action updates the card to cancelled without starting a session", async () => {
+  const { bot, fx: effects, deps } = makeBotWithLiveSessionProposal();
+  await bot.onMessage({ conversationId: "c1", text: "start live session", fromId: "u", fromName: "sam" }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "cancel-live", proposalId } }, effects);
+  expect(deps.liveSessions.has("c1")).toBe(false);
+  expect(JSON.stringify(effects.updates.at(-1)?.card)).toContain("cancelled");
+});
+
+test("start-live on an expired/unknown proposal posts an expiry message", async () => {
+  const { deps } = makeDeps({ liveSessionsEnabled: () => true });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId: "live-999" } }, effects);
+  expect(deps.liveSessions.has("c1")).toBe(false);
+  expect(effects.posted.some((p) => p.includes("expired"))).toBe(true);
+});
+
+// The registry is pre-bound to the channel directly (bypassing the propose/start card flow) —
+// this test is only about the capture contract in onMessage, not about how a session starts.
+function makeBotWithActiveLiveSession(channelId: string) {
+  const chatSpy = vi.fn(async () => ({ content: "should not be called", toolCalls: [] }));
+  const { startFn } = fakeLiveStartFn();
+  const { deps } = makeDeps({
+    chat: chatSpy,
+    liveSessionsEnabled: () => true,
+    liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+  });
+  const sink: LiveSessionSink = { post: async () => "m1", edit: async () => {} };
+  deps.liveSessions.start({ channelId, projectPath: "/p/bean", instruction: "go", sink });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  return { bot, fx: effects, deps, chatCalls: () => chatSpy.mock.calls.length };
+}
+
+test("channel messages route to an active session instead of converse, and stop ends it", async () => {
+  const { bot, fx: effects, deps, chatCalls } = makeBotWithActiveLiveSession("c1");
+  await bot.onMessage({ conversationId: "c1", text: "look at the auth module", fromId: "u", fromName: "sam" }, effects);
+  expect(chatCalls()).toBe(0); // converse never invoked
+  await bot.onMessage({ conversationId: "c1", text: "stop", fromId: "u", fromName: "sam" }, effects);
+  expect(deps.liveSessions.has("c1")).toBe(false);
+});
+
+test("capturing a live-session message advances the ambient cutoff, so it isn't replayed after the session ends", async () => {
+  const { bot, fx: effects, deps } = makeBotWithActiveLiveSession("c1");
+  const before = deps.conversations.ambientCutoff("c1");
+  await bot.onMessage({ conversationId: "c1", text: "look at the auth module", fromId: "u", fromName: "sam" }, effects);
+  // Without this, a later addressed message's fetchRecent(sinceMs) would re-fetch this same
+  // channel history and hand it to converse() a second time as ambient chatter.
+  expect(deps.conversations.ambientCutoff("c1")).toBeGreaterThan(before);
+});
+
+// Locks in the contract packages/discord/src/server.ts's messageCreate gate relies on: onMessage
+// itself has no addressed/unaddressed concept — it captures ANY text for a channel with an
+// active session, whether or not it looks like it was aimed at Bean. The bug this guarded
+// against (unaddressed channel chatter silently dropped instead of steering the live session)
+// was entirely in the Discord adapter's own "if (!addressed) return" gate, not in this capture
+// logic — a full adapter-level test isn't practical here since server.ts performs real config
+// loading and a live discord.js client login as top-level side effects on import, with no
+// existing harness in packages/discord/__test__/ to fake a Client/Message for it.
+test("onMessage captures plain, unaddressed-looking text for an active session — no @mention needed", async () => {
+  const { bot, fx: effects, deps, chatCalls } = makeBotWithActiveLiveSession("c1");
+  await bot.onMessage(
+    { conversationId: "c1", text: "just some plain hint, no mention of bean at all", fromId: "u", fromName: "sam" },
+    effects,
+  );
+  expect(chatCalls()).toBe(0); // captured by the live session, converse() never invoked
+  expect(deps.liveSessions.has("c1")).toBe(true);
+});
+
+test("start-live re-checks liveSessionsEnabled at claim time and refuses if the feature was disabled meanwhile", async () => {
+  // The proposal is offered while enabled, but a flag flip (or claude CLI going undetected)
+  // can land before the operator taps the card — the gate must be re-checked where the
+  // permissions-bypassed process actually launches, not just when the proposal was made.
+  const { bot, fx: effects, deps } = makeBotWithLiveSessionProposal();
+  await bot.onMessage({ conversationId: "c1", text: "start live session", fromId: "u", fromName: "sam" }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  deps.liveSessionsEnabled = () => false; // flag flips off after the card was posted
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId } }, effects);
+  expect(deps.liveSessions.has("c1")).toBe(false);
+  expect(JSON.stringify(effects.updates.at(-1)?.card)).toContain("cancelled");
+  expect(effects.posted.some((p) => p.toLowerCase().includes("disabled"))).toBe(true);
 });
