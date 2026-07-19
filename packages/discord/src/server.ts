@@ -200,6 +200,12 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         return;
       }
       if (interaction.commandName === "stop") {
+        // Same steering gate as a plain `stop` message: in a restricted session only the
+        // starter/co-drivers may end it, not any allow-listed bystander.
+        if (liveSessions.has(channelId) && !liveSessions.canSteer(channelId, interaction.user.id)) {
+          await interaction.reply({ content: "Only the session starter or a co-driver can stop this live session.", ephemeral: true });
+          return;
+        }
         const stopped = liveSessions.stop(channelId);
         await interaction.reply({ content: stopped ? "Stopping the live session." : "No live session running in this channel.", ephemeral: true });
         return;
