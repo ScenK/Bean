@@ -39,14 +39,14 @@ function collect(): { cbs: DelegateCallbacks; outputs: string[]; dones: string[]
 }
 
 describe("delegateCommand", () => {
-  it("maps claude to headless -p with stream-json and the explicit tool allowlist", () => {
+  it("maps claude to headless -p with stream-json and permission bypass", () => {
     const { command, args } = delegateCommand({ cli: "claude", projectPath: "/p", prompt: "fix the bug" });
     expect(command).toBe("claude");
     expect(args).toEqual([
       "-p", "fix the bug" + GIT_TRAILER_INSTRUCTION,
       "--output-format", "stream-json",
       "--verbose",
-      "--allowedTools", "Bash,Edit,Write,Read,Glob,Grep",
+      "--dangerously-skip-permissions",
     ]);
   });
 
