@@ -27,3 +27,38 @@ We wait for the Apple/Electron fix. What `main.ts` keeps instead:
   same when the icon does appear).
 
 Don't reintroduce a placement-retry loop without re-testing on current macOS.
+
+**Update (2026-07-19, macOS 26.5.2/25F84) — solved case, different mechanism:** the tray
+(packaged AND dev AND a minimal Electron repro) parked deterministically at `{x:0, y:1169}`
+on one machine, surviving reboot and resets of `com.apple.controlcenter` /
+`com.apple.systemuiserver` plists. Root cause was Tahoe's per-app **"Allow in the Menu Bar"**
+gate (System Settings → Menu Bar), whose state lives in a TCC-protected plist that ordinary
+pref resets do NOT touch:
+
+    ~/Library/Group Containers/group.com.apple.controlcenter/Library/Preferences/group.com.apple.controlcenter.plist
+
+It holds `trackedApplications` (`{isAllowed, menuItemLocations}` per app). An app gets
+blocked either by its own `isAllowed = false` or by an **orphaned mapping** — a different,
+disabled app's `menuItemLocations` claiming its bundle ID — and orphan-blocked apps don't
+even appear in the Settings pane toggle list (upstream write-up: CodexBar issue #1440).
+Fix: back up + delete that plist (or surgically flip the entry), `killall cfprefsd
+ControlCenter`, relaunch Bean. Terminal needs Full Disk Access / "access data from other
+apps" approval; sandboxed agents can't read it at all.
+
+Confirmed culprit (decoded from the pre-fix backup): `com.openai.codex`'s entry was
+`isAllowed = false` with `menuItemLocations = [com.openai.codex, dev.scenk.bean,
+com.github.Electron]` — the tracker had filed Bean (and stock Electron) under the Codex
+app's identity, almost certainly because **Bean spawns `codex exec` delegate children**,
+and the disabled Codex toggle then blocked Bean transitively. This can re-form: if the
+tray vanishes again on Tahoe, first check the Codex app's toggle in System Settings →
+Menu Bar, then fall back to the plist reset. Decode the blob with
+`plistlib.loads(outer["trackedApplications"])` — it's a nested binary plist.
+
+After the reset Bean re-registered and shows its own toggle in the Settings pane despite
+being only ad-hoc signed — signing is NOT required for the gate; a corrupt/orphaned entry
+just hides the app from the pane while blocking it.
+
+Diagnostic that cracked it: minimal native Swift `NSStatusItem` (unbundled CLI, untracked
+by the gate) placed fine while every Electron tray parked — bundle-ID-keyed blocking, not
+a rendering race. `tray.getBounds().y` far below the menu bar (≈ screen height) is the
+"parked" signature in both this and the placement-race failure.
