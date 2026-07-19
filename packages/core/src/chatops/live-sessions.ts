@@ -12,11 +12,21 @@ export interface LiveSessionSink {
   edit: (id: string, text: string) => Promise<void>;
 }
 
+/** Who may steer an active session:
+ * - `"open"` — war-room: anyone who can post in the channel sends the agent a turn.
+ * - `"restricted"` — only the starter and co-drivers they've added. */
+export type SteeringMode = "open" | "restricted";
+
 export interface LiveSessionStart {
   channelId: string;
   projectPath: string;
   instruction: string;
   model?: string;
+  /** Surface user-id of whoever tapped Start — the session's owner. Defaults to "" (no owner)
+   * for callers that don't care, which only matters under "restricted". */
+  starterId?: string;
+  /** Defaults to "open" so callers that don't opt in keep the original war-room behavior. */
+  steering?: SteeringMode;
   sink: LiveSessionSink;
   /** Each completed turn's final result — callers append it to conversation history. */
   onTurnResult?: (result: string) => void;
@@ -45,6 +55,10 @@ function turnFooter(s: TurnSummary): string {
 interface ActiveSession {
   handle: LiveSessionHandle;
   projectPath: string;
+  starterId: string;
+  steering: SteeringMode;
+  /** Extra user-ids the starter has granted steering to (restricted mode only). */
+  coDrivers: Set<string>;
   sink: LiveSessionSink;
   timer: ReturnType<typeof setInterval>;
   /** Current turn's text not yet finalized into a full message — the source of truth;
@@ -90,6 +104,39 @@ export class LiveSessionRegistry {
     return this.byChannel.has(channelId);
   }
 
+  /** True if `userId` started the session in this channel. */
+  isStarter(channelId: string, userId: string): boolean {
+    const s = this.byChannel.get(channelId);
+    return !!s && s.starterId === userId && userId !== "";
+  }
+
+  /** Whether `userId` is allowed to send this channel's session a turn (or stop it). Open mode:
+   * anyone. Restricted: the starter or a co-driver. No session → false. */
+  canSteer(channelId: string, userId: string): boolean {
+    const s = this.byChannel.get(channelId);
+    if (!s) return false;
+    if (s.steering === "open") return true;
+    return s.starterId === userId || s.coDrivers.has(userId);
+  }
+
+  /** Grant steering to `userId` (restricted mode). Returns false if there's no session or the
+   * id is already the starter / already a co-driver. */
+  addCoDriver(channelId: string, userId: string): boolean {
+    const s = this.byChannel.get(channelId);
+    if (!s || userId === "" || userId === s.starterId || s.coDrivers.has(userId)) return false;
+    s.coDrivers.add(userId);
+    return true;
+  }
+
+  /** Revoke a co-driver. Returns false if there's no session or they weren't one. */
+  removeCoDriver(channelId: string, userId: string): boolean {
+    return this.byChannel.get(channelId)?.coDrivers.delete(userId) ?? false;
+  }
+
+  coDrivers(channelId: string): string[] {
+    return [...(this.byChannel.get(channelId)?.coDrivers ?? [])];
+  }
+
   start(input: LiveSessionStart): boolean {
     if (this.byChannel.has(input.channelId)) return false;
     // Cross-process/cross-surface guard: the same reservation delegate runs use, so a second
@@ -100,6 +147,11 @@ export class LiveSessionRegistry {
     const s: ActiveSession = {
       handle: undefined as unknown as LiveSessionHandle,
       projectPath: input.projectPath,
+      starterId: input.starterId ?? "",
+      // A restricted session with no owner would lock everyone out (no id can match ""), so
+      // downgrade to open — the surface didn't supply an identity to gate on.
+      steering: input.steering === "restricted" && !input.starterId ? "open" : (input.steering ?? "open"),
+      coDrivers: new Set(),
       sink: input.sink,
       timer: setInterval(() => void this.flush(input.channelId), this.opts.throttleMs ?? DEFAULT_THROTTLE_MS),
       buf: "", msgId: undefined, dirty: false, rendering: false, closeAfterFlush: false,

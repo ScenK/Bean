@@ -57,6 +57,8 @@ export interface ProposedLiveSession {
   model?: string;
   /** Picked skill (on-card dropdown); its body is composed into the opening prompt at launch. */
   skillName?: string;
+  /** Who may steer once running (on-card toggle). Defaults to "restricted" at launch. */
+  steering?: "open" | "restricted";
 }
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */

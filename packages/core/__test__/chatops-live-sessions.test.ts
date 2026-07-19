@@ -54,6 +54,37 @@ describe("LiveSessionRegistry", () => {
     expect(reg.start({ channelId: "c", projectPath: "/p", instruction: "again", sink })).toBe(false);
   });
 
+  it("open mode lets anyone steer; restricted gates to starter + co-drivers", () => {
+    const reg = new LiveSessionRegistry(fakeStart().startFn as never, { dir: tmp() });
+    const { sink } = fakeSink();
+
+    reg.start({ channelId: "open", projectPath: "/a", instruction: "go", sink, starterId: "owner", steering: "open" });
+    expect(reg.canSteer("open", "owner")).toBe(true);
+    expect(reg.canSteer("open", "rando")).toBe(true); // war-room
+
+    reg.start({ channelId: "r", projectPath: "/b", instruction: "go", sink, starterId: "owner", steering: "restricted" });
+    expect(reg.isStarter("r", "owner")).toBe(true);
+    expect(reg.canSteer("r", "owner")).toBe(true);
+    expect(reg.canSteer("r", "rando")).toBe(false);
+
+    expect(reg.addCoDriver("r", "rando")).toBe(true);
+    expect(reg.canSteer("r", "rando")).toBe(true);
+    expect(reg.addCoDriver("r", "rando")).toBe(false); // already a co-driver
+    expect(reg.addCoDriver("r", "owner")).toBe(false); // starter isn't a co-driver
+    expect(reg.coDrivers("r")).toEqual(["rando"]);
+
+    expect(reg.removeCoDriver("r", "rando")).toBe(true);
+    expect(reg.canSteer("r", "rando")).toBe(false);
+
+    expect(reg.canSteer("gone", "owner")).toBe(false); // no session
+    expect(reg.isStarter("r", "")).toBe(false); // empty owner never matches
+
+    // Restricted but no starterId → downgrade to open, else nobody could steer.
+    reg.start({ channelId: "noowner", projectPath: "/c", instruction: "go", sink, steering: "restricted" });
+    expect(reg.canSteer("noowner", "anyone")).toBe(true);
+    expect(reg.isStarter("noowner", "")).toBe(false);
+  });
+
   it("start refuses a second channel targeting the same project (cross-process reservation)", () => {
     const dir = tmp();
     // pid: process.pid (this test process — always live and self-signalable), not fakeStart's

@@ -100,6 +100,8 @@ export interface LiveSessionProposalCardInput {
   model?: string;
   /** Picked skill name (default in the skill picker); absent = no skill. */
   skillName?: string;
+  /** Current steering mode, drives the on-card toggle label. Absent = "restricted". */
+  steering?: "open" | "restricted";
   /** Selectable projects for the on-card project picker; the one matching projectName is default. */
   projects: { name: string; path: string }[];
   /** Selectable claude models for the on-card model picker; empty = no picker (claude's default). */
