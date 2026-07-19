@@ -39,10 +39,17 @@ export interface IncomingMessage {
   text: string;
   fromId: string;
   fromName: string;
+  /** User-ids @mentioned in this message (excluding the bot), if the surface supplies them —
+   * used by the live-session `+driver`/`-driver` commands. Surfaces that omit it can't use
+   * mention-based co-driver management. */
+  mentionedIds?: string[];
 }
 
 export interface CardAction {
   conversationId: string;
+  /** Surface user-id of whoever tapped the card. Optional so existing tests/callers compile;
+   * the live-session start path uses it as the session owner. */
+  fromId?: string;
   fromName: string;
   value: { beanAction?: string; proposalId?: string; projectPath?: string; cli?: string; model?: string; memoryPicks?: string[] };
 }
@@ -168,7 +175,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     await deps.saveModelMemory({ ...memory, ...memoryUpdatesFor({ cli, model }) });
   }
 
-  async function startLiveSessionAction(p: PendingLiveSession, startedBy: string, fx: BotEffects): Promise<void> {
+  async function startLiveSessionAction(p: PendingLiveSession, startedBy: string, starterId: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();
     const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? p.proposal.projectPath;
     const updateTo = async (card: object): Promise<void> => {
@@ -189,6 +196,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       projectPath: p.proposal.projectPath,
       instruction,
       model: p.proposal.model,
+      starterId,
+      // Default restricted: only the starter (+ any co-drivers they add) steers, unless they
+      // flipped the card to war-room.
+      steering: p.proposal.steering ?? "restricted",
       sink,
       onTurnResult: (result) =>
         deps.conversations.append(p.conversationId, { role: "assistant", content: `[live session] ${result}` }),
@@ -205,6 +216,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started" }));
+    const mode = p.proposal.steering ?? "restricted";
+    await fx.post(mode === "open"
+      ? "War-room mode: anyone here can steer. Say `stop` to end it."
+      : "Restricted mode: only you steer. Add co-drivers with `+driver @name`, remove with `-driver @name`. Say `stop` to end it.");
   }
 
   // Post the confirm-first Start/Cancel card. Shared by the LLM path (propose_live_session)
@@ -445,12 +460,41 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           // message after the session ends would re-fetch these already-captured messages
           // from Discord history and hand them to converse() a second time.
           deps.conversations.setAmbientCutoff(msg.conversationId, Date.now());
-          if (msg.text.trim().toLowerCase() === "stop") {
-            deps.liveSessions.stop(msg.conversationId);
+          const conv = msg.conversationId;
+          const trimmed = msg.text.trim();
+          const lower = trimmed.toLowerCase();
+          // Co-driver management — starter only. `+driver @a @b` grants steering; `-driver @a`
+          // revokes; `drivers` lists. Mention ids come from the surface (msg.mentionedIds).
+          if (deps.liveSessions.isStarter(conv, msg.fromId)) {
+            if (lower.startsWith("+driver") || lower.startsWith("-driver")) {
+              const grant = lower.startsWith("+driver");
+              const ids = msg.mentionedIds ?? [];
+              if (ids.length === 0) {
+                await fx.reply(`@mention who to ${grant ? "add as a co-driver" : "remove"}, e.g. \`${grant ? "+" : "-"}driver @name\`.`);
+                return;
+              }
+              const changed = ids.filter((id) =>
+                grant ? deps.liveSessions.addCoDriver(conv, id) : deps.liveSessions.removeCoDriver(conv, id));
+              await fx.reply(changed.length === 0
+                ? "No change — already set that way."
+                : `${grant ? "Added" : "Removed"} ${changed.length} co-driver(s). Now steering: ${deps.liveSessions.coDrivers(conv).length} co-driver(s) + you.`);
+              return;
+            }
+          }
+          if (lower === "drivers") {
+            const co = deps.liveSessions.coDrivers(conv);
+            await fx.reply(co.length === 0 ? "No co-drivers yet." : `Co-drivers: ${co.length}.`);
+            return;
+          }
+          // Bystanders in restricted mode: kept out of the agent, but their message is still
+          // fenced from ambient replay above so it can't leak back in after the session ends.
+          if (!deps.liveSessions.canSteer(conv, msg.fromId)) return;
+          if (lower === "stop") {
+            deps.liveSessions.stop(conv);
             return; // the registry's onEnded posts the end notice
           }
-          deps.conversations.append(msg.conversationId, { role: "user", content: msg.text });
-          deps.liveSessions.send(msg.conversationId, msg.text);
+          deps.conversations.append(conv, { role: "user", content: msg.text });
+          deps.liveSessions.send(conv, msg.text);
           return;
         }
         if (msg.text.trim().toLowerCase() === "cancel") {
@@ -670,7 +714,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           await fx.post("Live sessions are disabled — this session wasn't started.");
           return;
         }
-        await startLiveSessionAction(pending, action.fromName, fx);
+        await startLiveSessionAction(pending, action.fromName, action.fromId ?? "", fx);
         return;
       }
       if (!proposalId) return;

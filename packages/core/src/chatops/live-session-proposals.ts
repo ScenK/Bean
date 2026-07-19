@@ -39,7 +39,7 @@ export class LiveSessionProposalStore {
   }
 
   /** Apply an on-card edit (project/model pick, or a modal prompt edit) to a pending proposal. */
-  update(id: string, patch: Partial<Pick<ProposedLiveSession, "projectPath" | "instruction" | "model" | "skillName">>): void {
+  update(id: string, patch: Partial<Pick<ProposedLiveSession, "projectPath" | "instruction" | "model" | "skillName" | "steering">>): void {
     const p = this.byId.get(id);
     if (p) p.proposal = { ...p.proposal, ...patch };
   }

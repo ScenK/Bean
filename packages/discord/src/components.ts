@@ -252,11 +252,15 @@ function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
         options: input.models.slice(0, 25).map((m) => ({ label: m.label.slice(0, 100), value: m.id, default: m.id === input.model })),
       }])]
     : [];
+  const restricted = (input.steering ?? "restricted") === "restricted";
+  const steeringHelp = restricted
+    ? "Restricted: only the starter steers (add co-drivers in-session with `+driver @name`)."
+    : "War-room: anyone in this channel steers.";
   return {
     embeds: [{
       title: "Bean proposes a live agent session",
       description: input.instruction.slice(0, LIVE_PROMPT_LIMIT),
-      fields: [{ name: "How it works", value: "Output streams here; every message in this channel becomes the agent's next turn. Say `stop` to end it." }],
+      fields: [{ name: "How it works", value: `Output streams here; each steering message becomes the agent's next turn. Say \`stop\` to end it.\n${steeringHelp}` }],
     }],
     // Discord caps a message at 5 action rows: project, skill, cli, model, buttons.
     components: [
@@ -265,6 +269,8 @@ function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
       ...cliRows,
       ...modelRows,
       row([
+        // Toggles restricted ⇄ war-room; label shows what a tap switches TO.
+        { type: BUTTON, style: 2, label: restricted ? "→ War-room" : "→ Restricted", custom_id: `bean:live-mode:${input.proposalId}` },
         { type: BUTTON, style: 1, label: "Edit prompt", custom_id: `bean:live-edit:${input.proposalId}` },
         { type: BUTTON, style: 3, label: "Start session", custom_id: `bean:start-live:${input.proposalId}` },
         { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-live:${input.proposalId}` },

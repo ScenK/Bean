@@ -179,6 +179,7 @@ app.post("/api/messages", (req, res) => {
       await bot.onCardAction(
         {
           conversationId: a.conversation.id,
+          fromId: a.from.id, // session owner for live-session steering (restricted by default)
           fromName: a.from.name ?? "someone",
           value: {
             beanAction: value.beanAction, proposalId: value.proposalId, projectPath: value.projectPath,

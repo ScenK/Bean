@@ -91,7 +91,8 @@ const allowed = (userId: string): boolean => discordConfig.allowedUserIds.includ
 // Rebuild the live-session proposal card from the current (possibly edited) proposal — used to
 // re-render in place after the Edit-prompt modal changes the text.
 async function liveSessionCardFor(
-  proposalId: string, proposal: { projectPath: string; instruction: string; model?: string; skillName?: string },
+  proposalId: string,
+  proposal: { projectPath: string; instruction: string; model?: string; skillName?: string; steering?: "open" | "restricted" },
 ): Promise<object> {
   const [projects, skills] = await Promise.all([
     loadProjects(projectsFile(dir)),
@@ -101,6 +102,7 @@ async function liveSessionCardFor(
   const models = (cliModels.find((e) => e.provider === "claude")?.models ?? []).map((id) => ({ id, label: id.split("/").pop() || id }));
   return discordCards.liveSessionProposalCard({
     proposalId, projectName, instruction: proposal.instruction, model: proposal.model, skillName: proposal.skillName,
+    steering: proposal.steering,
     projects: projects.map((p) => ({ name: p.name, path: p.path })), models,
     skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name })), clis: clis.filter((c) => c === "claude"),
   });
@@ -162,7 +164,12 @@ client.on("messageCreate", async (message) => {
       : undefined;
     try {
       await bot.onMessage(
-        { conversationId: message.channelId, text, fromId: message.author.id, fromName: message.author.displayName },
+        {
+          conversationId: message.channelId, text,
+          fromId: message.author.id, fromName: message.author.displayName,
+          // Everyone @mentioned except Bean — feeds the live-session `+driver`/`-driver` commands.
+          mentionedIds: [...message.mentions.users.keys()].filter((id) => id !== client.user?.id),
+        },
         effectsFor(message.channel, message.id),
       );
     } finally {
@@ -260,11 +267,22 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       return;
     }
 
+    // War-room ⇄ restricted toggle on the live-session card: flip the pending proposal and
+    // re-render in place. Pre-launch config, so no session-owner check — just the allow-list.
+    if (action === "live-mode") {
+      const pending = liveSessionProposals.get(payload);
+      if (pending) {
+        const next = pending.proposal.steering === "open" ? "restricted" : "open";
+        liveSessionProposals.update(payload, { steering: next });
+        await interaction.editReply(await liveSessionCardFor(payload, { ...pending.proposal, steering: next }));
+      }
+      return;
+    }
     if (!interaction.channel) return;
     const fx = effectsFor(interaction.channel);
     if (action === "cancel-run") {
       await bot.onCardAction(
-        { conversationId: interaction.channelId, fromName: interaction.user.displayName, value: { beanAction: "cancel-run", projectPath: payload } },
+        { conversationId: interaction.channelId, fromId: interaction.user.id, fromName: interaction.user.displayName, value: { beanAction: "cancel-run", projectPath: payload } },
         fx,
       );
       return;
@@ -274,6 +292,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     await bot.onCardAction(
       {
         conversationId: interaction.channelId,
+        fromId: interaction.user.id,
         fromName: interaction.user.displayName,
         value: { beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, memoryPicks: sel.memoryPicks },
       },
