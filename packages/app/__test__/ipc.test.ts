@@ -357,6 +357,7 @@ test("launch handler forwards getTerminalApp() into launchInTerminal's terminalA
 test("config get handler returns the injected view", () => {
   const view: ConfigView = {
     openaiApiKey: "sk-x", model: "m", terminalApp: "", editorApp: "", delegateCli: "",
+    systemControls: false, disabledClis: [],
     paths: { config: "/b/config.json", skills: "/b/skills", projects: "/b/projects.json", persona: "/b/persona.json" },
   };
   const handlers = buildConfigHandlers({ getConfig: () => view, applyConfig: async () => {} });
@@ -427,11 +428,11 @@ test("memory handlers list, save, append, and extract through injected deps", as
 test("config save handler forwards the update to applyConfig", async () => {
   const applied: ConfigUpdate[] = [];
   const handlers = buildConfigHandlers({
-    getConfig: () => ({ openaiApiKey: "", model: "", terminalApp: "", editorApp: "", delegateCli: "", paths: { config: "", skills: "", projects: "", persona: "" } }),
+    getConfig: () => ({ openaiApiKey: "", model: "", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], paths: { config: "", skills: "", projects: "", persona: "" } }),
     applyConfig: async (u) => { applied.push(u); },
   });
-  await handlers.save({ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app", delegateCli: "claude" });
-  expect(applied).toEqual([{ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app", delegateCli: "claude" }]);
+  await handlers.save({ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app", delegateCli: "claude", systemControls: false, disabledClis: ["codex"] });
+  expect(applied).toEqual([{ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app", delegateCli: "claude", systemControls: false, disabledClis: ["codex"] }]);
 });
 
 test("chat-prompt store lets a late-mounting chat window pull the pending prompt (same race fix)", () => {

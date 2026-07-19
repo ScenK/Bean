@@ -20,7 +20,7 @@ import {
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult, TodoStatus } from "@bean/core";
+import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult, TodoStatus, CliName } from "@bean/core";
 import { createAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
@@ -435,22 +435,24 @@ app.whenReady().then(async () => {
     const cfg = await loadConfig(cfgPath, dir);
 
     const runtime = createRuntimeConfig(
-      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls },
+      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, disabledClis: cfg.disabledClis },
       {
         makeChat: makeOpenAIChat,
         makeConverse: makeOpenAIConverse,
         saveConfigFile: (update) => saveConfig(configFile(dir), update),
       },
     );
+    const enabledClis = (): CliName[] => availableClis.filter((cli) => !runtime.getDisabledClis().includes(cli));
     // Gated per call on the live Settings toggle, so flipping it needs no restart.
     actionTools.push(systemControlTool(() => runtime.getSystemControls()));
 
     // Shared by createDelegateTasks (chat window's delegate button) and the routine
     // delegate-step adapter below — one resolver, not two copies of this preference logic.
-    const resolveDelegateCli = (): (typeof availableClis)[number] | undefined => {
+    const resolveDelegateCli = (): CliName | undefined => {
+      const enabled = enabledClis();
       const preferred = runtime.getDelegateCli();
-      if ((preferred === "claude" || preferred === "opencode") && availableClis.includes(preferred)) return preferred;
-      return availableClis[0];
+      if (enabled.includes(preferred as CliName)) return preferred as CliName;
+      return enabled[0];
     };
 
     const delegateTasks = createDelegateTasks({
@@ -602,6 +604,7 @@ app.whenReady().then(async () => {
         editorApp: runtime.getEditorApp(),
         delegateCli: runtime.getDelegateCli(),
         systemControls: runtime.getSystemControls(),
+        disabledClis: runtime.getDisabledClis(),
         paths: {
           config: configFile(dir),
           skills: skillsDir(dir),
@@ -612,12 +615,13 @@ app.whenReady().then(async () => {
       applyConfig: (update) => runtime.apply(update),
       getTerminalApp: () => runtime.getTerminalApp(),
       getEditorApp: () => runtime.getEditorApp(),
-      getAvailableClis: () => availableClis,
+      getAvailableClis: () => enabledClis(),
+      getDetectedClis: () => availableClis,
       getCliModels: () => cliModels,
       beanDirPath: dir,
       modelMemoryFile: modelMemoryFile(dir),
       delegateTasks,
-      delegateAvailable: () => availableClis.length > 0,
+      delegateAvailable: () => enabledClis().length > 0,
       onLaunchError: (req, err) => {
         const label = req.mode === "open" ? "open the project in your editor" : `launch (${req.mode})`;
         dialog.showErrorBox("Bean", `Couldn't ${label}: ${err.message}`);

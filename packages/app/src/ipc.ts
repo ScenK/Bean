@@ -521,6 +521,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   getTerminalApp: () => string;
   getEditorApp: () => string;
   getAvailableClis: () => CliName[];
+  getDetectedClis: () => CliName[];
   getCliModels: () => CliModels[];
   beanDirPath: string;
   modelMemoryFile: string;
@@ -599,6 +600,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.delegateStart, (_e, req: DelegateStartRequest) => deps.delegateTasks.start(req));
   ipcMain.on(IPC.delegateCancel, (_e, taskId: string) => deps.delegateTasks.cancel(taskId));
   ipcMain.handle(IPC.availableClis, () => deps.getAvailableClis());
+  ipcMain.handle(IPC.detectedClis, () => deps.getDetectedClis());
 
   const modelsHandler = buildModelsHandler(deps);
   ipcMain.handle(IPC.availableModels, () => modelsHandler());

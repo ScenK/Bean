@@ -112,3 +112,36 @@ test("getDelegateCli reflects the initial value and updates after apply", async 
   expect(rt.getDelegateCli()).toBe("claude");
   expect(saved[0]).toMatchObject({ delegateCli: "claude" });
 });
+
+test("disabledClis is exposed and updated by apply", async () => {
+  const saved: unknown[] = [];
+  const runtime = createRuntimeConfig(
+    {
+      openaiApiKey: "",
+      model: "m",
+      terminalApp: "",
+      editorApp: "",
+      delegateCli: "",
+      systemControls: false,
+      disabledClis: ["codex"],
+    },
+    {
+      makeChat: () => (async () => "") as never,
+      makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
+      saveConfigFile: async (update) => { saved.push(update); },
+    },
+  );
+
+  expect(runtime.getDisabledClis()).toEqual(["codex"]);
+  await runtime.apply({
+    openaiApiKey: "",
+    model: "m",
+    terminalApp: "",
+    editorApp: "",
+    delegateCli: "",
+    systemControls: false,
+    disabledClis: [],
+  });
+  expect(runtime.getDisabledClis()).toEqual([]);
+  expect(saved[0]).toMatchObject({ disabledClis: [] });
+});

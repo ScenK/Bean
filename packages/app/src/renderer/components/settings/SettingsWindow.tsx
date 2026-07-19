@@ -35,6 +35,7 @@ export function SettingsWindow() {
   const [editorApp, setEditorApp] = useState("");
   const [delegateCli, setDelegateCli] = useState("");
   const [systemControls, setSystemControls] = useState(false);
+  const [disabledClis, setDisabledClis] = useState<string[]>([]);
   const [clis, setClis] = useState<CliName[]>([]);
   const [paths, setPaths] = useState<ConfigView["paths"] | undefined>(undefined);
   const [save, setSave] = useState<SaveState>("idle");
@@ -66,6 +67,7 @@ export function SettingsWindow() {
       setEditorApp(c.editorApp);
       setDelegateCli(c.delegateCli);
       setSystemControls(c.systemControls);
+      setDisabledClis(c.disabledClis);
       setPaths(c.paths);
     });
     window.bean.chatopsStatus().then((status) => {
@@ -87,6 +89,7 @@ export function SettingsWindow() {
       await window.bean.saveConfig({
         openaiApiKey: apiKey.trim(), model: model.trim(),
         terminalApp: terminalApp.trim(), editorApp: editorApp.trim(), delegateCli, systemControls,
+        disabledClis,
       });
       setSave("saved");
     } catch (err) {
