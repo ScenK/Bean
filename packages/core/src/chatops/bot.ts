@@ -416,18 +416,25 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
   }
 
+  // Post a live-session proposal from a verbatim instruction — no converse()/LLM in the path, so
+  // the prompt reaches the card (and then claude) exactly as typed. Shared by the /live-session
+  // slash command and its literal-text form in onMessage. Returns a one-line status for the caller.
+  async function proposeLiveSessionFrom(conversationId: string, instruction: string, proposedBy: string, fx: BotEffects): Promise<string> {
+    if (!deps.liveSessionsEnabled()) return "Live sessions are disabled here.";
+    const text = instruction.trim();
+    if (!text) return "Add a prompt after `/live-session` — e.g. `/live-session investigate the auth bug`.";
+    const projects = await deps.loadProjects();
+    const first = projects[0];
+    if (!first) return "No projects are configured — add one first.";
+    // Project/model are picked on the card; default to the first project (user can switch).
+    const live: ProposedLiveSession = { projectPath: first.path, instruction: text };
+    await postLiveSessionProposal(live, conversationId, proposedBy, fx);
+    return "Proposed a live session — pick the project/model, edit the prompt if you want, then Start.";
+  }
+
   return {
-    async proposeLiveSession(args, fx): Promise<string> {
-      if (!deps.liveSessionsEnabled()) return "Live sessions are disabled here.";
-      const instruction = args.instruction.trim();
-      if (!instruction) return "Give the session an opening instruction.";
-      const projects = await deps.loadProjects();
-      const first = projects[0];
-      if (!first) return "No projects are configured — add one first.";
-      // Project/model are picked on the card; default to the first project (user can switch).
-      const live: ProposedLiveSession = { projectPath: first.path, instruction };
-      await postLiveSessionProposal(live, args.conversationId, args.proposedBy, fx);
-      return "Proposed a live session — pick the project/model, edit the prompt if you want, then Start.";
+    proposeLiveSession(args, fx): Promise<string> {
+      return proposeLiveSessionFrom(args.conversationId, args.instruction, args.proposedBy, fx);
     },
 
     async onMessage(msg: IncomingMessage, fx: BotEffects): Promise<void> {
@@ -456,6 +463,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
           deps.conversations.setAmbientCutoff(msg.conversationId, Date.now());
           await fx.reply("Fresh start — I've cleared this conversation's context.");
+          return;
+        }
+        // Literal `/live-session <prompt>` typed as a message (not Discord's slash-command
+        // picker): route it verbatim, bypassing converse(), so the LLM never rewrites the prompt
+        // the way it does for free-form "start a live session…" phrasing.
+        const liveCmd = /^\/?live-session\b\s*([\s\S]*)$/i.exec(msg.text.trim());
+        if (liveCmd) {
+          await fx.reply(await proposeLiveSessionFrom(msg.conversationId, liveCmd[1] ?? "", msg.fromName, fx));
           return;
         }
         const [skills, projects, persona, memories, modelMemory, todoRoutines] = await Promise.all([

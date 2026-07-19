@@ -960,6 +960,21 @@ test("start-live composes the picked skill's body into the opening prompt", asyn
   expect(prompts[0]).toContain("check the login flow");
 });
 
+test("literal /live-session message routes verbatim, never touching converse", async () => {
+  const chatSpy = vi.fn(async () => ({ content: "SHOULD NOT BE CALLED", toolCalls: [] }));
+  const { deps } = makeDeps({ chat: chatSpy, liveSessionsEnabled: () => true });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onMessage(
+    { conversationId: "c1", text: "/live-session for bean project, do we have codex support?", fromId: "u", fromName: "sam" },
+    effects,
+  );
+  expect(chatSpy).not.toHaveBeenCalled();
+  const card = JSON.stringify(effects.cards.at(-1));
+  expect(card).toContain("start-live");
+  expect(card).toContain("for bean project, do we have codex support?"); // verbatim, not an LLM rewrite
+});
+
 test("start-live on an expired/unknown proposal posts an expiry message", async () => {
   const { deps } = makeDeps({ liveSessionsEnabled: () => true });
   const bot = buildTeamsBot(deps);
