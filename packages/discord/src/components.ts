@@ -208,21 +208,68 @@ function consolidationResultCard(input: ConsolidationResultCardInput): object {
   return { embeds: [{ title }], components: [] };
 }
 
+// Discord embed description cap; also the modal text-input cap, so a stored prompt never
+// overflows what the Edit modal can hold.
+const LIVE_PROMPT_LIMIT = 4000;
+
 function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
+  // Discord: select value ≤ 100 chars (drops any project whose path is longer), ≤ 25 options.
+  const projectSelect = {
+    type: STRING_SELECT,
+    custom_id: `bean:live-project:${input.proposalId}`,
+    placeholder: "Project",
+    options: input.projects
+      .filter((p) => p.path.length <= 100)
+      .slice(0, 25)
+      .map((p) => ({ label: p.name.slice(0, 100), value: p.path, default: p.name === input.projectName })),
+  };
+  // "No skill" sentinel — double-underscore so it can't collide with a real kebab-case skill.
+  const skillRows = input.skills.length > 0
+    ? [row([{
+        type: STRING_SELECT,
+        custom_id: `bean:live-skill:${input.proposalId}`,
+        placeholder: "Skill (optional)",
+        options: [
+          { label: "— no skill —", value: "__none__", default: !input.skillName },
+          ...input.skills.slice(0, 24).map((s) => ({ label: s.name.slice(0, 100), value: s.name, default: s.name === input.skillName })),
+        ],
+      }])]
+    : [];
+  const cliRows = input.clis.length > 0
+    ? [row([{
+        type: STRING_SELECT,
+        custom_id: `bean:live-cli:${input.proposalId}`,
+        placeholder: "CLI",
+        options: input.clis.slice(0, 25).map((c, i) => ({ label: c, value: c, default: i === 0 })),
+      }])]
+    : [];
+  // Only shown when claude has configured models; empty = claude picks its own default.
+  const modelRows = input.models.length > 0
+    ? [row([{
+        type: STRING_SELECT,
+        custom_id: `bean:live-model:${input.proposalId}`,
+        placeholder: "Model (optional)",
+        options: input.models.slice(0, 25).map((m) => ({ label: m.label.slice(0, 100), value: m.id, default: m.id === input.model })),
+      }])]
+    : [];
   return {
     embeds: [{
       title: "Bean proposes a live agent session",
-      description: input.instruction,
-      fields: [
-        { name: "Project", value: input.projectName, inline: true },
-        ...(input.model ? [{ name: "Model", value: input.model, inline: true }] : []),
-        { name: "How it works", value: "Output streams here; every message in this channel becomes the agent's next turn. Say `stop` to end it." },
-      ],
+      description: input.instruction.slice(0, LIVE_PROMPT_LIMIT),
+      fields: [{ name: "How it works", value: "Output streams here; every message in this channel becomes the agent's next turn. Say `stop` to end it." }],
     }],
-    components: [row([
-      { type: BUTTON, style: 3, label: "Start session", custom_id: `bean:start-live:${input.proposalId}` },
-      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-live:${input.proposalId}` },
-    ])],
+    // Discord caps a message at 5 action rows: project, skill, cli, model, buttons.
+    components: [
+      row([projectSelect]),
+      ...skillRows,
+      ...cliRows,
+      ...modelRows,
+      row([
+        { type: BUTTON, style: 1, label: "Edit prompt", custom_id: `bean:live-edit:${input.proposalId}` },
+        { type: BUTTON, style: 3, label: "Start session", custom_id: `bean:start-live:${input.proposalId}` },
+        { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-live:${input.proposalId}` },
+      ]),
+    ],
   };
 }
 

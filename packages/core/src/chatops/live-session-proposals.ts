@@ -32,6 +32,18 @@ export class LiveSessionProposalStore {
     if (p) p.cardActivityId = activityId;
   }
 
+  /** Non-removing peek — the on-card project/model pickers and the edit-prompt modal read and
+   * mutate the pending proposal across several interactions before Start finally claims it. */
+  get(id: string): PendingLiveSession | undefined {
+    return this.byId.get(id);
+  }
+
+  /** Apply an on-card edit (project/model pick, or a modal prompt edit) to a pending proposal. */
+  update(id: string, patch: Partial<Pick<ProposedLiveSession, "projectPath" | "instruction" | "model" | "skillName">>): void {
+    const p = this.byId.get(id);
+    if (p) p.proposal = { ...p.proposal, ...patch };
+  }
+
   claim(id: string): PendingLiveSession | undefined {
     const p = this.byId.get(id);
     if (!p) return undefined;

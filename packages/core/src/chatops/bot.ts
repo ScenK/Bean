@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { converse, type ConverseDeps } from "../converse.js";
+import { converse, type ConverseDeps, type ProposedLiveSession } from "../converse.js";
+import { composePrompt } from "../prompt.js";
 import { extractMemories } from "../memory/extract.js";
 import { proposeMemoryConsolidation } from "../memory/consolidate.js";
 import { availableModels } from "../models.js";
@@ -107,6 +108,12 @@ const NO_CLI = "I can't run delegate tasks: neither `claude` nor `opencode` is o
 export function buildTeamsBot(deps: TeamsBotDeps): {
   onMessage: (msg: IncomingMessage, fx: BotEffects) => Promise<void>;
   onCardAction: (action: CardAction, fx: BotEffects) => Promise<void>;
+  /** Explicit /live-session entry: validate + post the same confirm card the LLM path posts.
+   * Returns a short line for the invoker (surface shows it as an ephemeral ack). */
+  proposeLiveSession: (
+    args: { conversationId: string; instruction: string; proposedBy: string },
+    fx: BotEffects,
+  ) => Promise<string>;
 } {
   const actions = [retrieveNoteTool(deps.searchNotes), systemControlTool(deps.systemControlsEnabled)];
 
@@ -172,10 +179,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       post: (text) => fx.postCard({ content: text }),
       edit: (id, text) => fx.updateCard(id, { content: text }),
     };
+    // A picked skill's body frames the opening turn (composePrompt = body + "## Task" + text).
+    const skill = p.proposal.skillName
+      ? (await deps.loadSkills()).find((s) => s.name === p.proposal.skillName)
+      : undefined;
+    const instruction = skill ? composePrompt(skill, p.proposal.instruction) : p.proposal.instruction;
     const started = deps.liveSessions.start({
       channelId: p.conversationId,
       projectPath: p.proposal.projectPath,
-      instruction: p.proposal.instruction,
+      instruction,
       model: p.proposal.model,
       sink,
       onTurnResult: (result) =>
@@ -193,6 +205,26 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started" }));
+  }
+
+  // Post the confirm-first Start/Cancel card. Shared by the LLM path (propose_live_session)
+  // and the explicit /live-session command — both just fill in a ProposedLiveSession.
+  async function postLiveSessionProposal(
+    live: ProposedLiveSession, conversationId: string, proposedBy: string, fx: BotEffects,
+  ): Promise<void> {
+    const [projects, skills] = await Promise.all([deps.loadProjects(), deps.loadSkills()]);
+    const projectName = projects.find((p) => p.path === live.projectPath)?.name ?? live.projectPath;
+    // Live sessions always run claude, so only claude's models/CLI are offered.
+    const models = (deps.cliModels.find((e) => e.provider === "claude")?.models ?? [])
+      .map((id) => ({ id, label: id.split("/").pop() || id }));
+    const clis = deps.detectClis().filter((c) => c === "claude");
+    const pending = deps.liveSessionProposals.add({ proposal: live, conversationId, proposedBy });
+    const activityId = await fx.postCard(deps.cards.liveSessionProposalCard({
+      proposalId: pending.id, projectName, instruction: live.instruction, model: live.model, skillName: live.skillName,
+      projects: projects.map((p) => ({ name: p.name, path: p.path })), models,
+      skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name })), clis,
+    }));
+    deps.liveSessionProposals.setCardActivityId(pending.id, activityId);
   }
 
   async function handleNoteAction(
@@ -385,6 +417,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   }
 
   return {
+    async proposeLiveSession(args, fx): Promise<string> {
+      if (!deps.liveSessionsEnabled()) return "Live sessions are disabled here.";
+      const instruction = args.instruction.trim();
+      if (!instruction) return "Give the session an opening instruction.";
+      const projects = await deps.loadProjects();
+      const first = projects[0];
+      if (!first) return "No projects are configured — add one first.";
+      // Project/model are picked on the card; default to the first project (user can switch).
+      const live: ProposedLiveSession = { projectPath: first.path, instruction };
+      await postLiveSessionProposal(live, args.conversationId, args.proposedBy, fx);
+      return "Proposed a live session — pick the project/model, edit the prompt if you want, then Start.";
+    },
+
     async onMessage(msg: IncomingMessage, fx: BotEffects): Promise<void> {
       try {
         if (deps.liveSessions.has(msg.conversationId)) {
@@ -483,13 +528,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           return;
         }
         if (result.proposedLiveSession) {
-          const live = result.proposedLiveSession;
-          const projectName = projects.find((p) => p.path === live.projectPath)?.name ?? live.projectPath;
-          const pending = deps.liveSessionProposals.add({ proposal: live, conversationId: msg.conversationId, proposedBy: msg.fromName });
-          const activityId = await fx.postCard(deps.cards.liveSessionProposalCard({
-            proposalId: pending.id, projectName, instruction: live.instruction, model: live.model,
-          }));
-          deps.liveSessionProposals.setCardActivityId(pending.id, activityId);
+          await postLiveSessionProposal(result.proposedLiveSession, msg.conversationId, msg.fromName, fx);
           return;
         }
         if (result.proposedNote) {
