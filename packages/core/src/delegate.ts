@@ -44,6 +44,22 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
       ],
     };
   }
+  if (req.cli === "codex") {
+    return {
+      command: "codex",
+      args: [
+        "exec",
+        "--json",
+        // Full bypass, matching the claude branch above: headless runs can't answer
+        // approval prompts, and the workspace-write sandbox blocks network (git push).
+        "--dangerously-bypass-approvals-and-sandbox",
+        // codex exec refuses non-git dirs; Bean's scratch workspace isn't a repo.
+        "--skip-git-repo-check",
+        ...modelArgs,
+        prompt,
+      ],
+    };
+  }
   return { command: "opencode", args: ["run", "--auto", ...modelArgs, prompt] };
 }
 
@@ -62,6 +78,24 @@ export function claudeTailLine(event: unknown): string | undefined {
 export function claudeResult(event: unknown): string | undefined {
   const e = event as { type?: unknown; result?: unknown } | null;
   return e?.type === "result" && typeof e.result === "string" ? e.result : undefined;
+}
+
+export function codexTailLine(event: unknown): string | undefined {
+  const e = event as { type?: unknown; item?: { type?: unknown; text?: unknown; command?: unknown } } | null;
+  if (e?.type !== "item.completed" || !e.item) return undefined;
+  const item = e.item;
+  if (item.type === "agent_message") return typeof item.text === "string" && item.text.trim() ? item.text.trim() : undefined;
+  if (item.type === "reasoning") return undefined;
+  if (item.type === "command_execution" && typeof item.command === "string") return `▸ ${item.command}`;
+  return typeof item.type === "string" ? `▸ ${item.type}` : undefined;
+}
+
+// Unlike claude's separate `result` event, codex's final answer is just the last
+// agent_message — runDelegate keeps overwriting `result` so the last one wins.
+export function codexResult(event: unknown): string | undefined {
+  const e = event as { type?: unknown; item?: { type?: unknown; text?: unknown } } | null;
+  if (e?.type !== "item.completed" || e.item?.type !== "agent_message") return undefined;
+  return typeof e.item.text === "string" ? e.item.text : undefined;
 }
 
 export interface DelegateCallbacks {
@@ -131,7 +165,7 @@ export function runDelegate(
   const handleLine = (line: string): void => {
     if (!line.trim() || settled || cancelling) return;
     rawLines.push(line);
-    if (req.cli !== "claude") {
+    if (req.cli === "opencode") {
       callbacks.onOutput(line);
       return;
     }
@@ -142,12 +176,22 @@ export function runDelegate(
       callbacks.onOutput(line);
       return;
     }
-    const r = claudeResult(event);
-    if (r !== undefined) {
-      result = r;
+    if (req.cli === "claude") {
+      const r = claudeResult(event);
+      if (r !== undefined) {
+        result = r;
+        return;
+      }
+      const tail = claudeTailLine(event);
+      if (tail) callbacks.onOutput(tail);
       return;
     }
-    const tail = claudeTailLine(event);
+    // codex: an agent_message is both the running tail AND the (latest) result.
+    const r = codexResult(event);
+    if (r !== undefined) {
+      result = r;
+    }
+    const tail = codexTailLine(event);
     if (tail) callbacks.onOutput(tail);
   };
 

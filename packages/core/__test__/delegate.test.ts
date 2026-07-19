@@ -5,6 +5,8 @@ import {
   delegateCommand,
   claudeTailLine,
   claudeResult,
+  codexTailLine,
+  codexResult,
   runDelegate,
   DELEGATE_TIMEOUT_MS,
   GIT_TRAILER_INSTRUCTION,
@@ -67,6 +69,21 @@ describe("delegateCommand", () => {
   });
 });
 
+describe("delegateCommand codex", () => {
+  it("maps codex to exec with json, sandbox bypass, and git-repo-check skip", () => {
+    expect(delegateCommand({ cli: "codex", projectPath: "/p", prompt: "fix it" })).toEqual({
+      command: "codex",
+      args: ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", "fix it" + GIT_TRAILER_INSTRUCTION],
+    });
+  });
+
+  it("appends --model with the verbatim model string", () => {
+    const { args } = delegateCommand({ cli: "codex", projectPath: "/p", prompt: "go", model: "gpt-5.6-sol" });
+    expect(args).toContain("--model");
+    expect(args).toContain("gpt-5.6-sol");
+  });
+});
+
 describe("claudeTailLine", () => {
   it("turns assistant text blocks into a tail line", () => {
     const event = { type: "assistant", message: { content: [{ type: "text", text: "Looking at router.ts" }] } };
@@ -102,6 +119,38 @@ describe("claudeResult", () => {
     expect(claudeResult({ type: "assistant", message: { content: [] } })).toBeUndefined();
     expect(claudeResult({ type: "result", result: 42 })).toBeUndefined();
     expect(claudeResult(null)).toBeUndefined();
+  });
+});
+
+describe("codexTailLine", () => {
+  it("returns agent_message text on item.completed", () => {
+    const e = { type: "item.completed", item: { id: "item_0", type: "agent_message", text: "I'll run that command now." } };
+    expect(codexTailLine(e)).toBe("I'll run that command now.");
+  });
+
+  it("turns completed command_execution into a ▸-prefixed line", () => {
+    const e = { type: "item.completed", item: { id: "item_1", type: "command_execution", command: "/bin/zsh -lc 'echo hello-bean'", exit_code: 0, status: "completed" } };
+    expect(codexTailLine(e)).toBe("▸ /bin/zsh -lc 'echo hello-bean'");
+  });
+
+  it("ignores item.started, reasoning items, and turn events", () => {
+    expect(codexTailLine({ type: "item.started", item: { type: "command_execution", command: "x" } })).toBeUndefined();
+    expect(codexTailLine({ type: "item.completed", item: { type: "reasoning" } })).toBeUndefined();
+    expect(codexTailLine({ type: "turn.completed", usage: {} })).toBeUndefined();
+    expect(codexTailLine({ type: "thread.started", thread_id: "t" })).toBeUndefined();
+  });
+});
+
+describe("codexResult", () => {
+  it("extracts agent_message text", () => {
+    const e = { type: "item.completed", item: { type: "agent_message", text: "DONE hello" } };
+    expect(codexResult(e)).toBe("DONE hello");
+  });
+
+  it("returns undefined for non-message items and other events", () => {
+    expect(codexResult({ type: "item.completed", item: { type: "command_execution", command: "x" } })).toBeUndefined();
+    expect(codexResult({ type: "turn.completed" })).toBeUndefined();
+    expect(codexResult(null)).toBeUndefined();
   });
 });
 
@@ -147,6 +196,24 @@ describe("runDelegate", () => {
     runDelegate({ cli: "claude", projectPath: "/p", prompt: "go" }, cbs, () => asChild(child));
     child.stdout.emit("data", Buffer.from("warning: something\n"));
     expect(outputs).toEqual(["warning: something"]);
+  });
+
+  it("parses codex --json output: streams tails, resolves the last agent_message as result", () => {
+    const child = new FakeChild();
+    const spawnFn = vi.fn(() => asChild(child));
+    const { cbs, outputs, dones } = collect();
+    runDelegate({ cli: "codex", projectPath: "/p", prompt: "go" }, cbs, spawnFn);
+    const lines = [
+      '{"type":"thread.started","thread_id":"t1"}',
+      '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"working on it"}}',
+      '{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"ls","exit_code":0,"status":"completed"}}',
+      '{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"DONE hello"}}',
+      '{"type":"turn.completed","usage":{}}',
+    ];
+    child.stdout.emit("data", Buffer.from(lines.join("\n") + "\n"));
+    child.emit("close", 0);
+    expect(outputs).toEqual(["working on it", "▸ ls", "DONE hello"]);
+    expect(dones).toEqual(["DONE hello"]);
   });
 
   it("opencode: every line is tail and the whole stdout is the result, including a trailing partial line", () => {
