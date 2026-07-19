@@ -9,6 +9,7 @@ import {
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials,
+  type ApplicationCommandDataResolvable,
   type Interaction, type Message, type MessageCreateOptions, type TextBasedChannel,
 } from "discord.js";
 import { chunkText } from "./chunk.js";
@@ -177,17 +178,31 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         await interaction.reply({ content: "You're not on this bot's allow-list.", ephemeral: true });
         return;
       }
-      if (interaction.commandName !== "live-session" || !interaction.channel) return;
-      await interaction.deferReply({ ephemeral: true }); // proposeLiveSession posts to the channel; ack within 3s
-      const reply = await bot.proposeLiveSession(
-        {
-          conversationId: interaction.channelId,
-          instruction: interaction.options.getString("prompt", true),
-          proposedBy: interaction.user.displayName,
-        },
-        effectsFor(interaction.channel),
-      );
-      await interaction.editReply(reply);
+      const channelId = interaction.channelId;
+      if (interaction.commandName === "new") {
+        conversations.clear(channelId);
+        conversations.setAmbientCutoff(channelId, Date.now()); // fence pre-reset chatter out of ambient
+        await interaction.reply({ content: "Fresh start — I've cleared this conversation's context.", ephemeral: true });
+        return;
+      }
+      if (interaction.commandName === "cancel") {
+        const n = runs.cancelAll();
+        await interaction.reply({ content: n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.", ephemeral: true });
+        return;
+      }
+      if (interaction.commandName === "stop") {
+        const stopped = liveSessions.stop(channelId);
+        await interaction.reply({ content: stopped ? "Stopping the live session." : "No live session running in this channel.", ephemeral: true });
+        return;
+      }
+      if (interaction.commandName === "live-session" && interaction.channel) {
+        await interaction.deferReply({ ephemeral: true }); // proposeLiveSession posts to the channel; ack within 3s
+        const reply = await bot.proposeLiveSession(
+          { conversationId: channelId, instruction: interaction.options.getString("prompt", true), proposedBy: interaction.user.displayName },
+          effectsFor(interaction.channel),
+        );
+        await interaction.editReply(reply);
+      }
       return;
     }
     // Edit-prompt modal submit: apply the new text, then re-render the card in place.
@@ -283,17 +298,36 @@ process.on("SIGTERM", () => {
 
 client.once("clientReady", async () => {
   console.log(`@bean/discord logged in as ${client.user?.tag} (clis: ${clis.join(", ") || "none"})`);
-  // Register /live-session only when usable; otherwise clear any stale copy. Project and model
-  // are chosen on the card (dropdowns), so the command carries just the opening prompt.
+  // Control commands map to Bean's existing text commands; /live-session is added only when
+  // usable (config flag + claude on PATH). Project/model/skill are picked on its card, so the
+  // command itself carries just the opening prompt.
   const liveEnabled = beanConfig.liveSessions && clis.includes("claude");
-  await client.application?.commands.set(liveEnabled ? [{
+  const liveCmd: ApplicationCommandDataResolvable = {
     name: "live-session",
     description: "Start a chat-bridged live coding session",
     dmPermission: true,
     options: [
       { type: ApplicationCommandOptionType.String, name: "prompt", description: "What the agent should start on (editable before you Start)", required: true },
     ],
-  }] : []);
+  };
+  const commands: ApplicationCommandDataResolvable[] = [
+    { name: "new", description: "Clear this conversation's context (fresh start)", dmPermission: true },
+    { name: "cancel", description: "Cancel any running background task(s)", dmPermission: true },
+    { name: "stop", description: "Stop the live session bound to this channel", dmPermission: true },
+    ...(liveEnabled ? [liveCmd] : []),
+  ];
+  const app = client.application;
+  if (!app) return;
+  // guildId set → register to that one server (instant); else global (all guilds Bean is in,
+  // ~1h first propagation). Registration silently no-ops if the bot lacks the
+  // `applications.commands` OAuth scope — re-invite with that scope if commands never appear.
+  if (discordConfig.guildId) {
+    await app.commands.set(commands, discordConfig.guildId);
+    console.log(`@bean/discord registered ${commands.length} slash command(s) to guild ${discordConfig.guildId}`);
+  } else {
+    await app.commands.set(commands);
+    console.log(`@bean/discord registered ${commands.length} global slash command(s) (first propagation can take ~1h)`);
+  }
 });
 
 // Routine digests: the main app enqueues outbox files; deliver them to their channel.
