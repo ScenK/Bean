@@ -1,9 +1,15 @@
 # Delegate loopback — the tracked exception to fire-and-forget
 
 `propose_delegate` (converse, confirm-first like `propose_run`) hands a task to a headless
-agent — `claude -p --output-format stream-json` with an explicit `--allowedTools` allowlist
-(never `--dangerously-skip-permissions`) or `opencode run` — via core's `runDelegate()`
-(`delegate.ts`, pure/DI, sibling of the untouched `launcher.ts`). Unlike Terminal launches,
+agent — `claude -p --output-format stream-json --dangerously-skip-permissions` or
+`opencode run --auto` — via core's `runDelegate()`. True bypass is a deliberate decision
+(2026-07, PR #77), same posture as live sessions: headless `-p` can't answer permission
+prompts, an `--allowedTools` allowlist stalls unattended night routines on the first
+non-allowlisted action, and `--permission-mode auto` is no middle ground because its
+classifier doesn't run headless (verified on v2.1.214 — every would-ask action is denied,
+even in-cwd writes). The confirm-first proposal card is the authorization boundary.
+Revisit if a Claude Code release runs the auto classifier headless. `runDelegate()` lives in
+`delegate.ts` (pure/DI, sibling of the untouched `launcher.ts`). Unlike Terminal launches,
 Bean **does** track these: `app/src/delegate-tasks.ts` keeps a task registry and pushes
 `started/output/done/failed/cancelled` over `bean:delegate-event` (Bean's first main→renderer
 push channel) to the chat's DelegateCard.
