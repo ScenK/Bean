@@ -96,9 +96,9 @@ Users choose which detected CLIs Bean offers; a disabled CLI disappears from eve
   (already driven from Settings) to apply.
 - **Live-session interaction:** all live-session gates check the enabled list for `"claude"`
   (discord `server.ts:69`, `bot.ts:550`, `bot.ts:738`), so disabling claude disables live
-  sessions automatically — same as claude not being installed. One wording tweak: when claude is
-  detected but disabled, the refusal message says "claude CLI is disabled in Bean's settings —
-  enable it to use live sessions" instead of the not-on-PATH message.
+  sessions automatically — same as claude not being installed. No wording change needed: the
+  bot's existing refusal copy is the generic "Live sessions are disabled here." (bot.ts:438),
+  which is accurate for the disabled case.
 - **Edge:** all CLIs disabled → existing `delegateAvailable === false` / `NO_CLI` paths cover it.
 
 ### 7. Out of scope
