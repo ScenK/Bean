@@ -64,7 +64,9 @@ const bot = buildTeamsBot({
   conversations,
   liveSessions,
   liveSessionProposals,
-  liveSessionsEnabled: () => beanConfig.liveSessions && clis.includes("claude"),
+  // Always on for Discord (no `liveSessions` config opt-in) — only gated by claude being on
+  // PATH, since the live-session engine is claude-specific. Still confirm-first via the card.
+  liveSessionsEnabled: () => clis.includes("claude"),
   cards: discordCards,
   systemControlsEnabled: () => beanConfig.systemControls,
 });
@@ -301,7 +303,7 @@ client.once("clientReady", async () => {
   // Control commands map to Bean's existing text commands; /live-session is added only when
   // usable (config flag + claude on PATH). Project/model/skill are picked on its card, so the
   // command itself carries just the opening prompt.
-  const liveEnabled = beanConfig.liveSessions && clis.includes("claude");
+  const liveEnabled = clis.includes("claude");
   const liveCmd: ApplicationCommandDataResolvable = {
     name: "live-session",
     description: "Start a chat-bridged live coding session",

@@ -47,12 +47,15 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   exported `discordCards: CardBuilders`). Don't assume one pattern when touching the other
   surface's card file — this exact mismatch caused a broken typecheck mid-build (see git
   history around commit range `482d173..c7c0050`).
-- Feature is invisible unless `~/.bean/config.json` has `"liveSessions": true` AND `claude`
-  is detected on PATH (`liveSessionsEnabled` checks both). `saveConfig` preserves the on-disk
-  `liveSessions` value when a caller omits the field (the desktop Settings save has no toggle
-  for it and would otherwise silently reset it to `false` on every save — a real, PR-review-
-  caught bug). Launch is always confirm-first via a card even though the session itself runs
-  with permissions bypassed once started.
+- Gating differs by surface. **Desktop** is invisible unless `~/.bean/config.json` has
+  `"liveSessions": true` AND `claude` is on PATH (`liveSessionsEnabled` checks both).
+  `saveConfig` preserves the on-disk `liveSessions` value when a caller omits the field (the
+  desktop Settings save has no toggle for it and would otherwise silently reset it to `false`
+  on every save — a real, PR-review-caught bug). **Discord** deliberately dropped the config
+  opt-in: `liveSessionsEnabled: () => clis.includes("claude")` — always on when claude is
+  present, since the allowlist + the confirm-first card are the authorization boundary there.
+  Launch is always confirm-first via a card even though the session itself runs with
+  permissions bypassed once started.
 - On Discord, `allowedUserIds` gates all normal chat with Bean — but **an active live session
   in a channel is itself the authorization boundary for steering it**: any non-bot message in
   a capturing channel reaches the session regardless of the allowlist (explicit decision —
