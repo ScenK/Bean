@@ -1,6 +1,6 @@
 # convention: Bean hands runs off to Terminal, it doesn't run them itself
 
-Bean no longer spawns `opencode`/`claude` as a child process it owns, streams stdout/stderr
+Bean no longer spawns `opencode`/`claude`/`codex` Terminal runs as child processes it owns, streams stdout/stderr
 from, or tracks status/pid/exit-code for. `launchInTerminal()` (`packages/core/src/launcher.ts`)
 writes a temp `.command` script (`cd <projectPath> && <command> <args>`, args shell-quoted via
 `shQuote`) and does `open <script>` — the same mechanism as double-clicking a `.command` file in
@@ -18,7 +18,7 @@ watches/interacts with the actual CLI directly.
 
 **What this obsoletes:**
 - The old `safety-runopencode-stdin-hang.md` note (child's stdin must be closed or a piped
-  `opencode run` hangs) — moot now: `opencode`/`claude` run inside Terminal.app's own real tty,
+  `opencode run` hangs) — moot now: terminal CLIs run inside Terminal.app's own real tty,
   not a Node-spawned pipe.
 - `TaskCard`/`TaskMonitor`/`onTaskEvent`/`cancelTask` (deleted from `app/`) — nothing to track
   once the process isn't Bean's child.

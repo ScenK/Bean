@@ -12,6 +12,13 @@ layer); `label` is derived from it (last `/` segment). `launchCommand`/`delegate
 a flat `Record<skillName, modelId>` at `~/.bean/model-memory.json`
 (`loadModelMemory`/`saveModelMemory`, same swallow-errors-to-default shape as `memory/store.ts`).
 
+`resolveCliModelSelection()` is the shared desktop boundary for choosing a compatible enabled
+CLI/model pair; it may omit `--model` when an enabled CLI has no configured supported model.
+Settings saves broadcast `bean:cli-availability-changed`, and already-open Chat, Plan, Projects,
+and Routines windows refetch the main-process catalog. `buildLaunchHandler()` still validates
+the live enabled CLI and normalizes an unsupported model, so a stale renderer cannot bypass the
+Settings denylist or launch a cross-provider pair.
+
 **No-project runs (2a):** `RouteSuggestion.projectPath` is now **optional** — absent means
 "scratch workspace," not an error. `converse()`'s `propose_run`/tool schema drops `project` from
 `required` (omit ≠ enum mismatch); an explicit-but-unknown project value is still rejected.
@@ -22,7 +29,7 @@ a flat `Record<skillName, modelId>` at `~/.bean/model-memory.json`
 **Bean does not fetch or clone the optional URL seed itself (deliberate, not a gap).** An
 earlier version of this feature had Bean shell out to `git ls-remote`/`git clone` and `fetch()`
 to classify and materialize a "no project" URL locally (`url-sniff.ts`, `scratch-workspace.ts` —
-both deleted). That duplicated capability the *launched* CLI already has: opencode/claude are
+both deleted). That duplicated capability the *launched* CLI already has: terminal coding CLIs are
 full coding agents with their own shell/git/fetch access, so having Bean do it first only added
 attack surface (SSRF/`file:` validation, a whole PATH-threading bug class for `git` specifically)
 for a feature the agent could do itself. Current design: the optional URL box in

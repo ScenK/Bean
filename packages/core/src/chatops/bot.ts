@@ -110,7 +110,7 @@ export interface TeamsBotDeps {
 
 const DESKTOP_ONLY =
   "That needs the Bean desktop app — from here I can only chat and run background delegate tasks. Ask me again and I'll run it as one.";
-const NO_CLI = "I can't run delegate tasks: neither `claude` nor `opencode` is on this machine's PATH.";
+const NO_CLI = "I can't run delegate tasks: no supported CLI (`claude`, `opencode`, or `codex`) is available on this machine.";
 
 export function buildTeamsBot(deps: TeamsBotDeps): {
   onMessage: (msg: IncomingMessage, fx: BotEffects) => Promise<void>;

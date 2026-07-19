@@ -2,14 +2,19 @@ import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createDelegateTasks, type DelegateEvent } from "../src/delegate-tasks.js";
-import type { DelegateCallbacks, DelegateHandle, DelegateRequest } from "@bean/core";
+import { createDelegateTasks, resolveDelegateSelection, type DelegateEvent } from "../src/delegate-tasks.js";
+import type { CliModels, CliName, DelegateCallbacks, DelegateHandle, DelegateRequest } from "@bean/core";
+
+const CLI_MODELS: CliModels[] = [
+  { provider: "claude", models: ["sonnet"] },
+  { provider: "codex", models: ["gpt-5.6-sol"] },
+];
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), "bean-delegate-tasks-"));
 }
 
-function harness(opts: { cli?: "claude" | "opencode"; dir?: string } = {}) {
+function harness(opts: { cli?: CliName; dir?: string } = {}) {
   const sent: DelegateEvent[] = [];
   const cancels: string[] = [];
   const cancelCallbacks: (() => void)[] = [];
@@ -17,7 +22,7 @@ function harness(opts: { cli?: "claude" | "opencode"; dir?: string } = {}) {
   const reqs: DelegateRequest[] = [];
   let nextId = 0;
   const tasks = createDelegateTasks({
-    resolveCli: () => opts.cli ?? "claude",
+    resolveCli: () => ({ cli: opts.cli ?? "claude" }),
     send: (e) => { sent.push(e); },
     newId: () => `task-${++nextId}`,
     dir: opts.dir ?? tmp(),
@@ -30,7 +35,53 @@ function harness(opts: { cli?: "claude" | "opencode"; dir?: string } = {}) {
   return { tasks, sent, cancels, cancelCallbacks, captured, reqs, cbs: () => captured.at(-1)!, req: () => reqs.at(-1)! };
 }
 
+describe("resolveDelegateSelection", () => {
+  it("Auto follows enabled CLI order instead of configured model order", () => {
+    expect(resolveDelegateSelection(CLI_MODELS, ["codex", "claude"], "")).toEqual({
+      cli: "codex",
+      model: "gpt-5.6-sol",
+    });
+  });
+
+  it("an untouched request honors an enabled configured Codex preference", () => {
+    expect(resolveDelegateSelection(CLI_MODELS, ["claude", "codex"], "codex")).toEqual({
+      cli: "codex",
+      model: "gpt-5.6-sol",
+    });
+  });
+
+  it("an explicitly selected model may override the configured CLI with a compatible provider", () => {
+    expect(resolveDelegateSelection(CLI_MODELS, ["codex", "claude"], "codex", "sonnet")).toEqual({
+      cli: "claude",
+      model: "sonnet",
+    });
+  });
+});
+
 describe("createDelegateTasks", () => {
+  it("uses one resolved compatible CLI/model pair for a delegate request", async () => {
+    const reqs: DelegateRequest[] = [];
+    const tasks = createDelegateTasks({
+      resolveCli: () => ({ cli: "codex", model: "gpt-5.6-sol" }),
+      send: () => {},
+      newId: () => "task-pair",
+      dir: tmp(),
+      run: (req) => {
+        reqs.push(req);
+        return { cancel: () => {} } satisfies DelegateHandle;
+      },
+    });
+
+    await tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it", model: "sonnet" });
+
+    expect(reqs).toEqual([{
+      cli: "codex",
+      projectPath: "/p",
+      prompt: "go",
+      model: "gpt-5.6-sol",
+    }]);
+  });
+
   it("start resolves the CLI, spawns via run, and emits started", async () => {
     const h = harness({ cli: "opencode" });
     const id = await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });
@@ -51,7 +102,7 @@ describe("createDelegateTasks", () => {
     await tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });
     expect(sent).toEqual([]);
     await new Promise((resolve) => setImmediate(resolve));
-    expect(sent).toEqual([{ taskId: "task-x", type: "failed", message: "No delegate CLI found — install claude or opencode." }]);
+    expect(sent).toEqual([{ taskId: "task-x", type: "failed", message: "No enabled delegate CLI found — enable one in Settings." }]);
   });
 
   it("forwards output, done, and failed callbacks as events", async () => {

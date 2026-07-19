@@ -1,15 +1,15 @@
 // packages/app/src/renderer/components/plan/PlanWindow.tsx
 import { useEffect, useState } from "preact/hooks";
-import { ProposalCard, type PickableModel } from "../../shared/ProposalCard.js";
+import { ProposalCard } from "../../shared/ProposalCard.js";
+import { useCliAvailability } from "../../shared/cli-availability.js";
 import type { Theme } from "../../../channels.js";
-import type { CliName, Project, RouteSuggestion } from "@bean/core";
+import type { Project, RouteSuggestion } from "@bean/core";
 
 export function PlanWindow() {
   const [theme, setTheme] = useState<Theme>("hearth");
   const [run, setRun] = useState<RouteSuggestion | undefined>(undefined);
-  const [clis, setClis] = useState<CliName[]>([]);
+  const { clis, models } = useCliAvailability();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [models, setModels] = useState<PickableModel[]>([]);
   const [lastUsedModel, setLastUsedModel] = useState<string | undefined>(undefined);
 
   useEffect(() => {
@@ -20,9 +20,7 @@ export function PlanWindow() {
     // stuck forever. onProposeRun still handles updates to an already-open window.
     window.bean.getPendingPlan().then((p) => { if (p) setRun(p); });
     window.bean.onProposeRun((suggestion) => setRun(suggestion));
-    window.bean.availableClis().then(setClis);
     window.bean.listProjects().then(setProjects);
-    window.bean.availableModels().then(setModels);
   }, []);
 
   // The "last used" badge is per-skill, so re-fetch whenever the proposed run's skill changes.
@@ -69,7 +67,7 @@ export function PlanWindow() {
             onConfirm={(edited, choice) => {
               if (choice.model) void window.bean.setModelMemory(run.skillName, choice.model);
               if (run.target === "chat") window.bean.runInChat(edited, run.skillName);
-              else {
+              else if (choice.cli) {
                 window.bean.launch({
                   mode: choice.cli,
                   projectPath: choice.projectPath ?? "",

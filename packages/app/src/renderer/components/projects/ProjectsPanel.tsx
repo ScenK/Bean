@@ -2,10 +2,12 @@ import { useEffect, useState } from "preact/hooks";
 import type { Project, LaunchMode, Skill } from "@bean/core";
 import { truncateMiddle } from "./truncate-path.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
+import { useCliAvailability } from "../../shared/cli-availability.js";
 
 const LAUNCH_CHIPS: { mode: LaunchMode; label: string; needsPrompt: boolean }[] = [
   { mode: "opencode", label: "opencode", needsPrompt: true },
   { mode: "claude", label: "claude", needsPrompt: true },
+  { mode: "codex", label: "codex", needsPrompt: true },
   { mode: "open", label: "Open in Editor", needsPrompt: false },
 ];
 
@@ -20,6 +22,7 @@ export function ProjectsPanel({
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
+  const { clis } = useCliAvailability();
   const [selected, setSelected] = useState<string | undefined>(undefined);
   const [formMode, setFormMode] = useState<LaunchMode | undefined>(undefined);
   const [prompt, setPrompt] = useState("");
@@ -37,9 +40,12 @@ export function ProjectsPanel({
     setSkills(nextSkills);
   };
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    void refresh();
+  }, []);
 
   const selectedProject = projects.find((p) => p.path === selected);
+  const chips = LAUNCH_CHIPS.filter((c) => c.mode === "open" || clis.includes(c.mode));
 
   const pickChip = (mode: LaunchMode, project: Project): void => {
     const chip = LAUNCH_CHIPS.find((c) => c.mode === mode)!;
@@ -200,7 +206,7 @@ export function ProjectsPanel({
           <div>
             <div class="bean-launch-label">LAUNCH</div>
             <div class="bean-launch-chips">
-              {LAUNCH_CHIPS.map((c) => (
+              {chips.map((c) => (
                 <button
                   key={c.mode}
                   type="button"

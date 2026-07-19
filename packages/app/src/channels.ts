@@ -9,6 +9,7 @@ export interface ConfigView {
   editorApp: string;
   delegateCli: string;
   systemControls: boolean;
+  disabledClis: string[];
   paths: { config: string; skills: string; projects: string; persona: string };
 }
 export interface ConfigUpdate {
@@ -18,6 +19,7 @@ export interface ConfigUpdate {
   editorApp: string;
   delegateCli: string;
   systemControls: boolean;
+  disabledClis: string[];
 }
 export interface AppInfo {
   version: string;
@@ -40,7 +42,9 @@ export const IPC = {
   delegateCancel: "bean:delegate-cancel",
   delegateEvent: "bean:delegate-event",
   availableClis: "bean:available-clis",
+  detectedClis: "bean:detected-clis",
   availableModels: "bean:available-models",
+  cliAvailabilityChanged: "bean:cli-availability-changed",
   getModelMemory: "bean:get-model-memory",
   setModelMemory: "bean:set-model-memory",
   chat: "bean:chat",

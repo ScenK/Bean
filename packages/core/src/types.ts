@@ -1,3 +1,5 @@
+import type { CliName } from "./launcher.js";
+
 export interface Skill {
   /** Stable id derived from filename without extension, e.g. "review-code". */
   name: string;
@@ -62,10 +64,12 @@ export interface BeanConfig {
   model: string;
   terminalApp: string; // "" = use the system default handler for .command files
   editorApp: string; // "" = no editor configured — "Open in Editor" prompts the user to set one
-  delegateCli: string; // "" = auto: first detected CLI; else "claude"/"opencode"
+  delegateCli: string; // "" = auto: first enabled CLI; else "claude"/"opencode"/"codex"
   systemControls: boolean; // opt-in: expose the system_control tool (volume/media/app) to chat
   /** Opt-in for chat-launched live coding-agent sessions (spec: live-sessions). */
   liveSessions: boolean;
+  /** Detected CLIs the user has switched off — a denylist so a newly installed CLI is
+   * enabled by default (auto-detect sets the initial status; spec: codex-cli-support). */
+  disabledClis: CliName[];
   beanDir: string; // resolved absolute path to ~/.bean
 }
-

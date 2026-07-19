@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-/** skillName -> last-used canonical model id, backing the "LAST USED · <skill>" badge. */
+/** skillName -> last-used literal configured model id, backing the "LAST USED · <skill>" badge. */
 export type ModelMemory = Record<string, string>;
 
 export async function loadModelMemory(file: string): Promise<ModelMemory> {

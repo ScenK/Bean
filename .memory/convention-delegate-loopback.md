@@ -1,8 +1,8 @@
 # Delegate loopback — the tracked exception to fire-and-forget
 
 `propose_delegate` (converse, confirm-first like `propose_run`) hands a task to a headless
-agent — `claude -p --output-format stream-json --dangerously-skip-permissions` or
-`opencode run --auto` — via core's `runDelegate()`. True bypass is a deliberate decision
+agent — Claude, OpenCode, or Codex with the provider-specific argv from `delegateCommand()` —
+via core's `runDelegate()`. True bypass is a deliberate decision
 (2026-07, PR #77), same posture as live sessions: headless `-p` can't answer permission
 prompts, an `--allowedTools` allowlist stalls unattended night routines on the first
 non-allowlisted action, and `--permission-mode auto` is no middle ground because its
@@ -26,5 +26,8 @@ Key contracts:
 - **Cancel waits for process close:** `DelegateHandle.cancel(onCancelled)` sends SIGTERM to the
   process group, escalates to SIGKILL if it does not close quickly, and only then lets the app
   registry emit `cancelled` and drop the task. Stray post-cancel callbacks are ignored.
-- The delegate CLI is user-picked in Settings (`delegateCli`, "" = first detected); the chat
-  model never chooses the harness.
+- The delegate CLI preference is user-picked in Settings (`delegateCli`, "" = first enabled).
+  `resolveCliModelSelection()` resolves that preference together with any requested model, so
+  the spawned harness is enabled and supports the model (or receives no `--model`). Only a
+  model the user explicitly clicks may override that CLI preference: DelegateCard's implicit
+  display default must not be sent as a requested model.

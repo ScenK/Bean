@@ -6,8 +6,9 @@ import { chmodSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
-export type LaunchMode = "opencode" | "claude" | "open";
-export type CliName = "opencode" | "claude";
+export const CLI_NAMES = ["opencode", "claude", "codex"] as const;
+export type CliName = (typeof CLI_NAMES)[number];
+export type LaunchMode = CliName | "open";
 
 const defaultIsExecutable = (p: string): boolean => {
   try {
@@ -26,7 +27,7 @@ export function detectClis(
 ): CliName[] {
   const dirs = pathEnv.split(delimiter).filter(Boolean);
   const onPath = (cmd: CliName): boolean => dirs.some((d) => isExecutable(join(d, cmd)));
-  return (["opencode", "claude"] as const).filter(onPath);
+  return CLI_NAMES.filter(onPath);
 }
 
 export type SpawnSyncFn = (command: string, args: string[]) => { stdout?: string };
@@ -54,13 +55,13 @@ export interface LaunchRequest {
   // seeds this dir itself (no git clone/page fetch) — a URL the user typed is folded into
   // `prompt` instead, and the launched agent fetches/clones it itself if it needs to.
   projectPath: string;
-  prompt?: string; // required for "opencode"/"claude", ignored for "open"
+  prompt?: string; // required for "opencode"/"claude"/"codex", ignored for "open"
   model?: string; // literal --model value (clis.json); ignored for "open"
 }
 
 export function launchCommand(req: LaunchRequest, editorApp?: string): { command: string; args: string[] } {
   switch (req.mode) {
-    // Interactive session with an initial prompt for both — not `opencode run` / `claude -p`,
+    // Interactive session with an initial prompt — not `opencode run` / `claude -p`,
     // which reply once and exit. This drops the user into the normal TUI/REPL with the message
     // pre-sent, so they can keep working after it replies.
     case "opencode": {
@@ -73,6 +74,10 @@ export function launchCommand(req: LaunchRequest, editorApp?: string): { command
     }
     case "claude":
       return { command: "claude", args: [...(req.model ? ["--model", req.model] : []), req.prompt ?? ""] };
+    case "codex":
+      // `--` terminates option parsing: a prompt starting with "-"/"--" (a markdown bullet,
+      // leftover "---" frontmatter, "--help") would otherwise be parsed as a codex flag.
+      return { command: "codex", args: [...(req.model ? ["--model", req.model] : []), "--", req.prompt ?? ""] };
     case "open":
       // editorApp is the user-configured editor .app (Settings); empty = not configured yet,
       // caught by launchInTerminal before ever spawning. `.app` bundles aren't executables
@@ -98,12 +103,12 @@ const defaultScriptWriter: ScriptWriter = (path, content) => {
 };
 
 function fireAndForget(child: ChildProcess, onError: (err: Error) => void): void {
-  // Without this, an ENOENT (opencode/claude/editor/open not on PATH) would surface as an
+  // Without this, an ENOENT (opencode/claude/codex/editor/open not on PATH) would surface as an
   // unhandled 'error' event and crash the Electron main process.
   child.on("error", onError);
 }
 
-// Bean's job ends here: hand the command off and stop tracking it. "opencode"/"claude"
+// Bean's job ends here: hand the command off and stop tracking it. "opencode"/"claude"/"codex"
 // run inside a generated .command script — macOS's double-click-to-run-in-Terminal
 // convention, the same mechanism `open` uses on a real double click — so the user
 // watches/interacts with the real CLI directly. "open" (the configured editor) is already

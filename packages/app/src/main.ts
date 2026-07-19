@@ -20,7 +20,7 @@ import {
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult, TodoStatus } from "@bean/core";
+import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult, TodoStatus, CliName } from "@bean/core";
 import { createAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
@@ -33,7 +33,7 @@ import {
 } from "./notification-permission-store.js";
 import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
-import { createDelegateTasks, resolvedPathSpawnFn } from "./delegate-tasks.js";
+import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } from "./delegate-tasks.js";
 import { createRoutineScheduler } from "./routine-scheduler.js";
 import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
 
@@ -435,23 +435,21 @@ app.whenReady().then(async () => {
     const cfg = await loadConfig(cfgPath, dir);
 
     const runtime = createRuntimeConfig(
-      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls },
+      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, disabledClis: cfg.disabledClis },
       {
         makeChat: makeOpenAIChat,
         makeConverse: makeOpenAIConverse,
         saveConfigFile: (update) => saveConfig(configFile(dir), update),
       },
     );
+    const enabledClis = (): CliName[] => availableClis.filter((cli) => !runtime.getDisabledClis().includes(cli));
     // Gated per call on the live Settings toggle, so flipping it needs no restart.
     actionTools.push(systemControlTool(() => runtime.getSystemControls()));
 
     // Shared by createDelegateTasks (chat window's delegate button) and the routine
     // delegate-step adapter below — one resolver, not two copies of this preference logic.
-    const resolveDelegateCli = (): (typeof availableClis)[number] | undefined => {
-      const preferred = runtime.getDelegateCli();
-      if ((preferred === "claude" || preferred === "opencode") && availableClis.includes(preferred)) return preferred;
-      return availableClis[0];
-    };
+    const resolveDelegateCli = (model?: string) =>
+      resolveDelegateSelection(cliModels, enabledClis(), runtime.getDelegateCli(), model);
 
     const delegateTasks = createDelegateTasks({
       resolvedPath,
@@ -496,13 +494,18 @@ app.whenReady().then(async () => {
     // is 30 minutes, meant for the interactive chat delegate button, not routines).
     const delegateStep = (req: DelegateStepRequest): Promise<string> =>
       new Promise((resolve, reject) => {
-        const cli = resolveDelegateCli();
-        if (!cli) { reject(new Error("No delegate CLI found — install claude or opencode.")); return; }
+        const choice = resolveDelegateCli(req.model);
+        if (!choice) { reject(new Error("No enabled delegate CLI found — enable one in Settings.")); return; }
         const prompt =
           (req.skill ? composePrompt(req.skill, req.instruction) : req.instruction) +
           (req.priorOutputs ? `\n\nOutput of this routine's earlier steps:\n${req.priorOutputs}` : "");
         runDelegate(
-          { cli, projectPath: req.projectPath ?? scratchDir(dir), prompt, model: req.model },
+          {
+            cli: choice.cli,
+            projectPath: req.projectPath ?? scratchDir(dir),
+            prompt,
+            ...(choice.model ? { model: choice.model } : {}),
+          },
           { onOutput: () => {}, onDone: resolve, onError: reject },
           resolvedPathSpawnFn(resolvedPath),
           ROUTINE_STEP_TIMEOUT_MS,
@@ -602,6 +605,7 @@ app.whenReady().then(async () => {
         editorApp: runtime.getEditorApp(),
         delegateCli: runtime.getDelegateCli(),
         systemControls: runtime.getSystemControls(),
+        disabledClis: runtime.getDisabledClis(),
         paths: {
           config: configFile(dir),
           skills: skillsDir(dir),
@@ -612,12 +616,13 @@ app.whenReady().then(async () => {
       applyConfig: (update) => runtime.apply(update),
       getTerminalApp: () => runtime.getTerminalApp(),
       getEditorApp: () => runtime.getEditorApp(),
-      getAvailableClis: () => availableClis,
+      getAvailableClis: () => enabledClis(),
+      getDetectedClis: () => availableClis,
       getCliModels: () => cliModels,
       beanDirPath: dir,
       modelMemoryFile: modelMemoryFile(dir),
       delegateTasks,
-      delegateAvailable: () => availableClis.length > 0,
+      delegateAvailable: () => enabledClis().length > 0,
       onLaunchError: (req, err) => {
         const label = req.mode === "open" ? "open the project in your editor" : `launch (${req.mode})`;
         dialog.showErrorBox("Bean", `Couldn't ${label}: ${err.message}`);

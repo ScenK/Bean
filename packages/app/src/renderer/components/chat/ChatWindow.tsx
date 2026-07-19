@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
 import { newId, type ChatItem } from "../../shared/chat-types.js";
-import type { PickableModel } from "../../shared/ProposalCard.js";
+import { useCliAvailability } from "../../shared/cli-availability.js";
 import type {
   ChatTurn, CliName, LinkedNote, MemoryCandidate, Memory, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill,
 } from "@bean/core";
@@ -92,11 +92,10 @@ export function ChatWindow() {
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
   const [closeFlow, setCloseFlow] = useState<CloseFlow | null>(null);
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
-  // Run-choice data for ProposalCard/DelegateCard's model+project+CLI pickers — fetched once,
-  // same as PlanWindow's equivalent state.
-  const [clis, setClis] = useState<CliName[]>([]);
+  // Settings invalidates this catalog, so an already-open card immediately stops offering a
+  // CLI the user just disabled.
+  const { clis, models: runModels } = useCliAvailability();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [runModels, setRunModels] = useState<PickableModel[]>([]);
   const [lastUsedModels, setLastUsedModels] = useState<Record<string, string>>({});
   // Full current skill list — passed to SkillCard so its "replaces existing" chip tracks
   // the user's live-edited name against real skills, not a stale server-computed flag.
@@ -127,9 +126,7 @@ export function ChatWindow() {
     window.bean.getModel().then(setModel);
     window.bean.getTheme().then(setTheme);
     window.bean.onThemeChanged(setTheme);
-    window.bean.availableClis().then(setClis);
     window.bean.listProjects().then(setProjects);
-    window.bean.availableModels().then(setRunModels);
     window.bean.listSkills().then(setSkills);
     // Pull any URL dropped before this window's renderer finished mounting — the push below
     // (onComponentDroppedUrl) can arrive first and gets silently dropped, same race
@@ -245,9 +242,10 @@ export function ChatWindow() {
     id: string,
     editedPrompt: string,
     run: RouteSuggestion,
-    choice: { cli: CliName; projectPath?: string; model?: string },
+    choice: { cli?: CliName; projectPath?: string; model?: string },
   ): void => {
     const inChat = run.target === "chat";
+    if (!inChat && !choice.cli) return;
     setItems((prev) => [
       ...prev.map((it) => (it.id === id && it.kind === "proposal" ? { ...it, state: "confirmed" as const } : it)),
       { kind: "status", id: newId(), text: inChat ? "Running here…" : "Handed off to Terminal.", tone: "done" },
@@ -258,7 +256,7 @@ export function ChatWindow() {
       return;
     }
     window.bean.launch({
-      mode: choice.cli,
+      mode: choice.cli!,
       projectPath: choice.projectPath ?? "",
       prompt: editedPrompt,
       model: choice.model,

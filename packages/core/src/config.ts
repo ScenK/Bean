@@ -2,6 +2,8 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CLI_NAMES } from "./launcher.js";
+import type { CliName } from "./launcher.js";
 import type { BeanConfig } from "./types.js";
 
 export function beanDir(): string {
@@ -34,7 +36,7 @@ export function runsDir(dir: string): string { return join(dir, "runs"); }
 export function modelMemoryFile(dir: string): string { return join(dir, "model-memory.json"); }
 // A "no project" run's working directory (2a) — the launched CLI's cwd when no real project
 // was picked. Bean never seeds it (no git clone/page fetch): if the user typed an optional
-// URL, it's folded into the composed prompt instead, and the launched agent (opencode/claude,
+// URL, it's folded into the composed prompt instead, and the launched agent (opencode/claude/codex,
 // a full coding agent with its own shell/git access) fetches or clones it itself if needed.
 export function scratchDir(dir: string): string { return join(dir, "workspace"); }
 
@@ -59,23 +61,25 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
     delegateCli: parsed.delegateCli ?? "",
     systemControls: parsed.systemControls ?? false,
     liveSessions: parsed.liveSessions ?? false,
+    disabledClis: Array.isArray(parsed.disabledClis)
+      ? parsed.disabledClis.filter((c): c is CliName => (CLI_NAMES as readonly string[]).includes(c as string))
+      : [],
     beanDir: beanDirPath,
   };
 }
 
 export async function saveConfig(
   file: string,
-  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; liveSessions?: boolean },
+  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; liveSessions?: boolean; disabledClis?: string[] },
 ): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   // No Settings UI toggle exists for liveSessions, so a desktop Settings save calls this with
-  // the field omitted entirely — falling back to a fixed default here would silently overwrite
-  // whatever the user (or a future toggle) had set. Preserve the on-disk value across saves
-  // that don't know about this field; only a brand-new file falls back to the default.
-  let existingLiveSessions: boolean | undefined;
+  // that field omitted entirely. Preserve either optional field when a caller does not know
+  // about it; only a brand-new file falls back to defaults. (Current Settings does send
+  // disabledClis, while older callers and first-launch bootstrap may omit it.)
+  let existing: Partial<BeanConfig> = {};
   try {
-    const raw = await readFile(file, "utf8");
-    existingLiveSessions = (JSON.parse(raw) as Partial<BeanConfig>).liveSessions;
+    existing = JSON.parse(await readFile(file, "utf8")) as Partial<BeanConfig>;
   } catch {
     // No existing file yet, or it's invalid — nothing to preserve.
   }
@@ -83,7 +87,8 @@ export async function saveConfig(
     openaiApiKey: config.openaiApiKey, model: config.model,
     terminalApp: config.terminalApp ?? "", editorApp: config.editorApp ?? "", delegateCli: config.delegateCli ?? "",
     systemControls: config.systemControls ?? false,
-    liveSessions: config.liveSessions ?? existingLiveSessions ?? false,
+    liveSessions: config.liveSessions ?? existing.liveSessions ?? false,
+    disabledClis: config.disabledClis ?? existing.disabledClis ?? [],
   };
   await writeFile(file, JSON.stringify(out, null, 2) + "\n", "utf8");
 }

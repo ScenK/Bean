@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { CliName } from "./launcher.js";
+import { CLI_NAMES, type CliName } from "./launcher.js";
 
 /** Which models each provider (CLI) offers — loaded from clis.json, not hardcoded.
  * A model string is passed verbatim as the CLI's --model value; there is no canonical
@@ -9,7 +9,7 @@ export interface CliModels {
   models: string[];
 }
 
-const KNOWN_PROVIDERS: readonly CliName[] = ["opencode", "claude"];
+const KNOWN_PROVIDERS: readonly CliName[] = CLI_NAMES;
 
 // Degrades per entry, never throws: a bad file yields undefined (caller falls back),
 // a bad entry is skipped with a log line — same spirit as the skills/projects loaders.

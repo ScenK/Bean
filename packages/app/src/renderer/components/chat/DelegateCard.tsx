@@ -2,7 +2,8 @@ import { useEffect, useState } from "preact/hooks";
 import type { ChatItem } from "../../shared/chat-types.js";
 import type { PickableModel } from "../../shared/ProposalCard.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
-import type { Project } from "@bean/core";
+import type { CliName, Project } from "@bean/core";
+import { resolveCliModelSelection } from "@bean/core/models";
 
 type DelegateItem = Extract<ChatItem, { kind: "delegate" }>;
 
@@ -21,6 +22,7 @@ export function DelegateCard({
   onConfirm,
   onDismiss,
   onCancelTask,
+  cliOptions,
   modelOptions,
   projectOptions,
 }: {
@@ -28,9 +30,9 @@ export function DelegateCard({
   onConfirm: (editedPrompt: string, model?: string) => void;
   onDismiss: () => void;
   onCancelTask: () => void;
-  /** Canonical models, annotated with which detected CLIs support each — the delegate's own
-   * CLI is resolved server-side (delegate-tasks.ts), so this dims a model only when NO
-   * detected CLI supports it at all, rather than against one picked CLI. */
+  cliOptions?: CliName[];
+  /** Configured models annotated with which enabled CLIs support each. The chosen model and
+   * compatible CLI are resolved as one pair in main before the delegate starts. */
   modelOptions?: PickableModel[];
   /** Projects this delegate's skill can run in — same "assigned, else every project" list
    * ChatPanel already builds for the sibling ProposalCard — used to show the project's name
@@ -42,8 +44,12 @@ export function DelegateCard({
   const [elapsed, setElapsed] = useState(0);
   const [modelChoice, setModelChoice] = useState<string | undefined>(undefined);
   const models = modelOptions ?? [];
-  const model = modelChoice ?? models[0]?.id;
-  const modelLabel = models.find((m) => m.id === model)?.label ?? model;
+  // selection only answers "is any CLI enabled" (the confirm gate). The CLI/model pair the run
+  // actually uses is resolved in main from the Settings delegate preference, which this card
+  // can't see — so displaying selection.model here would lie (e.g. show "sonnet" while main
+  // starts opencode's default). Show/checkmark only the user's explicit pick; otherwise neutral.
+  const selection = resolveCliModelSelection(models, cliOptions ?? [], { model: modelChoice });
+  const explicitLabel = modelChoice ? (models.find((m) => m.id === modelChoice)?.label ?? modelChoice) : undefined;
   const projectName =
     projectOptions?.find((p) => p.path === item.proposal.projectPath)?.name ?? item.proposal.projectPath;
 
@@ -65,20 +71,22 @@ export function DelegateCard({
         <span class="bean-chip">project · {projectName}</span>
         {item.proposal.skillName ? <span class="bean-chip">skill · {item.proposal.skillName}</span> : null}
         {pending && models.length > 0 ? (
-          <ChipMenu chipLabel={<>{modelLabel}</>}>
+          <ChipMenu chipLabel={selection
+            ? <>{explicitLabel ?? "Bean picks model"}</>
+            : <>No CLI enabled · Settings</>}>
             {(close) => (
               <div class="bean-chip-menu-list">
                 {models.map((m) => {
-                  const available = m.availableOn.length > 0;
+                  const available = m.availableOn.some((candidate) => cliOptions?.includes(candidate));
                   return (
                     <button
                       key={m.id}
                       type="button"
                       disabled={!available}
-                      class={`bean-chip-menu-row bean-chip-menu-row--model${model === m.id ? " bean-chip-menu-row--on" : ""}${available ? "" : " bean-chip-menu-row--dimmed"}`}
+                      class={`bean-chip-menu-row bean-chip-menu-row--model${modelChoice === m.id ? " bean-chip-menu-row--on" : ""}${available ? "" : " bean-chip-menu-row--dimmed"}`}
                       onClick={() => { if (available) { setModelChoice(m.id); close(); } }}
                     >
-                      <span class="bean-chip-menu-row-title">{model === m.id ? "✓ " : ""}{m.label}</span>
+                      <span class="bean-chip-menu-row-title">{modelChoice === m.id ? "✓ " : ""}{m.label}</span>
                       <span class="bean-chip-menu-caption">
                         {m.availableOn.join("  /  ") || "no CLI support"}
                       </span>
@@ -88,8 +96,10 @@ export function DelegateCard({
               </div>
             )}
           </ChipMenu>
-        ) : model ? (
-          <span class="bean-chip">{modelLabel}</span>
+        ) : selection ? (
+          <span class="bean-chip">{explicitLabel ?? "Bean picks model"}</span>
+        ) : pending ? (
+          <span class="bean-chip">no CLI enabled · Settings</span>
         ) : null}
       </div>
       {pending ? (
@@ -117,8 +127,10 @@ export function DelegateCard({
       ) : null}
       {item.state === "failed" && item.error ? <div class="bean-status bean-status--error">{item.error}</div> : null}
       <div class="bean-card-actions">
-        <button type="button" class="bean-btn" disabled={!pending} onClick={() => onConfirm(prompt, model)}>
-          {running || starting ? `${STATE_LABEL[item.state]} ${mmss}` : STATE_LABEL[item.state]}
+        <button type="button" class="bean-btn" disabled={!pending || !selection} onClick={() => onConfirm(prompt, modelChoice)}>
+          {running || starting
+            ? `${STATE_LABEL[item.state]} ${mmss}`
+            : pending && !selection ? "Enable a CLI in Settings" : STATE_LABEL[item.state]}
         </button>
         {pending ? <button type="button" class="bean-btn bean-btn--ghost" onClick={onDismiss}>Dismiss</button> : null}
         {running ? <button type="button" class="bean-btn bean-btn--ghost" onClick={onCancelTask}>Cancel</button> : null}

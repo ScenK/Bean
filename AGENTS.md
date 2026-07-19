@@ -38,7 +38,7 @@ may propose a run (skill + project + instruction) → user reviews/confirms in a
 Bean writes a temp shell script and opens it in Terminal.app (or launches `zed` directly for
 open mode). Bean does not stream or track the launched process's output. The exception is
 **delegation**: `converse()` can also propose a delegate run (`propose_delegate`) — a headless
-`claude -p` / `opencode run` that Bean spawns, streams, and cancels via core's `delegate.ts` +
+`claude -p` / `opencode run` / `codex exec` process that Bean spawns, streams, and cancels via core's `delegate.ts` +
 app's `delegate-tasks.ts`, with the result fed back into the chat when it finishes.
 
 The desktop app is one of **three surfaces**, all sharing the same core brain:
@@ -68,7 +68,8 @@ Per-user runtime data lives in `~/.bean/` (not in the repo) — see [Runtime con
 
 ## Environment & Commands
 
-Requires **Node ≥24**, **pnpm 11**, and **`opencode` on `PATH`**.
+Requires **Node ≥24** and **pnpm 11**. Terminal/delegate runs also need at least one supported
+CLI (`opencode`, `claude`, or `codex`) on `PATH`.
 
 Root scripts run through Turborepo (which builds `^build` deps first):
 
@@ -139,11 +140,11 @@ worktrees — each checkout needs its own.
     Never throws. Still wired up (`window.bean.route()` → `bean:route` → `buildRouteHandler()`)
     but no renderer code calls it anymore — `converse()` supersedes it for the chat flow.
   - `launcher.ts` `launchCommand()`/`launchInTerminal()` handle the launch modes `"opencode"`,
-    `"claude"`, and `"open"` (zed). For `"opencode"`/`"claude"` it writes a temp
+    `"claude"`, `"codex"`, and `"open"` (zed). For terminal CLIs it writes a temp
     `bean-run-*.command` script and opens it via `open -a <terminalApp>`; for `"open"` it
     spawns `zed` directly. Fire-and-forget — Bean does not stream or track that process's output.
   - `delegate.ts` `runDelegate()` is the tracked counterpart to the launcher: it spawns a
-    headless CLI (`delegateCommand()` maps claude/opencode flags), streams a parsed tail,
+    headless CLI (`delegateCommand()` maps Claude/OpenCode/Codex flags), streams a parsed tail,
     collects the final result, and can cancel the process group. Pure and DI'd like the rest.
   - `routine-store.ts` / `routine-runner.ts` — routines are cron-scheduled pipelines of
     `delegate`/`chat` steps saved as `~/.bean/routines/*.json` (state in `.state.json`).
@@ -226,7 +227,7 @@ Per-user, outside the repo. Path helpers live in `core/src/config.ts`.
 - `~/.bean/clis.json` → optional per-provider model lists overriding the repo default
   `.bean/clis.json`: `[{ "provider": "claude", "models": ["sonnet", ...] }]`. A user entry
   replaces that provider's default list; model strings are passed verbatim to `--model`.
-  Providers are still code (`opencode`, `claude`) — only their model lists are config.
+  Providers are still code (`opencode`, `claude`, `codex`) — only their model lists are config.
 - `~/.bean/skills/*.md` → one markdown file per skill. `description:` frontmatter is the
   router-visible summary; otherwise the first heading is used. The full body composes the prompt.
 - `~/.bean/projects.json` → `[{ "name": "...", "path": "/abs/path", "defaultSkill": "..." }]`

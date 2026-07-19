@@ -766,7 +766,7 @@ test("proposedDelegate with no CLI detected posts an error and no card", async (
   const effects = fx();
   await bot.onMessage(msg, effects);
   expect(effects.cards).toHaveLength(0);
-  expect(effects.posted.some((p) => p.includes("PATH"))).toBe(true);
+  expect(effects.posted.some((p) => p.includes("`claude`, `opencode`, or `codex`"))).toBe(true);
 });
 
 test("run onError posts the failure message and updates the card", async () => {
@@ -936,6 +936,22 @@ test("proposeLiveSession refuses when disabled, with no card", async () => {
   expect(await botOff.proposeLiveSession({ conversationId: "c1", instruction: "x", proposedBy: "s" }, fxOff))
     .toContain("disabled");
   expect(fxOff.cards).toHaveLength(0);
+});
+
+test("a disabled Claude CLI keeps the Claude-only live-session tool unavailable", async () => {
+  let toolNames: string[] = [];
+  const { deps } = makeDeps({
+    detectClis: () => ["codex"],
+    liveSessionsEnabled: () => true,
+    chat: async ({ tools }) => {
+      toolNames = tools.map((tool) => tool.name);
+      return { content: "no live session", toolCalls: [] };
+    },
+  });
+
+  await buildTeamsBot(deps).onMessage(msg, fx());
+
+  expect(toolNames).not.toContain("propose_live_session");
 });
 
 test("start-live composes the picked skill's body into the opening prompt", async () => {

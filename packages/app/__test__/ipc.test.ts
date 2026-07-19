@@ -12,6 +12,7 @@ import type { ConfigView, ConfigUpdate } from "../src/channels.js";
 import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate, Routine } from "@bean/core";
 import type { LaunchSpawnFn } from "@bean/core";
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 
 test("route handler wires core pieces together", async () => {
   const skills: Skill[] = [{ name: "review-code", description: "r", body: "BODY" }];
@@ -357,6 +358,7 @@ test("launch handler forwards getTerminalApp() into launchInTerminal's terminalA
 test("config get handler returns the injected view", () => {
   const view: ConfigView = {
     openaiApiKey: "sk-x", model: "m", terminalApp: "", editorApp: "", delegateCli: "",
+    systemControls: false, disabledClis: [],
     paths: { config: "/b/config.json", skills: "/b/skills", projects: "/b/projects.json", persona: "/b/persona.json" },
   };
   const handlers = buildConfigHandlers({ getConfig: () => view, applyConfig: async () => {} });
@@ -426,12 +428,15 @@ test("memory handlers list, save, append, and extract through injected deps", as
 
 test("config save handler forwards the update to applyConfig", async () => {
   const applied: ConfigUpdate[] = [];
+  const notifications: string[] = [];
   const handlers = buildConfigHandlers({
-    getConfig: () => ({ openaiApiKey: "", model: "", terminalApp: "", editorApp: "", delegateCli: "", paths: { config: "", skills: "", projects: "", persona: "" } }),
+    getConfig: () => ({ openaiApiKey: "", model: "", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], paths: { config: "", skills: "", projects: "", persona: "" } }),
     applyConfig: async (u) => { applied.push(u); },
+    onApplied: () => { notifications.push("cli-availability-changed"); },
   });
-  await handlers.save({ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app", delegateCli: "claude" });
-  expect(applied).toEqual([{ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app", delegateCli: "claude" }]);
+  await handlers.save({ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app", delegateCli: "claude", systemControls: false, disabledClis: ["codex"] });
+  expect(applied).toEqual([{ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app", delegateCli: "claude", systemControls: false, disabledClis: ["codex"] }]);
+  expect(notifications).toEqual(["cli-availability-changed"]);
 });
 
 test("chat-prompt store lets a late-mounting chat window pull the pending prompt (same race fix)", () => {
@@ -443,7 +448,7 @@ test("chat-prompt store lets a late-mounting chat window pull the pending prompt
   expect(store.get()).toBeUndefined();
 });
 
-test("models handler returns the canonical list annotated for the detected CLIs", () => {
+test("models handler returns the configured list annotated for the enabled CLIs", () => {
   const handler = buildModelsHandler({
     getAvailableClis: () => ["claude"],
     getCliModels: () => [
@@ -477,6 +482,65 @@ test("launch handler with a real projectPath fires synchronously (no scratch-wor
 
   // Synchronous: no awaited microtask needed before the spawn happens.
   expect(spawnLaunch).toHaveBeenCalledWith("open", expect.anything());
+});
+
+test("launch handler rejects a stale request for a disabled CLI", () => {
+  const child = fakeChild();
+  const spawnLaunch = vi.fn<LaunchSpawnFn>(() => child as never);
+  const onLaunchError = vi.fn();
+  const handler = buildLaunchHandler({
+    spawnLaunch,
+    onLaunchError,
+    getAvailableClis: () => ["claude"],
+    getCliModels: () => [
+      { provider: "claude", models: ["sonnet"] },
+      { provider: "codex", models: ["gpt-5.6-sol"] },
+    ],
+  });
+
+  handler({ mode: "codex", projectPath: "/dev/acme", prompt: "go", model: "gpt-5.6-sol" });
+
+  expect(spawnLaunch).not.toHaveBeenCalled();
+  expect(onLaunchError).toHaveBeenCalledWith(
+    expect.objectContaining({ mode: "codex" }),
+    expect.objectContaining({ message: expect.stringContaining("disabled") }),
+  );
+});
+
+test("launch handler normalizes an unsupported model to one supported by the valid CLI", () => {
+  const child = fakeChild();
+  const spawnLaunch = vi.fn<LaunchSpawnFn>(() => child as never);
+  const handler = buildLaunchHandler({
+    spawnLaunch,
+    getAvailableClis: () => ["claude"],
+    getCliModels: () => [
+      { provider: "claude", models: ["sonnet"] },
+      { provider: "codex", models: ["gpt-5.6-sol"] },
+    ],
+  });
+
+  handler({ mode: "claude", projectPath: "/dev/acme", prompt: "go", model: "gpt-5.6-sol" });
+
+  const scriptPath = spawnLaunch.mock.calls[0]?.[1][0];
+  expect(scriptPath).toEqual(expect.stringMatching(/bean-run-.*\.command$/));
+  const script = readFileSync(scriptPath!, "utf8");
+  expect(script).toContain("'--model' 'sonnet'");
+  expect(script).not.toContain("gpt-5.6-sol");
+});
+
+test("launch handler keeps open mode available when every terminal CLI is disabled", () => {
+  const child = fakeChild();
+  const spawnLaunch = vi.fn<LaunchSpawnFn>(() => child as never);
+  const handler = buildLaunchHandler({
+    spawnLaunch,
+    getEditorApp: () => "/Applications/Zed.app",
+    getAvailableClis: () => [],
+    getCliModels: () => [],
+  });
+
+  handler({ mode: "open", projectPath: "/p" });
+
+  expect(spawnLaunch).toHaveBeenCalledWith("open", ["-a", "/Applications/Zed.app", "/p"]);
 });
 
 test("launch handler with no project resolves via a bare scratch dir before launching", async () => {

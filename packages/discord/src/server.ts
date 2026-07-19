@@ -22,7 +22,7 @@ const discordConfig = await loadDiscordConfig(discordConfigFile(dir));
 const beanConfig = await loadConfig(configFile(dir), dir);
 if (!beanConfig.openaiApiKey) throw new Error("openaiApiKey missing in ~/.bean/config.json");
 
-const clis = detectClis();
+const clis = detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
 const cliModels = await loadCliModels(clisFile(builtinDir), clisFile(dir));
 const runs = new RunRegistry(runDelegate, { dir, botKind: "discord" });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
@@ -64,8 +64,8 @@ const bot = buildTeamsBot({
   conversations,
   liveSessions,
   liveSessionProposals,
-  // Always on for Discord (no `liveSessions` config opt-in) — only gated by claude being on
-  // PATH, since the live-session engine is claude-specific. Still confirm-first via the card.
+  // Always on for Discord (no `liveSessions` opt-in) when Claude is both detected and not in
+  // config's disabledClis list; the live-session engine itself is Claude-specific.
   liveSessionsEnabled: () => clis.includes("claude"),
   cards: discordCards,
   systemControlsEnabled: () => beanConfig.systemControls,
@@ -326,7 +326,7 @@ process.on("SIGTERM", () => {
 client.once("clientReady", async () => {
   console.log(`@bean/discord logged in as ${client.user?.tag} (clis: ${clis.join(", ") || "none"})`);
   // Control commands map to Bean's existing text commands; /live-session is added only when
-  // usable (config flag + claude on PATH). Project/model/skill are picked on its card, so the
+  // Claude is detected and config-enabled. Project/model/skill are picked on its card, so the
   // command itself carries just the opening prompt.
   const liveEnabled = clis.includes("claude");
   const liveCmd: ApplicationCommandDataResolvable = {
