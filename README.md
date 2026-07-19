@@ -65,7 +65,7 @@ The same pet fits both halves of your day:
 - **Personal & family** — a morning brief, reminders, a routine that tidies photos or
   drafts the grocery list, music and volume by voice, notes that remember birthdays and
   preferences.
-- **On the job** — hand a coding task to `opencode`/`claude`, schedule the standup
+- **On the job** — hand a coding task to `opencode`/`claude`/`codex`, schedule the standup
   summary, trigger a build from Teams, queue up to-dos and let a routine work them down.
 
 Set it up once; it quietly covers everything from the family calendar to the sprint.
@@ -88,7 +88,7 @@ Nothing to hand-edit.
 
 - macOS
 - Your own OpenAI API key (set it in Settings)
-- [`opencode`](https://opencode.ai) and/or `claude` on your `PATH` — for the launch
+- [`opencode`](https://opencode.ai) and/or `claude`, /`codex` on your `PATH` — for the launch
   modes that hand work to an external agent
 
 ---
