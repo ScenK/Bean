@@ -66,6 +66,17 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   permissions-bypassed child that ignores SIGTERM. `forceKillAll()` sends SIGKILL to every
   active session's process group synchronously, no grace period — correct specifically
   because the bot process itself is about to disappear anyway.
+- `startLiveSession` drains `child.stderr` (kept as a bounded 4000-char tail, same pattern as
+  `delegate.ts`) and folds its tail into a crashed session's exit error. This isn't optional
+  polish: an unread stderr pipe fills its OS buffer once the child (or a hook/plugin under it)
+  writes enough to it, which then blocks the child on its next write — a session can hang
+  silently while still showing as "active" if this is ever removed.
+- `LiveSessionRegistry.teardown()`'s final flush retries a bounded number of times
+  (`finalFlush`, 5 attempts / 500ms apart) before firing `onEnded` — the interval is already
+  cleared and the session already removed from `byChannel` by the time teardown runs, so
+  there's no later tick left to catch a transient Discord failure on the very last flush.
+  Gives up gracefully (notice says output "may be incomplete") rather than retrying forever,
+  since a genuinely broken sink (revoked token, deleted channel) must not hang teardown.
 - Manual end-to-end smoke test (real Discord bot + real `claude` CLI) was not run as part of
   the implementation — it needs live Discord credentials and a test server that weren't
   available in the implementing session. Full monorepo test/typecheck gate is green; the

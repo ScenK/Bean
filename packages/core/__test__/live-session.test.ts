@@ -50,12 +50,16 @@ describe("claudeTurnSummary", () => {
   });
 });
 
-function fakeChild(): { child: ChildProcess; stdin: PassThrough; stdout: PassThrough; emit: (ev: string, ...a: unknown[]) => void } {
+function fakeChild(): {
+  child: ChildProcess; stdin: PassThrough; stdout: PassThrough; stderr: PassThrough;
+  emit: (ev: string, ...a: unknown[]) => void;
+} {
   const child = new EventEmitter() as unknown as ChildProcess & EventEmitter;
   const stdin = new PassThrough();
   const stdout = new PassThrough();
-  Object.assign(child, { stdin, stdout, stderr: new PassThrough(), pid: 4242, kill: vi.fn() });
-  return { child, stdin, stdout, emit: (ev, ...a) => child.emit(ev, ...a) };
+  const stderr = new PassThrough();
+  Object.assign(child, { stdin, stdout, stderr, pid: 4242, kill: vi.fn() });
+  return { child, stdin, stdout, stderr, emit: (ev, ...a) => child.emit(ev, ...a) };
 }
 
 describe("startLiveSession", () => {
@@ -106,6 +110,26 @@ describe("startLiveSession", () => {
     startLiveSession({ projectPath: "/p", prompt: "go" }, { onOutput: () => {}, onTurnComplete: () => {}, onExit: (e) => { exitErr = e; } }, () => f.child);
     f.emit("close", 1);
     expect(exitErr?.message).toContain("code 1");
+  });
+
+  it("drains stderr and includes its tail in a non-zero exit's error", () => {
+    const f = fakeChild();
+    let exitErr: Error | undefined;
+    startLiveSession({ projectPath: "/p", prompt: "go" }, { onOutput: () => {}, onTurnComplete: () => {}, onExit: (e) => { exitErr = e; } }, () => f.child);
+    f.stderr.write("some warning\nfatal: something broke\n");
+    f.emit("close", 1);
+    expect(exitErr?.message).toContain("code 1");
+    expect(exitErr?.message).toContain("fatal: something broke");
+  });
+
+  it("draining stderr never crashes or blocks a clean exit", () => {
+    const f = fakeChild();
+    let exitErr: Error | undefined | null = null;
+    startLiveSession({ projectPath: "/p", prompt: "go" }, { onOutput: () => {}, onTurnComplete: () => {}, onExit: (e) => { exitErr = e; } }, () => f.child);
+    // A long-lived session can accumulate far more than the 4000-char tail buffer keeps.
+    f.stderr.write("x".repeat(10_000));
+    f.emit("close", 0);
+    expect(exitErr).toBeUndefined();
   });
 
   it("kills the session after the idle timeout", () => {

@@ -259,4 +259,53 @@ describe("LiveSessionRegistry", () => {
     expect(() => reg.forceKillAll()).not.toThrow();
     killSpy.mockRestore();
   });
+
+  it("retries the final teardown flush on transient failure, delivering the content once it succeeds", async () => {
+    const f = fakeStart();
+    const notices: string[] = [];
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const posts: string[] = [];
+    let attempt = 0;
+    const sink: LiveSessionSink = {
+      post: async (text) => {
+        attempt++;
+        if (attempt < 3) throw new Error("rate limited");
+        posts.push(text);
+        return `msg-${posts.length}`;
+      },
+      edit: async () => {},
+    };
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink, onEnded: (n) => notices.push(n) });
+
+    f.cbs().onOutput("final words");
+    f.cbs().onExit(undefined); // no timer left afterward to retry a failed send on its own
+
+    for (let i = 0; i < 3; i++) await Promise.resolve();
+    expect(notices).toHaveLength(0); // first attempt failed — still retrying, not given up
+
+    await vi.advanceTimersByTimeAsync(501); // between attempt 1 and 2 (also fails)
+    await vi.advanceTimersByTimeAsync(501); // between attempt 2 and 3 (succeeds)
+
+    expect(posts).toEqual(["final words"]);
+    expect(notices).toEqual(["Live session ended."]);
+  });
+
+  it("gives up after bounded retries and reports the final output may be incomplete", async () => {
+    const f = fakeStart();
+    const notices: string[] = [];
+    const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000 });
+    const sink: LiveSessionSink = {
+      post: async () => { throw new Error("always fails"); },
+      edit: async () => {},
+    };
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink, onEnded: (n) => notices.push(n) });
+
+    f.cbs().onOutput("final words");
+    f.cbs().onExit(undefined);
+
+    for (let i = 0; i < 5; i++) await vi.advanceTimersByTimeAsync(501);
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("may be incomplete");
+  });
 });

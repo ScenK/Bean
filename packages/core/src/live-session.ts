@@ -139,6 +139,15 @@ export function startLiveSession(
     }
   });
 
+  // Must drain stderr even though we only use it for error-reporting context: an unread pipe
+  // fills its OS buffer once the child (or a hook/plugin under it) writes enough to it, which
+  // then blocks the child on its next write — silently hanging a session that looks "active"
+  // (same reasoning as delegate.ts's stderrBuf).
+  let stderrBuf = "";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderrBuf = (stderrBuf + chunk.toString("utf8")).slice(-4000);
+  });
+
   const settle = (err?: Error): void => {
     if (exited) return;
     exited = true;
@@ -150,7 +159,10 @@ export function startLiveSession(
   child.on("error", (err: Error) => settle(err));
   child.on("close", (code: number | null) => {
     if (stopping || code === 0 || code === null) settle();
-    else settle(new Error(`claude exited with code ${code}`));
+    else {
+      const tail = stderrBuf.trim().split("\n").slice(-5).join("\n");
+      settle(new Error(`claude exited with code ${code}${tail ? ` - ${tail}` : ""}`));
+    }
   });
 
   child.stdin?.write(userTurnLine(req.prompt + GIT_TRAILER_INSTRUCTION));

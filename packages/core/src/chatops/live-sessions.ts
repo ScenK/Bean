@@ -142,12 +142,26 @@ export class LiveSessionRegistry {
     // Wait for any flush already in flight before the final flush — otherwise flushSession's
     // own rendering guard makes this a no-op and content buffered during that window is lost.
     const wait = s.inFlight ?? Promise.resolve();
-    void wait.then(() => {
+    void wait.then(async () => {
       if (s.buf) s.dirty = true; // force a final flush of anything still unsent
-      return this.flushSession(s);
-    }).then(() => {
-      s.onEnded?.(err ? `Live session died: ${err.message}` : "Live session ended.");
+      const delivered = await this.finalFlush(s);
+      const base = err ? `Live session died: ${err.message}` : "Live session ended.";
+      s.onEnded?.(delivered ? base : `${base} (last output may be incomplete — Discord kept rejecting it)`);
     });
+  }
+
+  // The interval is already cleared and the session already removed from byChannel by the
+  // time teardown calls this — there's no later tick left to retry a transient send failure
+  // on, so this is the only remaining chance to deliver the session's last output. Retries a
+  // bounded number of times rather than indefinitely: a genuinely broken sink (revoked token,
+  // deleted channel) must not hang teardown forever.
+  private async finalFlush(s: ActiveSession, attempts = 5, delayMs = 500): Promise<boolean> {
+    for (let i = 0; i < attempts; i++) {
+      await this.flushSession(s);
+      if (!s.dirty) return true;
+      if (i < attempts - 1) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    return false;
   }
 
   private async flush(channelId: string): Promise<void> {
