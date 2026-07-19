@@ -61,7 +61,7 @@ export interface LaunchRequest {
 
 export function launchCommand(req: LaunchRequest, editorApp?: string): { command: string; args: string[] } {
   switch (req.mode) {
-    // Interactive session with an initial prompt for both — not `opencode run` / `claude -p`,
+    // Interactive session with an initial prompt — not `opencode run` / `claude -p`,
     // which reply once and exit. This drops the user into the normal TUI/REPL with the message
     // pre-sent, so they can keep working after it replies.
     case "opencode": {
@@ -106,7 +106,7 @@ function fireAndForget(child: ChildProcess, onError: (err: Error) => void): void
   child.on("error", onError);
 }
 
-// Bean's job ends here: hand the command off and stop tracking it. "opencode"/"claude"
+// Bean's job ends here: hand the command off and stop tracking it. "opencode"/"claude"/"codex"
 // run inside a generated .command script — macOS's double-click-to-run-in-Terminal
 // convention, the same mechanism `open` uses on a real double click — so the user
 // watches/interacts with the real CLI directly. "open" (the configured editor) is already
