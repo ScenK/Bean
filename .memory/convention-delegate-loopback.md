@@ -28,4 +28,6 @@ Key contracts:
   registry emit `cancelled` and drop the task. Stray post-cancel callbacks are ignored.
 - The delegate CLI preference is user-picked in Settings (`delegateCli`, "" = first enabled).
   `resolveCliModelSelection()` resolves that preference together with any requested model, so
-  the spawned harness is enabled and supports the model (or receives no `--model`).
+  the spawned harness is enabled and supports the model (or receives no `--model`). Only a
+  model the user explicitly clicks may override that CLI preference: DelegateCard's implicit
+  display default must not be sent as a requested model.

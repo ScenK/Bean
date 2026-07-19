@@ -2,8 +2,13 @@ import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createDelegateTasks, type DelegateEvent } from "../src/delegate-tasks.js";
-import type { CliName, DelegateCallbacks, DelegateHandle, DelegateRequest } from "@bean/core";
+import { createDelegateTasks, resolveDelegateSelection, type DelegateEvent } from "../src/delegate-tasks.js";
+import type { CliModels, CliName, DelegateCallbacks, DelegateHandle, DelegateRequest } from "@bean/core";
+
+const CLI_MODELS: CliModels[] = [
+  { provider: "claude", models: ["sonnet"] },
+  { provider: "codex", models: ["gpt-5.6-sol"] },
+];
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), "bean-delegate-tasks-"));
@@ -29,6 +34,29 @@ function harness(opts: { cli?: CliName; dir?: string } = {}) {
   });
   return { tasks, sent, cancels, cancelCallbacks, captured, reqs, cbs: () => captured.at(-1)!, req: () => reqs.at(-1)! };
 }
+
+describe("resolveDelegateSelection", () => {
+  it("Auto follows enabled CLI order instead of configured model order", () => {
+    expect(resolveDelegateSelection(CLI_MODELS, ["codex", "claude"], "")).toEqual({
+      cli: "codex",
+      model: "gpt-5.6-sol",
+    });
+  });
+
+  it("an untouched request honors an enabled configured Codex preference", () => {
+    expect(resolveDelegateSelection(CLI_MODELS, ["claude", "codex"], "codex")).toEqual({
+      cli: "codex",
+      model: "gpt-5.6-sol",
+    });
+  });
+
+  it("an explicitly selected model may override the configured CLI with a compatible provider", () => {
+    expect(resolveDelegateSelection(CLI_MODELS, ["codex", "claude"], "codex", "sonnet")).toEqual({
+      cli: "claude",
+      model: "sonnet",
+    });
+  });
+});
 
 describe("createDelegateTasks", () => {
   it("uses one resolved compatible CLI/model pair for a delegate request", async () => {

@@ -16,7 +16,7 @@ import {
   loadNotes, saveNote, deleteNote, loadNoteHistory, searchNotes, retrieveNoteTool, detectClis, loginShellPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate,
-  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, availableModels, resolveCliModelSelection,
+  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
 } from "@bean/core";
@@ -33,7 +33,7 @@ import {
 } from "./notification-permission-store.js";
 import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
-import { createDelegateTasks, resolvedPathSpawnFn } from "./delegate-tasks.js";
+import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } from "./delegate-tasks.js";
 import { createRoutineScheduler } from "./routine-scheduler.js";
 import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
 
@@ -448,14 +448,8 @@ app.whenReady().then(async () => {
 
     // Shared by createDelegateTasks (chat window's delegate button) and the routine
     // delegate-step adapter below — one resolver, not two copies of this preference logic.
-    const resolveDelegateCli = (model?: string) => {
-      const enabled = enabledClis();
-      const preferred = runtime.getDelegateCli();
-      return resolveCliModelSelection(availableModels(cliModels, enabled), enabled, {
-        ...(enabled.includes(preferred as CliName) ? { cli: preferred as CliName } : {}),
-        ...(model ? { model } : {}),
-      });
-    };
+    const resolveDelegateCli = (model?: string) =>
+      resolveDelegateSelection(cliModels, enabledClis(), runtime.getDelegateCli(), model);
 
     const delegateTasks = createDelegateTasks({
       resolvedPath,

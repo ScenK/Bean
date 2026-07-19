@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
-import { runDelegate, reserveRun, releaseRun, updateReservationPid, enqueueOutbox, outboxDir, interruptedRunNotice, BEAN_GIT_IDENTITY } from "@bean/core";
-import type { CliModelSelection, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
+import {
+  runDelegate, reserveRun, releaseRun, updateReservationPid, enqueueOutbox, outboxDir,
+  interruptedRunNotice, BEAN_GIT_IDENTITY, availableModels, resolveCliModelSelection,
+} from "@bean/core";
+import type { CliModelSelection, CliModels, CliName, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
 
 export type DelegateEvent =
   | { taskId: string; type: "started" }
@@ -51,6 +54,24 @@ export function resolvedPathSpawnFn(resolvedPath: string | undefined): DelegateS
           env: { ...process.env, PATH: resolvedPath, ...BEAN_GIT_IDENTITY },
         })
     : undefined;
+}
+
+/** Resolve the Settings delegate preference together with an optional explicit model pick.
+ * Auto (or a now-disabled saved preference) means the first enabled CLI; only an explicit
+ * model request may move the selection to another compatible enabled provider. */
+export function resolveDelegateSelection(
+  cliModels: CliModels[],
+  enabled: CliName[],
+  configuredCli: string,
+  explicitModel?: string,
+): CliModelSelection | undefined {
+  const preferredCli = enabled.includes(configuredCli as CliName)
+    ? configuredCli as CliName
+    : enabled[0];
+  return resolveCliModelSelection(availableModels(cliModels, enabled), enabled, {
+    ...(preferredCli ? { cli: preferredCli } : {}),
+    ...(explicitModel ? { model: explicitModel } : {}),
+  });
 }
 
 interface Task {

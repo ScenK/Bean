@@ -124,7 +124,7 @@ export function DelegateCard({
       ) : null}
       {item.state === "failed" && item.error ? <div class="bean-status bean-status--error">{item.error}</div> : null}
       <div class="bean-card-actions">
-        <button type="button" class="bean-btn" disabled={!pending || !selection} onClick={() => onConfirm(prompt, model)}>
+        <button type="button" class="bean-btn" disabled={!pending || !selection} onClick={() => onConfirm(prompt, modelChoice)}>
           {running || starting
             ? `${STATE_LABEL[item.state]} ${mmss}`
             : pending && !selection ? "Enable a CLI in Settings" : STATE_LABEL[item.state]}

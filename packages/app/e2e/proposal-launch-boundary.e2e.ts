@@ -1,16 +1,24 @@
 import { test, expect } from "@playwright/test";
+import { delimiter } from "node:path";
 import { launchBean } from "./fixtures/launch-app.js";
-import { makeBeanHome } from "./fixtures/bean-home.js";
+import { installFakeCli, makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
 test("proposal (terminal target): confirming calls window.bean.launch, never a real process", async () => {
-  const home = await makeBeanHome();
+  // Guarantee one enabled provider even on a clean CI host. Disabling the other providers also
+  // keeps a developer's login-shell PATH from changing the expected pair when this runs locally.
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex"] });
+  const fakeBin = await installFakeCli(home.homeDir, "opencode");
   const stub = await startStubOpenAI();
   // Depends on .bean/skills/review-pr.md's current name + `target: terminal` frontmatter.
   stub.queue({
     toolCall: { name: "propose_run", args: { skill: "review-pr", project: home.projectPath, instruction: "review PR 1" } },
   });
-  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  const app = await launchBean({
+    HOME: home.homeDir,
+    OPENAI_BASE_URL: stub.url,
+    PATH: [fakeBin, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter),
+  });
   try {
     const avatar = await app.firstWindow();
     const [chat] = await Promise.all([
@@ -24,20 +32,13 @@ test("proposal (terminal target): confirming calls window.bean.launch, never a r
     const card = chat.locator(".bean-card");
     await expect(card).toContainText("review-pr");
 
-    // Derive the deterministic expected pair from Bean's own enabled catalog instead of
-    // assuming the CI host has opencode (rather than Claude or Codex) installed. The first
-    // configured model whose provider is enabled is the card's default.
-    const expected = await chat.evaluate(async () => {
+    const enabled = await chat.evaluate(async () => {
       const bean = (window as unknown as { bean: {
         availableClis: () => Promise<string[]>;
-        availableModels: () => Promise<{ id: string; availableOn: string[] }[]>;
       } }).bean;
-      const [clis, models] = await Promise.all([bean.availableClis(), bean.availableModels()]);
-      const model = models.find((candidate) => candidate.availableOn.some((cli) => clis.includes(cli)));
-      const cli = model?.availableOn.find((candidate) => clis.includes(candidate));
-      return { cli, model: model?.id };
+      return bean.availableClis();
     });
-    expect(expected.cli).toBeTruthy();
+    expect(enabled).toEqual(["opencode"]);
 
     // `contextBridge.exposeInMainWorld` deep-freezes the exposed `window.bean` api object
     // (verified: its own property descriptor and `.launch`'s are both non-configurable,
@@ -55,7 +56,11 @@ test("proposal (terminal target): confirming calls window.bean.launch, never a r
 
     await expect
       .poll(() => app.evaluate(() => (globalThis as unknown as { __lastLaunch?: unknown }).__lastLaunch))
-      .toMatchObject({ mode: expected.cli, model: expected.model, projectPath: home.projectPath });
+      .toMatchObject({
+        mode: "opencode",
+        model: "github-copilot/gpt-5.5",
+        projectPath: home.projectPath,
+      });
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
