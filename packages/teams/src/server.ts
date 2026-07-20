@@ -70,6 +70,10 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "teams" });
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this conversation has no idea what it's retrying.
 const conversations = new ConversationStore(dbFile(dir));
+// Hoisted (not inline in deps) so the /api/messages handler can check `has()` to capture
+// steer messages for a bound session, and the SIGTERM handler can kill them. Mirrors Discord.
+const liveSessions = new LiveSessionRegistry(undefined, { dir });
+const liveSessionProposals = new LiveSessionProposalStore();
 const bot = buildTeamsBot({
   chat: makeOpenAIConverse(beanConfig.openaiApiKey),
   model: beanConfig.model,
@@ -99,9 +103,12 @@ const bot = buildTeamsBot({
   saveMemories: (m) => saveMemories(dbFile(dir), m),
   consolidationProposals: new ConsolidationProposalStore(),
   conversations,
-  liveSessions: new LiveSessionRegistry(undefined, { dir }),
-  liveSessionProposals: new LiveSessionProposalStore(),
-  liveSessionsEnabled: () => false, // live sessions are Discord-first; Teams sink untested (spec: out of scope)
+  liveSessions,
+  liveSessionProposals,
+  // Same rule as Discord: live sessions run claude specifically, so they're on whenever claude
+  // is detected and not disabled. The Teams sink posts/edits via the proactive path (postCard
+  // below) so streamed turns land after the triggering turn ends.
+  liveSessionsEnabled: () => clis.includes("claude"),
   cards: {
     proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
     consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
@@ -115,6 +122,7 @@ const bot = buildTeamsBot({
 // before this process disappears, instead of just dying mid-run with the requester left hanging.
 process.on("SIGTERM", () => {
   runs.interruptAll(); // synchronous — see its doc comment; safe to exit right after
+  liveSessions.forceKillAll(); // don't orphan live `claude -p` process groups on shutdown
   process.exit(0);
 });
 
@@ -131,6 +139,15 @@ function addressedToBot(a: Activity): boolean {
   return (a.entities ?? []).some(
     (e) => e.type === "mention" && (e as { mentioned?: { id?: string } }).mentioned?.id === a.recipient.id,
   );
+}
+
+/** Surface user-ids @mentioned in this activity, minus the bot itself — feeds core's
+ * live-session `+driver`/`-driver` co-driver management (restricted steering). */
+function mentionIds(a: Activity): string[] {
+  return (a.entities ?? [])
+    .filter((e) => e.type === "mention")
+    .map((e) => (e as { mentioned?: { id?: string } }).mentioned?.id)
+    .filter((id): id is string => !!id && id !== a.recipient.id);
 }
 
 /** Effects bound to the incoming turn's conversation; posts after the turn ends go
@@ -150,6 +167,24 @@ function effectsFor(context: TurnContext): BotEffects {
         attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }],
       });
       return res?.id ?? "";
+    },
+    // Live-session streaming rides these (not postCard, which is adaptive-card-only on Teams):
+    // real text messages, posted proactively because turns stream in after the triggering
+    // turn's context is dead. postStream returns the activity id so editStream can revise it.
+    postStream: async (text) => {
+      let id = "";
+      await proactive(async (ctx) => {
+        const res = await ctx.sendActivity({ type: ActivityTypes.Message, text });
+        id = res?.id ?? "";
+      });
+      return id;
+    },
+    editStream: async (id, text) => {
+      await proactive(async (ctx) => {
+        await ctx.updateActivity({
+          id, type: ActivityTypes.Message, text, conversation: ref.conversation,
+        } as Partial<Activity> as Activity);
+      });
     },
     updateCard: async (activityId, card) => {
       await proactive(async (ctx) => {
@@ -192,7 +227,11 @@ app.post("/api/messages", (req, res) => {
     }
     const text = TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "";
     if (!text) return;
-    if (!addressedToBot(a)) {
+    // A live session bound to this conversation is its own authorization boundary: forward every
+    // message (mention or not) so allowed drivers can steer/stop it — core's onMessage decides
+    // who may. Mirrors the Discord surface's `capturing` bypass.
+    const capturing = liveSessions.has(a.conversation.id);
+    if (!addressedToBot(a) && !capturing) {
       // Not for Bean — remember it as context for a later mention, but don't reply.
       ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
       return;
@@ -203,7 +242,7 @@ app.post("/api/messages", (req, res) => {
     const typing = setInterval(() => { void context.sendActivity({ type: ActivityTypes.Typing }); }, 5000);
     try {
       await bot.onMessage(
-        { conversationId: a.conversation.id, text, fromId: a.from.id, fromName: a.from.name ?? "someone" },
+        { conversationId: a.conversation.id, text, fromId: a.from.id, fromName: a.from.name ?? "someone", mentionedIds: mentionIds(a) },
         fx,
       );
     } finally {

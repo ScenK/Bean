@@ -36,11 +36,19 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   cumulative content and must NOT be truncated after an ordinary send — only the rollover
   loop (each chunk becomes its own finalized message) and the `closeAfterFlush` reset (the
   message is actually ending) ever remove sent content from it.
-- The stream sink rides `BotEffects`: `postCard({content})` / `updateCard(id, {content})`.
-  This works on Discord (plain `MessageCreateOptions`) but NOT on Teams (adaptive-card
-  attachment shape) — which is why Teams wires the feature but hard-disables it
-  (`liveSessionsEnabled: () => false`). Enabling Teams needs a real text-post-and-edit path
-  there first, not just flipping the flag.
+- The stream sink rides `BotEffects`, preferring the optional **`postStream(text)→id` /
+  `editStream(id,text)`** text effects, falling back to `postCard({content})` /
+  `updateCard(id,{content})` when a surface omits them. Discord omits them — its `postCard`
+  takes plain `MessageCreateOptions` so `{content}` already IS a text message. **Teams MUST
+  supply `postStream`/`editStream`** (real `sendActivity({text})` / `updateActivity`), because
+  its `postCard` wraps the arg as an adaptive-card attachment and `{content: text}` is not a
+  valid AdaptiveCard — it would render broken. This is why Teams was originally hard-disabled;
+  it is now **enabled** (`liveSessionsEnabled: () => clis.includes("claude")`, same as Discord)
+  with those effects wired. Both Teams stream effects post **proactively**
+  (`continueConversationAsync`), not on the turn context — turns stream in after the triggering
+  turn's context is dead, and a stale-context send is silently dropped (same reason Teams'
+  `post`/`updateCard` already go proactive). Do not re-route the live stream through `postCard`
+  on Teams.
 - Teams' `cards.ts` has **no combined exported `CardBuilders` object** — every card is an
   individually-exported function, and `teams/server.ts` builds its own inline `cards: {...}`
   object literal from those imports. Discord's `components.ts` is the opposite (a single
@@ -106,6 +114,14 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   null`, so only the `stopping` flag tells them apart — check it explicitly rather than
   treating every `code === null` as a clean end, or a session someone else killed gets
   reported as "ended" instead of "died".
+- **Teams surface parity** (`teams/server.ts`): mirrors Discord's wiring — `liveSessions` /
+  `liveSessionProposals` are hoisted (not inline in deps) so the `/api/messages` handler can
+  `has()`-check to **capture** every message in a bound conversation (forwarded to `onMessage`
+  even without an @mention — the bound session is its own auth boundary, same as Discord), and
+  the SIGTERM handler can `forceKillAll()` the permissions-bypassed children. `mentionIds(a)`
+  (mention entities minus the bot's own id) is passed as `mentionedIds` so `+driver`/`-driver`
+  works. Group-channel capture still needs the manifest RSC permission `ChannelMessage.Read.Group`
+  (same constraint as ambient); 1:1 chats are always addressed so it's moot there.
 - Manual end-to-end smoke test (real Discord bot + real `claude` CLI) was not run as part of
   the implementation — it needs live Discord credentials and a test server that weren't
   available in the implementing session. Full monorepo test/typecheck gate is green; the

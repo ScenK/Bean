@@ -1,6 +1,7 @@
-# @bean/teams — Bean as a Teams group-chat bot (POC)
+# @bean/teams — Bean as a Teams bot (1:1 or group chat)
 
-Local Node server that lets a Teams group chat @mention Bean. Chat goes through
+Local Node server that lets you chat with Bean in a Teams 1:1 chat or @mention it in a
+group. Chat goes through
 `converse()`; delegate runs (headless `claude`/`opencode`) are confirm-first via an
 Adaptive Card and execute on THIS machine. Design: `docs/superpowers/specs/2026-07-10-teams-bot-design.md`.
 

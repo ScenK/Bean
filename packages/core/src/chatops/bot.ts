@@ -61,6 +61,12 @@ export interface BotEffects {
   post: (text: string) => Promise<void>;
   /** Ambient channel messages (not addressed to Bean) since the given epoch ms, oldest first. */
   fetchRecent?: (sinceMs: number) => Promise<AmbientMessage[]>;
+  /** Post a plain-text message and return its id; edit it in place. The live-session stream
+   * sink uses these. Optional: surfaces that omit them fall back to postCard/updateCard with
+   * `{content}` (correct on Discord, whose postCard takes plain message options — but NOT on
+   * Teams, where postCard is adaptive-card-only, so Teams must supply real text effects here). */
+  postStream?: (text: string) => Promise<string>;
+  editStream?: (id: string, text: string) => Promise<void>;
 }
 
 export interface TeamsBotDeps {
@@ -181,10 +187,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const updateTo = async (card: object): Promise<void> => {
       if (p.cardActivityId !== undefined) await fx.updateCard(p.cardActivityId, card);
     };
-    // Plain-text stream messages ride the card channel: postCard({content}) / updateCard(id, {content}).
+    // Plain-text stream messages: prefer the surface's real text path (postStream/editStream);
+    // fall back to the card channel where {content} already IS a plain message (Discord).
     const sink: LiveSessionSink = {
-      post: (text) => fx.postCard({ content: text }),
-      edit: (id, text) => fx.updateCard(id, { content: text }),
+      post: fx.postStream ?? ((text) => fx.postCard({ content: text })),
+      edit: fx.editStream ?? ((id, text) => fx.updateCard(id, { content: text })),
     };
     // A picked skill's body frames the opening turn (composePrompt = body + "## Task" + text).
     const skill = p.proposal.skillName
