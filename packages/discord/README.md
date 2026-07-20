@@ -1,4 +1,4 @@
-# @bean/discord — Bean in your DMs and personal server (POC)
+# @bean/discord — Bean in your DMs and personal server
 
 Personal single-user Discord adapter over the same chatops brain as `@bean/teams`
 (`packages/core/src/chatops/`). Gateway (outbound WebSocket) — no tunnel, no public
