@@ -1,7 +1,9 @@
 import { app } from "electron";
 import { execFile as execFileCb } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp as mkdtempCb, writeFile as writeFileCb, rename as renameCb, rm as rmCb, cp as cpCb } from "node:fs/promises";
+import { mkdtemp as mkdtempCb, writeFile as writeFileCb } from "node:fs/promises";
+import * as nodeFsPromises from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +14,20 @@ import {
 
 const execFile = promisify(execFileCb);
 const REPO = "ScenK/Bean";
+
+// Electron's main process patches `fs` so `*.asar` paths behave like read-only directories.
+// A recursive rm/cp over an app bundle then walks INTO app.asar, fails on its virtual
+// entries, and leaves a Bean.app.old skeleton behind (Contents/Resources/app.asar was
+// undeletable). `original-fs` is Electron's unpatched fs — use it for every whole-bundle
+// operation; fall back to plain node:fs when not running under Electron (unit tests).
+function bundleFs(): Pick<typeof nodeFsPromises, "rename" | "rm" | "cp"> {
+  try {
+    return (createRequire(import.meta.url)("original-fs") as typeof import("node:fs")).promises;
+  } catch {
+    return nodeFsPromises;
+  }
+}
+const bfs = bundleFs();
 
 export async function fetchLatestRelease(fetchImpl: typeof fetch = fetch): Promise<GithubReleaseInfo> {
   const res = await fetchImpl(`https://api.github.com/repos/${REPO}/releases/latest`);
@@ -78,9 +94,9 @@ export interface InstallDeps {
  * install path is never left without an app bundle. */
 export async function installAndRelaunch(extractedAppPath: string, deps: InstallDeps = {}): Promise<void> {
   const currentAppPath = deps.currentAppPath ?? currentAppBundlePath();
-  const rename = deps.rename ?? ((from, to) => renameCb(from, to));
-  const copyRecursive = deps.copyRecursive ?? ((from, to) => cpCb(from, to, { recursive: true }));
-  const rm = deps.rm ?? ((p) => rmCb(p, { recursive: true, force: true }));
+  const rename = deps.rename ?? ((from, to) => bfs.rename(from, to));
+  const copyRecursive = deps.copyRecursive ?? ((from, to) => bfs.cp(from, to, { recursive: true }));
+  const rm = deps.rm ?? ((p) => bfs.rm(p, { recursive: true, force: true }));
   const relaunch = deps.relaunch ?? (() => app.relaunch());
   const exit = deps.exit ?? (() => app.exit());
 
@@ -140,7 +156,7 @@ export interface CleanupDeps {
  * not-yet-installed update is superseded by a newer check, so repeated "Check for Updates"
  * clicks don't silently accumulate ~125MB of orphaned /tmp directories. Never throws. */
 export async function cleanupExtractedBundle(extractedAppPath: string, deps: CleanupDeps = {}): Promise<void> {
-  const rm = deps.rm ?? ((p) => rmCb(p, { recursive: true, force: true }));
+  const rm = deps.rm ?? ((p) => bfs.rm(p, { recursive: true, force: true }));
   await rm(dirname(extractedAppPath)).catch(() => {});
 }
 
