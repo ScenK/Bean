@@ -24,6 +24,7 @@
 - [safety-memory-append-vs-replace.md](safety-memory-append-vs-replace.md) — `saveMemories` (whole-list replace) still loses a concurrent writer's addition even on SQLite — that race is at the JS read-modify-write level, not the storage engine. New-fact-adding call sites must use insert-only `appendMemories`, not `listMemories`+`saveMemories`.
 - [safety-chatops-servers-must-die-with-the-app.md](safety-chatops-servers-must-die-with-the-app.md) — spawned Discord/Teams servers outlive the app as launchd orphans and keep serving stale code (three once accumulated; the oldest owned port 3978 and made a merged change look unshipped). `before-quit`→`stopAll()`, each server's `exitWhenOrphaned()` watchdog, and Teams' EADDRINUSE exit are all required. Debug with `lsof -iTCP:3978`/`ps -o lstart` before suspecting the code.
 - [safety-mac-adhoc-signing.md](safety-mac-adhoc-signing.md) — `packages/app`'s electron-builder `afterSign` hook ad-hoc codesigns `Bean.app` so the packaged arm64 binary is executable and Gatekeeper shows Open/Cancel instead of the unsigned "damaged, Move to Trash only" dialog; does not replace notarization.
+- [safety-release-attach-must-retry.md](safety-release-attach-must-retry.md) — `mac-installer.yml`'s "Attach to release" step must stay retrying + idempotent; v0.20.0/v0.20.1 both failed there on a transient GitHub API 503 after a fully successful build. Don't collapse it back to a single bare `gh release create`.
 
 ## convention — how we do things here
 
