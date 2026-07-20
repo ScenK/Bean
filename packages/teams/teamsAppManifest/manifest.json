@@ -1,7 +1,7 @@
 {
   "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "id": "1ba7fc48-d369-4d8a-b643-94c56555faee",
   "packageName": "com.bean.teamsbot",
   "developer": {
@@ -12,11 +12,11 @@
   },
   "name": {
     "short": "Bean",
-    "full": "Bean Desktop Pet Bot"
+    "full": "Bean — Digital Team Assistant"
   },
   "description": {
-    "short": "Chat with Bean in a Teams group.",
-    "full": "Local POC bot that lets a Teams group chat @mention Bean, propose delegate runs via Adaptive Cards, and stream results back to the thread."
+    "short": "Bean, your team's digital assistant.",
+    "full": "Bean is a digital team member that works alongside you in Microsoft Teams — message it directly in a 1:1 chat or @mention it in a group. Like a capable secretary, Bean handles requests conversationally, proposes and runs delegated tasks with confirm-first Adaptive Cards, and reports the results back to the thread."
   },
   "icons": {
     "color": "color.png",
@@ -26,7 +26,7 @@
   "bots": [
     {
       "botId": "<APP_ID>",
-      "scopes": ["groupChat", "team"],
+      "scopes": ["personal", "groupChat", "team"],
       "supportsFiles": false,
       "isNotificationOnly": false
     }

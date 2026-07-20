@@ -30,6 +30,12 @@ Bean has two chat adapters over one shared brain:
   User-Assigned Managed Identity (the portal's other option) is not viable here — it only
   issues credentials to workloads running on Azure compute, and this bot runs on the
   owner's Mac behind a dev tunnel.
+- **Bot scopes**: `teamsAppManifest/manifest.json` `bots[0].scopes` is
+  `["personal", "groupChat", "team"]`. `personal` is what makes 1:1 chats work — without it
+  Teams never installs into / delivers a direct message, even though the *code* has always
+  handled personal (`addressedToBot` returns true for `conversationType === "personal"`, and
+  the outbox DMs personal conversations). The blocker was purely the manifest scope; don't
+  drop `personal` back to group-only.
 - **Ambient channel history**: when mentioned, the bot injects recent non-mention channel
   messages as one synthetic user-role history turn (`BotEffects.fetchRecent`, fixed
   15-min/50-msg window, `chatops/ambient.ts`). Discord fetches on demand via
