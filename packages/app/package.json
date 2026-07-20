@@ -1,6 +1,6 @@
 {
   "name": "@bean/app",
-  "version": "0.20.0",
+  "version": "0.20.2",
   "description": "A desktop companion that chats, remembers, and — with your confirmation — gets things done.",
   "author": "Scen.K",
   "type": "module",
