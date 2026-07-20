@@ -44,4 +44,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
-          gh release create "${GITHUB_REF_NAME}" packages/app/release/*.dmg packages/app/release/*.zip packages/app/release/*.zip.sig --generate-notes
+          assets=(packages/app/release/*.dmg packages/app/release/*.zip packages/app/release/*.zip.sig)
+
+          # GitHub's API intermittently returns 5xx (v0.20.0/v0.20.1 both died here
+          # on a transient HTTP 503 after a fully successful build). Retry with
+          # backoff so a blip doesn't discard an otherwise-complete release, and stay
+          # idempotent: if a prior attempt already made the release, upload into it.
+          attempt=1
+          max=5
+          until [ "$attempt" -gt "$max" ]; do
+            if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+              gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber && exit 0
+            else
+              gh release create "${GITHUB_REF_NAME}" "${assets[@]}" --generate-notes && exit 0
+            fi
+            echo "Attach-to-release attempt ${attempt}/${max} failed; retrying in $((attempt * 10))s..." >&2
+            sleep "$((attempt * 10))"
+            attempt=$((attempt + 1))
+          done
+          echo "::error::Failed to attach release ${GITHUB_REF_NAME} after ${max} attempts" >&2
+          exit 1
