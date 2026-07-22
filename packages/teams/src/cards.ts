@@ -277,17 +277,53 @@ export function consolidationResultCard(input: ConsolidationResultCardInput): ob
   };
 }
 
+// Input ids (projectPath/model/skillName/cli/steering/instruction) come back merged into the
+// Start Action.Submit data — the Teams-native counterpart to Discord's per-select interactions.
 export function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
-  return {
-    type: "AdaptiveCard", version: "1.4",
-    body: [
-      { type: "TextBlock", text: "Bean proposes a live agent session", weight: "Bolder" },
-      { type: "TextBlock", text: input.instruction, wrap: true },
-      { type: "TextBlock", text: `Project: ${input.projectName}${input.model ? ` · Model: ${input.model}` : ""}`, isSubtle: true },
+  const steering = input.steering ?? "restricted";
+  const body: object[] = [
+    { type: "TextBlock", text: "Bean proposes a live agent session", weight: "Bolder" },
+    { type: "Input.Text", id: "instruction", label: "Prompt", isMultiline: true, value: input.instruction },
+    {
+      type: "Input.ChoiceSet", id: "projectPath", label: "Project", value: input.projectName,
+      // value must be the path (what start-live applies); default to the named project's path.
+      choices: input.projects.map((p) => ({ title: p.name, value: p.path })),
+    },
+  ];
+  const named = input.projects.find((p) => p.name === input.projectName);
+  if (named) (body[2] as { value: string }).value = named.path;
+  if (input.skills.length > 0) {
+    body.push({
+      type: "Input.ChoiceSet", id: "skillName", label: "Skill (optional)", value: input.skillName ?? "__none__",
+      choices: [{ title: "— no skill —", value: "__none__" }, ...input.skills.map((s) => ({ title: s.name, value: s.name }))],
+    });
+  }
+  if (input.clis.length > 0) {
+    body.push({
+      type: "Input.ChoiceSet", id: "cli", label: "CLI", value: input.clis[0],
+      choices: input.clis.map((c) => ({ title: c, value: c })),
+    });
+  }
+  if (input.models.length > 0) {
+    body.push({
+      type: "Input.ChoiceSet", id: "model", label: "Model (optional)", ...(input.model ? { value: input.model } : {}),
+      choices: input.models.map((m) => ({ title: m.label, value: m.id })),
+    });
+  }
+  body.push({
+    type: "Input.ChoiceSet", id: "steering", label: "Who can steer", value: steering,
+    choices: [
+      { title: "Restricted (only you + co-drivers)", value: "restricted" },
+      { title: "War-room (anyone in this chat)", value: "open" },
     ],
+  });
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard", version: "1.4",
+    body,
     actions: [
-      { type: "Action.Submit", title: "Start session", data: { beanAction: "start-live", proposalId: input.proposalId } },
-      { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-live", proposalId: input.proposalId } },
+      { type: "Action.Submit", title: "Start session", style: "positive", data: { beanAction: "start-live", proposalId: input.proposalId } },
+      { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-live", proposalId: input.proposalId }, associatedInputs: "none" },
     ],
   };
 }

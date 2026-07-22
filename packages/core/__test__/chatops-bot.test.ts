@@ -976,6 +976,31 @@ test("start-live composes the picked skill's body into the opening prompt", asyn
   expect(prompts[0]).toContain("check the login flow");
 });
 
+test("start-live applies on-card selections carried in the submit value (Teams path)", async () => {
+  const reqs: LiveSessionRequest[] = [];
+  const startFn = (req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => {
+    reqs.push(req);
+    return { pid: 1, send: () => {}, stop: () => cbs.onExit(undefined) };
+  };
+  const { deps } = makeDeps({
+    liveSessionsEnabled: () => true,
+    loadSkills: async () => [{ name: "review", description: "d", body: "REVIEW SKILL BODY", enabled: true }],
+    liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+  });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.proposeLiveSession({ conversationId: "c1", instruction: "original", proposedBy: "sam" }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  await bot.onCardAction({
+    conversationId: "c1", fromName: "sam",
+    value: { beanAction: "start-live", proposalId, instruction: "edited prompt", model: "opus", skillName: "review", steering: "open" },
+  }, effects);
+  expect(reqs).toHaveLength(1);
+  expect(reqs[0]?.model).toBe("opus");
+  expect(reqs[0]?.prompt).toContain("REVIEW SKILL BODY");
+  expect(reqs[0]?.prompt).toContain("edited prompt");
+});
+
 test("literal /live-session message routes verbatim, never touching converse", async () => {
   const chatSpy = vi.fn(async () => ({ content: "SHOULD NOT BE CALLED", toolCalls: [] }));
   const { deps } = makeDeps({ chat: chatSpy, liveSessionsEnabled: () => true });

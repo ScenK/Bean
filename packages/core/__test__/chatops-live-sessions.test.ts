@@ -30,11 +30,13 @@ function fakeStart() {
 function fakeSink() {
   const posts: string[] = [];
   const edits: [string, string][] = [];
+  let typings = 0;
   const sink: LiveSessionSink = {
     post: async (text) => { posts.push(text); return `msg-${posts.length}`; },
     edit: async (id, text) => { edits.push([id, text]); },
+    typing: () => { typings++; },
   };
-  return { sink, posts, edits };
+  return { sink, posts, edits, typingCount: () => typings };
 }
 
 beforeEach(() => vi.useFakeTimers());
@@ -52,6 +54,22 @@ describe("LiveSessionRegistry", () => {
     expect(reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink })).toBe(true);
     expect(reg.has("c")).toBe(true);
     expect(reg.start({ channelId: "c", projectPath: "/p", instruction: "again", sink })).toBe(false);
+  });
+
+  it("pings typing on turn start and repeats it until the turn completes", async () => {
+    const f = fakeStart();
+    const reg = new LiveSessionRegistry(f.startFn as never, { dir: tmp() });
+    const { sink, typingCount } = fakeSink();
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink });
+    expect(typingCount()).toBe(1); // opening turn
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(typingCount()).toBe(2); // re-ping while the turn is still in flight
+    f.cbs().onTurnComplete({ result: "done" });
+    const after = typingCount();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(typingCount()).toBe(after); // stopped once the turn finished
+    reg.send("c", "next"); // a new turn re-lights it
+    expect(typingCount()).toBe(after + 1);
   });
 
   it("open mode lets anyone steer; restricted gates to starter + co-drivers", () => {
