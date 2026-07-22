@@ -51,7 +51,7 @@ export interface CardAction {
    * the live-session start path uses it as the session owner. */
   fromId?: string;
   fromName: string;
-  value: { beanAction?: string; proposalId?: string; projectPath?: string; cli?: string; model?: string; memoryPicks?: string[] };
+  value: { beanAction?: string; proposalId?: string; projectPath?: string; cli?: string; model?: string; memoryPicks?: string[]; skillName?: string; steering?: string; instruction?: string };
 }
 
 export interface BotEffects {
@@ -67,6 +67,9 @@ export interface BotEffects {
    * Teams, where postCard is adaptive-card-only, so Teams must supply real text effects here). */
   postStream?: (text: string) => Promise<string>;
   editStream?: (id: string, text: string) => Promise<void>;
+  /** Fire a one-shot "typing…" indicator. The live-session sink pings this repeatedly while a
+   * turn runs so the surface shows Bean working during the agent's think/stream gap. Optional. */
+  sendTyping?: () => void;
 }
 
 export interface TeamsBotDeps {
@@ -192,6 +195,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const sink: LiveSessionSink = {
       post: fx.postStream ?? ((text) => fx.postCard({ content: text })),
       edit: fx.editStream ?? ((id, text) => fx.updateCard(id, { content: text })),
+      typing: fx.sendTyping,
     };
     // A picked skill's body frames the opening turn (composePrompt = body + "## Task" + text).
     const skill = p.proposal.skillName
@@ -721,6 +725,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           await fx.post("Live sessions are disabled — this session wasn't started.");
           return;
         }
+        // On-card selections. Teams merges its ChoiceSet/Input values into the Start submit;
+        // Discord already applied them live via per-select updates, so its value omits these
+        // (each guard is a no-op when the field is absent).
+        const v = action.value;
+        if (v.projectPath) pending.proposal.projectPath = v.projectPath;
+        if (v.instruction) pending.proposal.instruction = v.instruction;
+        if (v.model !== undefined) pending.proposal.model = v.model || undefined;
+        if (v.skillName !== undefined) pending.proposal.skillName = v.skillName === "__none__" ? undefined : (v.skillName || undefined);
+        if (v.steering === "open" || v.steering === "restricted") pending.proposal.steering = v.steering;
         await startLiveSessionAction(pending, action.fromName, action.fromId ?? "", fx);
         return;
       }

@@ -186,6 +186,11 @@ function effectsFor(context: TurnContext): BotEffects {
         } as Partial<Activity> as Activity);
       });
     },
+    // Live-session turn indicator: fire-and-forget proactive Typing (turns stream in after the
+    // triggering turn's context is dead, same reason as postStream). The registry re-pings it.
+    sendTyping: () => {
+      void proactive(async (ctx) => { await ctx.sendActivity({ type: ActivityTypes.Typing }); });
+    },
     updateCard: async (activityId, card) => {
       await proactive(async (ctx) => {
         await ctx.updateActivity({
@@ -219,6 +224,7 @@ app.post("/api/messages", (req, res) => {
           value: {
             beanAction: value.beanAction, proposalId: value.proposalId, projectPath: value.projectPath,
             cli: value.cli, model: value.model, memoryPicks,
+            skillName: value.skillName, steering: value.steering, instruction: value.instruction,
           },
         },
         fx,

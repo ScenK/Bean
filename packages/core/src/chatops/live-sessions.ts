@@ -10,6 +10,10 @@ import { reserveRun, releaseRun, updateReservationPid } from "../run-queue.js";
 export interface LiveSessionSink {
   post: (text: string) => Promise<string>;
   edit: (id: string, text: string) => Promise<void>;
+  /** Optional "typing…" ping. The registry calls it when a turn begins and repeats it on an
+   * interval until that turn completes — so the surface shows a live indicator during the
+   * agent's think/stream gap. Surfaces that omit it simply get no indicator. */
+  typing?: () => void;
 }
 
 /** Who may steer an active session:
@@ -44,6 +48,9 @@ type StartFn = (
 // Headroom under Discord's 2000-char message cap (embeds/formatting stay clear of the edge).
 const MSG_LIMIT = 1900;
 const DEFAULT_THROTTLE_MS = 1500;
+// A surface typing indicator (Teams' lasts only a few seconds) needs re-pinging to stay lit
+// across a long agent turn.
+const TYPING_PING_MS = 4000;
 
 function turnFooter(s: TurnSummary): string {
   const parts: string[] = [];
@@ -72,6 +79,8 @@ interface ActiveSession {
   inFlight?: Promise<void>;
   /** Set on turn completion: after the next successful flush, reset for a fresh message. */
   closeAfterFlush: boolean;
+  /** Repeats sink.typing() while a turn is in flight; cleared on turn complete / teardown. */
+  typingTimer?: ReturnType<typeof setInterval>;
   onEnded?: (notice: string) => void;
 }
 
@@ -166,6 +175,7 @@ export class LiveSessionRegistry {
           s.dirty = true;
         },
         onTurnComplete: (summary) => {
+          this.stopTyping(s);
           input.onTurnResult?.(summary.result);
           s.buf += (s.buf ? "\n" : "") + turnFooter(summary);
           s.dirty = true;
@@ -182,11 +192,29 @@ export class LiveSessionRegistry {
     if (typeof s.handle.pid === "number") {
       updateReservationPid(this.opts.dir, input.projectPath, s.handle.pid);
     }
+    this.startTyping(s); // the opening instruction is already in flight
     return true;
   }
 
+  // Lit while a turn runs (start / send) until onTurnComplete or teardown clears it.
+  private startTyping(s: ActiveSession): void {
+    if (!s.sink.typing || s.typingTimer) return;
+    s.sink.typing();
+    s.typingTimer = setInterval(() => s.sink.typing?.(), TYPING_PING_MS);
+  }
+
+  private stopTyping(s: ActiveSession): void {
+    if (s.typingTimer) {
+      clearInterval(s.typingTimer);
+      s.typingTimer = undefined;
+    }
+  }
+
   send(channelId: string, text: string): void {
-    this.byChannel.get(channelId)?.handle.send(text);
+    const s = this.byChannel.get(channelId);
+    if (!s) return;
+    s.handle.send(text);
+    this.startTyping(s);
   }
 
   stop(channelId: string): boolean {
@@ -226,6 +254,7 @@ export class LiveSessionRegistry {
     const s = this.byChannel.get(channelId);
     if (!s) return;
     clearInterval(s.timer);
+    this.stopTyping(s);
     this.byChannel.delete(channelId);
     // Safe to release here (not in forceKillAll — see its doc comment): teardown only ever
     // runs from onExit, i.e. once the child has actually confirmed dead, same as
