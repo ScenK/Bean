@@ -819,6 +819,21 @@ test("'Cancel' message cancels active runs without calling converse", async () =
   expect(chatSpy).not.toHaveBeenCalled();
 });
 
+test("'/cancel' works too — Teams has no slash-command infra, so the slash arrives as plain text", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const chatSpy = vi.fn(deps.chat);
+  const deps2 = { ...deps, chat: chatSpy };
+  const effects = fx();
+  const id = await proposeThenGetId(deps2, effects);
+  const bot = buildTeamsBot(deps2);
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id } }, effects);
+  expect(delegateCalls).toHaveLength(1);
+  chatSpy.mockClear();
+  await bot.onMessage({ ...msg, text: "/cancel" }, effects);
+  expect(effects.posted).toContain("Cancelled 1 run(s).");
+  expect(chatSpy).not.toHaveBeenCalled();
+});
+
 test("proposedSkill posts a skill proposal card and stores the pending draft", async () => {
   const { deps } = makeDeps({
     converseResult: { reply: "Drafted.", proposedSkill: { name: "changelog", body: "# C", updating: false } },
@@ -1048,6 +1063,13 @@ test("channel messages route to an active session instead of converse, and stop 
   expect(chatCalls()).toBe(0); // converse never invoked
   await bot.onMessage({ conversationId: "c1", text: "stop", fromId: "u", fromName: "sam" }, effects);
   expect(deps.liveSessions.has("c1")).toBe(false);
+});
+
+test("/stop ends a live session too (Teams has no slash-command infra, so it arrives as plain text)", async () => {
+  const { bot, fx: effects, deps, chatCalls } = makeBotWithActiveLiveSession("c1");
+  await bot.onMessage({ conversationId: "c1", text: "/stop", fromId: "u", fromName: "sam" }, effects);
+  expect(deps.liveSessions.has("c1")).toBe(false);
+  expect(chatCalls()).toBe(0); // "/stop" ended it — never sent to the agent as a turn
 });
 
 test("capturing a live-session message advances the ambient cutoff, so it isn't replayed after the session ends", async () => {
