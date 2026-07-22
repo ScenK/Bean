@@ -465,6 +465,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
 
     async onMessage(msg: IncomingMessage, fx: BotEffects): Promise<void> {
       try {
+        // Keyword commands (stop/drivers/cancel/new) accept an optional leading slash: Discord
+        // exposes them as real `/stop`-style slash commands, so users carry the slash habit to
+        // Teams — which has no slash-command infra, leaving these to arrive as plain text that
+        // must still match. `cmd` is the surface-agnostic normalized form used by every keyword
+        // check below (the `/live-session` regex does its own optional-slash match).
+        const cmd = msg.text.trim().toLowerCase().replace(/^\/+/, "");
         if (deps.liveSessions.has(msg.conversationId)) {
           // Fence this message out of a later ambient replay: fetchRecent's 15-min window is
           // keyed off this same cutoff, so without advancing it here, the next addressed
@@ -495,12 +501,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           // Bystanders in restricted mode: kept out of the agent, but their message is still
           // fenced from ambient replay above so it can't leak back in after the session ends.
           if (!deps.liveSessions.canSteer(conv, msg.fromId)) return;
-          if (lower === "drivers") {
+          if (cmd === "drivers") {
             const co = deps.liveSessions.coDrivers(conv);
             await fx.reply(co.length === 0 ? "No co-drivers yet." : `Co-drivers: ${co.length}.`);
             return;
           }
-          if (lower === "stop") {
+          if (cmd === "stop") {
             deps.liveSessions.stop(conv);
             return; // the registry's onEnded posts the end notice
           }
@@ -508,12 +514,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps.liveSessions.send(conv, msg.text);
           return;
         }
-        if (msg.text.trim().toLowerCase() === "cancel") {
+        if (cmd === "cancel") {
           const n = deps.runs.cancelAll();
           await fx.reply(n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.");
           return;
         }
-        if (msg.text.trim().toLowerCase() === "/new") {
+        if (cmd === "new") {
           deps.conversations.clear(msg.conversationId);
           // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
           deps.conversations.setAmbientCutoff(msg.conversationId, Date.now());
