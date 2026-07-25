@@ -6,3 +6,7 @@ allowBuilds:
 onlyBuiltDependencies:
   - esbuild
   - electron
+# Supply-chain cooldown: refuse lockfile entries published less than 24h ago.
+# This is pnpm 11's default, pinned here so it's discoverable and so the
+# dependabot `cooldown` in .github/dependabot.yml can be kept in step with it.
+minimumReleaseAge: 1440
