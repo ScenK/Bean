@@ -26,7 +26,17 @@ jobs:
       - name: Sync lockfile for dependabot PRs
         if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
         run: |
-          pnpm install --lockfile-only --no-frozen-lockfile
+          set -o pipefail
+          log="$RUNNER_TEMP/pnpm-sync.log"
+          if ! pnpm install --lockfile-only --no-frozen-lockfile 2>&1 | tee "$log"; then
+            # pnpm's minimumReleaseAge (pnpm-workspace.yaml) refuses versions
+            # published in the last 24h. Nothing to fix in the PR — it just
+            # opened too early — so say so instead of leaving a bare stack.
+            if grep -q ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION "$log"; then
+              echo "::error::This bump is younger than the minimumReleaseAge window in pnpm-workspace.yaml. Re-run this job once the release clears that window; dependabot's cooldown in .github/dependabot.yml should normally hold PRs back until then."
+            fi
+            exit 1
+          fi
           if ! git diff --quiet -- pnpm-lock.yaml; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"

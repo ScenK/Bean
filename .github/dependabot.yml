@@ -9,3 +9,9 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
+    # pnpm's `minimumReleaseAge` (pnpm-workspace.yaml) rejects lockfile entries
+    # younger than 24h, so a PR opened the moment a version ships fails CI and
+    # stays red until someone re-runs it by hand. Wait out that window here —
+    # keep this >= minimumReleaseAge.
+    cooldown:
+      default-days: 2
