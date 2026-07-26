@@ -23,6 +23,7 @@ export * from "./converse.js";
 export * from "./openai-chat.js";
 export * from "./launcher.js";
 export * from "./system-control.js";
+export * from "./image-gen.js";
 export * from "./delegate.js";
 export * from "./drop-plan.js";
 export * from "./updater.js";
