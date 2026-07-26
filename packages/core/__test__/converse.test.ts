@@ -27,6 +27,36 @@ test("plain reply with no tool call yields no proposal", async () => {
   expect(res.proposedRun).toBeUndefined();
 });
 
+test("latest-turn images are sent as content parts on the final user message", async () => {
+  let captured: ConvoMsg[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages }) => { captured = messages; return { content: "a cat", toolCalls: [] }; },
+  };
+  await conv({
+    latestUserText: "what is this?",
+    deps,
+    latestUserImages: [{ data: "AAAA", mimeType: "image/jpeg" }],
+  });
+  expect(captured[captured.length - 1]).toEqual({
+    role: "user",
+    content: [
+      { type: "text", text: "what is this?" },
+      { type: "image", image: { data: "AAAA", mimeType: "image/jpeg" } },
+    ],
+  });
+});
+
+test("no images keeps the final user message a plain string", async () => {
+  let captured: ConvoMsg[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages }) => { captured = messages; return { content: "hi", toolCalls: [] }; },
+  };
+  await conv({ latestUserText: "hello", deps });
+  expect(captured[captured.length - 1]).toEqual({ role: "user", content: "hello" });
+});
+
 test("valid propose_run tool call composes a run from the local skill body", async () => {
   const deps = depsReturning("On it.", [
     { name: "propose_run", args: { skill: "review-code", project: "/work/api", instruction: "review the 3 PRs" } },

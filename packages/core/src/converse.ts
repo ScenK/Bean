@@ -331,6 +331,10 @@ export interface ConverseInput {
   memories: Memory[];
   deps: ConverseDeps;
   droppedUrl?: string;
+  /** Images attached to the LATEST user turn only — history stays text (surfaces store a
+   * "[image attached]" placeholder there). Latest-turn-only by design: caps token cost with
+   * no trimming code; the model's own text description carries follow-up turns. */
+  latestUserImages?: ImageAttachment[];
   actions?: ActionTool[];
   now?: () => Date;
   linkedNote?: LinkedNote;
@@ -354,6 +358,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     memories,
     deps,
     droppedUrl,
+    latestUserImages = [],
     actions = [],
     now = () => new Date(),
     linkedNote,
@@ -397,7 +402,12 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     ...(contextParts.length > 0
       ? [{ role: "system", content: contextParts.join("\n\n") } satisfies ConvoMsg]
       : []),
-    { role: "user", content: latestUserText },
+    {
+      role: "user",
+      content: latestUserImages.length > 0
+        ? [{ type: "text" as const, text: latestUserText }, ...latestUserImages.map((image) => ({ type: "image" as const, image }))]
+        : latestUserText,
+    },
   ];
 
   // No skills means propose_run could never validly fire; project is optional (no-project /
