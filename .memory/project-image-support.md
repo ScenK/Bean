@@ -12,7 +12,11 @@ Spec: `docs/superpowers/specs/2026-07-26-image-support-design.md`.
   `ConverseResult.generatedImages`; surface handlers do (desktop fills `dataUrl`; bots use
   `BotEffects.sendFile` instead — Discord native upload; Teams serves the PNG from its own
   express server and links it via `teams.json`'s `publicBaseUrl` because Teams rejects large
-  inline base64 activities — no `publicBaseUrl` = no `sendFile`, core posts the path).
+  inline base64 activities — no `publicBaseUrl` = no `sendFile` (route not even mounted),
+  core posts the path). The Teams route serves ONLY opaque expiring per-send tokens
+  (`publishImage()`), never filenames — `~/.bean/images` holds every surface's history and
+  must not be enumerable. Live-session-captured channels skip attachment downloads entirely
+  (bridged agent takes text only).
 - **Ingest MIME allowlist**: vision accepts only png/jpeg/gif/webp — every surface filters on
   core's `SUPPORTED_IMAGE_MIMES` (renderer keeps a copy in `chat-types.ts`; it can't import
   core values). A bare `image/*` check lets HEIC/SVG through and fails the turn at the API.

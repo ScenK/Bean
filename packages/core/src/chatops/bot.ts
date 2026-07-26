@@ -570,7 +570,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const imageTool = deps.imageGen
           ? makeGenerateImageTool({
               ...deps.imageGen,
-              onStart: () => { void fx.post("🎨 Working on your image — this can take a minute…"); },
+              // .catch, not void: a rejected progress post (rate limit, transient network)
+              // fires outside onMessage's try — unhandled, it kills the whole bot process.
+              onStart: () => { fx.post("🎨 Working on your image — this can take a minute…").catch(() => {}); },
             })
           : undefined;
         // runAvailable=false: propose_run is never offered here — confirming one couldn't

@@ -158,10 +158,11 @@ client.on("messageCreate", async (message) => {
       message.mentions.repliedUser?.id === client.user?.id;
     if (!addressed && !capturing) return;
     const text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
-    // Image attachments (image/*, ≤10MB) ride along as vision input; an image-only
-    // message still gets a turn.
+    // Image attachments (supported vision formats, ≤10MB) ride along as vision input; an
+    // image-only message still gets a turn. Skipped while a live session captures the
+    // channel — the bridged agent only takes text, so downloading would silently drop them.
     const images: ImageAttachment[] = [];
-    for (const att of message.attachments.values()) {
+    for (const att of capturing ? [] : message.attachments.values()) {
       const mime = att.contentType?.split(";")[0]?.trim() ?? "";
       if (!(SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) || att.size > 10 * 1024 * 1024) continue;
       try {

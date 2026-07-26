@@ -14,6 +14,7 @@ import {
 } from "botbuilder";
 import express from "express";
 import { rateLimit } from "express-rate-limit";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
@@ -243,7 +244,7 @@ function effectsFor(context: TurnContext): BotEffects {
     ...(teamsConfig.publicBaseUrl
       ? {
           sendFile: async (path: string, caption?: string): Promise<void> => {
-            const url = `${teamsConfig.publicBaseUrl}/generated-images/${encodeURIComponent(basename(path))}`;
+            const url = `${teamsConfig.publicBaseUrl}/generated-images/${publishImage(path)}`;
             await proactive(async (ctx) => {
               await ctx.sendActivity({
                 type: ActivityTypes.Message,
@@ -272,15 +273,28 @@ function effectsFor(context: TurnContext): BotEffects {
 
 const app = express();
 app.use(express.json());
-// Serves generate_image output so sendFile can link it by URL (see effectsFor). Name is
-// allowlisted to the timestamped-slug pattern image-gen.ts writes — no traversal, PNGs only.
-// Rate-limited: this is the server's only unauthenticated file-reading route.
-const imageRouteLimiter = rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false });
-app.get("/generated-images/:name", imageRouteLimiter, (req, res) => {
-  const name = String(req.params.name ?? "");
-  if (!/^[A-Za-z0-9._-]+\.png$/.test(name) || name.includes("..")) { res.status(400).end(); return; }
-  res.sendFile(join(imagesDir(dir), name), (err) => { if (err) res.status(404).end(); });
-});
+// Serves generate_image output so sendFile can link it by URL (see effectsFor). Files are
+// exposed only via opaque, expiring, per-send capability tokens — never by filename — so the
+// route can't be used to enumerate ~/.bean/images (which also holds desktop/Discord output).
+// Mounted only when publicBaseUrl is set (without it nothing ever links here).
+const IMAGE_TOKEN_TTL_MS = 60 * 60_000;
+const publishedImages = new Map<string, { path: string; expiresAt: number }>();
+function publishImage(path: string): string {
+  // Opportunistic prune so long-lived servers don't accumulate dead tokens.
+  for (const [t, e] of publishedImages) { if (e.expiresAt < Date.now()) publishedImages.delete(t); }
+  const token = randomUUID();
+  publishedImages.set(token, { path, expiresAt: Date.now() + IMAGE_TOKEN_TTL_MS });
+  return token;
+}
+if (teamsConfig.publicBaseUrl) {
+  // Rate-limited: the server's only unauthenticated file-reading route.
+  const imageRouteLimiter = rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false });
+  app.get("/generated-images/:token", imageRouteLimiter, (req, res) => {
+    const entry = publishedImages.get(String(req.params.token ?? ""));
+    if (!entry || entry.expiresAt < Date.now()) { res.status(404).end(); return; }
+    res.sendFile(entry.path, (err) => { if (err) res.status(404).end(); });
+  });
+}
 app.post("/api/messages", (req, res) => {
   void adapter.process(req, res, async (context) => {
     const a = context.activity;
@@ -317,8 +331,9 @@ app.post("/api/messages", (req, res) => {
       return;
     }
     // Downloaded only after the addressing gate: ambient channel images must not cost
-    // token-authenticated fetches for messages Bean immediately discards.
-    const images = await downloadImages(a);
+    // token-authenticated fetches for messages Bean immediately discards. Also skipped
+    // while a live session captures the conversation — the bridged agent only takes text.
+    const images = capturing ? [] : await downloadImages(a);
     // An image-only message still gets a turn; pure empty messages stay ignored.
     if (!text && images.length === 0) return;
     fx.fetchRecent = async (sinceMs) => ambient.since(a.conversation.id, sinceMs);
