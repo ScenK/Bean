@@ -57,6 +57,18 @@ describe("makeOpenAIImageGenWithClient", () => {
     expect(await generate({ model: "m", prompt: "p" })).toEqual({ b64: "QUJD" });
   });
 
+  it("requests b64_json only for dall-e models (gpt-image rejects the param)", async () => {
+    const formats: Array<string | undefined> = [];
+    const generate = makeOpenAIImageGenWithClient({
+      images: {
+        generate: async (a) => { formats.push(a.response_format); return { data: [{ b64_json: "QUJD" }] }; },
+      },
+    });
+    await generate({ model: "dall-e-3", prompt: "p" });
+    await generate({ model: "gpt-image-2", prompt: "p" });
+    expect(formats).toEqual(["b64_json", undefined]);
+  });
+
   it("throws when the API returns no image data", async () => {
     const generate = makeOpenAIImageGenWithClient({ images: { generate: async () => ({}) } });
     await expect(generate({ model: "m", prompt: "p" })).rejects.toThrow(/no image data/);

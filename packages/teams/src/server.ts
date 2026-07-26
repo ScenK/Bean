@@ -118,8 +118,31 @@ const bot = buildTeamsBot({
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
 });
 
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** Buffer a response body up to MAX_IMAGE_BYTES; null when the cap is exceeded. Enforced
+ * while streaming so an oversized attachment never materializes fully in memory. */
+async function readCapped(res: Response): Promise<Buffer | null> {
+  const advertised = Number(res.headers.get("content-length") ?? 0);
+  if (advertised > MAX_IMAGE_BYTES) { await res.body?.cancel(); return null; }
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const reader = res.body?.getReader();
+  if (!reader) return Buffer.from(await res.arrayBuffer());
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_IMAGE_BYTES) { await reader.cancel(); return null; }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
+
 /** Teams inline images arrive as image/* attachments whose contentUrl sits on the SMBA
- * endpoint and requires the bot's own bearer token — a plain fetch gets a 401. */
+ * endpoint and requires the bot's own bearer token — a plain fetch gets a 401.
+ * Only call for messages that actually get a turn (addressed/captured) — ambient chatter
+ * must stay context-only, no downloads. */
 async function downloadImages(a: Activity): Promise<ImageAttachment[]> {
   const out: ImageAttachment[] = [];
   for (const att of a.attachments ?? []) {
@@ -131,8 +154,8 @@ async function downloadImages(a: Activity): Promise<ImageAttachment[]> {
       const token = await (creds as unknown as { getToken: () => Promise<string> }).getToken();
       const res = await fetch(att.contentUrl, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) { console.error(`teams attachment download failed: ${res.status}`); continue; }
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.byteLength > 10 * 1024 * 1024) continue;
+      const buf = await readCapped(res);
+      if (!buf) continue; // over the 10MB cap
       out.push({ data: buf.toString("base64"), mimeType: att.contentType });
     } catch (err) {
       console.error("teams attachment download failed:", err);
@@ -267,9 +290,6 @@ app.post("/api/messages", (req, res) => {
       return;
     }
     const text = TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "";
-    const images = await downloadImages(a);
-    // An image-only message still gets a turn; pure empty messages stay ignored.
-    if (!text && images.length === 0) return;
     // A live session bound to this conversation is its own authorization boundary: forward every
     // message (mention or not) so allowed drivers can steer/stop it — core's onMessage decides
     // who may. Mirrors the Discord surface's `capturing` bypass.
@@ -279,6 +299,11 @@ app.post("/api/messages", (req, res) => {
       if (text) ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
       return;
     }
+    // Downloaded only after the addressing gate: ambient channel images must not cost
+    // token-authenticated fetches for messages Bean immediately discards.
+    const images = await downloadImages(a);
+    // An image-only message still gets a turn; pure empty messages stay ignored.
+    if (!text && images.length === 0) return;
     fx.fetchRecent = async (sinceMs) => ambient.since(a.conversation.id, sinceMs);
     await context.sendActivity({ type: ActivityTypes.Typing });
     // Teams clears the typing indicator quickly; resend while onMessage is still working.

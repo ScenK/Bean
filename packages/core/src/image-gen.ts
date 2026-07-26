@@ -53,12 +53,17 @@ export function makeGenerateImageTool(deps: ImageGenDeps): { tool: ActionTool; p
 }
 
 interface ImageClient {
-  images: { generate: (a: { model: string; prompt: string }) => Promise<{ data?: Array<{ b64_json?: string }> }> };
+  images: { generate: (a: { model: string; prompt: string; response_format?: "b64_json" }) => Promise<{ data?: Array<{ b64_json?: string }> }> };
 }
 
 export function makeOpenAIImageGenWithClient(client: ImageClient): ImageGenDeps["generate"] {
   return async ({ model, prompt }) => {
-    const res = await client.images.generate({ model, prompt });
+    // gpt-image-* always returns b64 and rejects response_format; dall-e-* defaults to a URL,
+    // so it must be asked for b64 explicitly or generation "succeeds" with no data for us.
+    const res = await client.images.generate({
+      model, prompt,
+      ...(model.startsWith("dall-e") ? { response_format: "b64_json" as const } : {}),
+    });
     const b64 = res.data?.[0]?.b64_json;
     if (!b64) throw new Error("Images API returned no image data");
     return { b64 };
