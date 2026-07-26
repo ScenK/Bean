@@ -66,6 +66,8 @@ export interface BeanConfig {
   editorApp: string; // "" = no editor configured — "Open in Editor" prompts the user to set one
   delegateCli: string; // "" = auto: first enabled CLI; else "claude"/"opencode"/"codex"
   systemControls: boolean; // opt-in: expose the system_control tool (volume/media/app) to chat
+  imageModel: string; // Images API model for generate_image; no Settings UI — edit config.json
+
   /** Opt-in for chat-launched live coding-agent sessions (spec: live-sessions). */
   liveSessions: boolean;
   /** Detected CLIs the user has switched off — a denylist so a newly installed CLI is
