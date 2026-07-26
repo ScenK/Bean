@@ -82,6 +82,11 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
 
   const spawnBot = (bot: ChatopsBot): void => {
     if (procs.has(bot)) return;
+    // Record the intent before anything can fail. A missing dist is a build problem, not a
+    // decision — and if the in-memory set disagreed with the persisted file, the UI would offer
+    // Start for a bot that is already in chatops-enabled.json, leaving no way to clear it: the
+    // failing autostart would repeat every boot with Stop permanently out of reach.
+    enable(bot);
     const entry = join(deps.repoRoot, serverEntries[bot]);
     if (!exists(entry)) {
       liveness[bot] = { running: false, error: `Not built — run "pnpm --filter @bean/${bot} build" first.` };
@@ -97,7 +102,6 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     child.stderr?.on("data", (chunk) => { lastErr = chunk.toString().trim() || lastErr; });
     procs.set(bot, child);
     liveness[bot] = { running: true };
-    enable(bot);
     emit(bot);
     child.on("exit", (code, signal) => {
       procs.delete(bot);

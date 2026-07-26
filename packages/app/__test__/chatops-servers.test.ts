@@ -90,7 +90,7 @@ describe("createChatopsServers", () => {
       repoRoot: "/repo", resolvedPath: "/usr/bin", send: (e) => sent.push(e), existsFn: () => false,
     });
     servers.start("teams");
-    expect(sent).toEqual([{ bot: "teams", running: false, enabled: false, error: 'Not built — run "pnpm --filter @bean/teams build" first.' }]);
+    expect(sent).toEqual([{ bot: "teams", running: false, enabled: true, error: 'Not built — run "pnpm --filter @bean/teams build" first.' }]);
   });
 
   it("exit with a non-zero code surfaces the last stderr line as the error", () => {
@@ -158,10 +158,16 @@ describe("createChatopsServers", () => {
       expect(h.enabled.at(-1)).toEqual(["discord", "teams"]);
     });
 
-    it("a start that fails because the package isn't built enables nothing", () => {
+    // Intent is recorded before the build check, so an autostart replayed from the file can't end
+    // up enabled-on-disk but disabled-in-memory — which would show Start and strand the entry.
+    it("a start whose package isn't built still records the intent, so Stop stays reachable", () => {
       const h = harness({ built: false });
       h.servers.start("discord");
-      expect(h.enabled).toEqual([]);
+      expect(h.enabled).toEqual([["discord"]]);
+      expect(h.servers.status().discord.enabled).toBe(true);
+
+      h.servers.stop("discord");
+      expect(h.enabled.at(-1)).toEqual([]);
     });
 
     // Without this the intent is a one-way door: the UI drives Stop off `enabled`, so if stopping

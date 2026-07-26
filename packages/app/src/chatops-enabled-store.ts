@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ChatopsBot } from "./chatops-servers.js";
 
@@ -22,5 +22,12 @@ export async function loadChatopsEnabled(file: string): Promise<ChatopsBot[]> {
 
 export async function saveChatopsEnabled(file: string, enabled: ChatopsBot[]): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify({ enabled }), "utf8");
+  // Write-then-rename, because writeFile truncates first: a force quit, crash, or update exit
+  // landing mid-write leaves a partial file, and loadChatopsEnabled() reads anything unparseable
+  // as "nothing enabled" — silently switching every bot off. rename(2) within one directory is
+  // atomic, so a reader sees either the old contents or the new ones, never a torn file.
+  // A fixed temp name is safe here: main.ts chains these writes, so there is only ever one writer.
+  const tmp = `${file}.tmp`;
+  await writeFile(tmp, JSON.stringify({ enabled }), "utf8");
+  await rename(tmp, file);
 }

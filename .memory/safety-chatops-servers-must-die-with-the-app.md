@@ -84,8 +84,18 @@ used only to word the error message. Don't reintroduce a code check here.
 **`ChatopsState` carries `enabled` alongside `running`, and the Start/Stop toggle follows
 `enabled`.** Driving it off `running` (as it originally did) made the intent a one-way door: a
 crashed bot showed "Start", so `stop()` was unreachable, so it autostarted every boot with no way
-to say no. `stop()` therefore emits even when there's no process to kill — that's the only event
-the UI gets on that path.
+to say no. Two corollaries, both of which were bugs first:
+
+- `stop()` emits even when there's no process to kill — that's the only event the UI gets on that path.
+- `spawnBot()` calls `enable()` **before** the "is it built" check, so the in-memory set can never
+  disagree with `chatops-enabled.json`. When it did, a replayed autostart for an unbuilt package
+  showed Start while the file said enabled, and the entry could never be cleared.
+
+`saveChatopsEnabled` writes to `<file>.tmp` and renames over the target. `writeFile` truncates
+first, so an interrupted write (force quit, crash, the update exit) leaves a partial file — and
+`loadChatopsEnabled` reads anything unparseable as "nothing enabled", which switches every bot off
+without saying so. Chaining the writes in `main.ts` orders them; only the rename makes each one
+all-or-nothing.
 
 **When debugging "my chatops change didn't take effect": check the process, not just the code.**
 `lsof -nP -iTCP:3978 -sTCP:LISTEN` and `ps -eo pid,lstart,command | grep chatops` — compare the
