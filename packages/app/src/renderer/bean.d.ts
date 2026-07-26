@@ -22,6 +22,7 @@ declare global {
       getModelMemory(skillName: string): Promise<string | undefined>;
       setModelMemory(skillName: string, modelId: string): Promise<void>;
       chat(req: ChatRequest): Promise<ConverseResult>;
+      onChatImageProgress(cb: () => void): void;
       getModel(): Promise<string>;
       getPathForFile(file: File): string;
       getTheme(): Promise<Theme>;

@@ -17,7 +17,7 @@ import {
   loadNotes, saveNote, deleteNote, loadNoteHistory, searchNotes, retrieveNoteTool, detectClis, loginShellPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate,
-  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool,
+  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
 } from "@bean/core";
@@ -612,6 +612,13 @@ app.whenReady().then(async () => {
       personaFile: personaFile(dir),
       projectPersonaFile: personaFile(projectDir),
       actions: actionTools,
+      imageGen: {
+        generate: (a) => makeOpenAIImageGen(runtime.getApiKey())(a),
+        // ponytail: imageModel read at boot; move into runtime-config if a Settings field ever exists
+        getModel: () => cfg.imageModel,
+        imagesDir: imagesDir(dir),
+        onStart: () => { componentWindows.get("chat")?.webContents.send(IPC.chatImageProgress); },
+      },
       getConfig: () => ({
         openaiApiKey: runtime.getApiKey(),
         model: runtime.getModel(),

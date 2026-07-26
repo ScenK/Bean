@@ -69,8 +69,13 @@ export interface ProposedLiveSession {
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */
 export interface LinkedNote { slug: string; title: string; version: number; body: string; }
-export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedRemember?: boolean; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo; }
-export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?: string; linkedNote?: LinkedNote; }
+export interface ConverseResult {
+  reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedRemember?: boolean; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo;
+  /** Files produced by generate_image this turn — set by surface handlers (buildChatHandler
+   * fills dataUrl for inline rendering), never by converse() itself; bots use sendFile instead. */
+  generatedImages?: Array<{ path: string; dataUrl?: string }>;
+}
+export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; }
 
 // runAvailable=false (chatops: Discord/Teams) — no terminal exists there, so propose_run
 // is only offered for `target: chat` skills (which run on Bean's own model, no agent
