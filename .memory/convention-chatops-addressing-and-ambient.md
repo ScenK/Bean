@@ -24,8 +24,13 @@ Group channels (Discord/Teams) balance "natural" against "predictable" with one 
   `ConversationStore.ambientCutoff`/`setAmbientCutoff`). It started as an in-memory Map inside
   `buildTeamsBot` and that was a bug: Discord's `fetchRecent` re-reads *live channel history*,
   so a bot restart lost the cutoff while `chatops_turns` kept the block — the same chatter got
-  injected and persisted twice. Teams was immune only because its `AmbientStore` is itself
-  in-memory. Never move this watermark back into process memory.
+  injected and persisted twice. Teams was immune only while its `AmbientStore` was in-memory
+  too; now that the store is durable (below), both surfaces depend on the watermark. Never move
+  it back into process memory.
+- **Teams' `AmbientStore` is durable too** (`chatops_ambient` table, 200 rows/conversation,
+  trimmed on insert). Teams has no way to re-read channel history, so an in-memory store meant a
+  restart dropped every not-yet-injected message — real pain while Bean restarts often. Discord
+  doesn't use this store at all; its `fetchRecent` reads the channel live.
 - **`/new`** (like the `cancel` text command) clears the conversation via
   `ConversationStore.clear()` and fences ambient with `setAmbientCutoff(now)`, so pre-reset
   chatter can't leak back in.
