@@ -13,6 +13,7 @@ import {
   type ConversationReference, type Activity,
 } from "botbuilder";
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
@@ -273,8 +274,10 @@ const app = express();
 app.use(express.json());
 // Serves generate_image output so sendFile can link it by URL (see effectsFor). Name is
 // allowlisted to the timestamped-slug pattern image-gen.ts writes — no traversal, PNGs only.
-app.get("/generated-images/:name", (req, res) => {
-  const name = req.params.name;
+// Rate-limited: this is the server's only unauthenticated file-reading route.
+const imageRouteLimiter = rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false });
+app.get("/generated-images/:name", imageRouteLimiter, (req, res) => {
+  const name = String(req.params.name ?? "");
   if (!/^[A-Za-z0-9._-]+\.png$/.test(name) || name.includes("..")) { res.status(400).end(); return; }
   res.sendFile(join(imagesDir(dir), name), (err) => { if (err) res.status(404).end(); });
 });

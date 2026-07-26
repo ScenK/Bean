@@ -12,7 +12,8 @@
   "dependencies": {
     "@bean/core": "workspace:*",
     "botbuilder": "^4.23.0",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.6.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
