@@ -5,7 +5,7 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry,
+  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, type ImageAttachment,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials,
@@ -69,6 +69,7 @@ const bot = buildTeamsBot({
   liveSessionsEnabled: () => clis.includes("claude"),
   cards: discordCards,
   systemControlsEnabled: () => beanConfig.systemControls,
+  imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
 });
 
 // Partials.Channel is REQUIRED for DM message events in discord.js v14 (DM channels
@@ -122,6 +123,7 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string): Bo
       const msg = await channel.messages.fetch(activityId);
       await msg.edit(card as Parameters<Message["edit"]>[0]);
     },
+    sendFile: async (path, caption) => { await send({ content: caption ?? "", files: [path] }); },
     fetchRecent: async (sinceMs) => {
       if (!("messages" in channel)) return [];
       const fetched = await channel.messages.fetch({ limit: 50 });
@@ -156,7 +158,19 @@ client.on("messageCreate", async (message) => {
       message.mentions.repliedUser?.id === client.user?.id;
     if (!addressed && !capturing) return;
     const text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
-    if (!text) return;
+    // Image attachments (image/*, ≤10MB) ride along as vision input; an image-only
+    // message still gets a turn.
+    const images: ImageAttachment[] = [];
+    for (const att of message.attachments.values()) {
+      if (!att.contentType?.startsWith("image/") || att.size > 10 * 1024 * 1024) continue;
+      try {
+        const res = await fetch(att.url);
+        images.push({ data: Buffer.from(await res.arrayBuffer()).toString("base64"), mimeType: att.contentType });
+      } catch (err) {
+        console.error("attachment fetch failed:", err);
+      }
+    }
+    if (!text && images.length === 0) return;
     if ("sendTyping" in message.channel) await message.channel.sendTyping();
     // Discord's typing indicator lasts ~10s; refresh it while onMessage is still working.
     const typing = "sendTyping" in message.channel
@@ -165,7 +179,8 @@ client.on("messageCreate", async (message) => {
     try {
       await bot.onMessage(
         {
-          conversationId: message.channelId, text,
+          conversationId: message.channelId, text: text || "(image)",
+          images: images.length > 0 ? images : undefined,
           fromId: message.author.id, fromName: message.author.displayName,
           // Everyone @mentioned except Bean — feeds the live-session `+driver`/`-driver` commands.
           mentionedIds: [...message.mentions.users.keys()].filter((id) => id !== client.user?.id),
