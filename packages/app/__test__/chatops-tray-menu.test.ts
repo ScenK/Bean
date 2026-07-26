@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { chatopsMenuRows } from "../src/chatops-tray-menu.js";
 import type { ChatopsState } from "../src/chatops-servers.js";
 
-const status = (discord: ChatopsState, teams: ChatopsState) => ({ discord, teams });
+const bot = (s: Partial<ChatopsState>): ChatopsState => ({ running: false, enabled: false, ...s });
+const status = (discord: Partial<ChatopsState>, teams: Partial<ChatopsState>) => ({ discord: bot(discord), teams: bot(teams) });
 
 describe("chatopsMenuRows", () => {
   it("shows a gray dot and unchecked when a bot is stopped", () => {
@@ -14,7 +15,7 @@ describe("chatopsMenuRows", () => {
   });
 
   it("shows a green dot and checked when a bot is running", () => {
-    const rows = chatopsMenuRows(status({ running: true }, { running: false }));
+    const rows = chatopsMenuRows(status({ running: true, enabled: true }, { running: false }));
     expect(rows[0]).toEqual({ bot: "discord", label: "Discord", dot: "🟢", checked: true });
   });
 
@@ -23,13 +24,18 @@ describe("chatopsMenuRows", () => {
     expect(rows[0]).toEqual({ bot: "discord", label: "Discord", dot: "🔴", checked: false, error: "boom" });
   });
 
+  it("stays checked while an enabled bot is down, so the row can still be switched off", () => {
+    const rows = chatopsMenuRows(status({ running: false, enabled: true, error: "boom" }, { running: false }));
+    expect(rows[0]).toEqual({ bot: "discord", label: "Discord", dot: "🔴", checked: true, error: "boom" });
+  });
+
   it("prefers the red error dot even if running is somehow still true", () => {
-    const rows = chatopsMenuRows(status({ running: true, error: "boom" }, { running: false }));
+    const rows = chatopsMenuRows(status({ running: true, enabled: true, error: "boom" }, { running: false }));
     expect(rows[0]!.dot).toBe("🔴");
   });
 
   it("always returns discord then teams, in that order", () => {
-    const rows = chatopsMenuRows(status({ running: false }, { running: true }));
+    const rows = chatopsMenuRows(status({ running: false }, { running: true, enabled: true }));
     expect(rows.map((r) => r.bot)).toEqual(["discord", "teams"]);
   });
 

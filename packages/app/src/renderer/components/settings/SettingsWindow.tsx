@@ -42,8 +42,8 @@ export function SettingsWindow() {
   const [error, setError] = useState<string | undefined>(undefined);
   const [activeSection, setActiveSection] = useState("model");
   const [chatops, setChatops] = useState<Record<ChatopsBot, ChatopsState>>({
-    discord: { running: false },
-    teams: { running: false },
+    discord: { running: false, enabled: false },
+    teams: { running: false, enabled: false },
   });
 
   // A chatops error (e.g. "not built") stays informative for a few seconds, then clears itself
@@ -75,7 +75,7 @@ export function SettingsWindow() {
       (Object.keys(status) as ChatopsBot[]).forEach((bot) => { if (status[bot].error) scheduleErrorClear(bot, status[bot].error!); });
     });
     window.bean.onChatopsEvent((e) => {
-      setChatops((prev) => ({ ...prev, [e.bot]: { running: e.running, error: e.error } }));
+      setChatops((prev) => ({ ...prev, [e.bot]: { running: e.running, enabled: e.enabled, error: e.error } }));
       if (e.error) scheduleErrorClear(e.bot, e.error);
     });
   }, []);
@@ -253,12 +253,15 @@ export function SettingsWindow() {
                     {label}{s.running ? " — running" : s.error ? ` — ${s.error}` : " — stopped"}
                   </span>
                 </span>
+                {/* Follows `enabled`, not `running`: while a crashed bot is retrying (or has given
+                    up) it's still switched on, and Stop is the only way to clear that intent so it
+                    doesn't autostart again next launch. */}
                 <button
                   type="button"
                   class="bean-btn bean-btn--ghost"
-                  onClick={() => (s.running ? window.bean.chatopsStop(key) : window.bean.chatopsStart(key))}
+                  onClick={() => (s.enabled ? window.bean.chatopsStop(key) : window.bean.chatopsStart(key))}
                 >
-                  {s.running ? "Stop" : "Start"}
+                  {s.enabled ? "Stop" : "Start"}
                 </button>
               </div>
             );

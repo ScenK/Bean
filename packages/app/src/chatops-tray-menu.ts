@@ -23,6 +23,9 @@ export function chatopsMenuRows(status: Record<ChatopsBot, ChatopsState>): Chato
   return BOT_ORDER.map((bot) => {
     const s = status[bot];
     const dot: ChatopsMenuRow["dot"] = s.error ? "🔴" : s.running ? "🟢" : "⚪";
-    return { bot, label: BOT_LABELS[bot], dot, checked: s.running, ...(s.error ? { error: formatError(s.error) } : {}) };
+    // The dot reports the process; the checkbox reports the switch. They disagree while a crashed
+    // bot waits on a retry (🔴 but still checked) — and that's the point: main.ts turns `checked`
+    // into stop-vs-start, so an enabled-but-dead bot can still be switched off.
+    return { bot, label: BOT_LABELS[bot], dot, checked: s.enabled, ...(s.error ? { error: formatError(s.error) } : {}) };
   });
 }
