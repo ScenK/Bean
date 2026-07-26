@@ -91,15 +91,22 @@ export function ChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pendingImages, setPendingImages] = useState<Array<{ attachment: ImageAttachment; dataUrl: string }>>([]);
   const [imageError, setImageError] = useState<string | null>(null);
+  // FileReader is async — a submit racing an unfinished read would send the text without its
+  // image (and orphan the image onto the next turn). Submit blocks while any read is in flight.
+  const [imageReadsInFlight, setImageReadsInFlight] = useState(0);
 
   const attachImageFiles = (files: File[]): void => {
     for (const file of files) {
       const problem = imageFileGuard(file.type, file.size);
       if (problem) { setImageError(problem); continue; }
-      void readImageFile(file).then((img) => {
-        setImageError(null);
-        setPendingImages((prev) => [...prev, img]);
-      });
+      setImageReadsInFlight((n) => n + 1);
+      void readImageFile(file)
+        .then((img) => {
+          setImageError(null);
+          setPendingImages((prev) => [...prev, img]);
+        })
+        .catch(() => setImageError("Couldn't read that image."))
+        .finally(() => setImageReadsInFlight((n) => n - 1));
     }
   };
   // "Near bottom" tracked in a ref (the scroll handler runs constantly); the jump-down
@@ -151,7 +158,7 @@ export function ChatPanel({
 
   const submit = (): void => {
     const el = inputRef.current;
-    if (!el) return;
+    if (!el || imageReadsInFlight > 0) return;
     // Image-only sends are allowed; converse still needs some text on the turn.
     const text = el.value.trim() || (pendingImages.length > 0 ? "(image)" : "");
     if (!text) return;
@@ -361,7 +368,7 @@ export function ChatPanel({
             disabled={busy || !items.some((it) => it.kind === "reply")}
             onClick={onSaveToNotes}
           >📝 Save to notes</button>
-          <button type="button" class="bean-send" aria-label="Send" disabled={busy} onClick={submit}>
+          <button type="button" class="bean-send" aria-label="Send" disabled={busy || imageReadsInFlight > 0} onClick={submit}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg>
           </button>
         </div>
