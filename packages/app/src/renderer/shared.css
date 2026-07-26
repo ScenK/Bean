@@ -1793,3 +1793,45 @@ button, input, textarea, select, a {
   padding: 8px 10px;
   margin-top: 6px;
 }
+
+/* Chat image attachments: bubble thumbnails + composer pending-image chips */
+.bean-chat-thumb {
+  display: block;
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 8px;
+  margin-top: 6px;
+  cursor: pointer;
+}
+.bean-chat-pending-images {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+}
+.bean-chat-pending-image {
+  position: relative;
+  display: inline-block;
+}
+.bean-chat-pending-image img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--bean-border);
+}
+.bean-chat-pending-image button {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: none;
+  background: var(--bean-border);
+  color: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
