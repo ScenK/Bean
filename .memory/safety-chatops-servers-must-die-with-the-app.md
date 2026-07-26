@@ -63,6 +63,13 @@ it — so `stopAll()` sets `shuttingDown`, and both the scheduling check and the
 it plus `enabled.has(bot)`. `start()` clears the flag, so a *failed* update install doesn't leave
 retries dead for the rest of the session. Don't drop any of those guards.
 
+**A signal death is a crash, not a clean exit.** Node reports `code === null` when the child was
+signalled, so the original `code !== 0 && code !== null` test filed every SIGKILL under "clean" —
+leaving the bot enabled, error-free, and offline until someone noticed. The exits we asked for are
+identifiable without the code, because we are the only ones who clear `enabled` or set
+`shuttingDown`: `const deliberate = shuttingDown || !enabled.has(bot)`, and anything else that
+isn't a literal 0 is a crash. Don't reintroduce a code-shaped test for intent.
+
 **`ChatopsState` carries `enabled` alongside `running`, and the Start/Stop toggle follows
 `enabled`.** Driving it off `running` (as it originally did) made the intent a one-way door: a
 crashed bot showed "Start", so `stop()` was unreachable, so it autostarted every boot with no way

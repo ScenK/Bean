@@ -4,11 +4,12 @@ import { createChatopsServers, type ChatopsBot, type ChatopsEvent, type SpawnedP
 function fakeProcess() {
   const listeners: Record<string, ((arg: unknown) => void)[]> = {};
   const proc: SpawnedProcess = {
-    stderr: { on: (event, cb) => { (listeners[event] ??= []).push(cb as (arg: unknown) => void); } },
-    on: (event, cb) => { (listeners[event] ??= []).push(cb as (arg: unknown) => void); },
-    kill: () => { emit("exit", null); },
+    stderr: { on: (event, cb) => { (listeners[event] ??= []).push(cb as (...args: unknown[]) => void); } },
+    on: (event, cb) => { (listeners[event] ??= []).push(cb as (...args: unknown[]) => void); },
+    // Real kill() sends SIGTERM; the servers' own handlers exit 0, so model the code-0 path.
+    kill: () => { emit("exit", 0, null); },
   };
-  const emit = (event: string, arg: unknown) => { for (const cb of listeners[event] ?? []) cb(arg); };
+  const emit = (event: string, ...args: unknown[]) => { for (const cb of listeners[event] ?? []) cb(...args); };
   return { proc, emit };
 }
 
@@ -42,7 +43,7 @@ function harness({ built = true }: { built?: boolean } = {}) {
 
 /** Crash the newest spawned process with a non-zero exit, then let its retry fire. */
 function crashAndRetry(h: ReturnType<typeof harness>): void {
-  h.procs.at(-1)!.emit("exit", 1);
+  h.procs.at(-1)!.emit("exit", 1, null);
   h.flushRetries();
 }
 
@@ -96,14 +97,14 @@ describe("createChatopsServers", () => {
     const h = harness();
     h.servers.start("discord");
     h.procs[0]!.emit("data", Buffer.from("boom: missing config\n"));
-    h.procs[0]!.emit("exit", 1);
+    h.procs[0]!.emit("exit", 1, null);
     expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: true, error: "boom: missing config" });
   });
 
   it("clean exit (code 0) clears running with no error", () => {
     const h = harness();
     h.servers.start("teams");
-    h.procs[0]!.emit("exit", 0);
+    h.procs[0]!.emit("exit", 0, null);
     expect(h.sent.at(-1)).toEqual({ bot: "teams", running: false, enabled: true });
   });
 
@@ -143,7 +144,7 @@ describe("createChatopsServers", () => {
     it("a crash keeps the bot enabled so the next boot restarts it", () => {
       const h = harness();
       h.servers.start("teams");
-      h.procs[0]!.emit("exit", 1);
+      h.procs[0]!.emit("exit", 1, null);
       expect(h.enabled.at(-1)).toEqual(["teams"]);
     });
 
@@ -196,17 +197,42 @@ describe("createChatopsServers", () => {
       expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: true, error: "exited with code 1" });
     });
 
+    it("a signal death is a crash, not a clean exit — SIGKILL must not read as 'we stopped it'", () => {
+      const h = harness();
+      h.servers.start("teams");
+      h.procs[0]!.emit("exit", null, "SIGKILL");
+      expect(h.sent.at(-1)).toEqual({ bot: "teams", running: false, enabled: true, error: "killed by SIGKILL" });
+      h.flushRetries();
+      expect(h.spawned).toHaveLength(2);
+    });
+
+    it("our own stop() is never reported as a crash, however the child dies", () => {
+      const h = harness();
+      h.servers.start("discord");
+      h.servers.stop("discord");
+      expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: false });
+      expect(h.retries).toEqual([]);
+    });
+
+    it("stopAll() at quit is not reported as a crash either", () => {
+      const h = harness();
+      h.servers.start("teams");
+      h.servers.stopAll();
+      expect(h.sent.at(-1)).toEqual({ bot: "teams", running: false, enabled: true });
+      expect(h.retries).toEqual([]);
+    });
+
     it("a clean exit is not retried", () => {
       const h = harness();
       h.servers.start("teams");
-      h.procs[0]!.emit("exit", 0);
+      h.procs[0]!.emit("exit", 0, null);
       expect(h.retries).toEqual([]);
     });
 
     it("stop during the retry delay cancels the respawn", () => {
       const h = harness();
       h.servers.start("discord");
-      h.procs[0]!.emit("exit", 1);
+      h.procs[0]!.emit("exit", 1, null);
       h.servers.stop("discord");
       h.flushRetries();
       expect(h.spawned).toHaveLength(1);
@@ -215,7 +241,7 @@ describe("createChatopsServers", () => {
     it("stopAll at quit cancels pending retries — a respawn then would be the orphan we kill for", () => {
       const h = harness();
       h.servers.start("teams");
-      h.procs[0]!.emit("exit", 1);
+      h.procs[0]!.emit("exit", 1, null);
       h.servers.stopAll();
       h.flushRetries();
       expect(h.spawned).toHaveLength(1);

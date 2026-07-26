@@ -12,7 +12,9 @@ export type ChatopsEvent = { bot: ChatopsBot } & ChatopsState;
 
 export interface SpawnedProcess {
   stderr: { on(event: "data", cb: (chunk: Buffer) => void): void } | null;
-  on(event: "exit", cb: (code: number | null) => void): void;
+  /** Node gives `code === null` when the child died from a signal, with the name in `signal` —
+   * both are needed to tell "we killed it" from "the OS killed it". */
+  on(event: "exit", cb: (code: number | null, signal: string | null) => void): void;
   kill(): void;
 }
 
@@ -97,15 +99,23 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     liveness[bot] = { running: true };
     enable(bot);
     emit(bot);
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       procs.delete(bot);
-      const crashed = code !== 0 && code !== null;
+      // We are the only ones who take a bot out of `enabled` or set `shuttingDown`, so those two
+      // flags identify the exits we asked for — a SIGTERM from stop()/stopAll(). Everything else
+      // that isn't a clean 0 is a crash, *including* signal deaths (code === null): treating those
+      // as clean would let a SIGKILL leave the bot enabled, silent, and offline until a manual
+      // start. Read alongside each server's own SIGTERM handler, which exits 0 on the way out.
+      const deliberate = shuttingDown || !enabled.has(bot);
+      const crashed = !deliberate && code !== 0;
       if (now() - spawnedAt >= STABLE_MS) attempts.set(bot, 0);
-      liveness[bot] = crashed ? { running: false, error: lastErr || `exited with code ${code}` } : { running: false };
+      liveness[bot] = crashed
+        ? { running: false, error: lastErr || (signal ? `killed by ${signal}` : `exited with code ${code}`) }
+        : { running: false };
       emit(bot);
-      // enabled.has() is the "does the user still want this" check: a stop() during the delay,
-      // or before the timer fires, cancels the retry.
-      const retriable = crashed && !shuttingDown && enabled.has(bot) && (attempts.get(bot) ?? 0) < MAX_START_ATTEMPTS;
+      // `crashed` already excludes the deliberate exits; this is just the budget check. The
+      // timer callback re-tests both flags, since a stop() can land during the delay.
+      const retriable = crashed && (attempts.get(bot) ?? 0) < MAX_START_ATTEMPTS;
       if (retriable) delay(() => { if (!shuttingDown && enabled.has(bot)) spawnBot(bot); }, RETRY_DELAY_MS);
     });
   };
