@@ -596,10 +596,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps.conversations.append(msg.conversationId, { role: "assistant", content: result.reply });
           await fx.reply(result.reply);
         }
-        for (const p of imageTool?.paths ?? []) {
-          if (fx.sendFile) await fx.sendFile(p);
-          else await fx.post(`(image saved to ${p} — this surface can't display it)`);
-        }
+        // Drains (splices) the collector so a later pass — the chat-target follow-up below
+        // shares this same tool instance — never re-sends already-delivered images.
+        const deliverImages = async (): Promise<void> => {
+          for (const p of imageTool?.paths.splice(0) ?? []) {
+            if (fx.sendFile) await fx.sendFile(p);
+            else await fx.post(`(image saved to ${p} — this surface can't display it)`);
+          }
+        };
+        await deliverImages();
         void maybeCompact(msg.conversationId, deps.conversations, { chat: deps.chat, model: deps.model });
         if (result.proposedRun) {
           // A `target: chat` skill runs on Bean's own model: resend the composed prompt
@@ -619,6 +624,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               `The ${run.skillName} skill didn't produce a reply — try asking me directly instead.`;
             deps.conversations.append(msg.conversationId, { role: "assistant", content: text });
             await fx.post(text);
+            await deliverImages(); // the follow-up hop can call generate_image too
             return;
           }
           // Backstop only: terminal-target propose_run isn't offered from chatops, so this

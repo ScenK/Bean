@@ -1158,3 +1158,28 @@ test("generate_image runs, posts a working notice, and delivers the file via sen
   expect(sent).toHaveLength(1);
   expect(sent[0]!.path).toMatch(/a-cat\.png$/);
 });
+
+test("images generated during a chat-target follow-up are still delivered", async () => {
+  const imagesTmp = mkdtempSync(join(tmpdir(), "bean-imgout2-"));
+  let calls = 0;
+  const { deps } = makeDeps({
+    loadSkills: async () => [{ name: "draw-things", description: "d", body: "b", enabled: true, target: "chat" }],
+    chat: async () => {
+      calls += 1;
+      if (calls === 1) return { content: "", toolCalls: [{ id: "1", name: "propose_run", args: { skill: "draw-things", instruction: "draw a dog" } }] };
+      if (calls === 2) return { content: "", toolCalls: [{ id: "2", name: "generate_image", args: { prompt: "a dog" } }] };
+      return { content: "made it", toolCalls: [] };
+    },
+    imageGen: {
+      generate: async () => ({ b64: Buffer.from("png!").toString("base64") }),
+      model: "gpt-image-2",
+      imagesDir: imagesTmp,
+    },
+  });
+  const bot = buildTeamsBot(deps);
+  const sent: string[] = [];
+  const effects = { ...fx(), sendFile: async (path: string) => { sent.push(path); } };
+  await bot.onMessage({ ...msg, text: "draw a dog" }, effects);
+  expect(sent).toHaveLength(1);
+  expect(sent[0]).toMatch(/a-dog\.png$/);
+});

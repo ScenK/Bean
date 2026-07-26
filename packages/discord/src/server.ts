@@ -165,6 +165,8 @@ client.on("messageCreate", async (message) => {
       if (!att.contentType?.startsWith("image/") || att.size > 10 * 1024 * 1024) continue;
       try {
         const res = await fetch(att.url);
+        // A CDN error page base64'd as image bytes would poison the vision call.
+        if (!res.ok) { console.error(`attachment fetch failed: ${res.status}`); continue; }
         images.push({ data: Buffer.from(await res.arrayBuffer()).toString("base64"), mimeType: att.contentType });
       } catch (err) {
         console.error("attachment fetch failed:", err);
