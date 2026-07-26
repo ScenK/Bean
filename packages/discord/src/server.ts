@@ -5,7 +5,7 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, type ImageAttachment,
+  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials,
@@ -162,12 +162,13 @@ client.on("messageCreate", async (message) => {
     // message still gets a turn.
     const images: ImageAttachment[] = [];
     for (const att of message.attachments.values()) {
-      if (!att.contentType?.startsWith("image/") || att.size > 10 * 1024 * 1024) continue;
+      const mime = att.contentType?.split(";")[0]?.trim() ?? "";
+      if (!(SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) || att.size > 10 * 1024 * 1024) continue;
       try {
         const res = await fetch(att.url);
         // A CDN error page base64'd as image bytes would poison the vision call.
         if (!res.ok) { console.error(`attachment fetch failed: ${res.status}`); continue; }
-        images.push({ data: Buffer.from(await res.arrayBuffer()).toString("base64"), mimeType: att.contentType });
+        images.push({ data: Buffer.from(await res.arrayBuffer()).toString("base64"), mimeType: mime });
       } catch (err) {
         console.error("attachment fetch failed:", err);
       }

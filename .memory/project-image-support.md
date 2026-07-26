@@ -10,7 +10,12 @@ Spec: `docs/superpowers/specs/2026-07-26-image-support-design.md`.
   be built fresh per converse() call — its `paths` array collects that one turn's generated
   files (a shared instance leaks paths across requests). `converse()` never sets
   `ConverseResult.generatedImages`; surface handlers do (desktop fills `dataUrl`; bots use
-  `BotEffects.sendFile` instead — Discord native upload, Teams inline base64 `contentUrl`).
+  `BotEffects.sendFile` instead — Discord native upload; Teams serves the PNG from its own
+  express server and links it via `teams.json`'s `publicBaseUrl` because Teams rejects large
+  inline base64 activities — no `publicBaseUrl` = no `sendFile`, core posts the path).
+- **Ingest MIME allowlist**: vision accepts only png/jpeg/gif/webp — every surface filters on
+  core's `SUPPORTED_IMAGE_MIMES` (renderer keeps a copy in `chat-types.ts`; it can't import
+  core values). A bare `image/*` check lets HEIC/SVG through and fails the turn at the API.
 - **Model comes from config.** `~/.bean/config.json` `imageModel`, default `gpt-image-2`,
   no Settings UI — `saveConfig` must keep preserving it (same pattern as `liveSessions`).
 - **Slow-gen feedback**: the tool's `onStart` drives the desktop 🎨 working bubble

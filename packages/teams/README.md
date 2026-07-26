@@ -31,6 +31,9 @@ Adaptive Card and execute on THIS machine. Design: `docs/superpowers/specs/2026-
    else (endpoint, auth, tenant) checks out, this is almost certainly why — check it first.
 4. **Config**: create `~/.bean/teams.json`:
    `{ "botAppId": "<app-id>", "botAppPassword": "<client-secret>", "tenantId": "<tenant-id>", "port": 3978 }`
+   Optional: `"publicBaseUrl": "https://<your-tunnel-host>"` (the same tunnel the messaging
+   endpoint uses, without `/api/messages`) — required for Bean to deliver generated images to
+   Teams; without it Bean posts the image's file path instead.
 5. **Tunnel** (macOS): install via `curl -sL https://aka.ms/DevTunnelCliInstall | bash`
    (adds `devtunnel` to `~/bin` — put that on `PATH`, e.g. `export PATH="$HOME/bin:$PATH"`
    in `~/.zshrc`), then `devtunnel user login` once. Run `devtunnel host -p 3978

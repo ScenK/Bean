@@ -6,6 +6,10 @@ import { selectRelevantMemories } from "./memory/store.js";
 import type { CliName } from "./launcher.js";
 import type { AvailableModel } from "./models.js";
 
+/** The raster formats OpenAI vision input accepts — every ingest surface must filter to
+ * these (a bare image/* check lets HEIC/SVG/TIFF through and fails the whole turn at the
+ * API). The renderer keeps its own copy in chat-types.ts (can't import core values). */
+export const SUPPORTED_IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
 /** Base64 image payload (no data: prefix). */
 export interface ImageAttachment { data: string; mimeType: string }
 export type UserContentPart =

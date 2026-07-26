@@ -5,7 +5,7 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, type ImageAttachment,
+  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -146,7 +146,8 @@ async function readCapped(res: Response): Promise<Buffer | null> {
 async function downloadImages(a: Activity): Promise<ImageAttachment[]> {
   const out: ImageAttachment[] = [];
   for (const att of a.attachments ?? []) {
-    if (!att.contentType?.startsWith("image/") || !att.contentUrl) continue;
+    const mime = att.contentType?.split(";")[0]?.trim() ?? "";
+    if (!(SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) || !att.contentUrl) continue;
     try {
       const creds = await credentialsFactory.createCredentials(
         teamsConfig.botAppId, "https://api.botframework.com", "https://login.microsoftonline.com", true,
@@ -156,7 +157,7 @@ async function downloadImages(a: Activity): Promise<ImageAttachment[]> {
       if (!res.ok) { console.error(`teams attachment download failed: ${res.status}`); continue; }
       const buf = await readCapped(res);
       if (!buf) continue; // over the 10MB cap
-      out.push({ data: buf.toString("base64"), mimeType: att.contentType });
+      out.push({ data: buf.toString("base64"), mimeType: mime });
     } catch (err) {
       console.error("teams attachment download failed:", err);
     }
@@ -235,17 +236,23 @@ function effectsFor(context: TurnContext): BotEffects {
     },
     // Live-session turn indicator: fire-and-forget proactive Typing (turns stream in after the
     // triggering turn's context is dead, same reason as postStream). The registry re-pings it.
-    // Generated images render inline via a base64 contentUrl attachment (no file hosting needed).
-    sendFile: async (path, caption) => {
-      const b64 = (await readFile(path)).toString("base64");
-      await proactive(async (ctx) => {
-        await ctx.sendActivity({
-          type: ActivityTypes.Message,
-          text: caption ?? "",
-          attachments: [{ contentType: "image/png", contentUrl: `data:image/png;base64,${b64}`, name: basename(path) }],
-        });
-      });
-    },
+    // Teams rejects large activities, so a generated PNG can't ride inline as base64 —
+    // it's served from this bot's own express server and linked by public URL instead.
+    // No publicBaseUrl configured = no sendFile at all; core then posts the file path.
+    ...(teamsConfig.publicBaseUrl
+      ? {
+          sendFile: async (path: string, caption?: string): Promise<void> => {
+            const url = `${teamsConfig.publicBaseUrl}/generated-images/${encodeURIComponent(basename(path))}`;
+            await proactive(async (ctx) => {
+              await ctx.sendActivity({
+                type: ActivityTypes.Message,
+                text: caption ?? "",
+                attachments: [{ contentType: "image/png", contentUrl: url, name: basename(path) }],
+              });
+            });
+          },
+        }
+      : {}),
     sendTyping: () => {
       void proactive(async (ctx) => { await ctx.sendActivity({ type: ActivityTypes.Typing }); });
     },
@@ -264,6 +271,13 @@ function effectsFor(context: TurnContext): BotEffects {
 
 const app = express();
 app.use(express.json());
+// Serves generate_image output so sendFile can link it by URL (see effectsFor). Name is
+// allowlisted to the timestamped-slug pattern image-gen.ts writes — no traversal, PNGs only.
+app.get("/generated-images/:name", (req, res) => {
+  const name = req.params.name;
+  if (!/^[A-Za-z0-9._-]+\.png$/.test(name) || name.includes("..")) { res.status(400).end(); return; }
+  res.sendFile(join(imagesDir(dir), name), (err) => { if (err) res.status(404).end(); });
+});
 app.post("/api/messages", (req, res) => {
   void adapter.process(req, res, async (context) => {
     const a = context.activity;
