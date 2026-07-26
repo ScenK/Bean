@@ -101,11 +101,13 @@ describe("createChatopsServers", () => {
     expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: true, error: "boom: missing config" });
   });
 
-  it("clean exit (code 0) clears running with no error", () => {
+  // Both servers catch SIGTERM and exit(0), so an external `kill` is indistinguishable from a
+  // clean shutdown by code alone — only our own flags can tell them apart.
+  it("a code-0 exit we did not ask for is still a crash", () => {
     const h = harness();
     h.servers.start("teams");
     h.procs[0]!.emit("exit", 0, null);
-    expect(h.sent.at(-1)).toEqual({ bot: "teams", running: false, enabled: true });
+    expect(h.sent.at(-1)).toEqual({ bot: "teams", running: false, enabled: true, error: "exited unexpectedly (code 0)" });
   });
 
   it("stop kills the tracked process; stopping an untracked bot is a no-op", () => {
@@ -170,11 +172,11 @@ describe("createChatopsServers", () => {
       crashAndRetry(h);
       crashAndRetry(h);
       crashAndRetry(h); // gave up: enabled, but no process
-      expect(h.servers.status().discord).toEqual({ running: false, enabled: true, error: "exited with code 1" });
+      expect(h.servers.status().discord).toEqual({ running: false, enabled: true, error: "exited unexpectedly (code 1)" });
 
       h.servers.stop("discord");
       expect(h.enabled.at(-1)).toEqual([]);
-      expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: false, error: "exited with code 1" });
+      expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: false, error: "exited unexpectedly (code 1)" });
     });
 
     it("persists once per bot, not on every retry respawn", () => {
@@ -194,7 +196,7 @@ describe("createChatopsServers", () => {
       crashAndRetry(h);
       expect(h.spawned).toHaveLength(3);
       expect(h.retries).toEqual([]);
-      expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: true, error: "exited with code 1" });
+      expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: true, error: "exited unexpectedly (code 1)" });
     });
 
     it("a signal death is a crash, not a clean exit — SIGKILL must not read as 'we stopped it'", () => {
@@ -222,11 +224,12 @@ describe("createChatopsServers", () => {
       expect(h.retries).toEqual([]);
     });
 
-    it("a clean exit is not retried", () => {
+    it("an external kill is retried even though the server exits 0 on SIGTERM", () => {
       const h = harness();
       h.servers.start("teams");
       h.procs[0]!.emit("exit", 0, null);
-      expect(h.retries).toEqual([]);
+      h.flushRetries();
+      expect(h.spawned).toHaveLength(2);
     });
 
     it("stop during the retry delay cancels the respawn", () => {

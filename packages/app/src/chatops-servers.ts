@@ -101,16 +101,17 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     emit(bot);
     child.on("exit", (code, signal) => {
       procs.delete(bot);
-      // We are the only ones who take a bot out of `enabled` or set `shuttingDown`, so those two
-      // flags identify the exits we asked for — a SIGTERM from stop()/stopAll(). Everything else
-      // that isn't a clean 0 is a crash, *including* signal deaths (code === null): treating those
-      // as clean would let a SIGKILL leave the bot enabled, silent, and offline until a manual
-      // start. Read alongside each server's own SIGTERM handler, which exits 0 on the way out.
+      // These are daemons: they run until told otherwise, so *any* exit we didn't ask for is
+      // abnormal and the code carries no useful signal about intent. We are the only ones who
+      // take a bot out of `enabled` or set `shuttingDown`, so those two flags alone identify the
+      // exits we asked for. Both servers catch SIGTERM and exit(0) — so an external `kill` looks
+      // identical to a clean shutdown, and a code-shaped test would let it leave the bot enabled,
+      // silent and offline. Same trap as `code === null` for signal deaths.
       const deliberate = shuttingDown || !enabled.has(bot);
-      const crashed = !deliberate && code !== 0;
+      const crashed = !deliberate;
       if (now() - spawnedAt >= STABLE_MS) attempts.set(bot, 0);
       liveness[bot] = crashed
-        ? { running: false, error: lastErr || (signal ? `killed by ${signal}` : `exited with code ${code}`) }
+        ? { running: false, error: lastErr || (signal ? `killed by ${signal}` : `exited unexpectedly (code ${code})`) }
         : { running: false };
       emit(bot);
       // `crashed` already excludes the deliberate exits; this is just the budget check. The
