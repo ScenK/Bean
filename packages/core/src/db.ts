@@ -76,6 +76,16 @@ CREATE TABLE IF NOT EXISTS chatops_ambient_cutoff (
   cutoff_ms       INTEGER NOT NULL
 );
 
+-- Ambient messages themselves, for surfaces that can't re-read channel history (Teams).
+-- Discord doesn't use this table — it fetches the same window live from the channel.
+CREATE TABLE IF NOT EXISTS chatops_ambient (
+  conversation_id TEXT NOT NULL,
+  at              INTEGER NOT NULL,
+  from_name       TEXT NOT NULL,
+  text            TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chatops_ambient_conv ON chatops_ambient(conversation_id, at);
+
 CREATE TABLE IF NOT EXISTS todos (
   id             TEXT PRIMARY KEY,
   routine        TEXT NOT NULL,

@@ -1,3 +1,6 @@
+import type { DatabaseSync } from "node:sqlite";
+import { openDb } from "../db.js";
+
 /** A channel message Bean was not addressed in, kept as context for later mentions. */
 export interface AmbientMessage {
   fromName: string;
@@ -6,20 +9,35 @@ export interface AmbientMessage {
   at: number;
 }
 
-// ponytail: in-memory ring buffer, restart = amnesia — same accepted POC tradeoff as ConversationStore.
 const MAX_MESSAGES = 200;
 
-/** Per-conversation store of ambient (non-mention) channel messages. */
+/** Per-conversation store of ambient (non-mention) channel messages, backed by the shared
+ * bean.db (chatops_ambient) so a bot restart doesn't drop chatter nobody has mentioned Bean
+ * about yet. Only surfaces that can't re-read their own channel history use it — Discord
+ * fetches the same window live. */
 export class AmbientStore {
-  private byId = new Map<string, AmbientMessage[]>();
+  private db: DatabaseSync;
+
+  constructor(file: string) {
+    this.db = openDb(file);
+  }
 
   append(conversationId: string, msg: AmbientMessage): void {
-    const msgs = [...(this.byId.get(conversationId) ?? []), msg];
-    this.byId.set(conversationId, msgs.slice(-MAX_MESSAGES));
+    this.db.prepare(
+      "INSERT INTO chatops_ambient (conversation_id, at, from_name, text) VALUES (?, ?, ?, ?)",
+    ).run(conversationId, msg.at, msg.fromName, msg.text);
+    this.db.prepare(
+      "DELETE FROM chatops_ambient WHERE rowid IN (SELECT rowid FROM chatops_ambient " +
+        "WHERE conversation_id = ? ORDER BY at DESC, rowid DESC LIMIT -1 OFFSET ?)",
+    ).run(conversationId, MAX_MESSAGES);
   }
 
   since(conversationId: string, sinceMs: number): AmbientMessage[] {
-    return (this.byId.get(conversationId) ?? []).filter((m) => m.at >= sinceMs);
+    const rows = this.db.prepare(
+      "SELECT at, from_name, text FROM chatops_ambient WHERE conversation_id = ? AND at >= ? " +
+        "ORDER BY at, rowid",
+    ).all(conversationId, sinceMs) as unknown as { at: number; from_name: string; text: string }[];
+    return rows.map((r) => ({ fromName: r.from_name, text: r.text, at: r.at }));
   }
 }
 
