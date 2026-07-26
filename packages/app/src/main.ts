@@ -108,12 +108,12 @@ app.whenReady().then(async () => {
   // object, so both surfaces stay in sync. Rebuilt fresh in buildTrayMenu() below (not just
   // once here) so the checkbox/dot state is current every time the tray menu opens.
   const buildChatopsSubmenu = (): MenuItemConstructorOptions[] => {
-    const rawStatus = chatopsServers?.status() ?? { discord: { running: false }, teams: { running: false } };
+    const rawStatus = chatopsServers?.status() ?? { discord: { running: false, enabled: false }, teams: { running: false, enabled: false } };
     // Drop an error once it's past CHATOPS_ERROR_DISPLAY_MS old — see chatopsErrorSince above.
     const displayState = (bot: ChatopsBot, s: ChatopsState): ChatopsState => {
       const since = chatopsErrorSince[bot];
       const stale = s.error && since !== undefined && Date.now() - since > CHATOPS_ERROR_DISPLAY_MS;
-      return stale ? { running: s.running } : s;
+      return stale ? { running: s.running, enabled: s.enabled } : s;
     };
     const status: Record<ChatopsBot, ChatopsState> = {
       discord: displayState("discord", rawStatus.discord),
@@ -467,6 +467,7 @@ app.whenReady().then(async () => {
 
     const chatopsRoot = app.isPackaged ? process.resourcesPath : dirname(projectBeanDir());
     const chatopsEnabledPath = chatopsEnabledFile(app.getPath("userData"));
+    let chatopsSave: Promise<void> = Promise.resolve();
     chatopsServers = createChatopsServers({
       repoRoot: chatopsRoot,
       resolvedPath,
@@ -474,7 +475,13 @@ app.whenReady().then(async () => {
         if (event.error) chatopsErrorSince[event.bot] = Date.now(); else delete chatopsErrorSince[event.bot];
         broadcast(IPC.chatopsEvent, event);
       },
-      onEnabledChange: (bots) => void saveChatopsEnabled(chatopsEnabledPath, bots).catch(() => {}),
+      // Chained, not fire-and-forget: replaying two bots at boot (or a fast toggle) would
+      // otherwise put two mkdir+writeFile calls on the same path in flight, where an older
+      // subset can land last — or a torn write leaves JSON that loadChatopsEnabled() reads as
+      // "nothing enabled", silently undoing autostart.
+      onEnabledChange: (bots) => {
+        chatopsSave = chatopsSave.then(() => saveChatopsEnabled(chatopsEnabledPath, bots)).catch(() => {});
+      },
       ...(app.isPackaged ? {
         serverEntries: { discord: "chatops/discord/server.js", teams: "chatops/teams/server.js" },
         extraEnv: { BEAN_BUILTIN_DIR: projectDir },
@@ -643,7 +650,14 @@ app.whenReady().then(async () => {
       currentVersion: pkg.version,
       isPackaged: app.isPackaged,
       checkAndDownloadUpdate: (currentVersion: string) => checkAndDownloadUpdate(currentVersion),
-      installUpdate: (extractedAppPath: string) => installAndRelaunch(extractedAppPath),
+      // The install ends in app.relaunch() + app.exit(), which skips before-quit — so the only
+      // thing that would reap the chatops children is each server's 5s exitWhenOrphaned() poll,
+      // and the replacement app can autostart Teams inside that window and lose the port to the
+      // orphan. Kill them here instead, while we still have handles.
+      installUpdate: (extractedAppPath: string) => {
+        chatopsServers?.stopAll();
+        return installAndRelaunch(extractedAppPath);
+      },
       pendingUpdateStore,
       cleanupExtractedBundle: (extractedAppPath: string) => cleanupExtractedBundle(extractedAppPath),
       openReleasesPage: () => { void shell.openExternal("https://github.com/ScenK/Bean/releases"); },

@@ -46,12 +46,28 @@ Update installs go `app.relaunch()` + `app.exit()`, which **skips `before-quit`*
 (`exitWhenOrphaned()`) is what reaps the old servers there, not `stopAll()`. Autostart then spawns
 fresh ones. Don't "simplify" the orphan guard away on the theory that `before-quit` covers it.
 
-That ordering is also why autostart retries: the new app can spawn Teams while the pre-update
-orphan still holds :3978, so the first attempt loses on EADDRINUSE through no fault of the config.
-`spawnBot()` retries a crash up to `MAX_START_ATTEMPTS` (3 total, 2s apart), with a fresh budget
-once a run has lasted `STABLE_MS`. **A pending retry is a fourth way to create an orphan** — it can
-fire after the kill that scheduled it — so `stopAll()` sets `shuttingDown`, and both the scheduling
-check and the timer callback test it plus `enabled.has(bot)`. Don't drop either guard.
+Because of that, **`installUpdate` in `main.ts` calls `stopAll()` itself** before
+`installAndRelaunch()`. Relying on the orphan guard there isn't enough: its poll is 5s, and the
+replacement app autostarts within that window, so Teams would lose :3978 to a server that is
+already doomed. Two writers, one port, and the loser is the one the user can see.
+
+Autostart also retries for the same reason — as the belt to that suspenders. `spawnBot()` retries a
+crash up to `MAX_START_ATTEMPTS` (3 total, `RETRY_DELAY_MS` apart), with a fresh budget once a run
+has lasted `STABLE_MS`. **`RETRY_DELAY_MS` (5s) is deliberately ≥ the orphan guard's `pollMs`** — a
+shorter delay makes all three attempts land inside the window where the orphan can still hold the
+port, so the bot gives up over something that would have fixed itself. If you change either
+constant, keep that relationship.
+
+**A pending retry is a fourth way to create an orphan** — it can fire after the kill that scheduled
+it — so `stopAll()` sets `shuttingDown`, and both the scheduling check and the timer callback test
+it plus `enabled.has(bot)`. `start()` clears the flag, so a *failed* update install doesn't leave
+retries dead for the rest of the session. Don't drop any of those guards.
+
+**`ChatopsState` carries `enabled` alongside `running`, and the Start/Stop toggle follows
+`enabled`.** Driving it off `running` (as it originally did) made the intent a one-way door: a
+crashed bot showed "Start", so `stop()` was unreachable, so it autostarted every boot with no way
+to say no. `stop()` therefore emits even when there's no process to kill — that's the only event
+the UI gets on that path.
 
 **When debugging "my chatops change didn't take effect": check the process, not just the code.**
 `lsof -nP -iTCP:3978 -sTCP:LISTEN` and `ps -eo pid,lstart,command | grep chatops` — compare the

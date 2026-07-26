@@ -3,7 +3,11 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 export type ChatopsBot = "discord" | "teams";
-export interface ChatopsState { running: boolean; error?: string; }
+/** `running` is the process; `enabled` is the user's switch — the two come apart while a crashed
+ * bot waits on a retry, and after it has given up entirely. The Start/Stop toggle must follow
+ * `enabled`, not `running`: a bot that's enabled but dead still needs an off switch, or its
+ * intent is stuck on and it autostarts every boot with no way to say no. */
+export interface ChatopsState { running: boolean; enabled: boolean; error?: string; }
 export type ChatopsEvent = { bot: ChatopsBot } & ChatopsState;
 
 export interface SpawnedProcess {
@@ -19,12 +23,17 @@ const SERVER_ENTRY: Record<ChatopsBot, string> = {
 
 /** A server that dies seconds after spawning is usually losing a race, not misconfigured —
  * most often Teams hitting EADDRINUSE against an orphan from the previous bundle that
- * `exitWhenOrphaned()` is still reaping, which is exactly what boot-time autostart runs into
- * after an update install. Retry a couple of times before leaving the row red. Deterministic
- * failures (bad token, missing config) just burn the budget in ~6s and settle on the same error.
- * ponytail: fixed delay, no backoff — three tries over six seconds doesn't need a curve. */
+ * `exitWhenOrphaned()` is still reaping. Retry a couple of times before leaving the row red;
+ * deterministic failures (bad token, missing config) just burn the budget and settle on the
+ * same error.
+ *
+ * The delay is deliberately longer than `exitWhenOrphaned()`'s 5s poll period
+ * (core/src/chatops/orphan-guard.ts): the orphan can hold the port for up to one full tick after
+ * its parent dies, so a budget that expires inside that window would give up while the only
+ * thing wrong is a port that's about to free itself. Two retries 5s apart clear it with margin.
+ * ponytail: fixed delay, no backoff — three tries doesn't need a curve. */
 const MAX_START_ATTEMPTS = 3;
-const RETRY_DELAY_MS = 2_000;
+const RETRY_DELAY_MS = 5_000;
 /** Past this, a run counts as having served rather than failed to start, so its crash gets a
  * fresh retry budget instead of being charged to the original start. */
 const STABLE_MS = 10_000;
@@ -52,7 +61,8 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
   const now = deps.nowFn ?? Date.now;
   const delay = deps.delayFn ?? ((cb, ms) => { setTimeout(cb, ms); });
   const procs = new Map<ChatopsBot, SpawnedProcess>();
-  const state: Record<ChatopsBot, ChatopsState> = { discord: { running: false }, teams: { running: false } };
+  // Liveness only — `enabled` is the separate source of truth for intent, folded in by view().
+  const liveness: Record<ChatopsBot, { running: boolean; error?: string }> = { discord: { running: false }, teams: { running: false } };
   const enabled = new Set<ChatopsBot>();
   const attempts = new Map<ChatopsBot, number>();
   // Set once by stopAll() at quit. A retry timer can outlive the kill it was scheduled by, and
@@ -60,7 +70,8 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
   // see .memory/safety-chatops-servers-must-die-with-the-app.md.
   let shuttingDown = false;
 
-  const emit = (bot: ChatopsBot): void => deps.send({ bot, ...state[bot] });
+  const view = (bot: ChatopsBot): ChatopsState => ({ ...liveness[bot], enabled: enabled.has(bot) });
+  const emit = (bot: ChatopsBot): void => deps.send({ bot, ...view(bot) });
   const enable = (bot: ChatopsBot): void => {
     if (enabled.has(bot)) return;
     enabled.add(bot);
@@ -71,7 +82,7 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     if (procs.has(bot)) return;
     const entry = join(deps.repoRoot, serverEntries[bot]);
     if (!exists(entry)) {
-      state[bot] = { running: false, error: `Not built — run "pnpm --filter @bean/${bot} build" first.` };
+      liveness[bot] = { running: false, error: `Not built — run "pnpm --filter @bean/${bot} build" first.` };
       emit(bot);
       return;
     }
@@ -83,14 +94,14 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     const child = doSpawn(process.execPath, [entry], deps.repoRoot, { ...process.env, ...deps.extraEnv, PATH: deps.resolvedPath, ELECTRON_RUN_AS_NODE: "1" });
     child.stderr?.on("data", (chunk) => { lastErr = chunk.toString().trim() || lastErr; });
     procs.set(bot, child);
-    state[bot] = { running: true };
+    liveness[bot] = { running: true };
     enable(bot);
     emit(bot);
     child.on("exit", (code) => {
       procs.delete(bot);
       const crashed = code !== 0 && code !== null;
       if (now() - spawnedAt >= STABLE_MS) attempts.set(bot, 0);
-      state[bot] = crashed ? { running: false, error: lastErr || `exited with code ${code}` } : { running: false };
+      liveness[bot] = crashed ? { running: false, error: lastErr || `exited with code ${code}` } : { running: false };
       emit(bot);
       // enabled.has() is the "does the user still want this" check: a stop() during the delay,
       // or before the timer fires, cancels the retry.
@@ -100,10 +111,13 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
   };
 
   return {
-    status: (): Record<ChatopsBot, ChatopsState> => state,
+    status: (): Record<ChatopsBot, ChatopsState> => ({ discord: view("discord"), teams: view("teams") }),
 
-    /** Explicit start (autostart at boot, tray, Settings) — always gets the full retry budget. */
+    /** Explicit start (autostart at boot, tray, Settings) — always gets the full retry budget.
+     * Also clears `shuttingDown`: only stopAll() sets it, and if the quit it was set for didn't
+     * actually happen (a failed update install), retries would stay dead for the whole session. */
     start(bot: ChatopsBot): void {
+      shuttingDown = false;
       attempts.set(bot, 0);
       spawnBot(bot);
     },
@@ -114,7 +128,10 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
       // a restart.
       if (enabled.delete(bot)) deps.onEnabledChange?.([...enabled]);
       attempts.set(bot, 0);
-      procs.get(bot)?.kill();
+      const child = procs.get(bot);
+      // No process to kill means no "exit" event, so this is the only chance to tell the UI the
+      // switch moved — that's the path that turns off a bot which crashed or gave up retrying.
+      if (child) child.kill(); else emit(bot);
     },
 
     stopAll(): void {

@@ -51,7 +51,7 @@ describe("createChatopsServers", () => {
     const h = harness();
     h.servers.start("discord");
     expect(h.spawned).toEqual([{ command: process.execPath, args: ["/repo/packages/discord/dist/server.js"], cwd: "/repo" }]);
-    expect(h.sent).toEqual([{ bot: "discord", running: true }]);
+    expect(h.sent).toEqual([{ bot: "discord", running: true, enabled: true }]);
   });
 
   it("can start a packaged server bundle from resources", () => {
@@ -73,7 +73,7 @@ describe("createChatopsServers", () => {
     servers.start("discord");
 
     expect(spawned).toEqual([{ command: process.execPath, args: ["/Resources/chatops/discord/server.js"], cwd: "/Resources", env: expect.objectContaining({ PATH: "/usr/bin", BEAN_BUILTIN_DIR: "/Resources/builtin", ELECTRON_RUN_AS_NODE: "1" }) }]);
-    expect(sent).toEqual([{ bot: "discord", running: true }]);
+    expect(sent).toEqual([{ bot: "discord", running: true, enabled: true }]);
   });
 
   it("start is a no-op while already running", () => {
@@ -89,7 +89,7 @@ describe("createChatopsServers", () => {
       repoRoot: "/repo", resolvedPath: "/usr/bin", send: (e) => sent.push(e), existsFn: () => false,
     });
     servers.start("teams");
-    expect(sent).toEqual([{ bot: "teams", running: false, error: 'Not built — run "pnpm --filter @bean/teams build" first.' }]);
+    expect(sent).toEqual([{ bot: "teams", running: false, enabled: false, error: 'Not built — run "pnpm --filter @bean/teams build" first.' }]);
   });
 
   it("exit with a non-zero code surfaces the last stderr line as the error", () => {
@@ -97,28 +97,28 @@ describe("createChatopsServers", () => {
     h.servers.start("discord");
     h.procs[0]!.emit("data", Buffer.from("boom: missing config\n"));
     h.procs[0]!.emit("exit", 1);
-    expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, error: "boom: missing config" });
+    expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: true, error: "boom: missing config" });
   });
 
   it("clean exit (code 0) clears running with no error", () => {
     const h = harness();
     h.servers.start("teams");
     h.procs[0]!.emit("exit", 0);
-    expect(h.sent.at(-1)).toEqual({ bot: "teams", running: false });
+    expect(h.sent.at(-1)).toEqual({ bot: "teams", running: false, enabled: true });
   });
 
   it("stop kills the tracked process; stopping an untracked bot is a no-op", () => {
     const h = harness();
     h.servers.start("discord");
     h.servers.stop("discord");
-    expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false });
+    expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: false });
     expect(() => h.servers.stop("teams")).not.toThrow();
   });
 
   it("status reflects the current state of both bots", () => {
     const h = harness();
     h.servers.start("discord");
-    expect(h.servers.status()).toEqual({ discord: { running: true }, teams: { running: false } });
+    expect(h.servers.status()).toEqual({ discord: { running: true, enabled: true }, teams: { running: false, enabled: false } });
   });
 
   it("stopAll kills every running process", () => {
@@ -126,7 +126,8 @@ describe("createChatopsServers", () => {
     h.servers.start("discord");
     h.servers.start("teams");
     h.servers.stopAll();
-    expect(h.servers.status()).toEqual({ discord: { running: false }, teams: { running: false } });
+    // Still enabled — quitting is not the user switching them off.
+    expect(h.servers.status()).toEqual({ discord: { running: false, enabled: true }, teams: { running: false, enabled: true } });
   });
 
   // The enabled set is user intent, not liveness — it's what main.ts replays on the next boot.
@@ -160,6 +161,21 @@ describe("createChatopsServers", () => {
       expect(h.enabled).toEqual([]);
     });
 
+    // Without this the intent is a one-way door: the UI drives Stop off `enabled`, so if stopping
+    // a dead-but-enabled bot didn't clear and emit, it would autostart every boot forever.
+    it("stop clears the intent and emits even when nothing is running", () => {
+      const h = harness();
+      h.servers.start("discord");
+      crashAndRetry(h);
+      crashAndRetry(h);
+      crashAndRetry(h); // gave up: enabled, but no process
+      expect(h.servers.status().discord).toEqual({ running: false, enabled: true, error: "exited with code 1" });
+
+      h.servers.stop("discord");
+      expect(h.enabled.at(-1)).toEqual([]);
+      expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: false, error: "exited with code 1" });
+    });
+
     it("persists once per bot, not on every retry respawn", () => {
       const h = harness();
       h.servers.start("teams");
@@ -177,7 +193,7 @@ describe("createChatopsServers", () => {
       crashAndRetry(h);
       expect(h.spawned).toHaveLength(3);
       expect(h.retries).toEqual([]);
-      expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, error: "exited with code 1" });
+      expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, enabled: true, error: "exited with code 1" });
     });
 
     it("a clean exit is not retried", () => {
