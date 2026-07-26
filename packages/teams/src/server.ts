@@ -5,7 +5,7 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry,
+  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, type ImageAttachment,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -14,7 +14,7 @@ import {
 } from "botbuilder";
 import express from "express";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   finishedCard, memoryProposalCard, memoryResultCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
   consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
@@ -115,7 +115,31 @@ const bot = buildTeamsBot({
     liveSessionProposalCard, liveSessionResultCard,
   },
   systemControlsEnabled: () => beanConfig.systemControls,
+  imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
 });
+
+/** Teams inline images arrive as image/* attachments whose contentUrl sits on the SMBA
+ * endpoint and requires the bot's own bearer token — a plain fetch gets a 401. */
+async function downloadImages(a: Activity): Promise<ImageAttachment[]> {
+  const out: ImageAttachment[] = [];
+  for (const att of a.attachments ?? []) {
+    if (!att.contentType?.startsWith("image/") || !att.contentUrl) continue;
+    try {
+      const creds = await credentialsFactory.createCredentials(
+        teamsConfig.botAppId, "https://api.botframework.com", "https://login.microsoftonline.com", true,
+      );
+      const token = await (creds as unknown as { getToken: () => Promise<string> }).getToken();
+      const res = await fetch(att.contentUrl, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) { console.error(`teams attachment download failed: ${res.status}`); continue; }
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.byteLength > 10 * 1024 * 1024) continue;
+      out.push({ data: buf.toString("base64"), mimeType: att.contentType });
+    } catch (err) {
+      console.error("teams attachment download failed:", err);
+    }
+  }
+  return out;
+}
 
 // chatopsServers.stop() (packages/app/src/chatops-servers.ts) sends SIGTERM with no other
 // warning — mark any in-flight run interrupted (durable outbox notice to its conversation)
@@ -188,6 +212,17 @@ function effectsFor(context: TurnContext): BotEffects {
     },
     // Live-session turn indicator: fire-and-forget proactive Typing (turns stream in after the
     // triggering turn's context is dead, same reason as postStream). The registry re-pings it.
+    // Generated images render inline via a base64 contentUrl attachment (no file hosting needed).
+    sendFile: async (path, caption) => {
+      const b64 = (await readFile(path)).toString("base64");
+      await proactive(async (ctx) => {
+        await ctx.sendActivity({
+          type: ActivityTypes.Message,
+          text: caption ?? "",
+          attachments: [{ contentType: "image/png", contentUrl: `data:image/png;base64,${b64}`, name: basename(path) }],
+        });
+      });
+    },
     sendTyping: () => {
       void proactive(async (ctx) => { await ctx.sendActivity({ type: ActivityTypes.Typing }); });
     },
@@ -232,14 +267,16 @@ app.post("/api/messages", (req, res) => {
       return;
     }
     const text = TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "";
-    if (!text) return;
+    const images = await downloadImages(a);
+    // An image-only message still gets a turn; pure empty messages stay ignored.
+    if (!text && images.length === 0) return;
     // A live session bound to this conversation is its own authorization boundary: forward every
     // message (mention or not) so allowed drivers can steer/stop it — core's onMessage decides
     // who may. Mirrors the Discord surface's `capturing` bypass.
     const capturing = liveSessions.has(a.conversation.id);
     if (!addressedToBot(a) && !capturing) {
       // Not for Bean — remember it as context for a later mention, but don't reply.
-      ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
+      if (text) ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
       return;
     }
     fx.fetchRecent = async (sinceMs) => ambient.since(a.conversation.id, sinceMs);
@@ -248,7 +285,11 @@ app.post("/api/messages", (req, res) => {
     const typing = setInterval(() => { void context.sendActivity({ type: ActivityTypes.Typing }); }, 5000);
     try {
       await bot.onMessage(
-        { conversationId: a.conversation.id, text, fromId: a.from.id, fromName: a.from.name ?? "someone", mentionedIds: mentionIds(a) },
+        {
+          conversationId: a.conversation.id, text: text || "(image)",
+          images: images.length > 0 ? images : undefined,
+          fromId: a.from.id, fromName: a.from.name ?? "someone", mentionedIds: mentionIds(a),
+        },
         fx,
       );
     } finally {
