@@ -46,6 +46,13 @@ Update installs go `app.relaunch()` + `app.exit()`, which **skips `before-quit`*
 (`exitWhenOrphaned()`) is what reaps the old servers there, not `stopAll()`. Autostart then spawns
 fresh ones. Don't "simplify" the orphan guard away on the theory that `before-quit` covers it.
 
+That ordering is also why autostart retries: the new app can spawn Teams while the pre-update
+orphan still holds :3978, so the first attempt loses on EADDRINUSE through no fault of the config.
+`spawnBot()` retries a crash up to `MAX_START_ATTEMPTS` (3 total, 2s apart), with a fresh budget
+once a run has lasted `STABLE_MS`. **A pending retry is a fourth way to create an orphan** — it can
+fire after the kill that scheduled it — so `stopAll()` sets `shuttingDown`, and both the scheduling
+check and the timer callback test it plus `enabled.has(bot)`. Don't drop either guard.
+
 **When debugging "my chatops change didn't take effect": check the process, not just the code.**
 `lsof -nP -iTCP:3978 -sTCP:LISTEN` and `ps -eo pid,lstart,command | grep chatops` — compare the
 process start time against when the change landed.

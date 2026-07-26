@@ -17,12 +17,16 @@ function harness({ built = true }: { built?: boolean } = {}) {
   const spawned: { command: string; args: string[]; cwd: string }[] = [];
   const procs: ReturnType<typeof fakeProcess>[] = [];
   const enabled: ChatopsBot[][] = [];
+  const retries: (() => void)[] = [];
+  let clock = 0;
   const servers = createChatopsServers({
     repoRoot: "/repo",
     resolvedPath: "/usr/bin",
     send: (e) => sent.push(e),
     onEnabledChange: (bots) => enabled.push(bots),
     existsFn: () => built,
+    nowFn: () => clock,
+    delayFn: (cb) => { retries.push(cb); },
     spawnFn: (command, args, cwd) => {
       spawned.push({ command, args, cwd });
       const p = fakeProcess();
@@ -30,7 +34,16 @@ function harness({ built = true }: { built?: boolean } = {}) {
       return p.proc;
     },
   });
-  return { servers, sent, spawned, procs, enabled };
+  /** Fires every retry the code has scheduled so far (the real delayFn is a setTimeout). */
+  const flushRetries = (): void => { for (const cb of retries.splice(0)) cb(); };
+  const advance = (ms: number): void => { clock += ms; };
+  return { servers, sent, spawned, procs, enabled, retries, flushRetries, advance };
+}
+
+/** Crash the newest spawned process with a non-zero exit, then let its retry fire. */
+function crashAndRetry(h: ReturnType<typeof harness>): void {
+  h.procs.at(-1)!.emit("exit", 1);
+  h.flushRetries();
 }
 
 describe("createChatopsServers", () => {
@@ -145,6 +158,85 @@ describe("createChatopsServers", () => {
       const h = harness({ built: false });
       h.servers.start("discord");
       expect(h.enabled).toEqual([]);
+    });
+
+    it("persists once per bot, not on every retry respawn", () => {
+      const h = harness();
+      h.servers.start("teams");
+      crashAndRetry(h);
+      expect(h.enabled).toEqual([["teams"]]);
+    });
+  });
+
+  describe("retry on early crash", () => {
+    it("respawns up to 3 attempts total, then gives up with the error visible", () => {
+      const h = harness();
+      h.servers.start("discord");
+      crashAndRetry(h);
+      crashAndRetry(h);
+      crashAndRetry(h);
+      expect(h.spawned).toHaveLength(3);
+      expect(h.retries).toEqual([]);
+      expect(h.sent.at(-1)).toEqual({ bot: "discord", running: false, error: "exited with code 1" });
+    });
+
+    it("a clean exit is not retried", () => {
+      const h = harness();
+      h.servers.start("teams");
+      h.procs[0]!.emit("exit", 0);
+      expect(h.retries).toEqual([]);
+    });
+
+    it("stop during the retry delay cancels the respawn", () => {
+      const h = harness();
+      h.servers.start("discord");
+      h.procs[0]!.emit("exit", 1);
+      h.servers.stop("discord");
+      h.flushRetries();
+      expect(h.spawned).toHaveLength(1);
+    });
+
+    it("stopAll at quit cancels pending retries — a respawn then would be the orphan we kill for", () => {
+      const h = harness();
+      h.servers.start("teams");
+      h.procs[0]!.emit("exit", 1);
+      h.servers.stopAll();
+      h.flushRetries();
+      expect(h.spawned).toHaveLength(1);
+    });
+
+    it("a crash after the run was stable gets a fresh budget, not the leftover one", () => {
+      const h = harness();
+      h.servers.start("discord");
+      crashAndRetry(h);
+      crashAndRetry(h); // budget now spent: 3rd process is the last of this start
+      h.advance(30_000);
+      crashAndRetry(h); // ...but it served for 30s, so this crash starts over
+      expect(h.spawned).toHaveLength(4);
+      crashAndRetry(h);
+      crashAndRetry(h);
+      expect(h.spawned).toHaveLength(6);
+      expect(h.retries).toEqual([]);
+    });
+
+    it("an explicit restart after giving up gets the full budget again", () => {
+      const h = harness();
+      h.servers.start("discord");
+      crashAndRetry(h);
+      crashAndRetry(h);
+      crashAndRetry(h); // budget spent, nothing running
+      expect(h.spawned).toHaveLength(3);
+      h.servers.start("discord");
+      crashAndRetry(h);
+      crashAndRetry(h);
+      expect(h.spawned).toHaveLength(6);
+    });
+
+    it("does not retry an unbuilt package — the retry can't fix a missing file", () => {
+      const h = harness({ built: false });
+      h.servers.start("teams");
+      expect(h.retries).toEqual([]);
+      expect(h.spawned).toEqual([]);
     });
   });
 });
