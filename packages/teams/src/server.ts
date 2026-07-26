@@ -128,7 +128,7 @@ process.on("SIGTERM", () => {
 
 // Ambient (non-mention) channel messages only reach /api/messages if the Teams app manifest
 // grants the RSC permission ChannelMessage.Read.Group — see packages/teams/README.md.
-const ambient = new AmbientStore();
+const ambient = new AmbientStore(dbFile(dir));
 
 /** True only when the message @mentions the bot; personal (1:1) chats always count.
  * Naming the bot in passing ("we should add x to bean") deliberately does NOT count —

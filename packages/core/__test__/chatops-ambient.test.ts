@@ -1,8 +1,16 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vitest";
 import { AmbientStore, formatAmbientBlock } from "../src/chatops/ambient.js";
 
+function newStore(): { store: AmbientStore; file: string } {
+  const file = join(mkdtempSync(join(tmpdir(), "bean-ambient-")), "bean.db");
+  return { store: new AmbientStore(file), file };
+}
+
 test("since() filters by timestamp and keeps order", () => {
-  const s = new AmbientStore();
+  const { store: s } = newStore();
   s.append("c1", { fromName: "alice", text: "old", at: 1000 });
   s.append("c1", { fromName: "bob", text: "new", at: 2000 });
   expect(s.since("c1", 1500)).toEqual([{ fromName: "bob", text: "new", at: 2000 }]);
@@ -10,11 +18,19 @@ test("since() filters by timestamp and keeps order", () => {
 });
 
 test("store caps at 200 messages per conversation", () => {
-  const s = new AmbientStore();
+  const { store: s } = newStore();
   for (let i = 0; i < 250; i++) s.append("c1", { fromName: "a", text: `m${i}`, at: i });
   const all = s.since("c1", 0);
   expect(all).toHaveLength(200);
   expect(all[0]?.text).toBe("m50");
+});
+
+test("chatter survives a restart", () => {
+  const { store: s, file } = newStore();
+  s.append("c1", { fromName: "alice", text: "ship it", at: 1000 });
+  expect(new AmbientStore(file).since("c1", 0)).toEqual([
+    { fromName: "alice", text: "ship it", at: 1000 },
+  ]);
 });
 
 test("formatAmbientBlock renders timestamped lines with a current-time anchor and untrusted framing", () => {

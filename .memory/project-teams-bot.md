@@ -42,4 +42,5 @@ Bean has two chat adapters over one shared brain:
   `channel.messages.fetch` (no extra intents). Teams needs RSC permissions in the app
   manifest (`ChannelMessage.Read.Group` + `ChatMessage.Read.Chat`) to receive non-mention
   messages at all; without them the feature silently no-ops. Non-mention Teams messages are
-  stored in an in-memory `AmbientStore` (200/conversation, restart amnesia) and never replied to.
+  stored in the `AmbientStore` (`chatops_ambient` table in `bean.db`, 200/conversation, survives
+  restarts) and never replied to.
