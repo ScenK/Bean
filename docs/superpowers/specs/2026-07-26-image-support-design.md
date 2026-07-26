@@ -22,10 +22,12 @@ Routines/delegate are out of scope.
   System / assistant / tool messages stay `string`.
 - `openai-chat.ts` `toOpenAIMessage()` maps image parts to OpenAI
   `{ type: "image_url", image_url: { url: "data:<mime>;base64,<data>" } }` parts.
-- `converse()` passes content through untouched.
-- **History trimming:** before each API call, image parts in user turns older than the
-  last 4 turns are replaced with a `[image omitted]` text part. Caps token cost.
-  Trimming happens at send time; the in-memory conversation keeps the parts.
+- **Latest-turn-only:** `ConverseInput.latestUserImages?: ImageAttachment[]` attaches
+  images to the current user turn only. `ChatTurn` (history) stays text — surfaces store
+  a `[image attached]` placeholder. No trimming code needed; token cost capped by
+  construction. Ceiling: multi-turn follow-ups about the same image lose the pixels
+  (the model keeps its own prior text description). Upgrade path: widen `ChatTurn` if
+  that ever matters.
 
 ## Section 2 — Generation
 
@@ -38,8 +40,13 @@ Routines/delegate are out of scope.
   path (or error string). Offered only when deps provide a generate fn.
 - `ConverseResult` gains `generatedImages?: string[]` (absolute paths) so surfaces
   render without parsing reply text.
-- Config: reuses `openaiApiKey`; image model hardcoded `gpt-image-1` for now.
+- Config: reuses `openaiApiKey`; image model comes from `~/.bean/config.json`'s new
+  `imageModel` key, defaulting to `gpt-image-2` (user decision — no hardcoded model).
 - Errors: API failure → error string as tool result; `converse()` never throws.
+- **Slow-generation feedback (user decision):** the tool factory takes an optional
+  `onStart` callback fired when generation begins. Desktop: pushed over IPC to flip the
+  chat's working bubble to "🎨 Painting…". Discord/Teams: the bot posts
+  "🎨 Working on your image — this can take a minute…" as a message.
 
 ## Section 3 — Desktop ChatWindow
 
