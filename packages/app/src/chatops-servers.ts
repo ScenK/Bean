@@ -124,8 +124,8 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     status: (): Record<ChatopsBot, ChatopsState> => ({ discord: view("discord"), teams: view("teams") }),
 
     /** Explicit start (autostart at boot, tray, Settings) — always gets the full retry budget.
-     * Also clears `shuttingDown`: only stopAll() sets it, and if the quit it was set for didn't
-     * actually happen (a failed update install), retries would stay dead for the whole session. */
+     * Also clears `shuttingDown`: it's only set on the way out, so if the process is still here
+     * asking for a bot, that exit didn't happen and retries shouldn't stay dead for the session. */
     start(bot: ChatopsBot): void {
       shuttingDown = false;
       attempts.set(bot, 0);

@@ -653,11 +653,19 @@ app.whenReady().then(async () => {
       // The install ends in app.relaunch() + app.exit(), which skips before-quit — so the only
       // thing that would reap the chatops children is each server's 5s exitWhenOrphaned() poll,
       // and the replacement app can autostart Teams inside that window and lose the port to the
-      // orphan. Kill them here instead, while we still have handles.
-      installUpdate: (extractedAppPath: string) => {
-        chatopsServers?.stopAll();
-        return installAndRelaunch(extractedAppPath);
-      },
+      // orphan. Kill them ourselves instead, while we still have handles.
+      //
+      // Hung off the relaunch hook rather than done up front on purpose: installAndRelaunch()
+      // reaches relaunch() only after the bundle swap has succeeded (every failure path rolls
+      // back and throws first — see updater.test.ts), and exit() is the very next statement. A
+      // failed install therefore leaves the bots running and untouched, instead of killing them
+      // for an update that never happened and leaving the toggles showing Stop.
+      installUpdate: (extractedAppPath: string) => installAndRelaunch(extractedAppPath, {
+        relaunch: () => {
+          chatopsServers?.stopAll();
+          app.relaunch();
+        },
+      }),
       pendingUpdateStore,
       cleanupExtractedBundle: (extractedAppPath: string) => cleanupExtractedBundle(extractedAppPath),
       openReleasesPage: () => { void shell.openExternal("https://github.com/ScenK/Bean/releases"); },

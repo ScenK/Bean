@@ -46,10 +46,15 @@ Update installs go `app.relaunch()` + `app.exit()`, which **skips `before-quit`*
 (`exitWhenOrphaned()`) is what reaps the old servers there, not `stopAll()`. Autostart then spawns
 fresh ones. Don't "simplify" the orphan guard away on the theory that `before-quit` covers it.
 
-Because of that, **`installUpdate` in `main.ts` calls `stopAll()` itself** before
-`installAndRelaunch()`. Relying on the orphan guard there isn't enough: its poll is 5s, and the
-replacement app autostarts within that window, so Teams would lose :3978 to a server that is
-already doomed. Two writers, one port, and the loser is the one the user can see.
+Because of that, **`installUpdate` in `main.ts` calls `stopAll()` itself** — passed as
+`installAndRelaunch`'s `relaunch` hook, not run up front. Relying on the orphan guard there isn't
+enough: its poll is 5s, and the replacement app autostarts within that window, so Teams would lose
+:3978 to a server that is already doomed. Two writers, one port, and the loser is the one the user
+can see. But killing them *before* the bundle swap is wrong too — a failed install leaves the app
+running with its bots dead and (since the toggle follows `enabled`) showing Stop, so recovery takes
+two clicks for an update that never happened. The `relaunch` hook is reached only after the swap
+succeeded, with `exit()` as the next statement; `updater.test.ts` asserts `relaunch` stays
+uncalled on every rollback path, which is what makes that placement safe. Keep those tests.
 
 Autostart also retries for the same reason — as the belt to that suspenders. `spawnBot()` retries a
 crash up to `MAX_START_ATTEMPTS` (3 total, `RETRY_DELAY_MS` apart), with a fresh budget once a run
