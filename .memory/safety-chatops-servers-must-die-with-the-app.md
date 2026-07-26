@@ -28,6 +28,24 @@ success synchronously inside that callback prints "listening on :3978" from a pr
 about to exit. The success log is therefore deferred with `setImmediate` and guarded by a
 `bindFailed` flag; the error reliably lands first (verified empirically).
 
+## Autostart is intent, not liveness — and it must not weaken the three defenses
+
+`chatops-enabled-store.ts` persists which bots the user switched on (`chatops-enabled.json` in
+Electron's userData); `main.ts` replays that list at boot so a quit, a `pnpm dev` relaunch, or an
+update install doesn't silently leave the bots off. The set tracks **user intent**, so:
+
+- `start()`/`stop()` (tray *and* Settings both route through `createChatopsServers`) are the only
+  things that move a bot in or out — that's why the hook lives in core-app rather than at the two
+  call sites.
+- **`stopAll()` must never clear it.** It's the quit-time kill from defense 1; clearing it there
+  would mean "quit" reads as "the user turned the bots off".
+- A crash / non-zero exit also leaves the set alone, so a crashed bot comes back next boot.
+- A start that fails the "not built" check enables nothing — it never ran.
+
+Update installs go `app.relaunch()` + `app.exit()`, which **skips `before-quit`** — so defense 2
+(`exitWhenOrphaned()`) is what reaps the old servers there, not `stopAll()`. Autostart then spawns
+fresh ones. Don't "simplify" the orphan guard away on the theory that `before-quit` covers it.
+
 **When debugging "my chatops change didn't take effect": check the process, not just the code.**
 `lsof -nP -iTCP:3978 -sTCP:LISTEN` and `ps -eo pid,lstart,command | grep chatops` — compare the
 process start time against when the change landed.

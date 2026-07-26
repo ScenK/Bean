@@ -23,6 +23,10 @@ export interface ChatopsServersDeps {
   send: (event: ChatopsEvent) => void;
   serverEntries?: Record<ChatopsBot, string>;
   extraEnv?: NodeJS.ProcessEnv;
+  /** Called with the set of bots the user has switched on, whenever that intent changes.
+   * Intent, not liveness: a crash or `stopAll()` at quit leaves the set alone, so main.ts can
+   * restart them on the next boot. Only an explicit start/stop moves a bot in or out. */
+  onEnabledChange?: (enabled: ChatopsBot[]) => void;
   spawnFn?: (command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => SpawnedProcess;
   existsFn?: (path: string) => boolean;
 }
@@ -33,8 +37,10 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
   const serverEntries = deps.serverEntries ?? SERVER_ENTRY;
   const procs = new Map<ChatopsBot, SpawnedProcess>();
   const state: Record<ChatopsBot, ChatopsState> = { discord: { running: false }, teams: { running: false } };
+  const enabled = new Set<ChatopsBot>();
 
   const emit = (bot: ChatopsBot): void => deps.send({ bot, ...state[bot] });
+  const emitEnabled = (): void => deps.onEnabledChange?.([...enabled]);
 
   return {
     status: (): Record<ChatopsBot, ChatopsState> => state,
@@ -54,7 +60,9 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
       child.stderr?.on("data", (chunk) => { lastErr = chunk.toString().trim() || lastErr; });
       procs.set(bot, child);
       state[bot] = { running: true };
+      enabled.add(bot);
       emit(bot);
+      emitEnabled();
       child.on("exit", (code) => {
         procs.delete(bot);
         state[bot] = code === 0 || code === null ? { running: false } : { running: false, error: lastErr || `exited with code ${code}` };
@@ -63,6 +71,10 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     },
 
     stop(bot: ChatopsBot): void {
+      // Deliberate stop = the user wants it off; drop it before the kill so the "exit" handler
+      // can't be read as intent either way. Unlike stopAll(), this does not survive a restart.
+      enabled.delete(bot);
+      emitEnabled();
       procs.get(bot)?.kill();
     },
 

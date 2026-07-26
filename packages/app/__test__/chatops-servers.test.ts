@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createChatopsServers, type ChatopsEvent, type SpawnedProcess } from "../src/chatops-servers.js";
+import { createChatopsServers, type ChatopsBot, type ChatopsEvent, type SpawnedProcess } from "../src/chatops-servers.js";
 
 function fakeProcess() {
   const listeners: Record<string, ((arg: unknown) => void)[]> = {};
@@ -12,15 +12,17 @@ function fakeProcess() {
   return { proc, emit };
 }
 
-function harness() {
+function harness({ built = true }: { built?: boolean } = {}) {
   const sent: ChatopsEvent[] = [];
   const spawned: { command: string; args: string[]; cwd: string }[] = [];
   const procs: ReturnType<typeof fakeProcess>[] = [];
+  const enabled: ChatopsBot[][] = [];
   const servers = createChatopsServers({
     repoRoot: "/repo",
     resolvedPath: "/usr/bin",
     send: (e) => sent.push(e),
-    existsFn: () => true,
+    onEnabledChange: (bots) => enabled.push(bots),
+    existsFn: () => built,
     spawnFn: (command, args, cwd) => {
       spawned.push({ command, args, cwd });
       const p = fakeProcess();
@@ -28,7 +30,7 @@ function harness() {
       return p.proc;
     },
   });
-  return { servers, sent, spawned, procs };
+  return { servers, sent, spawned, procs, enabled };
 }
 
 describe("createChatopsServers", () => {
@@ -112,5 +114,37 @@ describe("createChatopsServers", () => {
     h.servers.start("teams");
     h.servers.stopAll();
     expect(h.servers.status()).toEqual({ discord: { running: false }, teams: { running: false } });
+  });
+
+  // The enabled set is user intent, not liveness — it's what main.ts replays on the next boot.
+  describe("onEnabledChange (autostart intent)", () => {
+    it("start adds the bot and stop removes it", () => {
+      const h = harness();
+      h.servers.start("discord");
+      h.servers.start("teams");
+      h.servers.stop("discord");
+      expect(h.enabled).toEqual([["discord"], ["discord", "teams"], ["teams"]]);
+    });
+
+    it("a crash keeps the bot enabled so the next boot restarts it", () => {
+      const h = harness();
+      h.servers.start("teams");
+      h.procs[0]!.emit("exit", 1);
+      expect(h.enabled.at(-1)).toEqual(["teams"]);
+    });
+
+    it("stopAll at quit leaves the enabled set intact", () => {
+      const h = harness();
+      h.servers.start("discord");
+      h.servers.start("teams");
+      h.servers.stopAll();
+      expect(h.enabled.at(-1)).toEqual(["discord", "teams"]);
+    });
+
+    it("a start that fails because the package isn't built enables nothing", () => {
+      const h = harness({ built: false });
+      h.servers.start("discord");
+      expect(h.enabled).toEqual([]);
+    });
   });
 });

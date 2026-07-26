@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
+import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./chatops-enabled-store.js";
 import { createChatopsServers } from "./chatops-servers.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
@@ -465,6 +466,7 @@ app.whenReady().then(async () => {
     interruptAllDelegates = delegateTasks.interruptAll;
 
     const chatopsRoot = app.isPackaged ? process.resourcesPath : dirname(projectBeanDir());
+    const chatopsEnabledPath = chatopsEnabledFile(app.getPath("userData"));
     chatopsServers = createChatopsServers({
       repoRoot: chatopsRoot,
       resolvedPath,
@@ -472,12 +474,17 @@ app.whenReady().then(async () => {
         if (event.error) chatopsErrorSince[event.bot] = Date.now(); else delete chatopsErrorSince[event.bot];
         broadcast(IPC.chatopsEvent, event);
       },
+      onEnabledChange: (bots) => void saveChatopsEnabled(chatopsEnabledPath, bots).catch(() => {}),
       ...(app.isPackaged ? {
         serverEntries: { discord: "chatops/discord/server.js", teams: "chatops/teams/server.js" },
         extraEnv: { BEAN_BUILTIN_DIR: projectDir },
       } : {}),
     });
     app.on("before-quit", () => chatopsServers?.stopAll());
+    // Bring back whatever the user had switched on. Every restart path lands here — plain quit,
+    // dev relaunch, and an update install (`app.relaunch()` skips before-quit, but each server's
+    // exitWhenOrphaned() reaps it) — so the bots don't quietly stay off after an update.
+    for (const bot of await loadChatopsEnabled(chatopsEnabledPath)) chatopsServers.start(bot);
 
     // --- Routines: cron-scheduled multi-step automations (see .memory/project-routines.md). ---
     const routinesPath = routinesDir(dir);
