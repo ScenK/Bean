@@ -30,7 +30,8 @@ interface ToolChatClient {
       create: (args: {
         model: string;
         messages: Array<
-          | { role: "system" | "user"; content: string }
+          | { role: "system"; content: string }
+          | { role: "user"; content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> }
           | { role: "assistant"; content: string; tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> }
           | { role: "tool"; content: string; tool_call_id: string }
         >;
@@ -66,7 +67,16 @@ function toOpenAIMessage(message: ConvoMsg): Parameters<ToolChatClient["chat"]["
         : {}),
     };
   }
-  return message;
+  if (message.role === "user" && Array.isArray(message.content)) {
+    return {
+      role: "user",
+      content: message.content.map((p) =>
+        p.type === "text"
+          ? { type: "text" as const, text: p.text }
+          : { type: "image_url" as const, image_url: { url: `data:${p.image.mimeType};base64,${p.image.data}` } }),
+    };
+  }
+  return message as { role: "system"; content: string } | { role: "user"; content: string };
 }
 
 export function makeOpenAIConverseWithClient(client: ToolChatClient): ConverseDeps["chat"] {

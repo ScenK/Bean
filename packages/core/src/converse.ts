@@ -6,8 +6,14 @@ import { selectRelevantMemories } from "./memory/store.js";
 import type { CliName } from "./launcher.js";
 import type { AvailableModel } from "./models.js";
 
+/** Base64 image payload (no data: prefix). */
+export interface ImageAttachment { data: string; mimeType: string }
+export type UserContentPart =
+  | { type: "text"; text: string }
+  | { type: "image"; image: ImageAttachment };
 export type ConvoMsg =
-  | { role: "system" | "user"; content: string }
+  | { role: "system"; content: string }
+  | { role: "user"; content: string | UserContentPart[] }
   | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
   | { role: "tool"; content: string; toolCallId: string };
 // "system" backs chatops/compact.ts's rolling summary turn — ConvoMsg already accepts it, so
