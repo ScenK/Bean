@@ -22,6 +22,39 @@ function readImageFile(file: File): Promise<{ attachment: ImageAttachment; dataU
   });
 }
 
+/**
+ * Full-size preview for a chat image. Native `<dialog>`, so the backdrop, Esc-to-close and
+ * focus trapping come from the platform — click the image to toggle fit ↔ 1:1 zoom.
+ */
+function ImagePreview({ image, onClose }: { image: { dataUrl: string; path?: string }; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [zoomed, setZoomed] = useState(false);
+  useEffect(() => { ref.current?.showModal(); }, []);
+  return (
+    <dialog
+      ref={ref}
+      class="bean-image-preview"
+      onClose={onClose}
+      // A click landing on the dialog itself (not its content) is a backdrop click.
+      onClick={(e) => { if (e.target === ref.current) ref.current?.close(); }}
+    >
+      <img
+        class={`bean-image-preview-img${zoomed ? " bean-image-preview-img--zoom" : ""}`}
+        src={image.dataUrl}
+        alt="image preview"
+        title={zoomed ? "Click to fit" : "Click to zoom"}
+        onClick={() => setZoomed((z) => !z)}
+      />
+      <div class="bean-image-preview-actions">
+        {image.path ? (
+          <button type="button" class="bean-btn" onClick={() => window.bean.revealInFinder(image.path!)}>Show in Finder</button>
+        ) : null}
+        <button type="button" class="bean-btn bean-btn--ghost" onClick={() => ref.current?.close()}>Close</button>
+      </div>
+    </dialog>
+  );
+}
+
 export function ChatPanel({
   items,
   busy,
@@ -94,6 +127,9 @@ export function ChatPanel({
   // FileReader is async — a submit racing an unfinished read would send the text without its
   // image (and orphan the image onto the next turn). Submit blocks while any read is in flight.
   const [imageReadsInFlight, setImageReadsInFlight] = useState(0);
+  // Clicked transcript image, shown full-size in the overlay. Generated images carry a `path`
+  // (so they also offer "Show in Finder"); pasted/dropped ones only exist as a data URL.
+  const [preview, setPreview] = useState<{ dataUrl: string; path?: string } | null>(null);
 
   // Slots reserved by accepted-but-still-reading files. A ref, not state: a second paste
   // arriving before the first batch's FileReaders resolve must see those reservations
@@ -243,7 +279,15 @@ export function ChatPanel({
             return (
               <div key={it.id} class="bean-bubble bean-bubble--user">
                 {it.display ?? it.text}
-                {it.images?.map((src) => <img class="bean-chat-thumb" src={src} alt="attached image" />)}
+                {it.images?.map((src) => (
+                  <img
+                    class="bean-chat-thumb"
+                    src={src}
+                    alt="attached image"
+                    title="Click to preview"
+                    onClick={() => setPreview({ dataUrl: src })}
+                  />
+                ))}
               </div>
             );
           }
@@ -256,8 +300,8 @@ export function ChatPanel({
                     class="bean-chat-thumb"
                     src={img.dataUrl}
                     alt="generated image"
-                    title="Reveal in Finder"
-                    onClick={() => window.bean.revealInFinder(img.path)}
+                    title="Click to preview"
+                    onClick={() => setPreview({ dataUrl: img.dataUrl, path: img.path })}
                   />
                 ))}
               </div>
@@ -384,6 +428,7 @@ export function ChatPanel({
           </button>
         </div>
       </div>
+      {preview ? <ImagePreview image={preview} onClose={() => setPreview(null)} /> : null}
     </div>
   );
 }

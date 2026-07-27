@@ -1803,6 +1803,42 @@ button, input, textarea, select, a {
   margin-top: 6px;
   cursor: pointer;
 }
+.bean-image-preview {
+  max-width: 96vw;
+  max-height: 96vh;
+  padding: 10px;
+  border: 1px solid var(--bean-border);
+  border-radius: 12px;
+  background: var(--bean-surface);
+  color: var(--bean-text);
+  overflow: auto;
+}
+.bean-image-preview::backdrop {
+  background: rgb(0 0 0 / 0.6);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.bean-image-preview-img {
+  display: block;
+  max-width: 88vw;
+  max-height: 82vh;
+  border-radius: 8px;
+  cursor: zoom-in;
+}
+/* Zoomed = natural size; the dialog scrolls around it. */
+.bean-image-preview-img--zoom {
+  max-width: none;
+  max-height: none;
+  cursor: zoom-out;
+}
+.bean-image-preview-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  position: sticky;
+  left: 0;
+  margin-top: 10px;
+}
 .bean-chat-pending-images {
   display: flex;
   gap: 6px;
