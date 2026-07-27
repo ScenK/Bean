@@ -1,5 +1,5 @@
 import {
-  route, converse, launchInTerminal, scratchDir,
+  route, converse, launchInTerminal, scratchDir, makeGenerateImageTool, type ImageGenDeps,
   availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
@@ -7,7 +7,7 @@ import {
   type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
   type TodoItem, type CliModels,
 } from "@bean/core";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";
 import { BrowserWindow, dialog, screen, shell, type IpcMain } from "electron";
 import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
@@ -174,6 +174,9 @@ export interface ChatHandlerDeps {
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
   loadRoutines?: () => Promise<Routine[]>;
+  /** Enables the generate_image action tool. getModel (not a value): imageModel may live
+   * behind runtime config someday; onStart drives the chat window's 🎨 working indicator. */
+  imageGen?: { generate: ImageGenDeps["generate"]; getModel: () => string; imagesDir: string; onStart?: () => void };
 }
 
 export function buildChatHandler(deps: ChatHandlerDeps) {
@@ -187,20 +190,37 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
     ]);
     const enabled = skills.filter((s) => s.enabled !== false);
     const todoRoutines = routines.filter((r) => r.todoDriven).map((r) => r.name);
-    return converse({
+    // Per-request (not shared) so `paths` collects only this turn's generated files.
+    const imageTool = deps.imageGen
+      ? makeGenerateImageTool({
+          generate: deps.imageGen.generate,
+          model: deps.imageGen.getModel(),
+          imagesDir: deps.imageGen.imagesDir,
+          onStart: deps.imageGen.onStart,
+        })
+      : undefined;
+    const result = await converse({
       history: req.history,
       latestUserText: req.message,
+      latestUserImages: req.images,
       skills: enabled,
       projects,
       persona,
       memories,
       deps: { chat: deps.converse, model: deps.getModel() },
       droppedUrl: req.droppedUrl,
-      actions: deps.actions,
+      actions: imageTool ? [...(deps.actions ?? []), imageTool.tool] : deps.actions,
       linkedNote: req.linkedNote,
       delegateAvailable: deps.delegateAvailable?.() ?? false,
       todoRoutines,
     });
+    if (imageTool && imageTool.paths.length > 0) {
+      result.generatedImages = await Promise.all(imageTool.paths.map(async (path) => ({
+        path,
+        dataUrl: `data:image/png;base64,${(await readFile(path)).toString("base64")}`,
+      })));
+    }
+    return result;
   };
 }
 
@@ -527,6 +547,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
+  imageGen?: ChatHandlerDeps["imageGen"];
   broadcast: (channel: string, payload: unknown) => void;
   openComponent: (kind: ComponentKind, droppedUrl?: string) => void;
   proposeRun: (suggestion: RouteSuggestion) => void;

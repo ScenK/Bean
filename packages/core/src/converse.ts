@@ -6,8 +6,23 @@ import { selectRelevantMemories } from "./memory/store.js";
 import type { CliName } from "./launcher.js";
 import type { AvailableModel } from "./models.js";
 
+/** The raster formats OpenAI vision input accepts — every ingest surface must filter to
+ * these (a bare image/* check lets HEIC/SVG/TIFF through and fails the whole turn at the
+ * API). GIF is deliberately absent: vision rejects animated GIFs and telling animated from
+ * static needs frame parsing — not worth it for a format nobody screenshots in.
+ * The renderer keeps its own copy in chat-types.ts (can't import core values). */
+export const SUPPORTED_IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp"] as const;
+/** Per-message image cap. 4 × the 10MB per-file cap stays under OpenAI's 50MB total
+ * image-input limit; every ingest surface enforces it. */
+export const MAX_IMAGES_PER_MESSAGE = 4;
+/** Base64 image payload (no data: prefix). */
+export interface ImageAttachment { data: string; mimeType: string }
+export type UserContentPart =
+  | { type: "text"; text: string }
+  | { type: "image"; image: ImageAttachment };
 export type ConvoMsg =
-  | { role: "system" | "user"; content: string }
+  | { role: "system"; content: string }
+  | { role: "user"; content: string | UserContentPart[] }
   | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
   | { role: "tool"; content: string; toolCallId: string };
 // "system" backs chatops/compact.ts's rolling summary turn — ConvoMsg already accepts it, so
@@ -63,8 +78,13 @@ export interface ProposedLiveSession {
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */
 export interface LinkedNote { slug: string; title: string; version: number; body: string; }
-export interface ConverseResult { reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedRemember?: boolean; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo; }
-export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?: string; linkedNote?: LinkedNote; }
+export interface ConverseResult {
+  reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedRemember?: boolean; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo;
+  /** Files produced by generate_image this turn — set by surface handlers (buildChatHandler
+   * fills dataUrl for inline rendering), never by converse() itself; bots use sendFile instead. */
+  generatedImages?: Array<{ path: string; dataUrl?: string }>;
+}
+export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; }
 
 // runAvailable=false (chatops: Discord/Teams) — no terminal exists there, so propose_run
 // is only offered for `target: chat` skills (which run on Bean's own model, no agent
@@ -325,6 +345,10 @@ export interface ConverseInput {
   memories: Memory[];
   deps: ConverseDeps;
   droppedUrl?: string;
+  /** Images attached to the LATEST user turn only — history stays text (surfaces store a
+   * "[image attached]" placeholder there). Latest-turn-only by design: caps token cost with
+   * no trimming code; the model's own text description carries follow-up turns. */
+  latestUserImages?: ImageAttachment[];
   actions?: ActionTool[];
   now?: () => Date;
   linkedNote?: LinkedNote;
@@ -348,6 +372,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     memories,
     deps,
     droppedUrl,
+    latestUserImages = [],
     actions = [],
     now = () => new Date(),
     linkedNote,
@@ -391,7 +416,12 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     ...(contextParts.length > 0
       ? [{ role: "system", content: contextParts.join("\n\n") } satisfies ConvoMsg]
       : []),
-    { role: "user", content: latestUserText },
+    {
+      role: "user",
+      content: latestUserImages.length > 0
+        ? [{ type: "text" as const, text: latestUserText }, ...latestUserImages.map((image) => ({ type: "image" as const, image }))]
+        : latestUserText,
+    },
   ];
 
   // No skills means propose_run could never validly fire; project is optional (no-project /

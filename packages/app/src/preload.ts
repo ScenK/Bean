@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld("bean", {
   setModelMemory: (skillName: string, modelId: string): Promise<void> =>
     ipcRenderer.invoke(IPC.setModelMemory, skillName, modelId),
   chat: (req: ChatRequest): Promise<ConverseResult> => ipcRenderer.invoke(IPC.chat, req),
+  onChatImageProgress: (cb: () => void) => ipcRenderer.on(IPC.chatImageProgress, () => cb()),
   getModel: (): Promise<string> => ipcRenderer.invoke(IPC.getModel),
   // File/folder drags (Finder) populate dataTransfer.files, not text/uri-list — this is the
   // only way to recover an absolute path from a dropped File since Electron 32 (File.path was

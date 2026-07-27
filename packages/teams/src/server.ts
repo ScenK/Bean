@@ -5,7 +5,7 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry,
+  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -115,7 +115,46 @@ const bot = buildTeamsBot({
     liveSessionProposalCard, liveSessionResultCard,
   },
   systemControlsEnabled: () => beanConfig.systemControls,
+  imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
 });
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** Buffer a response body up to MAX_IMAGE_BYTES; null when over the cap.
+ * ponytail: Content-Length check + post-buffer check, no streaming enforcement — the only
+ * caller fetches from Microsoft's own SMBA endpoint, whose Content-Length is reliable. */
+async function readCapped(res: Response): Promise<Buffer | null> {
+  if (Number(res.headers.get("content-length") ?? 0) > MAX_IMAGE_BYTES) { await res.body?.cancel(); return null; }
+  const buf = Buffer.from(await res.arrayBuffer());
+  return buf.byteLength > MAX_IMAGE_BYTES ? null : buf;
+}
+
+/** Teams inline images arrive as image/* attachments whose contentUrl sits on the SMBA
+ * endpoint and requires the bot's own bearer token — a plain fetch gets a 401.
+ * Only call for messages that actually get a turn (addressed/captured) — ambient chatter
+ * must stay context-only, no downloads. */
+async function downloadImages(a: Activity): Promise<ImageAttachment[]> {
+  const out: ImageAttachment[] = [];
+  for (const att of a.attachments ?? []) {
+    if (out.length >= MAX_IMAGES_PER_MESSAGE) break;
+    const mime = att.contentType?.split(";")[0]?.trim() ?? "";
+    if (!(SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) || !att.contentUrl) continue;
+    try {
+      const creds = await credentialsFactory.createCredentials(
+        teamsConfig.botAppId, "https://api.botframework.com", "https://login.microsoftonline.com", true,
+      );
+      const token = await (creds as unknown as { getToken: () => Promise<string> }).getToken();
+      const res = await fetch(att.contentUrl, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) { console.error(`teams attachment download failed: ${res.status}`); continue; }
+      const buf = await readCapped(res);
+      if (!buf) continue; // over the 10MB cap
+      out.push({ data: buf.toString("base64"), mimeType: mime });
+    } catch (err) {
+      console.error("teams attachment download failed:", err);
+    }
+  }
+  return out;
+}
 
 // chatopsServers.stop() (packages/app/src/chatops-servers.ts) sends SIGTERM with no other
 // warning — mark any in-flight run interrupted (durable outbox notice to its conversation)
@@ -188,6 +227,9 @@ function effectsFor(context: TurnContext): BotEffects {
     },
     // Live-session turn indicator: fire-and-forget proactive Typing (turns stream in after the
     // triggering turn's context is dead, same reason as postStream). The registry re-pings it.
+    // No sendFile on purpose: Teams rejects large inline base64 activities, and hosting the
+    // file (public route + auth tokens + rate limiting) isn't worth it — core's fallback
+    // posts the saved file's path instead, and the user opens it locally.
     sendTyping: () => {
       void proactive(async (ctx) => { await ctx.sendActivity({ type: ActivityTypes.Typing }); });
     },
@@ -232,23 +274,32 @@ app.post("/api/messages", (req, res) => {
       return;
     }
     const text = TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "";
-    if (!text) return;
     // A live session bound to this conversation is its own authorization boundary: forward every
     // message (mention or not) so allowed drivers can steer/stop it — core's onMessage decides
     // who may. Mirrors the Discord surface's `capturing` bypass.
     const capturing = liveSessions.has(a.conversation.id);
     if (!addressedToBot(a) && !capturing) {
       // Not for Bean — remember it as context for a later mention, but don't reply.
-      ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
+      if (text) ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
       return;
     }
+    // Downloaded only after the addressing gate: ambient channel images must not cost
+    // token-authenticated fetches for messages Bean immediately discards. Also skipped
+    // while a live session captures the conversation — the bridged agent only takes text.
+    const images = capturing ? [] : await downloadImages(a);
+    // An image-only message still gets a turn; pure empty messages stay ignored.
+    if (!text && images.length === 0) return;
     fx.fetchRecent = async (sinceMs) => ambient.since(a.conversation.id, sinceMs);
     await context.sendActivity({ type: ActivityTypes.Typing });
     // Teams clears the typing indicator quickly; resend while onMessage is still working.
     const typing = setInterval(() => { void context.sendActivity({ type: ActivityTypes.Typing }); }, 5000);
     try {
       await bot.onMessage(
-        { conversationId: a.conversation.id, text, fromId: a.from.id, fromName: a.from.name ?? "someone", mentionedIds: mentionIds(a) },
+        {
+          conversationId: a.conversation.id, text: text || "(image)",
+          images: images.length > 0 ? images : undefined,
+          fromId: a.from.id, fromName: a.from.name ?? "someone", mentionedIds: mentionIds(a),
+        },
         fx,
       );
     } finally {

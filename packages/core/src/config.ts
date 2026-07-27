@@ -39,6 +39,8 @@ export function modelMemoryFile(dir: string): string { return join(dir, "model-m
 // URL, it's folded into the composed prompt instead, and the launched agent (opencode/claude/codex,
 // a full coding agent with its own shell/git access) fetches or clones it itself if needed.
 export function scratchDir(dir: string): string { return join(dir, "workspace"); }
+// generate_image output lands here as timestamped PNGs; no cleanup policy (add one if it matters).
+export function imagesDir(dir: string): string { return join(dir, "images"); }
 
 export async function loadConfig(file: string, beanDirPath: string): Promise<BeanConfig> {
   let raw: string;
@@ -60,6 +62,7 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
     editorApp: parsed.editorApp ?? "",
     delegateCli: parsed.delegateCli ?? "",
     systemControls: parsed.systemControls ?? false,
+    imageModel: parsed.imageModel ?? "gpt-image-2",
     liveSessions: parsed.liveSessions ?? false,
     disabledClis: Array.isArray(parsed.disabledClis)
       ? parsed.disabledClis.filter((c): c is CliName => (CLI_NAMES as readonly string[]).includes(c as string))
@@ -70,7 +73,7 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
 
 export async function saveConfig(
   file: string,
-  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; liveSessions?: boolean; disabledClis?: string[] },
+  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; imageModel?: string; liveSessions?: boolean; disabledClis?: string[] },
 ): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   // No Settings UI toggle exists for liveSessions, so a desktop Settings save calls this with
@@ -87,6 +90,7 @@ export async function saveConfig(
     openaiApiKey: config.openaiApiKey, model: config.model,
     terminalApp: config.terminalApp ?? "", editorApp: config.editorApp ?? "", delegateCli: config.delegateCli ?? "",
     systemControls: config.systemControls ?? false,
+    imageModel: config.imageModel ?? existing.imageModel ?? "gpt-image-2",
     liveSessions: config.liveSessions ?? existing.liveSessions ?? false,
     disabledClis: config.disabledClis ?? existing.disabledClis ?? [],
   };

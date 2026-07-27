@@ -5,8 +5,22 @@ import { NoteCard } from "./NoteCard.js";
 import { SkillCard } from "./SkillCard.js";
 import { TodoCard } from "./TodoCard.js";
 import { DelegateCard } from "./DelegateCard.js";
-import { insertDroppedPath, type ChatItem } from "../../shared/chat-types.js";
-import type { CliName, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
+import { imageFileGuard, insertDroppedPath, type ChatItem } from "../../shared/chat-types.js";
+import type { CliName, ImageAttachment, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
+
+/** Read a picked image into an attachment + full data URL for its composer thumbnail. */
+function readImageFile(file: File): Promise<{ attachment: ImageAttachment; dataUrl: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+      resolve({ attachment: { data: base64, mimeType: file.type }, dataUrl });
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 export function ChatPanel({
   items,
@@ -53,7 +67,7 @@ export function ChatPanel({
   // Full current skill list — SkillCard uses it to live-recompute "replaces existing"
   // against the user's edited name, not just the model's originally-proposed one.
   skills: Skill[];
-  onSend: (text: string) => void;
+  onSend: (text: string, images?: ImageAttachment[]) => void;
   onConfirm: (
     id: string,
     editedPrompt: string,
@@ -75,6 +89,37 @@ export function ChatPanel({
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [pendingImages, setPendingImages] = useState<Array<{ attachment: ImageAttachment; dataUrl: string }>>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
+  // FileReader is async — a submit racing an unfinished read would send the text without its
+  // image (and orphan the image onto the next turn). Submit blocks while any read is in flight.
+  const [imageReadsInFlight, setImageReadsInFlight] = useState(0);
+
+  // Slots reserved by accepted-but-still-reading files. A ref, not state: a second paste
+  // arriving before the first batch's FileReaders resolve must see those reservations
+  // synchronously, or the two batches together can exceed the per-message cap.
+  const reservedSlotsRef = useRef(0);
+
+  const attachImageFiles = (files: File[]): void => {
+    // Stale errors clear at the start of a new attempt — never on individual read success,
+    // which would wipe a same-batch rejection message before the user can read it.
+    setImageError(null);
+    for (const file of files) {
+      const problem = imageFileGuard(file.type, file.size, pendingImages.length + reservedSlotsRef.current);
+      if (problem) { setImageError(problem); continue; }
+      reservedSlotsRef.current += 1;
+      setImageReadsInFlight((n) => n + 1);
+      void readImageFile(file)
+        .then((img) => {
+          setPendingImages((prev) => [...prev, img]);
+        })
+        .catch(() => setImageError("Couldn't read that image."))
+        .finally(() => {
+          reservedSlotsRef.current -= 1;
+          setImageReadsInFlight((n) => n - 1);
+        });
+    }
+  };
   // "Near bottom" tracked in a ref (the scroll handler runs constantly); the jump-down
   // button is state because it renders.
   const atBottomRef = useRef(true);
@@ -124,11 +169,16 @@ export function ChatPanel({
 
   const submit = (): void => {
     const el = inputRef.current;
-    if (!el) return;
-    const text = el.value;
+    if (!el || imageReadsInFlight > 0) return;
+    // Image-only sends are allowed; converse still needs some text on the turn.
+    const text = el.value.trim() || (pendingImages.length > 0 ? "(image)" : "");
+    if (!text) return;
     el.value = "";
     resizeInput();
-    onSend(text);
+    const images = pendingImages.map((p) => p.attachment);
+    setPendingImages([]);
+    setImageError(null);
+    onSend(text, images.length > 0 ? images : undefined);
   };
 
   const droppedPath = (e: DragEvent): string | undefined => {
@@ -137,6 +187,14 @@ export function ChatPanel({
   };
 
   const dropPathIntoComposer = (e: DragEvent): void => {
+    const files = [...(e.dataTransfer?.files ?? [])];
+    // Image files become attachments (Bean can see them); everything else keeps the
+    // existing insert-the-path behavior for project/URL drops.
+    if (files.length > 0 && files.every((f) => f.type.startsWith("image/"))) {
+      e.preventDefault();
+      attachImageFiles(files);
+      return;
+    }
     const path = droppedPath(e);
     if (!path || !inputRef.current) return;
     e.preventDefault();
@@ -146,6 +204,16 @@ export function ChatPanel({
     el.focus();
     el.setSelectionRange(next.cursor, next.cursor);
     resizeInput();
+  };
+
+  const pasteImages = (e: ClipboardEvent): void => {
+    const files = [...(e.clipboardData?.items ?? [])]
+      .filter((i) => i.kind === "file" && i.type.startsWith("image/"))
+      .map((i) => i.getAsFile())
+      .filter((f): f is File => f !== null);
+    if (files.length === 0) return; // plain text paste — leave it to the textarea
+    e.preventDefault();
+    attachImageFiles(files);
   };
 
   return (
@@ -171,8 +239,30 @@ export function ChatPanel({
           <div class="bean-panel-empty">Ask Bean to do something, or just say hi.</div>
         ) : null}
         {items.map((it) => {
-          if (it.kind === "user") return <div key={it.id} class="bean-bubble bean-bubble--user">{it.display ?? it.text}</div>;
-          if (it.kind === "reply") return <div key={it.id} class="bean-bubble bean-bubble--bean"><Markdown text={it.display ?? it.text} /></div>;
+          if (it.kind === "user") {
+            return (
+              <div key={it.id} class="bean-bubble bean-bubble--user">
+                {it.display ?? it.text}
+                {it.images?.map((src) => <img class="bean-chat-thumb" src={src} alt="attached image" />)}
+              </div>
+            );
+          }
+          if (it.kind === "reply") {
+            return (
+              <div key={it.id} class="bean-bubble bean-bubble--bean">
+                <Markdown text={it.display ?? it.text} />
+                {it.images?.map((img) => (
+                  <img
+                    class="bean-chat-thumb"
+                    src={img.dataUrl}
+                    alt="generated image"
+                    title="Reveal in Finder"
+                    onClick={() => window.bean.revealInFinder(img.path)}
+                  />
+                ))}
+              </div>
+            );
+          }
           if (it.kind === "working") return <div key={it.id} class="bean-bubble bean-bubble--bean bean-bubble--working">{it.text}<span class="bean-dots"><span /><span /><span /></span></div>;
           if (it.kind === "status") return <div key={it.id} class={`bean-status bean-status--${it.tone}`}>{it.text}</div>;
           if (it.kind === "note") {
@@ -252,6 +342,21 @@ export function ChatPanel({
         </button>
       ) : null}
       <div class="bean-chat-input">
+        {imageError ? <div class="bean-status bean-status--error">{imageError}</div> : null}
+        {pendingImages.length > 0 ? (
+          <div class="bean-chat-pending-images">
+            {pendingImages.map((img, i) => (
+              <span class="bean-chat-pending-image">
+                <img src={img.dataUrl} alt="pending attachment" />
+                <button
+                  type="button"
+                  aria-label="Remove image"
+                  onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
+                >✕</button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <div class="bean-chat-input-shell">
           <textarea
             ref={inputRef}
@@ -260,6 +365,7 @@ export function ChatPanel({
             placeholder="Message Bean…"
             disabled={busy}
             onInput={resizeInput}
+            onPaste={pasteImages}
             onDragOver={(e) => { if (droppedPath(e)) e.preventDefault(); }}
             onDrop={dropPathIntoComposer}
             onKeyDown={(e) => {
@@ -273,7 +379,7 @@ export function ChatPanel({
             disabled={busy || !items.some((it) => it.kind === "reply")}
             onClick={onSaveToNotes}
           >📝 Save to notes</button>
-          <button type="button" class="bean-send" aria-label="Send" disabled={busy} onClick={submit}>
+          <button type="button" class="bean-send" aria-label="Send" disabled={busy || imageReadsInFlight > 0} onClick={submit}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg>
           </button>
         </div>

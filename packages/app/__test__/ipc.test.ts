@@ -73,6 +73,50 @@ test("chat handler wires skills/projects/persona into converse", async () => {
   expect(out.proposedRun?.composedPrompt).toContain("BODY");
 });
 
+test("chat handler forwards req.images to converse and runs generate_image into generatedImages", async () => {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const imagesTmp = await mkdtemp(join(tmpdir(), "bean-imgs-"));
+  let calls = 0;
+  let sawImageParts = false;
+  const b64 = Buffer.from("png!").toString("base64");
+  const handler = buildChatHandler({
+    loadSkills: async () => [],
+    loadProjects: async () => [],
+    loadPersona: async () => ({ name: "Bean", tags: [] }) as Persona,
+    converse: async ({ messages, tools }) => {
+      calls += 1;
+      const last = messages[messages.length - 1]!;
+      if (Array.isArray(last.content)) sawImageParts = last.content.some((p) => p.type === "image");
+      if (calls === 1) {
+        expect(tools.some((t) => t.name === "generate_image")).toBe(true);
+        return { content: "", toolCalls: [{ id: "1", name: "generate_image", args: { prompt: "a cat" } }] };
+      }
+      return { content: "done", toolCalls: [] };
+    },
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills",
+    skillsDir: "/b/skills",
+    projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json",
+    projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [],
+    dbFile: "/b/memory.json",
+    imageGen: {
+      generate: async () => ({ b64 }),
+      getModel: () => "gpt-image-2",
+      imagesDir: imagesTmp,
+    },
+  });
+  const out = await handler({ history: [], message: "draw a cat", images: [{ data: "AAAA", mimeType: "image/png" }] });
+  expect(sawImageParts).toBe(true);
+  expect(out.reply).toBe("done");
+  expect(out.generatedImages).toHaveLength(1);
+  expect(out.generatedImages![0]!.dataUrl).toBe(`data:image/png;base64,${b64}`);
+  expect(out.generatedImages![0]!.path).toMatch(/a-cat\.png$/);
+});
+
 test("chat handler drops disabled skills and injects recalled memories", async () => {
   const skills: Skill[] = [
     { name: "review-code", description: "r", body: "BODY", enabled: true },

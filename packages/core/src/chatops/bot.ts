@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { converse, type ConverseDeps, type ProposedLiveSession } from "../converse.js";
+import { converse, type ConverseDeps, type ImageAttachment, type ProposedLiveSession } from "../converse.js";
+import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
 import { extractMemories } from "../memory/extract.js";
 import { proposeMemoryConsolidation } from "../memory/consolidate.js";
@@ -43,6 +44,9 @@ export interface IncomingMessage {
    * used by the live-session `+driver`/`-driver` commands. Surfaces that omit it can't use
    * mention-based co-driver management. */
   mentionedIds?: string[];
+  /** Image attachments (image/*, ≤10MB) already downloaded by the surface — attached to this
+   * turn only; history keeps a text placeholder. */
+  images?: ImageAttachment[];
 }
 
 export interface CardAction {
@@ -70,6 +74,9 @@ export interface BotEffects {
   /** Fire a one-shot "typing…" indicator. The live-session sink pings this repeatedly while a
    * turn runs so the surface shows Bean working during the agent's think/stream gap. Optional. */
   sendTyping?: () => void;
+  /** Deliver a local file (generated image) to the conversation. Optional: surfaces without it
+   * get a plain-text path notice instead. */
+  sendFile?: (path: string, caption?: string) => Promise<void>;
 }
 
 export interface TeamsBotDeps {
@@ -115,6 +122,8 @@ export interface TeamsBotDeps {
   liveSessionProposals: LiveSessionProposalStore;
   /** Gates the propose_live_session tool (config liveSessions flag + surface support). */
   liveSessionsEnabled: () => boolean;
+  /** Enables the generate_image action tool; omit to disable image generation. */
+  imageGen?: Pick<ImageGenDeps, "generate" | "model" | "imagesDir">;
 }
 
 const DESKTOP_ONLY =
@@ -557,12 +566,21 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             history = [...history, { role: "user", content: block }];
           }
         }
+        // Per-turn (not shared) so `paths` collects only this request's generated files.
+        const imageTool = deps.imageGen
+          ? makeGenerateImageTool({
+              ...deps.imageGen,
+              // .catch, not void: a rejected progress post (rate limit, transient network)
+              // fires outside onMessage's try — unhandled, it kills the whole bot process.
+              onStart: () => { fx.post("🎨 Working on your image — this can take a minute…").catch(() => {}); },
+            })
+          : undefined;
         // runAvailable=false: propose_run is never offered here — confirming one couldn't
         // execute anything from Teams/Discord; propose_delegate is the only run path.
         const converseBase = {
           skills, projects, persona, memories,
           deps: { chat: deps.chat, model: deps.model },
-          actions,
+          actions: imageTool ? [...actions, imageTool.tool] : actions,
           delegateAvailable: true,
           liveSessionAvailable: deps.liveSessionsEnabled() && detected.includes("claude"),
           availableClis: detected,
@@ -571,12 +589,24 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           runAvailable: false,
           todoRoutines,
         };
-        const result = await converse({ ...converseBase, history, latestUserText: msg.text });
-        deps.conversations.append(msg.conversationId, { role: "user", content: msg.text });
+        const result = await converse({ ...converseBase, history, latestUserText: msg.text, latestUserImages: msg.images });
+        deps.conversations.append(msg.conversationId, {
+          role: "user",
+          content: msg.images?.length ? `${msg.text}\n[image attached]` : msg.text,
+        });
         if (result.reply) {
           deps.conversations.append(msg.conversationId, { role: "assistant", content: result.reply });
           await fx.reply(result.reply);
         }
+        // Drains (splices) the collector so a later pass — the chat-target follow-up below
+        // shares this same tool instance — never re-sends already-delivered images.
+        const deliverImages = async (): Promise<void> => {
+          for (const p of imageTool?.paths.splice(0) ?? []) {
+            if (fx.sendFile) await fx.sendFile(p);
+            else await fx.post(`(image saved to ${p} — this surface can't display it)`);
+          }
+        };
+        await deliverImages();
         void maybeCompact(msg.conversationId, deps.conversations, { chat: deps.chat, model: deps.model });
         if (result.proposedRun) {
           // A `target: chat` skill runs on Bean's own model: resend the composed prompt
@@ -596,6 +626,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               `The ${run.skillName} skill didn't produce a reply — try asking me directly instead.`;
             deps.conversations.append(msg.conversationId, { role: "assistant", content: text });
             await fx.post(text);
+            await deliverImages(); // the follow-up hop can call generate_image too
             return;
           }
           // Backstop only: terminal-target propose_run isn't offered from chatops, so this

@@ -1112,3 +1112,74 @@ test("start-live re-checks liveSessionsEnabled at claim time and refuses if the 
   expect(JSON.stringify(effects.updates.at(-1)?.card)).toContain("cancelled");
   expect(effects.posted.some((p) => p.toLowerCase().includes("disabled"))).toBe(true);
 });
+
+test("incoming images reach converse as content parts and history stores a placeholder", async () => {
+  const seen: unknown[] = [];
+  const { deps } = makeDeps({
+    chat: async ({ messages }) => {
+      seen.push(messages[messages.length - 1]);
+      return { content: "a screenshot", toolCalls: [] };
+    },
+  });
+  const bot = buildTeamsBot(deps);
+  await bot.onMessage({ ...msg, text: "what is this?", images: [{ data: "AAAA", mimeType: "image/png" }] }, fx());
+  expect(seen[0]).toEqual({
+    role: "user",
+    content: [
+      { type: "text", text: "what is this?" },
+      { type: "image", image: { data: "AAAA", mimeType: "image/png" } },
+    ],
+  });
+  expect(deps.conversations.history("c1")[0]).toEqual({ role: "user", content: "what is this?\n[image attached]" });
+});
+
+test("generate_image runs, posts a working notice, and delivers the file via sendFile", async () => {
+  const imagesTmp = mkdtempSync(join(tmpdir(), "bean-imgout-"));
+  let calls = 0;
+  const { deps } = makeDeps({
+    chat: async () => {
+      calls += 1;
+      return calls === 1
+        ? { content: "", toolCalls: [{ id: "1", name: "generate_image", args: { prompt: "a cat" } }] }
+        : { content: "here you go", toolCalls: [] };
+    },
+    imageGen: {
+      generate: async () => ({ b64: Buffer.from("png!").toString("base64") }),
+      model: "gpt-image-2",
+      imagesDir: imagesTmp,
+    },
+  });
+  const bot = buildTeamsBot(deps);
+  const sent: { path: string; caption?: string }[] = [];
+  const effects = { ...fx(), sendFile: async (path: string, caption?: string) => { sent.push({ path, caption }); } };
+  await bot.onMessage({ ...msg, text: "draw a cat" }, effects);
+  expect(effects.posted.some((p) => p.includes("🎨"))).toBe(true);
+  expect(effects.posted).toContain("here you go");
+  expect(sent).toHaveLength(1);
+  expect(sent[0]!.path).toMatch(/a-cat\.png$/);
+});
+
+test("images generated during a chat-target follow-up are still delivered", async () => {
+  const imagesTmp = mkdtempSync(join(tmpdir(), "bean-imgout2-"));
+  let calls = 0;
+  const { deps } = makeDeps({
+    loadSkills: async () => [{ name: "draw-things", description: "d", body: "b", enabled: true, target: "chat" }],
+    chat: async () => {
+      calls += 1;
+      if (calls === 1) return { content: "", toolCalls: [{ id: "1", name: "propose_run", args: { skill: "draw-things", instruction: "draw a dog" } }] };
+      if (calls === 2) return { content: "", toolCalls: [{ id: "2", name: "generate_image", args: { prompt: "a dog" } }] };
+      return { content: "made it", toolCalls: [] };
+    },
+    imageGen: {
+      generate: async () => ({ b64: Buffer.from("png!").toString("base64") }),
+      model: "gpt-image-2",
+      imagesDir: imagesTmp,
+    },
+  });
+  const bot = buildTeamsBot(deps);
+  const sent: string[] = [];
+  const effects = { ...fx(), sendFile: async (path: string) => { sent.push(path); } };
+  await bot.onMessage({ ...msg, text: "draw a dog" }, effects);
+  expect(sent).toHaveLength(1);
+  expect(sent[0]).toMatch(/a-dog\.png$/);
+});

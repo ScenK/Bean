@@ -79,6 +79,53 @@ test("converse adapter sends assistant tool calls and tool result messages", asy
   expect((createdArgs as { prompt_cache_key?: string }).prompt_cache_key).toBe("bean-converse");
 });
 
+test("converse adapter maps user image parts to image_url data URLs", async () => {
+  let createdArgs: unknown;
+  const fakeClient = {
+    chat: {
+      completions: {
+        create: async (args: unknown) => {
+          createdArgs = args;
+          return { choices: [{ message: { content: "ok" } }] };
+        },
+      },
+    },
+  };
+  const chat = makeOpenAIConverseWithClient(fakeClient as never);
+  await chat({
+    model: "m",
+    messages: [{
+      role: "user",
+      content: [
+        { type: "text", text: "what is this?" },
+        { type: "image", image: { data: "AAAA", mimeType: "image/png" } },
+      ],
+    }],
+    tools: [],
+  });
+  expect((createdArgs as { messages: Array<{ content: unknown }> }).messages[0]?.content).toEqual([
+    { type: "text", text: "what is this?" },
+    { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+  ]);
+});
+
+test("converse adapter passes plain-string user content through unchanged", async () => {
+  let createdArgs: unknown;
+  const fakeClient = {
+    chat: {
+      completions: {
+        create: async (args: unknown) => {
+          createdArgs = args;
+          return { choices: [{ message: { content: "ok" } }] };
+        },
+      },
+    },
+  };
+  const chat = makeOpenAIConverseWithClient(fakeClient as never);
+  await chat({ model: "m", messages: [{ role: "user", content: "hi" }], tools: [] });
+  expect((createdArgs as { messages: Array<{ content: unknown }> }).messages[0]?.content).toBe("hi");
+});
+
 test("converse adapter skips a tool call with malformed arguments", async () => {
   const fakeClient = {
     chat: {

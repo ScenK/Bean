@@ -3,7 +3,7 @@ import { ChatPanel } from "./ChatPanel.js";
 import { newId, type ChatItem } from "../../shared/chat-types.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import type {
-  ChatTurn, CliName, LinkedNote, MemoryCandidate, Memory, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill,
+  ChatTurn, CliName, ImageAttachment, LinkedNote, MemoryCandidate, Memory, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill,
 } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
 import type { InterruptedRunNotice } from "../../../ipc.js";
@@ -117,7 +117,7 @@ export function ChatWindow() {
   const closeTranscriptRef = useRef<ChatTurn[]>([]);
   // The mount effect below runs once, so it must reach sendMessage through a ref — a direct
   // reference would close over the first render's stale `busy`/`items`.
-  const sendRef = useRef<(text: string, display?: string, queueIfBusy?: boolean) => Promise<void>>(async () => {});
+  const sendRef = useRef<(text: string, display?: string, queueIfBusy?: boolean, images?: ImageAttachment[]) => Promise<void>>(async () => {});
 
   useEffect(() => {
     const setTheme = (theme: string): void => {
@@ -165,6 +165,11 @@ export function ChatWindow() {
     window.bean.getPendingInterruptedRunNotices().then((notices) => { if (notices?.length) showInterruptedRunNotices(notices); });
     window.bean.onInterruptedRunNotice(showInterruptedRunNotices);
     window.bean.onDelegateEvent(applyDelegateEvent);
+    // generate_image started inside the current turn — flip the working bubble so the
+    // (up to a minute) wait reads as painting, not a hang.
+    window.bean.onChatImageProgress(() => {
+      setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it)));
+    });
     window.bean.onReviewBeforeClose(() => {
       const transcript: ChatTurn[] = itemsRef.current
         .filter((it): it is Extract<ChatItem, { kind: "user" | "reply" }> => it.kind === "user" || it.kind === "reply")
@@ -188,7 +193,7 @@ export function ChatWindow() {
     return () => clearTimeout(t);
   }, [droppedUrl]);
 
-  const sendMessage = async (text: string, display?: string, queueIfBusy = false): Promise<void> => {
+  const sendMessage = async (text: string, display?: string, queueIfBusy = false, images?: ImageAttachment[]): Promise<void> => {
     const message = text.trim();
     if (!message) return;
     if (busyRef.current) {
@@ -199,19 +204,32 @@ export function ChatWindow() {
     setBusy(true);
     setStatus("working");
     const workingId = newId();
-    setItems((prev) => [...prev, { kind: "user", id: newId(), text: message, display }, { kind: "working", id: workingId, text: "Spinning up" }]);
+    setItems((prev) => [...prev, {
+      kind: "user", id: newId(), text: message, display,
+      images: images?.map((i) => `data:${i.mimeType};base64,${i.data}`),
+    }, { kind: "working", id: workingId, text: "Spinning up" }]);
 
+    // Image bytes ride only on the current turn; older turns keep a text placeholder
+    // (mirrors chatops — see core's latestUserImages doc comment).
     const history: ChatTurn[] = itemsRef.current
       .filter((it): it is Extract<ChatItem, { kind: "user" | "reply" }> => it.kind === "user" || it.kind === "reply")
-      .map((it) => ({ role: it.kind === "user" ? "user" : "assistant", content: it.text }));
+      .map((it) => ({
+        role: it.kind === "user" ? "user" : "assistant",
+        content: it.kind === "user" && it.images?.length ? `${it.text}\n[image attached]` : it.text,
+      }));
 
     try {
-      const res = await window.bean.chat({ history, message, linkedNote: linkedNoteRef.current });
+      const res = await window.bean.chat({ history, message, linkedNote: linkedNoteRef.current, images });
       if (res.model) setModel(res.model);
 
       setItems((prev) => {
         const next = prev.filter((it) => it.id !== workingId);
-        if (res.reply.trim()) next.push({ kind: "reply", id: newId(), text: res.reply });
+        const generated = res.generatedImages?.filter(
+          (g): g is { path: string; dataUrl: string } => typeof g.dataUrl === "string",
+        );
+        if (res.reply.trim() || generated?.length) {
+          next.push({ kind: "reply", id: newId(), text: res.reply, images: generated?.length ? generated : undefined });
+        }
         if (res.proposedRun) {
           next.push({ kind: "proposal", id: newId(), run: res.proposedRun, state: "pending" });
           const skillName = res.proposedRun.skillName;
@@ -513,7 +531,7 @@ export function ChatWindow() {
         runModels={runModels}
         lastUsedModels={lastUsedModels}
         skills={skills}
-        onSend={sendMessage}
+        onSend={(text, images) => void sendMessage(text, undefined, false, images)}
         onConfirm={confirmProposal}
         onCancel={cancelProposal}
         onNoteSave={(id, edited, asNew) => void saveNote(id, edited, asNew)}
