@@ -101,6 +101,9 @@ export function ChatPanel({
   const reservedSlotsRef = useRef(0);
 
   const attachImageFiles = (files: File[]): void => {
+    // Stale errors clear at the start of a new attempt — never on individual read success,
+    // which would wipe a same-batch rejection message before the user can read it.
+    setImageError(null);
     for (const file of files) {
       const problem = imageFileGuard(file.type, file.size, pendingImages.length + reservedSlotsRef.current);
       if (problem) { setImageError(problem); continue; }
@@ -108,7 +111,6 @@ export function ChatPanel({
       setImageReadsInFlight((n) => n + 1);
       void readImageFile(file)
         .then((img) => {
-          setImageError(null);
           setPendingImages((prev) => [...prev, img]);
         })
         .catch(() => setImageError("Couldn't read that image."))
