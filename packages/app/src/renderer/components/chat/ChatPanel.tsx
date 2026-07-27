@@ -44,6 +44,9 @@ function ImagePreview({ image, onClose }: { image: { dataUrl: string; path?: str
         type="button"
         class={`bean-image-preview-img${zoomed ? " bean-image-preview-img--zoom" : ""}`}
         title={zoomed ? "Fit to window" : "Zoom to full size"}
+        // Explicit label: without it the accessible name falls through to the child img's alt,
+        // which says nothing about this being the zoom toggle.
+        aria-label="Toggle full-size zoom"
         aria-pressed={zoomed}
         onClick={() => setZoomed((z) => !z)}
       >
