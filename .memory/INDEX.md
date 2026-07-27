@@ -41,6 +41,7 @@
 - [convention-project-skills-vs-default-skill.md](convention-project-skills-vs-default-skill.md) — `Project.skills` (many-to-many skill-group assignment, powers the Skills panel's General/project grouping) vs `Project.defaultSkill` (unrelated router/drop-plan/avatar fallback heuristic) — don't conflate them, and don't drop `skills` when rebuilding a `Project` object from an edit form.
 - [convention-prompt-prefix-caching.md](convention-prompt-prefix-caching.md) — `converse()`'s leading system message (and tool specs) must stay byte-stable per chat for OpenAI prefix caching; volatile per-turn context (clock, recalled memories) goes in the trailing system message before the latest user turn.
 - [convention-hidden-skills.md](convention-hidden-skills.md) — `hidden: true` frontmatter (distinct from `enabled: false`) removes a skill from every renderer UI via the single `buildListSkillsHandler` IPC filter, while `converse()` still routes against it; the built-in `bean` self-intro skill is the first user, and is already undeletable since `deleteSkill` never touches `.bean/skills/`.
+- [convention-new-external-surface.md](convention-new-external-surface.md) — design-time checklist for any new ingress/egress surface (auth-or-delete, rate limit, early size caps, exact MIME allowlist, res.ok, no `void` promises, collision-safe names, gate before work) — the finding classes AI reviewers otherwise raise one round at a time; pairs with AGENTS.md's Review policy.
 
 ## project — ongoing work context
 

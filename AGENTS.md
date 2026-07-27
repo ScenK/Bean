@@ -240,6 +240,38 @@ Per-user, outside the repo. Path helpers live in `core/src/config.ts`.
 All path helpers live in `core/src/config.ts` — check there for the current set, don't
 hand-maintain the list here.
 
+---
+
+## Review policy (AI reviewers on PRs)
+
+Automated reviewers (Codex, CodeQL, any LLM reviewer) never run out of findings — they
+re-review the whole PR on every push and sample a different subset of the effectively
+unbounded P2 pool each round. **Reviewer silence is not the merge criterion and never
+arrives**; this policy is. It applies to humans and agents fixing review feedback alike.
+
+**Triage every finding, don't reflex-fix it:**
+
+- **P0/P1 on lines this PR touched** — fix in-PR, always.
+- **P2 on lines this PR touched** — fix in-PR only if the fix is small and local (a few
+  lines, no new dependency, no new endpoint/config/surface). Otherwise reply "deferred per
+  review policy", file a follow-up issue or `.memory` note, and resolve the thread.
+- **Any finding outside the PR's diff** — backlog (issue), never blocks the merge.
+- **Prefer deleting surface over armoring it.** If a finding's "proper" fix adds an
+  endpoint, dependency, token scheme, or config knob, first ask whether the feature slice
+  that needs it is worth keeping at all — a plain-text fallback or explicit user notice
+  often beats an armored subsystem. (Case study: PR #94's Teams image hosting — one size
+  limit finding escalated into route + capability tokens + rate limiting + config across
+  three review rounds, then the whole stack was deleted in favor of posting the file path.)
+
+**Stop criterion:** at most **2 review rounds** after the PR is opened. After that, merge
+when CI is green and no P0/P1 is open; everything else becomes issues. Batch a round's
+fixes into **one push** — every push re-triggers a full re-review.
+
+**Deposit an artifact per accepted finding class:** a fixed finding should leave behind the
+thing that kills its whole class — a `.memory/` entry, a test, or a checklist line (see
+[`.memory/convention-new-external-surface.md`](.memory/convention-new-external-surface.md))
+— so the next PR doesn't re-litigate it.
+
 <!-- CODEGRAPH_START -->
 ## CodeGraph
 
