@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import OpenAI from "openai";
@@ -40,7 +41,9 @@ export function makeGenerateImageTool(deps: ImageGenDeps): { tool: ActionTool; p
       try {
         const { b64 } = await deps.generate({ model: deps.model, prompt });
         await mkdir(deps.imagesDir, { recursive: true });
-        const file = join(deps.imagesDir, `${Date.now()}-${slug(prompt)}.png`);
+        // UUID chunk: concurrent generations with matching prompt slugs in the same
+        // millisecond must not race writeFile into the same path.
+        const file = join(deps.imagesDir, `${Date.now()}-${randomUUID().slice(0, 8)}-${slug(prompt)}.png`);
         await writeFile(file, Buffer.from(b64, "base64"));
         paths.push(file);
         return `Image generated and saved to ${file}. It is already shown to the user — describe it in one short sentence.`;

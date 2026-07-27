@@ -5,7 +5,7 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -13,10 +13,8 @@ import {
   type ConversationReference, type Activity,
 } from "botbuilder";
 import express from "express";
-import { rateLimit } from "express-rate-limit";
-import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   finishedCard, memoryProposalCard, memoryResultCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
   consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
@@ -122,23 +120,13 @@ const bot = buildTeamsBot({
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
-/** Buffer a response body up to MAX_IMAGE_BYTES; null when the cap is exceeded. Enforced
- * while streaming so an oversized attachment never materializes fully in memory. */
+/** Buffer a response body up to MAX_IMAGE_BYTES; null when over the cap.
+ * ponytail: Content-Length check + post-buffer check, no streaming enforcement — the only
+ * caller fetches from Microsoft's own SMBA endpoint, whose Content-Length is reliable. */
 async function readCapped(res: Response): Promise<Buffer | null> {
-  const advertised = Number(res.headers.get("content-length") ?? 0);
-  if (advertised > MAX_IMAGE_BYTES) { await res.body?.cancel(); return null; }
-  const chunks: Buffer[] = [];
-  let total = 0;
-  const reader = res.body?.getReader();
-  if (!reader) return Buffer.from(await res.arrayBuffer());
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_IMAGE_BYTES) { await reader.cancel(); return null; }
-    chunks.push(Buffer.from(value));
-  }
-  return Buffer.concat(chunks);
+  if (Number(res.headers.get("content-length") ?? 0) > MAX_IMAGE_BYTES) { await res.body?.cancel(); return null; }
+  const buf = Buffer.from(await res.arrayBuffer());
+  return buf.byteLength > MAX_IMAGE_BYTES ? null : buf;
 }
 
 /** Teams inline images arrive as image/* attachments whose contentUrl sits on the SMBA
@@ -148,6 +136,7 @@ async function readCapped(res: Response): Promise<Buffer | null> {
 async function downloadImages(a: Activity): Promise<ImageAttachment[]> {
   const out: ImageAttachment[] = [];
   for (const att of a.attachments ?? []) {
+    if (out.length >= MAX_IMAGES_PER_MESSAGE) break;
     const mime = att.contentType?.split(";")[0]?.trim() ?? "";
     if (!(SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) || !att.contentUrl) continue;
     try {
@@ -238,23 +227,9 @@ function effectsFor(context: TurnContext): BotEffects {
     },
     // Live-session turn indicator: fire-and-forget proactive Typing (turns stream in after the
     // triggering turn's context is dead, same reason as postStream). The registry re-pings it.
-    // Teams rejects large activities, so a generated PNG can't ride inline as base64 —
-    // it's served from this bot's own express server and linked by public URL instead.
-    // No publicBaseUrl configured = no sendFile at all; core then posts the file path.
-    ...(teamsConfig.publicBaseUrl
-      ? {
-          sendFile: async (path: string, caption?: string): Promise<void> => {
-            const url = `${teamsConfig.publicBaseUrl}/generated-images/${publishImage(path)}`;
-            await proactive(async (ctx) => {
-              await ctx.sendActivity({
-                type: ActivityTypes.Message,
-                text: caption ?? "",
-                attachments: [{ contentType: "image/png", contentUrl: url, name: basename(path) }],
-              });
-            });
-          },
-        }
-      : {}),
+    // No sendFile on purpose: Teams rejects large inline base64 activities, and hosting the
+    // file (public route + auth tokens + rate limiting) isn't worth it — core's fallback
+    // posts the saved file's path instead, and the user opens it locally.
     sendTyping: () => {
       void proactive(async (ctx) => { await ctx.sendActivity({ type: ActivityTypes.Typing }); });
     },
@@ -273,28 +248,6 @@ function effectsFor(context: TurnContext): BotEffects {
 
 const app = express();
 app.use(express.json());
-// Serves generate_image output so sendFile can link it by URL (see effectsFor). Files are
-// exposed only via opaque, expiring, per-send capability tokens — never by filename — so the
-// route can't be used to enumerate ~/.bean/images (which also holds desktop/Discord output).
-// Mounted only when publicBaseUrl is set (without it nothing ever links here).
-const IMAGE_TOKEN_TTL_MS = 60 * 60_000;
-const publishedImages = new Map<string, { path: string; expiresAt: number }>();
-function publishImage(path: string): string {
-  // Opportunistic prune so long-lived servers don't accumulate dead tokens.
-  for (const [t, e] of publishedImages) { if (e.expiresAt < Date.now()) publishedImages.delete(t); }
-  const token = randomUUID();
-  publishedImages.set(token, { path, expiresAt: Date.now() + IMAGE_TOKEN_TTL_MS });
-  return token;
-}
-if (teamsConfig.publicBaseUrl) {
-  // Rate-limited: the server's only unauthenticated file-reading route.
-  const imageRouteLimiter = rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false });
-  app.get("/generated-images/:token", imageRouteLimiter, (req, res) => {
-    const entry = publishedImages.get(String(req.params.token ?? ""));
-    if (!entry || entry.expiresAt < Date.now()) { res.status(404).end(); return; }
-    res.sendFile(entry.path, (err) => { if (err) res.status(404).end(); });
-  });
-}
 app.post("/api/messages", (req, res) => {
   void adapter.process(req, res, async (context) => {
     const a = context.activity;

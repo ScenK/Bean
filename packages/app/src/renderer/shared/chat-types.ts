@@ -1,13 +1,16 @@
 import type { ProposedDelegate, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo } from "@bean/core";
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-// Renderer copy of core's SUPPORTED_IMAGE_MIMES (converse.ts) — the renderer can't import
-// core values (node-free bundle rule), only types. Keep the two lists in step.
-const SUPPORTED_IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-/** Returns a user-facing error message for an unattachable file, or null when it's fine. */
-export function imageFileGuard(type: string, size: number): string | null {
-  if (!SUPPORTED_IMAGE_MIMES.includes(type)) return "Only PNG, JPEG, GIF, or WebP images can be attached.";
+// Renderer copies of core's SUPPORTED_IMAGE_MIMES / MAX_IMAGES_PER_MESSAGE (converse.ts) —
+// the renderer can't import core values (node-free bundle rule), only types. Keep in step.
+const SUPPORTED_IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp"];
+export const MAX_IMAGES_PER_MESSAGE = 4;
+/** Returns a user-facing error message for an unattachable file, or null when it's fine.
+ * `attachedCount` = images already pending on this message (aggregate cap). */
+export function imageFileGuard(type: string, size: number, attachedCount = 0): string | null {
+  if (!SUPPORTED_IMAGE_MIMES.includes(type)) return "Only PNG, JPEG, or WebP images can be attached.";
   if (size > MAX_IMAGE_BYTES) return "Images must be 10 MB or smaller.";
+  if (attachedCount >= MAX_IMAGES_PER_MESSAGE) return `At most ${MAX_IMAGES_PER_MESSAGE} images per message.`;
   return null;
 }
 

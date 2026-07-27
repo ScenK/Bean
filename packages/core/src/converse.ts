@@ -8,8 +8,13 @@ import type { AvailableModel } from "./models.js";
 
 /** The raster formats OpenAI vision input accepts — every ingest surface must filter to
  * these (a bare image/* check lets HEIC/SVG/TIFF through and fails the whole turn at the
- * API). The renderer keeps its own copy in chat-types.ts (can't import core values). */
-export const SUPPORTED_IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+ * API). GIF is deliberately absent: vision rejects animated GIFs and telling animated from
+ * static needs frame parsing — not worth it for a format nobody screenshots in.
+ * The renderer keeps its own copy in chat-types.ts (can't import core values). */
+export const SUPPORTED_IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp"] as const;
+/** Per-message image cap. 4 × the 10MB per-file cap stays under OpenAI's 50MB total
+ * image-input limit; every ingest surface enforces it. */
+export const MAX_IMAGES_PER_MESSAGE = 4;
 /** Base64 image payload (no data: prefix). */
 export interface ImageAttachment { data: string; mimeType: string }
 export type UserContentPart =

@@ -66,7 +66,9 @@ Routines/delegate are out of scope.
   downloaded and attached as image parts on that user turn. Non-image or oversized
   attachments ignored (existing text flow unaffected).
 - Egress: new `BotEffects.sendFile(path, caption?)` effect. Discord: native
-  attachment upload. Teams: inline base64 image in the activity/card.
+  attachment upload. Teams: no `sendFile` — activity size limits reject large inline
+  base64, and hosting the file was judged overkill; core's fallback posts the saved
+  file's path instead.
 - Shared logic (size/type filter, base64 packing) lives in core `chatops/`; each
   surface only fetches bytes with its own SDK.
 

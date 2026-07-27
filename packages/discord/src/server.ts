@@ -5,7 +5,7 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials,
@@ -163,6 +163,7 @@ client.on("messageCreate", async (message) => {
     // channel — the bridged agent only takes text, so downloading would silently drop them.
     const images: ImageAttachment[] = [];
     for (const att of capturing ? [] : message.attachments.values()) {
+      if (images.length >= MAX_IMAGES_PER_MESSAGE) break;
       const mime = att.contentType?.split(";")[0]?.trim() ?? "";
       if (!(SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) || att.size > 10 * 1024 * 1024) continue;
       try {

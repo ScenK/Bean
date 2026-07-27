@@ -96,9 +96,13 @@ export function ChatPanel({
   const [imageReadsInFlight, setImageReadsInFlight] = useState(0);
 
   const attachImageFiles = (files: File[]): void => {
+    // Local counter (not just state length): a multi-file drop guards each file against
+    // the count it will actually land at, before any async read resolves.
+    let count = pendingImages.length;
     for (const file of files) {
-      const problem = imageFileGuard(file.type, file.size);
+      const problem = imageFileGuard(file.type, file.size, count);
       if (problem) { setImageError(problem); continue; }
+      count += 1;
       setImageReadsInFlight((n) => n + 1);
       void readImageFile(file)
         .then((img) => {
