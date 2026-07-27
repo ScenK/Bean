@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import OpenAI from "openai";
 import type { ActionTool } from "./converse.js";
 
 export interface ImageGenDeps {
@@ -55,24 +54,5 @@ export function makeGenerateImageTool(deps: ImageGenDeps): { tool: ActionTool; p
   return { tool, paths };
 }
 
-interface ImageClient {
-  images: { generate: (a: { model: string; prompt: string; response_format?: "b64_json" }) => Promise<{ data?: Array<{ b64_json?: string }> }> };
-}
-
-export function makeOpenAIImageGenWithClient(client: ImageClient): ImageGenDeps["generate"] {
-  return async ({ model, prompt }) => {
-    // gpt-image-* always returns b64 and rejects response_format; dall-e-* defaults to a URL,
-    // so it must be asked for b64 explicitly or generation "succeeds" with no data for us.
-    const res = await client.images.generate({
-      model, prompt,
-      ...(model.startsWith("dall-e") ? { response_format: "b64_json" as const } : {}),
-    });
-    const b64 = res.data?.[0]?.b64_json;
-    if (!b64) throw new Error("Images API returned no image data");
-    return { b64 };
-  };
-}
-
-export function makeOpenAIImageGen(apiKey: string): ImageGenDeps["generate"] {
-  return makeOpenAIImageGenWithClient(new OpenAI({ apiKey }) as unknown as ImageClient);
-}
+// The concrete OpenAI Images adapter (makeOpenAIImageGen) lives in openai-chat.ts — the one
+// module allowed to touch the real SDK; this module stays pure and dependency-injected.

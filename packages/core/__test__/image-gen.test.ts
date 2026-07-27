@@ -2,7 +2,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeGenerateImageTool, makeOpenAIImageGenWithClient } from "../src/image-gen.js";
+import { makeGenerateImageTool } from "../src/image-gen.js";
+import { makeOpenAIImageGenWithClient } from "../src/openai-chat.js";
 
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "bean-img-")); });

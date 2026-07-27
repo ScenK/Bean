@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { ChatMsg, RouterDeps } from "./router.js";
 import type { ConverseDeps, ConvoMsg, ToolCall } from "./converse.js";
+import type { ImageGenDeps } from "./image-gen.js";
 
 interface ChatClient {
   chat: {
@@ -111,4 +112,26 @@ export function makeOpenAIConverseWithClient(client: ToolChatClient): ConverseDe
 export function makeOpenAIConverse(apiKey: string): ConverseDeps["chat"] {
   const client = new OpenAI({ apiKey }) as unknown as ToolChatClient;
   return makeOpenAIConverseWithClient(client);
+}
+
+interface ImageClient {
+  images: { generate: (a: { model: string; prompt: string; response_format?: "b64_json" }) => Promise<{ data?: Array<{ b64_json?: string }> }> };
+}
+
+export function makeOpenAIImageGenWithClient(client: ImageClient): ImageGenDeps["generate"] {
+  return async ({ model, prompt }) => {
+    // gpt-image-* always returns b64 and rejects response_format; dall-e-* defaults to a URL,
+    // so it must be asked for b64 explicitly or generation "succeeds" with no data for us.
+    const res = await client.images.generate({
+      model, prompt,
+      ...(model.startsWith("dall-e") ? { response_format: "b64_json" as const } : {}),
+    });
+    const b64 = res.data?.[0]?.b64_json;
+    if (!b64) throw new Error("Images API returned no image data");
+    return { b64 };
+  };
+}
+
+export function makeOpenAIImageGen(apiKey: string): ImageGenDeps["generate"] {
+  return makeOpenAIImageGenWithClient(new OpenAI({ apiKey }) as unknown as ImageClient);
 }
