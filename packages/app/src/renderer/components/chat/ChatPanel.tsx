@@ -34,6 +34,7 @@ function ImagePreview({ image, onClose }: { image: { dataUrl: string; path?: str
     <dialog
       ref={ref}
       class="bean-image-preview"
+      aria-label="Image preview"
       onClose={onClose}
       // A click landing on the dialog itself (not its content) is a backdrop click.
       onClick={(e) => { if (e.target === ref.current) ref.current?.close(); }}
