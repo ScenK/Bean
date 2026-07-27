@@ -1795,13 +1795,22 @@ button, input, textarea, select, a {
 }
 
 /* Chat image attachments: bubble thumbnails + composer pending-image chips */
+/* A button, not a bare img — the thumbnail opens the preview, so it must be tabbable and
+   Enter/Space-operable; the native element gives all of that plus the focus ring. */
 .bean-chat-thumb {
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  margin-top: 6px;
+  cursor: pointer;
+}
+.bean-chat-thumb img {
   display: block;
   max-width: 200px;
   max-height: 200px;
   border-radius: 8px;
-  margin-top: 6px;
-  cursor: pointer;
 }
 .bean-image-preview {
   max-width: 96vw;
@@ -1820,16 +1829,23 @@ button, input, textarea, select, a {
 }
 .bean-image-preview-img {
   display: block;
-  max-width: 88vw;
-  max-height: 82vh;
+  padding: 0;
+  border: none;
+  background: none;
   border-radius: 8px;
   cursor: zoom-in;
 }
+.bean-image-preview-img img {
+  display: block;
+  max-width: 88vw;
+  max-height: 82vh;
+  border-radius: 8px;
+}
 /* Zoomed = natural size; the dialog scrolls around it. */
-.bean-image-preview-img--zoom {
+.bean-image-preview-img--zoom { cursor: zoom-out; }
+.bean-image-preview-img--zoom img {
   max-width: none;
   max-height: none;
-  cursor: zoom-out;
 }
 .bean-image-preview-actions {
   display: flex;

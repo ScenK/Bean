@@ -38,13 +38,16 @@ function ImagePreview({ image, onClose }: { image: { dataUrl: string; path?: str
       // A click landing on the dialog itself (not its content) is a backdrop click.
       onClick={(e) => { if (e.target === ref.current) ref.current?.close(); }}
     >
-      <img
+      {/* Button, not a bare img: the zoom toggle has to be reachable by keyboard too. */}
+      <button
+        type="button"
         class={`bean-image-preview-img${zoomed ? " bean-image-preview-img--zoom" : ""}`}
-        src={image.dataUrl}
-        alt="image preview"
-        title={zoomed ? "Click to fit" : "Click to zoom"}
+        title={zoomed ? "Fit to window" : "Zoom to full size"}
+        aria-pressed={zoomed}
         onClick={() => setZoomed((z) => !z)}
-      />
+      >
+        <img src={image.dataUrl} alt="image preview" />
+      </button>
       <div class="bean-image-preview-actions">
         {image.path ? (
           <button type="button" class="bean-btn" onClick={() => window.bean.revealInFinder(image.path!)}>Show in Finder</button>
@@ -280,13 +283,9 @@ export function ChatPanel({
               <div key={it.id} class="bean-bubble bean-bubble--user">
                 {it.display ?? it.text}
                 {it.images?.map((src) => (
-                  <img
-                    class="bean-chat-thumb"
-                    src={src}
-                    alt="attached image"
-                    title="Click to preview"
-                    onClick={() => setPreview({ dataUrl: src })}
-                  />
+                  <button type="button" class="bean-chat-thumb" title="Preview" onClick={() => setPreview({ dataUrl: src })}>
+                    <img src={src} alt="attached image" />
+                  </button>
                 ))}
               </div>
             );
@@ -296,13 +295,14 @@ export function ChatPanel({
               <div key={it.id} class="bean-bubble bean-bubble--bean">
                 <Markdown text={it.display ?? it.text} />
                 {it.images?.map((img) => (
-                  <img
+                  <button
+                    type="button"
                     class="bean-chat-thumb"
-                    src={img.dataUrl}
-                    alt="generated image"
-                    title="Click to preview"
+                    title="Preview"
                     onClick={() => setPreview({ dataUrl: img.dataUrl, path: img.path })}
-                  />
+                  >
+                    <img src={img.dataUrl} alt="generated image" />
+                  </button>
                 ))}
               </div>
             );
