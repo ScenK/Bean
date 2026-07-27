@@ -95,14 +95,16 @@ export function ChatPanel({
   // image (and orphan the image onto the next turn). Submit blocks while any read is in flight.
   const [imageReadsInFlight, setImageReadsInFlight] = useState(0);
 
+  // Slots reserved by accepted-but-still-reading files. A ref, not state: a second paste
+  // arriving before the first batch's FileReaders resolve must see those reservations
+  // synchronously, or the two batches together can exceed the per-message cap.
+  const reservedSlotsRef = useRef(0);
+
   const attachImageFiles = (files: File[]): void => {
-    // Local counter (not just state length): a multi-file drop guards each file against
-    // the count it will actually land at, before any async read resolves.
-    let count = pendingImages.length;
     for (const file of files) {
-      const problem = imageFileGuard(file.type, file.size, count);
+      const problem = imageFileGuard(file.type, file.size, pendingImages.length + reservedSlotsRef.current);
       if (problem) { setImageError(problem); continue; }
-      count += 1;
+      reservedSlotsRef.current += 1;
       setImageReadsInFlight((n) => n + 1);
       void readImageFile(file)
         .then((img) => {
@@ -110,7 +112,10 @@ export function ChatPanel({
           setPendingImages((prev) => [...prev, img]);
         })
         .catch(() => setImageError("Couldn't read that image."))
-        .finally(() => setImageReadsInFlight((n) => n - 1));
+        .finally(() => {
+          reservedSlotsRef.current -= 1;
+          setImageReadsInFlight((n) => n - 1);
+        });
     }
   };
   // "Near bottom" tracked in a ref (the scroll handler runs constantly); the jump-down
