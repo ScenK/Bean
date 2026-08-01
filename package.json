@@ -17,7 +17,7 @@
     "upgrade:outdated": "node scripts/outdated-report.mjs"
   },
   "devDependencies": {
-    "turbo": "^2.10.6",
+    "turbo": "^2.10.7",
     "typescript": "^7.0.2"
   }
 }
