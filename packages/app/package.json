@@ -63,7 +63,7 @@
   },
   "devDependencies": {
     "@bean/core": "workspace:*",
-    "@playwright/test": "^1.62.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^26.1.2",
     "dompurify": "^3.4.12",
     "electron": "^43.2.0",
