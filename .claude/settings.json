@@ -5,6 +5,16 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"$(git branch --show-current)\" = main ] && echo 'On main: before ANY code edit, run: pnpm worktree:create BRANCH -- then work from .worktrees/BRANCH.'; [ -f .codegraph/codegraph.db ] || codegraph init >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
