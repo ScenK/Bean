@@ -68,7 +68,7 @@
     "dompurify": "^3.4.13",
     "electron": "^43.3.0",
     "electron-builder": "^26.15.3",
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "marked": "^18.0.9",
     "preact": "^10.29.8",
     "typescript": "^7.0.2",
