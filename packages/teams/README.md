@@ -46,7 +46,13 @@ Adaptive Card and execute on THIS machine. Design: `docs/superpowers/specs/2026-
    exposes reachability.) Sanity-check reachability directly:
    `curl -i -X POST https://<tunnel-id>.devtunnels.ms/api/messages -d '{}'` should return
    **401 Unauthorized** (proves the tunnel + server are up and the auth gate is live — a 404
-   means the path is wrong, a connection error means the tunnel or server is down).
+   means the path is wrong *or the tunnel has no port* (`devtunnel port list` shows 0 — a bare
+   `devtunnel host` on a persistent tunnel forwards nothing until `devtunnel port create -p 3978`
+   ran, and the running host must be restarted to pick a new port up); a 502 means the port
+   was created with `--protocol https` (the local server is plain http — leave protocol at its
+   default); a connection error means the tunnel or server is down). Use the URL `devtunnel host`
+   prints as "Connect via browser" — it is `<id>-3978.<cluster>.devtunnels.ms`, not the tunnel's
+   friendly name.
 6. **Teams app package**: `teamsAppManifest/` next to this README holds a fill-in template —
    `id` needs a fresh GUID (`uuidgen`), `bots[0].botId` and `webApplicationInfo.id` = the App
    ID. It needs two icons: `color.png` (192×192) and `outline.png` (32×32) — generic starter

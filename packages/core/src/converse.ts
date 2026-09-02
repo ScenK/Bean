@@ -454,6 +454,14 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       return { reply: "I couldn't reach the model — check your API key in ~/.bean/config.json.", model: deps.model };
     }
 
+    // A rejected proposal (hallucinated tool, unknown skill/project, blank args) must not end
+    // the turn: `content` is usually "" alongside a tool call, and an empty reply is silence on
+    // every surface. Feed the rejection back as a tool result so the next round answers in text.
+    const reject = (c: ToolCall, why: string): void => {
+      messages.push({ role: "assistant", content, toolCalls: [c] });
+      messages.push({ role: "tool", content: `error: ${why} Reply to the user in plain text instead.`, toolCallId: c.id ?? c.name });
+    };
+
     const call = toolCalls.find((c) => c.name === "propose_run");
     if (call) {
       const args = (call.args ?? {}) as { skill?: unknown; project?: unknown; instruction?: unknown };
@@ -461,7 +469,12 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       // args.project absent = a deliberate no-project run; present-but-unknown = the model
       // named something outside the enum, which we still treat as invalid.
       const project = args.project === undefined ? undefined : projects.find((p) => p.path === args.project);
-      if (!skill || (args.project !== undefined && !project)) return { reply: content, model: deps.model };
+      if (!skill || (args.project !== undefined && !project)) {
+        reject(call, runAvailable
+          ? "unknown skill or project."
+          : "propose_run is not available here; terminal skills run via propose_delegate.");
+        continue;
+      }
       const instruction = typeof args.instruction === "string" ? args.instruction : latestUserText;
       return {
         reply: content,
@@ -483,7 +496,8 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       };
       const project = projects.find((p) => p.path === args.project);
       if (!project || typeof args.instruction !== "string" || !args.instruction.trim()) {
-        return { reply: content, model: deps.model };
+        reject(delegateCall, "unknown project or empty instruction.");
+        continue;
       }
       const skill = skills.find((s) => s.name === args.skill);
       return {
@@ -509,7 +523,8 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       const args = (liveCall.args ?? {}) as { project?: unknown; instruction?: unknown; model?: unknown };
       const project = projects.find((p) => p.path === args.project);
       if (!project || typeof args.instruction !== "string" || !args.instruction.trim()) {
-        return { reply: content, model: deps.model };
+        reject(liveCall, "unknown project or empty instruction.");
+        continue;
       }
       return {
         reply: content,
@@ -528,7 +543,8 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     if (noteCall) {
       const args = (noteCall.args ?? {}) as { title?: unknown; body?: unknown; project?: unknown };
       if (typeof args.title !== "string" || !args.title.trim() || typeof args.body !== "string") {
-        return { reply: content, model: deps.model };
+        reject(noteCall, "a note needs a title and body.");
+        continue;
       }
       const project = projects.find((p) => p.path === args.project)?.path;
       return {
@@ -543,7 +559,8 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       const args = (skillCall.args ?? {}) as { name?: unknown; body?: unknown };
       const name = typeof args.name === "string" ? args.name.trim() : "";
       if (!name || INVALID_SKILL_NAME.test(name) || typeof args.body !== "string" || !args.body.trim()) {
-        return { reply: content, model: deps.model };
+        reject(skillCall, "invalid skill name or empty body.");
+        continue;
       }
       return {
         reply: content,
@@ -557,7 +574,8 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       const args = (todoCall.args ?? {}) as { routine?: unknown; text?: unknown };
       const text = typeof args.text === "string" ? args.text.trim() : "";
       if (!text || typeof args.routine !== "string" || !todoRoutines.includes(args.routine)) {
-        return { reply: content, model: deps.model };
+        reject(todoCall, "unknown routine or empty text.");
+        continue;
       }
       return { reply: content, model: deps.model, proposedTodo: { routine: args.routine, text } };
     }
