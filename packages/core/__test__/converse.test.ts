@@ -134,6 +134,26 @@ test("runAvailable=false with no chat-target skills drops propose_run and reject
   expect(res.proposedRun).toBeUndefined();
 });
 
+test("a rejected proposal call with empty content is fed back as a tool error so the next round answers in text", async () => {
+  const seen: ConvoMsg[][] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages }) => {
+      seen.push(messages);
+      // Round 1: silent hallucinated propose_run (chatops offers no propose_run for terminal skills).
+      if (seen.length === 1) return { content: "", toolCalls: [{ id: "c1", name: "propose_run", args: { skill: "review-code", instruction: "x" } }] };
+      return { content: "I can run that as a delegate task — want me to?", toolCalls: [] };
+    },
+  };
+  const res = await conv({ latestUserText: "run the standup", deps, delegateAvailable: true, runAvailable: false });
+  expect(res.proposedRun).toBeUndefined();
+  expect(res.reply).toBe("I can run that as a delegate task — want me to?");
+  const tail = seen[1]!.slice(-2);
+  expect(tail[0]).toMatchObject({ role: "assistant", toolCalls: [{ id: "c1", name: "propose_run" }] });
+  expect(tail[1]).toMatchObject({ role: "tool", toolCallId: "c1" });
+  expect((tail[1] as { content: string }).content).toMatch(/propose_delegate/);
+});
+
 test("propose_run is still offered with no configured projects — project is optional", async () => {
   let captured: ToolSpec[] = [];
   const deps: ConverseDeps = {
