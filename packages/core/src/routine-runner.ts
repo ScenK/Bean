@@ -34,13 +34,14 @@ export interface RoutineRunResult { record: RunRecord; digest: string; results: 
 
 export const ROUTINE_STEP_TIMEOUT_MS = 15 * 60_000;
 const MAX_TOOL_ROUNDS = 5;
-const PRIOR_OUTPUT_CAP = 4000; // chars per prior step folded into later prompts
+const PRIOR_OUTPUT_CAP = 4000; // chars per prior step folded into LATER STEPS' prompts
+const DIGEST_OUTPUT_CAP = 100_000; // digest sees near-full step output — truncation silently drops report sections
 const SUMMARY_CAP = 200;
 
-function priorOutputsBlock(results: StepResult[]): string {
+function priorOutputsBlock(results: StepResult[], cap = PRIOR_OUTPUT_CAP): string {
   if (results.length === 0) return "";
   return results
-    .map((r) => `--- step ${r.index + 1} (${r.kind}, ${r.ok ? "ok" : "FAILED"}) ---\n${r.output.slice(-PRIOR_OUTPUT_CAP)}`)
+    .map((r) => `--- step ${r.index + 1} (${r.kind}, ${r.ok ? "ok" : "FAILED"}) ---\n${r.output.slice(-cap)}`)
     .join("\n\n");
 }
 
@@ -95,7 +96,7 @@ async function composeDigest(
   deps: RoutineRunnerDeps,
   timeoutMs: number,
 ): Promise<string> {
-  const fallback = `Routine "${routine.name}" finished.\n\n${priorOutputsBlock(results)}`;
+  const fallback = `Routine "${routine.name}" finished.\n\n${priorOutputsBlock(results, DIGEST_OUTPUT_CAP)}`;
   try {
     const res = await withTimeout(
       deps.chat({
@@ -110,7 +111,7 @@ async function composeDigest(
               "Call out any FAILED " +
               "step explicitly with its error. Plain text/markdown, no preamble, no questions.",
           },
-          { role: "user", content: priorOutputsBlock(results) },
+          { role: "user", content: priorOutputsBlock(results, DIGEST_OUTPUT_CAP) },
         ],
         tools: [],
       }),
@@ -208,7 +209,10 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
     allOk = await runSteps(routine, deps, timeoutMs, results, "", "");
   }
 
-  const digest = await composeDigest(routine, results, deps, timeoutMs);
+  // One successful step: its output IS the deliverable. Re-summarizing it only loses detail and
+  // bolts on "Overall status / Step 1 / FAILED steps" scaffolding the step's own format forbids.
+  const only = results.length === 1 ? results[0] : undefined;
+  const digest = only?.ok ? only.output : await composeDigest(routine, results, deps, timeoutMs);
   const record: RunRecord = {
     startedAt,
     finishedAt: now().toISOString(),
