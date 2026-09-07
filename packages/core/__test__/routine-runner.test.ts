@@ -55,6 +55,17 @@ describe("runRoutine", () => {
     expect(res.record.steps).toHaveLength(2);
   });
 
+  it("delivers a lone successful step's output verbatim, without a digest pass", async () => {
+    const report = "Standup\n\n## A\n- x\n".padEnd(9000, "y") + "\nlast line, verbatim, always.";
+    const chat = vi.fn(async () => ({ content: "re-summarized", toolCalls: [] }));
+    const res = await runRoutine(
+      routine([{ kind: "delegate", skill: "s", project: "/p", instruction: "go" }]),
+      baseDeps(chat, { delegate: async () => report }),
+    );
+    expect(res.digest).toBe(report); // no truncation, no "Overall status" scaffolding
+    expect(chat).not.toHaveBeenCalled();
+  });
+
   it("continues past a failed step and marks the run failed", async () => {
     const { fn } = chatStub([{ content: "still ran" }, { content: "digest with failure" }]);
     const res = await runRoutine(
@@ -123,7 +134,8 @@ describe("runRoutine", () => {
         ? new Promise(() => {}) // digest call never resolves
         : Promise.resolve({ content: "step out", toolCalls: [] });
     const p = runRoutine(
-      routine([{ kind: "chat", instruction: "x" }]),
+      // Two steps: a lone successful step skips the digest pass entirely.
+      routine([{ kind: "chat", instruction: "x" }, { kind: "chat", instruction: "y" }]),
       baseDeps(hungDigest, { stepTimeoutMs: 1000 }),
     );
     await vi.advanceTimersByTimeAsync(1001);
@@ -137,10 +149,13 @@ describe("runRoutine", () => {
     let call = 0;
     const flaky: RoutineRunnerDeps["chat"] = async () => {
       call++;
-      if (call === 1) return { content: "step out", toolCalls: [] };
+      if (call <= 2) return { content: "step out", toolCalls: [] };
       throw new Error("model down");
     };
-    const res = await runRoutine(routine([{ kind: "chat", instruction: "x" }]), baseDeps(flaky));
+    const res = await runRoutine(
+      routine([{ kind: "chat", instruction: "x" }, { kind: "chat", instruction: "y" }]),
+      baseDeps(flaky),
+    );
     expect(res.digest).toContain("step out");
     expect(res.digest).toContain("r"); // routine name present
   });
@@ -198,6 +213,18 @@ describe("todo-driven routines", () => {
     ]);
     expect(result.record.status).toBe("ok");
     expect(result.results).toHaveLength(4);
+  });
+
+  it("strips the [todo: ...] label from a lone step's verbatim digest", async () => {
+    const todos = fakeTodos([todo("1", "task A")]);
+    const chat = vi.fn(async () => ({ content: "digest", toolCalls: [] }));
+    const result = await runRoutine(
+      { ...routine, steps: [{ kind: "delegate", skill: "plan", instruction: "plan it" }] },
+      { chat, model: "m", delegate: async () => "the report", tools: [], findSkill: () => undefined, todos: todos.dep },
+    );
+    expect(result.digest).toBe("the report"); // no "[todo: task A] " prefix in the deliverable
+    expect(result.results[0]!.output).toBe("[todo: task A] the report"); // still labeled internally
+    expect(chat).not.toHaveBeenCalled();
   });
 
   it("scopes prior outputs to the current todo", async () => {

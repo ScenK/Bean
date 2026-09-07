@@ -34,13 +34,14 @@ export interface RoutineRunResult { record: RunRecord; digest: string; results: 
 
 export const ROUTINE_STEP_TIMEOUT_MS = 15 * 60_000;
 const MAX_TOOL_ROUNDS = 5;
-const PRIOR_OUTPUT_CAP = 4000; // chars per prior step folded into later prompts
+const PRIOR_OUTPUT_CAP = 4000; // chars per prior step folded into LATER STEPS' prompts
+const DIGEST_OUTPUT_CAP = 100_000; // total chars of step output the digest sees — split across steps
 const SUMMARY_CAP = 200;
 
-function priorOutputsBlock(results: StepResult[]): string {
+function priorOutputsBlock(results: StepResult[], cap = PRIOR_OUTPUT_CAP): string {
   if (results.length === 0) return "";
   return results
-    .map((r) => `--- step ${r.index + 1} (${r.kind}, ${r.ok ? "ok" : "FAILED"}) ---\n${r.output.slice(-PRIOR_OUTPUT_CAP)}`)
+    .map((r) => `--- step ${r.index + 1} (${r.kind}, ${r.ok ? "ok" : "FAILED"}) ---\n${r.output.slice(-cap)}`)
     .join("\n\n");
 }
 
@@ -95,7 +96,10 @@ async function composeDigest(
   deps: RoutineRunnerDeps,
   timeoutMs: number,
 ): Promise<string> {
-  const fallback = `Routine "${routine.name}" finished.\n\n${priorOutputsBlock(results)}`;
+  // Cap the JOINED block, not each step: N steps must not multiply into a prompt past the
+  // model's window (a rejected digest falls back to this same block, fanned to every sink).
+  const block = priorOutputsBlock(results, Math.floor(DIGEST_OUTPUT_CAP / Math.max(1, results.length)));
+  const fallback = `Routine "${routine.name}" finished.\n\n${block}`;
   try {
     const res = await withTimeout(
       deps.chat({
@@ -110,7 +114,7 @@ async function composeDigest(
               "Call out any FAILED " +
               "step explicitly with its error. Plain text/markdown, no preamble, no questions.",
           },
-          { role: "user", content: priorOutputsBlock(results) },
+          { role: "user", content: block },
         ],
         tools: [],
       }),
@@ -174,6 +178,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
   const startedAt = now().toISOString();
   const results: StepResult[] = [];
   let allOk = true;
+  let soleLabelPrefix = ""; // only meaningful when the run ends up with exactly one result
 
   if (routine.todoDriven && deps.todos) {
     const pending = await deps.todos.listPending(routine.name);
@@ -190,6 +195,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
       await deps.todos.setStatus(item.id, "running");
       const scoped: StepResult[] = []; // prior-outputs chain is per-todo, never cross-todo
       const labelPrefix = `[todo: ${item.text}] `;
+      soleLabelPrefix = labelPrefix;
       const ok = await runSteps(
         routine, deps, timeoutMs, scoped,
         `\n\nQueued task:\n${item.text}`,
@@ -208,7 +214,13 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
     allOk = await runSteps(routine, deps, timeoutMs, results, "", "");
   }
 
-  const digest = await composeDigest(routine, results, deps, timeoutMs);
+  // One successful step: its output IS the deliverable. Re-summarizing it only loses detail and
+  // bolts on "Overall status / Step 1 / FAILED steps" scaffolding the step's own format forbids.
+  // The `[todo: ...] ` label is scaffolding for the digest prompt's grouping, not for the reader.
+  const only = results.length === 1 ? results[0] : undefined;
+  const digest = only?.ok
+    ? (soleLabelPrefix && only.output.startsWith(soleLabelPrefix) ? only.output.slice(soleLabelPrefix.length) : only.output)
+    : await composeDigest(routine, results, deps, timeoutMs);
   const record: RunRecord = {
     startedAt,
     finishedAt: now().toISOString(),
