@@ -215,6 +215,18 @@ describe("todo-driven routines", () => {
     expect(result.results).toHaveLength(4);
   });
 
+  it("strips the [todo: ...] label from a lone step's verbatim digest", async () => {
+    const todos = fakeTodos([todo("1", "task A")]);
+    const chat = vi.fn(async () => ({ content: "digest", toolCalls: [] }));
+    const result = await runRoutine(
+      { ...routine, steps: [{ kind: "delegate", skill: "plan", instruction: "plan it" }] },
+      { chat, model: "m", delegate: async () => "the report", tools: [], findSkill: () => undefined, todos: todos.dep },
+    );
+    expect(result.digest).toBe("the report"); // no "[todo: task A] " prefix in the deliverable
+    expect(result.results[0]!.output).toBe("[todo: task A] the report"); // still labeled internally
+    expect(chat).not.toHaveBeenCalled();
+  });
+
   it("scopes prior outputs to the current todo", async () => {
     const priors: string[] = [];
     const todos = fakeTodos([todo("1", "task A"), todo("2", "task B")]);
