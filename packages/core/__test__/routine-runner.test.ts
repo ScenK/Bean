@@ -227,6 +227,16 @@ describe("todo-driven routines", () => {
     expect(chat).not.toHaveBeenCalled();
   });
 
+  it("unwraps a lone step's report from an outer ```markdown fence", async () => {
+    const todos = fakeTodos([todo("1", "task A")]);
+    const result = await runRoutine(
+      { ...routine, steps: [{ kind: "delegate", skill: "plan", instruction: "plan it" }] },
+      { chat: async () => ({ content: "digest", toolCalls: [] }), model: "m",
+        delegate: async () => "```markdown\n# Report\n\n```js\nx\n```\n```", tools: [], findSkill: () => undefined, todos: todos.dep },
+    );
+    expect(result.digest).toBe("# Report\n\n```js\nx\n```"); // outer fence gone, inner kept
+  });
+
   it("scopes prior outputs to the current todo", async () => {
     const priors: string[] = [];
     const todos = fakeTodos([todo("1", "task A"), todo("2", "task B")]);

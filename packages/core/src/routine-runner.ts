@@ -45,6 +45,13 @@ function priorOutputsBlock(results: StepResult[], cap = PRIOR_OUTPUT_CAP): strin
     .join("\n\n");
 }
 
+// Agents like to wrap a whole report in one ```markdown fence; chat surfaces (Teams) then render
+// the digest as a code block. Unwrap only that outer fence — inner fences stay.
+export function unfence(text: string): string {
+  const m = /^\s*```[\w-]*\r?\n([\s\S]*?)\r?\n```\s*$/.exec(text);
+  return m?.[1] ?? text;
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 60_000)} minutes`)), ms);
@@ -218,9 +225,9 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
   // bolts on "Overall status / Step 1 / FAILED steps" scaffolding the step's own format forbids.
   // The `[todo: ...] ` label is scaffolding for the digest prompt's grouping, not for the reader.
   const only = results.length === 1 ? results[0] : undefined;
-  const digest = only?.ok
+  const digest = unfence(only?.ok
     ? (soleLabelPrefix && only.output.startsWith(soleLabelPrefix) ? only.output.slice(soleLabelPrefix.length) : only.output)
-    : await composeDigest(routine, results, deps, timeoutMs);
+    : await composeDigest(routine, results, deps, timeoutMs));
   const record: RunRecord = {
     startedAt,
     finishedAt: now().toISOString(),
