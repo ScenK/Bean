@@ -36,10 +36,25 @@ try {
   conversationRefs = JSON.parse(await readFile(conversationRefsFile, "utf8")) as typeof conversationRefs;
 } catch { /* first run */ }
 
+// Teams channel conversation ids carry the thread: `19:...@thread.tacv2;messageid=<rootPost>`.
+// Sending to the bare id (no `;messageid=`) creates a NEW post in the channel; the full id
+// replies in that thread. Channel refs are stored under the bare id so a routine sink can
+// name the channel itself and get a fresh post per digest.
+const bareChannelId = (id: string): string => id.split(";")[0] ?? id;
+// Refs saved before channel keys went bare are keyed `...;messageid=`: re-key them.
+for (const [key, ref] of Object.entries(conversationRefs)) {
+  if (ref.conversation?.conversationType !== "channel" || !key.includes(";")) continue;
+  delete conversationRefs[key];
+  const id = bareChannelId(key);
+  conversationRefs[id] ??= { ...ref, conversation: { ...ref.conversation, id } };
+}
+
 async function rememberConversation(ref: Partial<ConversationReference>): Promise<void> {
-  const id = ref.conversation?.id;
-  if (!id || conversationRefs[id]) return;
-  conversationRefs[id] = ref;
+  const raw = ref.conversation?.id;
+  if (!raw || !ref.conversation) return;
+  const id = ref.conversation.conversationType === "channel" ? bareChannelId(raw) : raw;
+  if (conversationRefs[id]) return;
+  conversationRefs[id] = { ...ref, conversation: { ...ref.conversation, id } };
   await mkdir(dirname(conversationRefsFile), { recursive: true });
   await writeFile(conversationRefsFile, JSON.stringify(conversationRefs, null, 2) + "\n", "utf8");
 }
@@ -346,8 +361,11 @@ setInterval(() => {
       const text = msg.displayBody ?? (msg.title ? `**${msg.title}**\n\n${msg.body}` : msg.body);
       // No channel = DM the user directly: every personal (1:1) conversation we've seen so
       // far (the default delivery mode). A specific channel targets one known conversation.
+      // A channel target resolves via its bare id but is sent to exactly the id given: bare =
+      // new post in the channel, `;messageid=` = reply in that thread (e.g. an interrupted run).
+      const known = msg.channel ? conversationRefs[msg.channel] ?? conversationRefs[bareChannelId(msg.channel)] : undefined;
       const targets = msg.channel
-        ? (conversationRefs[msg.channel] ? [conversationRefs[msg.channel]!] : [])
+        ? (known?.conversation ? [{ ...known, conversation: { ...known.conversation, id: msg.channel } }] : [])
         : Object.values(conversationRefs).filter((r) => r.conversation?.conversationType === "personal");
       if (targets.length === 0) {
         console.error(msg.channel
