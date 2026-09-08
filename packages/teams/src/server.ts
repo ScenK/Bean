@@ -46,7 +46,7 @@ for (const [key, ref] of Object.entries(conversationRefs)) {
   if (ref.conversation?.conversationType !== "channel" || !key.includes(";")) continue;
   delete conversationRefs[key];
   const id = bareChannelId(key);
-  conversationRefs[id] ??= { ...ref, conversation: { ...ref.conversation, id } };
+  conversationRefs[id] ??= { ...ref, activityId: undefined, conversation: { ...ref.conversation, id } };
 }
 
 async function rememberConversation(ref: Partial<ConversationReference>): Promise<void> {
@@ -54,7 +54,9 @@ async function rememberConversation(ref: Partial<ConversationReference>): Promis
   if (!raw || !ref.conversation) return;
   const id = ref.conversation.conversationType === "channel" ? bareChannelId(raw) : raw;
   if (conversationRefs[id]) return;
-  conversationRefs[id] = { ...ref, conversation: { ...ref.conversation, id } };
+  // activityId dropped: continueConversationAsync turns it into replyToId, which would pin a
+  // proactive post to the mentioning message's thread even when the conversation id is bare.
+  conversationRefs[id] = { ...ref, activityId: undefined, conversation: { ...ref.conversation, id } };
   await mkdir(dirname(conversationRefsFile), { recursive: true });
   await writeFile(conversationRefsFile, JSON.stringify(conversationRefs, null, 2) + "\n", "utf8");
 }
