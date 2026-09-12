@@ -69,7 +69,7 @@
     "electron": "^44.1.1",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
-    "marked": "^18.0.11",
+    "marked": "^18.0.12",
     "preact": "^10.29.8",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
