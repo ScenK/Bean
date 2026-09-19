@@ -7,8 +7,8 @@ import type {
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
 
-/** Confirm-first proposal: verbatim instruction, cli/model ChoiceSets, Run/Cancel.
- * Input ids "cli"/"model" come back merged into the Action.Submit data. */
+/** Confirm-first proposal: verbatim instruction, skill/cli/model ChoiceSets, Run/Cancel.
+ * Input ids "skillName"/"cli"/"model" come back merged into the Action.Submit data. */
 export function proposalCard(input: ProposalCardInput): object {
   const modelChoices = input.models.filter((m) => m.availableOn.length > 0);
   return {
@@ -17,14 +17,18 @@ export function proposalCard(input: ProposalCardInput): object {
     version: "1.4",
     body: [
       { type: "TextBlock", size: "medium", weight: "bolder", text: "Bean proposes a delegate run" },
-      {
-        type: "FactSet",
-        facts: [
-          { title: "Project", value: input.projectName },
-          ...(input.skillName ? [{ title: "Skill", value: input.skillName }] : []),
-        ],
-      },
+      { type: "FactSet", facts: [{ title: "Project", value: input.projectName }] },
       { type: "TextBlock", text: input.instruction, wrap: true },
+      ...(input.skills.length > 0 ? [{
+        type: "Input.ChoiceSet",
+        id: "skillName",
+        label: "Skill",
+        value: input.skillName ?? "__none__",
+        choices: [
+          { title: "— no skill —", value: "__none__" },
+          ...input.skills.map((s) => ({ title: s.name, value: s.name })),
+        ],
+      }] : []),
       {
         type: "Input.ChoiceSet",
         id: "cli",

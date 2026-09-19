@@ -9,6 +9,7 @@ const models = [
 const proposalInput = {
   proposalId: "prop-1", projectName: "bean", skillName: "fix-bug",
   instruction: "fix the <flaky> test & report", clis: ["claude" as const, "opencode" as const],
+  skills: [{ name: "fix-bug" }, { name: "review-code" }],
   models, defaultCli: "claude" as const, defaultModel: "sonnet",
 };
 
@@ -30,6 +31,34 @@ test("proposal selects pre-select the resolved cli and model", () => {
   const model = selects.find((c) => c.custom_id === "bean:model:prop-1");
   expect(cli?.options?.find((o) => o.default)?.value).toBe("claude");
   expect(model?.options?.find((o) => o.default)?.value).toBe("sonnet");
+  const skill = selects.find((c) => c.custom_id === "bean:skill:prop-1");
+  expect(skill?.options?.find((o) => o.default)?.value).toBe("fix-bug");
+});
+
+test("proposal skill select defaults to the no-skill sentinel when no skill was picked", () => {
+  const card = discordCards.proposalCard({ ...proposalInput, skillName: undefined }) as {
+    components: { components: { custom_id: string; options?: { value: string; default?: boolean }[] }[] }[];
+  };
+  const skill = card.components.flatMap((r) => r.components).find((c) => c.custom_id === "bean:skill:prop-1");
+  expect(skill?.options?.find((o) => o.default)?.value).toBe("__none__");
+});
+
+test("proposal skill select keeps the picked skill visible past the 24-option cap", () => {
+  const many = Array.from({ length: 40 }, (_, i) => ({ name: `skill-${i}` }));
+  const card = discordCards.proposalCard({ ...proposalInput, skillName: "skill-39", skills: many }) as {
+    components: { components: { custom_id: string; options?: { value: string; default?: boolean }[] }[] }[];
+  };
+  const skill = card.components.flatMap((r) => r.components).find((c) => c.custom_id === "bean:skill:prop-1");
+  expect(skill?.options).toHaveLength(25); // sentinel + 24
+  expect(skill?.options?.find((o) => o.default)?.value).toBe("skill-39");
+});
+
+test("proposal skill select drops names past Discord's 100-char option-value cap", () => {
+  const card = discordCards.proposalCard({ ...proposalInput, skills: [{ name: "x".repeat(101) }, { name: "ok" }] }) as {
+    components: { components: { custom_id: string; options?: { value: string }[] }[] }[];
+  };
+  const skill = card.components.flatMap((r) => r.components).find((c) => c.custom_id === "bean:skill:prop-1");
+  expect(skill?.options?.map((o) => o.value)).toEqual(["__none__", "ok"]);
 });
 
 test("running message carries cancel-run and the tail in a code block", () => {
