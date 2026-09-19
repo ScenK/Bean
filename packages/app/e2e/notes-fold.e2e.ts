@@ -27,25 +27,31 @@ test("notes sidebar: a folded project group stays folded across a restart", asyn
   };
 
   const env = { HOME: home.homeDir, OPENAI_BASE_URL: stub.url };
-  let app = await launchBean(env, userDataDir);
   try {
-    const notes = await open(app);
-    const header = notes.locator(".bean-notes-group", { hasText: "demo" });
-    await expect(header).toBeVisible();
-    await expect(notes.locator(".bean-notes-row-text", { hasText: "Alpha note" })).toBeVisible();
+    const app = await launchBean(env, userDataDir);
+    try {
+      const notes = await open(app);
+      const header = notes.locator(".bean-notes-group", { hasText: "demo" });
+      await expect(header).toBeVisible();
+      await expect(notes.locator(".bean-notes-row-text", { hasText: "Alpha note" })).toBeVisible();
 
-    await header.click();
-    await expect(notes.locator(".bean-notes-row-text", { hasText: "Alpha note" })).toHaveCount(0);
-  } finally {
-    await app.close();
-  }
+      await header.click();
+      await expect(notes.locator(".bean-notes-row-text", { hasText: "Alpha note" })).toHaveCount(0);
+    } finally {
+      await app.close();
+    }
 
-  app = await launchBean(env, userDataDir);
-  try {
-    const notes = await open(app);
-    await expect(notes.locator(".bean-notes-group", { hasText: "demo" })).toBeVisible();
-    await expect(notes.locator(".bean-notes-row-text", { hasText: "Alpha note" })).toHaveCount(0);
+    const restarted = await launchBean(env, userDataDir);
+    try {
+      const notes = await open(restarted);
+      await expect(notes.locator(".bean-notes-group", { hasText: "demo" })).toBeVisible();
+      await expect(notes.locator(".bean-notes-row-text", { hasText: "Alpha note" })).toHaveCount(0);
+    } finally {
+      await restarted.close();
+    }
   } finally {
-    await Promise.allSettled([app.close(), stub.close(), home.cleanup(), rm(userDataDir, { recursive: true, force: true })]);
+    // Outer, so a failed assertion in either launch can't leak the stub server, the fixture
+    // HOME, or the userData dir this test owns (launchBean only self-cleans dirs it made).
+    await Promise.allSettled([stub.close(), home.cleanup(), rm(userDataDir, { recursive: true, force: true })]);
   }
 });
