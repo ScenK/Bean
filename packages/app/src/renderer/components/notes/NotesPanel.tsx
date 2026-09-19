@@ -11,6 +11,11 @@ type Mode = "view" | "edit" | "add";
 const COLLAPSED_KEY = "bean.notes.collapsedGroups";
 const STARRED_KEY = "starred";
 
+// The colored spine is what carries project identity in the index-dense list, which is why the
+// group labels can stay whisper-quiet. Indexed by the project's position in the registry rather
+// than a hash of its path: stable across renames, and adjacent projects never collide.
+const SPINES = ["#4c7dd9", "#3fa87a", "#b06ad0", "#d98b2b", "#3fa2b8", "#c0566d"];
+
 function loadCollapsed(): string[] {
   try {
     const raw = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]") as unknown;
@@ -81,6 +86,14 @@ export function NotesPanel() {
     const line = body.split("\n").map((l) => l.trim()).find((l) => l.length > 0 && !l.startsWith("#")) ?? "";
     return line.length > 90 ? `${line.slice(0, 90)}…` : line;
   };
+
+  const spineColor = (n: Note): string => {
+    const i = projects.findIndex((p) => p.path === n.project);
+    return i < 0 ? "var(--bean-border)" : SPINES[i % SPINES.length]!;
+  };
+
+  const shortDay = (n: Note): string =>
+    n.updated ? new Date(n.updated).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
 
   const metaLine = (n: Note): string => {
     const day = n.updated ? new Date(n.updated).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
@@ -222,31 +235,53 @@ export function NotesPanel() {
     );
   };
 
-  const noteRow = (n: Note) => (
-    <div
-      key={n.slug}
-      class={`bean-skills-row${selectedSlug === n.slug ? " bean-skills-row--selected" : ""}`}
-      onClick={() => select(n.slug)}
-    >
-      <div class="bean-skills-row-main">
-        <div class="bean-notes-row-title">
+  // 2b: one line per note — spine, title, count-or-date. Only the selected row spends vertical
+  // space, lifting into a card with its snippet, meta and Continue action.
+  const noteRow = (n: Note) => {
+    const on = selectedSlug === n.slug;
+    return (
+      <div
+        key={n.slug}
+        class={`bean-notes-idx${on ? " bean-notes-idx--on" : ""}`}
+        onClick={() => select(n.slug)}
+      >
+        <div class="bean-notes-idx-line">
+          <span class="bean-notes-spine" style={{ background: spineColor(n) }} />
+          <span class="bean-notes-idx-title">{n.title}</span>
           <button
             type="button"
-            class={`bean-notes-star${n.starred ? " bean-notes-star--on" : ""}`}
+            class={`bean-notes-star bean-notes-idx-star${n.starred ? " bean-notes-star--on" : ""}`}
             title={n.starred ? "Unstar note" : "Star note"}
             aria-pressed={n.starred}
             onClick={(e) => { e.stopPropagation(); void toggleStar(n); }}
           >
-            {n.starred ? "\u2605" : "\u2606"}
+            {"\u2605"}
           </button>
-          <span class="bean-notes-row-text">{n.title}</span>
-          {n.openCount > 0 ? <span class="bean-notes-open">{n.openCount} OPEN</span> : null}
+          {n.openCount > 0 ? (
+            <span class="bean-notes-idx-open" title={`${n.openCount} open question(s)`}>{n.openCount}</span>
+          ) : (
+            <span class="bean-notes-idx-date">{shortDay(n)}</span>
+          )}
         </div>
-        <div class="bean-notes-snippet">{snippet(n.body) || "(empty)"}</div>
-        <div class="bean-notes-meta">{metaLine(n)}</div>
+        {on ? (
+          <>
+            <div class="bean-notes-idx-snippet">{snippet(n.body) || "(empty)"}</div>
+            <div class="bean-notes-idx-foot">
+              <span>{metaLine(n)}</span>
+              <span class="bean-skills-spacer" />
+              <button
+                type="button"
+                class="bean-notes-idx-continue"
+                onClick={(e) => { e.stopPropagation(); continueInChat(); }}
+              >
+                Continue {"\u2197"}
+              </button>
+            </div>
+          </>
+        ) : null}
       </div>
-    </div>
-  );
+    );
+  };
 
   const editor = (
     <>
@@ -297,7 +332,7 @@ export function NotesPanel() {
             const searching = query.trim() !== "";
             const open = searching || !collapsed.includes(g.key);
             return (
-              <div key={g.key} class="bean-notes-group-block">
+              <div key={g.key}>
                 <button
                   type="button"
                   class="bean-skills-list-label bean-skills-list-label--toggle bean-notes-group"
@@ -334,7 +369,7 @@ export function NotesPanel() {
                     aria-pressed={selected.starred}
                     onClick={() => void toggleStar(selected)}
                   >
-                    {selected.starred ? "\u2605" : "\u2606"}
+                    {"\u2605"}
                   </button>
                   <div class="bean-skills-title">{selected.title}</div>
                   {selected.project ? <span class="bean-skills-tag">{projectName(selected.project)}</span> : null}

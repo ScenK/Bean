@@ -46,6 +46,7 @@
 - [convention-hidden-skills.md](convention-hidden-skills.md) — `hidden: true` frontmatter (distinct from `enabled: false`) removes a skill from every renderer UI via the single `buildListSkillsHandler` IPC filter, while `converse()` still routes against it; the built-in `bean` self-intro skill is the first user, and is already undeletable since `deleteSkill` never touches `.bean/skills/`.
 - [convention-renderer-view-prefs-in-localstorage.md](convention-renderer-view-prefs-in-localstorage.md) — renderer-only view prefs (folded notes groups, remembered tabs) go in `localStorage`, which works and persists on Bean's `file://` windows; IPC + `~/.bean` stays for anything main or another surface needs.
 - [convention-new-external-surface.md](convention-new-external-surface.md) — design-time checklist for any new ingress/egress surface (auth-or-delete, rate limit, early size caps, exact MIME allowlist, res.ok, no `void` promises, collision-safe names, gate before work) — the finding classes AI reviewers otherwise raise one round at a time; pairs with AGENTS.md's Review policy.
+- [convention-renderer-class-rename.md](convention-renderer-class-rename.md) — renaming/deleting a renderer CSS class: grep the repo root, not `packages/app/src` — the `packages/app/e2e/` specs select by class name and neither `pnpm test` nor `pnpm typecheck` can see the break; plus hide hover-revealed controls with `opacity: 0`, never `visibility: hidden`, or they leave the tab order.
 
 ## project — ongoing work context
 

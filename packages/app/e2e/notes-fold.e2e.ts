@@ -33,10 +33,10 @@ test("notes sidebar: a folded project group stays folded across a restart", asyn
       const notes = await open(app);
       const header = notes.locator(".bean-notes-group", { hasText: "demo" });
       await expect(header).toBeVisible();
-      await expect(notes.locator(".bean-notes-row-text", { hasText: "Alpha note" })).toBeVisible();
+      await expect(notes.locator(".bean-notes-idx-title", { hasText: "Alpha note" })).toBeVisible();
 
       await header.click();
-      await expect(notes.locator(".bean-notes-row-text", { hasText: "Alpha note" })).toHaveCount(0);
+      await expect(notes.locator(".bean-notes-idx-title", { hasText: "Alpha note" })).toHaveCount(0);
     } finally {
       await app.close();
     }
@@ -45,7 +45,7 @@ test("notes sidebar: a folded project group stays folded across a restart", asyn
     try {
       const notes = await open(restarted);
       await expect(notes.locator(".bean-notes-group", { hasText: "demo" })).toBeVisible();
-      await expect(notes.locator(".bean-notes-row-text", { hasText: "Alpha note" })).toHaveCount(0);
+      await expect(notes.locator(".bean-notes-idx-title", { hasText: "Alpha note" })).toHaveCount(0);
     } finally {
       await restarted.close();
     }
