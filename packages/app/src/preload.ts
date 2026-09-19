@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld("bean", {
   listNotes: (): Promise<Note[]> => ipcRenderer.invoke(IPC.listNotes),
   saveNote: (draft: NoteDraft): Promise<string> => ipcRenderer.invoke(IPC.saveNote, draft),
   deleteNote: (slug: string): Promise<void> => ipcRenderer.invoke(IPC.deleteNote, slug),
+  starNote: (slug: string, starred: boolean): Promise<void> => ipcRenderer.invoke(IPC.starNote, slug, starred),
   noteHistory: (slug: string): Promise<Note[]> => ipcRenderer.invoke(IPC.noteHistory, slug),
   routinesList: (): Promise<Routine[]> => ipcRenderer.invoke(IPC.routinesList),
   routinesSave: (routine: Routine): Promise<void> => ipcRenderer.invoke(IPC.routinesSave, routine),

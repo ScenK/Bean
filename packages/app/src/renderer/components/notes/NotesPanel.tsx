@@ -9,6 +9,7 @@ type Mode = "view" | "edit" | "add";
 // it lives in the renderer's own localStorage rather than ~/.bean — no IPC channel, and a lost
 // value just unfolds everything.
 const COLLAPSED_KEY = "bean.notes.collapsedGroups";
+const STARRED_KEY = "starred";
 
 function loadCollapsed(): string[] {
   try {
@@ -54,17 +55,24 @@ export function NotesPanel() {
     return q ? notes.filter((n) => n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q)) : notes;
   }, [notes, query]);
 
-  // Group by project (registry order), General last; notes sorted A–Z by title within a group.
+  // Starred notes first as their own group, then by project (registry order), General last;
+  // notes sorted A–Z by title within a group. A star that only floated a note inside its own
+  // project group would stay buried under the groups above it — the point of starring is to be
+  // above everything, so starred notes leave their project group entirely.
   // `key` is the project path, not the display name: names are neither unique nor stable, and
   // one could even be "General" — folding is keyed off this, so it has to identify the group.
+  // STARRED_KEY can't collide: project paths are absolute.
   const groups = useMemo(() => {
     const byTitle = (a: Note, b: Note) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
     const out: { key: string; label: string; notes: Note[] }[] = [];
+    const starred = filtered.filter((n) => n.starred);
+    if (starred.length > 0) out.push({ key: STARRED_KEY, label: "★ Starred", notes: starred.sort(byTitle) });
+    const rest = filtered.filter((n) => !n.starred);
     for (const p of projects) {
-      const own = filtered.filter((n) => n.project === p.path);
+      const own = rest.filter((n) => n.project === p.path);
       if (own.length > 0) out.push({ key: p.path, label: p.name, notes: own.sort(byTitle) });
     }
-    const general = filtered.filter((n) => !n.project || !projects.some((p) => p.path === n.project));
+    const general = rest.filter((n) => !n.project || !projects.some((p) => p.path === n.project));
     if (general.length > 0) out.push({ key: "", label: "General", notes: general.sort(byTitle) });
     return out;
   }, [filtered, projects]);
@@ -77,6 +85,15 @@ export function NotesPanel() {
   const metaLine = (n: Note): string => {
     const day = n.updated ? new Date(n.updated).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
     return [day, `v${n.version}`, n.source === "chat" ? "from chat" : "yours"].filter(Boolean).join(" · ");
+  };
+
+  const toggleStar = async (n: Note): Promise<void> => {
+    try {
+      await window.bean.starNote(n.slug, !n.starred);
+      await refresh();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const toggleGroup = (key: string): void => {
@@ -213,6 +230,15 @@ export function NotesPanel() {
     >
       <div class="bean-skills-row-main">
         <div class="bean-notes-row-title">
+          <button
+            type="button"
+            class={`bean-notes-star${n.starred ? " bean-notes-star--on" : ""}`}
+            title={n.starred ? "Unstar note" : "Star note"}
+            aria-pressed={n.starred}
+            onClick={(e) => { e.stopPropagation(); void toggleStar(n); }}
+          >
+            {n.starred ? "\u2605" : "\u2606"}
+          </button>
           <span class="bean-notes-row-text">{n.title}</span>
           {n.openCount > 0 ? <span class="bean-notes-open">{n.openCount} OPEN</span> : null}
         </div>
@@ -301,6 +327,15 @@ export function NotesPanel() {
             <div class="bean-skills-header">
               <div class="bean-skills-header-main">
                 <div class="bean-skills-title-row">
+                  <button
+                    type="button"
+                    class={`bean-notes-star${selected.starred ? " bean-notes-star--on" : ""}`}
+                    title={selected.starred ? "Unstar note" : "Star note"}
+                    aria-pressed={selected.starred}
+                    onClick={() => void toggleStar(selected)}
+                  >
+                    {selected.starred ? "\u2605" : "\u2606"}
+                  </button>
                   <div class="bean-skills-title">{selected.title}</div>
                   {selected.project ? <span class="bean-skills-tag">{projectName(selected.project)}</span> : null}
                 </div>

@@ -16,6 +16,8 @@ export interface Note {
   source: "chat" | "manual";
   /** Unchecked `- [ ]` items in the body — the "open questions" count. */
   openCount: number;
+  /** Pinned by the user — sorts to the top of the list. */
+  starred: boolean;
 }
 
 export interface NoteDraft {
@@ -40,6 +42,7 @@ const traversal = /[/\\]|\.\./;
 
 interface NoteRow {
   slug: string; title: string; body: string; project: string | null; updated: string; version: number; source: string;
+  starred?: number;
 }
 
 function toNote(row: NoteRow): Note {
@@ -47,16 +50,17 @@ function toNote(row: NoteRow): Note {
     slug: row.slug, title: row.title, body: row.body, project: row.project ?? undefined,
     updated: row.updated, version: row.version, source: row.source === "manual" ? "manual" : "chat",
     openCount: openQuestionCount(row.body),
+    starred: row.starred === 1,
   };
 }
 
-const SELECT_NOTE = "SELECT slug, title, body, project, updated, version, source FROM notes";
+const SELECT_NOTE = "SELECT slug, title, body, project, updated, version, source, starred FROM notes";
 
 export async function loadNotes(file: string): Promise<Note[]> {
   const db = openDb(file);
-  // slug ASC as a tiebreaker: `updated` alone isn't unique (same-second saves), and without a
+  // Starred first, then newest. slug ASC as a tiebreaker: `updated` alone isn't unique (same-second saves), and without a
   // secondary key SQLite's tie order is unspecified — this keeps ties deterministic.
-  const rows = db.prepare(`${SELECT_NOTE} ORDER BY updated DESC, slug ASC`).all() as unknown as NoteRow[];
+  const rows = db.prepare(`${SELECT_NOTE} ORDER BY starred DESC, updated DESC, slug ASC`).all() as unknown as NoteRow[];
   return rows.map(toNote);
 }
 
@@ -114,6 +118,13 @@ export async function saveNote(
   return slug;
 }
 
+/** Stars/unstars a note. Deliberately not part of saveNote: a star is a view preference, not
+ * an edit, and shouldn't bump the version or push a row into notes_history. */
+export async function starNote(file: string, slug: string, starred: boolean): Promise<void> {
+  if (traversal.test(slug)) throw new Error(`invalid note slug: ${slug}`);
+  openDb(file).prepare("UPDATE notes SET starred = ? WHERE slug = ?").run(starred ? 1 : 0, slug);
+}
+
 /** Removes the note row; notes_history versions are deliberately kept. */
 export async function deleteNote(file: string, slug: string): Promise<void> {
   if (traversal.test(slug)) throw new Error(`invalid note slug: ${slug}`);
@@ -130,7 +141,7 @@ export async function searchNotes(file: string, query: string, limit = 5): Promi
   const db = openDb(file);
   const matchQuery = words.map((w) => `"${w.replace(/"/g, '""')}"*`).join(" OR ");
   const rows = db.prepare(
-    "SELECT n.slug, n.title, n.body, n.project, n.updated, n.version, n.source FROM notes_fts f " +
+    "SELECT n.slug, n.title, n.body, n.project, n.updated, n.version, n.source, n.starred FROM notes_fts f " +
       "JOIN notes n ON n.rowid = f.rowid WHERE notes_fts MATCH ? ORDER BY bm25(notes_fts) LIMIT ?",
   ).all(matchQuery, limit) as unknown as NoteRow[];
   return rows.map(toNote);

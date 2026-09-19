@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS notes (
   project TEXT,
   updated TEXT NOT NULL,
   version INTEGER NOT NULL,
-  source  TEXT NOT NULL
+  source  TEXT NOT NULL,
+  starred INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS notes_history (
   slug    TEXT NOT NULL,
@@ -113,6 +114,24 @@ export function openDb(file: string): DatabaseSync {
   const isNew = !existsSync(file);
   const db = new DatabaseSync(file);
   db.exec(SCHEMA);
+  // Column added after the table shipped, so CREATE TABLE IF NOT EXISTS won't add it to an
+  // existing bean.db. Checked against the schema rather than try/catch around ADD COLUMN: that
+  // would also swallow a lock timeout or I/O error and cache a handle whose notes are unusable.
+  // Re-checked under BEGIN IMMEDIATE: the app and the bot servers can open the same bean.db at
+  // once, and two openers that both saw the column missing would have the loser's ALTER throw.
+  const hasStarred = (): boolean =>
+    (db.prepare("PRAGMA table_info(notes)").all() as unknown as { name: string }[])
+      .some((c) => c.name === "starred");
+  if (!hasStarred()) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (!hasStarred()) db.exec("ALTER TABLE notes ADD COLUMN starred INTEGER NOT NULL DEFAULT 0");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
   cache.set(file, db);
   if (isNew) migrateFromFiles(db, dirname(file));
   return db;

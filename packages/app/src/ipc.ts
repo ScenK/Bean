@@ -410,6 +410,7 @@ export interface NotesHandlerDeps {
   loadNotes: (file: string) => Promise<Note[]>;
   saveNote: (file: string, draft: NoteDraft) => Promise<string>;
   deleteNote: (file: string, slug: string) => Promise<void>;
+  starNote: (file: string, slug: string, starred: boolean) => Promise<void>;
   loadNoteHistory: (file: string, slug: string) => Promise<Note[]>;
   dbFile: string;
 }
@@ -419,6 +420,7 @@ export function buildNotesHandlers(deps: NotesHandlerDeps) {
     list: (): Promise<Note[]> => deps.loadNotes(deps.dbFile),
     save: (draft: NoteDraft): Promise<string> => deps.saveNote(deps.dbFile, draft),
     delete: (slug: string): Promise<void> => deps.deleteNote(deps.dbFile, slug),
+    star: (slug: string, starred: boolean): Promise<void> => deps.starNote(deps.dbFile, slug, starred),
     history: (slug: string): Promise<Note[]> => deps.loadNoteHistory(deps.dbFile, slug),
   };
 }
@@ -546,6 +548,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   loadNotes: NotesHandlerDeps["loadNotes"];
   saveNote: NotesHandlerDeps["saveNote"];
   deleteNote: NotesHandlerDeps["deleteNote"];
+  starNote: NotesHandlerDeps["starNote"];
   loadNoteHistory: NotesHandlerDeps["loadNoteHistory"];
   dbFile: string;
   actions?: ActionTool[];
@@ -671,6 +674,9 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.listNotes, () => notesHandlers.list());
   ipcMain.handle(IPC.saveNote, (_e, draft: NoteDraft) => notesHandlers.save(draft));
   ipcMain.handle(IPC.deleteNote, (_e, slug: string) => notesHandlers.delete(slug));
+  // === true, not a cast: the renderer's types are erased by the time a value crosses IPC,
+  // and every truthy payload ("false" included) would otherwise star the note.
+  ipcMain.handle(IPC.starNote, (_e, slug: string, starred: unknown) => notesHandlers.star(slug, starred === true));
   ipcMain.handle(IPC.noteHistory, (_e, slug: string) => notesHandlers.history(slug));
 
   const configHandlers = buildConfigHandlers({

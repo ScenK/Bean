@@ -66,6 +66,7 @@ declare global {
       listNotes(): Promise<Note[]>;
       saveNote(draft: NoteDraft): Promise<string>;
       deleteNote(slug: string): Promise<void>;
+      starNote(slug: string, starred: boolean): Promise<void>;
       noteHistory(slug: string): Promise<Note[]>;
       routinesList(): Promise<Routine[]>;
       routinesSave(routine: Routine): Promise<void>;

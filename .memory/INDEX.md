@@ -30,6 +30,7 @@
 
 ## convention — how we do things here
 
+- [convention-bean-db-column-additions.md](convention-bean-db-column-additions.md) — a new column on an existing `bean.db` table needs its own `ALTER TABLE` in `openDb()`, guarded by `PRAGMA table_info` inside `BEGIN IMMEDIATE` (never a bare try/catch); and leave the FTS5 triggers firing on every UPDATE.
 - [convention-ipc-channels.md](convention-ipc-channels.md) — IPC channel names are defined once in `app/src/channels.ts`; never string-literal them.
 - [convention-core-is-electron-free.md](convention-core-is-electron-free.md) — keep `@bean/core` pure and dependency-injected so it tests without Electron.
 - [convention-chatops-card-pickers.md](convention-chatops-card-pickers.md) — on-card pickers must re-derive at launch (`startRun` recomposes the prompt; an unresolvable skill refuses the run rather than degrading to the bare instruction), and Discord selects cap at 25 options / 100-char values with the picked entry hoisted so truncation can't drop it.
