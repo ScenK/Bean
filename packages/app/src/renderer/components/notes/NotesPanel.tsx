@@ -39,15 +39,16 @@ export function NotesPanel() {
     return q ? notes.filter((n) => n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q)) : notes;
   }, [notes, query]);
 
-  // Group by project (registry order), General last; notes stay updated-first within a group.
+  // Group by project (registry order), General last; notes sorted A–Z by title within a group.
   const groups = useMemo(() => {
+    const byTitle = (a: Note, b: Note) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
     const out: { label: string; notes: Note[] }[] = [];
     for (const p of projects) {
       const own = filtered.filter((n) => n.project === p.path);
-      if (own.length > 0) out.push({ label: p.name, notes: own });
+      if (own.length > 0) out.push({ label: p.name, notes: own.sort(byTitle) });
     }
     const general = filtered.filter((n) => !n.project || !projects.some((p) => p.path === n.project));
-    if (general.length > 0) out.push({ label: "General", notes: general });
+    if (general.length > 0) out.push({ label: "General", notes: general.sort(byTitle) });
     return out;
   }, [filtered, projects]);
 
@@ -238,8 +239,8 @@ export function NotesPanel() {
           <div class="bean-panel-empty">No notes match "{query}".</div>
         ) : (
           groups.map((g) => (
-            <div key={g.label} class="bean-skills-row-group">
-              <div class="bean-skills-list-label">{g.label} · {g.notes.length}</div>
+            <div key={g.label} class="bean-notes-group-block">
+              <div class="bean-skills-list-label bean-notes-group">{g.label}<span class="bean-notes-group-count">{g.notes.length}</span></div>
               {g.notes.map(noteRow)}
             </div>
           ))
