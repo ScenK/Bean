@@ -22,3 +22,9 @@ from this race doesn't block merges.
 production code), or (b) move `registerIpc()` before `createAvatarWindow()` in `main.ts` (fixes
 the actual race for real users too, not just tests — the more correct fix, but touches app
 startup ordering, so verify nothing in `registerIpc`'s deps assumes the window already exists).
+
+**Related, and why `playwright.config.ts` pins `workers: 1`:** running the suite in parallel
+(Playwright's default is half the CPU cores) fails most specs outright — several full Electron
+apps launching at once contend on startup and hit this race far harder. Reproduce with
+`pnpm --filter @bean/app exec playwright test --workers=5`; it predates the notes-fold spec.
+Don't "speed up" CI by removing that pin until the race itself is fixed.
