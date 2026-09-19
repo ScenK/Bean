@@ -6,6 +6,7 @@
   --bean-text: oklch(0.3 0.02 60);
   --bean-text-dim: oklch(0.55 0.015 60);
   --bean-accent: oklch(0.66 0.15 48);
+  --bean-star: oklch(0.64 0.15 78); /* deeper than it looks: 3.4:1 on the hearth surface */
   --bean-accent-ink: #fff;
   --bean-orb-1: oklch(0.85 0.12 74);
   --bean-orb-2: oklch(0.71 0.16 50);
@@ -27,6 +28,7 @@
   --bean-text: oklch(0.92 0.008 260);
   --bean-text-dim: oklch(0.62 0.02 260);
   --bean-accent: oklch(0.74 0.12 235);
+  --bean-star: oklch(0.82 0.14 82);
   --bean-accent-ink: oklch(0.18 0.012 265);
   --bean-orb-1: oklch(0.87 0.09 215);
   --bean-orb-2: oklch(0.71 0.13 248);

@@ -1306,7 +1306,6 @@ button, input, textarea, select, a {
 .bean-memory-del:hover { opacity: 1; }
 
 /* Notes */
-.bean-notes-meta { font-size: 11px; opacity: 0.55; margin-top: 3px; }
 .bean-notes-version-link { color: var(--bean-accent); text-decoration: underline; cursor: pointer; }
 
 .bean-notes-body { flex: 1; overflow-y: auto; font-size: 13px; line-height: 1.55; }
@@ -1336,59 +1335,113 @@ button, input, textarea, select, a {
 .bean-save-notes:disabled { opacity: 0.45; cursor: default; }
 .bean-send svg { width: 14px; height: 14px; }
 
-/* Notes list rows (mockup 1b) */
-.bean-notes-row-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
-.bean-notes-row-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bean-notes-open {
-  flex: none;
-  font: 600 10px ui-monospace, monospace;
-  color: var(--bean-accent);
-  background: var(--bean-surface-2);
-  border: 1px solid var(--bean-border);
-  border-radius: 6px;
-  padding: 2px 6px;
-}
-.bean-notes-star {
-  flex: none;
-  background: none;
-  border: none;
-  padding: 0;
+/* Notes list rows (mockup 2b — index-dense: one line per note, detail only on the selected row) */
+.bean-notes-idx {
+  padding: 5px 9px;
+  border-radius: 9px;
   cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-  color: var(--bean-text-dim);
 }
-.bean-notes-star:hover { color: var(--bean-accent); }
-.bean-notes-star--on { color: var(--bean-accent); }
-.bean-notes-snippet {
-  margin-top: 2px;
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: var(--bean-text-dim);
+.bean-notes-idx:hover { background: var(--bean-surface-2); }
+.bean-notes-idx-line { display: flex; align-items: center; gap: 8px; }
+.bean-notes-spine { flex: none; width: 3px; height: 14px; border-radius: 2px; }
+.bean-notes-idx-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bean-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.bean-notes-idx-open { flex: none; font: 600 10px ui-monospace, monospace; color: var(--bean-accent); }
+.bean-notes-idx-date { flex: none; font: 10px ui-monospace, monospace; color: var(--bean-text-dim); }
 
-/* Project group header: the sidebar's primary divider, so it outranks the row text. */
+/* Always the filled glyph — gold when starred, quiet grey when not. An outline star reads as a
+   bordered box at this size, which is why the off state is a color change, not a different mark. */
+.bean-notes-star {
+  flex: none;
+  background: none;
+  border: none;
+  padding: 0 2px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--bean-text-dim);
+  opacity: 0.45;
+}
+.bean-notes-star:hover, .bean-notes-star:focus-visible { color: var(--bean-star); opacity: 1; }
+.bean-notes-star--on { color: var(--bean-star); opacity: 1; }
+
+/* The star is the row's only action, so it stays out of the line until you are looking at that
+   row — an already-starred one keeps showing it, or there would be no way to unstar by eye.
+   Hidden with opacity, not visibility: the button has to stay in the tab order, and a keyboard
+   user reveals it by focusing it. */
+.bean-notes-idx-star { opacity: 0; font-size: 12px; }
+.bean-notes-idx:hover .bean-notes-idx-star,
+.bean-notes-idx--on .bean-notes-idx-star,
+.bean-notes-idx-star:focus-visible,
+.bean-notes-idx-star.bean-notes-star--on { opacity: 1; }
+
+/* The selected row is the only one that spends vertical space: it lifts into a card. */
+.bean-notes-idx--on,
+.bean-notes-idx--on:hover {
+  margin: 5px 0;
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--bean-accent) 10%, var(--bean-surface));
+  border: 1px solid color-mix(in oklch, var(--bean-accent) 32%, transparent);
+  box-shadow: 0 10px 22px -16px rgba(0, 0, 0, 0.55);
+}
+.bean-notes-idx--on .bean-notes-idx-title { font-weight: 700; }
+.bean-notes-idx--on .bean-notes-idx-open {
+  color: var(--bean-accent-ink);
+  background: var(--bean-accent);
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+.bean-notes-idx-snippet {
+  margin-top: 5px;
+  padding-left: 11px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--bean-text-dim);
+}
+.bean-notes-idx-foot {
+  margin-top: 6px;
+  padding-left: 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 10.5px ui-monospace, monospace;
+  color: var(--bean-text-dim);
+}
+.bean-notes-idx-continue {
+  flex: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font: 600 10.5px ui-monospace, monospace;
+  color: var(--bean-accent);
+}
+.bean-notes-idx-continue:hover { text-decoration: underline; }
+
+/* Group header: the spine carries project identity now, so the label can whisper. */
 .bean-notes-group {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  font: 700 12px ui-monospace, monospace;
-  letter-spacing: 0.06em;
-  color: var(--bean-text);
-  padding: 6px 10px 4px;
+  font: 600 10px ui-monospace, monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bean-text-dim);
+  padding: 13px 10px 4px;
 }
-.bean-notes-group:hover:not(:disabled) { color: var(--bean-accent); }
+.bean-notes-group:hover:not(:disabled) { color: var(--bean-text); }
 .bean-notes-group:disabled { cursor: default; }
 .bean-notes-group-caret { flex: none; width: 10px; font-size: 9px; opacity: 0.7; }
-.bean-notes-group-count { margin-left: auto; font-size: 10.5px; font-weight: 600; color: var(--bean-text-dim); }
-.bean-notes-group-block + .bean-notes-group-block {
-  margin-top: 12px;
-  border-top: 1px solid var(--bean-border);
-  padding-top: 6px;
-}
+.bean-notes-group-count { margin-left: auto; font-size: 10px; font-weight: 600; }
 
 /* Chat composer + jump-to-latest */
 .bean-input--composer { resize: none; line-height: 1.45; max-height: 120px; overflow-y: auto; }
@@ -1435,13 +1488,6 @@ button, input, textarea, select, a {
 .bean-md blockquote { border-left: 3px solid var(--bean-border); padding-left: 10px; color: var(--bean-text-dim); }
 .bean-md input[type="checkbox"] { margin-right: 6px; accent-color: var(--bean-accent); }
 .bean-md input[type="checkbox"]:not([disabled]) { cursor: pointer; }
-
-/* Selected (accent) rows: keep snippet/meta legible on the orange background. */
-.bean-skills-row--selected .bean-notes-row-text { color: var(--bean-accent-ink); }
-.bean-skills-row--selected .bean-notes-star { color: var(--bean-accent-ink); }
-.bean-skills-row--selected .bean-notes-snippet { color: rgba(255, 255, 255, 0.85); }
-.bean-skills-row--selected .bean-notes-meta { color: rgba(255, 255, 255, 0.7); }
-.bean-skills-row--selected .bean-notes-open { color: var(--bean-accent); background: #fff; border-color: transparent; }
 
 /* Routines (mockup 1a — "Routine as a recipe") */
 
