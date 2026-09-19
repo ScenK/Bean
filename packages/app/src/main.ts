@@ -53,6 +53,19 @@ if (!app.requestSingleInstanceLock()) app.exit(0);
 // leaves an orphaned Bean holding the single-instance lock.
 for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => app.quit());
 
+// Every Bean window is a local file:// renderer. A web link in a note/chat body must never
+// navigate the window (it would replace the UI with the page) or spawn an Electron popup —
+// hand http(s) to the default browser instead. One place, so every surface is covered.
+const openExternally = (url: string): boolean => {
+  if (!/^https?:\/\//i.test(url)) return false;
+  void shell.openExternal(url);
+  return true;
+};
+app.on("web-contents-created", (_e, contents) => {
+  contents.setWindowOpenHandler(({ url }) => { openExternally(url); return { action: "deny" }; });
+  contents.on("will-navigate", (e, url) => { if (openExternally(url)) e.preventDefault(); });
+});
+
 app.whenReady().then(async () => {
   const dir = beanDir();
   // Packaged builds don't contain the monorepo root, so projectBeanDir()'s "../../../.bean"
