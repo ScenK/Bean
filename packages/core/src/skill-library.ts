@@ -23,6 +23,7 @@ export async function loadSkills(dir: string): Promise<Skill[]> {
       description: parseDescription(body, fm),
       body,
       enabled: fm.enabled?.toLowerCase() !== "false",
+      quickLaunch: fm["quick-launch"]?.toLowerCase() !== "false",
       target: fm.target?.toLowerCase() === "chat" ? "chat" : undefined,
       hidden: fm.hidden?.toLowerCase() === "true",
     });
@@ -30,19 +31,20 @@ export async function loadSkills(dir: string): Promise<Skill[]> {
   return skills;
 }
 
-// Content fingerprint ignoring the `enabled` flag — so toggling a built-in skill on/off (which
+// Content fingerprint ignoring the toggle flags — so flipping a built-in skill on/off (which
 // writes a shadow copy into userDir) isn't mistaken for the user actually customizing it.
+const TOGGLE_KEYS = ["enabled", "quick-launch"];
 function fingerprint(body: string): string {
   const fm = parseFrontmatter(body);
-  const fmKeys = Object.keys(fm).filter((k) => k !== "enabled").sort();
+  const fmKeys = Object.keys(fm).filter((k) => !TOGGLE_KEYS.includes(k)).sort();
   return `${fmKeys.map((k) => `${k}:${fm[k]}`).join("\n")}\n---\n${stripFrontmatter(body).trim()}`;
 }
 
 // Merges the repo-shipped built-in skills (projectDir) with the user's ~/.bean/skills
 // (userDir): a user file with the same name replaces the project one; anything present in
 // only one dir still shows up. Tags each result with which layer is currently in effect. A user
-// file that's byte-identical to its built-in counterpart except for the `enabled` flag is NOT a
-// real customization (just an enable/disable toggle) — it stays tagged "project" so the UI
+// file that's byte-identical to its built-in counterpart except for the toggle flags is NOT a
+// real customization (just an enable/quick-launch toggle) — it stays tagged "project" so the UI
 // doesn't claim the user authored it.
 export async function loadLayeredSkills(projectDir: string, userDir: string): Promise<Skill[]> {
   const [projectSkills, userSkills] = await Promise.all([loadSkills(projectDir), loadSkills(userDir)]);

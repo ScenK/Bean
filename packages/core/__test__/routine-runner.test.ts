@@ -30,6 +30,18 @@ const baseDeps = (chat: RoutineRunnerDeps["chat"], over: Partial<RoutineRunnerDe
 });
 
 describe("runRoutine", () => {
+  it("fails a step whose skill is disabled instead of silently running it without instructions", async () => {
+    const { fn } = chatStub([{ content: "the digest" }]);
+    const delegate = vi.fn(async () => "should never run");
+    const res = await runRoutine(
+      routine([{ kind: "delegate", skill: "ci-triage", project: "/p", instruction: "check CI" }]),
+      baseDeps(fn, { delegate, findSkill: () => ({ ...skill("ci-triage"), enabled: false }) }),
+    );
+    expect(delegate).not.toHaveBeenCalled();
+    expect(res.results[0]!.ok).toBe(false);
+    expect(res.results[0]!.output).toContain("disabled");
+  });
+
   it("runs steps in order and threads prior outputs into later steps", async () => {
     const { fn, calls } = chatStub([
       { content: "chat step output" },

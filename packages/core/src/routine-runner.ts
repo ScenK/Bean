@@ -29,6 +29,15 @@ export interface RoutineRunnerDeps {
   };
 }
 
+/** A skill switched off in the Skills panel must not keep running inside saved routines — and
+ * dropping it silently would run the step stripped of its instructions, which reads like success.
+ * Throwing lands in runRoutine's per-step catch, so the step fails loudly instead. */
+function resolveSkill(deps: RoutineRunnerDeps, name: string | undefined): Skill | undefined {
+  const skill = name ? deps.findSkill(name) : undefined;
+  if (skill?.enabled === false) throw new Error(`skill "${name}" is disabled — re-enable it in the Skills panel`);
+  return skill;
+}
+
 export interface StepResult { index: number; kind: "delegate" | "chat"; ok: boolean; output: string }
 export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[] }
 
@@ -66,7 +75,7 @@ async function runChatStep(
   prior: string,
   deps: RoutineRunnerDeps,
 ): Promise<string> {
-  const skill = step.skill ? deps.findSkill(step.skill) : undefined;
+  const skill = resolveSkill(deps, step.skill);
   const systemParts = [
     `You are Bean executing step ${index + 1} of the scheduled routine "${routine.name}" unattended. ` +
       "There is no user present: never ask questions, never wait for confirmation. Use the tools you are " +
@@ -155,7 +164,7 @@ async function runSteps(
     try {
       const output = effective.kind === "delegate"
         ? await deps.delegate({
-            skill: deps.findSkill(effective.skill),
+            skill: resolveSkill(deps, effective.skill),
             projectPath: effective.project,
             instruction: effective.instruction,
             model: effective.model,

@@ -142,6 +142,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
 } {
   const actions = [retrieveNoteTool(deps.searchNotes), systemControlTool(deps.systemControlsEnabled)];
 
+  // `enabled: false` is the skill's off switch and it applies here too. `quick-launch: false`
+  // deliberately does not — that one only trims the desktop avatar's drag bloom.
+  const loadActiveSkills = async (): Promise<Skill[]> =>
+    (await deps.loadSkills()).filter((s) => s.enabled !== false);
+
   async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();
     const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? p.proposal.projectPath;
@@ -225,7 +230,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     };
     // A picked skill's body frames the opening turn (composePrompt = body + "## Task" + text).
     const skill = p.proposal.skillName
-      ? (await deps.loadSkills()).find((s) => s.name === p.proposal.skillName)
+      ? (await loadActiveSkills()).find((s) => s.name === p.proposal.skillName)
       : undefined;
     const instruction = skill ? composePrompt(skill, p.proposal.instruction) : p.proposal.instruction;
     const started = deps.liveSessions.start({
@@ -264,7 +269,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   async function postLiveSessionProposal(
     live: ProposedLiveSession, conversationId: string, proposedBy: string, fx: BotEffects,
   ): Promise<void> {
-    const [projects, skills] = await Promise.all([deps.loadProjects(), deps.loadSkills()]);
+    const [projects, skills] = await Promise.all([deps.loadProjects(), loadActiveSkills()]);
     const projectName = projects.find((p) => p.path === live.projectPath)?.name ?? live.projectPath;
     // Live sessions always run claude, so only claude's models/CLI are offered.
     const models = (deps.cliModels.find((e) => e.provider === "claude")?.models ?? [])
@@ -561,7 +566,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           return;
         }
         const [skills, projects, persona, memories, modelMemory, todoRoutines] = await Promise.all([
-          deps.loadSkills(), deps.loadProjects(), deps.loadPersona(), deps.loadMemories(), deps.loadModelMemory(),
+          loadActiveSkills(), deps.loadProjects(), deps.loadPersona(), deps.loadMemories(), deps.loadModelMemory(),
           deps.listTodoRoutines(),
         ]);
         const detected = deps.detectClis();

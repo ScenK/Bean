@@ -252,8 +252,9 @@ if (el && orbSlot && hint && bloom && reading) {
   };
 
   const buildDragTiles = (): void => {
-    // Disabled skills are hidden from the quick-launch (still editable in the Skills panel).
-    const active = skills.filter((s) => s.enabled !== false);
+    // Two flags keep a skill out of the bloom: `enabled: false` (off everywhere) and
+    // `quick-launch: false` (this surface only — the chat agent and chatops still see it).
+    const active = skills.filter((s) => s.enabled !== false && s.quickLaunch !== false);
     if (active.length > 0) {
       // Same priority order as bestProjectForSkill (explicit Project.skills before the legacy
       // defaultSkill badge), just picking a skill — keeps the "best guess" hint consistent with

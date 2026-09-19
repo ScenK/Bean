@@ -188,3 +188,18 @@ test("loadLayeredSkills: disabling a built-in skill with no pre-existing frontma
   expect(skills[0]!.overridesBuiltIn).toBe(false);
   expect(skills[0]!.enabled).toBe(false);
 });
+
+test("loadSkills: quick-launch: false is the desktop-bloom-only hide, independent of enabled", async () => {
+  await writeFile(join(dir, "a.md"), "---\ndescription: d\nquick-launch: false\n---\nBody");
+  const [skill] = await loadSkills(dir);
+  expect(skill!.quickLaunch).toBe(false);
+  expect(skill!.enabled).toBe(true);
+});
+
+test("loadLayeredSkills: hiding a built-in from quick-launch isn't a user override either", async () => {
+  await writeFile(join(projectDir, "a.md"), "---\ndescription: d\n---\nBody");
+  await writeFile(join(userDir, "a.md"), "---\ndescription: d\nquick-launch: false\n---\nBody");
+  const [skill] = await loadLayeredSkills(projectDir, userDir);
+  expect(skill!.source).toBe("project");
+  expect(skill!.quickLaunch).toBe(false);
+});
