@@ -17,7 +17,7 @@ test("proposal card shows the verbatim instruction and wires confirm/cancel data
   const card = proposalCard({
     proposalId: "prop-1", projectName: "bean", skillName: "fix-bug",
     instruction: "fix the <flaky> test & report", clis: ["claude", "opencode"],
-    models, defaultCli: "claude", defaultModel: "sonnet",
+    skills: [{ name: "fix-bug" }], models, defaultCli: "claude", defaultModel: "sonnet",
   });
   const s = flatten(card);
   expect(s).toContain("fix the <flaky> test & report");
@@ -28,13 +28,15 @@ test("proposal card shows the verbatim instruction and wires confirm/cancel data
 
 test("proposal card pre-selects the resolved cli and model in ChoiceSets", () => {
   const card = proposalCard({
-    proposalId: "p", projectName: "bean", instruction: "x",
+    proposalId: "p", projectName: "bean", instruction: "x", skills: [{ name: "fix-bug" }],
     clis: ["claude"], models, defaultCli: "claude", defaultModel: "sonnet",
   }) as { body: { type: string; id?: string; value?: string }[] };
   const cliInput = card.body.find((el) => el.id === "cli");
   const modelInput = card.body.find((el) => el.id === "model");
   expect(cliInput?.value).toBe("claude");
   expect(modelInput?.value).toBe("sonnet");
+  // No skill picked by converse() -> the picker opens on the "no skill" sentinel.
+  expect(card.body.find((el) => el.id === "skillName")?.value).toBe("__none__");
 });
 
 test("running card carries a cancel-run action with the project path", () => {

@@ -32,6 +32,7 @@
 
 - [convention-ipc-channels.md](convention-ipc-channels.md) — IPC channel names are defined once in `app/src/channels.ts`; never string-literal them.
 - [convention-core-is-electron-free.md](convention-core-is-electron-free.md) — keep `@bean/core` pure and dependency-injected so it tests without Electron.
+- [convention-chatops-card-pickers.md](convention-chatops-card-pickers.md) — on-card pickers must re-derive at launch (`startRun` recomposes the prompt; an unresolvable skill refuses the run rather than degrading to the bare instruction), and Discord selects cap at 25 options / 100-char values with the picked entry hoisted so truncation can't drop it.
 - [convention-chatops-addressing-and-ambient.md](convention-chatops-addressing-and-ambient.md) — only an explicit address (DM/@mention/reply) gets a turn — name-matching was deleted, don't reintroduce it; ambient block is untrusted data with a time anchor; the chronology/persist/durable-cutoff trio in `bot.ts`; the `/new` reset command.
 - [convention-routine-digest-is-not-a-rewrite.md](convention-routine-digest-is-not-a-rewrite.md) — a lone routine step's output is delivered verbatim; never re-summarize a report a skill already formatted, and never size a deliverable with the 4k step-chaining cap.
 - [convention-delegate-git-identity.md](convention-delegate-git-identity.md) — delegate spawns inject `GIT_AUTHOR_NAME`/`GIT_EMAIL` (Bean) so headless commits/PRs attribute to Bean, not the local user.

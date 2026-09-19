@@ -316,6 +316,47 @@ test("confirm starts the run, updates the card, and persists model memory", asyn
   expect(deps.conversations.history("c1").at(-1)).toEqual({ role: "assistant", content: "[delegate result] all fixed" });
 });
 
+test("confirm re-composes the prompt from the skill picked on the card", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  // The card offers every skill; picking one that converse() didn't choose must still frame the run.
+  expect(JSON.stringify(effects.cards[0])).toContain("fix-bug");
+  const bot = buildTeamsBot(deps);
+  await bot.onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude", skillName: "fix-bug" } },
+    effects,
+  );
+  expect(delegateCalls[0]?.req.prompt).toBe("b\n\n## Task\nfix it");
+});
+
+test("confirm with a skill that no longer exists refuses instead of running bare", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  const bot = buildTeamsBot(deps);
+  await bot.onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude", skillName: "deleted-skill" } },
+    effects,
+  );
+  expect(delegateCalls).toHaveLength(0);
+  expect(effects.posted.some((m) => m.includes("deleted-skill"))).toBe(true);
+});
+
+test("confirm with the no-skill sentinel runs the bare instruction", async () => {
+  const { deps, delegateCalls } = makeDeps({
+    converseResult: { ...delegateResult, proposedDelegate: { projectPath: "/p/bean", instruction: "fix it", skillName: "fix-bug", composedPrompt: "b\n\n## Task\nfix it" } },
+  });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  const bot = buildTeamsBot(deps);
+  await bot.onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude", skillName: "__none__" } },
+    effects,
+  );
+  expect(delegateCalls[0]?.req.prompt).toBe("fix it");
+});
+
 test("confirm on an expired proposal posts an expiry message", async () => {
   const { deps } = makeDeps({ converseResult: delegateResult });
   const effects = fx();

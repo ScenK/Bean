@@ -4,8 +4,11 @@ import type { AvailableModel } from "../models.js";
 export interface ProposalCardInput {
   proposalId: string;
   projectName: string;
+  /** Picked skill name (default in the skill picker); absent = no skill. */
   skillName?: string;
   instruction: string;
+  /** Selectable skills for the on-card skill picker; empty = no picker. */
+  skills: { name: string }[];
   clis: CliName[];
   models: AvailableModel[];
   defaultCli: CliName;

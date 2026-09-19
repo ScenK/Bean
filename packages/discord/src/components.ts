@@ -12,6 +12,29 @@ const BUTTON = 2;
 const STRING_SELECT = 3;
 const row = (components: object[]): object => ({ type: 1, components });
 
+// The skill dropdown shared by the delegate and live-session cards. Discord caps a select at
+// 25 options with values ≤ 100 chars, so an over-long name is dropped (an invalid value would
+// reject the whole payload) and the picked skill is hoisted to the front — truncation must
+// never drop the option the card defaults to. "__none__" is the no-skill sentinel: double
+// underscores so it can't collide with a real kebab-case skill name.
+function skillSelectRows(customId: string, skills: { name: string }[], skillName?: string): object[] {
+  const selectable = skills.filter((s) => s.name.length <= 100);
+  const options = [
+    ...selectable.filter((s) => s.name === skillName),
+    ...selectable.filter((s) => s.name !== skillName),
+  ].slice(0, 24);
+  if (options.length === 0) return [];
+  return [row([{
+    type: STRING_SELECT,
+    custom_id: customId,
+    placeholder: "Skill (optional)",
+    options: [
+      { label: "— no skill —", value: "__none__", default: !skillName },
+      ...options.map((s) => ({ label: s.name, value: s.name, default: s.name === skillName })),
+    ],
+  }])];
+}
+
 function proposalCard(input: ProposalCardInput): object {
   const cliSelect = {
     type: STRING_SELECT,
@@ -31,6 +54,7 @@ function proposalCard(input: ProposalCardInput): object {
         default: m.id === input.defaultModel,
       })),
   };
+  const skillRows = skillSelectRows(`bean:skill:${input.proposalId}`, input.skills, input.skillName);
   const buttons = [
     { type: BUTTON, style: 3, label: "Run", custom_id: `bean:confirm:${input.proposalId}` },
     { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-proposal:${input.proposalId}` },
@@ -39,12 +63,9 @@ function proposalCard(input: ProposalCardInput): object {
     embeds: [{
       title: "Bean proposes a delegate run",
       description: input.instruction,
-      fields: [
-        { name: "Project", value: input.projectName, inline: true },
-        ...(input.skillName ? [{ name: "Skill", value: input.skillName, inline: true }] : []),
-      ],
+      fields: [{ name: "Project", value: input.projectName, inline: true }],
     }],
-    components: [row([cliSelect]), row([modelSelect]), row(buttons)],
+    components: [...skillRows, row([cliSelect]), row([modelSelect]), row(buttons)],
   };
 }
 
@@ -223,18 +244,7 @@ function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
       .slice(0, 25)
       .map((p) => ({ label: p.name.slice(0, 100), value: p.path, default: p.name === input.projectName })),
   };
-  // "No skill" sentinel — double-underscore so it can't collide with a real kebab-case skill.
-  const skillRows = input.skills.length > 0
-    ? [row([{
-        type: STRING_SELECT,
-        custom_id: `bean:live-skill:${input.proposalId}`,
-        placeholder: "Skill (optional)",
-        options: [
-          { label: "— no skill —", value: "__none__", default: !input.skillName },
-          ...input.skills.slice(0, 24).map((s) => ({ label: s.name.slice(0, 100), value: s.name, default: s.name === input.skillName })),
-        ],
-      }])]
-    : [];
+  const skillRows = skillSelectRows(`bean:live-skill:${input.proposalId}`, input.skills, input.skillName);
   const cliRows = input.clis.length > 0
     ? [row([{
         type: STRING_SELECT,

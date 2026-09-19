@@ -85,7 +85,7 @@ const client = new Client({
 // Latest select-menu choices per proposal message id — Discord sends each select change
 // as its own interaction, so the values must be cached until the Run button is pressed.
 // Entries die with the proposal (deleted on confirm/cancel).
-const selections = new Map<string, { cli?: string; model?: string; memoryPicks?: string[] }>();
+const selections = new Map<string, { cli?: string; model?: string; skillName?: string; memoryPicks?: string[] }>();
 
 const allowed = (userId: string): boolean => discordConfig.allowedUserIds.includes(userId);
 
@@ -288,6 +288,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       const sel = selections.get(interaction.message.id) ?? {};
       if (action === "cli") sel.cli = interaction.values[0];
       if (action === "model") sel.model = interaction.values[0];
+      if (action === "skill") sel.skillName = interaction.values[0];
       if (action === "pick-memories") sel.memoryPicks = interaction.values;
       selections.set(interaction.message.id, sel);
       return;
@@ -320,7 +321,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         conversationId: interaction.channelId,
         fromId: interaction.user.id,
         fromName: interaction.user.displayName,
-        value: { beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, memoryPicks: sel.memoryPicks },
+        value: { beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, skillName: sel.skillName, memoryPicks: sel.memoryPicks },
       },
       fx,
     );

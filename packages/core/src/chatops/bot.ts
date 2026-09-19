@@ -145,10 +145,27 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();
     const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? p.proposal.projectPath;
+    // Recomposed here, not taken from proposal.composedPrompt: the card's skill picker can
+    // swap the skill after converse() composed it, so the body must be re-applied at launch.
+    const skill = p.proposal.skillName
+      ? (await deps.loadSkills()).find((s) => s.name === p.proposal.skillName)
+      : undefined;
+    // A named skill that no longer resolves (deleted/renamed while the card sat, or a bogus
+    // submitted value) must not silently degrade into a bare-instruction run: the card said
+    // one thing, the run would do another. Refuse instead.
+    if (p.proposal.skillName && !skill) {
+      if (p.cardActivityId !== undefined) {
+        await fx.updateCard(p.cardActivityId, deps.cards.finishedCard({
+          projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled",
+        }));
+      }
+      await fx.post(`I can't find the \`${p.proposal.skillName}\` skill any more — ask me again and pick a skill that still exists.`);
+      return;
+    }
     const req: DelegateRequest = {
       cli,
       projectPath: p.proposal.projectPath,
-      prompt: p.proposal.composedPrompt,
+      prompt: skill ? composePrompt(skill, p.proposal.instruction) : p.proposal.instruction,
       ...(model !== undefined ? { model } : {}),
     };
     const cardId = p.cardActivityId;
@@ -701,6 +718,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const activityId = await fx.postCard(deps.cards.proposalCard({
           proposalId: pending.id, projectName, skillName: proposal.skillName,
           instruction: proposal.instruction, clis: detected,
+          skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name })),
           models: availableModels(deps.cliModels, detected), defaultCli: choice.cli, defaultModel: choice.model,
         }));
         deps.proposals.setCardActivityId(pending.id, activityId);
@@ -792,6 +810,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         await fx.post("That proposal expired — ask me again.");
         return;
       }
+      // On-card skill pick (same sentinel as the live-session card). Teams merges its
+      // ChoiceSet value into the Run submit; Discord applies it from its per-message selections.
+      const picked = action.value.skillName;
+      if (picked !== undefined) p.proposal.skillName = picked === "__none__" ? undefined : (picked || undefined);
       const detected = deps.detectClis();
       const memory = await deps.loadModelMemory();
       const choice = resolveCliModel(
