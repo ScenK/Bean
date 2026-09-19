@@ -5,6 +5,19 @@ import type { Note, Project } from "@bean/core";
 
 type Mode = "view" | "edit" | "add";
 
+// Which project groups are folded shut. A view preference, so it lives in the renderer's own
+// localStorage rather than ~/.bean — no IPC channel, and a lost value just unfolds everything.
+const COLLAPSED_KEY = "bean.notes.collapsedGroups";
+
+function loadCollapsed(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]") as unknown;
+    return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 // Reuses the Skills panel anatomy (and its bean-skills-* styles): list left, detail right.
 export function NotesPanel() {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -17,6 +30,7 @@ export function NotesPanel() {
   const [saveError, setSaveError] = useState<string | undefined>(undefined);
   const [history, setHistory] = useState<Note[] | undefined>(undefined);
   const [viewVersion, setViewVersion] = useState<Note | undefined>(undefined);
+  const [collapsed, setCollapsed] = useState<string[]>(loadCollapsed);
 
   const refresh = async (): Promise<void> => {
     const [nextNotes, nextProjects] = await Promise.all([
@@ -60,6 +74,14 @@ export function NotesPanel() {
   const metaLine = (n: Note): string => {
     const day = n.updated ? new Date(n.updated).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
     return [day, `v${n.version}`, n.source === "chat" ? "from chat" : "yours"].filter(Boolean).join(" · ");
+  };
+
+  const toggleGroup = (label: string): void => {
+    setCollapsed((prev) => {
+      const next = prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label];
+      try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next)); } catch { /* private mode / quota: fold still works this session */ }
+      return next;
+    });
   };
 
   const select = (slug: string): void => {
@@ -238,12 +260,26 @@ export function NotesPanel() {
         ) : filtered.length === 0 ? (
           <div class="bean-panel-empty">No notes match "{query}".</div>
         ) : (
-          groups.map((g) => (
-            <div key={g.label} class="bean-notes-group-block">
-              <div class="bean-skills-list-label bean-notes-group">{g.label}<span class="bean-notes-group-count">{g.notes.length}</span></div>
-              {g.notes.map(noteRow)}
-            </div>
-          ))
+          groups.map((g) => {
+            // A search that matched inside a folded group would show nothing, so a live query
+            // overrides the fold; the stored state is untouched and returns when the query clears.
+            const open = !collapsed.includes(g.label) || query.trim() !== "";
+            return (
+              <div key={g.label} class="bean-notes-group-block">
+                <button
+                  type="button"
+                  class="bean-skills-list-label bean-skills-list-label--toggle bean-notes-group"
+                  aria-expanded={open}
+                  onClick={() => toggleGroup(g.label)}
+                >
+                  <span class="bean-notes-group-caret">{open ? "\u25be" : "\u25b8"}</span>
+                  {g.label}
+                  <span class="bean-notes-group-count">{g.notes.length}</span>
+                </button>
+                {open ? g.notes.map(noteRow) : null}
+              </div>
+            );
+          })
         )}
         <span class="bean-skills-spacer" />
         <button type="button" class="bean-btn" onClick={startAdd}>+ New note</button>
