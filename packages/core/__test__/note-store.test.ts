@@ -2,7 +2,7 @@ import { expect, test, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadNotes, loadNoteHistory, saveNote, deleteNote, openQuestionCount, retrieveNoteTool, searchNotes } from "../src/note-store.js";
+import { loadNotes, loadNoteHistory, saveNote, deleteNote, starNote, openQuestionCount, retrieveNoteTool, searchNotes } from "../src/note-store.js";
 import { closeDb } from "../src/db.js";
 import { dbFile } from "../src/config.js";
 
@@ -131,9 +131,52 @@ test("legacy notes/*.md and .history/*.md are migrated in on first open", async 
   const notes = await loadNotes(file);
   expect(notes).toEqual([{
     slug: "old-note", title: "Old note", body: "current body", project: undefined,
-    updated: "2026-07-01T00:00:00.000Z", version: 2, source: "chat", openCount: 0,
+    updated: "2026-07-01T00:00:00.000Z", version: 2, source: "chat", openCount: 0, starred: false,
   }]);
   const hist = await loadNoteHistory(file, "old-note");
   expect(hist).toHaveLength(1);
   expect(hist[0]!.body).toBe("old body");
+});
+
+test("starred notes sort first and survive an edit without bumping the version", async () => {
+  await saveNote(file, { title: "Newer", body: "b" }, t1);
+  await saveNote(file, { title: "Older", body: "a" }, t0);
+  expect((await loadNotes(file)).map((n) => n.title)).toEqual(["Newer", "Older"]);
+
+  await starNote(file, "older", true);
+  const starredFirst = await loadNotes(file);
+  expect(starredFirst.map((n) => n.title)).toEqual(["Older", "Newer"]);
+  expect(starredFirst[0]!.starred).toBe(true);
+
+  await saveNote(file, { title: "Older", body: "a2", slug: "older" }, t1);
+  const afterEdit = (await loadNotes(file)).find((n) => n.slug === "older")!;
+  expect(afterEdit.starred).toBe(true);
+  expect(afterEdit.version).toBe(2);
+
+  await starNote(file, "older", false);
+  expect((await loadNotes(file)).find((n) => n.slug === "older")!.starred).toBe(false);
+});
+
+test("a pre-star bean.db gains the starred column on open", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  await mkdir(dir, { recursive: true });
+  const legacy = new DatabaseSync(file);
+  // The pre-star schema verbatim, FTS and its triggers included — a fixture without them would
+  // leave the index empty and make an UPDATE's FTS 'delete' report a malformed database.
+  legacy.exec(
+    "CREATE TABLE notes (slug TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, " +
+      "project TEXT, updated TEXT NOT NULL, version INTEGER NOT NULL, source TEXT NOT NULL);" +
+      "CREATE VIRTUAL TABLE notes_fts USING fts5(title, body, content='notes', content_rowid='rowid');" +
+      "CREATE TRIGGER notes_ai AFTER INSERT ON notes BEGIN " +
+      "INSERT INTO notes_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;" +
+      "INSERT INTO notes VALUES ('old', 'Old', 'body', NULL, '2026-07-01T00:00:00.000Z', 1, 'chat');",
+  );
+  legacy.close();
+
+  const notes = await loadNotes(file);
+  expect(notes[0]!.starred).toBe(false);
+  await starNote(file, "old", true);
+  expect((await loadNotes(file))[0]!.starred).toBe(true);
+  // The star UPDATE ran the FTS triggers: the index must still be usable afterwards.
+  expect((await searchNotes(file, "Old")).map((n) => n.slug)).toEqual(["old"]);
 });

@@ -14,7 +14,7 @@ import {
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, saveMemories, appendMemories, extractMemories,
   loadReminders, saveReminders, dueReminders, extractPageText,
-  loadNotes, saveNote, deleteNote, loadNoteHistory, searchNotes, retrieveNoteTool, detectClis, loginShellPath, deliver,
+  loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, searchNotes, retrieveNoteTool, detectClis, loginShellPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate,
   composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
@@ -614,7 +614,7 @@ app.whenReady().then(async () => {
     registerIpc(ipcMain, {
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
       loadMemories, saveMemories, appendMemories, extractMemories,
-      loadNotes, saveNote, deleteNote, loadNoteHistory,
+      loadNotes, saveNote, deleteNote, starNote, loadNoteHistory,
       dbFile: dbFile(dir),
       chat: runtime.chat,
       converse: runtime.converse,
