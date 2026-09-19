@@ -7,8 +7,13 @@ export interface Skill {
   description: string;
   /** Full markdown body used to compose the prompt. */
   body: string;
-  /** `enabled: false` frontmatter hides the skill from the drag quick-launch. Absent = shown. */
+  /** `enabled: false` frontmatter switches the skill off everywhere — quick-launch, the chat
+   * agent's routing catalog, chatops, routine step pickers. It stays listed (greyed) in the
+   * Skills panel so it can be switched back on. Absent = on. */
   enabled?: boolean;
+  /** `quick-launch: false` frontmatter hides the skill from the drag-onto-avatar quick-launch
+   * only — the agent and chatops still see it. Keeps the bloom short. Absent = shown. */
+  quickLaunch?: boolean;
   /** `hidden: true` frontmatter fully hides the skill from every user-facing UI (Skills panel,
    * quick-launch, project default-skill picker, chat skill list) while keeping it in the
    * catalog `converse()` routes against. Filtered out only at the `listSkills` IPC boundary —

@@ -154,7 +154,10 @@ export function buildRouteHandler(deps: RouteHandlerDeps) {
       deps.loadSkills(deps.projectSkillsDir, deps.skillsDir),
       deps.loadProjects(deps.projectsFile),
     ]);
-    return route(input, skills, projects, { chat: deps.chat, model: deps.getModel() });
+    // Same `enabled` gate as buildChatHandler — route()'s fallback picks a skill on its own, so
+    // an unfiltered list would hand back a switched-off one.
+    const enabled = skills.filter((s) => s.enabled !== false);
+    return route(input, enabled, projects, { chat: deps.chat, model: deps.getModel() });
   };
 }
 

@@ -54,14 +54,14 @@ export function SkillsPanel({
         class={`bean-skills-row${selectedName === s.name ? " bean-skills-row--selected" : ""}${s.enabled === false ? " bean-skills-row--off" : ""}`}
         onClick={() => selectSkill(s.name)}
       >
-        {/* Enable/disable pill — orange = shown in the drag quick-launch, gray = hidden. */}
+        {/* Enable/disable pill — the everywhere switch; orange = on, gray = off. */}
         <button
           type="button"
           role="switch"
           aria-checked={s.enabled !== false}
           class={`bean-skills-pill${s.enabled !== false ? " bean-skills-pill--on" : ""}`}
-          title={s.enabled === false ? "Hidden from quick-launch — click to enable" : "Shown in quick-launch — click to disable"}
-          onClick={(e) => { e.stopPropagation(); void setEnabled(s, s.enabled === false); }}
+          title={s.enabled === false ? "Disabled everywhere — click to enable" : "Enabled — click to disable everywhere"}
+          onClick={(e) => { e.stopPropagation(); void setFlag(s, "enabled", s.enabled === false); }}
         >
           <span class="bean-skills-pill-knob" />
         </button>
@@ -180,11 +180,11 @@ export function SkillsPanel({
     }
   };
 
-  // Persist the enable toggle by rewriting the skill's frontmatter. Clears the key when true (the
-  // default) to keep files clean; writes `enabled: false` only when disabled.
-  const setEnabled = async (skill: Skill, enabled: boolean): Promise<void> => {
+  // Persist either toggle by rewriting the skill's frontmatter. Clears the key when on (the
+  // default) to keep files clean; writes `<key>: false` only when switched off.
+  const setFlag = async (skill: Skill, key: "enabled" | "quick-launch", on: boolean): Promise<void> => {
     try {
-      await window.bean.saveSkill(skill.name, setFrontmatter(skill.body, "enabled", enabled ? undefined : "false"));
+      await window.bean.saveSkill(skill.name, setFrontmatter(skill.body, key, on ? undefined : "false"));
       await refresh();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
@@ -201,10 +201,11 @@ export function SkillsPanel({
     return "Add `target: terminal` (run in opencode) or `target: chat` (reply in Bean's chat) to the frontmatter — Bean needs it to route the skill.";
   };
 
-  const canRun = projects.length > 0;
+  // A disabled skill is off everywhere, and "everywhere" includes this panel's own Run button.
+  const canRun = projects.length > 0 && selectedSkill?.enabled !== false;
 
   const runSkill = (): void => {
-    if (!selectedSkill) return;
+    if (!selectedSkill || selectedSkill.enabled === false) return;
     const projectPath = bestProjectForSkill(selectedSkill.name, projects)?.path;
     if (!projectPath) return;
     // Same composePrompt() the drag-drop-onto-petal flow uses, so both paths hand opencode
@@ -267,18 +268,41 @@ export function SkillsPanel({
                 <div class="bean-skills-description">{selectedSkill.description}</div>
               </div>
               <div class="bean-skills-toggle-col">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={selectedSkill.enabled !== false}
-                  class={`bean-skills-toggle${selectedSkill.enabled !== false ? " bean-skills-toggle--on" : ""}`}
-                  onClick={() => void setEnabled(selectedSkill, selectedSkill.enabled === false)}
-                >
-                  <span class="bean-skills-toggle-knob" />
-                </button>
-                <span class="bean-skills-toggle-label">
-                  {selectedSkill.enabled !== false ? "Enabled everywhere" : "Hidden from quick-launch"}
-                </span>
+                <div class="bean-skills-toggle-pair">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={selectedSkill.enabled !== false}
+                    class={`bean-skills-toggle${selectedSkill.enabled !== false ? " bean-skills-toggle--on" : ""}`}
+                    title="Off switches the skill off everywhere — chat, chatops, routines and quick-launch"
+                    onClick={() => void setFlag(selectedSkill, "enabled", selectedSkill.enabled === false)}
+                  >
+                    <span class="bean-skills-toggle-knob" />
+                  </button>
+                  <span class="bean-skills-toggle-label">
+                    {selectedSkill.enabled !== false ? "Enabled everywhere" : "Disabled everywhere"}
+                  </span>
+                </div>
+                {/* Quick-launch is a subset of enabled, so it reads as off (and stays untouchable)
+                    while the skill is disabled — no pretending a petal will show. */}
+                <div class="bean-skills-toggle-pair">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={selectedSkill.enabled !== false && selectedSkill.quickLaunch !== false}
+                    disabled={selectedSkill.enabled === false}
+                    class={`bean-skills-toggle${selectedSkill.enabled !== false && selectedSkill.quickLaunch !== false ? " bean-skills-toggle--on" : ""}`}
+                    title="Off hides the skill from the drag-onto-avatar petals; chat and chatops still use it"
+                    onClick={() => void setFlag(selectedSkill, "quick-launch", selectedSkill.quickLaunch === false)}
+                  >
+                    <span class="bean-skills-toggle-knob" />
+                  </button>
+                  <span class="bean-skills-toggle-label">
+                    {selectedSkill.enabled === false
+                      ? "Quick-launch off while disabled"
+                      : selectedSkill.quickLaunch !== false ? "In quick-launch" : "Hidden from quick-launch"}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -325,7 +349,7 @@ export function SkillsPanel({
                 type="button"
                 class="bean-btn"
                 disabled={!canRun}
-                title={!canRun ? "No projects configured" : undefined}
+                title={selectedSkill.enabled === false ? "Skill is disabled — switch it on to run it" : !canRun ? "No projects configured" : undefined}
                 onClick={runSkill}
               >
                 Run skill

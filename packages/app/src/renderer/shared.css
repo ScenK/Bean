@@ -597,9 +597,11 @@ button, input, textarea, select, a {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 5px;
+  gap: 11px;
   flex: none;
 }
+.bean-skills-toggle-pair { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.bean-skills-toggle:disabled { opacity: 0.45; cursor: default; }
 .bean-skills-toggle {
   width: 40px;
   height: 23px;

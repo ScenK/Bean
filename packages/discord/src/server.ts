@@ -105,7 +105,7 @@ async function liveSessionCardFor(
     proposalId, projectName, instruction: proposal.instruction, model: proposal.model, skillName: proposal.skillName,
     steering: proposal.steering,
     projects: projects.map((p) => ({ name: p.name, path: p.path })), models,
-    skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name })), clis: clis.filter((c) => c === "claude"),
+    skills: skills.filter((s) => !s.hidden && s.enabled !== false).map((s) => ({ name: s.name })), clis: clis.filter((c) => c === "claude"),
   });
 }
 
