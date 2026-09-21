@@ -4,21 +4,22 @@
   --bean-surface-2: oklch(0.975 0.012 70);
   --bean-border: oklch(0.9 0.01 70);
   --bean-text: oklch(0.3 0.02 60);
-  --bean-text-dim: oklch(0.55 0.015 60);
-  --bean-accent: oklch(0.66 0.15 48);
+  --bean-text-dim: oklch(0.49 0.015 60); /* 4.7:1 on --bean-bg */
+  --bean-accent: oklch(0.66 0.15 48); /* fills only — 2.4:1 as text, which is what --bean-accent-text is for */
+  --bean-accent-text: oklch(0.48 0.16 48); /* 5.2:1 on --bean-bg — accent as ink or a line on a surface */
   --bean-link: oklch(0.47 0.16 250); /* 5.0:1 on --bean-bg, 6.6:1 on --bean-surface */
-  --bean-star: oklch(0.64 0.15 78); /* deeper than it looks: 3.4:1 on the hearth surface */
+  --bean-star: oklch(0.56 0.15 78); /* 3.5:1 on --bean-bg (non-text icon) */
+  --bean-error: oklch(0.5 0.19 25); /* 4.9:1 on --bean-bg */
+  --bean-control-border: oklch(0.58 0.01 70); /* 3.2:1 on --bean-bg — control outlines, not separators */
+  /* White on the amber fill is 3.3:1 — below AA, kept deliberately: the light theme's look is
+     the product decision here. See .memory/convention-theme-contrast.md. */
   --bean-accent-ink: #fff;
   --bean-orb-1: oklch(0.85 0.12 74);
   --bean-orb-2: oklch(0.71 0.16 50);
   --bean-orb-3: oklch(0.58 0.16 32);
   --bean-orb-glow: oklch(0.74 0.15 52 / 0.5);
   --bean-orb-check: oklch(0.62 0.13 150 / 0.55);
-  --bean-orb-check-ink: oklch(0.55 0.13 150);
-  --bean-console-bg: oklch(0.205 0.018 60);
-  --bean-console-fg: oklch(0.82 0.02 80);
-  --bean-console-cmd: oklch(0.74 0.12 52);
-  --bean-console-meta: oklch(0.6 0.02 70);
+  --bean-orb-check-ink: oklch(0.48 0.13 150); /* 4.6:1 on --bean-bg */
 }
 
 :root[data-theme="graphite"] {
@@ -29,8 +30,11 @@
   --bean-text: oklch(0.92 0.008 260);
   --bean-text-dim: oklch(0.62 0.02 260);
   --bean-accent: oklch(0.74 0.12 235);
+  --bean-accent-text: oklch(0.74 0.12 235); /* graphite's accent already clears 7.4:1 on a surface */
   --bean-link: oklch(0.78 0.12 235); /* 8.5:1 on --bean-surface */
   --bean-star: oklch(0.82 0.14 82);
+  --bean-error: oklch(0.7 0.16 25); /* 5.8:1 on --bean-surface */
+  --bean-control-border: oklch(0.52 0.014 265); /* 3.3:1 on --bean-bg — control outlines, not separators */
   --bean-accent-ink: oklch(0.18 0.012 265);
   --bean-orb-1: oklch(0.87 0.09 215);
   --bean-orb-2: oklch(0.71 0.13 248);
@@ -38,10 +42,6 @@
   --bean-orb-glow: oklch(0.7 0.14 240 / 0.5);
   --bean-orb-check: oklch(0.76 0.12 160 / 0.55);
   --bean-orb-check-ink: oklch(0.8 0.12 160);
-  --bean-console-bg: oklch(0.165 0.015 270);
-  --bean-console-fg: oklch(0.8 0.02 240);
-  --bean-console-cmd: oklch(0.78 0.1 235);
-  --bean-console-meta: oklch(0.55 0.02 260);
 }
 
 html, body {

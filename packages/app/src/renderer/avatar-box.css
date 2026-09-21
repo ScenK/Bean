@@ -61,7 +61,7 @@
   margin-top: 2px;
   transition: color 0.18s ease;
 }
-.bean-box--hovering .bean-box-hint { color: var(--bean-accent); }
+.bean-box--hovering .bean-box-hint { color: var(--bean-accent-text); }
 
 .bean-orb-slot {
   flex: none;

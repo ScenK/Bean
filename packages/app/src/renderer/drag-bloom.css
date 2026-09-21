@@ -93,7 +93,7 @@
   font: 600 13px ui-monospace, monospace;
   color: var(--bean-text);
 }
-.bean-petal--active .bean-petal-name { color: var(--bean-accent); }
+.bean-petal--active .bean-petal-name { color: var(--bean-accent-text); }
 .bean-petal-desc {
   font: 11px ui-monospace, monospace;
   color: var(--bean-text-dim);

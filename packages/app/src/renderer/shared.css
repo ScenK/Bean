@@ -101,7 +101,7 @@ button, input, textarea, select, a {
 .bean-panel-dropped-url {
   margin-top: 8px;
   font: 12px ui-monospace, monospace;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   word-break: break-all;
 }
 
@@ -149,7 +149,7 @@ button, input, textarea, select, a {
 }
 .bean-chat-state--working { background: var(--bean-accent); }
 .bean-chat-state--done { background: var(--bean-orb-check-ink); }
-.bean-chat-state--error { background: #e5484d; }
+.bean-chat-state--error { background: var(--bean-error); }
 .bean-chat-meta-spacer { flex: 1; }
 .bean-chat-model {
   font: 600 11px ui-monospace, monospace;
@@ -213,7 +213,7 @@ button, input, textarea, select, a {
 }
 .bean-status--info { color: var(--bean-text-dim); }
 .bean-status--done { color: var(--bean-orb-check-ink); border-color: var(--bean-orb-check-ink); }
-.bean-status--error { color: #e5484d; border-color: #e5484d; }
+.bean-status--error { color: var(--bean-error); border-color: var(--bean-error); }
 
 .bean-card {
   align-self: stretch;
@@ -348,64 +348,7 @@ button, input, textarea, select, a {
   white-space: nowrap;
 }
 
-/* --- console (SP3) --- */
-.bean-console {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  background: var(--bean-console-bg);
-  color: var(--bean-console-fg);
-  padding: 14px 16px;
-  font: 12.5px/1.65 ui-monospace, SFMono-Regular, monospace;
-}
-.bean-console-bar {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-bottom: 12px;
-}
-.bean-console-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  border-radius: 999px;
-  padding: 3px 9px;
-}
-.bean-console-chip--running { background: oklch(0.32 0.06 50); color: oklch(0.85 0.1 60); }
-.bean-console-chip--done { background: oklch(0.3 0.05 150); color: oklch(0.85 0.12 155); }
-.bean-console-chip--failed { background: oklch(0.32 0.09 25); color: oklch(0.85 0.13 30); }
-.bean-console-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: bean-console-blink 1.1s infinite;
-}
-.bean-console-meta { color: var(--bean-console-meta); }
-.bean-console-spacer { flex: 1; }
-.bean-console-time { color: var(--bean-console-meta); font-variant-numeric: tabular-nums; }
-.bean-console-cmd {
-  color: var(--bean-console-cmd);
-  margin-bottom: 2px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.bean-console-line {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.bean-console-stderr { color: oklch(0.78 0.12 25); }
-.bean-console-caret {
-  display: inline-block;
-  width: 7px;
-  height: 14px;
-  background: var(--bean-console-fg);
-  vertical-align: -2px;
-  animation: bean-console-caret 1s step-end infinite;
-}
-@keyframes bean-console-blink { 50% { opacity: 0.25; } }
-@keyframes bean-console-caret { 50% { opacity: 0; } }
+@keyframes bean-blink { 50% { opacity: 0.25; } }
 
 /* --- skills (SP4) --- */
 .bean-skills {
@@ -485,7 +428,7 @@ button, input, textarea, select, a {
 .bean-skills-tag {
   font-size: 11px;
   font-weight: 600;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: var(--bean-surface-2);
   border-radius: 6px;
   padding: 2.5px 7px;
@@ -498,10 +441,10 @@ button, input, textarea, select, a {
 }
 .bean-skills-row--selected .bean-skills-tag {
   color: var(--bean-accent-ink);
-  background: rgba(255, 255, 255, 0.22);
+  background: color-mix(in oklch, var(--bean-accent-ink) 22%, transparent);
 }
 .bean-skills-row--selected .bean-skills-tag--general {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--bean-accent-ink);
   border-color: rgba(255, 255, 255, 0.4);
 }
 .bean-skills-badge {
@@ -517,18 +460,18 @@ button, input, textarea, select, a {
 }
 .bean-skills-badge--yours {
   color: #fff;
-  background: oklch(0.6 0.13 150);
-  border-color: oklch(0.6 0.13 150);
+  background: oklch(0.48 0.13 150);
+  border-color: oklch(0.48 0.13 150);
 }
 .bean-skills-row--selected .bean-skills-badge {
-  color: var(--bean-accent);
-  background: #fff;
+  color: var(--bean-accent-text);
+  background: var(--bean-accent-ink);
   border-color: transparent;
 }
 .bean-skills-row--selected .bean-skills-badge--yours {
   color: #fff;
-  background: oklch(0.6 0.13 150);
-  border-color: oklch(0.6 0.13 150);
+  background: oklch(0.48 0.13 150);
+  border-color: oklch(0.48 0.13 150);
 }
 /* Enable/disable pill: gray track (off) → amber track (on), knob slides right. */
 .bean-skills-pill {
@@ -540,7 +483,7 @@ button, input, textarea, select, a {
   border-radius: 999px;
   position: relative;
   cursor: pointer;
-  background: var(--bean-border);
+  background: var(--bean-control-border);
   transition: background 0.15s ease;
 }
 .bean-skills-pill--on { background: var(--bean-accent); }
@@ -551,14 +494,15 @@ button, input, textarea, select, a {
   width: 13px;
   height: 13px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--bean-accent-ink);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   transition: transform 0.15s ease;
 }
 .bean-skills-pill--on .bean-skills-pill-knob { transform: translateX(13px); }
 /* Selected rows use the accent color as their own background, so the "on" pill needs a
    translucent track instead of solid accent — otherwise it disappears into the row. */
-.bean-skills-row--selected .bean-skills-pill--on { background: rgba(255, 255, 255, 0.35); }
+.bean-skills-row--selected .bean-skills-pill--on { background: var(--bean-accent-ink); }
+.bean-skills-row--selected .bean-skills-pill--on .bean-skills-pill-knob { background: var(--bean-accent); }
 .bean-skills-row--selected {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
@@ -610,7 +554,7 @@ button, input, textarea, select, a {
   border-radius: 999px;
   position: relative;
   cursor: pointer;
-  background: var(--bean-border);
+  background: var(--bean-control-border);
   transition: background 0.15s ease;
 }
 .bean-skills-toggle--on { background: var(--bean-accent); }
@@ -621,7 +565,7 @@ button, input, textarea, select, a {
   width: 19px;
   height: 19px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--bean-accent-ink);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   transition: transform 0.15s ease;
 }
@@ -641,7 +585,7 @@ button, input, textarea, select, a {
 .bean-skills-project-chip--on {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
-  border-color: var(--bean-accent);
+  border-color: var(--bean-accent-text);
 }
 .bean-skills-projects-hint { font-size: 12.5px; color: var(--bean-text-dim); }
 .bean-skills-preview-box {
@@ -669,7 +613,7 @@ button, input, textarea, select, a {
 .bean-skills-preview-open {
   font-size: 12px;
   font-weight: 600;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: none;
   border: none;
   cursor: pointer;
@@ -709,7 +653,7 @@ button, input, textarea, select, a {
 .bean-skills-delete-link {
   font-size: 13px;
   font-weight: 600;
-  color: #e5484d;
+  color: var(--bean-error);
   background: none;
   border: none;
   cursor: pointer;
@@ -718,7 +662,7 @@ button, input, textarea, select, a {
 .bean-skills-delete-link:disabled { opacity: 0.5; cursor: default; }
 .bean-skills-error {
   font-size: 12px;
-  color: #e5484d;
+  color: var(--bean-error);
 }
 .bean-card-picker {
   display: flex;
@@ -797,16 +741,16 @@ button, input, textarea, select, a {
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.bean-chip-menu-row--on .bean-chip-menu-caption { color: color-mix(in oklch, var(--bean-accent-ink) 75%, transparent); }
+.bean-chip-menu-row--on .bean-chip-menu-caption { color: var(--bean-accent-ink); }
 .bean-chip-menu-badge {
   font: 600 9px ui-monospace, monospace;
   letter-spacing: 0.05em;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: var(--bean-accent-ink);
   border-radius: 4px;
   padding: 1.5px 5px;
 }
-.bean-chip-menu-row--on .bean-chip-menu-badge { color: var(--bean-accent); background: #fff; }
+.bean-chip-menu-row--on .bean-chip-menu-badge { color: var(--bean-accent-text); background: var(--bean-accent-ink); }
 .bean-chip-menu-divider { height: 1px; background: var(--bean-border); margin: 5px 4px; }
 .bean-chip-menu-url-seed {
   display: flex;
@@ -871,7 +815,7 @@ button, input, textarea, select, a {
 .bean-tag-chip--selected {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
-  border-color: var(--bean-accent);
+  border-color: var(--bean-accent-text);
   font-weight: 600;
 }
 .bean-persona-sample {
@@ -882,7 +826,7 @@ button, input, textarea, select, a {
 }
 .bean-persona-error {
   font-size: 12px;
-  color: #e5484d;
+  color: var(--bean-error);
 }
 
 /* --- projects (SP6) --- */
@@ -930,7 +874,7 @@ button, input, textarea, select, a {
 .bean-projects-list { padding: 0; }
 .bean-projects-row { cursor: pointer; }
 .bean-projects-row--selected {
-  border-color: var(--bean-accent);
+  border-color: var(--bean-accent-text);
   background: var(--bean-surface-2);
 }
 .bean-projects-launch {
@@ -953,7 +897,7 @@ button, input, textarea, select, a {
   padding: 6px 11px;
   cursor: pointer;
 }
-.bean-launch-chip:hover { border-color: var(--bean-accent); }
+.bean-launch-chip:hover { border-color: var(--bean-accent-text); }
 .bean-launch-form {
   display: flex;
   flex-direction: column;
@@ -962,68 +906,6 @@ button, input, textarea, select, a {
 }
 .bean-browse-row { display: flex; gap: 8px; }
 .bean-browse-row .bean-input--boxed { flex: 1; }
-
-.bean-task-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 4px;
-}
-.bean-task-card {
-  background: var(--bean-surface-2);
-  border: 1px solid var(--bean-border);
-  border-radius: 10px;
-  padding: 11px 12px;
-}
-.bean-task-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--bean-text-dim);
-  margin-bottom: 8px;
-}
-.bean-task-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
-}
-.bean-task-dot--running { background: oklch(0.66 0.15 48); animation: bean-console-blink 1.1s infinite; }
-.bean-task-dot--done { background: oklch(0.7 0.14 155); }
-.bean-task-dot--failed { background: oklch(0.66 0.16 30); }
-.bean-task-dot--cancelled { background: var(--bean-text-dim); }
-.bean-task-mode { font-weight: 600; color: var(--bean-text); }
-.bean-task-project { color: var(--bean-text-dim); }
-.bean-task-pid { font: 11px ui-monospace, monospace; }
-.bean-task-cancel { padding: 3px 9px; font-size: 11px; }
-.bean-task-progress {
-  height: 6px;
-  border-radius: 999px;
-  background: var(--bean-border);
-  overflow: hidden;
-}
-.bean-task-progress-fill {
-  height: 100%;
-  border-radius: 999px;
-  background: var(--bean-text-dim);
-  width: 100%;
-}
-.bean-task-progress-fill--running {
-  background: oklch(0.66 0.15 48);
-  animation: bean-task-progress 1.4s ease-in-out infinite alternate;
-}
-.bean-task-message {
-  margin-top: 8px;
-  font: 11px ui-monospace, monospace;
-  color: #e5484d;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-@keyframes bean-task-progress {
-  from { transform: translateX(-40%); }
-  to { transform: translateX(40%); }
-}
 
 /* --- plan window --- */
 .bean-plan {
@@ -1104,11 +986,10 @@ button, input, textarea, select, a {
   height: 8px;
   border-radius: 50%;
   background: var(--bean-text-dim);
-  opacity: 0.5;
   box-shadow: 0 0 0 3px transparent;
 }
-.bean-chatops-dot--running { background: #30a46c; opacity: 1; box-shadow: 0 0 0 3px color-mix(in oklch, #30a46c 20%, transparent); }
-.bean-chatops-dot--error { background: #e5484d; opacity: 1; box-shadow: 0 0 0 3px color-mix(in oklch, #e5484d 20%, transparent); }
+.bean-chatops-dot--running { background: var(--bean-orb-check-ink); box-shadow: 0 0 0 3px color-mix(in oklch, var(--bean-orb-check-ink) 20%, transparent); }
+.bean-chatops-dot--error { background: var(--bean-error); box-shadow: 0 0 0 3px color-mix(in oklch, var(--bean-error) 20%, transparent); }
 .bean-chatops-label {
   flex: 1;
   min-width: 0;
@@ -1117,7 +998,7 @@ button, input, textarea, select, a {
   overflow-wrap: break-word;
 }
 .bean-chatops-label-error {
-  color: #e5484d;
+  color: var(--bean-error);
 }
 
 .bean-settings-jumpbar {
@@ -1143,7 +1024,7 @@ button, input, textarea, select, a {
 .bean-settings-tab--active {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
-  border-color: var(--bean-accent);
+  border-color: var(--bean-accent-text);
 }
 .bean-settings-card {
   flex: none;
@@ -1241,7 +1122,7 @@ button, input, textarea, select, a {
 }
 .bean-about-version {
   font: 12px ui-monospace, monospace;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
 }
 .bean-about-desc {
   margin: 8px 0 0;
@@ -1283,30 +1164,30 @@ button, input, textarea, select, a {
 .bean-about-update-error {
   max-width: 320px;
   font-size: 12px;
-  color: #e5484d;
+  color: var(--bean-error);
   text-align: center;
 }
 .bean-about-update-link {
   font-size: 12px;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
 }
 
 .bean-memory-review { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); z-index: 10; }
 .bean-memory-review-card { background: var(--bean-surface, #fff); border-radius: 12px; padding: 16px; width: 88%; max-width: 380px; box-shadow: 0 8px 30px rgba(0,0,0,0.25); }
 .bean-memory-review-title { font-weight: 600; margin-bottom: 10px; }
 .bean-memory-review-row { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; font-size: 13px; }
-.bean-memory-review-tag { opacity: 0.6; font-style: normal; }
-.bean-memory-review-loading { font-size: 13px; font-style: italic; opacity: 0.7; }
+.bean-memory-review-tag { color: var(--bean-text-dim); font-style: normal; }
+.bean-memory-review-loading { font-size: 13px; font-style: italic; color: var(--bean-text-dim); }
 
-.bean-memory-group-label { font-size: 11px; text-transform: uppercase; opacity: 0.6; margin: 10px 0 4px; }
-.bean-memory-empty { font-size: 13px; opacity: 0.6; padding: 2px 0 6px; }
+.bean-memory-group-label { font-size: 11px; text-transform: uppercase; color: var(--bean-text-dim); margin: 10px 0 4px; }
+.bean-memory-empty { font-size: 13px; color: var(--bean-text-dim); padding: 2px 0 6px; }
 .bean-memory-item { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
 .bean-memory-input { flex: 1; }
-.bean-memory-del { border: none; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; opacity: 0.6; }
-.bean-memory-del:hover { opacity: 1; }
+.bean-memory-del { border: none; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; color: var(--bean-text-dim); }
+.bean-memory-del:hover { color: var(--bean-text); }
 
 /* Notes */
-.bean-notes-version-link { color: var(--bean-accent); text-decoration: underline; cursor: pointer; }
+.bean-notes-version-link { color: var(--bean-accent-text); text-decoration: underline; cursor: pointer; }
 
 .bean-notes-body { flex: 1; overflow-y: auto; font-size: 13px; line-height: 1.55; }
 .bean-notes-body .bean-md h1, .bean-notes-body .bean-md h2, .bean-notes-body .bean-md h3 {
@@ -1315,7 +1196,7 @@ button, input, textarea, select, a {
   text-transform: uppercase;
   color: var(--bean-text-dim);
 }
-.bean-chat-unlink { border: none; background: transparent; cursor: pointer; font-size: 11px; opacity: 0.6; padding: 0 2px; }
+.bean-chat-unlink { border: none; background: transparent; cursor: pointer; font-size: 11px; color: var(--bean-text-dim); padding: 0 2px; }
 .bean-chat-unlink:hover { opacity: 1; }
 .bean-notes-title { flex: none; }
 .bean-chat-notechip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; white-space: nowrap; }
@@ -1324,7 +1205,7 @@ button, input, textarea, select, a {
   flex: none;
   font-size: 12px;
   font-weight: 600;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: transparent;
   border: 1px solid var(--bean-border);
   border-radius: 8px;
@@ -1354,7 +1235,7 @@ button, input, textarea, select, a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.bean-notes-idx-open { flex: none; font: 600 10px ui-monospace, monospace; color: var(--bean-accent); }
+.bean-notes-idx-open { flex: none; font: 600 10px ui-monospace, monospace; color: var(--bean-accent-text); }
 .bean-notes-idx-date { flex: none; font: 10px ui-monospace, monospace; color: var(--bean-text-dim); }
 
 /* Always the filled glyph — gold when starred, quiet grey when not. An outline star reads as a
@@ -1368,7 +1249,6 @@ button, input, textarea, select, a {
   font-size: 13px;
   line-height: 1;
   color: var(--bean-text-dim);
-  opacity: 0.45;
 }
 .bean-notes-star:hover, .bean-notes-star:focus-visible { color: var(--bean-star); opacity: 1; }
 .bean-notes-star--on { color: var(--bean-star); opacity: 1; }
@@ -1423,7 +1303,7 @@ button, input, textarea, select, a {
   padding: 0;
   cursor: pointer;
   font: 600 10.5px ui-monospace, monospace;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
 }
 .bean-notes-idx-continue:hover { text-decoration: underline; }
 
@@ -1440,7 +1320,7 @@ button, input, textarea, select, a {
 }
 .bean-notes-group:hover:not(:disabled) { color: var(--bean-text); }
 .bean-notes-group:disabled { cursor: default; }
-.bean-notes-group-caret { flex: none; width: 10px; font-size: 9px; opacity: 0.7; }
+.bean-notes-group-caret { flex: none; width: 10px; font-size: 9px; }
 .bean-notes-group-count { margin-left: auto; font-size: 10px; font-weight: 600; }
 
 /* Chat composer + jump-to-latest */
@@ -1489,14 +1369,14 @@ button, input, textarea, select, a {
 .bean-md a, .bean-md a:visited { color: var(--bean-link); text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .bean-md a:hover { text-decoration-thickness: 2px; }
 .bean-md a:focus-visible { outline: 2px solid var(--bean-link); outline-offset: 2px; border-radius: 2px; }
-.bean-md input[type="checkbox"] { margin-right: 6px; accent-color: var(--bean-accent); }
+.bean-md input[type="checkbox"] { margin-right: 6px; accent-color: var(--bean-accent-text); }
 .bean-md input[type="checkbox"]:not([disabled]) { cursor: pointer; }
 
 /* Routines (mockup 1a — "Routine as a recipe") */
 
 /* List rail: [enable pill] [name + cadence] [status dot] */
 .bean-routines-row { gap: 11px; }
-.bean-routines-row--off { opacity: 0.55; }
+.bean-routines-row--off .bean-skills-row-name { color: var(--bean-text-dim); }
 .bean-routines-row-sub {
   margin-top: 3px;
   font: 11px ui-monospace, monospace;
@@ -1505,7 +1385,7 @@ button, input, textarea, select, a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.bean-skills-row--selected .bean-routines-row-sub { color: rgba(255, 255, 255, 0.8); }
+.bean-skills-row--selected .bean-routines-row-sub { color: var(--bean-accent-ink); }
 
 .bean-routines-dot {
   flex: none;
@@ -1513,19 +1393,18 @@ button, input, textarea, select, a {
   height: 7px;
   border-radius: 50%;
   background: var(--bean-text-dim);
-  opacity: 0.5;
 }
-.bean-routines-dot--enabled { background: oklch(0.7 0.14 155); opacity: 1; }
+.bean-routines-dot--enabled { background: var(--bean-orb-check-ink); opacity: 1; }
 .bean-routines-dot--running {
-  background: oklch(0.7 0.14 155);
+  background: var(--bean-orb-check-ink);
   opacity: 1;
-  animation: bean-console-blink 1.1s infinite;
-  box-shadow: 0 0 6px oklch(0.7 0.14 155 / 70%);
+  animation: bean-blink 1.1s infinite;
+  box-shadow: 0 0 6px color-mix(in oklch, var(--bean-orb-check-ink) 70%, transparent);
 }
-.bean-routines-dot--failed { background: #e5484d; opacity: 1; }
-.bean-routines-dot--off { background: var(--bean-text-dim); opacity: 0.5; }
-.bean-skills-row--selected .bean-routines-dot { box-shadow: 0 0 7px rgba(255, 255, 255, 0.8); }
-.bean-skills-row--selected .bean-routines-dot--off { background: #fff; }
+.bean-routines-dot--failed { background: var(--bean-error); opacity: 1; }
+.bean-routines-dot--off { background: var(--bean-text-dim); }
+.bean-skills-row--selected .bean-routines-dot { box-shadow: 0 0 0 1.5px var(--bean-accent-ink); }
+.bean-skills-row--selected .bean-routines-dot--off { background: var(--bean-accent-ink); }
 
 .bean-routines-new {
   width: 100%;
@@ -1578,7 +1457,7 @@ button, input, textarea, select, a {
   line-height: 1.55;
   color: var(--bean-text-dim);
 }
-.bean-routines-desc-text::placeholder { color: var(--bean-text-dim); opacity: 0.6; }
+.bean-routines-desc-text::placeholder { color: var(--bean-text-dim); opacity: 1; }
 
 .bean-routines-divider { height: 1px; background: var(--bean-border); }
 
@@ -1591,7 +1470,7 @@ button, input, textarea, select, a {
 }
 .bean-routines-chip-select {
   font: 600 14px ui-monospace, monospace;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: var(--bean-surface-2);
   border: 1px solid var(--bean-border);
   border-radius: 7px;
@@ -1621,7 +1500,7 @@ button, input, textarea, select, a {
 .bean-routines-custom-link {
   margin-left: 8px;
   font-size: 12.5px;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: none;
   border: none;
   padding: 0;
@@ -1647,7 +1526,7 @@ button, input, textarea, select, a {
   align-items: center;
   gap: 6px;
   font-size: 12.5px;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
 }
 .bean-routines-next-dot {
   width: 6px;
@@ -1655,8 +1534,8 @@ button, input, textarea, select, a {
   border-radius: 50%;
   background: var(--bean-accent);
 }
-.bean-routines-next--bad { color: #e5484d; }
-.bean-routines-next--bad .bean-routines-next-dot { background: #e5484d; }
+.bean-routines-next--bad { color: var(--bean-error); }
+.bean-routines-next--bad .bean-routines-next-dot { background: var(--bean-error); }
 
 /* Type toggle: Always runs / Todo-driven segmented buttons */
 .bean-routines-type-row { display: flex; flex-direction: column; gap: 8px; }
@@ -1672,7 +1551,7 @@ button, input, textarea, select, a {
 .bean-routines-type-btn--on {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
-  border-color: var(--bean-accent);
+  border-color: var(--bean-accent-text);
 }
 
 /* Queue: the todo backlog for a todo-driven routine */
@@ -1687,13 +1566,13 @@ button, input, textarea, select, a {
   padding: 8px 12px;
 }
 .bean-routines-todo-text { flex: 1; min-width: 0; font-size: 13px; color: var(--bean-text); }
-.bean-routines-todo--done .bean-routines-todo-text { text-decoration: line-through; opacity: 0.6; }
+.bean-routines-todo--done .bean-routines-todo-text { text-decoration: line-through; color: var(--bean-text-dim); }
 /* Inline edit swaps the text span for a boxed input, sized to fill the same row. */
 .bean-routines-todo .bean-input--boxed { flex: 1; min-width: 0; padding: 5px 9px; }
 .bean-routines-todo-link {
   font-size: 13px;
   font-weight: 600;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: none;
   border: none;
   cursor: pointer;
@@ -1722,15 +1601,15 @@ button, input, textarea, select, a {
   border-radius: 13px;
   padding: 11px 15px;
 }
-.bean-routines-todo-add:focus-within { border-color: var(--bean-accent); }
+.bean-routines-todo-add:focus-within { border-color: var(--bean-accent-text); }
 .bean-routines-todo-add-input {
   font-size: 13px;
   font-weight: 600;
-  color: oklch(0.55 0.1 48);
+  color: var(--bean-accent-text);
 }
-.bean-routines-todo-add-input::placeholder { color: oklch(0.55 0.1 48); font-weight: 600; }
+.bean-routines-todo-add-input::placeholder { color: var(--bean-accent-text); font-weight: 600; }
 .bean-routines-todo--dragging { opacity: 0.45; }
-.bean-routines-todo--drop { border-color: var(--bean-accent); box-shadow: 0 0 0 1px var(--bean-accent); }
+.bean-routines-todo--drop { border-color: var(--bean-accent-text); box-shadow: 0 0 0 1px var(--bean-accent-text); }
 
 /* Steps: numbered timeline of delegate cards */
 .bean-routines-section-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
@@ -1783,7 +1662,7 @@ button, input, textarea, select, a {
 .bean-chip-menu-trigger--accent {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
-  border-color: var(--bean-accent);
+  border-color: var(--bean-accent-text);
 }
 .bean-chip-menu-trigger--accent .bean-chip-menu-caret { color: color-mix(in oklch, var(--bean-accent-ink) 70%, transparent); }
 /* Keep a step's chip triggers from stretching to the instruction below when a skill/project
@@ -1799,8 +1678,8 @@ button, input, textarea, select, a {
 .bean-routines-handle:active { cursor: grabbing; }
 .bean-routines-step--dragging { opacity: 0.45; }
 .bean-routines-step--drop .bean-routines-step-card {
-  border-color: var(--bean-accent);
-  box-shadow: 0 0 0 1px var(--bean-accent);
+  border-color: var(--bean-accent-text);
+  box-shadow: 0 0 0 1px var(--bean-accent-text);
 }
 .bean-routines-step-instruction {
   min-height: 62px;
@@ -1827,9 +1706,9 @@ button, input, textarea, select, a {
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
-  color: oklch(0.55 0.1 48);
+  color: var(--bean-accent-text);
 }
-.bean-routines-add:hover { border-color: var(--bean-accent); }
+.bean-routines-add:hover { border-color: var(--bean-accent-text); }
 .bean-routines-add-plus { font-size: 15px; }
 .bean-routines-add-hint { font-weight: 400; color: var(--bean-text-dim); }
 
@@ -1844,7 +1723,6 @@ button, input, textarea, select, a {
 .bean-routines-sink-suboption {
   margin-left: 22px;
   font-size: 12px;
-  opacity: 0.85;
 }
 .bean-routines-footer { display: flex; align-items: center; gap: 12px; }
 .bean-routines-digest-line {
@@ -1969,4 +1847,11 @@ button, input, textarea, select, a {
   line-height: 1;
   cursor: pointer;
   padding: 0;
+}
+
+/* Keyboard focus must stay visible: a few inputs clear the UA outline for the wrapper look.
+   Last rule in the file so it wins the specificity tie with those `outline: none` blocks. */
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--bean-accent-text);
+  outline-offset: 2px;
 }
