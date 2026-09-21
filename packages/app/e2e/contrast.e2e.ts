@@ -21,6 +21,12 @@ const SCAN = `(() => {
   };
   const lum = (c) => { const f = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4); return 0.2126 * f(c[0] / 255) + 0.7152 * f(c[1] / 255) + 0.0722 * f(c[2] / 255); };
   const over = (f, b) => (f[3] >= 1 ? f : [0, 1, 2].map((i) => f[i] * f[3] + b[i] * (1 - f[3])).concat([1]));
+  // Stack two translucent layers into one, keeping the combined alpha.
+  const merge = (t, b) => {
+    const a = t[3] + b[3] * (1 - t[3]);
+    if (a === 0) return [0, 0, 0, 0];
+    return [0, 1, 2].map((i) => (t[i] * t[3] + b[i] * b[3] * (1 - t[3])) / a).concat([a]);
+  };
   const ratio = (f, b) => { const x = lum(over(f, b)), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
   // CSS opacity fades an element *and its descendants* as a group over what is behind it, so a
   // layer's effective alpha carries its own opacity and its ancestors' — never its children's.
@@ -60,11 +66,13 @@ const SCAN = `(() => {
     const raw = parse(cs.color);
     if (!raw) continue;
     const rows = chain(el);
-    // The element's own background sits between its text and everything above it.
-    const own = rows[0].bg;
-    let bg = backdrop(rows);
-    if (own && own[3] > 0) bg = over([own[0], own[1], own[2], own[3] * rows[0].fade], bg);
-    const fg = [raw[0], raw[1], raw[2], raw[3] * rows[0].fade];
+    // The element's own opacity fades its text and its own background together, as one group,
+    // over whatever the ancestors paint — so merge inside the group first, fade after.
+    const own = rows[0].bg && rows[0].bg[3] > 0 ? rows[0].bg : null;
+    const outer = backdrop(rows);
+    const group = own ? merge(raw, own) : raw;
+    const fg = over([group[0], group[1], group[2], group[3] * rows[0].fade], outer);
+    const bg = own ? over([own[0], own[1], own[2], own[3] * rows[0].fade], outer) : outer;
     const px = parseFloat(cs.fontSize);
     const need = px >= 24 || (Number(cs.fontWeight) >= 700 && px >= 18.66) ? 3 : 4.5;
     const got = ratio(fg, bg);
