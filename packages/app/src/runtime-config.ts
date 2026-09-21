@@ -3,7 +3,7 @@ import type { RouterDeps, ConverseDeps } from "@bean/core";
 export interface RuntimeConfigDeps {
   makeChat: (apiKey: string) => RouterDeps["chat"];
   makeConverse: (apiKey: string) => ConverseDeps["chat"];
-  saveConfigFile: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; disabledClis: string[] }) => Promise<void>;
+  saveConfigFile: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; routineDigestContext: boolean; disabledClis: string[] }) => Promise<void>;
 }
 
 export interface RuntimeConfig {
@@ -15,15 +15,16 @@ export interface RuntimeConfig {
   getEditorApp: () => string;
   getDelegateCli: () => string;
   getSystemControls: () => boolean;
+  getRoutineDigestContext: () => boolean;
   getDisabledClis: () => string[];
-  apply: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; disabledClis: string[] }) => Promise<void>;
+  apply: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; routineDigestContext: boolean; disabledClis: string[] }) => Promise<void>;
 }
 
 // Holds the live OpenAI clients + model behind stable wrapper functions. IPC handlers close
 // over the wrappers once at startup; apply() swaps the underlying clients in place so a Settings
 // save takes effect on the next chat/route with no restart (see the Settings window).
 export function createRuntimeConfig(
-  initial: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; disabledClis: string[] },
+  initial: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; routineDigestContext: boolean; disabledClis: string[] },
   deps: RuntimeConfigDeps,
 ): RuntimeConfig {
   let apiKey = initial.openaiApiKey;
@@ -32,6 +33,7 @@ export function createRuntimeConfig(
   let editorApp = initial.editorApp;
   let delegateCli = initial.delegateCli;
   let systemControls = initial.systemControls;
+  let routineDigestContext = initial.routineDigestContext;
   let disabledClis = initial.disabledClis;
   // ponytail: the OpenAI SDK throws in its constructor when apiKey is "", so building the
   // clients eagerly would crash startup before the user ever gets to Settings. Build lazily
@@ -54,6 +56,7 @@ export function createRuntimeConfig(
     getEditorApp: () => editorApp,
     getDelegateCli: () => delegateCli,
     getSystemControls: () => systemControls,
+    getRoutineDigestContext: () => routineDigestContext,
     getDisabledClis: () => disabledClis,
     apply: async (update) => {
       const nextChatClient = update.openaiApiKey ? deps.makeChat(update.openaiApiKey) : null;
@@ -62,6 +65,7 @@ export function createRuntimeConfig(
         openaiApiKey: update.openaiApiKey, model: update.model,
         terminalApp: update.terminalApp, editorApp: update.editorApp, delegateCli: update.delegateCli,
         systemControls: update.systemControls,
+        routineDigestContext: update.routineDigestContext,
         disabledClis: update.disabledClis,
       });
       apiKey = update.openaiApiKey;
@@ -70,6 +74,7 @@ export function createRuntimeConfig(
       editorApp = update.editorApp;
       delegateCli = update.delegateCli;
       systemControls = update.systemControls;
+      routineDigestContext = update.routineDigestContext;
       disabledClis = update.disabledClis;
       chatClient = nextChatClient;
       converseClient = nextConverseClient;

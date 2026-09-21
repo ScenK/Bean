@@ -49,3 +49,14 @@ test("maybeCompact summarizes the oldest 40 once over 60 turns", async () => {
   expect(h[0]).toEqual({ role: "system", content: "summary text" });
   expect(h[1]?.content).toBe("m40");
 });
+
+test("concurrent maybeCompact calls do not drop newer turns", async () => {
+  const s = new ConversationStore(file);
+  for (let i = 0; i < 61; i++) s.append("c1", { role: "user", content: `m${i}` });
+  // Unserialized, both passes snapshot the same oldest 40 and the second replaceOldest eats
+  // the first's summary plus 39 newer turns, leaving 22 - 40 + 1 turns behind.
+  await Promise.all([maybeCompact("c1", s, deps), maybeCompact("c1", s, deps)]);
+  const h = s.history("c1");
+  expect(h).toHaveLength(22); // second pass is under the threshold, so it's a no-op
+  expect(h[1]?.content).toBe("m40");
+});

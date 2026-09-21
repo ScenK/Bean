@@ -29,6 +29,11 @@ export interface OutboxMessage {
   // as-is. Consumers show `displayBody ?? body`; `body` is always what a follow-up chat turn
   // should see. Absent for plain messages (routine digests) — those already are the display text.
   displayBody?: string;
+  // true = also append `body` to the target conversation's history after delivery, so a
+  // follow-up question about this message has it as context. Set by the enqueuer (routine
+  // digests, gated by config's `routineDigestContext`); an interrupted-run notice appends
+  // unconditionally via `displayBody` instead.
+  context?: boolean;
   createdAt: string; // ISO
 }
 

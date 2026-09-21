@@ -35,6 +35,7 @@ export function SettingsWindow() {
   const [editorApp, setEditorApp] = useState("");
   const [delegateCli, setDelegateCli] = useState("");
   const [systemControls, setSystemControls] = useState(false);
+  const [routineDigestContext, setRoutineDigestContext] = useState(false);
   const [detectedClis, setDetectedClis] = useState<CliName[]>([]);
   const [disabledClis, setDisabledClis] = useState<string[]>([]);
   const [paths, setPaths] = useState<ConfigView["paths"] | undefined>(undefined);
@@ -67,6 +68,7 @@ export function SettingsWindow() {
       setEditorApp(c.editorApp);
       setDelegateCli(c.delegateCli);
       setSystemControls(c.systemControls);
+      setRoutineDigestContext(c.routineDigestContext);
       setDisabledClis(c.disabledClis);
       setPaths(c.paths);
     });
@@ -89,6 +91,7 @@ export function SettingsWindow() {
       await window.bean.saveConfig({
         openaiApiKey: apiKey.trim(), model: model.trim(),
         terminalApp: terminalApp.trim(), editorApp: editorApp.trim(), delegateCli, systemControls,
+        routineDigestContext,
         disabledClis,
       });
       setSave("saved");
@@ -266,6 +269,19 @@ export function SettingsWindow() {
               </div>
             );
           })}
+          <div class="bean-settings-row">
+            <span class="bean-settings-row-label">Routine digests</span>
+            <div class="bean-settings-row-control">
+              <label class="bean-chatops-row" title="Keeps each routine digest in the conversation it was posted to, so you can ask follow-up questions about it. Off by default — digests nobody asks about still cost tokens on every later turn.">
+                <input
+                  type="checkbox"
+                  checked={routineDigestContext}
+                  onChange={(e) => { setRoutineDigestContext((e.target as HTMLInputElement).checked); setSave("idle"); }}
+                />
+                <span class="bean-chatops-label">Keep digests as chat context for follow-ups</span>
+              </label>
+            </div>
+          </div>
         </section>
 
         <section id="appearance" class="bean-settings-card">

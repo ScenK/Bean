@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
-  buildTeamsBot, exitWhenOrphaned, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
+  buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
@@ -28,13 +28,15 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "discord" });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this channel has no idea what it's retrying.
+// Hoisted out of the bot deps so the outbox loop's maybeCompact can reuse the same client.
+const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey);
 const conversations = new ConversationStore(dbFile(dir));
 const liveSessions = new LiveSessionRegistry(undefined, { dir });
 // Hoisted (not inline in deps) so the /live-session card's project/model dropdowns and the
 // edit-prompt modal can read and mutate the pending proposal before Start claims it.
 const liveSessionProposals = new LiveSessionProposalStore();
 const bot = buildTeamsBot({
-  chat: makeOpenAIConverse(beanConfig.openaiApiKey),
+  chat: converseChat,
   model: beanConfig.model,
   loadSkills: () => loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
   loadProjects: () => loadProjects(projectsFile(dir)),
@@ -379,6 +381,15 @@ client.once("clientReady", async () => {
 });
 
 // Routine digests: the main app enqueues outbox files; deliver them to their channel.
+// Digest/notice delivery appends straight to the store, bypassing bot.onMessage — which is the
+// only other place maybeCompact runs. Without this, a channel that only ever *receives* messages
+// (an opted-in routine sink nobody replies in) grows unbounded and the first follow-up ships the
+// whole pile. Fire-and-forget, same as bot.ts's call.
+const appendDelivered = (conversationId: string, body: string): void => {
+  conversations.append(conversationId, { role: "assistant", content: body });
+  void maybeCompact(conversationId, conversations, { chat: converseChat, model: beanConfig.model });
+};
+
 const OUTBOX_POLL_MS = 5_000;
 setInterval(() => {
   void (async () => {
@@ -393,7 +404,11 @@ setInterval(() => {
         for (const userId of discordConfig.allowedUserIds) {
           try {
             const user = await client.users.fetch(userId);
-            for (const chunk of chunkText(text)) await user.send(chunk);
+            // The DM channel id is the conversation id here, and we only learn it from a
+            // sent message — so capture it rather than trying to resolve it up front.
+            let dmChannelId: string | undefined;
+            for (const chunk of chunkText(text)) dmChannelId = (await user.send(chunk)).channelId;
+            if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body);
           } catch (err) {
             console.error(`outbox: discord DM to ${userId} failed`, err);
           }
@@ -407,7 +422,7 @@ setInterval(() => {
           continue;
         }
         for (const chunk of chunkText(text)) await channel.send(chunk);
-        if (msg.displayBody) conversations.append(msg.channel, { role: "assistant", content: msg.body });
+        if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body);
       } catch (err) {
         console.error("outbox: discord send failed", err);
       }

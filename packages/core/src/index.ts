@@ -33,6 +33,7 @@ export * from "./chatops/orphan-guard.js";
 export * from "./chatops/bot.js";
 export * from "./chatops/cards-api.js";
 export * from "./chatops/conversation.js";
+export * from "./chatops/compact.js";
 export * from "./chatops/proposals.js";
 export * from "./chatops/note-proposals.js";
 export * from "./chatops/todo-proposals.js";
