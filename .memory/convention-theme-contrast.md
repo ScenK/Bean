@@ -12,13 +12,18 @@ Renderer colors that land on a surface or on an accent fill go through a `--bean
 The accent is **three tokens with three jobs**, and mixing them is the mistake to avoid:
 `--bean-accent` is the fill (hearth keeps its original bright amber, which is only 2.4:1 as
 text — never use it as ink on a surface); `--bean-accent-text` is that accent darkened for ink
-and lines on a surface; `--bean-accent-ink` is what reads *on* the fill — dark brown in hearth,
-not white, because white on the original amber is 3.3:1. The one place `--bean-accent` is
-correct as ink is on an `--bean-accent-ink` fill (the inverted badges), where it reads 4.8:1.
+and lines on a surface; `--bean-accent-ink` is what reads *on* the fill.
 
-Accepted exception: an accent-filled button on `--bean-bg` is 2.4:1 fill-to-page in hearth. The
-fill brightness is a deliberate product choice; the control is identified by its 4.8:1 label.
-Revisit only by outlining those buttons in `--bean-accent-text`, never by dulling the fill.
+**Accepted exception — don't "fix" it:** in hearth the fill is the original amber under white
+ink, 3.3:1, below AA. Both a darker fill and a dark ink were tried and rejected on sight; the
+light theme's look is the product decision and it outranks the number here. The guards encode
+it, they don't ignore it: the token test holds hearth's ink-on-fill to 3:1 (graphite still owes
+4.5:1), and the DOM scan holds any text painted in `--bean-accent-ink` to 3:1, so a regression
+past *that* still fails. An accent-filled button is likewise 2.4:1 against the page.
+
+Everything around the fill still pays full freight, which is why `--bean-accent-text` exists —
+a link or label is not a fill. Text on an `--bean-accent-ink` fill (the inverted badges) uses
+`--bean-accent-text` too, since that ink is white in hearth.
 
 `--bean-control-border` exists because `--bean-border` is a *separator* tone (1:1 with the page
 in hearth). A control whose only cue is a colored track (the skills/routines toggles) uses

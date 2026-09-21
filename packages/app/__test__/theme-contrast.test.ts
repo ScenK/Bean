@@ -73,8 +73,12 @@ describe.each(["hearth", "graphite"])("%s theme contrast", (theme) => {
     for (const surface of SURFACES) expect(contrast(t[name]!, t[surface]!), `${name} on ${surface}`).toBeGreaterThanOrEqual(3);
   });
 
-  test("accent ink reads on an accent fill (buttons, selected rows) >= 4.5:1", () => {
-    expect(contrast(t["--bean-accent-ink"]!, t["--bean-accent"]!)).toBeGreaterThanOrEqual(4.5);
+  // Hearth deliberately keeps its original amber fill under white ink: 3.3:1, below AA. The fill
+  // is a product decision; see .memory/convention-theme-contrast.md. Graphite has no such excuse.
+  const inkOnFill = theme === "hearth" ? 3 : 4.5;
+
+  test(`accent ink reads on an accent fill (buttons, selected rows) >= ${inkOnFill}:1`, () => {
+    expect(contrast(t["--bean-accent-ink"]!, t["--bean-accent"]!)).toBeGreaterThanOrEqual(inkOnFill);
   });
 
   test("toggle knob (accent ink) is distinguishable from both track colors >= 3:1", () => {

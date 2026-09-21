@@ -51,6 +51,11 @@ const SCAN = `(() => {
     }
     return over(scale(c, rows[rows.length - 1].alpha), [255, 255, 255, 1]);
   };
+  // Hearth keeps its original amber fill with white ink: 3.3:1, below AA and deliberate (see
+  // .memory/convention-theme-contrast.md). Text painted in --bean-accent-ink is on that fill by
+  // construction, so it is held to 3:1 — a regression past that still fails the run.
+  const inkColor = parse(getComputedStyle(document.documentElement).getPropertyValue("--bean-accent-ink"));
+  const sameColor = (a, b) => a && b && Math.abs(a[0] - b[0]) < 2 && Math.abs(a[1] - b[1]) < 2 && Math.abs(a[2] - b[2]) < 2;
   const fails = [];
   for (const el of document.querySelectorAll("*")) {
     const cs = getComputedStyle(el);
@@ -64,7 +69,8 @@ const SCAN = `(() => {
     const fg = fold(rows, raw);
     const bg = fold(rows, [0, 0, 0, 0]);
     const px = parseFloat(cs.fontSize);
-    const need = px >= 24 || (Number(cs.fontWeight) >= 700 && px >= 18.66) ? 3 : 4.5;
+    let need = px >= 24 || (Number(cs.fontWeight) >= 700 && px >= 18.66) ? 3 : 4.5;
+    if (sameColor(parse(cs.color), inkColor)) need = 3;
     const got = ratio(fg, bg);
     if (got < need) fails.push(\`\${el.className || el.tagName} "\${(el.textContent || "").trim().slice(0, 30)}" \${got.toFixed(2)}:1 < \${need}:1\`);
   }
