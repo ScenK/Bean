@@ -987,11 +987,10 @@ button, input, textarea, select, a {
   height: 8px;
   border-radius: 50%;
   background: var(--bean-text-dim);
-  opacity: 0.5;
   box-shadow: 0 0 0 3px transparent;
 }
-.bean-chatops-dot--running { background: #30a46c; opacity: 1; box-shadow: 0 0 0 3px color-mix(in oklch, #30a46c 20%, transparent); }
-.bean-chatops-dot--error { background: var(--bean-error); opacity: 1; box-shadow: 0 0 0 3px color-mix(in oklch, var(--bean-error) 20%, transparent); }
+.bean-chatops-dot--running { background: var(--bean-orb-check-ink); box-shadow: 0 0 0 3px color-mix(in oklch, var(--bean-orb-check-ink) 20%, transparent); }
+.bean-chatops-dot--error { background: var(--bean-error); box-shadow: 0 0 0 3px color-mix(in oklch, var(--bean-error) 20%, transparent); }
 .bean-chatops-label {
   flex: 1;
   min-width: 0;
@@ -1178,8 +1177,8 @@ button, input, textarea, select, a {
 .bean-memory-review-card { background: var(--bean-surface, #fff); border-radius: 12px; padding: 16px; width: 88%; max-width: 380px; box-shadow: 0 8px 30px rgba(0,0,0,0.25); }
 .bean-memory-review-title { font-weight: 600; margin-bottom: 10px; }
 .bean-memory-review-row { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; font-size: 13px; }
-.bean-memory-review-tag { opacity: 0.6; font-style: normal; }
-.bean-memory-review-loading { font-size: 13px; font-style: italic; opacity: 0.7; }
+.bean-memory-review-tag { color: var(--bean-text-dim); font-style: normal; }
+.bean-memory-review-loading { font-size: 13px; font-style: italic; color: var(--bean-text-dim); }
 
 .bean-memory-group-label { font-size: 11px; text-transform: uppercase; color: var(--bean-text-dim); margin: 10px 0 4px; }
 .bean-memory-empty { font-size: 13px; color: var(--bean-text-dim); padding: 2px 0 6px; }
@@ -1198,7 +1197,7 @@ button, input, textarea, select, a {
   text-transform: uppercase;
   color: var(--bean-text-dim);
 }
-.bean-chat-unlink { border: none; background: transparent; cursor: pointer; font-size: 11px; opacity: 0.6; padding: 0 2px; }
+.bean-chat-unlink { border: none; background: transparent; cursor: pointer; font-size: 11px; color: var(--bean-text-dim); padding: 0 2px; }
 .bean-chat-unlink:hover { opacity: 1; }
 .bean-notes-title { flex: none; }
 .bean-chat-notechip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; white-space: nowrap; }
@@ -1378,7 +1377,7 @@ button, input, textarea, select, a {
 
 /* List rail: [enable pill] [name + cadence] [status dot] */
 .bean-routines-row { gap: 11px; }
-.bean-routines-row--off { opacity: 0.55; }
+.bean-routines-row--off .bean-skills-row-name { color: var(--bean-text-dim); }
 .bean-routines-row-sub {
   margin-top: 3px;
   font: 11px ui-monospace, monospace;
@@ -1395,7 +1394,6 @@ button, input, textarea, select, a {
   height: 7px;
   border-radius: 50%;
   background: var(--bean-text-dim);
-  opacity: 0.5;
 }
 .bean-routines-dot--enabled { background: var(--bean-orb-check-ink); opacity: 1; }
 .bean-routines-dot--running {
@@ -1405,7 +1403,7 @@ button, input, textarea, select, a {
   box-shadow: 0 0 6px color-mix(in oklch, var(--bean-orb-check-ink) 70%, transparent);
 }
 .bean-routines-dot--failed { background: var(--bean-error); opacity: 1; }
-.bean-routines-dot--off { background: var(--bean-text-dim); opacity: 0.5; }
+.bean-routines-dot--off { background: var(--bean-text-dim); }
 .bean-skills-row--selected .bean-routines-dot { box-shadow: 0 0 0 1.5px var(--bean-accent-ink); }
 .bean-skills-row--selected .bean-routines-dot--off { background: var(--bean-accent-ink); }
 
@@ -1460,7 +1458,7 @@ button, input, textarea, select, a {
   line-height: 1.55;
   color: var(--bean-text-dim);
 }
-.bean-routines-desc-text::placeholder { color: var(--bean-text-dim); opacity: 0.6; }
+.bean-routines-desc-text::placeholder { color: var(--bean-text-dim); opacity: 1; }
 
 .bean-routines-divider { height: 1px; background: var(--bean-border); }
 
@@ -1569,7 +1567,7 @@ button, input, textarea, select, a {
   padding: 8px 12px;
 }
 .bean-routines-todo-text { flex: 1; min-width: 0; font-size: 13px; color: var(--bean-text); }
-.bean-routines-todo--done .bean-routines-todo-text { text-decoration: line-through; opacity: 0.6; }
+.bean-routines-todo--done .bean-routines-todo-text { text-decoration: line-through; color: var(--bean-text-dim); }
 /* Inline edit swaps the text span for a boxed input, sized to fill the same row. */
 .bean-routines-todo .bean-input--boxed { flex: 1; min-width: 0; padding: 5px 9px; }
 .bean-routines-todo-link {

@@ -22,30 +22,34 @@ const SCAN = `(() => {
   const lum = (c) => { const f = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4); return 0.2126 * f(c[0] / 255) + 0.7152 * f(c[1] / 255) + 0.0722 * f(c[2] / 255); };
   const over = (f, b) => (f[3] >= 1 ? f : [0, 1, 2].map((i) => f[i] * f[3] + b[i] * (1 - f[3])).concat([1]));
   const ratio = (f, b) => { const x = lum(over(f, b)), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
-  // Walk to the first opaque background, keeping every translucent layer (and the opacity each
-  // one inherits) on the way, then composite bottom-up — a 22%-white veil over an accent fill is
-  // not the same backdrop as the fill itself, and a half-faded button is not its own color.
-  const backdrop = (el) => {
-    const layers = [];
-    let fade = 1;
-    let n = el;
-    let base = null;
-    while (n) {
+  // CSS opacity fades an element *and its descendants* as a group over what is behind it, so a
+  // layer's effective alpha carries its own opacity and its ancestors' — never its children's.
+  // Collect the chain once, then apply the suffix product of opacities to each layer.
+  const chain = (el) => {
+    const rows = [];
+    for (let n = el; n; n = n.parentElement) {
       const cs = getComputedStyle(n);
-      fade *= Number(cs.opacity === "" ? 1 : cs.opacity);
-      const c = parse(cs.backgroundColor);
-      if (c && c[3] > 0) {
-        const layer = [c[0], c[1], c[2], c[3] * fade];
-        if (layer[3] >= 0.999) { base = layer; break; }
-        layers.push(layer);
-      }
-      n = n.parentElement;
+      rows.push({ alpha: Number(cs.opacity === "" ? 1 : cs.opacity), bg: parse(cs.backgroundColor) });
+    }
+    let fade = 1;
+    for (let i = rows.length - 1; i >= 0; i--) { fade *= rows[i].alpha; rows[i].fade = fade; }
+    return rows;
+  };
+  // The backdrop behind the text: every background above it, composited bottom-up.
+  const backdrop = (rows) => {
+    const layers = [];
+    let base = null;
+    for (let i = 1; i < rows.length; i++) {
+      const c = rows[i].bg;
+      if (!c || c[3] === 0) continue;
+      const layer = [c[0], c[1], c[2], c[3] * rows[i].fade];
+      if (layer[3] >= 0.999) { base = layer; break; }
+      layers.push(layer);
     }
     let out = base || [255, 255, 255, 1];
     for (let i = layers.length - 1; i >= 0; i--) out = over(layers[i], out);
     return out;
   };
-  const fade = (el) => { let f = 1, n = el; while (n) { const o = getComputedStyle(n).opacity; f *= Number(o === "" ? 1 : o); n = n.parentElement; } return f; };
   const fails = [];
   for (const el of document.querySelectorAll("*")) {
     const cs = getComputedStyle(el);
@@ -55,10 +59,15 @@ const SCAN = `(() => {
     if (el.closest('[disabled], [aria-disabled="true"]')) continue;
     const raw = parse(cs.color);
     if (!raw) continue;
-    const fg = [raw[0], raw[1], raw[2], raw[3] * fade(el)];
+    const rows = chain(el);
+    // The element's own background sits between its text and everything above it.
+    const own = rows[0].bg;
+    let bg = backdrop(rows);
+    if (own && own[3] > 0) bg = over([own[0], own[1], own[2], own[3] * rows[0].fade], bg);
+    const fg = [raw[0], raw[1], raw[2], raw[3] * rows[0].fade];
     const px = parseFloat(cs.fontSize);
     const need = px >= 24 || (Number(cs.fontWeight) >= 700 && px >= 18.66) ? 3 : 4.5;
-    const got = ratio(fg, backdrop(el));
+    const got = ratio(fg, bg);
     if (got < need) fails.push(\`\${el.className || el.tagName} "\${(el.textContent || "").trim().slice(0, 30)}" \${got.toFixed(2)}:1 < \${need}:1\`);
   }
   return fails;

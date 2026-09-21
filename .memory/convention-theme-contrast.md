@@ -1,7 +1,7 @@
 # Theme colors carry a WCAG budget
 
-Every renderer color goes through a `--bean-*` token in `packages/app/src/renderer/theme.css`,
-and each token has a contrast job it must keep:
+Renderer colors that land on a surface or on an accent fill go through a `--bean-*` token in
+`packages/app/src/renderer/theme.css`, and each token has a contrast job it must keep:
 
 - text tokens (`--bean-text`, `--bean-text-dim`, `--bean-accent`, `--bean-link`, `--bean-error`,
   `--bean-orb-check-ink`) — **4.5:1 against all three surfaces** (`--bean-bg`, `--bean-surface`,
