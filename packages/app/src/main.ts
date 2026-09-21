@@ -449,7 +449,7 @@ app.whenReady().then(async () => {
     const cfg = await loadConfig(cfgPath, dir);
 
     const runtime = createRuntimeConfig(
-      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, disabledClis: cfg.disabledClis },
+      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, routineDigestContext: cfg.routineDigestContext, disabledClis: cfg.disabledClis },
       {
         makeChat: makeOpenAIChat,
         makeConverse: makeOpenAIConverse,
@@ -593,6 +593,9 @@ app.whenReady().then(async () => {
         await enqueueOutbox(outboxDir(dir), {
           transport: sink.transport, channel: sink.channel,
           title: `Routine: ${routine.name}`, body: result.digest,
+          // Read live, not at boot: flipping the Settings toggle takes effect on the next run
+          // without restarting the bot servers (they just honor the flag on the message).
+          context: runtime.getRoutineDigestContext(),
         }, randomUUID);
       }
       if (routine.sinks.notify && notificationTransport.available()) {
@@ -639,6 +642,7 @@ app.whenReady().then(async () => {
         editorApp: runtime.getEditorApp(),
         delegateCli: runtime.getDelegateCli(),
         systemControls: runtime.getSystemControls(),
+        routineDigestContext: runtime.getRoutineDigestContext(),
         disabledClis: runtime.getDisabledClis(),
         paths: {
           config: configFile(dir),

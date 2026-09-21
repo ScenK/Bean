@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
-  buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, MemoryProposalStore, NoteProposalStore, ProposalStore,
+  buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
@@ -86,13 +86,15 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "teams" });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this conversation has no idea what it's retrying.
+// Hoisted out of the bot deps so the outbox loop's maybeCompact can reuse the same client.
+const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey);
 const conversations = new ConversationStore(dbFile(dir));
 // Hoisted (not inline in deps) so the /api/messages handler can check `has()` to capture
 // steer messages for a bound session, and the SIGTERM handler can kill them. Mirrors Discord.
 const liveSessions = new LiveSessionRegistry(undefined, { dir });
 const liveSessionProposals = new LiveSessionProposalStore();
 const bot = buildTeamsBot({
-  chat: makeOpenAIConverse(beanConfig.openaiApiKey),
+  chat: converseChat,
   model: beanConfig.model,
   loadSkills: () => loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
   loadProjects: () => loadProjects(projectsFile(dir)),
@@ -352,6 +354,15 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 });
 
 // Routine digests: the main app enqueues outbox files; deliver them via a proactive message.
+// Digest/notice delivery appends straight to the store, bypassing bot.onMessage — which is the
+// only other place maybeCompact runs. Without this, a channel that only ever *receives* messages
+// (an opted-in routine sink nobody replies in) grows unbounded and the first follow-up ships the
+// whole pile. Fire-and-forget, same as bot.ts's call.
+const appendDelivered = (conversationId: string, body: string): void => {
+  conversations.append(conversationId, { role: "assistant", content: body });
+  void maybeCompact(conversationId, conversations, { chat: converseChat, model: beanConfig.model });
+};
+
 const OUTBOX_POLL_MS = 5_000;
 setInterval(() => {
   void (async () => {
@@ -382,11 +393,15 @@ setInterval(() => {
             await context.sendActivity(text);
           });
           delivered = true;
+          // Per-target, because a DM fanout has no msg.channel to append to.
+          if (msg.context && ref.conversation?.id) {
+            appendDelivered(ref.conversation.id, msg.body);
+          }
         } catch (err) {
           console.error("outbox: teams send failed", err);
         }
       }
-      if (delivered && msg.displayBody && msg.channel) conversations.append(msg.channel, { role: "assistant", content: msg.body });
+      if (delivered && msg.displayBody && !msg.context && msg.channel) appendDelivered(msg.channel, msg.body);
     }
   })();
 }, OUTBOX_POLL_MS);
