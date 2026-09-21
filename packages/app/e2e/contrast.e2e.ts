@@ -28,33 +28,28 @@ const SCAN = `(() => {
     return [0, 1, 2].map((i) => (t[i] * t[3] + b[i] * b[3] * (1 - t[3])) / a).concat([a]);
   };
   const ratio = (f, b) => { const x = lum(over(f, b)), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
-  // CSS opacity fades an element *and its descendants* as a group over what is behind it, so a
-  // layer's effective alpha carries its own opacity and its ancestors' — never its children's.
-  // Collect the chain once, then apply the suffix product of opacities to each layer.
+  // CSS opacity fades an element *and its descendants* as one group, so the only correct model
+  // is to composite inward-out: build the pixel inside the innermost group, then, at each step
+  // outward, scale it by that group's opacity and lay it over the next ancestor's background.
+  const scale = (c, k) => [c[0], c[1], c[2], c[3] * k];
   const chain = (el) => {
     const rows = [];
     for (let n = el; n; n = n.parentElement) {
       const cs = getComputedStyle(n);
-      rows.push({ alpha: Number(cs.opacity === "" ? 1 : cs.opacity), bg: parse(cs.backgroundColor) });
+      const bg = parse(cs.backgroundColor);
+      rows.push({ alpha: Number(cs.opacity === "" ? 1 : cs.opacity), bg: bg && bg[3] > 0 ? bg : null });
     }
-    let fade = 1;
-    for (let i = rows.length - 1; i >= 0; i--) { fade *= rows[i].alpha; rows[i].fade = fade; }
     return rows;
   };
-  // The backdrop behind the text: every background above it, composited bottom-up.
-  const backdrop = (rows) => {
-    const layers = [];
-    let base = null;
+  // The seed is the text color for the glyph pixel, or a transparent pixel for the backdrop it
+  // sits on; both travel the same stack, which is what makes the two comparable.
+  const fold = (rows, seed) => {
+    let c = rows[0].bg ? merge(seed, rows[0].bg) : seed;
     for (let i = 1; i < rows.length; i++) {
-      const c = rows[i].bg;
-      if (!c || c[3] === 0) continue;
-      const layer = [c[0], c[1], c[2], c[3] * rows[i].fade];
-      if (layer[3] >= 0.999) { base = layer; break; }
-      layers.push(layer);
+      c = scale(c, rows[i - 1].alpha);
+      if (rows[i].bg) c = merge(c, rows[i].bg);
     }
-    let out = base || [255, 255, 255, 1];
-    for (let i = layers.length - 1; i >= 0; i--) out = over(layers[i], out);
-    return out;
+    return over(scale(c, rows[rows.length - 1].alpha), [255, 255, 255, 1]);
   };
   const fails = [];
   for (const el of document.querySelectorAll("*")) {
@@ -66,13 +61,8 @@ const SCAN = `(() => {
     const raw = parse(cs.color);
     if (!raw) continue;
     const rows = chain(el);
-    // The element's own opacity fades its text and its own background together, as one group,
-    // over whatever the ancestors paint — so merge inside the group first, fade after.
-    const own = rows[0].bg && rows[0].bg[3] > 0 ? rows[0].bg : null;
-    const outer = backdrop(rows);
-    const group = own ? merge(raw, own) : raw;
-    const fg = over([group[0], group[1], group[2], group[3] * rows[0].fade], outer);
-    const bg = own ? over([own[0], own[1], own[2], own[3] * rows[0].fade], outer) : outer;
+    const fg = fold(rows, raw);
+    const bg = fold(rows, [0, 0, 0, 0]);
     const px = parseFloat(cs.fontSize);
     const need = px >= 24 || (Number(cs.fontWeight) >= 700 && px >= 18.66) ? 3 : 4.5;
     const got = ratio(fg, bg);
