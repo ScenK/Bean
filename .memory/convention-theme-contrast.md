@@ -13,9 +13,18 @@ and each token has a contrast job it must keep:
 in hearth). A control whose only cue is a colored track (the skills/routines toggles) uses
 `--bean-control-border`; cards and dividers keep `--bean-border`.
 
-Don't hardcode a hex/oklch in `shared.css` — a light-theme-tuned literal silently fails in
-graphite (that's how `#e5484d` errors and a `oklch(0.55 0.1 48)` input color got in). The
-per-theme token is the fix.
+Don't hardcode a theme-dependent color in `shared.css` — a literal tuned for one theme silently
+fails in the other (that's how `#e5484d` errors and an `oklch(0.55 0.1 48)` input color got in).
+A literal is only fine when it is self-contained: a fixed fill plus its own ink, contrast-checked
+once and identical in both themes (the "YOURS" badge green). Anything that lands on a surface or
+an accent fill takes the per-theme token.
+
+Two more traps the audit hit:
+- `opacity` is not a dim tone. `opacity: 0.6` on body text reads 3.8:1 in hearth; use
+  `--bean-text-dim`. Opacity is fine for `:disabled` (WCAG exempts inactive controls) and for
+  hover-revealed controls.
+- a translucent veil over a fill is its own backdrop — `rgba(255,255,255,0.22)` over the hearth
+  accent dropped white ink to 4.2:1.
 
 Two guards, both required to stay green:
 - `packages/app/__test__/theme-contrast.test.ts` — parses `theme.css` and checks the budget above
