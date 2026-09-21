@@ -101,7 +101,7 @@ button, input, textarea, select, a {
 .bean-panel-dropped-url {
   margin-top: 8px;
   font: 12px ui-monospace, monospace;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   word-break: break-all;
 }
 
@@ -428,7 +428,7 @@ button, input, textarea, select, a {
 .bean-skills-tag {
   font-size: 11px;
   font-weight: 600;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: var(--bean-surface-2);
   border-radius: 6px;
   padding: 2.5px 7px;
@@ -442,7 +442,7 @@ button, input, textarea, select, a {
 .bean-skills-row--selected .bean-skills-tag {
   color: var(--bean-accent-ink);
   background: transparent;
-  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--bean-accent-ink) 45%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--bean-accent-ink) 70%, transparent);
 }
 .bean-skills-row--selected .bean-skills-tag--general {
   color: var(--bean-accent-ink);
@@ -586,7 +586,7 @@ button, input, textarea, select, a {
 .bean-skills-project-chip--on {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
-  border-color: var(--bean-accent);
+  border-color: var(--bean-accent-text);
 }
 .bean-skills-projects-hint { font-size: 12.5px; color: var(--bean-text-dim); }
 .bean-skills-preview-box {
@@ -614,7 +614,7 @@ button, input, textarea, select, a {
 .bean-skills-preview-open {
   font-size: 12px;
   font-weight: 600;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: none;
   border: none;
   cursor: pointer;
@@ -816,7 +816,7 @@ button, input, textarea, select, a {
 .bean-tag-chip--selected {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
-  border-color: var(--bean-accent);
+  border-color: var(--bean-accent-text);
   font-weight: 600;
 }
 .bean-persona-sample {
@@ -875,7 +875,7 @@ button, input, textarea, select, a {
 .bean-projects-list { padding: 0; }
 .bean-projects-row { cursor: pointer; }
 .bean-projects-row--selected {
-  border-color: var(--bean-accent);
+  border-color: var(--bean-accent-text);
   background: var(--bean-surface-2);
 }
 .bean-projects-launch {
@@ -898,7 +898,7 @@ button, input, textarea, select, a {
   padding: 6px 11px;
   cursor: pointer;
 }
-.bean-launch-chip:hover { border-color: var(--bean-accent); }
+.bean-launch-chip:hover { border-color: var(--bean-accent-text); }
 .bean-launch-form {
   display: flex;
   flex-direction: column;
@@ -1025,7 +1025,7 @@ button, input, textarea, select, a {
 .bean-settings-tab--active {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
-  border-color: var(--bean-accent);
+  border-color: var(--bean-accent-text);
 }
 .bean-settings-card {
   flex: none;
@@ -1123,7 +1123,7 @@ button, input, textarea, select, a {
 }
 .bean-about-version {
   font: 12px ui-monospace, monospace;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
 }
 .bean-about-desc {
   margin: 8px 0 0;
@@ -1170,7 +1170,7 @@ button, input, textarea, select, a {
 }
 .bean-about-update-link {
   font-size: 12px;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
 }
 
 .bean-memory-review { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); z-index: 10; }
@@ -1188,7 +1188,7 @@ button, input, textarea, select, a {
 .bean-memory-del:hover { color: var(--bean-text); }
 
 /* Notes */
-.bean-notes-version-link { color: var(--bean-accent); text-decoration: underline; cursor: pointer; }
+.bean-notes-version-link { color: var(--bean-accent-text); text-decoration: underline; cursor: pointer; }
 
 .bean-notes-body { flex: 1; overflow-y: auto; font-size: 13px; line-height: 1.55; }
 .bean-notes-body .bean-md h1, .bean-notes-body .bean-md h2, .bean-notes-body .bean-md h3 {
@@ -1206,7 +1206,7 @@ button, input, textarea, select, a {
   flex: none;
   font-size: 12px;
   font-weight: 600;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: transparent;
   border: 1px solid var(--bean-border);
   border-radius: 8px;
@@ -1236,7 +1236,7 @@ button, input, textarea, select, a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.bean-notes-idx-open { flex: none; font: 600 10px ui-monospace, monospace; color: var(--bean-accent); }
+.bean-notes-idx-open { flex: none; font: 600 10px ui-monospace, monospace; color: var(--bean-accent-text); }
 .bean-notes-idx-date { flex: none; font: 10px ui-monospace, monospace; color: var(--bean-text-dim); }
 
 /* Always the filled glyph — gold when starred, quiet grey when not. An outline star reads as a
@@ -1304,7 +1304,7 @@ button, input, textarea, select, a {
   padding: 0;
   cursor: pointer;
   font: 600 10.5px ui-monospace, monospace;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
 }
 .bean-notes-idx-continue:hover { text-decoration: underline; }
 
@@ -1370,7 +1370,7 @@ button, input, textarea, select, a {
 .bean-md a, .bean-md a:visited { color: var(--bean-link); text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .bean-md a:hover { text-decoration-thickness: 2px; }
 .bean-md a:focus-visible { outline: 2px solid var(--bean-link); outline-offset: 2px; border-radius: 2px; }
-.bean-md input[type="checkbox"] { margin-right: 6px; accent-color: var(--bean-accent); }
+.bean-md input[type="checkbox"] { margin-right: 6px; accent-color: var(--bean-accent-text); }
 .bean-md input[type="checkbox"]:not([disabled]) { cursor: pointer; }
 
 /* Routines (mockup 1a — "Routine as a recipe") */
@@ -1471,7 +1471,7 @@ button, input, textarea, select, a {
 }
 .bean-routines-chip-select {
   font: 600 14px ui-monospace, monospace;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: var(--bean-surface-2);
   border: 1px solid var(--bean-border);
   border-radius: 7px;
@@ -1501,7 +1501,7 @@ button, input, textarea, select, a {
 .bean-routines-custom-link {
   margin-left: 8px;
   font-size: 12.5px;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: none;
   border: none;
   padding: 0;
@@ -1527,7 +1527,7 @@ button, input, textarea, select, a {
   align-items: center;
   gap: 6px;
   font-size: 12.5px;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
 }
 .bean-routines-next-dot {
   width: 6px;
@@ -1552,7 +1552,7 @@ button, input, textarea, select, a {
 .bean-routines-type-btn--on {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
-  border-color: var(--bean-accent);
+  border-color: var(--bean-accent-text);
 }
 
 /* Queue: the todo backlog for a todo-driven routine */
@@ -1573,7 +1573,7 @@ button, input, textarea, select, a {
 .bean-routines-todo-link {
   font-size: 13px;
   font-weight: 600;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
   background: none;
   border: none;
   cursor: pointer;
@@ -1602,15 +1602,15 @@ button, input, textarea, select, a {
   border-radius: 13px;
   padding: 11px 15px;
 }
-.bean-routines-todo-add:focus-within { border-color: var(--bean-accent); }
+.bean-routines-todo-add:focus-within { border-color: var(--bean-accent-text); }
 .bean-routines-todo-add-input {
   font-size: 13px;
   font-weight: 600;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
 }
-.bean-routines-todo-add-input::placeholder { color: var(--bean-accent); font-weight: 600; }
+.bean-routines-todo-add-input::placeholder { color: var(--bean-accent-text); font-weight: 600; }
 .bean-routines-todo--dragging { opacity: 0.45; }
-.bean-routines-todo--drop { border-color: var(--bean-accent); box-shadow: 0 0 0 1px var(--bean-accent); }
+.bean-routines-todo--drop { border-color: var(--bean-accent-text); box-shadow: 0 0 0 1px var(--bean-accent-text); }
 
 /* Steps: numbered timeline of delegate cards */
 .bean-routines-section-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
@@ -1663,7 +1663,7 @@ button, input, textarea, select, a {
 .bean-chip-menu-trigger--accent {
   color: var(--bean-accent-ink);
   background: var(--bean-accent);
-  border-color: var(--bean-accent);
+  border-color: var(--bean-accent-text);
 }
 .bean-chip-menu-trigger--accent .bean-chip-menu-caret { color: color-mix(in oklch, var(--bean-accent-ink) 70%, transparent); }
 /* Keep a step's chip triggers from stretching to the instruction below when a skill/project
@@ -1679,8 +1679,8 @@ button, input, textarea, select, a {
 .bean-routines-handle:active { cursor: grabbing; }
 .bean-routines-step--dragging { opacity: 0.45; }
 .bean-routines-step--drop .bean-routines-step-card {
-  border-color: var(--bean-accent);
-  box-shadow: 0 0 0 1px var(--bean-accent);
+  border-color: var(--bean-accent-text);
+  box-shadow: 0 0 0 1px var(--bean-accent-text);
 }
 .bean-routines-step-instruction {
   min-height: 62px;
@@ -1707,9 +1707,9 @@ button, input, textarea, select, a {
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
-  color: var(--bean-accent);
+  color: var(--bean-accent-text);
 }
-.bean-routines-add:hover { border-color: var(--bean-accent); }
+.bean-routines-add:hover { border-color: var(--bean-accent-text); }
 .bean-routines-add-plus { font-size: 15px; }
 .bean-routines-add-hint { font-weight: 400; color: var(--bean-text-dim); }
 
@@ -1853,6 +1853,6 @@ button, input, textarea, select, a {
 /* Keyboard focus must stay visible: a few inputs clear the UA outline for the wrapper look.
    Last rule in the file so it wins the specificity tie with those `outline: none` blocks. */
 :where(button, a, input, textarea, select, [tabindex]):focus-visible {
-  outline: 2px solid var(--bean-accent);
+  outline: 2px solid var(--bean-accent-text);
   outline-offset: 2px;
 }

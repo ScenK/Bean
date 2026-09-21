@@ -57,7 +57,9 @@ function contrast(fg: [number, number, number], bg: [number, number, number]): n
 
 const SURFACES = ["--bean-bg", "--bean-surface", "--bean-surface-2"] as const;
 // Body text (4.5:1) vs. icons and control outlines (3:1).
-const TEXT_ON_SURFACE = ["--bean-text", "--bean-text-dim", "--bean-accent", "--bean-link", "--bean-error", "--bean-orb-check-ink"];
+// `--bean-accent` is a *fill* tone and is deliberately not in this list — accent used as ink or
+// as a line on a surface is `--bean-accent-text`, which is what has to clear 4.5:1.
+const TEXT_ON_SURFACE = ["--bean-text", "--bean-text-dim", "--bean-accent-text", "--bean-link", "--bean-error", "--bean-orb-check-ink"];
 const GRAPHIC_ON_SURFACE = ["--bean-star", "--bean-control-border"];
 
 describe.each(["hearth", "graphite"])("%s theme contrast", (theme) => {

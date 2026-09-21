@@ -3,11 +3,22 @@
 Renderer colors that land on a surface or on an accent fill go through a `--bean-*` token in
 `packages/app/src/renderer/theme.css`, and each token has a contrast job it must keep:
 
-- text tokens (`--bean-text`, `--bean-text-dim`, `--bean-accent`, `--bean-link`, `--bean-error`,
-  `--bean-orb-check-ink`) — **4.5:1 against all three surfaces** (`--bean-bg`, `--bean-surface`,
+- text tokens (`--bean-text`, `--bean-text-dim`, `--bean-accent-text`, `--bean-link`,
+  `--bean-error`, `--bean-orb-check-ink`) — **4.5:1 against all three surfaces** (`--bean-bg`, `--bean-surface`,
   `--bean-surface-2`), because panels put the same text on all of them;
 - graphic tokens (`--bean-star`, `--bean-control-border`) — **3:1** (WCAG 1.4.11);
 - `--bean-accent-ink` on an `--bean-accent` fill — 4.5:1 (buttons, selected rows, chips).
+
+The accent is **three tokens with three jobs**, and mixing them is the mistake to avoid:
+`--bean-accent` is the fill (hearth keeps its original bright amber, which is only 2.4:1 as
+text — never use it as ink on a surface); `--bean-accent-text` is that accent darkened for ink
+and lines on a surface; `--bean-accent-ink` is what reads *on* the fill — dark brown in hearth,
+not white, because white on the original amber is 3.3:1. The one place `--bean-accent` is
+correct as ink is on an `--bean-accent-ink` fill (the inverted badges), where it reads 4.8:1.
+
+Accepted exception: an accent-filled button on `--bean-bg` is 2.4:1 fill-to-page in hearth. The
+fill brightness is a deliberate product choice; the control is identified by its 4.8:1 label.
+Revisit only by outlining those buttons in `--bean-accent-text`, never by dulling the fill.
 
 `--bean-control-border` exists because `--bean-border` is a *separator* tone (1:1 with the page
 in hearth). A control whose only cue is a colored track (the skills/routines toggles) uses
