@@ -1486,6 +1486,9 @@ button, input, textarea, select, a {
 .bean-md pre { background: var(--bean-surface-2); border-radius: 8px; padding: 8px 10px; overflow-x: auto; }
 .bean-md pre code { background: transparent; padding: 0; }
 .bean-md blockquote { border-left: 3px solid var(--bean-border); padding-left: 10px; color: var(--bean-text-dim); }
+.bean-md a, .bean-md a:visited { color: var(--bean-link); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.bean-md a:hover { text-decoration-thickness: 2px; }
+.bean-md a:focus-visible { outline: 2px solid var(--bean-link); outline-offset: 2px; border-radius: 2px; }
 .bean-md input[type="checkbox"] { margin-right: 6px; accent-color: var(--bean-accent); }
 .bean-md input[type="checkbox"]:not([disabled]) { cursor: pointer; }
 
