@@ -10,11 +10,31 @@ export interface DashRun extends RunRecord {
 }
 
 export interface DashStep {
+  /** Position in the run's recorded step list — NOT the routine's step number when the
+   * routine is todo-driven (the runner appends one pass of every step per todo). `todo`
+   * disambiguates those; see stepLabel(). */
   index: number;
   kind: "delegate" | "chat";
   ok: boolean;
   summary: string;
+  /** The todo this pass ran for, when the runner labelled the output `[todo: ...] `. */
+  todo?: string;
 }
+
+const TODO_LABEL = /^\[todo: ([^\]]*)\] ?/;
+
+/** The runner prefixes a todo pipeline's output with `[todo: <text>] ` — lift that out so the
+ * card can name the todo instead of claiming a step number that doesn't line up. */
+export function parseStep(step: { kind: "delegate" | "chat"; ok: boolean; summary: string }, index: number): DashStep {
+  const m = TODO_LABEL.exec(step.summary);
+  return m
+    ? { index, kind: step.kind, ok: step.ok, summary: step.summary.slice(m[0].length), todo: m[1] }
+    : { index, kind: step.kind, ok: step.ok, summary: step.summary };
+}
+
+/** What to call a step in the UI. A todo-labelled pass can't honestly claim "step N". */
+export const stepLabel = (step: DashStep): string =>
+  step.todo === undefined ? `step ${step.index + 1}` : "todo";
 
 export const runId = (routine: string, startedAt: string): string => `${routine}@${startedAt}`;
 
@@ -32,7 +52,7 @@ export function flattenRuns(states: Record<string, RoutineStateView>): DashRun[]
 /** A failed step is the only thing in a run that can actually need a decision; everything
  * else resolved without you and collapses to one line. */
 export function splitSteps(run: DashRun | undefined): { needs: DashStep[]; resolved: DashStep[] } {
-  const steps: DashStep[] = (run?.steps ?? []).map((s, index) => ({ index, ...s }));
+  const steps: DashStep[] = (run?.steps ?? []).map(parseStep);
   return { needs: steps.filter((s) => !s.ok), resolved: steps.filter((s) => s.ok) };
 }
 

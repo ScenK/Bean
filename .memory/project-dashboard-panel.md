@@ -19,6 +19,13 @@ Mapping decisions worth keeping:
 - **"Mark all reviewed" is `localStorage`**, per
   [convention-renderer-view-prefs-in-localstorage.md](convention-renderer-view-prefs-in-localstorage.md)
   — nothing in main or another surface reads it.
+- **A todo-driven run records one pass of every step per todo**, so a step's position in
+  `RunRecord.steps` is not the routine's step number. The runner prefixes those outputs with
+  `[todo: <text>] `; `parseStep()`/`stepLabel()` read that prefix and name the todo instead of
+  claiming a wrong "Step N". Don't reintroduce position-as-step-number.
+- **Deferred (review policy P2):** "Run routine again" on a todo-driven routine with an empty
+  queue records a successful no-op run. Guarding it needs a `todosList` poll the dashboard
+  otherwise doesn't want; the row it leaves is visible and harmless.
 - `runs.ts` is pure and unit-tested (`__test__/dashboard-runs.test.ts`); the panel holds the JSX.
 
 **Adding any new component window touches five places** — miss one and it fails at a different

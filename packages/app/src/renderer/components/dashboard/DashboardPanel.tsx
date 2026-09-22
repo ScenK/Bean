@@ -4,7 +4,7 @@ import type { Routine } from "@bean/core";
 import { nextRun } from "@bean/core/cron";
 import { Markdown } from "../../shared/Markdown.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
-import { flattenRuns, splitSteps, unreadRuns, type DashRun, type DashStep } from "./runs.js";
+import { flattenRuns, splitSteps, stepLabel, unreadRuns, type DashRun, type DashStep } from "./runs.js";
 import type { RoutineStateView } from "../../../ipc.js";
 
 // Renderer-only view pref (see .memory/convention-renderer-view-prefs-in-localstorage.md):
@@ -28,6 +28,9 @@ const dayLabel = (iso: string, now: Date): string => {
   return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 };
 
+const stepTitle = (step: DashStep): string =>
+  step.todo === undefined ? `Step ${step.index + 1} failed` : `Failed on todo: ${step.todo}`;
+
 function nextRunText(routine: Routine | undefined): string {
   if (!routine) return "routine deleted — history kept";
   if (!routine.enabled) return "paused — won't run again until you enable it";
@@ -48,6 +51,8 @@ export function DashboardPanel() {
   const [resolvedOpen, setResolvedOpen] = useState(false);
   const [digestOpen, setDigestOpen] = useState(false);
   const [reviewedAt, setReviewedAt] = useState<string | null>(readReviewed());
+  const [rerunning, setRerunning] = useState(false);
+  const [notice, setNotice] = useState("");
 
   const refresh = async (): Promise<void> => {
     const [list, st] = await Promise.all([window.bean.routinesList(), window.bean.routinesState()]);
@@ -68,10 +73,12 @@ export function DashboardPanel() {
   const unreadIds = useMemo(() => new Set(unread.map((r) => r.id)), [unread]);
 
   // Newest run is the default read — the dashboard opens on "what happened last night".
+  // History is capped, so the selected run can also roll out from under us on a poll; fall
+  // back to the newest rather than leaving the detail pane blank.
   useEffect(() => {
-    if (!selectedId && runs[0]) setSelectedId(runs[0].id);
+    if (runs[0] && !runs.some((r) => r.id === selectedId)) setSelectedId(runs[0].id);
   }, [runs, selectedId]);
-  useEffect(() => { setResolvedOpen(false); setDigestOpen(false); }, [selectedId]);
+  useEffect(() => { setResolvedOpen(false); setDigestOpen(false); setNotice(""); }, [selectedId]);
 
   const run: DashRun | undefined = runs.find((r) => r.id === selectedId);
   const { needs, resolved } = splitSteps(run);
@@ -88,15 +95,23 @@ export function DashboardPanel() {
   const askBean = (step: DashStep): void => {
     if (!run) return;
     window.bean.runInChat(
-      `Step ${step.index + 1} of my routine "${run.routine}" failed on its ${clock(run.startedAt)} run:\n\n` +
+      `${stepTitle(step)} in my routine "${run.routine}" on its ${clock(run.startedAt)} run:\n\n` +
         `${step.summary}\n\nWhat happened, and what should I do about it?`,
       `Routine: ${run.routine}`,
     );
   };
 
   const rerun = async (): Promise<void> => {
-    if (run) await window.bean.routinesRunNow(run.routine);
-    await refresh();
+    if (!run) return;
+    setRerunning(true);
+    setNotice("");
+    try {
+      const { started, reason } = await window.bean.routinesRunNow(run.routine);
+      setNotice(started ? "" : (reason ?? "couldn't start the run"));
+      await refresh();
+    } finally {
+      setRerunning(false);
+    }
   };
 
   const runRow = (r: DashRun) => {
@@ -104,8 +119,16 @@ export function DashboardPanel() {
     return (
       <div
         key={r.id}
+        role="button"
+        tabIndex={0}
+        aria-pressed={selectedId === r.id}
         class={`bean-skills-row bean-dash-row${selectedId === r.id ? " bean-skills-row--selected" : ""}`}
         onClick={() => setSelectedId(r.id)}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          setSelectedId(r.id);
+        }}
       >
         <span class={`bean-dash-dot bean-dash-dot--${r.status}`} />
         <div class="bean-skills-row-main">
@@ -218,7 +241,7 @@ export function DashboardPanel() {
                         <div class="bean-dash-resolved-list">
                           {resolved.map((s) => (
                             <div key={s.index} class="bean-dash-resolved-item">
-                              <span class="bean-dash-meta">step {s.index + 1} · {s.kind}</span>
+                              <span class="bean-dash-meta">{stepLabel(s)} · {s.kind}</span>
                               <span>{s.summary}</span>
                             </div>
                           ))}
@@ -229,21 +252,27 @@ export function DashboardPanel() {
                 : null}
 
               {needs.map((s, i) =>
-                spineRow(`step ${s.index + 1}`, "call", (
+                spineRow(stepLabel(s), "call", (
                   <div class="bean-dash-card">
                     <div class="bean-dash-card-tags">
                       <span class="bean-dash-tag">NEEDS YOU · {i + 1} OF {needs.length}</span>
                       <span class="bean-dash-meta">{run.routine} · {s.kind} step</span>
                     </div>
-                    <div class="bean-dash-card-title">Step {s.index + 1} failed</div>
+                    <div class="bean-dash-card-title">{stepTitle(s)}</div>
                     <div class="bean-dash-card-text">{s.summary}</div>
                     <div class="bean-dash-card-actions">
                       <button type="button" class="bean-btn" onClick={() => askBean(s)}>
                         Ask Bean
                       </button>
-                      <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void rerun()}>
-                        Run routine again
+                      <button
+                        type="button"
+                        class="bean-btn bean-btn--ghost"
+                        disabled={rerunning}
+                        onClick={() => void rerun()}
+                      >
+                        {rerunning ? "Starting…" : "Run routine again"}
                       </button>
+                      {notice ? <span class="bean-dash-notice">{notice}</span> : null}
                     </div>
                   </div>
                 )),
