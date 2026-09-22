@@ -5,30 +5,31 @@ import { nextRun } from "@bean/core/cron";
 import { Markdown } from "../../shared/Markdown.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import {
-  flattenRuns, groupRuns, splitSteps, stepLabel, unreadRuns,
+  flattenRuns, groupRuns, reviewRuns, splitSteps, stepLabel, unreadRuns,
   type DashRun, type DashStep, type RunBucket,
 } from "./runs.js";
 import type { RoutineStateView } from "../../../ipc.js";
 
 // Renderer-only view prefs (see .memory/convention-renderer-view-prefs-in-localstorage.md):
-// "I've seen everything up to here", and which day headers are folded. Nothing in main or
+// which runs you've marked reviewed, and which day headers are folded. Nothing in main or
 // another surface needs either.
-const REVIEWED_KEY = "bean.dashboard.reviewedAt";
-const readReviewed = (): string | null => {
-  try { return localStorage.getItem(REVIEWED_KEY); } catch { return null; }
-};
-
+const REVIEWED_KEY = "bean.dashboard.reviewedRuns";
 // Days open by default except older ones (see dayOpenByDefault), so what's stored is the set of
 // headers you've *flipped* away from that default — one list instead of a collapsed list plus
 // an expanded one.
 const FLIPPED_KEY = "bean.dashboard.flippedDays";
-function readFlipped(): string[] {
+
+function readList(key: string): string[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(FLIPPED_KEY) ?? "[]") as unknown;
+    const raw = JSON.parse(localStorage.getItem(key) ?? "[]") as unknown;
     return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : [];
   } catch {
     return [];
   }
+}
+
+function writeList(key: string, value: string[]): void {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode: still works this session */ }
 }
 
 const pad2 = (n: number): string => String(n).padStart(2, "0");
@@ -80,9 +81,11 @@ export function DashboardPanel() {
   const [states, setStates] = useState<Record<string, RoutineStateView>>({});
   const [selectedKey, setSelectedKey] = useState<string | undefined>(undefined);
   const [openResolved, setOpenResolved] = useState<string[]>([]);
-  const [openDigests, setOpenDigests] = useState<string[]>([]);
-  const [reviewedAt, setReviewedAt] = useState<string | null>(readReviewed());
-  const [flipped, setFlipped] = useState<string[]>(readFlipped);
+  // The latest run's digest is the one you came to read, so it starts open and the rest stay
+  // shut; this list holds the runs flipped away from that default.
+  const [flippedDigests, setFlippedDigests] = useState<string[]>([]);
+  const [reviewed, setReviewed] = useState<string[]>(() => readList(REVIEWED_KEY));
+  const [flipped, setFlipped] = useState<string[]>(() => readList(FLIPPED_KEY));
   const [rerunning, setRerunning] = useState(false);
   const [notice, setNotice] = useState("");
 
@@ -103,8 +106,11 @@ export function DashboardPanel() {
   const runs = useMemo(() => flattenRuns(states), [states]);
   const days = useMemo(() => groupRuns(runs), [runs]);
   const buckets = useMemo(() => days.flatMap((d) => d.buckets), [days]);
-  const unread = useMemo(() => unreadRuns(runs, reviewedAt), [runs, reviewedAt]);
-  const unreadIds = useMemo(() => new Set(unread.map((r) => r.id)), [unread]);
+  const reviewedSet = useMemo(() => new Set(reviewed), [reviewed]);
+  const unreadIds = useMemo(
+    () => new Set(unreadRuns(runs, reviewedSet).map((r) => r.id)),
+    [runs, reviewedSet],
+  );
 
   // The newest day's first routine is the default read — the dashboard opens on "what happened
   // last night". History is capped, so the selection can also roll out from under us on a poll;
@@ -112,7 +118,7 @@ export function DashboardPanel() {
   useEffect(() => {
     if (buckets[0] && !buckets.some((b) => b.key === selectedKey)) setSelectedKey(buckets[0].key);
   }, [buckets, selectedKey]);
-  useEffect(() => { setOpenResolved([]); setOpenDigests([]); setNotice(""); }, [selectedKey]);
+  useEffect(() => { setOpenResolved([]); setFlippedDigests([]); setNotice(""); }, [selectedKey]);
 
   const bucket: RunBucket | undefined = buckets.find((b) => b.key === selectedKey);
   const routine = routines.find((r) => r.name === bucket?.routine);
@@ -124,6 +130,7 @@ export function DashboardPanel() {
     () => (bucket?.runs ?? []).map((run) => ({ run, ...splitSteps(run) })),
     [bucket],
   );
+  const unreadHere = (bucket?.runs ?? []).filter((r) => unreadIds.has(r.id)).length;
   const needsTotal = runViews.reduce((n, v) => n + v.needs.length, 0);
   const resolvedTotal = runViews.reduce((n, v) => n + v.resolved.length, 0);
   const isNewest = bucket !== undefined && buckets[0]?.key === bucket.key;
@@ -134,15 +141,18 @@ export function DashboardPanel() {
   const toggleDay = (date: string): void => {
     setFlipped((prev) => {
       const next = prev.includes(date) ? prev.filter((k) => k !== date) : [...prev, date];
-      try { localStorage.setItem(FLIPPED_KEY, JSON.stringify(next)); } catch { /* private mode: fold still works this session */ }
+      writeList(FLIPPED_KEY, next);
       return next;
     });
   };
 
-  const markAllReviewed = (): void => {
-    const stamp = new Date().toISOString();
-    try { localStorage.setItem(REVIEWED_KEY, stamp); } catch { /* private mode — badge just stays */ }
-    setReviewedAt(stamp);
+  // Reviewing is scoped to what's on screen — the day you just read, not every older day
+  // still sitting unread in the rail.
+  const markDayReviewed = (): void => {
+    if (!bucket) return;
+    const next = reviewRuns(reviewedSet, bucket.runs.map((r) => r.id), runs);
+    writeList(REVIEWED_KEY, next);
+    setReviewed(next);
   };
 
   const askBean = (run: DashRun, step: DashStep): void => {
@@ -216,7 +226,7 @@ export function DashboardPanel() {
   const runSection = (view: (typeof runViews)[number], index: number, firstNeed: number) => {
     const { run, needs, resolved } = view;
     const resolvedOpen = openResolved.includes(run.id);
-    const digestOpen = openDigests.includes(run.id);
+    const digestOpen = (index === runViews.length - 1) !== flippedDigests.includes(run.id);
     return [
       spineRow(`${run.id}-head`, `run ${index + 1}`, "run", (
         <div class="bean-dash-run-head">
@@ -288,7 +298,7 @@ export function DashboardPanel() {
                 type="button"
                 class="bean-dash-digest-head"
                 aria-expanded={digestOpen}
-                onClick={() => toggle(openDigests, setOpenDigests, run.id)}
+                onClick={() => toggle(flippedDigests, setFlippedDigests, run.id)}
               >
                 <span class="bean-field-label">DIGEST · RUN {index + 1}</span>
                 <span class="bean-dash-resolved-toggle">{digestOpen ? "Hide ▴" : "Read ▾"}</span>
@@ -368,10 +378,10 @@ export function DashboardPanel() {
               <button
                 type="button"
                 class="bean-btn bean-btn--ghost"
-                disabled={unread.length === 0}
-                onClick={markAllReviewed}
+                disabled={unreadHere === 0}
+                onClick={markDayReviewed}
               >
-                {unread.length > 0 ? `Mark all reviewed (${unread.length})` : "All reviewed"}
+                {unreadHere > 0 ? `Mark this day reviewed (${unreadHere})` : "Day reviewed"}
               </button>
             </div>
 

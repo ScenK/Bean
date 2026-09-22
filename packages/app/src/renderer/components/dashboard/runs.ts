@@ -65,9 +65,18 @@ export function splitSteps(run: DashRun | undefined): { needs: DashStep[]; resol
   return { needs: steps.filter((s) => !s.ok), resolved: steps.filter((s) => s.ok) };
 }
 
-/** Runs finished after the last "mark all reviewed" — the rail's unread badge. */
-export function unreadRuns(runs: DashRun[], reviewedAt: string | null): DashRun[] {
-  return reviewedAt ? runs.filter((r) => r.finishedAt > reviewedAt) : runs;
+/** Runs you haven't marked reviewed — the rail's unread dot. Reviewing is per run rather than
+ * a single "seen up to here" timestamp, because the panel marks one day at a time: a timestamp
+ * would silently clear every older day too. */
+export function unreadRuns(runs: DashRun[], reviewed: ReadonlySet<string>): DashRun[] {
+  return runs.filter((r) => !reviewed.has(r.id));
+}
+
+/** Adds `ids` to the reviewed set, dropping any that no longer exist in `runs` — history is
+ * capped, so without the prune the stored list would grow past what it can ever match. */
+export function reviewRuns(reviewed: ReadonlySet<string>, ids: string[], runs: DashRun[]): string[] {
+  const live = new Set(runs.map((r) => r.id));
+  return [...new Set([...reviewed, ...ids])].filter((id) => live.has(id));
 }
 
 /** Every run a routine did on one local day — the dashboard's unit of selection and of

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { flattenRuns, groupRuns, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
+import { flattenRuns, groupRuns, reviewRuns, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
 import type { RoutineStateView } from "../src/ipc.js";
 
 const record = (startedAt: string, finishedAt: string, ok: boolean[]) => ({
@@ -117,10 +117,20 @@ describe("dashboard runs", () => {
     expect(today!.buckets.map((b) => b.key)).toEqual(["2026-09-21|nightly", "2026-09-21|weekly"]);
   });
 
-  test("unread is everything finished after the review mark, all runs when never reviewed", () => {
+  test("everything is unread until you review it, run by run", () => {
     const runs = flattenRuns(states);
-    expect(unreadRuns(runs, null)).toHaveLength(3);
-    expect(unreadRuns(runs, "2026-09-20T09:00:00Z").map((r) => r.routine)).toEqual(["nightly"]);
-    expect(unreadRuns(runs, "2026-09-22T09:00:00Z")).toEqual([]);
+    expect(unreadRuns(runs, new Set())).toHaveLength(3);
+    const oneDay = runs.filter((r) => r.routine === "weekly").map((r) => r.id);
+    const reviewed = new Set(reviewRuns(new Set(), oneDay, runs));
+    // Reviewing one day leaves every other day unread — the whole point of scoping the button
+    // to the panel instead of stamping a "seen up to here" time.
+    expect(unreadRuns(runs, reviewed).map((r) => r.routine)).toEqual(["nightly"]);
   });
+
+  test("reviewing drops ids for runs that have rolled out of the capped history", () => {
+    const runs = flattenRuns(states);
+    const stale = new Set(["nightly@1999-01-01T00:00:00Z"]);
+    expect(reviewRuns(stale, [runs[0]!.id], runs)).toEqual([runs[0]!.id]);
+  });
+
 });

@@ -16,9 +16,12 @@ Mapping decisions worth keeping:
   "Dismiss" affordance was deliberately not built — it would have to lie or invent a store.
 - **Per-step timestamps don't exist**, only run start/finish, so the spine's time column reads
   `step N` for step rows. Adding real step times means changing `RunRecord` in core.
-- **"Mark all reviewed" is `localStorage`**, per
+- **Reviewing is per run, scoped to the day on screen** (`localStorage`, per
   [convention-renderer-view-prefs-in-localstorage.md](convention-renderer-view-prefs-in-localstorage.md)
-  — nothing in main or another surface reads it.
+  — nothing in main or another surface reads it). It was a single "seen up to here" timestamp
+  first; that silently cleared every older day too, which is why `reviewRuns()` stores ids and
+  prunes them against the live run list instead. The latest run's digest starts open, older
+  ones shut — same flipped-from-default list trick as the day folds.
 - **A todo-driven run records one pass of every step per todo**, so a step's position in
   `RunRecord.steps` is not the routine's step number. The runner prefixes those outputs with
   `[todo: <text>] `; `parseStep()`/`stepLabel()` read that prefix and name the todo instead of
