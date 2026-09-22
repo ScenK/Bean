@@ -6,18 +6,13 @@ import { Markdown } from "../../shared/Markdown.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import {
   flattenRuns, groupRuns, reviewRuns, splitSteps, stepLabel, unreadRuns,
-  type DashRun, type DashStep, type RunBucket,
+  type DashRun, type DashStep, type DayGroup, type RunBucket,
 } from "./runs.js";
 import type { RoutineStateView } from "../../../ipc.js";
 
-// Renderer-only view prefs (see .memory/convention-renderer-view-prefs-in-localstorage.md):
-// which runs you've marked reviewed, and which day headers are folded. Nothing in main or
-// another surface needs either.
+// Renderer-only view pref (see .memory/convention-renderer-view-prefs-in-localstorage.md):
+// which runs you've marked reviewed. Nothing in main or another surface needs it.
 const REVIEWED_KEY = "bean.dashboard.reviewedRuns";
-// Days open by default except older ones (see dayOpenByDefault), so what's stored is the set of
-// headers you've *flipped* away from that default — one list instead of a collapsed list plus
-// an expanded one.
-const FLIPPED_KEY = "bean.dashboard.flippedDays";
 
 function readList(key: string): string[] {
   try {
@@ -50,10 +45,6 @@ const dayLabel = (date: string, now: Date): string => {
   return then.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 };
 
-// Only the newest day starts open — older days are history you go looking for, not something
-// to scroll past every morning.
-const dayOpenByDefault = (dayIndex: number): boolean => dayIndex === 0;
-
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 const stepTitle = (step: DashStep): string => {
@@ -71,22 +62,25 @@ function nextRunText(routine: Routine | undefined): string {
   }
 }
 
+type RunView = { run: DashRun; needs: DashStep[]; resolved: DashStep[] };
+
 // 4a "Night-shift ledger, panel form": rail of days on the left, one time spine on the right.
-// The unit of reading is a routine's whole day — a routine that fires several times a day is one
-// rail row whose runs the spine reads in order — and the only thing a run can genuinely ask of
-// you is a failed step, so failures become the numbered NEEDS YOU cards (numbered across the
-// day, not per run) and every step that passed collapses into its run's RESOLVED line.
+// The unit of reading is a whole day — every routine that ran, each a section of RUN 1, RUN 2, …
+// — so the morning is one pass down one column. The only thing a run can genuinely ask of you is
+// a failed step, so failures become the NEEDS YOU cards, numbered across the whole day rather
+// than per run, and every step that passed collapses into its run's RESOLVED line.
 export function DashboardPanel() {
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [states, setStates] = useState<Record<string, RoutineStateView>>({});
-  const [selectedKey, setSelectedKey] = useState<string | undefined>(undefined);
+  const [selectedDate, setSelectedDate] = useState<string | undefined>(undefined);
   const [openResolved, setOpenResolved] = useState<string[]>([]);
-  // The latest run's digest is the one you came to read, so it starts open and the rest stay
+  // Each routine's latest digest is what you came to read, so it starts open and the rest stay
   // shut; this list holds the runs flipped away from that default.
   const [flippedDigests, setFlippedDigests] = useState<string[]>([]);
   const [reviewed, setReviewed] = useState<string[]>(() => readList(REVIEWED_KEY));
-  const [flipped, setFlipped] = useState<string[]>(() => readList(FLIPPED_KEY));
-  const [rerunning, setRerunning] = useState(false);
+  // The routine whose run is being started, "" when none — the button that started it is the
+  // one that says so.
+  const [rerunning, setRerunning] = useState("");
   const [notice, setNotice] = useState("");
 
   const refresh = async (): Promise<void> => {
@@ -105,52 +99,52 @@ export function DashboardPanel() {
 
   const runs = useMemo(() => flattenRuns(states), [states]);
   const days = useMemo(() => groupRuns(runs), [runs]);
-  const buckets = useMemo(() => days.flatMap((d) => d.buckets), [days]);
   const reviewedSet = useMemo(() => new Set(reviewed), [reviewed]);
   const unreadIds = useMemo(
     () => new Set(unreadRuns(runs, reviewedSet).map((r) => r.id)),
     [runs, reviewedSet],
   );
 
-  // The newest day's first routine is the default read — the dashboard opens on "what happened
-  // last night". History is capped, so the selection can also roll out from under us on a poll;
-  // fall back to the newest rather than leaving the detail pane blank.
+  // The newest day is the default read — the dashboard opens on "what happened last night".
+  // History is capped, so the selection can also roll out from under us on a poll; fall back to
+  // the newest rather than leaving the detail pane blank.
   useEffect(() => {
-    if (buckets[0] && !buckets.some((b) => b.key === selectedKey)) setSelectedKey(buckets[0].key);
-  }, [buckets, selectedKey]);
-  useEffect(() => { setOpenResolved([]); setFlippedDigests([]); setNotice(""); }, [selectedKey]);
+    if (days[0] && !days.some((d) => d.date === selectedDate)) setSelectedDate(days[0].date);
+  }, [days, selectedDate]);
+  useEffect(() => { setOpenResolved([]); setFlippedDigests([]); setNotice(""); }, [selectedDate]);
 
-  const bucket: RunBucket | undefined = buckets.find((b) => b.key === selectedKey);
-  const routine = routines.find((r) => r.name === bucket?.routine);
+  const day: DayGroup | undefined = days.find((d) => d.date === selectedDate);
   const now = new Date();
 
-  // Every run of the selected day, split into what needs you and what resolved. The NEEDS YOU
-  // cards are numbered across the whole bucket so the morning has one end, not one per run.
-  const runViews = useMemo(
-    () => (bucket?.runs ?? []).map((run) => ({ run, ...splitSteps(run) })),
-    [bucket],
+  // Every run of the selected day, split into what needs you and what resolved, kept under its
+  // routine. NEEDS YOU cards are numbered across the whole day so the morning has one end.
+  const sections = useMemo(
+    () => (day?.buckets ?? []).map((bucket) => ({
+      bucket,
+      views: bucket.runs.map((run): RunView => ({ run, ...splitSteps(run) })),
+    })),
+    [day],
   );
-  const unreadHere = (bucket?.runs ?? []).filter((r) => unreadIds.has(r.id)).length;
-  const needsTotal = runViews.reduce((n, v) => n + v.needs.length, 0);
-  const resolvedTotal = runViews.reduce((n, v) => n + v.resolved.length, 0);
-  const isNewest = bucket !== undefined && buckets[0]?.key === bucket.key;
+  const needsTotal = day?.needs ?? 0;
+  const resolvedTotal = sections.reduce(
+    (n, s) => n + s.views.reduce((m, v) => m + v.resolved.length, 0),
+    0,
+  );
+  const unreadHere = (day?.buckets ?? []).reduce(
+    (n, b) => n + b.runs.filter((r) => unreadIds.has(r.id)).length,
+    0,
+  );
+  const isNewest = day !== undefined && days[0]?.date === day.date;
 
   const toggle = (list: string[], set: (v: string[]) => void, key: string): void =>
     set(list.includes(key) ? list.filter((k) => k !== key) : [...list, key]);
 
-  const toggleDay = (date: string): void => {
-    setFlipped((prev) => {
-      const next = prev.includes(date) ? prev.filter((k) => k !== date) : [...prev, date];
-      writeList(FLIPPED_KEY, next);
-      return next;
-    });
-  };
-
   // Reviewing is scoped to what's on screen — the day you just read, not every older day
   // still sitting unread in the rail.
   const markDayReviewed = (): void => {
-    if (!bucket) return;
-    const next = reviewRuns(reviewedSet, bucket.runs.map((r) => r.id), runs);
+    if (!day) return;
+    const ids = day.buckets.flatMap((b) => b.runs.map((r) => r.id));
+    const next = reviewRuns(reviewedSet, ids, runs);
     writeList(REVIEWED_KEY, next);
     setReviewed(next);
   };
@@ -163,54 +157,53 @@ export function DashboardPanel() {
     );
   };
 
-  const rerun = async (): Promise<void> => {
-    if (!bucket) return;
-    setRerunning(true);
+  const rerun = async (name: string): Promise<void> => {
+    setRerunning(name);
     setNotice("");
     try {
-      const { started, reason } = await window.bean.routinesRunNow(bucket.routine);
+      const { started, reason } = await window.bean.routinesRunNow(name);
       setNotice(started ? "" : (reason ?? "couldn't start the run"));
       await refresh();
     } finally {
-      setRerunning(false);
+      setRerunning("");
     }
   };
 
-  const bucketRow = (b: RunBucket) => {
-    const unreadHere = b.runs.some((r) => unreadIds.has(r.id));
-    const last = b.runs[b.runs.length - 1]!;
+  const dayRow = (d: DayGroup) => {
+    const unreadThere = d.buckets.some((b) => b.runs.some((r) => unreadIds.has(r.id)));
     return (
       <div
-        key={b.key}
+        key={d.date}
         role="button"
         tabIndex={0}
-        aria-pressed={selectedKey === b.key}
-        class={`bean-skills-row bean-dash-row bean-dash-row--nested${selectedKey === b.key ? " bean-skills-row--selected" : ""}`}
-        onClick={() => setSelectedKey(b.key)}
+        aria-pressed={selectedDate === d.date}
+        class={`bean-skills-row bean-dash-row${selectedDate === d.date ? " bean-skills-row--selected" : ""}`}
+        onClick={() => setSelectedDate(d.date)}
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " ") return;
           e.preventDefault();
-          setSelectedKey(b.key);
+          setSelectedDate(d.date);
         }}
       >
-        <span class={`bean-dash-dot bean-dash-dot--${b.needs > 0 ? "failed" : "ok"}`} />
+        <span class={`bean-dash-dot bean-dash-dot--${d.needs > 0 ? "failed" : "ok"}`} />
         <div class="bean-skills-row-main">
-          <div class="bean-skills-row-name">{b.routine}</div>
+          <div class="bean-skills-row-name">{dayLabel(d.date, now)}</div>
           <div class="bean-dash-row-sub">
-            {plural(b.runs.length, "run")} · {clock(b.runs[0]!.startedAt)}
-            {b.runs.length > 1 ? ` → ${clock(last.startedAt)}` : ""}
+            {plural(d.buckets.length, "routine")} · {plural(d.runCount, "run")}
           </div>
         </div>
-        {b.needs > 0 ? <span class="bean-dash-row-badge">{b.needs}</span> : null}
-        {unreadHere ? <span class="bean-dash-row-unread" title="Not reviewed yet" /> : null}
+        {d.needs > 0 ? <span class="bean-dash-row-badge">{d.needs}</span> : null}
+        {unreadThere ? <span class="bean-dash-row-unread" title="Not reviewed yet" /> : null}
       </div>
     );
   };
 
-  // Routine health: the selected routine's last runs, oldest-left, as one ok/failed bar each.
-  const health = [...(bucket ? (states[bucket.routine]?.history ?? []) : [])].reverse();
-
-  const spineRow = (key: string, time: string, kind: "plain" | "call" | "end" | "run", body: ComponentChildren) => (
+  const spineRow = (
+    key: string,
+    time: string,
+    kind: "plain" | "call" | "end" | "run" | "routine",
+    body: ComponentChildren,
+  ) => (
     <div class="bean-dash-spine-row" key={key}>
       <div class={`bean-dash-time bean-dash-time--${kind}`}>{time}</div>
       <div class="bean-dash-rail">
@@ -221,12 +214,13 @@ export function DashboardPanel() {
     </div>
   );
 
-  // One run's slice of the day's spine: its header, its resolved line, its failed-step cards and
-  // its digest. `firstNeed` is where this run's cards continue the day's running count.
-  const runSection = (view: (typeof runViews)[number], index: number, firstNeed: number) => {
+  // One run's slice of the day: its header, its resolved line, its failed-step cards and its
+  // digest. `firstNeed` is where this run's cards continue the day's running count; `latest` is
+  // its routine's newest run of the day, whose digest starts open.
+  const runSection = (view: RunView, index: number, firstNeed: number, latest: boolean) => {
     const { run, needs, resolved } = view;
     const resolvedOpen = openResolved.includes(run.id);
-    const digestOpen = (index === runViews.length - 1) !== flippedDigests.includes(run.id);
+    const digestOpen = latest !== flippedDigests.includes(run.id);
     return [
       spineRow(`${run.id}-head`, `run ${index + 1}`, "run", (
         <div class="bean-dash-run-head">
@@ -280,10 +274,10 @@ export function DashboardPanel() {
               <button
                 type="button"
                 class="bean-btn bean-btn--ghost"
-                disabled={rerunning}
-                onClick={() => void rerun()}
+                disabled={rerunning !== ""}
+                onClick={() => void rerun(run.routine)}
               >
-                {rerunning ? "Starting…" : "Run routine again"}
+                {rerunning === run.routine ? "Starting…" : "Run routine again"}
               </button>
               {notice ? <span class="bean-dash-notice">{notice}</span> : null}
             </div>
@@ -303,10 +297,45 @@ export function DashboardPanel() {
                 <span class="bean-field-label">DIGEST · RUN {index + 1}</span>
                 <span class="bean-dash-resolved-toggle">{digestOpen ? "Hide ▴" : "Read ▾"}</span>
               </button>
-              {digestOpen ? <Markdown text={run.digest} /> : null}
+              {digestOpen ? (
+                <div class="bean-dash-digest-body"><Markdown text={run.digest} /></div>
+              ) : null}
             </div>
           ))]
         : []),
+    ];
+  };
+
+  // A routine's whole slice of the day, headed by which routine it is, when it runs next, and
+  // its recent pass/fail history.
+  const routineSection = (bucket: RunBucket, views: RunView[], firstNeed: number) => {
+    const routine = routines.find((r) => r.name === bucket.routine);
+    const health = [...(states[bucket.routine]?.history ?? [])].reverse();
+    let cursor = firstNeed;
+    return [
+      spineRow(`${bucket.key}-routine`, "", "routine", (
+        <div class="bean-dash-routine-head">
+          <div class="bean-dash-routine-main">
+            <span class="bean-dash-routine-name">{bucket.routine}</span>
+            <span class="bean-dash-meta">
+              {plural(bucket.runs.length, "run")} · {nextRunText(routine)}
+            </span>
+          </div>
+          <div
+            class="bean-dash-health-bars bean-dash-health-bars--inline"
+            title={`${plural(health.length, "run")} in history, ${health.filter((h) => h.status === "failed").length} failed`}
+          >
+            {health.map((h) => (
+              <span key={h.startedAt} class={`bean-dash-health-bar bean-dash-health-bar--${h.status}`} />
+            ))}
+          </div>
+        </div>
+      )),
+      ...views.flatMap((view, i) => {
+        const rows = runSection(view, i, cursor, i === views.length - 1);
+        cursor += view.needs.length;
+        return rows;
+      }),
     ];
   };
 
@@ -315,60 +344,30 @@ export function DashboardPanel() {
   return (
     <div class="bean-skills">
       <div class="bean-skills-list">
-        <div class="bean-skills-list-label">Runs · {runs.length}</div>
-        {runs.length === 0 ? (
+        <div class="bean-skills-list-label">Days · {days.length}</div>
+        {days.length === 0 ? (
           <div class="bean-panel-empty">Nothing has run yet — routines report here once they finish.</div>
         ) : (
-          days.map((day, i) => {
-            const open = dayOpenByDefault(i) !== flipped.includes(day.date);
-            return (
-              <div key={day.date}>
-                <button
-                  type="button"
-                  class="bean-skills-list-label bean-skills-list-label--toggle bean-notes-group"
-                  aria-expanded={open}
-                  onClick={() => toggleDay(day.date)}
-                >
-                  <span class="bean-notes-group-caret">{open ? "▾" : "▸"}</span>
-                  {dayLabel(day.date, now)}
-                  <span class="bean-notes-group-count">{day.runCount}</span>
-                </button>
-                {open ? day.buckets.map(bucketRow) : null}
-              </div>
-            );
-          })
+          days.map(dayRow)
         )}
         <span class="bean-skills-spacer" />
-        {bucket ? (
-          <div class="bean-dash-health">
-            <div class="bean-field-label">ROUTINE HEALTH</div>
-            <div class="bean-dash-health-bars">
-              {health.map((h) => (
-                <span key={h.startedAt} class={`bean-dash-health-bar bean-dash-health-bar--${h.status}`} />
-              ))}
-            </div>
-            <div class="bean-dash-health-text">
-              {plural(health.length, "run")}, {health.filter((h) => h.status === "failed").length} failed
-              {" · "}{nextRunText(routine)}
-            </div>
-            <button type="button" class="bean-dash-link" onClick={() => void window.bean.openComponent("routines")}>
-              Open routines →
-            </button>
-          </div>
-        ) : null}
+        <button type="button" class="bean-dash-link" onClick={() => void window.bean.openComponent("routines")}>
+          Open routines →
+        </button>
+        <div class="bean-skills-path">{plural(runs.length, "run")} kept · older ones roll off</div>
       </div>
 
       <div class="bean-skills-detail">
-        {!bucket ? (
+        {!day ? (
           <PanelEmptyState message="Pick a day to read what Bean did while you were away." />
         ) : (
           <>
             <div class="bean-dash-header">
               <span class="bean-dash-orb" />
               <div class="bean-dash-header-main">
-                <h2 class="bean-dash-title">{dayLabel(bucket.date, now)} · {bucket.routine}</h2>
+                <h2 class="bean-dash-title">{dayLabel(day.date, now)}</h2>
                 <div class="bean-dash-header-sub">
-                  {plural(bucket.runs.length, "run")}{" · "}
+                  {plural(day.buckets.length, "routine")}{" · "}{plural(day.runCount, "run")}{" · "}
                   {needsTotal > 0
                     ? <b class="bean-dash-accent">{needsTotal} need{needsTotal === 1 ? "s" : ""} your call</b>
                     : "nothing needs you"}
@@ -386,9 +385,9 @@ export function DashboardPanel() {
             </div>
 
             <div class="bean-dash-spine">
-              {runViews.map((view, i) => {
-                const rows = runSection(view, i, needCursor);
-                needCursor += view.needs.length;
+              {sections.map(({ bucket, views }) => {
+                const rows = routineSection(bucket, views, needCursor);
+                needCursor += views.reduce((n, v) => n + v.needs.length, 0);
                 return rows;
               })}
 
@@ -400,10 +399,6 @@ export function DashboardPanel() {
                     </div>
                   ))
                 : null}
-            </div>
-
-            <div class="bean-dash-footer">
-              <span>{nextRunText(routine)} — anything here stays until the history rolls over.</span>
             </div>
           </>
         )}
