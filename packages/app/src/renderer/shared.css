@@ -1345,8 +1345,11 @@ button, input, textarea, select, a {
 }
 .bean-jump-down svg { width: 14px; height: 14px; }
 
-/* Rendered markdown (marked + DOMPurify) — bubbles are pre-wrap, this block isn't. */
-.bean-md { white-space: normal; }
+/* Rendered markdown (marked + DOMPurify) — bubbles are pre-wrap, this block isn't.
+   `anywhere` because model output routinely carries a tracking URL with no break
+   opportunity for 200 characters, which otherwise runs straight out of its box (and,
+   unlike `break-word`, it also stops that URL setting a grid/flex column's min-content). */
+.bean-md { white-space: normal; overflow-wrap: anywhere; }
 .bean-md > :first-child { margin-top: 0; }
 .bean-md > :last-child { margin-bottom: 0; }
 .bean-md p, .bean-md ul, .bean-md ol, .bean-md pre, .bean-md blockquote { margin: 6px 0; }

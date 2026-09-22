@@ -23,9 +23,14 @@ Mapping decisions worth keeping:
   prunes them against the live run list instead. The latest run's digest starts open, older
   ones shut (that's index 0, runs being newest-first) — same flipped-from-default list trick as
   the day folds.
+- **The Routines panel shows only the last 3 runs** (`HISTORY_SHOWN`), with a line pointing at
+  the Dashboard for the rest — that panel is for editing a routine, not reading its output. The
+  20-record storage cap is unchanged; the Dashboard needs the depth.
 - **A digest needs `.bean-dash-digest-body` around its `<Markdown>`.** `.bean-md` sets no
   font-size, so a bare digest inherits the window's 16px while its own headings are 13.5px —
-  the headings render *smaller* than the prose under them.
+  the headings render *smaller* than the prose under them. `.bean-md` itself sets
+  `overflow-wrap: anywhere`, because model output routinely carries a 200-character tracking URL
+  with no break opportunity, which otherwise runs straight out of its box.
 - **A todo-driven run records one pass of every step per todo**, so a step's position in
   `RunRecord.steps` is not the routine's step number. The runner prefixes those outputs with
   `[todo: <text>] `; `parseStep()`/`stepLabel()` read that prefix and name the todo instead of

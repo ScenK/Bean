@@ -51,7 +51,13 @@ export async function makeBeanHome(options: BeanHomeOptions = {}): Promise<BeanH
     startedAt,
     finishedAt,
     status: ok ? "ok" : "failed",
-    digest: "## Digest\n\nWhat happened overnight.",
+    // The unbroken tracking URL is deliberate: model output is full of them, and one used to
+    // run straight out of the digest box (see .bean-md's overflow-wrap).
+    digest:
+      "## Digest\n\nWhat happened overnight.\n\n" +
+      "https://links.example.com/z/by2jik940uny04?uid=27706e6c-c599-471f-9bba-ae8eb1801762"
+      + "&txnid=102ce841-d403-4764-ae58-ff963614788f&mid=580aa974-68e2-4994-928d-5d3b87efd5f8"
+      + "&utm_campaign=103531624&utm_content=101080&bsencid=5689\n",
     steps: ok
       ? [{ kind: "chat", ok: true, summary: "build red then green on retry" }]
       : [
@@ -71,6 +77,8 @@ export async function makeBeanHome(options: BeanHomeOptions = {}): Promise<BeanH
           run("2026-01-02T20:00:00.000Z", "2026-01-02T20:45:00.000Z", false),
           run("2026-01-02T14:00:00.000Z", "2026-01-02T14:30:00.000Z", true),
           run("2026-01-01T14:00:00.000Z", "2026-01-01T14:30:00.000Z", true),
+          // A fourth run so the Routines panel's 3-entry history cap is visible, not implied.
+          run("2025-12-31T14:00:00.000Z", "2025-12-31T14:30:00.000Z", true),
         ],
       },
       weekly: {
