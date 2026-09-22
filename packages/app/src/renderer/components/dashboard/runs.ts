@@ -87,8 +87,8 @@ export interface RunBucket {
   routine: string;
   /** Local calendar date of these runs, ISO `YYYY-MM-DD`; the panel formats the label. */
   date: string;
-  /** Newest-first out of flattenRuns, but a day reads forward, so these are OLDEST-first:
-   * run 1 is the day's first run. */
+  /** Newest-first, like every other level: the latest run is what you want at the top of the
+   * spine. A run's ordinal is therefore `runs.length - index`, not `index + 1`. */
   runs: DashRun[];
   /** Failed steps across the whole bucket — what the day still needs from you. */
   needs: number;
@@ -110,9 +110,8 @@ const localDate = (iso: string): string => {
 export const bucketKey = (date: string, routine: string): string => `${date}|${routine}`;
 
 /** Rail shape: local day → routine → that routine's runs on that day. A routine that fires
- * several times a day becomes ONE row, whose runs the spine then reads in order. Input must
- * already be newest-first (flattenRuns' order): days and routines keep that order, while each
- * bucket's own runs are reversed so the timeline reads first run → last run. */
+ * several times a day becomes ONE section, whose runs the spine then reads newest-first. Input
+ * must already be newest-first (flattenRuns' order), which every level here preserves. */
 export function groupRuns(runs: DashRun[]): DayGroup[] {
   const days: DayGroup[] = [];
   const byDate = new Map<string, DayGroup>();
@@ -132,7 +131,7 @@ export function groupRuns(runs: DashRun[]): DayGroup[] {
       byBucket.set(key, bucket);
       day.buckets.push(bucket);
     }
-    bucket.runs.unshift(run); // newest-first in, oldest-first out
+    bucket.runs.push(run);
     const failed = run.steps.filter((step) => !step.ok).length;
     bucket.needs += failed;
     day.runCount++;

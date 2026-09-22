@@ -108,10 +108,10 @@ describe("dashboard runs", () => {
       ["nightly", 2, 1],
       ["weekly", 1, 1],
     ]);
-    // A day reads forward: run 1 is the day's FIRST run, not the newest.
+    // Newest-first at every level, buckets included — the spine puts the latest run on top.
     expect(today!.buckets[0]!.runs.map((r) => r.startedAt)).toEqual([
-      "2026-09-21T06:00:00",
       "2026-09-21T22:04:00",
+      "2026-09-21T06:00:00",
     ]);
     // Keys stay unique when two routines run on the same day.
     expect(today!.buckets.map((b) => b.key)).toEqual(["2026-09-21|nightly", "2026-09-21|weekly"]);

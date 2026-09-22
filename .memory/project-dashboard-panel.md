@@ -37,8 +37,9 @@ Mapping decisions worth keeping:
   out of `groupRuns()`) of RUN 1, RUN 2, … each run with its own resolved line, cards and
   digest. NEEDS YOU cards are numbered across the whole day, so the morning has one end rather
   than one per run or per routine, and **each routine's latest run opens its digest** — not just
-  the day's last one. Bucket runs are stored oldest-first (a day reads forward) while days and
-  routines stay newest-first.
+  the day's last one. **Newest-first at every level**, buckets included, with the "you are here"
+  marker at the TOP of the spine: the latest thing Bean did is the first thing you read. A run's
+  displayed ordinal is therefore `runs.length - index`, so RUN 2 sits above RUN 1.
 - `runs.ts` is pure and unit-tested (`__test__/dashboard-runs.test.ts`); the panel holds the JSX.
 
 **Adding any new component window touches five places** — miss one and it fails at a different

@@ -65,10 +65,12 @@ function nextRunText(routine: Routine | undefined): string {
 type RunView = { run: DashRun; needs: DashStep[]; resolved: DashStep[] };
 
 // 4a "Night-shift ledger, panel form": rail of days on the left, one time spine on the right.
-// The unit of reading is a whole day — every routine that ran, each a section of RUN 1, RUN 2, …
-// — so the morning is one pass down one column. The only thing a run can genuinely ask of you is
-// a failed step, so failures become the NEEDS YOU cards, numbered across the whole day rather
-// than per run, and every step that passed collapses into its run's RESOLVED line.
+// The unit of reading is a whole day — every routine that ran, each a section of its runs — so
+// the morning is one pass down one column. The spine reads newest-first at every level, the
+// "you are here" marker at the top, so the latest thing Bean did is the first thing you see.
+// The only thing a run can genuinely ask of you is a failed step, so failures become the NEEDS
+// YOU cards, numbered across the whole day rather than per run, and every step that passed
+// collapses into its run's RESOLVED line.
 export function DashboardPanel() {
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [states, setStates] = useState<Record<string, RoutineStateView>>({});
@@ -215,14 +217,15 @@ export function DashboardPanel() {
   );
 
   // One run's slice of the day: its header, its resolved line, its failed-step cards and its
-  // digest. `firstNeed` is where this run's cards continue the day's running count; `latest` is
-  // its routine's newest run of the day, whose digest starts open.
-  const runSection = (view: RunView, index: number, firstNeed: number, latest: boolean) => {
+  // digest. `ordinal` is the run's chronological place in its routine's day (the spine shows
+  // them newest-first, so it counts down); `firstNeed` is where this run's cards continue the
+  // day's running count; `latest` is its routine's newest run of the day, whose digest is open.
+  const runSection = (view: RunView, ordinal: number, firstNeed: number, latest: boolean) => {
     const { run, needs, resolved } = view;
     const resolvedOpen = openResolved.includes(run.id);
     const digestOpen = latest !== flippedDigests.includes(run.id);
     return [
-      spineRow(`${run.id}-head`, `run ${index + 1}`, "run", (
+      spineRow(`${run.id}-head`, `run ${ordinal}`, "run", (
         <div class="bean-dash-run-head">
           <span class="bean-dash-run-time">{clock(run.startedAt)} → {clock(run.finishedAt)}</span>
           <span class="bean-dash-meta">
@@ -265,7 +268,7 @@ export function DashboardPanel() {
           <div class="bean-dash-card">
             <div class="bean-dash-card-tags">
               <span class="bean-dash-tag">NEEDS YOU · {firstNeed + i + 1} OF {needsTotal}</span>
-              <span class="bean-dash-meta">{run.routine} · {s.kind} step · run {index + 1}</span>
+              <span class="bean-dash-meta">{run.routine} · {s.kind} step · run {ordinal}</span>
             </div>
             <div class="bean-dash-card-title">{stepTitle(s)}</div>
             <div class="bean-dash-card-text">{s.summary}</div>
@@ -294,7 +297,7 @@ export function DashboardPanel() {
                 aria-expanded={digestOpen}
                 onClick={() => toggle(flippedDigests, setFlippedDigests, run.id)}
               >
-                <span class="bean-field-label">DIGEST · RUN {index + 1}</span>
+                <span class="bean-field-label">DIGEST · RUN {ordinal}</span>
                 <span class="bean-dash-resolved-toggle">{digestOpen ? "Hide ▴" : "Read ▾"}</span>
               </button>
               {digestOpen ? (
@@ -331,8 +334,10 @@ export function DashboardPanel() {
           </div>
         </div>
       )),
+      // views are newest-first, so the first one is the latest run and carries the day's
+      // highest ordinal.
       ...views.flatMap((view, i) => {
-        const rows = runSection(view, i, cursor, i === views.length - 1);
+        const rows = runSection(view, views.length - i, cursor, i === 0);
         cursor += view.needs.length;
         return rows;
       }),
@@ -385,12 +390,6 @@ export function DashboardPanel() {
             </div>
 
             <div class="bean-dash-spine">
-              {sections.map(({ bucket, views }) => {
-                const rows = routineSection(bucket, views, needCursor);
-                needCursor += views.reduce((n, v) => n + v.needs.length, 0);
-                return rows;
-              })}
-
               {isNewest
                 ? spineRow("here", "now", "end", (
                     <div class="bean-dash-here">
@@ -399,6 +398,12 @@ export function DashboardPanel() {
                     </div>
                   ))
                 : null}
+
+              {sections.map(({ bucket, views }) => {
+                const rows = routineSection(bucket, views, needCursor);
+                needCursor += views.reduce((n, v) => n + v.needs.length, 0);
+                return rows;
+              })}
             </div>
           </>
         )}
