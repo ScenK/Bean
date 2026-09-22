@@ -49,11 +49,16 @@ export function createAvatarWindow(): BrowserWindow {
   const win = new BrowserWindow({
     ...START_SIZE, ...startPosition(), frame: false, transparent: true,
     backgroundColor: "#00000000", hasShadow: false,
-    alwaysOnTop: true, resizable: false,
+    alwaysOnTop: true, resizable: false, show: false,
     webPreferences: { preload },
   });
-  void win.loadFile(renderer("avatar"));
   return win;
+}
+
+// Load only after main has registered IPC, so the renderer's first requests cannot race boot.
+export async function loadAvatarWindow(win: BrowserWindow): Promise<void> {
+  await win.loadFile(renderer("avatar"));
+  win.show();
 }
 
 // Places a new window just to the left of the bean (the avatar sits top-right), then clamps

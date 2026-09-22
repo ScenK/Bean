@@ -132,3 +132,20 @@
 }
 .bean-reading--open { opacity: 1; }
 .bean-petal-badge--end { position: absolute; top: 10px; right: 10px; }
+
+/* Clip only the list, keeping the capsule and its glow outside the scroll viewport. */
+.bean-tile-scroll {
+  position: absolute;
+  top: var(--bean-tiles-top, 108px);
+  bottom: var(--bean-tiles-bottom, 8px);
+  left: 12px;
+  right: 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-app-region: no-drag;
+}
+.bean-tile-stack { position: relative; }
+.bean-tile-stack .bean-petal { max-width: calc(100% - 12px); }
+.bean-menu--open .bean-tile-scroll,
+.bean-drag-bloom--open .bean-tile-scroll { pointer-events: auto; }

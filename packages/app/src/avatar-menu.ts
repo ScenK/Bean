@@ -5,14 +5,12 @@ export interface Size {
   height: number;
 }
 
-// Per-mode grown-window sizes. The bean lives in the top-right; the box + tiles grow down and
-// to the left, so windows are wide enough for the box and tall enough for the tile stack. Kept
-// as tight as possible so the transparent window blocks as little of the desktop as it can.
+// Preferred panel sizes; actual bounds fit the display. Tiles scroll and can open above
+// the capsule. Keep windows tight to avoid blocking unnecessary desktop area.
 export const AVATAR_SIZE: Size = { width: 120, height: 120 };
 // Proximity/hover: just the expanded box (bean + helper text), no tiles — a short strip.
 export const AVATAR_HOVER_SIZE: Size = { width: 300, height: 120 };
-// Left-click quick-actions: box + 6 tiles (chat/skills/projects/notes/routines/dashboard) —
-// first tile center 92px below the box, 60px steps, so the 6th tile ends ~510px down.
+// Left-click quick-actions: capsule + six tiles (chat/skills/projects/notes/routines/dashboard).
 export const AVATAR_MENU_SIZE: Size = { width: 300, height: 520 };
 // Drag-skill bloom: box + a taller stack of skill/quick-action tiles.
 export const AVATAR_DRAG_SIZE: Size = { width: 300, height: 620 };
@@ -49,15 +47,21 @@ export interface Point {
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(v, hi));
 
+/** Keep a window inside a work area, including displays with negative coordinates. */
+export function clampAvatarBounds(bounds: Bounds, workArea: Bounds): Bounds {
+  const width = Math.min(bounds.width, workArea.width);
+  const height = Math.min(bounds.height, workArea.height);
+  return {
+    x: Math.round(clamp(bounds.x, workArea.x, workArea.x + workArea.width - width)),
+    y: Math.round(clamp(bounds.y, workArea.y, workArea.y + workArea.height - height)),
+    width, height,
+  };
+}
+
 /**
- * Layout for the grown avatar (hover box, quick-actions menu, drag-skill bloom). Keeps the
- * bean's on-screen center fixed — so it never "jumps" when the window grows — by sitting it
- * `rightMargin` in from the grown window's right edge and `topMargin` down from the top (box +
- * tiles grow downward and to the left), then clamping the *window* to the work area so it can't
- * land off-screen. Returns the window bounds plus the bean's resulting center *within* that
- * window, which the renderer uses to place the box and lay out the tiles. When the bean is near
- * an edge the clamp shifts the window (not the bean), so some tiles may fall outside — but the
- * bean stays put, which is what matters.
+ * Prefer the existing bean position. Near an edge, move the expanded panel inward so its
+ * capsule and tile column fit. The caller retains the idle anchor for collapse. Tile lists
+ * scroll when the display is shorter than the requested panel or there are many skills.
  */
 export function dragBloomLayout(
   beanScreenCenter: Point,
@@ -65,8 +69,22 @@ export function dragBloomLayout(
   workArea: Bounds,
   rightMargin = 80,
   topMargin = 44,
-): { bounds: Bounds; bean: Point } {
-  const x = clamp(beanScreenCenter.x - (size.width - rightMargin), workArea.x, workArea.x + Math.max(0, workArea.width - size.width));
-  const y = clamp(beanScreenCenter.y - topMargin, workArea.y, workArea.y + Math.max(0, workArea.height - size.height));
-  return { bounds: { x, y, width: size.width, height: size.height }, bean: { x: beanScreenCenter.x - x, y: beanScreenCenter.y - y } };
+): { bounds: Bounds; bean: Point & { tilesAbove: boolean } } {
+  const tiles = size.height > AVATAR_HOVER_SIZE.height;
+  const above = beanScreenCenter.y - workArea.y;
+  const below = workArea.y + workArea.height - beanScreenCenter.y;
+  const tilesAbove = tiles && below < size.height - topMargin && above > below;
+  // Prefer the side with room instead of moving the bean to fit a fixed downward stack.
+  const available = (tilesAbove ? above : below) + topMargin;
+  const height = tiles ? Math.min(size.height, Math.max(240, available)) : size.height;
+  const bounds = clampAvatarBounds({
+    x: beanScreenCenter.x - (size.width - rightMargin),
+    y: beanScreenCenter.y - (tilesAbove ? height - topMargin : topMargin),
+    width: size.width, height,
+  }, workArea);
+  return { bounds, bean: {
+    x: clamp(beanScreenCenter.x - bounds.x, Math.min(159, bounds.width - 33), bounds.width - 33),
+    y: clamp(beanScreenCenter.y - bounds.y, Math.min(topMargin, bounds.height / 2), bounds.height - topMargin),
+    tilesAbove,
+  } };
 }

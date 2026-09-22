@@ -46,10 +46,11 @@ contextBridge.exposeInMainWorld("bean", {
   moveWindowBy: (dx: number, dy: number): void => ipcRenderer.send(IPC.moveWindowBy, dx, dy),
   resizeWindowToContent: (height: number): void => ipcRenderer.send(IPC.resizeWindowToContent, height),
   setAvatarMode: (mode: AvatarMode): void => ipcRenderer.send(IPC.setAvatarMode, mode),
+  onAvatarReset: (cb: () => void) => ipcRenderer.on(IPC.avatarReset, () => cb()),
   onAvatarFoldMenu: (cb: () => void) =>
     ipcRenderer.on(IPC.avatarFoldMenu, () => cb()),
-  onAvatarDragLayout: (cb: (p: { x: number; y: number }) => void) =>
-    ipcRenderer.on(IPC.avatarDragLayout, (_e, p: { x: number; y: number }) => cb(p)),
+  onAvatarDragLayout: (cb: (p: { x: number; y: number; tilesAbove?: boolean }) => void) =>
+    ipcRenderer.on(IPC.avatarDragLayout, (_e, p: { x: number; y: number; tilesAbove?: boolean }) => cb(p)),
   planFromDrop: (skillName: string, droppedUrl: string): void =>
     ipcRenderer.send(IPC.planFromDrop, skillName, droppedUrl),
   runInChat: (prompt: string, label: string, noteSlug?: string): void =>

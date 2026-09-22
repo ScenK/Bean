@@ -2,18 +2,14 @@ import { createOrb } from "./orb.js";
 import type { AvatarMode, ComponentKind } from "../channels.js";
 import { createDragPreparationGate } from "../drag-preparation.js";
 import { createDragWatchdog } from "../drag-watchdog.js";
-import { AVATAR_SIZE, avatarSizeForMode } from "../avatar-menu.js";
-import { computeStackPositions, nearestPetalIndex, pointInRect, resolvePetalDropIndex, type Point } from "../petal-geometry.js";
+import { AVATAR_SIZE } from "../avatar-menu.js";
+import { computeStackPositions, nearestPetalIndex, pointInRect, type Point } from "../petal-geometry.js";
 import type { Project, Skill } from "@bean/core";
 
-// Quick-actions and the drag-skill bloom render as the same vertical tile stack (see the
-// redesign mockup at ~/Develop/Desktop Quick Action App and .bean-petal in drag-bloom.css):
-// tiles right-aligned under the bean, growing downward, sliding in from the side.
-const TILE_DX = 84;        // column sits left of the bean anchor so tiles are right-aligned under it
-const TILE_FIRST_DY = 92;  // first tile's center, just below the bean box
-const TILE_STEP = 60;      // vertical spacing between tile centers
-const tilePositions = (count: number, cx: number, cy: number): Point[] =>
-  computeStackPositions(count, cx - TILE_DX, cy + TILE_FIRST_DY, TILE_STEP);
+// Quick-actions and drag skills share a scrolling tile stack. Main places its viewport
+// above or below the capsule according to available display space.
+const TILE_STEP = 60;
+const tilePositions = (count: number): Point[] => computeStackPositions(count, 0, 30, TILE_STEP);
 
 // Peaceful, muted per-tile icon colors — the only splash of color; tile surfaces stay amber.
 const TILE_COLORS = ["#7FA88B", "#7C9CC4", "#C9976B", "#B58BB0", "#C7A24E", "#6FA8A0"];
@@ -44,7 +40,6 @@ const tileInner = (icon: string, name: string, desc: string, tileColor: string, 
     <span class="bean-petal-desc">${desc}</span>
   </span>`;
 
-let menuCx = 0, menuCy = 0;
 
 // The window is reused for the avatar's whole lifetime now — it never navigates
 // to another page — so this fixed size only needs to be set once.
@@ -69,13 +64,17 @@ if (el && orbSlot && hint && bloom && reading) {
   const orb = createOrb(orbSlot, { size: 48 });
   orb.setState("listening");
 
-  window.bean.getTheme().then((t) => { document.documentElement.dataset.theme = t; });
+  // The HTML supplies a visible fallback even if theme IPC fails.
+  void window.bean.getTheme().then((t) => {
+    if (t === "hearth" || t === "graphite") document.documentElement.dataset.theme = t;
+  }).catch((err: unknown) => console.warn("Bean: using fallback theme", err));
   window.bean.onThemeChanged((t) => { document.documentElement.dataset.theme = t; });
 
   // Avatar mode: "normal" (collapsed bean) | "hover" (proximity box, no tiles) | "menu"
   // (quick-action tiles) | "drag" (skill/quick-action tiles).
   // Drives the window's grown size via the main process (see avatar-menu.ts).
   let mode: AvatarMode = "normal";
+  let resetVersion = 0;
   const dragPreparation = createDragPreparationGate();
   const setMode = (next: AvatarMode): void => {
     mode = next;
@@ -86,18 +85,20 @@ if (el && orbSlot && hint && bloom && reading) {
   // The bean box is right-anchored so it grows leftward/downward while the bean itself stays put.
   // padding-right is 0 (see avatar-box.css), so the bean's distance from the box's right edge is
   // a constant `RIGHT_INSET` (1px border + 24px half-orb) — position by that and it never drifts.
-  // The window width is known from the mode (dragBloomLayout never clamps width), so we don't race
-  // the async resize by reading window.innerWidth.
+  // Translate from the capsule's right edge rather than reading an asynchronously resized
+  // window's width. This also works when a small display limits the panel dimensions.
   const RIGHT_INSET = 25;
-  const positionBox = (x: number, y: number): void => {
+  const positionBox = (x: number, y: number, tilesAbove = false): void => {
     el.style.position = "absolute";
-    el.style.left = "auto";
-    el.style.right = `${avatarSizeForMode(mode).width - (x + RIGHT_INSET)}px`;
+    el.style.left = `${x + RIGHT_INSET}px`;
+    el.style.right = "auto";
     el.style.top = `${y}px`;
-    el.style.transform = "translateY(-50%)";
+    document.documentElement.style.setProperty("--bean-tiles-top", tilesAbove ? "8px" : `${y + 64}px`);
+    document.documentElement.style.setProperty("--bean-tiles-bottom", tilesAbove ? `calc(100% - ${y - 64}px)` : "8px");
+    el.style.transform = "translate(-100%, -50%)";
   };
-  // The box is always absolutely pinned by its right edge (a constant inset from the bean), so the
-  // bean holds one screen position regardless of window size — no absolute↔flow jump on collapse.
+  // The box is always absolutely pinned by its right edge. Main preserves the idle anchor
+  // for collapse and only shifts the expanded capsule when an edge would clip it.
   // Start it pinned at the idle window's center.
   const pinIdle = (): void => positionBox(AVATAR_SIZE.width / 2, AVATAR_SIZE.height / 2);
   pinIdle();
@@ -178,14 +179,14 @@ if (el && orbSlot && hint && bloom && reading) {
 
   const renderMenu = (): void => {
     if (!menu) return;
-    const positions = tilePositions(QUICK_ACTIONS.length, menuCx, menuCy);
-    menu.innerHTML = QUICK_ACTIONS.map((a, i) => {
+    const positions = tilePositions(QUICK_ACTIONS.length);
+    menu.innerHTML = `<div class="bean-tile-scroll"><div class="bean-tile-stack" style="height:${QUICK_ACTIONS.length * TILE_STEP}px">` + QUICK_ACTIONS.map((a, i) => {
       const p = positions[i]!;
       return `
-      <button type="button" class="bean-petal bean-petal--menu" data-kind="${a.kind}" style="left:${p.x}px;top:${p.y}px;--i:${i}">
+      <button type="button" class="bean-petal bean-petal--menu" data-kind="${a.kind}" style="left:50%;top:${p.y}px;--i:${Math.min(i, 7)}">
         ${tileInner(ICONS[a.kind] ?? "", a.name, a.desc, color(i))}
       </button>`;
-    }).join("");
+    }).join("") + "</div></div>";
     // Notes tile badge: total saved note count. Patched in async after the menu paints.
     void window.bean.listNotes().then((notes) => {
       const tile = menu.querySelector('.bean-petal--menu[data-kind="notes"]');
@@ -233,8 +234,7 @@ if (el && orbSlot && hint && bloom && reading) {
   // -webkit-app-region:drag OS window-move region that swallows mouse-driven events on anything
   // that isn't a real, properly-sized no-drag element (see .memory/safety-window-behavior.md).
   // The orb's center within the grown window is provided by the main process per drag (see
-  // dragBloomLayout); it anchors on the bean's fixed screen position so the bean never jumps.
-  let beanCx = 220, beanCy = 44; // sane default for the first paint before the layout reply lands
+  // dragBloomLayout); it also selects an upward panel near the screen bottom.
   let skills: Skill[] = [];
   let projects: Project[] = [];
   let petalPositions: Point[] = [];
@@ -290,38 +290,34 @@ if (el && orbSlot && hint && bloom && reading) {
   };
 
   const renderPetals = (): void => {
-    petalPositions = tilePositions(dragTiles.length, beanCx, beanCy);
-    bloom.innerHTML = dragTiles.map((t, i) => {
+    petalPositions = tilePositions(dragTiles.length);
+    bloom.innerHTML = `<div class="bean-tile-scroll"><div class="bean-tile-stack" style="height:${dragTiles.length * TILE_STEP}px">` + dragTiles.map((t, i) => {
       const p = petalPositions[i]!;
       return `
-      <div class="bean-petal${t.badge ? " bean-petal--suggested" : ""}" data-index="${i}" style="left:${p.x}px;top:${p.y}px;--i:${i}">
+      <div class="bean-petal${t.badge ? " bean-petal--suggested" : ""}" data-index="${i}" style="left:50%;top:${p.y}px;--i:${Math.min(i, 7)}">
         ${tileInner(t.icon, t.name, t.desc, color(i), t.badge)}
       </div>`;
-    }).join("");
+    }).join("") + "</div></div>";
   };
 
   // Pin the box + place the tiles once the main process reports where the bean landed in the grown
   // window. Tiles are created collapsed, then flipped open next frame so the slide-in plays.
   window.bean.onAvatarDragLayout((p) => {
-    if (mode === "normal") { positionBox(p.x, p.y); return; } // re-pin the collapsed box after a resize
+    if (mode === "normal") { positionBox(p.x, p.y, p.tilesAbove); return; } // re-pin the collapsed box after a resize
     if (mode === "hover") {
-      positionBox(p.x, p.y);
+      positionBox(p.x, p.y, p.tilesAbove);
       expandBox("drop anything here");
       return;
     }
     if (mode === "menu") {
-      menuCx = p.x;
-      menuCy = p.y;
-      positionBox(p.x, p.y);
+      positionBox(p.x, p.y, p.tilesAbove);
       expandBox("quick actions");
       renderMenu();
       requestAnimationFrame(() => menu?.classList.add("bean-menu--open"));
       return;
     }
     if (mode !== "drag") return;
-    beanCx = p.x;
-    beanCy = p.y;
-    positionBox(p.x, p.y);
+    positionBox(p.x, p.y, p.tilesAbove);
     expandBox("drop anything here");
     renderPetals();
     requestAnimationFrame(() => bloom.classList.add("bean-drag-bloom--open"));
@@ -358,9 +354,11 @@ if (el && orbSlot && hint && bloom && reading) {
     if (mode !== "normal" && mode !== "hover") return;
     if (!dragPreparation.begin()) return;
     cancelCollapse();
+    const version = resetVersion;
     void (async () => {
       try {
         [skills, projects] = await Promise.all([window.bean.listSkills(), window.bean.listProjects()]);
+        if (version !== resetVersion) return;
         buildDragTiles();
         // Grow into drag mode; the main process replies with the bean's anchored position
         // (onAvatarDragLayout above), which is when we actually place the box and open the bloom.
@@ -371,6 +369,17 @@ if (el && orbSlot && hint && bloom && reading) {
     })();
   });
 
+  const dropIndex = (e: DragEvent): number | undefined => {
+    if (pointInRect(e.clientX, e.clientY, el.getBoundingClientRect())) return undefined;
+    const list = bloom.querySelector<HTMLElement>(".bean-tile-scroll");
+    if (!list) return undefined;
+    const rect = list.getBoundingClientRect();
+    if (!pointInRect(e.clientX, e.clientY, rect)) return undefined;
+    return nearestPetalIndex(e.clientX - rect.left - list.clientWidth / 2,
+      e.clientY - rect.top + list.scrollTop, petalPositions, 130);
+  };
+
+  let lastAutoScroll = 0;
   bloom.addEventListener("dragover", (e) => {
     e.preventDefault();
     dragWatchdog.arm();
@@ -379,10 +388,17 @@ if (el && orbSlot && hint && bloom && reading) {
     // the first petal — implicitly running a skill nobody chose. See el.getBoundingClientRect(),
     // not bloom's, since the box is the thing the user is actually dropping onto.
     if (pointInRect(e.clientX, e.clientY, el.getBoundingClientRect())) { setHover(undefined, true); return; }
-    const rect = bloom.getBoundingClientRect();
-    // Wider gate than a radial fan: tiles are broad, so hovering anywhere over the column snaps
-    // to the nearest tile center.
-    setHover(nearestPetalIndex(e.clientX - rect.left, e.clientY - rect.top, petalPositions, 130));
+    const list = bloom.querySelector<HTMLElement>(".bean-tile-scroll");
+    if (list) {
+      const rect = list.getBoundingClientRect();
+      // Repeated native dragover events allow reaching long lists without dropping the URL.
+      if (pointInRect(e.clientX, e.clientY, rect) && e.timeStamp - lastAutoScroll >= 100) {
+        lastAutoScroll = e.timeStamp;
+        if (e.clientY > rect.bottom - 32) list.scrollTop += 24;
+        else if (e.clientY < rect.top + 32) list.scrollTop -= 24;
+      }
+    }
+    setHover(dropIndex(e));
   });
 
   bloom.addEventListener("dragleave", (e) => {
@@ -396,7 +412,7 @@ if (el && orbSlot && hint && bloom && reading) {
   bloom.addEventListener("drop", (e) => {
     e.preventDefault();
     const url = dataUrl(e);
-    const index = resolvePetalDropIndex(e.clientX, e.clientY, bloom.getBoundingClientRect(), el.getBoundingClientRect(), petalPositions, 130);
+    const index = dropIndex(e);
     const chosen = index !== undefined ? dragTiles[index] : undefined;
     closeBloom();
     if (url && chosen) chosen.run(url);
@@ -435,7 +451,7 @@ if (el && orbSlot && hint && bloom && reading) {
     if (e.defaultPrevented || mode !== "drag") return; // bloom/el already handled it
     e.preventDefault();
     const url = dataUrl(e);
-    const index = resolvePetalDropIndex(e.clientX, e.clientY, bloom.getBoundingClientRect(), el.getBoundingClientRect(), petalPositions, 130);
+    const index = dropIndex(e);
     const chosen = index !== undefined ? dragTiles[index] : undefined;
     closeBloom();
     if (url && chosen) chosen.run(url);
@@ -468,6 +484,23 @@ if (el && orbSlot && hint && bloom && reading) {
     if (mode === "normal" || mode === "hover") window.bean.moveWindowBy(e.screenX - lastX, e.screenY - lastY);
     lastX = e.screenX;
     lastY = e.screenY;
+  });
+  window.bean.onAvatarReset(() => {
+    resetVersion++;
+    cancelCollapse();
+    dragWatchdog.disarm();
+    mode = "normal";
+    dragging = false;
+    moved = false;
+    document.documentElement.classList.remove("bean-moving");
+    menu?.classList.remove("bean-menu--open");
+    bloom.classList.remove("bean-drag-bloom--open");
+    setHover(undefined);
+    collapseBox();
+  });
+  window.addEventListener("blur", () => {
+    dragging = false;
+    document.documentElement.classList.remove("bean-moving");
   });
   window.addEventListener("mouseup", () => {
     document.documentElement.classList.remove("bean-moving");

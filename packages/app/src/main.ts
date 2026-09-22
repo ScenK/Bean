@@ -6,6 +6,7 @@ import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./ch
 import { createChatopsServers } from "./chatops-servers.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
+import { installAvatarControls } from "./avatar-window.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import {
@@ -22,7 +23,7 @@ import {
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult, TodoStatus, CliName } from "@bean/core";
-import { createAvatarWindow, createComponentWindow } from "./windows.js";
+import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
   buildRoutineHandlers, buildTodoHandlers, buildPendingUpdateStore, type ChatPromptPayload,
@@ -73,7 +74,11 @@ app.whenReady().then(async () => {
   // instead (see package.json build.extraResources) — use that when packaged.
   const projectDir = app.isPackaged ? join(process.resourcesPath, "builtin") : projectBeanDir();
 
+  let quitting = false;
+  app.on("before-quit", () => { quitting = true; });
   const avatar = createAvatarWindow();
+  const avatarControls = installAvatarControls(avatar);
+  let avatarReady = false;
   // Hoisted out of the `try` block below (where it's created) so the tray menu's click
   // handler — built further up in this function, long before that `try` runs — can read
   // it. Safe because click handlers only fire on user interaction, after this whole
@@ -96,7 +101,7 @@ app.whenReady().then(async () => {
 
   // A second launch (e.g. double-clicking Bean.app again) just surfaces the bean.
   app.on("second-instance", () => {
-    if (!avatar.isDestroyed()) { avatar.show(); avatar.focus(); }
+    avatarControls.reveal();
   });
 
   // Monochrome template image (regenerate with scripts/generate-icons.mjs); macOS inverts
@@ -148,6 +153,7 @@ app.whenReady().then(async () => {
     return items;
   };
   const buildTrayMenu = (): Menu => Menu.buildFromTemplate([
+    { label: "Bring Bean Back", icon: symbol("location"), click: () => avatarControls.bringBack() },
     { label: "Settings", icon: symbol("gearshape"), accelerator: "Cmd+,", click: () => openComponent("settings") },
     { label: "Chat Bots", icon: symbol("message"), submenu: buildChatopsSubmenu() },
     { label: "Persona", icon: symbol("person.crop.circle"), accelerator: "Cmd+P", click: () => openComponent("persona") },
@@ -162,8 +168,7 @@ app.whenReady().then(async () => {
   // bean is already visible, the click pops the menu as usual.
   tray.on("click", () => {
     if (!avatar.isDestroyed() && !avatar.isVisible()) {
-      avatar.show();
-      avatar.focus();
+      avatarControls.reveal();
       return;
     }
     trayMenu = buildTrayMenu();
@@ -180,10 +185,9 @@ app.whenReady().then(async () => {
   // Dock-icon click (dev only; packaged has no Dock icon) surfaces a Cmd+W-hidden bean —
   // mirrors the tray-click re-summon so a lost tray icon never strands the pet.
   app.on("activate", () => {
-    if (!avatar.isDestroyed() && !avatar.isVisible()) { avatar.show(); avatar.focus(); }
+    avatarControls.reveal();
   });
 
-  let quitting = false;
   // Reassigned once delegateTasks exists (below); a quit requested before that point has
   // nothing in-flight to interrupt, so the no-op default is correct, not just a placeholder.
   // Synchronous (see delegate-tasks.ts's interruptAll doc comment) — deliberately NOT a
@@ -193,7 +197,6 @@ app.whenReady().then(async () => {
   // before-quit hook in this file is plain synchronous fire-and-forget; this matches that.
   let interruptAllDelegates: () => void = () => {};
   app.on("before-quit", () => {
-    quitting = true;
     interruptAllDelegates();
     // Spawned chatops servers do NOT die with us — without this they survive as launchd-owned
     // orphans, holding port 3978 and answering webhooks with whatever build they booted with.
@@ -719,6 +722,9 @@ app.whenReady().then(async () => {
       }),
     });
 
+    await loadAvatarWindow(avatar);
+    avatarReady = true;
+
     // Report any delegate run interrupted by the previous quit (delegate-tasks.ts's
     // interruptAll()/main.ts's own before-quit handler leave one outbox notice per run). A
     // one-shot claim, not a poll loop: main.ts is the only possible producer for the "chat"
@@ -732,8 +738,12 @@ app.whenReady().then(async () => {
       if (chat) sendToWindow(chat, IPC.interruptedRunNotice, notices);
     }
   } catch (err) {
+    if (!avatarReady) throw err;
     dialog.showErrorBox("Bean", err instanceof Error ? err.message : String(err));
   }
+}).catch((err: unknown) => {
+  dialog.showErrorBox("Bean could not start", err instanceof Error ? err.message : String(err));
+  app.quit();
 });
 
 ipcMain.on(IPC.quit, () => app.quit());
