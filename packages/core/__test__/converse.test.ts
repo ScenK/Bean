@@ -736,3 +736,13 @@ describe("propose_todo", () => {
     expect(res.proposedTodo).toBeUndefined();
   });
 });
+
+test("a failing chat call surfaces the real reason, not a blanket API-key blame", async () => {
+  const deps: ConverseDeps = {
+    model: "gpt-5.6-luna",
+    chat: async () => { throw new Error("Function tools with reasoning_effort are not supported"); },
+  };
+  const res = await conv({ latestUserText: "hi", deps });
+  expect(res.reply).toContain("Function tools with reasoning_effort are not supported");
+  expect(res.reply).toContain("gpt-5.6-luna");
+});

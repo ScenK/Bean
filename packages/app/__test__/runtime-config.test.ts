@@ -148,3 +148,46 @@ test("disabledClis is exposed and updated by apply", async () => {
   expect(runtime.getDisabledClis()).toEqual([]);
   expect(saved[0]).toMatchObject({ disabledClis: [] });
 });
+
+test("reasoning effort reaches the converse client and is rebuilt on save", async () => {
+  const madeConverse: string[] = [];
+  const saved: RuntimeUpdate[] = [];
+  const rt = createRuntimeConfig(
+    {
+      openaiApiKey: "sk-x",
+      model: "gpt-5.6-luna",
+      terminalApp: "",
+      editorApp: "",
+      delegateCli: "",
+      systemControls: false,
+      reasoningEffort: "low",
+      routineDigestContext: false,
+      disabledClis: [],
+    },
+    {
+      makeChat: () => (async () => "") as never,
+      makeConverse: (_k, effort) => { madeConverse.push(effort); return (async () => ({ content: "", toolCalls: [] })) as never; },
+      saveConfigFile: async (u) => { saved.push(u); },
+    },
+  );
+
+  expect(rt.getReasoningEffort()).toBe("low");
+  expect(madeConverse).toEqual(["low"]);
+
+  await rt.apply({
+    openaiApiKey: "sk-x",
+    model: "gpt-5.6-luna",
+    terminalApp: "",
+    editorApp: "",
+    delegateCli: "",
+    systemControls: false,
+    reasoningEffort: "high",
+    routineDigestContext: false,
+    disabledClis: [],
+  });
+
+  // Rebuilt, not just stored — the effort is baked into the client at construction.
+  expect(madeConverse).toEqual(["low", "high"]);
+  expect(rt.getReasoningEffort()).toBe("high");
+  expect(saved[0]).toMatchObject({ reasoningEffort: "high" });
+});

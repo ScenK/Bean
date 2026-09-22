@@ -448,11 +448,11 @@ app.whenReady().then(async () => {
     const cfgPath = configFile(dir);
     // ponytail: first launch has no ~/.bean yet — bootstrap an empty-key config so
     // loadConfig (which throws on missing file) has something to read instead of crashing.
-    if (!existsSync(cfgPath)) await saveConfig(cfgPath, { openaiApiKey: "", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false });
+    if (!existsSync(cfgPath)) await saveConfig(cfgPath, { openaiApiKey: "", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "" });
     const cfg = await loadConfig(cfgPath, dir);
 
     const runtime = createRuntimeConfig(
-      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, routineDigestContext: cfg.routineDigestContext, disabledClis: cfg.disabledClis },
+      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, reasoningEffort: cfg.reasoningEffort, routineDigestContext: cfg.routineDigestContext, disabledClis: cfg.disabledClis },
       {
         makeChat: makeOpenAIChat,
         makeConverse: makeOpenAIConverse,
@@ -645,6 +645,7 @@ app.whenReady().then(async () => {
         editorApp: runtime.getEditorApp(),
         delegateCli: runtime.getDelegateCli(),
         systemControls: runtime.getSystemControls(),
+        reasoningEffort: runtime.getReasoningEffort(),
         routineDigestContext: runtime.getRoutineDigestContext(),
         disabledClis: runtime.getDisabledClis(),
         paths: {

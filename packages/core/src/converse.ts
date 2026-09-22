@@ -450,8 +450,12 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       const res = await deps.chat({ model: deps.model, messages, tools });
       content = res.content;
       toolCalls = res.toolCalls;
-    } catch {
-      return { reply: "I couldn't reach the model — check your API key in ~/.bean/config.json.", model: deps.model };
+    } catch (err) {
+      // The cause matters: a bad key, a 404 model id, a 429, and a 400 over unsupported
+      // params all land here, and blaming the API key for every one of them sent a past
+      // debugging session down the wrong path entirely.
+      const why = err instanceof Error ? err.message : String(err);
+      return { reply: `I couldn't reach the model (${deps.model}): ${why}`, model: deps.model };
     }
 
     // A rejected proposal (hallucinated tool, unknown skill/project, blank args) must not end
