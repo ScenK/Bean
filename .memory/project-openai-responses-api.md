@@ -22,6 +22,17 @@ migration, not a bug. `/v1/responses` accepts every effort with tools.
 - Reasoning items in `output[]` are dropped. Verified against the live API: a follow-up call
   carrying only `function_call` + `function_call_output` is accepted and answers correctly, so
   converse()'s 3-round tool loop carries no encrypted reasoning state.
+- `strict: false` must be sent on every tool. Responses treats an **omitted** `strict` as
+  `true`, and a strict schema makes every property required — which silently forced
+  `propose_run`'s optional `project` (killing the no-project scratch run) and
+  `propose_delegate`'s optional `skill`/`cli`/`model`. Verified live: omitted `strict` echoes
+  back as `true` and the model always fills the optional argument; `strict: false` restores it.
+- A message part is `output_text` **or** `refusal`, and a refusal carries no `text` at all.
+  Reading only `text` turns a refusal into an empty, silent reply.
+- Only `completed` is usable. `failed`/`cancelled` throw (their partial output is not an
+  answer); `incomplete` throws if it produced a tool call — an unfinished response must never
+  trigger an action — and otherwise labels its partial text rather than passing it off as
+  finished.
 - Shape differences from chat.completions, all easy to get wrong: tools are flat (no nested
   `function:`), images are `input_image` with a bare `image_url` string, an assistant turn with
   N tool calls expands to N sibling `function_call` items, and the id to echo back is

@@ -37,7 +37,9 @@ type ResponsesItem =
 
 interface ResponsesOutputItem {
   type: string;
-  content?: Array<{ type?: string; text?: string }> | null;
+  // A message part is either `output_text` (carrying `text`) or `refusal` (carrying `refusal`
+  // and no text at all) — reading only `text` turns a refusal into an empty, silent reply.
+  content?: Array<{ type?: string; text?: string; refusal?: string }> | null;
   call_id?: string;
   name?: string;
   arguments?: string;
@@ -65,7 +67,7 @@ interface ResponsesClient {
     create: (args: {
       model: string;
       input: ResponsesItem[];
-      tools?: Array<{ type: "function"; name: string; description: string; parameters: object }>;
+      tools?: Array<{ type: "function"; name: string; description: string; parameters: object; strict: boolean }>;
       tool_choice?: "auto";
       reasoning?: { effort: string };
       store?: boolean;
@@ -74,6 +76,7 @@ interface ResponsesClient {
       output?: ResponsesOutputItem[] | null;
       status?: string | null;
       incomplete_details?: { reason?: string | null } | null;
+      error?: { message?: string | null } | null;
     }>;
   };
 }
@@ -113,7 +116,11 @@ export function makeOpenAIConverseWithClient(client: ResponsesClient, reasoningE
     const res = await client.responses.create({
       model,
       input: messages.flatMap(toResponsesItems),
-      tools: tools.map((t) => ({ type: "function", name: t.name, description: t.description, parameters: stripEmptyEnums(t.parameters) })),
+      // strict must be sent explicitly: Responses treats an omitted `strict` as true, and a
+      // strict schema makes EVERY property required. That silently broke the optional
+      // arguments converse() relies on — propose_run's no-project scratch run became
+      // unreachable, and propose_delegate's optional skill/cli/model were forced.
+      tools: tools.map((t) => ({ type: "function", name: t.name, description: t.description, parameters: stripEmptyEnums(t.parameters), strict: false })),
       tool_choice: "auto",
       // Omitted unless the user picked one in Settings: sending reasoning.effort to a model
       // that has no reasoning (gpt-4o-mini, gpt-5.4-nano) is a hard 400, so "" must mean
@@ -132,7 +139,7 @@ export function makeOpenAIConverseWithClient(client: ResponsesClient, reasoningE
     const toolCalls: ToolCall[] = [];
     for (const item of res.output ?? []) {
       if (item.type === "message") {
-        for (const part of item.content ?? []) content += part.text ?? "";
+        for (const part of item.content ?? []) content += part.text ?? part.refusal ?? "";
         continue;
       }
       // Reasoning items also arrive here and are dropped: the tool round trip is accepted
@@ -144,12 +151,17 @@ export function makeOpenAIConverseWithClient(client: ResponsesClient, reasoningE
         /* skip malformed tool call */
       }
     }
-    // A truncated response yields no message and no tool call, which would surface as a chat
-    // turn that silently answers nothing. Fail loudly instead — converse() turns this into a
-    // visible reply naming the reason.
-    if (!content && toolCalls.length === 0 && res.status === "incomplete") {
+    // Anything short of a completed response must not pass silently. A failed or cancelled
+    // response has no trustworthy output at all; a truncated one must never trigger a tool
+    // call, and its partial text is labelled rather than presented as a finished answer.
+    // converse() turns each throw into a visible reply naming the reason.
+    if (res.status === "failed" || res.status === "cancelled") {
+      throw new Error(`response ${res.status}${res.error?.message ? `: ${res.error.message}` : ""}`);
+    }
+    if (res.status === "incomplete" && (!content || toolCalls.length > 0)) {
       throw new Error(`response incomplete (${res.incomplete_details?.reason ?? "unknown reason"})`);
     }
+    if (res.status === "incomplete") return { content: `${content}\n\n_(cut off — the model hit its output limit.)_`, toolCalls };
     return { content, toolCalls };
   };
 }

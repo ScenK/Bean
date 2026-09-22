@@ -93,8 +93,10 @@ test("converse adapter sends tools flat, not nested under function", async () =>
     messages: [],
     tools: [{ name: "set_reminder", description: "set one", parameters: { type: "object" } }],
   });
+  // strict:false is load-bearing — Responses treats an omitted strict as true, which makes
+  // every property required and breaks converse()'s optional arguments.
   expect(seen.args?.tools).toEqual([
-    { type: "function", name: "set_reminder", description: "set one", parameters: { type: "object" } },
+    { type: "function", name: "set_reminder", description: "set one", parameters: { type: "object" }, strict: false },
   ]);
   expect(seen.args?.tool_choice).toBe("auto");
 });
@@ -184,10 +186,39 @@ test("converse adapter throws when a truncated response carries no content or to
   await expect(chat({ model: "m", messages: [], tools: [] })).rejects.toThrow("max_output_tokens");
 });
 
-test("converse adapter accepts an incomplete response that still produced content", async () => {
+test("converse adapter labels truncated text instead of passing it off as a finished answer", async () => {
   const client = {
     responses: { create: async () => ({ output: [{ type: "message", content: [{ text: "partial" }] }], status: "incomplete", incomplete_details: { reason: "max_output_tokens" } }) },
   };
   const out = await makeOpenAIConverseWithClient(client as never)({ model: "m", messages: [], tools: [] });
-  expect(out.content).toBe("partial");
+  expect(out.content).toContain("partial");
+  expect(out.content).toContain("cut off");
+});
+
+test("converse adapter refuses to act on a tool call from a truncated response", async () => {
+  const client = {
+    responses: { create: async () => ({
+      output: [{ type: "function_call", call_id: "c1", name: "set_reminder", arguments: "{}" }],
+      status: "incomplete",
+      incomplete_details: { reason: "max_output_tokens" },
+    }) },
+  };
+  await expect(makeOpenAIConverseWithClient(client as never)({ model: "m", messages: [], tools: [] }))
+    .rejects.toThrow("max_output_tokens");
+});
+
+test("converse adapter throws on a failed response, naming the error", async () => {
+  const client = {
+    responses: { create: async () => ({ output: [], status: "failed", error: { message: "server had a problem" } }) },
+  };
+  await expect(makeOpenAIConverseWithClient(client as never)({ model: "m", messages: [], tools: [] }))
+    .rejects.toThrow("server had a problem");
+});
+
+test("converse adapter surfaces a refusal, which carries no text part", async () => {
+  const client = {
+    responses: { create: async () => ({ output: [{ type: "message", content: [{ type: "refusal", refusal: "I can't help with that." }] }], status: "completed" }) },
+  };
+  const out = await makeOpenAIConverseWithClient(client as never)({ model: "m", messages: [], tools: [] });
+  expect(out.content).toBe("I can't help with that.");
 });
