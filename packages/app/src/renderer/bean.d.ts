@@ -37,8 +37,9 @@ declare global {
       moveWindowBy(dx: number, dy: number): void;
       resizeWindowToContent(height: number): void;
       setAvatarMode(mode: AvatarMode): void;
+      onAvatarReset(cb: () => void): void;
       onAvatarFoldMenu(cb: () => void): void;
-      onAvatarDragLayout(cb: (p: { x: number; y: number }) => void): void;
+      onAvatarDragLayout(cb: (p: { x: number; y: number; tilesAbove?: boolean }) => void): void;
       planFromDrop(skillName: string, droppedUrl: string): void;
       runInChat(prompt: string, label: string, noteSlug?: string): void;
       getPendingChatPrompt(): Promise<{ prompt: string; label: string; noteSlug?: string } | undefined>;

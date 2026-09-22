@@ -75,6 +75,7 @@ export const IPC = {
   resizeWindowToContent: "bean:resize-window-to-content",
   setAvatarMode: "bean:set-avatar-mode",
   avatarFoldMenu: "bean:avatar-fold-menu",
+  avatarReset: "bean:avatar-reset",
   avatarDragLayout: "bean:avatar-drag-layout",
   planFromDrop: "bean:plan-from-drop",
   getConfig: "bean:get-config",

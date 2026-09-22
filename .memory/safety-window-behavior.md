@@ -58,3 +58,19 @@ progress always streams to the Chat window's `webContents` (`ipc.ts`'s `IPC.run`
 hardcodes `deps.chatSender()`), regardless of which window called `run()`. The Plan window
 confirming a run also calls `openComponent("chat")` so the user sees the existing console
 immediately, rather than growing a second, duplicate console view.
+
+**Avatar visibility and edge placement (2026-09):** `avatar-window.ts` owns mode, original idle
+anchor, cursor polling, native movement, and display recovery. Main loads the renderer only
+after IPC registration (see project-e2e-ipc-ready-race.md). `dragBloomLayout` opens tile lists
+above the capsule near the bottom edge and limits panel size to the work area. Scroll viewports
+keep every skill reachable; drop hit-testing must include `scrollTop` and reject positions
+outside the viewport. The capsule can shift inward at an edge so its text stays visible;
+collapse returns to the original idle anchor, clamped to an available display.
+
+All moves, including OS drag-region moves, update the anchor by the **applied** bounds delta.
+The window is confined to one display's work area (no straddling). Display changes reset only
+invalid bounds and never unhide a Cmd+W-hidden bean. Ordinary activation preserves placement;
+the tray's explicit **Bring Bean Back** action resets onto the cursor's display. Reset must
+clear renderer collapse/drag state before sending the new idle layout, including invalidating
+pending asynchronous skill-list preparation. Keep the regression tests in avatar-window.test.ts
+and avatar-visibility.e2e.ts.

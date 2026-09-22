@@ -10,8 +10,7 @@ import {
 import { mkdir, readFile } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";
 import { BrowserWindow, dialog, screen, shell, type IpcMain } from "electron";
-import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
-import { avatarSizeForMode, dragBloomLayout, nextAvatarBounds, type Bounds } from "./avatar-menu.js";
+import { IPC, type Theme, type ComponentKind, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import type { UpdateCheckOutcome } from "./updater.js";
@@ -729,29 +728,6 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.getPendingChatPrompt, () => deps.getPendingChatPrompt());
   ipcMain.handle(IPC.getPendingInterruptedRunNotices, () => deps.getPendingInterruptedRunNotices());
 
-  // Avatar window growth: one shared mode (normal/menu/drag) drives its bounds. The bubble
-  // menu grows symmetrically (centered on the bean). The drag bloom instead anchors on the
-  // bean's fixed screen center and clamps the window to the work area, so growing near a screen
-  // corner shifts the window — never the bean (see dragBloomLayout). We remember that anchor to
-  // recenter the small window when the bloom closes.
-  let dragAnchor: { x: number; y: number } | undefined;
-  let menuAnchor: { x: number; y: number } | undefined;
-
-  // Manual drag-to-move for the avatar: the visible #bean element is deliberately
-  // -webkit-app-region: no-drag (see .memory/safety-window-behavior.md), so moving
-  // it is done via mouse deltas from the renderer instead of the CSS drag region.
-  ipcMain.on(IPC.moveWindowBy, (e, dx: number, dy: number) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    if (!win) return;
-    const [x = 0, y = 0] = win.getPosition();
-    win.setPosition(x + dx, y + dy);
-    // Moving while a box/bloom is open (the common case — proximity-hover opens on approach, so
-    // the user is usually dragging the expanded box): keep the collapse anchor in sync with the
-    // move, otherwise closing the box would snap the bean back to where it was grabbed.
-    if (dragAnchor) dragAnchor = { x: dragAnchor.x + dx, y: dragAnchor.y + dy };
-    if (menuAnchor) menuAnchor = { x: menuAnchor.x + dx, y: menuAnchor.y + dy };
-  });
-
   // Lets a component window grow to fit its own content (e.g. About growing when an update
   // notice appears) instead of clipping it. Width is left alone; height only grows/shrinks to
   // what the renderer measured, clamped to the display's work area.
@@ -761,68 +737,5 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
     const [width] = win.getContentSize();
     const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
     win.setContentSize(width ?? 0, Math.min(Math.round(height), workArea.height), true);
-  });
-  let menuPoll: ReturnType<typeof setInterval> | undefined;
-  let menuOutsideSince: number | undefined;
-  const stopMenuPoll = (): void => {
-    if (menuPoll) clearInterval(menuPoll);
-    menuPoll = undefined;
-    menuOutsideSince = undefined;
-  };
-  // Polls the cursor and asks the renderer to fold once it's been outside the window for `foldMs`.
-  // The click menu folds lazily (2s); the hover box folds promptly (backstop for the renderer's
-  // mouseleave, which on this transparent always-on-top window sometimes never fires).
-  const startMenuPoll = (win: BrowserWindow, foldMs: number): void => {
-    stopMenuPoll();
-    menuPoll = setInterval(() => {
-      if (win.isDestroyed()) { stopMenuPoll(); return; }
-      const bounds = win.getBounds();
-      const point = screen.getCursorScreenPoint();
-      const inside = point.x >= bounds.x && point.x <= bounds.x + bounds.width && point.y >= bounds.y && point.y <= bounds.y + bounds.height;
-      if (inside) { menuOutsideSince = undefined; return; }
-      menuOutsideSince ??= Date.now();
-      if (Date.now() - menuOutsideSince < foldMs) return;
-      win.webContents.send(IPC.avatarFoldMenu);
-      stopMenuPoll();
-    }, 120);
-  };
-  ipcMain.on(IPC.setAvatarMode, (e, mode: AvatarMode) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    if (!win) return;
-    // The click menu auto-folds lazily; the hover box folds promptly (backstop for a dropped
-    // mouseleave). Grown-tile / idle modes don't poll.
-    if (mode === "menu") startMenuPoll(win, 2000);
-    else if (mode === "hover") startMenuPoll(win, 100);
-    else stopMenuPoll();
-    const cur = win.getBounds();
-    let target: Bounds;
-    if (mode === "drag" || mode === "menu" || mode === "hover") {
-      // Anchor on the bean's fixed screen center so it never jumps as the box + tiles grow.
-      // Reuse an existing anchor when we're already grown (hover→menu, menu→drag, …): in a grown
-      // window the bean sits at the top-right, NOT the window center, so recomputing from the center
-      // would mis-anchor and make the bean jump left. Only when growing fresh from the idle window
-      // (no anchor yet) is the window center the bean's true position.
-      const beanCenter = dragAnchor ?? menuAnchor ?? { x: cur.x + Math.round(cur.width / 2), y: cur.y + Math.round(cur.height / 2) };
-      if (mode === "drag") dragAnchor = beanCenter;
-      else menuAnchor = beanCenter;
-      const workArea = screen.getDisplayMatching(cur).workArea;
-      const layout = dragBloomLayout(beanCenter, avatarSizeForMode(mode), workArea);
-      target = layout.bounds;
-      win.webContents.send(IPC.avatarDragLayout, layout.bean);
-    } else if (mode === "normal" && (dragAnchor || menuAnchor)) {
-      const anchor = dragAnchor ?? menuAnchor!;
-      const size = avatarSizeForMode("normal");
-      target = { x: anchor.x - Math.round(size.width / 2), y: anchor.y - Math.round(size.height / 2), width: size.width, height: size.height };
-      dragAnchor = undefined;
-      menuAnchor = undefined;
-    } else {
-      target = nextAvatarBounds(cur, avatarSizeForMode(mode));
-    }
-    if (target.width === cur.width && target.height === cur.height && target.x === cur.x && target.y === cur.y) return;
-    win.setBounds(target);
-    // Idle centers the bean in the small (120x120) window; tell the renderer that center so it
-    // re-pins the (collapsed) box to the exact same screen point — the window resized but the bean
-    // must not move (see onAvatarDragLayout "normal").
-    if (mode === "normal") win.webContents.send(IPC.avatarDragLayout, { x: Math.round(target.width / 2), y: Math.round(target.height / 2) });
   });
 }
