@@ -20,7 +20,7 @@ const COMPONENT_WINDOW_SIZE: Record<ComponentKind, { width: number; height: numb
   settings: { width: 560, height: 680 },
   about: { width: 420, height: 380 },
   routines: { width: 1040, height: 720 },
-  dashboard: { width: 1100, height: 760 },
+  dashboard: { width: 1200, height: 780 },
 };
 
 const COMPONENT_WINDOW_TITLE: Record<ComponentKind, string> = {
