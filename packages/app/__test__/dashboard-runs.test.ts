@@ -65,6 +65,21 @@ describe("dashboard runs", () => {
     expect(stepLabel(needs[0]!)).toBe("todo");
   });
 
+  test("a todo prefix truncated by the summary cap is still a todo, never a step number", () => {
+    const long = `[todo: ${"x".repeat(400)}`.slice(0, 200); // no closing "]" survives the cap
+    const { needs } = splitSteps({
+      routine: "queue",
+      id: "queue@x",
+      startedAt: "x",
+      finishedAt: "y",
+      status: "failed",
+      digest: "",
+      steps: [{ kind: "chat", ok: false, summary: long }],
+    });
+    expect(needs[0]!.todo).toBe("");
+    expect(stepLabel(needs[0]!)).toBe("todo");
+  });
+
   test("an unlabelled step keeps its position-based step number", () => {
     expect(stepLabel(splitSteps(flattenRuns(states)[0]).needs[0]!)).toBe("step 2");
   });

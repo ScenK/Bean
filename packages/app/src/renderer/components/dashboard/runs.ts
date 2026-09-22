@@ -22,14 +22,23 @@ export interface DashStep {
 }
 
 const TODO_LABEL = /^\[todo: ([^\]]*)\] ?/;
+const TODO_OPEN = "[todo: ";
 
 /** The runner prefixes a todo pipeline's output with `[todo: <text>] ` — lift that out so the
- * card can name the todo instead of claiming a step number that doesn't line up. */
+ * card can name the todo instead of claiming a step number that doesn't line up.
+ *
+ * A summary is capped at 200 chars by the runner, so a long todo's prefix can arrive with its
+ * `]` cut off; that still means "this was a todo pass", just without a usable name — never
+ * "step N", which would be a wrong claim. A `]` inside the todo text itself only truncates the
+ * displayed name (cosmetic): matching to the LAST `]` would misread the far more common case
+ * of a `]` in the step's own output. */
 export function parseStep(step: { kind: "delegate" | "chat"; ok: boolean; summary: string }, index: number): DashStep {
   const m = TODO_LABEL.exec(step.summary);
-  return m
-    ? { index, kind: step.kind, ok: step.ok, summary: step.summary.slice(m[0].length), todo: m[1] }
-    : { index, kind: step.kind, ok: step.ok, summary: step.summary };
+  if (m) return { index, kind: step.kind, ok: step.ok, summary: step.summary.slice(m[0].length), todo: m[1] };
+  if (step.summary.startsWith(TODO_OPEN)) {
+    return { index, kind: step.kind, ok: step.ok, summary: step.summary.slice(TODO_OPEN.length), todo: "" };
+  }
+  return { index, kind: step.kind, ok: step.ok, summary: step.summary };
 }
 
 /** What to call a step in the UI. A todo-labelled pass can't honestly claim "step N". */

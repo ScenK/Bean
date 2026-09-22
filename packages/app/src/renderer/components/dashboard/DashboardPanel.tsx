@@ -28,8 +28,10 @@ const dayLabel = (iso: string, now: Date): string => {
   return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 };
 
-const stepTitle = (step: DashStep): string =>
-  step.todo === undefined ? `Step ${step.index + 1} failed` : `Failed on todo: ${step.todo}`;
+const stepTitle = (step: DashStep): string => {
+  if (step.todo === undefined) return `Step ${step.index + 1} failed`;
+  return step.todo ? `Failed on todo: ${step.todo}` : "Failed on a queued todo";
+};
 
 function nextRunText(routine: Routine | undefined): string {
   if (!routine) return "routine deleted — history kept";
