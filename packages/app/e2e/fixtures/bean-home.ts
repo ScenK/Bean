@@ -62,17 +62,20 @@ export async function makeBeanHome(options: BeanHomeOptions = {}): Promise<BeanH
   await writeFile(
     join(routinesPath, ".state.json"),
     JSON.stringify({
+      // Midday UTC so the two Jan 2 runs stay on one *local* day in any plausible TZ — the
+      // Dashboard buckets by local date, and a fixture that split them would never render the
+      // multi-run spine this is here to cover.
       nightly: {
-        lastRun: "2026-01-02T22:04:00.000Z",
+        lastRun: "2026-01-02T20:00:00.000Z",
         history: [
-          run("2026-01-02T22:04:00.000Z", "2026-01-02T23:15:00.000Z", false),
-          run("2026-01-02T06:00:00.000Z", "2026-01-02T06:30:00.000Z", true),
-          run("2026-01-01T22:04:00.000Z", "2026-01-01T23:15:00.000Z", true),
+          run("2026-01-02T20:00:00.000Z", "2026-01-02T20:45:00.000Z", false),
+          run("2026-01-02T14:00:00.000Z", "2026-01-02T14:30:00.000Z", true),
+          run("2026-01-01T14:00:00.000Z", "2026-01-01T14:30:00.000Z", true),
         ],
       },
       weekly: {
-        lastRun: "2026-01-01T08:00:00.000Z",
-        history: [run("2026-01-01T08:00:00.000Z", "2026-01-01T08:30:00.000Z", true)],
+        lastRun: "2026-01-01T15:00:00.000Z",
+        history: [run("2026-01-01T15:00:00.000Z", "2026-01-01T15:30:00.000Z", true)],
       },
     }, null, 2),
     "utf8",

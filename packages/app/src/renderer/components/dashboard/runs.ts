@@ -70,19 +70,27 @@ export function unreadRuns(runs: DashRun[], reviewedAt: string | null): DashRun[
   return reviewedAt ? runs.filter((r) => r.finishedAt > reviewedAt) : runs;
 }
 
-export interface RunDay {
-  /** `${routine}|${localDate}` — the fold key, unique across the whole rail. */
+/** Every run a routine did on one local day — the dashboard's unit of selection and of
+ * reading. The spine renders the whole bucket as one timeline, run after run. */
+export interface RunBucket {
+  /** `${date}|${routine}` — the selection key, stable across polls. */
   key: string;
-  /** Local calendar date of the day's runs, as an ISO date; the panel formats the label. */
+  routine: string;
+  /** Local calendar date of these runs, ISO `YYYY-MM-DD`; the panel formats the label. */
   date: string;
+  /** Newest-first out of flattenRuns, but a day reads forward, so these are OLDEST-first:
+   * run 1 is the day's first run. */
   runs: DashRun[];
+  /** Failed steps across the whole bucket — what the day still needs from you. */
+  needs: number;
 }
 
-export interface RunGroup {
-  /** The routine name, which is also its fold key. */
-  routine: string;
-  count: number;
-  days: RunDay[];
+export interface DayGroup {
+  /** The local date, which is also its fold key. */
+  date: string;
+  buckets: RunBucket[];
+  runCount: number;
+  needs: number;
 }
 
 const localDate = (iso: string): string => {
@@ -90,31 +98,36 @@ const localDate = (iso: string): string => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
-/** Rail shape: routine → day → its runs, each level newest-first. A routine that runs several
- * times a day collects those runs under one day header instead of spreading them down the rail.
- * Input must already be newest-first (flattenRuns' order), which is what keeps every level's
- * order right without re-sorting. */
-export function groupRuns(runs: DashRun[]): RunGroup[] {
-  const groups: RunGroup[] = [];
-  const byRoutine = new Map<string, RunGroup>();
-  const byDay = new Map<string, RunDay>();
+export const bucketKey = (date: string, routine: string): string => `${date}|${routine}`;
+
+/** Rail shape: local day → routine → that routine's runs on that day. A routine that fires
+ * several times a day becomes ONE row, whose runs the spine then reads in order. Input must
+ * already be newest-first (flattenRuns' order): days and routines keep that order, while each
+ * bucket's own runs are reversed so the timeline reads first run → last run. */
+export function groupRuns(runs: DashRun[]): DayGroup[] {
+  const days: DayGroup[] = [];
+  const byDate = new Map<string, DayGroup>();
+  const byBucket = new Map<string, RunBucket>();
   for (const run of runs) {
-    let group = byRoutine.get(run.routine);
-    if (!group) {
-      group = { routine: run.routine, count: 0, days: [] };
-      byRoutine.set(run.routine, group);
-      groups.push(group);
-    }
-    group.count++;
     const date = localDate(run.startedAt);
-    const key = `${run.routine}|${date}`;
-    let day = byDay.get(key);
+    let day = byDate.get(date);
     if (!day) {
-      day = { key, date, runs: [] };
-      byDay.set(key, day);
-      group.days.push(day);
+      day = { date, buckets: [], runCount: 0, needs: 0 };
+      byDate.set(date, day);
+      days.push(day);
     }
-    day.runs.push(run);
+    const key = bucketKey(date, run.routine);
+    let bucket = byBucket.get(key);
+    if (!bucket) {
+      bucket = { key, routine: run.routine, date, runs: [], needs: 0 };
+      byBucket.set(key, bucket);
+      day.buckets.push(bucket);
+    }
+    bucket.runs.unshift(run); // newest-first in, oldest-first out
+    const failed = run.steps.filter((step) => !step.ok).length;
+    bucket.needs += failed;
+    day.runCount++;
+    day.needs += failed;
   }
-  return groups;
+  return days;
 }

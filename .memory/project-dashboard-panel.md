@@ -26,10 +26,14 @@ Mapping decisions worth keeping:
 - **Deferred (review policy P2):** "Run routine again" on a todo-driven routine with an empty
   queue records a successful no-op run. Guarding it needs a `todosList` poll the dashboard
   otherwise doesn't want; the row it leaves is visible and harmless.
-- **The rail is routine → local day → runs** (`groupRuns()`), so a routine that fires several
-  times a day collects under one day header. Fold state is a single localStorage list of headers
-  *flipped away from their default* — groups open, and only a routine's newest day open — rather
-  than separate collapsed/expanded sets.
+- **The unit of selection is a routine's whole local day**, not one run (`RunBucket` out of
+  `groupRuns()`): the rail is local day → routine (one row even when it fired five times), and
+  the spine renders that bucket's runs in order as RUN 1, RUN 2, … each with its own resolved
+  line, cards and digest. NEEDS YOU cards are numbered across the bucket, so the morning has one
+  end rather than one per run. Bucket runs are stored oldest-first (a day reads forward) while
+  days and routines stay newest-first. Fold state is a single localStorage list of day headers
+  *flipped away from their default* — newest day open, older days shut — not separate
+  collapsed/expanded sets.
 - `runs.ts` is pure and unit-tested (`__test__/dashboard-runs.test.ts`); the panel holds the JSX.
 
 **Adding any new component window touches five places** — miss one and it fails at a different

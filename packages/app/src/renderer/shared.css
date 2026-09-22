@@ -1947,7 +1947,10 @@ button, input, textarea, select, a {
 .bean-dash-header-sub { font-size: 13px; color: var(--bean-text-dim); margin-top: 2px; }
 .bean-dash-accent { color: var(--bean-accent-text); }
 
-.bean-dash-spine { display: grid; grid-template-columns: 76px 18px 1fr; }
+/* Each row is its own grid so a run section can be built as a list of rows; the rail
+   column's line fills its row, which is what keeps the spine continuous. */
+.bean-dash-spine { display: flex; flex-direction: column; }
+.bean-dash-spine-row { display: grid; grid-template-columns: 76px 18px 1fr; }
 .bean-dash-time {
   font: 600 12px/1.4 ui-monospace, monospace;
   color: var(--bean-text-dim);
@@ -1956,6 +1959,13 @@ button, input, textarea, select, a {
 }
 .bean-dash-time--call { color: var(--bean-accent-text); font-weight: 700; }
 .bean-dash-time--end { color: var(--bean-text); }
+.bean-dash-time--run {
+  color: var(--bean-text);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-top: 20px;
+}
 .bean-dash-rail { display: flex; flex-direction: column; align-items: center; }
 .bean-dash-node {
   flex: none;
@@ -1972,10 +1982,35 @@ button, input, textarea, select, a {
   box-shadow: 0 0 0 4px color-mix(in oklch, var(--bean-accent) 18%, transparent);
 }
 .bean-dash-node--end { background: var(--bean-text); }
+.bean-dash-node--run {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: var(--bean-surface);
+  border: 2px solid var(--bean-control-border);
+  margin-top: 22px;
+}
 .bean-dash-line { flex: 1; width: 1px; background: var(--bean-border); }
 /* The spine ends at the last node — no line dangling below it. */
-.bean-dash-spine > .bean-dash-rail:nth-last-child(2) .bean-dash-line { background: none; }
+.bean-dash-spine > .bean-dash-spine-row:last-child .bean-dash-line { background: none; }
 .bean-dash-body { padding: 12px 0 14px 16px; min-width: 0; }
+
+.bean-dash-run-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--bean-border);
+}
+.bean-dash-spine-row:first-child .bean-dash-run-head { margin-top: 0; padding-top: 0; border-top: none; }
+.bean-dash-run-time {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--bean-text);
+}
 
 .bean-dash-plain {
   display: flex;
@@ -2086,5 +2121,4 @@ button, input, textarea, select, a {
 .bean-dash-notice { font-size: 12.5px; color: var(--bean-error); }
 /* Rail hierarchy: routine header, day subheader, then its runs. Indent is the only thing
    carrying the nesting — the headers reuse the Notes panel's group chrome. */
-.bean-dash-subgroup { padding-left: 24px; text-transform: none; letter-spacing: 0.02em; }
 .bean-dash-row--nested { margin-left: 14px; }
