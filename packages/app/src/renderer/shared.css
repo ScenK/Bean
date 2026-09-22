@@ -1895,10 +1895,14 @@ button, input, textarea, select, a {
 }
 .bean-skills-row--selected .bean-dash-row-unread { background: var(--bean-accent-ink); }
 
+.bean-dash-health {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 10px 6px;
+  border-top: 1px solid var(--bean-border);
+}
 .bean-dash-health-bars { display: flex; gap: 3px; }
-/* Inline in a routine's spine header: a thin streak, not the rail's full-width block. */
-.bean-dash-health-bars--inline { flex: none; width: 96px; }
-.bean-dash-health-bars--inline .bean-dash-health-bar { height: 10px; }
 .bean-dash-health-bar {
   flex: 1;
   height: 16px;
@@ -1906,9 +1910,9 @@ button, input, textarea, select, a {
 }
 .bean-dash-health-bar--ok { background: var(--bean-orb-check-ink); }
 .bean-dash-health-bar--failed { background: var(--bean-error); }
+.bean-dash-health-text { font-size: 12px; line-height: 1.5; color: var(--bean-text-dim); }
 .bean-dash-link {
   align-self: flex-start;
-  padding: 8px 10px;
   font: 600 12.5px sans-serif;
   color: var(--bean-accent-text);
   background: none;
@@ -1990,31 +1994,6 @@ button, input, textarea, select, a {
 /* The spine ends at the last node — no line dangling below it. */
 .bean-dash-spine > .bean-dash-spine-row:last-child .bean-dash-line { background: none; }
 .bean-dash-body { padding: 12px 0 14px 16px; min-width: 0; }
-
-.bean-dash-routine-head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  margin-top: 18px;
-  padding: 10px 0 2px;
-  border-top: 2px solid var(--bean-border);
-}
-.bean-dash-spine-row:first-child .bean-dash-routine-head { margin-top: 0; border-top: none; }
-.bean-dash-routine-main { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; flex: 1; min-width: 0; }
-.bean-dash-routine-name {
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: -0.012em;
-  color: var(--bean-text);
-}
-.bean-dash-node--routine {
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: var(--bean-text);
-  margin-top: 20px;
-}
 
 .bean-dash-run-head {
   display: flex;
@@ -2138,6 +2117,10 @@ button, input, textarea, select, a {
   border: none;
   cursor: pointer;
 }
+.bean-dash-footer { font-size: 12.5px; color: var(--bean-text-dim); }
+/* .bean-md sets no font-size, so a digest would inherit the window's 16px while its own
+   headings are 13.5px — headings rendering SMALLER than the prose under them. The body sets
+   its own size and gives headings a quiet small-caps treatment instead. */
 .bean-dash-digest-body {
   border-top: 1px solid var(--bean-border);
   padding: 12px 0 10px;
@@ -2161,3 +2144,4 @@ button, input, textarea, select, a {
 .bean-dash-notice { font-size: 12.5px; color: var(--bean-error); }
 /* Rail hierarchy: routine header, day subheader, then its runs. Indent is the only thing
    carrying the nesting — the headers reuse the Notes panel's group chrome. */
+.bean-dash-row--nested { margin-left: 14px; }

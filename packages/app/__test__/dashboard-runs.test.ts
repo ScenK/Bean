@@ -108,7 +108,8 @@ describe("dashboard runs", () => {
       ["nightly", 2, 1],
       ["weekly", 1, 1],
     ]);
-    // Newest-first at every level, buckets included — the spine puts the latest run on top.
+    // Newest-first at every level, buckets included — the spine reads the latest run at the top
+    // and labels it with its chronological ordinal (RUN 2 above RUN 1).
     expect(today!.buckets[0]!.runs.map((r) => r.startedAt)).toEqual([
       "2026-09-21T22:04:00",
       "2026-09-21T06:00:00",
