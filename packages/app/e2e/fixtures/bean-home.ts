@@ -37,36 +37,42 @@ export async function makeBeanHome(options: BeanHomeOptions = {}): Promise<BeanH
     JSON.stringify([{ name: "demo", path: projectPath }], null, 2),
     "utf8",
   );
-  // One finished routine run (one failed step, one ok) so the Dashboard has a real ledger to
-  // render — the empty state would never exercise its cards.
+  // A few finished runs — two of the same routine on one local day, one on an earlier day, plus
+  // a second routine — so the Dashboard rail renders its real routine/day grouping and its
+  // cards, not the empty state.
   const routinesPath = join(beanDir, "routines");
   await mkdir(routinesPath, { recursive: true });
-  await writeFile(
-    join(routinesPath, "nightly.json"),
-    JSON.stringify({
-      name: "nightly",
-      enabled: true,
-      cron: "0 22 * * *",
-      steps: [{ kind: "chat", instruction: "check the build" }],
-      sinks: {},
-    }, null, 2),
-    "utf8",
-  );
+  const routine = (name: string, cron: string) => ({
+    name, enabled: true, cron, steps: [{ kind: "chat", instruction: "check the build" }], sinks: {},
+  });
+  await writeFile(join(routinesPath, "nightly.json"), JSON.stringify(routine("nightly", "0 22 * * *"), null, 2), "utf8");
+  await writeFile(join(routinesPath, "weekly.json"), JSON.stringify(routine("weekly", "0 8 * * 1"), null, 2), "utf8");
+  const run = (startedAt: string, finishedAt: string, ok: boolean) => ({
+    startedAt,
+    finishedAt,
+    status: ok ? "ok" : "failed",
+    digest: "## Digest\n\nWhat happened overnight.",
+    steps: ok
+      ? [{ kind: "chat", ok: true, summary: "build red then green on retry" }]
+      : [
+          { kind: "chat", ok: true, summary: "build red then green on retry" },
+          { kind: "chat", ok: false, summary: "dependency scan could not reach the registry" },
+        ],
+  });
   await writeFile(
     join(routinesPath, ".state.json"),
     JSON.stringify({
       nightly: {
-        lastRun: "2026-01-01T22:04:00.000Z",
-        history: [{
-          startedAt: "2026-01-01T22:04:00.000Z",
-          finishedAt: "2026-01-02T07:15:00.000Z",
-          status: "failed",
-          digest: "## Nightly\n\nOne step failed.",
-          steps: [
-            { kind: "chat", ok: true, summary: "build red then green on retry" },
-            { kind: "chat", ok: false, summary: "dependency scan could not reach the registry" },
-          ],
-        }],
+        lastRun: "2026-01-02T22:04:00.000Z",
+        history: [
+          run("2026-01-02T22:04:00.000Z", "2026-01-02T23:15:00.000Z", false),
+          run("2026-01-02T06:00:00.000Z", "2026-01-02T06:30:00.000Z", true),
+          run("2026-01-01T22:04:00.000Z", "2026-01-01T23:15:00.000Z", true),
+        ],
+      },
+      weekly: {
+        lastRun: "2026-01-01T08:00:00.000Z",
+        history: [run("2026-01-01T08:00:00.000Z", "2026-01-01T08:30:00.000Z", true)],
       },
     }, null, 2),
     "utf8",

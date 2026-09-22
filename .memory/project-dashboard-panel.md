@@ -26,6 +26,10 @@ Mapping decisions worth keeping:
 - **Deferred (review policy P2):** "Run routine again" on a todo-driven routine with an empty
   queue records a successful no-op run. Guarding it needs a `todosList` poll the dashboard
   otherwise doesn't want; the row it leaves is visible and harmless.
+- **The rail is routine → local day → runs** (`groupRuns()`), so a routine that fires several
+  times a day collects under one day header. Fold state is a single localStorage list of headers
+  *flipped away from their default* — groups open, and only a routine's newest day open — rather
+  than separate collapsed/expanded sets.
 - `runs.ts` is pure and unit-tested (`__test__/dashboard-runs.test.ts`); the panel holds the JSX.
 
 **Adding any new component window touches five places** — miss one and it fails at a different

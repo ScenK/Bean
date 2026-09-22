@@ -4,7 +4,7 @@ import type { Routine } from "@bean/core";
 import { nextRun } from "@bean/core/cron";
 import { Markdown } from "../../shared/Markdown.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
-import { flattenRuns, splitSteps, stepLabel, unreadRuns, type DashRun, type DashStep } from "./runs.js";
+import { flattenRuns, groupRuns, splitSteps, stepLabel, unreadRuns, type DashRun, type DashStep } from "./runs.js";
 import type { RoutineStateView } from "../../../ipc.js";
 
 // Renderer-only view pref (see .memory/convention-renderer-view-prefs-in-localstorage.md):
@@ -13,6 +13,19 @@ const REVIEWED_KEY = "bean.dashboard.reviewedAt";
 const readReviewed = (): string | null => {
   try { return localStorage.getItem(REVIEWED_KEY); } catch { return null; }
 };
+
+// Rail groups open by default except older days (see dayOpenByDefault), so what's stored is the
+// set of headers you've *flipped* away from that default — one list instead of a
+// collapsed-list plus an expanded-list.
+const FLIPPED_KEY = "bean.dashboard.flippedGroups";
+function readFlipped(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FLIPPED_KEY) ?? "[]") as unknown;
+    return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 const clock = (iso: string): string => {
@@ -27,6 +40,8 @@ const dayLabel = (iso: string, now: Date): string => {
   if (days === 1) return "Last night";
   return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 };
+
+const dayOpenByDefault = (dayIndex: number): boolean => dayIndex === 0;
 
 const stepTitle = (step: DashStep): string => {
   if (step.todo === undefined) return `Step ${step.index + 1} failed`;
@@ -53,6 +68,7 @@ export function DashboardPanel() {
   const [resolvedOpen, setResolvedOpen] = useState(false);
   const [digestOpen, setDigestOpen] = useState(false);
   const [reviewedAt, setReviewedAt] = useState<string | null>(readReviewed());
+  const [flipped, setFlipped] = useState<string[]>(readFlipped);
   const [rerunning, setRerunning] = useState(false);
   const [notice, setNotice] = useState("");
 
@@ -71,6 +87,7 @@ export function DashboardPanel() {
   }, []);
 
   const runs = useMemo(() => flattenRuns(states), [states]);
+  const groups = useMemo(() => groupRuns(runs), [runs]);
   const unread = useMemo(() => unreadRuns(runs, reviewedAt), [runs, reviewedAt]);
   const unreadIds = useMemo(() => new Set(unread.map((r) => r.id)), [unread]);
 
@@ -87,6 +104,14 @@ export function DashboardPanel() {
   const routine = routines.find((r) => r.name === run?.routine);
   const isNewest = run !== undefined && runs[0]?.id === run.id;
   const now = new Date();
+
+  const toggleGroup = (key: string): void => {
+    setFlipped((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+      try { localStorage.setItem(FLIPPED_KEY, JSON.stringify(next)); } catch { /* private mode: fold still works this session */ }
+      return next;
+    });
+  };
 
   const markAllReviewed = (): void => {
     const stamp = new Date().toISOString();
@@ -124,7 +149,7 @@ export function DashboardPanel() {
         role="button"
         tabIndex={0}
         aria-pressed={selectedId === r.id}
-        class={`bean-skills-row bean-dash-row${selectedId === r.id ? " bean-skills-row--selected" : ""}`}
+        class={`bean-skills-row bean-dash-row bean-dash-row--nested${selectedId === r.id ? " bean-skills-row--selected" : ""}`}
         onClick={() => setSelectedId(r.id)}
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " ") return;
@@ -134,9 +159,9 @@ export function DashboardPanel() {
       >
         <span class={`bean-dash-dot bean-dash-dot--${r.status}`} />
         <div class="bean-skills-row-main">
-          <div class="bean-skills-row-name">{dayLabel(r.startedAt, now)} · {r.routine}</div>
+          <div class="bean-skills-row-name">{clock(r.startedAt)} → {clock(r.finishedAt)}</div>
           <div class="bean-dash-row-sub">
-            {clock(r.startedAt)} → {clock(r.finishedAt)} · {r.steps.length} step{r.steps.length === 1 ? "" : "s"}
+            {r.steps.length} step{r.steps.length === 1 ? "" : "s"} · {r.status === "ok" ? "ok" : "failed"}
           </div>
         </div>
         {failed > 0 ? <span class="bean-dash-row-badge">{failed}</span> : null}
@@ -166,7 +191,45 @@ export function DashboardPanel() {
         {runs.length === 0 ? (
           <div class="bean-panel-empty">Nothing has run yet — routines report here once they finish.</div>
         ) : (
-          runs.map(runRow)
+          groups.map((g) => {
+            const groupOpen = flipped.includes(g.routine) === false;
+            return (
+              <div key={g.routine}>
+                <button
+                  type="button"
+                  class="bean-skills-list-label bean-skills-list-label--toggle bean-notes-group"
+                  aria-expanded={groupOpen}
+                  onClick={() => toggleGroup(g.routine)}
+                >
+                  <span class="bean-notes-group-caret">{groupOpen ? "\u25be" : "\u25b8"}</span>
+                  {g.routine}
+                  <span class="bean-notes-group-count">{g.count}</span>
+                </button>
+                {groupOpen
+                  ? g.days.map((d, i) => {
+                      // Only the routine's latest day is open to begin with — older days are
+                      // history you go looking for, not something to scroll past every morning.
+                      const open = dayOpenByDefault(i) !== flipped.includes(d.key);
+                      return (
+                        <div key={d.key}>
+                          <button
+                            type="button"
+                            class="bean-skills-list-label bean-skills-list-label--toggle bean-notes-group bean-dash-subgroup"
+                            aria-expanded={open}
+                            onClick={() => toggleGroup(d.key)}
+                          >
+                            <span class="bean-notes-group-caret">{open ? "\u25be" : "\u25b8"}</span>
+                            {dayLabel(d.runs[0]!.startedAt, now)}
+                            <span class="bean-notes-group-count">{d.runs.length}</span>
+                          </button>
+                          {open ? d.runs.map(runRow) : null}
+                        </div>
+                      );
+                    })
+                  : null}
+              </div>
+            );
+          })
         )}
         <span class="bean-skills-spacer" />
         {run ? (

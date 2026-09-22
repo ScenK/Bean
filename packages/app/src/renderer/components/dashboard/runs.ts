@@ -69,3 +69,52 @@ export function splitSteps(run: DashRun | undefined): { needs: DashStep[]; resol
 export function unreadRuns(runs: DashRun[], reviewedAt: string | null): DashRun[] {
   return reviewedAt ? runs.filter((r) => r.finishedAt > reviewedAt) : runs;
 }
+
+export interface RunDay {
+  /** `${routine}|${localDate}` — the fold key, unique across the whole rail. */
+  key: string;
+  /** Local calendar date of the day's runs, as an ISO date; the panel formats the label. */
+  date: string;
+  runs: DashRun[];
+}
+
+export interface RunGroup {
+  /** The routine name, which is also its fold key. */
+  routine: string;
+  count: number;
+  days: RunDay[];
+}
+
+const localDate = (iso: string): string => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/** Rail shape: routine → day → its runs, each level newest-first. A routine that runs several
+ * times a day collects those runs under one day header instead of spreading them down the rail.
+ * Input must already be newest-first (flattenRuns' order), which is what keeps every level's
+ * order right without re-sorting. */
+export function groupRuns(runs: DashRun[]): RunGroup[] {
+  const groups: RunGroup[] = [];
+  const byRoutine = new Map<string, RunGroup>();
+  const byDay = new Map<string, RunDay>();
+  for (const run of runs) {
+    let group = byRoutine.get(run.routine);
+    if (!group) {
+      group = { routine: run.routine, count: 0, days: [] };
+      byRoutine.set(run.routine, group);
+      groups.push(group);
+    }
+    group.count++;
+    const date = localDate(run.startedAt);
+    const key = `${run.routine}|${date}`;
+    let day = byDay.get(key);
+    if (!day) {
+      day = { key, date, runs: [] };
+      byDay.set(key, day);
+      group.days.push(day);
+    }
+    day.runs.push(run);
+  }
+  return groups;
+}

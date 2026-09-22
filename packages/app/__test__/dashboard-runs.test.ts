@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { flattenRuns, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
+import { flattenRuns, groupRuns, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
 import type { RoutineStateView } from "../src/ipc.js";
 
 const record = (startedAt: string, finishedAt: string, ok: boolean[]) => ({
@@ -82,6 +82,36 @@ describe("dashboard runs", () => {
 
   test("an unlabelled step keeps its position-based step number", () => {
     expect(stepLabel(splitSteps(flattenRuns(states)[0]).needs[0]!)).toBe("step 2");
+  });
+
+  test("groups the rail by routine, then by local day, newest first at every level", () => {
+    // Two runs of the same routine on one local day must land under one day header, not two
+    // rows in the rail.
+    const twice: Record<string, RoutineStateView> = {
+      nightly: {
+        running: false,
+        history: [
+          record("2026-09-21T22:04:00", "2026-09-21T23:15:00", [true]),
+          record("2026-09-21T06:00:00", "2026-09-21T06:30:00", [true]),
+          record("2026-09-19T06:00:00", "2026-09-19T06:30:00", [true]),
+        ],
+      },
+      weekly: { running: false, history: [record("2026-09-20T08:00:00", "2026-09-20T08:30:00", [true])] },
+    };
+    const groups = groupRuns(flattenRuns(twice));
+    expect(groups.map((g) => [g.routine, g.count])).toEqual([["nightly", 3], ["weekly", 1]]);
+    expect(groups[0]!.days.map((d) => [d.date, d.runs.length])).toEqual([
+      ["2026-09-21", 2],
+      ["2026-09-19", 1],
+    ]);
+    // Fold keys are unique across the rail, so two routines run on the same day never share one.
+    expect(groups[0]!.days[0]!.key).toBe("nightly|2026-09-21");
+    expect(groups[1]!.days[0]!.key).toBe("weekly|2026-09-20");
+    // Newest-first survives grouping.
+    expect(groups[0]!.days[0]!.runs.map((r) => r.startedAt)).toEqual([
+      "2026-09-21T22:04:00",
+      "2026-09-21T06:00:00",
+    ]);
   });
 
   test("unread is everything finished after the review mark, all runs when never reviewed", () => {
