@@ -77,7 +77,7 @@ const SCAN = `(() => {
   return fails;
 })()`;
 
-const WINDOWS = ["chat", "skills", "projects", "routines", "settings", "persona", "about", "notes", "plan"];
+const WINDOWS = ["chat", "skills", "projects", "routines", "dashboard", "settings", "persona", "about", "notes", "plan"];
 
 test("every component window clears WCAG AA text contrast in both themes", async () => {
   const home = await makeBeanHome();

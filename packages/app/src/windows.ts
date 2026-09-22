@@ -20,6 +20,7 @@ const COMPONENT_WINDOW_SIZE: Record<ComponentKind, { width: number; height: numb
   settings: { width: 560, height: 680 },
   about: { width: 420, height: 380 },
   routines: { width: 1040, height: 720 },
+  dashboard: { width: 1100, height: 760 },
 };
 
 const COMPONENT_WINDOW_TITLE: Record<ComponentKind, string> = {
@@ -32,6 +33,7 @@ const COMPONENT_WINDOW_TITLE: Record<ComponentKind, string> = {
   settings: "Settings",
   about: "About Bean",
   routines: "Routines",
+  dashboard: "Dashboard",
 };
 
 // Default spawn spot: top-right of the primary display, inset so the bean doesn't sit flush
