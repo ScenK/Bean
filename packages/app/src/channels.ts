@@ -9,6 +9,7 @@ export interface ConfigView {
   editorApp: string;
   delegateCli: string;
   systemControls: boolean;
+  reasoningEffort: string;
   routineDigestContext: boolean;
   disabledClis: string[];
   paths: { config: string; skills: string; projects: string; persona: string };
@@ -20,6 +21,7 @@ export interface ConfigUpdate {
   editorApp: string;
   delegateCli: string;
   systemControls: boolean;
+  reasoningEffort: string;
   routineDigestContext: boolean;
   disabledClis: string[];
 }

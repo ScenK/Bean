@@ -87,7 +87,7 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "teams" });
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this conversation has no idea what it's retrying.
 // Hoisted out of the bot deps so the outbox loop's maybeCompact can reuse the same client.
-const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey);
+const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reasoningEffort);
 const conversations = new ConversationStore(dbFile(dir));
 // Hoisted (not inline in deps) so the /api/messages handler can check `has()` to capture
 // steer messages for a bound session, and the SIGTERM handler can kill them. Mirrors Discord.

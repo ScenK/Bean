@@ -63,7 +63,7 @@ test("saveConfig writes only persisted config fields (no beanDir)", async () => 
   const file = join(dir, "config.json");
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m", terminalApp: "" });
   const parsed = JSON.parse(await readFile(file, "utf8"));
-  expect(Object.keys(parsed).sort()).toEqual(["delegateCli", "disabledClis", "editorApp", "imageModel", "liveSessions", "model", "openaiApiKey", "routineDigestContext", "systemControls", "terminalApp"]);
+  expect(Object.keys(parsed).sort()).toEqual(["delegateCli", "disabledClis", "editorApp", "imageModel", "liveSessions", "model", "openaiApiKey", "reasoningEffort", "routineDigestContext", "systemControls", "terminalApp"]);
 });
 
 test("loads config and defaults terminalApp to empty string", async () => {
@@ -176,4 +176,17 @@ test("routineDigestContext defaults off and round-trips", async () => {
   expect((await loadConfig(file, "/b")).routineDigestContext).toBe(false);
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m", routineDigestContext: true });
   expect((await loadConfig(file, "/b")).routineDigestContext).toBe(true);
+});
+
+test("reasoningEffort defaults to \"\" and is preserved by a save that omits it", async () => {
+  const file = join(dir, "config.json");
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
+  // "" is load-bearing: it means "send no reasoning param", which models without reasoning require.
+  expect((await loadConfig(file, dir)).reasoningEffort).toBe("");
+
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m", reasoningEffort: "high" });
+  expect((await loadConfig(file, dir)).reasoningEffort).toBe("high");
+
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
+  expect((await loadConfig(file, dir)).reasoningEffort).toBe("high");
 });

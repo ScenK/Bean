@@ -7,6 +7,10 @@ import { PanelHeader } from "../../shared/Panel.js";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
+// "" is deliberately first: models without reasoning reject the parameter outright, so the
+// default must send nothing at all rather than any effort value.
+const REASONING_EFFORTS = ["", "none", "low", "medium", "high"] as const;
+
 const PATH_LABELS: { key: keyof ConfigView["paths"]; label: string }[] = [
   { key: "config", label: "Config" },
   { key: "skills", label: "Skills" },
@@ -35,6 +39,7 @@ export function SettingsWindow() {
   const [editorApp, setEditorApp] = useState("");
   const [delegateCli, setDelegateCli] = useState("");
   const [systemControls, setSystemControls] = useState(false);
+  const [reasoningEffort, setReasoningEffort] = useState("");
   const [routineDigestContext, setRoutineDigestContext] = useState(false);
   const [detectedClis, setDetectedClis] = useState<CliName[]>([]);
   const [disabledClis, setDisabledClis] = useState<string[]>([]);
@@ -68,6 +73,7 @@ export function SettingsWindow() {
       setEditorApp(c.editorApp);
       setDelegateCli(c.delegateCli);
       setSystemControls(c.systemControls);
+      setReasoningEffort(c.reasoningEffort);
       setRoutineDigestContext(c.routineDigestContext);
       setDisabledClis(c.disabledClis);
       setPaths(c.paths);
@@ -91,6 +97,7 @@ export function SettingsWindow() {
       await window.bean.saveConfig({
         openaiApiKey: apiKey.trim(), model: model.trim(),
         terminalApp: terminalApp.trim(), editorApp: editorApp.trim(), delegateCli, systemControls,
+        reasoningEffort,
         routineDigestContext,
         disabledClis,
       });
@@ -159,6 +166,21 @@ export function SettingsWindow() {
                 placeholder="gpt-4o-mini"
                 onInput={(e) => { setModel((e.target as HTMLInputElement).value); setSave("idle"); }}
               />
+            </div>
+          </div>
+          <div class="bean-settings-row">
+            <span class="bean-settings-row-label">Reasoning effort</span>
+            <div class="bean-settings-row-control">
+              <select
+                class="bean-input"
+                title="Only reasoning models accept this. Others reject the request — leave it on Default for gpt-4o-mini or gpt-5.4-nano."
+                value={reasoningEffort}
+                onChange={(e) => { setReasoningEffort((e.target as HTMLSelectElement).value); setSave("idle"); }}
+              >
+                {REASONING_EFFORTS.map((e) => (
+                  <option key={e} value={e}>{e === "" ? "Default (model's own)" : e}</option>
+                ))}
+              </select>
             </div>
           </div>
           {detectedClis.length > 0 && (

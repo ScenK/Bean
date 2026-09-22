@@ -71,6 +71,9 @@ export interface BeanConfig {
   editorApp: string; // "" = no editor configured — "Open in Editor" prompts the user to set one
   delegateCli: string; // "" = auto: first enabled CLI; else "claude"/"opencode"/"codex"
   systemControls: boolean; // opt-in: expose the system_control tool (volume/media/app) to chat
+  /** Reasoning effort for the brain model ("none"/"low"/"medium"/"high"). "" = send nothing:
+   * models without reasoning (gpt-4o-mini, gpt-5.4-nano) reject the parameter outright. */
+  reasoningEffort: string;
   imageModel: string; // Images API model for generate_image; no Settings UI — edit config.json
 
   /** Opt-in for chat-launched live coding-agent sessions (spec: live-sessions). */

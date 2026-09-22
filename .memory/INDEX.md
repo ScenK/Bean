@@ -52,6 +52,7 @@
 
 ## project — ongoing work context
 
+- [project-openai-responses-api.md](project-openai-responses-api.md) — `converse()` talks to `/v1/responses`; chat.completions rejects function tools + reasoning on gpt-5.4-nano and newer. `store: false` and the empty-string effort default are load-bearing.
 - [project-settings-about-context-menu.md](project-settings-about-context-menu.md) — Settings/Persona/About/Exit live only behind the tray's left-click (no right-click anywhere, on tray or avatar); live-reloading Settings over ~/.bean via runtime-config, and the no-fake-chrome window rule (match the chat window; register new windows in esbuild + windows.ts).
 - [project-notes-feature.md](project-notes-feature.md) — Notes (chat ⇄ note): confirm-first `propose_note`, SQLite-backed (`bean.db`'s `notes`/`notes_fts`/`notes_history` tables, migrated from the old `~/.bean/notes/*.md` + `.history/`), FTS5 `searchNotes` behind `retrieve_note`, linked-chat update-in-place rule, and why notes must stay explicit/inert vs memory.
 - [project-bean-memory.md](project-bean-memory.md) — Bean's memory: `~/.bean/bean.db` (migrated from `memory.json`), FTS5 top-K recall above 20 memories, extract-on-close (confirm) via `appendMemories`, enabled-skill filter, persona-panel editing, and the chatops-only consolidation (merge/drop) proposal.

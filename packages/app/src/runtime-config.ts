@@ -2,8 +2,8 @@ import type { RouterDeps, ConverseDeps } from "@bean/core";
 
 export interface RuntimeConfigDeps {
   makeChat: (apiKey: string) => RouterDeps["chat"];
-  makeConverse: (apiKey: string) => ConverseDeps["chat"];
-  saveConfigFile: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; routineDigestContext: boolean; disabledClis: string[] }) => Promise<void>;
+  makeConverse: (apiKey: string, reasoningEffort: string) => ConverseDeps["chat"];
+  saveConfigFile: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; reasoningEffort: string; routineDigestContext: boolean; disabledClis: string[] }) => Promise<void>;
 }
 
 export interface RuntimeConfig {
@@ -15,16 +15,17 @@ export interface RuntimeConfig {
   getEditorApp: () => string;
   getDelegateCli: () => string;
   getSystemControls: () => boolean;
+  getReasoningEffort: () => string;
   getRoutineDigestContext: () => boolean;
   getDisabledClis: () => string[];
-  apply: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; routineDigestContext: boolean; disabledClis: string[] }) => Promise<void>;
+  apply: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; reasoningEffort: string; routineDigestContext: boolean; disabledClis: string[] }) => Promise<void>;
 }
 
 // Holds the live OpenAI clients + model behind stable wrapper functions. IPC handlers close
 // over the wrappers once at startup; apply() swaps the underlying clients in place so a Settings
 // save takes effect on the next chat/route with no restart (see the Settings window).
 export function createRuntimeConfig(
-  initial: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; routineDigestContext: boolean; disabledClis: string[] },
+  initial: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; reasoningEffort: string; routineDigestContext: boolean; disabledClis: string[] },
   deps: RuntimeConfigDeps,
 ): RuntimeConfig {
   let apiKey = initial.openaiApiKey;
@@ -33,13 +34,14 @@ export function createRuntimeConfig(
   let editorApp = initial.editorApp;
   let delegateCli = initial.delegateCli;
   let systemControls = initial.systemControls;
+  let reasoningEffort = initial.reasoningEffort;
   let routineDigestContext = initial.routineDigestContext;
   let disabledClis = initial.disabledClis;
   // ponytail: the OpenAI SDK throws in its constructor when apiKey is "", so building the
   // clients eagerly would crash startup before the user ever gets to Settings. Build lazily
   // per-call instead; a missing key just surfaces as an auth error from the actual chat call.
   let chatClient = apiKey ? deps.makeChat(apiKey) : null;
-  let converseClient = apiKey ? deps.makeConverse(apiKey) : null;
+  let converseClient = apiKey ? deps.makeConverse(apiKey, reasoningEffort) : null;
 
   return {
     chat: ((...args: Parameters<RouterDeps["chat"]>) => {
@@ -56,15 +58,17 @@ export function createRuntimeConfig(
     getEditorApp: () => editorApp,
     getDelegateCli: () => delegateCli,
     getSystemControls: () => systemControls,
+    getReasoningEffort: () => reasoningEffort,
     getRoutineDigestContext: () => routineDigestContext,
     getDisabledClis: () => disabledClis,
     apply: async (update) => {
       const nextChatClient = update.openaiApiKey ? deps.makeChat(update.openaiApiKey) : null;
-      const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey) : null;
+      const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey, update.reasoningEffort) : null;
       await deps.saveConfigFile({
         openaiApiKey: update.openaiApiKey, model: update.model,
         terminalApp: update.terminalApp, editorApp: update.editorApp, delegateCli: update.delegateCli,
         systemControls: update.systemControls,
+        reasoningEffort: update.reasoningEffort,
         routineDigestContext: update.routineDigestContext,
         disabledClis: update.disabledClis,
       });
@@ -74,6 +78,7 @@ export function createRuntimeConfig(
       editorApp = update.editorApp;
       delegateCli = update.delegateCli;
       systemControls = update.systemControls;
+      reasoningEffort = update.reasoningEffort;
       routineDigestContext = update.routineDigestContext;
       disabledClis = update.disabledClis;
       chatClient = nextChatClient;

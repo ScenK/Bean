@@ -62,6 +62,7 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
     editorApp: parsed.editorApp ?? "",
     delegateCli: parsed.delegateCli ?? "",
     systemControls: parsed.systemControls ?? false,
+    reasoningEffort: parsed.reasoningEffort ?? "",
     imageModel: parsed.imageModel ?? "gpt-image-2",
     liveSessions: parsed.liveSessions ?? false,
     routineDigestContext: parsed.routineDigestContext ?? false,
@@ -74,7 +75,7 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
 
 export async function saveConfig(
   file: string,
-  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; imageModel?: string; liveSessions?: boolean; routineDigestContext?: boolean; disabledClis?: string[] },
+  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; reasoningEffort?: string; imageModel?: string; liveSessions?: boolean; routineDigestContext?: boolean; disabledClis?: string[] },
 ): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   // No Settings UI toggle exists for liveSessions, so a desktop Settings save calls this with
@@ -91,6 +92,7 @@ export async function saveConfig(
     openaiApiKey: config.openaiApiKey, model: config.model,
     terminalApp: config.terminalApp ?? "", editorApp: config.editorApp ?? "", delegateCli: config.delegateCli ?? "",
     systemControls: config.systemControls ?? false,
+    reasoningEffort: config.reasoningEffort ?? existing.reasoningEffort ?? "",
     imageModel: config.imageModel ?? existing.imageModel ?? "gpt-image-2",
     liveSessions: config.liveSessions ?? existing.liveSessions ?? false,
     routineDigestContext: config.routineDigestContext ?? existing.routineDigestContext ?? false,
