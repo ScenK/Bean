@@ -166,7 +166,7 @@ worktrees — each checkout needs its own.
   `registerIpc`. `ipc.ts` keeps handlers thin and testable (`buildChatHandler`/`buildLaunchHandler`
   are separable from Electron). The renderer is `avatar.ts`/`orb.ts` plus component windows
   under `renderer/components/` (`chat`, `plan`, `projects`, `skills`, `persona`, `routines`,
-  `settings`, `about`) — there is no `intake`/`console` page anymore.
+  `dashboard`, `settings`, `about`) — there is no `intake`/`console` page anymore.
 
 - **`@bean/discord` / `@bean/teams`** — standalone Node bot servers (not Electron), each a
   thin surface that wires its platform SDK to core's `chatops/` layer and reads its own

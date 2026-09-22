@@ -11,9 +11,9 @@ export interface Size {
 export const AVATAR_SIZE: Size = { width: 120, height: 120 };
 // Proximity/hover: just the expanded box (bean + helper text), no tiles — a short strip.
 export const AVATAR_HOVER_SIZE: Size = { width: 300, height: 120 };
-// Left-click quick-actions: box + 5 tiles (chat/skills/projects/notes/routines) — first tile
-// center 92px below the box, 60px steps, so the 5th tile ends ~450px down.
-export const AVATAR_MENU_SIZE: Size = { width: 300, height: 460 };
+// Left-click quick-actions: box + 6 tiles (chat/skills/projects/notes/routines/dashboard) —
+// first tile center 92px below the box, 60px steps, so the 6th tile ends ~510px down.
+export const AVATAR_MENU_SIZE: Size = { width: 300, height: 520 };
 // Drag-skill bloom: box + a taller stack of skill/quick-action tiles.
 export const AVATAR_DRAG_SIZE: Size = { width: 300, height: 620 };
 

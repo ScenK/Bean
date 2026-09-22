@@ -118,6 +118,10 @@ function nextRunView(cron: string): { ok: boolean; text: string } {
   }
 }
 
+// This panel is for editing a routine, not reading its output — the last few runs are enough to
+// see whether it's healthy, and the Dashboard is where the whole kept history lives.
+const HISTORY_SHOWN = 3;
+
 type DotKind = "running" | "failed" | "enabled" | "off";
 
 // Enabled = green, running = glowing green, failed/missed = red, disabled = grey — the pill's
@@ -961,12 +965,19 @@ export function RoutinesPanel() {
           <div class="bean-skills-projects">
             <div class="bean-field-label">RUN HISTORY</div>
             <div class="bean-skills-description">{statusText(selectedState)}</div>
-            {selectedState.history.map((h, i) => (
+            {selectedState.history.slice(0, HISTORY_SHOWN).map((h, i) => (
               <details key={i} class="bean-routines-history-entry">
                 <summary>{h.status} · {new Date(h.finishedAt).toLocaleString()}</summary>
                 <pre class="bean-routines-history-digest">{h.digest}</pre>
               </details>
             ))}
+            {selectedState.history.length > HISTORY_SHOWN ? (
+              <span class="bean-routines-section-note">
+                {selectedState.history.length - HISTORY_SHOWN === 1
+                  ? "1 older run — read it in the Dashboard."
+                  : `${selectedState.history.length - HISTORY_SHOWN} older runs — read them in the Dashboard.`}
+              </span>
+            ) : null}
           </div>
         ) : null}
         </>

@@ -1,5 +1,5 @@
 export type Theme = "hearth" | "graphite";
-export type ComponentKind = "chat" | "skills" | "persona" | "projects" | "notes" | "plan" | "settings" | "about" | "routines";
+export type ComponentKind = "chat" | "skills" | "persona" | "projects" | "notes" | "plan" | "settings" | "about" | "routines" | "dashboard";
 export type AvatarMode = "normal" | "hover" | "menu" | "drag";
 
 export interface ConfigView {
