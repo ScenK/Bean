@@ -1,5 +1,11 @@
 [
-  { "provider": "claude", "models": ["sonnet", "opus", "haiku"] },
+  { "provider": "claude",
+    "models": [
+      "opus",
+      "sonnet",
+      "haiku"
+    ]
+  },
   {
     "provider": "opencode",
     "models": [
@@ -9,5 +15,5 @@
       "github-copilot/claude-opus-4.8"
     ]
   },
-  { "provider": "codex", "models": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] }
+  { "provider": "codex", "models": ["gpt-6-sol", "gpt-6-luna", "gpt-6-astra"] }
 ]
