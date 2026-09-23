@@ -7,7 +7,7 @@ test("proposal (in-chat target): confirming sends the composed prompt in chat", 
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
   // First request: the model proposes running the "draft-reply" skill (target: chat).
-  // Depends on .bean/skills/draft-reply.md's current name + `target: chat` frontmatter.
+  // Skill fixture written by makeBeanHome().
   stub.queue({
     toolCall: { name: "propose_run", args: { skill: "draft-reply", project: home.projectPath, instruction: "reply to Jane" } },
   });

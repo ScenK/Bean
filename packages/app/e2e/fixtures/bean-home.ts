@@ -13,10 +13,10 @@ interface BeanHomeOptions {
 }
 
 /**
- * Creates a throwaway `~/.bean` fixture: a fake config + one fixture project. No skill fixture
- * files are needed — main.ts also layers in the repo's own `.bean/skills/*.md` as "builtin"
- * skills regardless of HOME, and those already include both a `target: chat` skill
- * (draft-reply) and a `target: terminal` skill (review-pr) for the proposal-flow tests.
+ * Creates a throwaway `~/.bean` fixture: a fake config, one fixture project, and two user skills
+ * — a `target: chat` skill (draft-reply) and a terminal skill (review-pr) for the proposal-flow
+ * tests. They live here, not in the repo's built-in `.bean/skills`, so pruning built-ins never
+ * breaks e2e.
  */
 export async function makeBeanHome(options: BeanHomeOptions = {}): Promise<BeanHome> {
   const homeDir = await mkdtemp(join(tmpdir(), "bean-e2e-home-"));
@@ -32,6 +32,10 @@ export async function makeBeanHome(options: BeanHomeOptions = {}): Promise<BeanH
     }, null, 2),
     "utf8",
   );
+  const skillsPath = join(beanDir, "skills");
+  await mkdir(skillsPath, { recursive: true });
+  await writeFile(join(skillsPath, "draft-reply.md"), "---\ntarget: chat\ndescription: Draft a reply\n---\n\n# Draft Reply\n", "utf8");
+  await writeFile(join(skillsPath, "review-pr.md"), "---\ndescription: Review a PR\n---\n\n# Review PR\n", "utf8");
   await writeFile(
     join(beanDir, "projects.json"),
     JSON.stringify([{ name: "demo", path: projectPath }], null, 2),

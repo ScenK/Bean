@@ -10,7 +10,7 @@ test("proposal (terminal target): confirming calls window.bean.launch, never a r
   const home = await makeBeanHome({ disabledClis: ["claude", "codex"] });
   const fakeBin = await installFakeCli(home.homeDir, "opencode");
   const stub = await startStubOpenAI();
-  // Depends on .bean/skills/review-pr.md's current name + `target: terminal` frontmatter.
+  // Skill fixture written by makeBeanHome().
   stub.queue({
     toolCall: { name: "propose_run", args: { skill: "review-pr", project: home.projectPath, instruction: "review PR 1" } },
   });
