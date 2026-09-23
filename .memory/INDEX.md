@@ -32,6 +32,7 @@
 
 - [convention-bean-db-column-additions.md](convention-bean-db-column-additions.md) — a new column on an existing `bean.db` table needs its own `ALTER TABLE` in `openDb()`, guarded by `PRAGMA table_info` inside `BEGIN IMMEDIATE` (never a bare try/catch); and leave the FTS5 triggers firing on every UPDATE.
 - [convention-ipc-channels.md](convention-ipc-channels.md) — IPC channel names are defined once in `app/src/channels.ts`; never string-literal them.
+- [convention-route-by-own-capabilities.md](convention-route-by-own-capabilities.md) — `converse()` hands off anything its own tools don't cover (don't list harness task types); `propose_delegate` project is optional via `scratchPath`.
 - [convention-core-is-electron-free.md](convention-core-is-electron-free.md) — keep `@bean/core` pure and dependency-injected so it tests without Electron.
 - [convention-chatops-card-pickers.md](convention-chatops-card-pickers.md) — on-card pickers must re-derive at launch (`startRun` recomposes the prompt; an unresolvable skill refuses the run rather than degrading to the bare instruction), and Discord selects cap at 25 options / 100-char values with the picked entry hoisted so truncation can't drop it.
 - [convention-chatops-addressing-and-ambient.md](convention-chatops-addressing-and-ambient.md) — only an explicit address (DM/@mention/reply) gets a turn — name-matching was deleted, don't reintroduce it; ambient block is untrusted data with a time anchor; the chronology/persist/durable-cutoff trio in `bot.ts`; the `/new` reset command.

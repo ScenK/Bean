@@ -1,5 +1,5 @@
 import {
-  beanDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
+  beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
@@ -12,6 +12,7 @@ import {
   type ApplicationCommandDataResolvable,
   type Interaction, type Message, type MessageCreateOptions, type TextBasedChannel,
 } from "discord.js";
+import { mkdirSync } from "node:fs";
 import { chunkText } from "./chunk.js";
 import { discordCards } from "./components.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
@@ -35,6 +36,10 @@ const liveSessions = new LiveSessionRegistry(undefined, { dir });
 // Hoisted (not inline in deps) so the /live-session card's project/model dropdowns and the
 // edit-prompt modal can read and mutate the pending proposal before Start claims it.
 const liveSessionProposals = new LiveSessionProposalStore();
+// Hosts delegates not tied to a project (a Jira ticket, research); spawn needs the cwd to exist.
+const scratchPath = scratchDir(dir);
+mkdirSync(scratchPath, { recursive: true });
+
 const bot = buildTeamsBot({
   chat: converseChat,
   model: beanConfig.model,
@@ -69,6 +74,7 @@ const bot = buildTeamsBot({
   // Always on for Discord (no `liveSessions` opt-in) when Claude is both detected and not in
   // config's disabledClis list; the live-session engine itself is Claude-specific.
   liveSessionsEnabled: () => clis.includes("claude"),
+  scratchPath,
   cards: discordCards,
   systemControlsEnabled: () => beanConfig.systemControls,
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },

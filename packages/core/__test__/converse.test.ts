@@ -215,6 +215,49 @@ test("propose_delegate drops unknown project or missing instruction", async () =
   }
 });
 
+test("with scratchPath, propose_delegate without a project runs in the scratch workspace", async () => {
+  let tool: ToolSpec | undefined;
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => {
+      tool = tools.find((t) => t.name === "propose_delegate");
+      return { content: "", toolCalls: [{ name: "propose_delegate", args: { instruction: "file a Jira ticket for X" } }] };
+    },
+  };
+  const res = await conv({ latestUserText: "make a jira ticket for X", deps, delegateAvailable: true, scratchPath: "/bean/workspace" });
+  expect((tool?.parameters as { required: string[] }).required).toEqual(["instruction"]);
+  expect(res.proposedDelegate?.projectPath).toBe("/bean/workspace");
+  expect(res.proposedDelegate?.instruction).toBe("file a Jira ticket for X");
+});
+
+test("with no delegate tool offered, the prompt never promises a hand-off", async () => {
+  let systemContent = "";
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages }) => { systemContent = messages[0]!.content; return { content: "ok", toolCalls: [] }; },
+  };
+  await conv({ latestUserText: "file a jira ticket", deps, delegateAvailable: false });
+  expect(systemContent).toContain("say plainly that you can't do that here");
+  expect(systemContent).not.toContain("hand it off right away");
+  expect(systemContent).not.toContain("Never say you cannot access");
+});
+
+test("without scratchPath, propose_delegate still requires a project", async () => {
+  const deps = depsReturning("on it", [{ name: "propose_delegate", args: { instruction: "x" } }]);
+  const res = await conv({ latestUserText: "delegate this", deps, delegateAvailable: true });
+  expect(res.proposedDelegate).toBeUndefined();
+});
+
+test("with scratchPath, propose_delegate is offered even with no projects registered", async () => {
+  let captured: ToolSpec[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => { captured = tools; return { content: "ok", toolCalls: [] }; },
+  };
+  await conv({ latestUserText: "hi", deps, projects: [], delegateAvailable: true, scratchPath: "/bean/workspace" });
+  expect(captured.map((t) => t.name)).toContain("propose_delegate");
+});
+
 test("propose_delegate tool is offered only when delegation is available", async () => {
   let captured: ToolSpec[] = [];
   const deps: ConverseDeps = {
@@ -227,7 +270,7 @@ test("propose_delegate tool is offered only when delegation is available", async
   expect(captured.map((t) => t.name)).toContain("propose_delegate");
 });
 
-test("delegate instructions tell the model to inspect linked projects instead of refusing", async () => {
+test("routing is by Bean's own capabilities: external-system work hands off instead of refusing", async () => {
   let systemContent = "";
   let delegateDescription = "";
   const deps: ConverseDeps = {
@@ -241,9 +284,11 @@ test("delegate instructions tell the model to inspect linked projects instead of
 
   await conv({ latestUserText: "what does the bean project do?", deps, delegateAvailable: true });
 
-  expect(systemContent).toContain("inspect, explore, summarize, or explain a linked project");
-  expect(systemContent).toContain("do not say you cannot access the repository");
-  expect(delegateDescription).toContain("inspect, summarize, explain");
+  expect(systemContent).toContain("Decide by what the task needs, not by its topic");
+  expect(systemContent).toContain("drafting or rewriting text");
+  expect(systemContent).toContain("When unsure whether it needs those, hand off");
+  expect(systemContent).toContain("Never say you cannot access a repository or external system");
+  expect(delegateDescription).toContain("external systems like Jira");
 });
 
 test("delegate guidance tells the model to propose directly, not ask permission in chat first", async () => {
@@ -336,7 +381,7 @@ test("system prompt composes persona intro, behavior instructions, and catalog i
   const persona: Persona = { name: "Ponyta", tags: ["Playful", "Formal"] };
   await conv({ latestUserText: "hi", persona, deps });
   const personaIdx = systemContent.indexOf(composePersonaPrompt(persona));
-  const behaviorIdx = systemContent.indexOf("You cannot do project work yourself");
+  const behaviorIdx = systemContent.indexOf("You yourself can only talk");
   const catalogIdx = systemContent.indexOf("Skills:");
   expect(personaIdx).toBe(0);
   expect(behaviorIdx).toBeGreaterThan(personaIdx);
@@ -366,7 +411,7 @@ test("delegate guidance lives in behavior instructions", async () => {
     },
   };
   await conv({ latestUserText: "hi", deps, delegateAvailable: true });
-  const delegateIdx = systemContent.indexOf("a background agent does the work while the chat stays open");
+  const delegateIdx = systemContent.indexOf("the agent works in the background while the chat stays open");
   const noteIdx = systemContent.indexOf("Don't propose a note for small talk");
   const catalogIdx = systemContent.indexOf("Skills:");
   expect(delegateIdx).toBeGreaterThan(noteIdx);
