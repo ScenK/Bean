@@ -89,21 +89,28 @@ export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?
 // runAvailable=false (chatops: Discord/Teams) — no terminal exists there, so propose_run
 // is only offered for `target: chat` skills (which run on Bean's own model, no agent
 // harness); everything else routes to propose_delegate.
-const behaviorInstructions = (runAvailable: boolean): string =>
+// delegateOffered mirrors whether propose_delegate is in this request's tools — the hand-off
+// rule must not promise an agent that isn't there (desktop with no enabled CLI).
+const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean): string =>
   // Routing is decided by Bean's OWN closed capability set, not by guessing what the
   // delegated harness can do — that set (MCP servers, auth, skills) is invisible from here.
   // See .memory/convention-route-by-own-capabilities.md.
-  "You are the conversational front of a two-part system. You yourself can only talk, " +
-  "plus call the tools you are given in this request. You have no access to files, " +
-  "repositories, a shell, the web, or external systems (issue trackers such as Jira, " +
-  "GitHub, email, calendars, docs). A separate agent does — it runs with the user's own " +
-  "tools and credentials. Decide by what YOU can do: if the request is conversation, or " +
-  "one of your own tools covers it, handle it yourself. Anything else that asks for " +
-  "something to be done, created, looked up, or changed is the agent's job — hand it off " +
-  "instead of drafting it in chat or asking clarifying questions first; put what you know " +
-  "into the instruction and let the agent ask. When unsure, hand off: the user confirms " +
-  "the card before anything runs, so an unneeded hand-off costs one click, while a " +
-  "made-up answer about code or external data costs trust. " +
+  "You yourself can only talk, plus call the tools you are given in this request. You have " +
+  "no access to files, repositories, a shell, the web or current data, or external systems " +
+  "(issue trackers such as Jira, GitHub, email, calendars, docs). Decide by what the task " +
+  "needs, not by its topic: if the complete result can be given as chat text (answering, " +
+  "explaining, drafting or rewriting text, brainstorming, summarizing what the user pasted), " +
+  "or one of your own tools covers it, handle it yourself. " +
+  (delegateOffered
+    ? "If finishing it needs files, a shell, the web or current data, or a change in an " +
+      "external system (e.g. actually creating a ticket, not drafting one), it is a job for " +
+      "the separate agent, which runs with the user's own tools and credentials — hand it " +
+      "off right away instead of drafting it in chat or asking clarifying questions first; " +
+      "put what you know into the instruction and let the agent ask. When unsure whether it " +
+      "needs those, hand off: the user confirms the card before anything runs, so an unneeded " +
+      "hand-off costs one click, while a made-up answer about code or external data costs trust. "
+    : "If finishing it needs files, a shell, the web or current data, or a change in an " +
+      "external system, say plainly that you can't do that here — never pretend you did it. ") +
   "Your own tools (reminders etc.) you DO execute yourself — call them " +
   "directly when the user asks, then confirm what you did in one short sentence. " +
   "The skills/projects list below " +
@@ -119,7 +126,7 @@ const behaviorInstructions = (runAvailable: boolean): string =>
   "the task isn't about one of the user's projects (e.g. filing a ticket, researching a " +
   "topic). Call propose_delegate directly — don't ask the user in chat text whether " +
   "you should delegate first; the card Bean shows afterward is the confirmation step. " +
-  "Never say you cannot access a repository or external system — hand off instead. " +
+  (delegateOffered ? "Never say you cannot access a repository or external system — hand off instead. " : "") +
   (runAvailable
     ? "Use propose_run instead when the user wants to watch or continue the " +
       "work in their own terminal. Both are confirm-first via the card shown after you " +
@@ -412,9 +419,10 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   // caching is exact-prefix, so anything per-turn here (a clock, per-message memory ranking)
   // re-bills the entire conversation uncached on every turn. Volatile context goes in a
   // second system message after history instead — only the tail misses the cache.
+  const delegateOffered = delegateAvailable && (projects.length > 0 || scratchPath !== undefined);
   const systemParts = [
     composePersonaPrompt(persona),
-    behaviorInstructions(runAvailable),
+    behaviorInstructions(runAvailable, delegateOffered),
     catalog(skills, projects),
   ];
   if (linkedNote) {
@@ -455,7 +463,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   const runnableSkills = runAvailable ? skills : skills.filter((s) => s.target === "chat");
   const tools = [
     ...(runnableSkills.length > 0 ? [proposeRunTool(runnableSkills, projects, !runAvailable)] : []),
-    ...(delegateAvailable && (projects.length > 0 || scratchPath)
+    ...(delegateOffered
       ? [proposeDelegateTool(skills, projects, availableClis, models, scratchPath !== undefined)]
       : []),
     ...(liveSessionAvailable && projects.length > 0 ? [proposeLiveSessionTool(projects, models)] : []),

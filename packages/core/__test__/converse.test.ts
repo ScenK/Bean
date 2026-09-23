@@ -230,6 +230,18 @@ test("with scratchPath, propose_delegate without a project runs in the scratch w
   expect(res.proposedDelegate?.instruction).toBe("file a Jira ticket for X");
 });
 
+test("with no delegate tool offered, the prompt never promises a hand-off", async () => {
+  let systemContent = "";
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages }) => { systemContent = messages[0]!.content; return { content: "ok", toolCalls: [] }; },
+  };
+  await conv({ latestUserText: "file a jira ticket", deps, delegateAvailable: false });
+  expect(systemContent).toContain("say plainly that you can't do that here");
+  expect(systemContent).not.toContain("hand it off right away");
+  expect(systemContent).not.toContain("Never say you cannot access");
+});
+
 test("without scratchPath, propose_delegate still requires a project", async () => {
   const deps = depsReturning("on it", [{ name: "propose_delegate", args: { instruction: "x" } }]);
   const res = await conv({ latestUserText: "delegate this", deps, delegateAvailable: true });
@@ -272,8 +284,9 @@ test("routing is by Bean's own capabilities: external-system work hands off inst
 
   await conv({ latestUserText: "what does the bean project do?", deps, delegateAvailable: true });
 
-  expect(systemContent).toContain("Decide by what YOU can do");
-  expect(systemContent).toContain("When unsure, hand off");
+  expect(systemContent).toContain("Decide by what the task needs, not by its topic");
+  expect(systemContent).toContain("drafting or rewriting text");
+  expect(systemContent).toContain("When unsure whether it needs those, hand off");
   expect(systemContent).toContain("Never say you cannot access a repository or external system");
   expect(delegateDescription).toContain("external systems like Jira");
 });
@@ -368,7 +381,7 @@ test("system prompt composes persona intro, behavior instructions, and catalog i
   const persona: Persona = { name: "Ponyta", tags: ["Playful", "Formal"] };
   await conv({ latestUserText: "hi", persona, deps });
   const personaIdx = systemContent.indexOf(composePersonaPrompt(persona));
-  const behaviorIdx = systemContent.indexOf("You are the conversational front");
+  const behaviorIdx = systemContent.indexOf("You yourself can only talk");
   const catalogIdx = systemContent.indexOf("Skills:");
   expect(personaIdx).toBe(0);
   expect(behaviorIdx).toBeGreaterThan(personaIdx);

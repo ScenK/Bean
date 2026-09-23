@@ -1,10 +1,14 @@
 # Route by Bean's own capabilities, not the harness's
 
 `converse()`'s routing rule (`behaviorInstructions` in `core/src/converse.ts`) decides
-"answer myself vs hand off" by **Bean's own closed capability set**: plain conversation plus
-the tools passed in that request. Anything else that asks for something to be done, created,
-looked up, or changed goes to `propose_delegate`. When unsure, hand off: the confirm card
-makes a needless hand-off cheap, while a made-up answer is costly.
+"answer myself vs hand off" by **what the task needs**, checked against Bean's own closed
+capability set (plain conversation plus the tools passed in that request). A result that
+fits in chat text (answering, drafting, rewriting, brainstorming) stays with Bean. Anything
+that needs files, a shell, the web or current data, or a change in an external system goes
+to `propose_delegate`, biased toward hand-off when unsure (the confirm card makes a needless
+hand-off cheap). The hand-off wording is only included when `propose_delegate` is actually
+offered; otherwise Bean is told to say it can't. Don't over-widen it to "anything created":
+that sends plain drafting work to the harness.
 
 **Why:** the old rule described the *harness's* job ("project work", "inspect a linked
 project"). The harness's real reach (MCP servers like Jira, auth, skills) is invisible to
