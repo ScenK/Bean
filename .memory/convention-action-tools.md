@@ -19,7 +19,7 @@ pull-on-mount race fix as the plan/dropped-url stores — and opens the chat). T
 shows a collapsed `▶ <skill>` label (`ChatItem.display`) while the model gets the full
 prompt. `fetch_url` (main.ts, backed by core's pure `extractPageText()`) is the action tool
 that lets chat-target skills actually read dropped URLs. Built-in content skills
-(summarize/explain/draft-reply/extract-tasks in repo `.bean/skills/`) are chat-target;
+(`bean`, `generate-skill` in repo `.bean/skills/`) are chat-target;
 `builtin-skills.test.ts` enumerates them, so adding a built-in means updating that test.
 
 Tool results use the OpenAI `tool_call_id` protocol: `converse()` preserves the assistant

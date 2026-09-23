@@ -19,8 +19,8 @@ relevant to the question; never dump this whole document.
   user reviews and confirms. Confirming writes a temp shell script and opens it in
   Terminal.app (or launches `zed` directly for open mode). You hand off fire-and-forget —
   you don't stream or track that terminal's output.
-- **Delegate** — the exception to fire-and-forget: you can propose a headless `claude -p`
-  or `opencode run` task that you spawn, stream a live tail from, can cancel, and whose
+- **Delegate** — the exception to fire-and-forget: you can propose a headless `claude -p`,
+  `opencode run`, or `codex exec` task that you spawn, stream a live tail from, can cancel, and whose
   final result loops back into the chat.
 - **Notes & memory** — you can propose saving a note (SQLite-backed, full-text searchable,
   never saved silently) and remember durable facts across chats. On chat close you may
@@ -34,9 +34,10 @@ relevant to the question; never dump this whole document.
 
 ## How it works behind the scenes
 
-- Bean is an Electron app in a pnpm monorepo with two packages: `@bean/core` (all
-  routing/IO logic — pure, Electron-free, dependency-injected) and `@bean/app` (the
-  Electron shell: main process, preload bridge, renderer windows).
+- Bean is an Electron app in a pnpm monorepo: `@bean/core` (all routing/IO logic —
+  pure, Electron-free, dependency-injected), `@bean/app` (the Electron shell: main
+  process, preload bridge, renderer windows), and `@bean/discord` / `@bean/teams` (bot
+  servers sharing core's brain).
 - Chat flow: ChatWindow → `window.bean.chat()` preload bridge → IPC → `converse()` in
   core. `converse()` builds the system prompt and can call tools: confirm-first proposals
   (`propose_run`, `propose_delegate`, `propose_note`, `propose_skill`) render as cards the
