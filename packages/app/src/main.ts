@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
@@ -69,6 +69,8 @@ app.on("web-contents-created", (_e, contents) => {
 
 app.whenReady().then(async () => {
   const dir = beanDir();
+  // Chat delegates with no project (and project-less routine steps) run here; spawn needs the cwd.
+  mkdirSync(scratchDir(dir), { recursive: true });
   // Packaged builds don't contain the monorepo root, so projectBeanDir()'s "../../../.bean"
   // walk resolves outside the app bundle. electron-builder copies .bean into Resources/builtin
   // instead (see package.json build.extraResources) — use that when packaged.

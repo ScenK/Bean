@@ -122,6 +122,8 @@ export interface TeamsBotDeps {
   liveSessionProposals: LiveSessionProposalStore;
   /** Gates the propose_live_session tool (config liveSessions flag + surface support). */
   liveSessionsEnabled: () => boolean;
+  /** Working dir for delegates not tied to a project (must exist); omit to require a project. */
+  scratchPath?: string;
   /** Enables the generate_image action tool; omit to disable image generation. */
   imageGen?: Pick<ImageGenDeps, "generate" | "model" | "imagesDir">;
 }
@@ -604,6 +606,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps: { chat: deps.chat, model: deps.model },
           actions: imageTool ? [...actions, imageTool.tool] : actions,
           delegateAvailable: true,
+          scratchPath: deps.scratchPath,
           liveSessionAvailable: deps.liveSessionsEnabled() && detected.includes("claude"),
           availableClis: detected,
           models: availableModels(deps.cliModels, detected),

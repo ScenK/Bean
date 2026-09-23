@@ -90,16 +90,23 @@ export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?
 // is only offered for `target: chat` skills (which run on Bean's own model, no agent
 // harness); everything else routes to propose_delegate.
 const behaviorInstructions = (runAvailable: boolean): string =>
-  "You cannot do project work yourself — a separate `opencode` process does. " +
-  (runAvailable
-    ? "When the user " +
-      "wants a concrete task done in one of their projects, call the propose_run tool with the " +
-      "best matching skill name, project path, and a clear instruction; otherwise just reply in " +
-      "text. "
-    : "") +
-  "Any other tools you are given (reminders etc.) you DO execute yourself — call them " +
+  // Routing is decided by Bean's OWN closed capability set, not by guessing what the
+  // delegated harness can do — that set (MCP servers, auth, skills) is invisible from here.
+  // See .memory/convention-route-by-own-capabilities.md.
+  "You are the conversational front of a two-part system. You yourself can only talk, " +
+  "plus call the tools you are given in this request. You have no access to files, " +
+  "repositories, a shell, the web, or external systems (issue trackers such as Jira, " +
+  "GitHub, email, calendars, docs). A separate agent does — it runs with the user's own " +
+  "tools and credentials. Decide by what YOU can do: if the request is conversation, or " +
+  "one of your own tools covers it, handle it yourself. Anything else that asks for " +
+  "something to be done, created, looked up, or changed is the agent's job — hand it off " +
+  "instead of drafting it in chat or asking clarifying questions first; put what you know " +
+  "into the instruction and let the agent ask. When unsure, hand off: the user confirms " +
+  "the card before anything runs, so an unneeded hand-off costs one click, while a " +
+  "made-up answer about code or external data costs trust. " +
+  "Your own tools (reminders etc.) you DO execute yourself — call them " +
   "directly when the user asks, then confirm what you did in one short sentence. " +
-  "Only propose a run when the user clearly wants work done. The skills/projects list below " +
+  "The skills/projects list below " +
   "is for your own routing decisions — don't recite or summarize it unprompted. Only describe " +
   "your skills or projects if the user directly asks what you can do. " +
   "When the user asks to save this talk as a note, or a substantive discussion winds down " +
@@ -107,12 +114,12 @@ const behaviorInstructions = (runAvailable: boolean): string =>
   "anything is saved. Notes capture conversation output (summaries, ideas, open questions), " +
   "NOT durable one-line facts about the user — those are handled elsewhere. Don't propose a " +
   "note for small talk or a talk that reached no substance. If you are given a " +
-  "propose_delegate tool: use it when the user wants project work done; a background " +
-  "agent does the work while the chat stays open, and its result returns to this " +
-  "conversation. Call propose_delegate directly — don't ask the user in chat text whether " +
+  "propose_delegate tool, it is how you hand off: the agent works in the background while " +
+  "the chat stays open, and its result returns to this conversation. Omit its project when " +
+  "the task isn't about one of the user's projects (e.g. filing a ticket, researching a " +
+  "topic). Call propose_delegate directly — don't ask the user in chat text whether " +
   "you should delegate first; the card Bean shows afterward is the confirmation step. " +
-  "If the user asks you to inspect, explore, summarize, or explain a linked project, " +
-  "use propose_delegate; do not say you cannot access the repository. " +
+  "Never say you cannot access a repository or external system — hand off instead. " +
   (runAvailable
     ? "Use propose_run instead when the user wants to watch or continue the " +
       "work in their own terminal. Both are confirm-first via the card shown after you " +
@@ -121,7 +128,7 @@ const behaviorInstructions = (runAvailable: boolean): string =>
       "directly in this chat — call it for those. Any other request to run, launch, or " +
       "kick off work is a propose_delegate call. Delegates are confirm-first via the card " +
       "shown after you propose — not by asking permission in chat text.") +
-  " When the user explicitly asks you to remember or save durable facts from this chat, call " +
+" When the user explicitly asks you to remember or save durable facts from this chat, call " +
   "propose_remember — the user then confirms which facts are kept; never save memory silently. " +
   "When the user asks you to create a new skill or change an existing one, call propose_skill " +
   "with the complete markdown — the user confirms the card before anything is written. " +
@@ -248,9 +255,22 @@ function proposeRunTool(skills: Skill[], projects: Project[], inChatOnly = false
   };
 }
 
-function proposeDelegateTool(skills: Skill[], projects: Project[], availableClis: CliName[], models: AvailableModel[]): ToolSpec {
+// scratch=true makes project optional: omitted means the caller's scratch workspace, for
+// tasks not tied to a repo (filing a ticket, research) — otherwise the required project enum
+// structurally blocks the hand-off and the model drafts the task in chat instead.
+function proposeDelegateTool(skills: Skill[], projects: Project[], availableClis: CliName[], models: AvailableModel[], scratch: boolean): ToolSpec {
   const properties: Record<string, unknown> = {
-    project: { type: "string", enum: projects.map((p) => p.path), description: "the project path to work in" },
+    ...(projects.length > 0
+      ? {
+          project: {
+            type: "string",
+            enum: projects.map((p) => p.path),
+            description: scratch
+              ? "the project path to work in; omit when the task isn't about one of these projects"
+              : "the project path to work in",
+          },
+        }
+      : {}),
     instruction: {
       type: "string",
       description: "the concrete, self-contained task for the delegated agent — include all context it needs",
@@ -281,11 +301,12 @@ function proposeDelegateTool(skills: Skill[], projects: Project[], availableClis
   return {
     name: "propose_delegate",
     description:
-      "Delegate a task to a background coding agent that can inspect, summarize, explain, or work " +
-      "inside the project and reports the result back to this chat when finished. Call it directly — " +
+      "Hand a task to a background agent that has the user's own tools and credentials (files, " +
+      "shell, web, external systems like Jira or GitHub). It can inspect, explain, create, or " +
+      "change things and reports the result back to this chat when finished. Call it directly — " +
       "don't ask the user for permission in chat text first; the card shown afterward is what the " +
       "user confirms and edits before it actually starts.",
-    parameters: { type: "object", properties, required: ["project", "instruction"] },
+    parameters: { type: "object", properties, required: scratch ? ["instruction"] : ["project", "instruction"] },
   };
 }
 
@@ -353,6 +374,8 @@ export interface ConverseInput {
   now?: () => Date;
   linkedNote?: LinkedNote;
   delegateAvailable?: boolean;
+  /** Working dir for a delegate with no project; when set, propose_delegate's project is optional. */
+  scratchPath?: string;
   liveSessionAvailable?: boolean;
   availableClis?: CliName[];
   models?: AvailableModel[]; // configured models (clis.json) for the propose_delegate enum; [] = no model param offered
@@ -377,6 +400,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     now = () => new Date(),
     linkedNote,
     delegateAvailable = false,
+    scratchPath,
     liveSessionAvailable = false,
     availableClis = [],
     models = [],
@@ -431,7 +455,9 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   const runnableSkills = runAvailable ? skills : skills.filter((s) => s.target === "chat");
   const tools = [
     ...(runnableSkills.length > 0 ? [proposeRunTool(runnableSkills, projects, !runAvailable)] : []),
-    ...(delegateAvailable && projects.length > 0 ? [proposeDelegateTool(skills, projects, availableClis, models)] : []),
+    ...(delegateAvailable && (projects.length > 0 || scratchPath)
+      ? [proposeDelegateTool(skills, projects, availableClis, models, scratchPath !== undefined)]
+      : []),
     ...(liveSessionAvailable && projects.length > 0 ? [proposeLiveSessionTool(projects, models)] : []),
     proposeNoteTool(projects, linkedNote),
     proposeSkillTool(),
@@ -498,8 +524,9 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       const args = (delegateCall.args ?? {}) as {
         project?: unknown; instruction?: unknown; skill?: unknown; cli?: unknown; model?: unknown;
       };
-      const project = projects.find((p) => p.path === args.project);
-      if (!project || typeof args.instruction !== "string" || !args.instruction.trim()) {
+      // Same absent-vs-unknown split as propose_run: absent = scratch workspace (when offered).
+      const projectPath = args.project === undefined ? scratchPath : projects.find((p) => p.path === args.project)?.path;
+      if (!projectPath || typeof args.instruction !== "string" || !args.instruction.trim()) {
         reject(delegateCall, "unknown project or empty instruction.");
         continue;
       }
@@ -508,7 +535,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reply: content,
         model: deps.model,
         proposedDelegate: {
-          projectPath: project.path,
+          projectPath,
           instruction: args.instruction,
           skillName: skill?.name,
           composedPrompt: skill ? composePrompt(skill, args.instruction, droppedUrl) : args.instruction,

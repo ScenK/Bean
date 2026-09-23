@@ -175,6 +175,8 @@ export interface ChatHandlerDeps {
   dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
+  /** Its scratch workspace hosts delegates that aren't about a project (main.ts creates it). */
+  beanDirPath?: string;
   loadRoutines?: () => Promise<Routine[]>;
   /** Enables the generate_image action tool. getModel (not a value): imageModel may live
    * behind runtime config someday; onStart drives the chat window's 🎨 working indicator. */
@@ -214,6 +216,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       actions: imageTool ? [...(deps.actions ?? []), imageTool.tool] : deps.actions,
       linkedNote: req.linkedNote,
       delegateAvailable: deps.delegateAvailable?.() ?? false,
+      scratchPath: deps.beanDirPath ? scratchDir(deps.beanDirPath) : undefined,
       todoRoutines,
     });
     if (imageTool && imageTool.paths.length > 0) {
