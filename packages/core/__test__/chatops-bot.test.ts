@@ -1224,3 +1224,17 @@ test("images generated during a chat-target follow-up are still delivered", asyn
   expect(sent).toHaveLength(1);
   expect(sent[0]).toMatch(/a-dog\.png$/);
 });
+
+test("a rejected card edit neither crashes the bot nor blocks posting the run's result", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  const bot = buildTeamsBot(deps);
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id } }, effects);
+  effects.updateCard = async () => { throw new Error("Invalid Form Body"); };
+  const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  delegateCalls[0]?.cb.onDone("the answer");
+  await vi.waitFor(() => expect(effects.posted).toContain("the answer"));
+  expect(errSpy).toHaveBeenCalled();
+  errSpy.mockRestore();
+});
