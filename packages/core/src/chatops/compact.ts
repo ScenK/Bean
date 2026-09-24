@@ -37,6 +37,10 @@ async function compactOnce(
   if (conversations.turnCount(conversationId) <= COMPACT_THRESHOLD) return;
   const oldest = conversations.oldest(conversationId, SUMMARIZE_COUNT);
   const summary = await summarizeTurns(oldest, deps);
+  // `/new` or `/resume` may have swapped the live history during the await — only replace the
+  // turns that were actually summarized (check + replace are synchronous, so nothing interleaves).
+  const now = conversations.oldest(conversationId, SUMMARIZE_COUNT);
+  if (JSON.stringify(now) !== JSON.stringify(oldest)) return;
   conversations.replaceOldest(conversationId, SUMMARIZE_COUNT, { role: "system", content: summary });
 }
 

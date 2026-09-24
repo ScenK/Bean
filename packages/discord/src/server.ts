@@ -239,6 +239,12 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       }
       const channelId = interaction.channelId;
       if (["new", "sessions", "resume"].includes(interaction.commandName)) {
+        // Same as the text path, where these words go to the running agent: a live session keeps
+        // appending to this history, so switching it underneath would split its transcript.
+        if (liveSessions.has(channelId) && interaction.commandName !== "sessions") {
+          await interaction.reply({ content: "A live session is running here — `/stop` it before switching conversations.", ephemeral: true });
+          return;
+        }
         const n = interaction.options.getInteger("session");
         const cmd = n === null ? interaction.commandName : `${interaction.commandName} ${n}`;
         await interaction.reply({ content: sessionCommand(conversations, channelId, cmd) ?? "", ephemeral: true });
