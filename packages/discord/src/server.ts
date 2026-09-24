@@ -168,16 +168,21 @@ client.on("messageCreate", async (message) => {
     if (!addressed && !capturing) return;
     let text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
     // Voice messages (and other audio clips ≤25MB, the transcription API cap) arrive with empty
-    // content — transcribe them into the turn's text so they get a normal reply.
-    for (const att of message.attachments.values()) {
+    // content — transcribe them into the turn's text so they get a normal reply. In a captured
+    // channel only someone who can steer the session pays for a transcription (onMessage would
+    // drop anyone else's turn anyway).
+    const canTranscribe = !capturing || liveSessions.canSteer(message.channelId, message.author.id);
+    let transcribeFailed = false;
+    for (const att of canTranscribe ? message.attachments.values() : []) {
       if (!att.contentType?.startsWith("audio/") || att.size > 25 * 1024 * 1024) continue;
       try {
         const res = await fetch(att.url);
-        if (!res.ok) { console.error(`audio fetch failed: ${res.status}`); continue; }
+        if (!res.ok) { console.error(`audio fetch failed: ${res.status}`); transcribeFailed = true; continue; }
         const heard = await transcribe(await res.arrayBuffer(), att.name, att.contentType.split(";")[0]!.trim());
         if (heard) text = text ? `${text}\n\n${heard}` : heard;
       } catch (err) {
         console.error("audio transcription failed:", err);
+        transcribeFailed = true;
       }
     }
     // Image attachments (supported vision formats, ≤10MB) ride along as vision input; an
@@ -197,7 +202,10 @@ client.on("messageCreate", async (message) => {
         console.error("attachment fetch failed:", err);
       }
     }
-    if (!text && images.length === 0) return;
+    if (!text && images.length === 0) {
+      if (transcribeFailed) await message.reply("I couldn't transcribe that voice message — try again, or type it out.");
+      return;
+    }
     if ("sendTyping" in message.channel) await message.channel.sendTyping();
     // Discord's typing indicator lasts ~10s; refresh it while onMessage is still working.
     const typing = "sendTyping" in message.channel
