@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { makeOpenAIChatWithClient, makeOpenAIConverseWithClient } from "../src/openai-chat.js";
+import { makeOpenAIChatWithClient, makeOpenAIConverseWithClient, makeOpenAITranscribeWithClient } from "../src/openai-chat.js";
 
 // A fake /v1/responses client that records the request and replays a canned output[].
 function fakeResponses(output: unknown[] = [{ type: "message", content: [{ type: "output_text", text: "ok" }] }]) {
@@ -221,4 +221,15 @@ test("converse adapter surfaces a refusal, which carries no text part", async ()
   };
   const out = await makeOpenAIConverseWithClient(client as never)({ model: "m", messages: [], tools: [] });
   expect(out.content).toBe("I can't help with that.");
+});
+
+test("makeOpenAITranscribeWithClient sends the audio as a named file and returns the trimmed transcript", async () => {
+  let sent: { model: string; file: File } | undefined;
+  const t = makeOpenAITranscribeWithClient({
+    audio: { transcriptions: { create: async (a) => { sent = a; return { text: "  hello bean \n" }; } } },
+  });
+  expect(await t(new TextEncoder().encode("ogg").buffer, "voice-message.ogg", "audio/ogg")).toBe("hello bean");
+  expect(sent?.model).toBe("gpt-4o-mini-transcribe");
+  expect(sent?.file.name).toBe("voice-message.ogg");
+  expect(sent?.file.type).toBe("audio/ogg");
 });
