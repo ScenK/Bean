@@ -29,5 +29,9 @@ unconditionally; Discord applies selects live into a per-message `selections` ma
 (`discord/src/server.ts`) and only sends the ones the user actually touched. Guards in
 `onCardAction` must therefore be no-ops when a field is absent.
 
+Discord **embed field values cap at 1024 chars** (description 4096). Anything dynamic in a field —
+the running card's progress tail is often a delegate's whole final answer — must be clamped in
+`components.ts`; an over-limit edit is a 400, and it once crashed the bot mid-run (lost result).
+
 Related: [project-live-sessions.md](project-live-sessions.md),
 [project-config-driven-cli-models.md](project-config-driven-cli-models.md).

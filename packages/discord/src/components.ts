@@ -69,12 +69,20 @@ function proposalCard(input: ProposalCardInput): object {
   };
 }
 
+// Discord rejects an embed field value over 1024 chars. The tail is often a delegate's whole
+// final answer, and a rejected edit used to crash the bot mid-run — keep only the newest end.
+const FIELD_VALUE_LIMIT = 1024;
+function clampTail(tail: string): string {
+  const max = FIELD_VALUE_LIMIT - "```\n\n```".length;
+  return tail.length <= max ? tail : "…" + tail.slice(-(max - 1));
+}
+
 function runningCard(input: RunningCardInput): object {
   return {
     embeds: [{
       title: `Running in ${input.projectName}… (started by ${input.startedBy})`,
       description: input.instruction,
-      ...(input.tail ? { fields: [{ name: "Progress", value: `\`\`\`\n${input.tail}\n\`\`\`` }] } : {}),
+      ...(input.tail ? { fields: [{ name: "Progress", value: `\`\`\`\n${clampTail(input.tail)}\n\`\`\`` }] } : {}),
     }],
     // cancel-run carries the projectPath in the customId's id slot; server.ts resolves it
     // via its proposal-message state (spec: adapter-local maps). Using projectPath directly

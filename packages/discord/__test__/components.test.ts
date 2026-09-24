@@ -194,3 +194,13 @@ test("live-session card omits model/skill/cli dropdowns when none are configured
   expect(s).not.toContain("bean:live-skill:");
   expect(s).not.toContain("bean:live-cli:");
 });
+
+test("running card clamps a long tail to Discord's 1024-char field limit, keeping the newest end", () => {
+  const tail = "a".repeat(2000) + "END";
+  const card = discordCards.runningCard({
+    projectName: "bean", instruction: "search", startedBy: "scen", tail, projectPath: "/p",
+  }) as { embeds: { fields: { value: string }[] }[] };
+  const value = card.embeds[0]!.fields[0]!.value;
+  expect(value.length).toBeLessThanOrEqual(1024);
+  expect(value).toContain("END\n```");
+});

@@ -149,6 +149,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   const loadActiveSkills = async (): Promise<Skill[]> =>
     (await deps.loadSkills()).filter((s) => s.enabled !== false);
 
+  // Run events fire from the delegate's stream callbacks, outside any awaited chain. A rejected
+  // surface call (e.g. Discord 400 on an oversized card edit) left unhandled kills the bot
+  // process and loses the run's result — log it and keep going. A failed card edit must not
+  // block posting the result either, hence the inner catches.
+  function logRunEffectError(err: unknown): void {
+    console.error("chatops run effect failed:", err);
+  }
+
   async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();
     const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? p.proposal.projectPath;
@@ -183,26 +191,27 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       req,
       {
         onTail: (line) => {
-          void updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, tail: line, projectPath: req.projectPath }));
+          updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, tail: line, projectPath: req.projectPath }))
+            .catch(logRunEffectError);
         },
         onDone: (result) => {
           void (async () => {
             deps.conversations.append(p.conversationId, { role: "assistant", content: `[delegate result] ${result}` });
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done" }));
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done" })).catch(logRunEffectError);
             await fx.post(result);
-          })();
+          })().catch(logRunEffectError);
         },
         onError: (message) => {
           void (async () => {
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error" }));
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error" })).catch(logRunEffectError);
             await fx.post(`Delegate run failed: ${message}`);
-          })();
+          })().catch(logRunEffectError);
         },
         onCancelled: () => {
           void (async () => {
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled" }));
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled" })).catch(logRunEffectError);
             await fx.post("Run cancelled.");
-          })();
+          })().catch(logRunEffectError);
         },
       },
       { instruction: p.proposal.instruction, conversationId: p.conversationId },
