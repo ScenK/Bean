@@ -115,3 +115,17 @@ test("archives are capped, and resuming the oldest survives the trim", () => {
   expect(s.history("c1")).toEqual([{ role: "user", content: archived.at(-1)!.preview }]);
   expect(s.archived("c1")).toHaveLength(MAX_ARCHIVED_SESSIONS);
 });
+
+test("a resumed session re-archived by /new is not the one trimmed", async () => {
+  const s = new ConversationStore(file);
+  for (let i = 0; i < MAX_ARCHIVED_SESSIONS; i++) {
+    s.append("c1", { role: "user", content: `topic ${i}` });
+    s.archive("c1");
+    await new Promise((r) => setTimeout(r, 2)); // distinct archive timestamps
+  }
+  s.append("c1", { role: "user", content: "live" });
+  s.resume("c1", MAX_ARCHIVED_SESSIONS - 1); // oldest: "topic 0"
+  s.archive("c1");
+  expect(s.archived("c1")[0]?.preview).toBe("topic 0");
+  expect(s.archived("c1").map((a) => a.preview)).toContain("live");
+});

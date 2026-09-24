@@ -74,13 +74,14 @@ export class ConversationStore {
     for (const old of this.archived(conversationId).slice(MAX_ARCHIVED_SESSIONS)) this.clear(old.key);
   }
 
-  /** Archived sessions for this conversation, most recently active first. */
+  /** Archived sessions for this conversation, most recently archived first (the key embeds the
+   * archive time) — so a just-resumed-then-re-archived session isn't the first one trimmed. */
   archived(conversationId: string): ArchivedSession[] {
     const prefix = archivePrefix(conversationId);
     const rows = this.db.prepare(
       "SELECT conversation_id AS key, MAX(created_at) AS lastActive, COUNT(*) AS turns, " +
         "(SELECT content FROM chatops_turns u WHERE u.conversation_id = t.conversation_id AND u.role = 'user' ORDER BY seq LIMIT 1) AS preview " +
-        "FROM chatops_turns t WHERE substr(conversation_id, 1, ?) = ? GROUP BY conversation_id ORDER BY lastActive DESC, key DESC",
+        "FROM chatops_turns t WHERE substr(conversation_id, 1, ?) = ? GROUP BY conversation_id ORDER BY key DESC",
     ).all(prefix.length, prefix) as unknown as (Omit<ArchivedSession, "preview"> & { preview: string | null })[];
     return rows.map((r) => ({ ...r, preview: r.preview ?? "" }));
   }
