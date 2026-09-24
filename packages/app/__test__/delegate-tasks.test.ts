@@ -87,7 +87,7 @@ describe("createDelegateTasks", () => {
     const id = await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });
     expect(id).toBe("task-1");
     expect(h.req()).toEqual({ cli: "opencode", projectPath: "/p", prompt: "go" });
-    expect(h.sent).toEqual([{ taskId: "task-1", type: "started" }]);
+    expect(h.sent).toEqual([{ taskId: "task-1", type: "started", projectPath: "/p", instruction: "do it" }]);
   });
 
   it("emits a deferred failed event when no CLI is available", async () => {
@@ -121,7 +121,7 @@ describe("createDelegateTasks", () => {
     const id = await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });
     h.tasks.cancel(id);
     expect(h.cancels).toEqual(["go"]);
-    expect(h.sent.at(-1)).toEqual({ taskId: id, type: "started" });
+    expect(h.sent.at(-1)).toMatchObject({ taskId: id, type: "started" });
     h.cancelCallbacks[0]!();
     expect(h.sent.at(-1)).toEqual({ taskId: id, type: "cancelled" });
     h.cbs().onDone("too late");
@@ -149,7 +149,7 @@ describe("createDelegateTasks", () => {
     h.cbs().onDone("done");
     // freed after completion
     const idC = await h.tasks.start({ projectPath: "/p", prompt: "three", instruction: "again" });
-    expect(h.sent).toContainEqual({ taskId: idC, type: "started" });
+    expect(h.sent).toContainEqual({ taskId: idC, type: "started", projectPath: "/p", instruction: "again" });
   });
 
   it("cancelAll cancels every running task and emits cancelled for each", async () => {

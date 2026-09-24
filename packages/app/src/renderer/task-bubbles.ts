@@ -1,0 +1,114 @@
+import type { TaskJob } from "../task-status.js";
+
+// Design 2a "speech bubble": one bubble per running job, stacked above the bean, newest nearest
+// the bean and the only one with a tail. Click a bubble to expand its detail (read-only).
+const ICONS = {
+  delegate: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  routine: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/><path d="M12 7v5l3 3"/>',
+  done: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  failed: '<path d="M12 7v6"/><path d="M12 17h.01"/>',
+};
+
+const esc = (s: string): string =>
+  s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+const clock = (ms: number): string => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+const meta = (j: TaskJob, now: number): string => {
+  if (j.state !== "running") return j.state;
+  const elapsed = clock(now - j.startedAt);
+  return j.steps && j.step !== undefined ? `${j.step + 1}/${j.steps.length} · ${elapsed}` : elapsed;
+};
+
+const iconKey = (j: TaskJob): keyof typeof ICONS => (j.state === "running" ? j.kind : j.state);
+
+function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh: boolean, now: number): string {
+  const running = j.state === "running";
+  const steps = j.steps ?? [];
+  const bar = running && steps.length > 0 && j.step !== undefined
+    ? `<div class="bean-bubble-bar"><div style="width:${Math.round(((j.step + 0.5) / steps.length) * 100)}%"></div></div>`
+    : "";
+  const stepRows = steps.map((label, i) => {
+    const cls = !running || i < (j.step ?? 0) ? "done" : i === j.step ? "now" : "";
+    const mark = cls === "now" ? "now" : cls === "done" && running ? "done" : "";
+    return `<div class="bean-bubble-step bean-bubble-step--${cls || "todo"}"><span></span><span>${esc(label)}</span><span>${mark}</span></div>`;
+  }).join("");
+  const detail = open && (j.detail || steps.length)
+    ? `<div class="bean-bubble-detail">${j.detail ? `<div class="bean-bubble-note">${esc(j.detail)}</div>` : ""}${stepRows ? `<div class="bean-bubble-steps">${stepRows}</div>` : ""}</div>`
+    : "";
+  const caret = running && j.kind === "delegate" ? '<span class="bean-bubble-caret"></span>' : "";
+  return `
+    <button type="button" class="bean-bubble bean-bubble--${j.state}${tail ? " bean-bubble--tail" : ""}${fresh ? " bean-bubble--new" : ""}" data-id="${esc(j.id)}" aria-expanded="${open}">
+      <span class="bean-bubble-head">
+        <span class="bean-bubble-icon bean-bubble-icon--${iconKey(j)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${ICONS[iconKey(j)]}</svg></span>
+        <span class="bean-bubble-name">${esc(j.name)}</span>
+        <span class="bean-bubble-meta" data-started="${j.startedAt}">${esc(meta(j, now))}</span>
+      </span>
+      ${quiet ? "" : `<span class="bean-bubble-line">${esc(j.line)}${caret}</span>`}
+      ${bar}${detail}
+    </button>`;
+}
+
+export function createTaskBubbles(container: HTMLElement, onHeight: (h: number) => void) {
+  let jobs: TaskJob[] = [];
+  let openId: string | undefined;
+  // Pop-in plays once per job — every streamed output line re-renders the stack.
+  let seen = new Set<string>();
+  const stack = document.createElement("div");
+  stack.className = "bean-bubble-stack";
+  container.replaceChildren(stack);
+
+  // Flipped below the bean, the DOM order reverses so the newest (tailed) bubble is still nearest
+  // it — and is the first thing a scrolled stack shows.
+  let below = false;
+
+  const render = (): void => {
+    if (openId && !jobs.some((j) => j.id === openId)) openId = undefined;
+    const now = Date.now();
+    // Streamed output re-renders every bubble; keep keyboard focus on the same job across it.
+    const focused = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(".bean-bubble")?.dataset.id;
+    const html = jobs.map((j, i) =>
+      bubble(j, j.id === openId, openId !== undefined && j.id !== openId, i === jobs.length - 1, !seen.has(j.id), now));
+    stack.innerHTML = (below ? html.reverse() : html).join("");
+    seen = new Set(jobs.map((j) => j.id));
+    if (focused) [...stack.querySelectorAll<HTMLElement>(".bean-bubble")].find((n) => n.dataset.id === focused)?.focus();
+  };
+
+  stack.addEventListener("click", (e) => {
+    const id = (e.target as HTMLElement).closest<HTMLElement>(".bean-bubble")?.dataset.id;
+    if (!id) return;
+    openId = openId === id ? undefined : id;
+    render();
+  });
+
+  // Only the meta clocks tick; re-rendering whole bubbles every second would reset hover/focus.
+  setInterval(() => {
+    const now = Date.now();
+    stack.querySelectorAll<HTMLElement>(".bean-bubble").forEach((node) => {
+      const j = jobs.find((x) => x.id === node.dataset.id);
+      const m = node.querySelector(".bean-bubble-meta");
+      if (j && m) m.textContent = meta(j, now);
+    });
+  }, 1000);
+
+  // Report the stack's height (tail included) so main can size the window around it; 0 = no jobs.
+  new ResizeObserver(() => onHeight(jobs.length ? stack.offsetHeight : 0)).observe(stack);
+
+  return {
+    update(next: TaskJob[]): void {
+      jobs = next;
+      render();
+    },
+    running: (): boolean => jobs.some((j) => j.state === "running"),
+    /** From main's layout: which side of the bean, and how tall the stack may get before it scrolls. */
+    setLayout(nextBelow: boolean, stackMax: number | undefined): void {
+      stack.style.maxHeight = stackMax ? `${stackMax}px` : "";
+      if (nextBelow === below) return;
+      below = nextBelow;
+      render();
+    },
+  };
+}

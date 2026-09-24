@@ -1,6 +1,6 @@
 import { ipcMain, screen, type BrowserWindow } from "electron";
 import { IPC, type AvatarMode } from "./channels.js";
-import { AVATAR_SIZE, avatarSizeForMode, clampAvatarBounds, dragBloomLayout, type Point } from "./avatar-menu.js";
+import { AVATAR_SIZE, avatarSizeForMode, clampAvatarBounds, dragBloomLayout, statusLayout, type Point } from "./avatar-menu.js";
 
 /** One owner for the avatar's mode, idle anchor, native movement, and recovery. */
 export function installAvatarControls(win: BrowserWindow): { bringBack: () => void; reveal: () => void } {
@@ -9,6 +9,9 @@ export function installAvatarControls(win: BrowserWindow): { bringBack: () => vo
   let poll: ReturnType<typeof setInterval> | undefined;
   let outsideSince: number | undefined;
   let placing = false;
+  let current: AvatarMode = "normal";
+  // Height of the renderer's status-bubble stack (0 = no jobs). Idle/hover grow upward to hold it.
+  let statusHeight = 0;
   const stopPoll = (): void => {
     clearInterval(poll);
     poll = undefined;
@@ -26,7 +29,14 @@ export function installAvatarControls(win: BrowserWindow): { bringBack: () => vo
     const cur = win.getBounds();
     const center = anchor ?? { x: cur.x + cur.width / 2, y: cur.y + cur.height / 2 };
     const work = screen.getDisplayNearestPoint(center).workArea;
-    if (next === "normal") {
+    current = next;
+    if ((next === "normal" || next === "hover") && statusHeight > 0) {
+      // The bean isn't at the window's center here, so keep the anchor for the eventual collapse.
+      anchor = center;
+      const layout = statusLayout(center, statusHeight, work);
+      place(layout.bounds);
+      win.webContents.send(IPC.avatarDragLayout, layout.bean);
+    } else if (next === "normal") {
       const bounds = clampAvatarBounds({ x: center.x - AVATAR_SIZE.width / 2, y: center.y - AVATAR_SIZE.height / 2, ...AVATAR_SIZE }, work);
       anchor = undefined;
       place(bounds);
@@ -77,8 +87,16 @@ export function installAvatarControls(win: BrowserWindow): { bringBack: () => vo
     if (e.sender !== win.webContents || !["normal", "hover", "menu", "drag"].includes(next)) return;
     setMode(next);
   };
+  const changeStatusHeight: Parameters<typeof ipcMain.on>[1] = (e, h: number) => {
+    if (e.sender !== win.webContents || !Number.isFinite(h)) return;
+    const next = Math.max(0, Math.round(h));
+    if (next === statusHeight) return;
+    statusHeight = next;
+    if (current === "normal" || current === "hover") setMode(current);
+  };
   ipcMain.on(IPC.moveWindowBy, move);
   ipcMain.on(IPC.setAvatarMode, changeMode);
+  ipcMain.on(IPC.setAvatarStatusHeight, changeStatusHeight);
 
   const reset = (center: Point): void => {
     anchor = center;
@@ -106,6 +124,7 @@ export function installAvatarControls(win: BrowserWindow): { bringBack: () => vo
     stopPoll();
     ipcMain.removeListener(IPC.moveWindowBy, move);
     ipcMain.removeListener(IPC.setAvatarMode, changeMode);
+    ipcMain.removeListener(IPC.setAvatarStatusHeight, changeStatusHeight);
     screen.removeListener("display-removed", recoverDisplay);
     screen.removeListener("display-metrics-changed", recoverDisplay);
   });

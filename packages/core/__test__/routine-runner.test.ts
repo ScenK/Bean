@@ -30,6 +30,16 @@ const baseDeps = (chat: RoutineRunnerDeps["chat"], over: Partial<RoutineRunnerDe
 });
 
 describe("runRoutine", () => {
+  it("reports each step index via onStep as it starts", async () => {
+    const { fn } = chatStub([{ content: "a" }, { content: "b" }, { content: "the digest" }]);
+    const seen: number[] = [];
+    await runRoutine(
+      routine([{ kind: "chat", instruction: "one" }, { kind: "chat", instruction: "two" }]),
+      baseDeps(fn, { onStep: (i) => seen.push(i) }),
+    );
+    expect(seen).toEqual([0, 1]);
+  });
+
   it("fails a step whose skill is disabled instead of silently running it without instructions", async () => {
     const { fn } = chatStub([{ content: "the digest" }]);
     const delegate = vi.fn(async () => "should never run");

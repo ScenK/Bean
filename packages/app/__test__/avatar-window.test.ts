@@ -106,3 +106,18 @@ test("manual moves clamp applied bounds and do not strand the collapse anchor", 
   expect(idle.y + idle.height).toBeLessThanOrEqual(900);
   win.emit("closed");
 });
+
+test("status bubbles grow the idle window upward around a fixed bean, then collapse back", () => {
+  const { win } = fixture();
+  const idle = win.getBounds();
+  const bean = { x: idle.x + 60, y: idle.y + 60 };
+  const height = (h: number) => ipc.get(IPC.setAvatarStatusHeight)!({ sender: win.webContents }, h);
+  height(200);
+  const grown = win.getBounds();
+  expect(grown).toMatchObject({ width: 300, height: 320 });
+  expect(win.webContents.send).toHaveBeenLastCalledWith(IPC.avatarDragLayout, { x: bean.x - grown.x, y: bean.y - grown.y, bubblesBelow: false, stackMax: 700 });
+  expect(bean.y - grown.y).toBe(260); // stack sits above the bean
+  height(0);
+  expect(win.getBounds()).toEqual(idle);
+  win.emit("closed");
+});

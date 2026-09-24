@@ -68,7 +68,7 @@ function copyStaticAssets() {
   for (const f of ["chat", "skills", "persona", "projects", "notes", "routines", "dashboard", "plan", "settings", "about"]) {
     writeFileSync(`dist/renderer/${f}.html`, componentHtml(f));
   }
-  for (const f of ["theme.css", "orb.css", "avatar-box.css", "shared.css", "bubble-menu.css", "drag-bloom.css"]) {
+  for (const f of ["theme.css", "orb.css", "avatar-box.css", "shared.css", "bubble-menu.css", "drag-bloom.css", "task-bubbles.css"]) {
     cpSync(`src/renderer/${f}`, `dist/renderer/${f}`);
   }
 }

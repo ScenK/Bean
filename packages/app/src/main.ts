@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { join, dirname } from "node:path";
+import { basename, join, dirname } from "node:path";
 import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./chatops-enabled-store.js";
 import { createChatopsServers } from "./chatops-servers.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
@@ -37,6 +37,7 @@ import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
 import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } from "./delegate-tasks.js";
 import { createRoutineScheduler } from "./routine-scheduler.js";
+import { createTaskStatus } from "./task-status.js";
 import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
 
 // dist/main.js sits next to package.json (esbuild output isn't relocated).
@@ -80,6 +81,10 @@ app.whenReady().then(async () => {
   app.on("before-quit", () => { quitting = true; });
   const avatar = createAvatarWindow();
   const avatarControls = installAvatarControls(avatar);
+  // Running delegates/routines, pushed to the avatar's status bubbles (design 2a).
+  const taskStatus = createTaskStatus((jobs) => {
+    if (!avatar.isDestroyed()) avatar.webContents.send(IPC.taskStatus, jobs);
+  });
   let avatarReady = false;
   // Hoisted out of the `try` block below (where it's created) so the tray menu's click
   // handler — built further up in this function, long before that `try` runs — can read
@@ -475,6 +480,17 @@ app.whenReady().then(async () => {
       dir,
       resolveCli: resolveDelegateCli,
       send: (event) => {
+        if (event.type === "started") {
+          taskStatus.upsert(event.taskId, {
+            kind: "delegate", name: event.projectPath ? basename(event.projectPath) : "delegate",
+            line: "Starting…", detail: event.instruction, startedAt: Date.now(), state: "running",
+          });
+        } else if (event.type === "output") {
+          const line = event.line.trim();
+          if (line) taskStatus.upsert(event.taskId, { line });
+        } else if (event.type === "done") taskStatus.finish(event.taskId, "done", "Done");
+        else if (event.type === "failed") taskStatus.finish(event.taskId, "failed", event.message);
+        else taskStatus.finish(event.taskId, "failed", "Stopped");
         const chat = componentWindows.get("chat");
         if (chat && !chat.isDestroyed()) sendToWindow(chat, IPC.delegateEvent, event);
       },
@@ -571,18 +587,29 @@ app.whenReady().then(async () => {
 
     const runOneRoutine = async (routine: Routine): Promise<RoutineRunResult> => {
       const skills = await loadLayeredSkills(skillsDir(projectDir), skillsDir(dir));
-      return runRoutine(routine, {
-        chat: runtime.converse,
-        model: runtime.getModel(),
-        delegate: delegateStep,
-        tools: [...actionTools, saveNoteTool],
-        findSkill: (name) => skills.find((s) => s.name === name),
-        todos: {
-          listPending: async (r) => (await listTodos(dbFile(dir), r)).filter((t) => t.status === "pending"),
-          setStatus: (id, status: TodoStatus, resultSummary?: string) =>
-            updateTodoStatus(dbFile(dir), id, status, resultSummary),
-        },
-      });
+      const id = `routine:${routine.name}`;
+      const steps = routine.steps.map((st) => st.skill || (st.instruction.length > 60 ? `${st.instruction.slice(0, 59)}…` : st.instruction));
+      taskStatus.upsert(id, { kind: "routine", name: routine.name, line: steps[0] ?? "", detail: routine.description ?? "", steps, step: 0, startedAt: Date.now(), state: "running" });
+      let result: RoutineRunResult | undefined;
+      try {
+        result = await runRoutine(routine, {
+          onStep: (i) => taskStatus.upsert(id, { step: i, line: steps[i] ?? "" }),
+          chat: runtime.converse,
+          model: runtime.getModel(),
+          delegate: delegateStep,
+          tools: [...actionTools, saveNoteTool],
+          findSkill: (name) => skills.find((s) => s.name === name),
+          todos: {
+            listPending: async (r) => (await listTodos(dbFile(dir), r)).filter((t) => t.status === "pending"),
+            setStatus: (todoId, status: TodoStatus, resultSummary?: string) =>
+              updateTodoStatus(dbFile(dir), todoId, status, resultSummary),
+          },
+        });
+        return result;
+      } finally {
+        const failed = !result || result.record.status === "failed";
+        taskStatus.finish(id, failed ? "failed" : "done", failed ? (result ? "Finished with a failed step" : "Run failed") : `Done · ${steps.length} step${steps.length === 1 ? "" : "s"}`);
+      }
     };
 
     const deliverDigest = async (routine: Routine, result: RoutineRunResult): Promise<void> => {

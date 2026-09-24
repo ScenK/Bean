@@ -5,6 +5,7 @@ import type {
   Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine, TodoItem,
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
+import type { TaskJob } from "./task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
 import type { RoutineStateView, InterruptedRunNotice } from "./ipc.js";
 
@@ -49,8 +50,11 @@ contextBridge.exposeInMainWorld("bean", {
   onAvatarReset: (cb: () => void) => ipcRenderer.on(IPC.avatarReset, () => cb()),
   onAvatarFoldMenu: (cb: () => void) =>
     ipcRenderer.on(IPC.avatarFoldMenu, () => cb()),
-  onAvatarDragLayout: (cb: (p: { x: number; y: number; tilesAbove?: boolean }) => void) =>
-    ipcRenderer.on(IPC.avatarDragLayout, (_e, p: { x: number; y: number; tilesAbove?: boolean }) => cb(p)),
+  onAvatarDragLayout: (cb: (p: { x: number; y: number; tilesAbove?: boolean; bubblesBelow?: boolean; stackMax?: number }) => void) =>
+    ipcRenderer.on(IPC.avatarDragLayout, (_e, p: { x: number; y: number; tilesAbove?: boolean; bubblesBelow?: boolean; stackMax?: number }) => cb(p)),
+  setAvatarStatusHeight: (height: number): void => ipcRenderer.send(IPC.setAvatarStatusHeight, height),
+  onTaskStatus: (cb: (jobs: TaskJob[]) => void) =>
+    ipcRenderer.on(IPC.taskStatus, (_e, jobs: TaskJob[]) => cb(jobs)),
   planFromDrop: (skillName: string, droppedUrl: string): void =>
     ipcRenderer.send(IPC.planFromDrop, skillName, droppedUrl),
   runInChat: (prompt: string, label: string, noteSlug?: string): void =>

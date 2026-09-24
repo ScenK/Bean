@@ -1,4 +1,5 @@
 import { createOrb } from "./orb.js";
+import { createTaskBubbles } from "./task-bubbles.js";
 import type { AvatarMode, ComponentKind } from "../channels.js";
 import { createDragPreparationGate } from "../drag-preparation.js";
 import { createDragWatchdog } from "../drag-watchdog.js";
@@ -57,8 +58,9 @@ const hint = document.querySelector<HTMLElement>(".bean-box-hint");
 const menu = document.getElementById("bean-menu");
 const bloom = document.getElementById("bean-drag-bloom");
 const reading = document.getElementById("bean-reading");
+const bubbles = document.getElementById("bean-bubbles");
 
-if (el && orbSlot && hint && bloom && reading) {
+if (el && orbSlot && hint && bloom && reading && bubbles) {
   (el.style as unknown as { webkitAppRegion: string }).webkitAppRegion = "no-drag";
 
   const orb = createOrb(orbSlot, { size: 48 });
@@ -78,7 +80,31 @@ if (el && orbSlot && hint && bloom && reading) {
   const dragPreparation = createDragPreparationGate();
   const setMode = (next: AvatarMode): void => {
     mode = next;
+    // Menu/drag tiles own the space around the bean; the status bubbles step aside meanwhile.
+    bubbles.classList.toggle("bean-bubbles--hidden", next === "menu" || next === "drag");
     window.bean.setAvatarMode(next);
+  };
+
+  // Running delegates/routines float above the bean (design 2a). Main sizes the window to the
+  // stack's height and replies with the bean's position via onAvatarDragLayout (placeBubbles).
+  const taskBubbles = createTaskBubbles(bubbles, (h) => window.bean.setAvatarStatusHeight(h));
+  window.bean.onTaskStatus((jobs) => {
+    taskBubbles.update(jobs);
+    orb.setState(taskBubbles.running() ? "working" : "listening");
+  });
+  // Bubbles right-align with the bean (272px wide, right edge 32px past its center — the tail at
+  // right:22 then points at it) and end 36px from its center, where the hover capsule begins.
+  // Near the top of the screen main flips them below the bean (bubblesBelow).
+  const placeBubbles = (x: number, y: number, below = false, stackMax?: number): void => {
+    bubbles.classList.toggle("bean-bubbles--below", below);
+    taskBubbles.setLayout(below, stackMax);
+    // Near the left screen edge the clamped window leaves the bean < 240px from its left side:
+    // keep the bubble inside the window and slide the tail over to stay under the bean.
+    const left = Math.max(4, x + 32 - 272);
+    bubbles.style.left = `${left}px`;
+    bubbles.style.setProperty("--bean-tail-right", `${272 - (x - left) - 6}px`);
+    bubbles.style.top = below ? `${y + 36}px` : "auto";
+    bubbles.style.bottom = below ? "auto" : `calc(100% - ${y - 36}px)`;
   };
 
   // ── The expanding box ────────────────────────────────────────────────────
@@ -303,6 +329,7 @@ if (el && orbSlot && hint && bloom && reading) {
   // Pin the box + place the tiles once the main process reports where the bean landed in the grown
   // window. Tiles are created collapsed, then flipped open next frame so the slide-in plays.
   window.bean.onAvatarDragLayout((p) => {
+    placeBubbles(p.x, p.y, p.bubblesBelow, p.stackMax);
     if (mode === "normal") { positionBox(p.x, p.y, p.tilesAbove); return; } // re-pin the collapsed box after a resize
     if (mode === "hover") {
       positionBox(p.x, p.y, p.tilesAbove);
@@ -490,6 +517,7 @@ if (el && orbSlot && hint && bloom && reading) {
     cancelCollapse();
     dragWatchdog.disarm();
     mode = "normal";
+    bubbles.classList.remove("bean-bubbles--hidden");
     dragging = false;
     moved = false;
     document.documentElement.classList.remove("bean-moving");
