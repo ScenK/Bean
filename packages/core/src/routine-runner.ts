@@ -22,6 +22,8 @@ export interface RoutineRunnerDeps {
   findSkill: (name: string) => Skill | undefined;
   now?: () => Date;
   stepTimeoutMs?: number;
+  /** Called as each step starts (index into routine.steps) — drives the avatar's status bubble. */
+  onStep?: (index: number) => void;
   /** Injected by the app for todo-driven routines: core never touches the DB itself. */
   todos?: {
     listPending: (routine: string) => Promise<TodoItem[]>;
@@ -161,6 +163,7 @@ async function runSteps(
   for (const [index, step] of routine.steps.entries()) {
     const prior = priorOutputsBlock(results);
     const effective = { ...step, instruction: step.instruction + instructionSuffix } as RoutineStep;
+    deps.onStep?.(index);
     try {
       const output = effective.kind === "delegate"
         ? await deps.delegate({

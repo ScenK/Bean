@@ -4,6 +4,7 @@ import type {
 } from "@bean/core";
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
+import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
 import type { RoutineStateView, InterruptedRunNotice } from "../ipc.js";
 
@@ -39,7 +40,9 @@ declare global {
       setAvatarMode(mode: AvatarMode): void;
       onAvatarReset(cb: () => void): void;
       onAvatarFoldMenu(cb: () => void): void;
-      onAvatarDragLayout(cb: (p: { x: number; y: number; tilesAbove?: boolean }) => void): void;
+      onAvatarDragLayout(cb: (p: { x: number; y: number; tilesAbove?: boolean; bubblesBelow?: boolean; stackMax?: number }) => void): void;
+      setAvatarStatusHeight(height: number): void;
+      onTaskStatus(cb: (jobs: TaskJob[]) => void): void;
       planFromDrop(skillName: string, droppedUrl: string): void;
       runInChat(prompt: string, label: string, noteSlug?: string): void;
       getPendingChatPrompt(): Promise<{ prompt: string; label: string; noteSlug?: string } | undefined>;

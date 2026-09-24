@@ -6,7 +6,8 @@ import {
 import type { CliModelSelection, CliModels, CliName, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
 
 export type DelegateEvent =
-  | { taskId: string; type: "started" }
+  // projectPath/instruction label the avatar's status bubble (task-status.ts); chat ignores them.
+  | { taskId: string; type: "started"; projectPath: string; instruction: string }
   | { taskId: string; type: "output"; line: string }
   | { taskId: string; type: "done"; result: string }
   | { taskId: string; type: "failed"; message: string }
@@ -148,7 +149,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       // child*, not this (possibly about-to-exit) process. See run-queue.ts's doc comment.
       if (handle.pid !== undefined) updateReservationPid(deps.dir, req.projectPath, handle.pid);
       tasks.set(taskId, { cancel: handle.cancel, cancelling: false, projectPath: req.projectPath, instruction: req.instruction });
-      emit({ taskId, type: "started" });
+      emit({ taskId, type: "started", projectPath: req.projectPath, instruction: req.instruction });
       return taskId;
     },
 

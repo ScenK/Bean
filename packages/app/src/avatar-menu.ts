@@ -88,3 +88,28 @@ export function dragBloomLayout(
     tilesAbove,
   } };
 }
+
+// Status bubbles (design 2a): while jobs run, the idle window grows upward to hold the bubble
+// stack above the bean. The bean sits STATUS_BEAN_INSET from the right edge so the 272px bubbles
+// right-align with it and the last bubble's tail points at it.
+export const STATUS_WIDTH = 300;
+const STATUS_BEAN_INSET = 44;
+
+/** Window bounds holding a `stackHeight`-tall bubble stack above a bean at `bean` (screen px) —
+ * or below it when the top of the screen lacks the room and the bottom has more (Bean's default
+ * spot is 160px from the top). ponytail: a stack taller than either side is squeezed by the clamp. */
+export function statusLayout(bean: Point, stackHeight: number, workArea: Bounds): { bounds: Bounds; bean: Point & { bubblesBelow: boolean; stackMax: number } } {
+  const half = AVATAR_SIZE.height / 2;
+  const height = Math.round(stackHeight) + AVATAR_SIZE.height;
+  const above = bean.y - workArea.y;
+  const below = workArea.y + workArea.height - bean.y;
+  const bubblesBelow = above < height - half && below > above;
+  const bounds = clampAvatarBounds({
+    x: bean.x - (STATUS_WIDTH - STATUS_BEAN_INSET),
+    y: bubblesBelow ? bean.y - half : bean.y - (height - half),
+    width: STATUS_WIDTH, height,
+  }, workArea);
+  // The stack scrolls past the room on its side of the bean rather than outgrowing the window.
+  const stackMax = Math.max(120, (bubblesBelow ? below : above) - half);
+  return { bounds, bean: { x: bean.x - bounds.x, y: bean.y - bounds.y, bubblesBelow, stackMax } };
+}

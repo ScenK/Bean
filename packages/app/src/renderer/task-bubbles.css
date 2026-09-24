@@ -1,0 +1,173 @@
+/* Status bubbles (design 2a): the tile surface from drag-bloom.css .bean-petal, so they match the
+   quick actions. avatar.ts pins the container's left/bottom right above the bean. */
+.bean-bubbles {
+  position: absolute;
+  width: 272px;
+  transition: opacity 0.18s ease;
+}
+/* Menu/drag modes own the space around the bean. opacity, not display:none, so the stack keeps
+   its measured height and the window doesn't resize under the tiles. */
+.bean-bubbles--hidden { opacity: 0; pointer-events: none; }
+
+.bean-bubble-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto; /* max-height = room on this side of the bean (statusLayout stackMax) */
+  padding-bottom: 8px; /* room for the tail inside the scroll box */
+  margin-bottom: -8px;
+}
+.bean-bubbles--below .bean-bubble-stack { padding: 8px 0 0; margin: -8px 0 0; }
+
+.bean-bubble {
+  -webkit-app-region: no-drag; /* on the clickable box itself — see safety-window-behavior */
+  position: relative;
+  box-sizing: border-box;
+  width: 272px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px 11px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--bean-text);
+  background: color-mix(in oklab, var(--bean-accent) 6%, var(--bean-surface));
+  border: 1px solid color-mix(in oklab, var(--bean-accent) 14%, var(--bean-border));
+  border-radius: 14px;
+  box-shadow: 0 12px 32px -20px rgba(0, 0, 0, 0.7);
+}
+.bean-bubble--new { animation: bean-bubble-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+.bean-bubble:focus-visible { outline: 2px solid var(--bean-accent); outline-offset: 2px; }
+.bean-bubble--failed {
+  background: color-mix(in oklab, var(--bean-accent) 16%, var(--bean-surface));
+  border-color: var(--bean-accent);
+}
+/* Tail: a rotated square sharing the bubble's fill, pointing down at the bean. */
+.bean-bubble--tail::after {
+  content: "";
+  position: absolute;
+  right: var(--bean-tail-right, 22px);
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  background: inherit;
+  border-right: inherit;
+  border-bottom: inherit;
+  transform: rotate(45deg);
+}
+/* Flipped below the bean (task-bubbles.ts reverses the DOM order): tail points up. */
+.bean-bubbles--below .bean-bubble--tail::after {
+  bottom: auto;
+  top: -7px;
+  border-right: none;
+  border-bottom: none;
+  border-left: inherit;
+  border-top: inherit;
+}
+@keyframes bean-bubble-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+}
+
+.bean-bubble-head { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.bean-bubble-icon {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--chip);
+  background: color-mix(in oklab, var(--chip) 16%, transparent);
+}
+.bean-bubble-icon svg { width: 14px; height: 14px; display: block; }
+/* Same muted tile colors as the quick actions (avatar.ts TILE_COLORS). */
+.bean-bubble-icon--delegate { --chip: #7FA88B; }
+.bean-bubble-icon--routine { --chip: #C7A24E; }
+.bean-bubble-icon--done { --chip: var(--bean-orb-check-ink); }
+.bean-bubble-icon--failed { --chip: var(--bean-accent-text); }
+
+.bean-bubble-name {
+  font: 600 12.5px ui-monospace, monospace;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bean-bubble-meta {
+  flex: none;
+  font: 11px ui-monospace, monospace;
+  color: var(--bean-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.bean-bubble-line {
+  font-size: 13px;
+  line-height: 1.45;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bean-bubble-caret {
+  display: inline-block;
+  width: 2px;
+  height: 13px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--bean-accent);
+  animation: bean-bubble-caret 1s step-end infinite;
+}
+@keyframes bean-bubble-caret { 0%, 48% { opacity: 1; } 49%, 100% { opacity: 0; } }
+
+.bean-bubble-bar {
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--bean-accent) 18%, var(--bean-surface));
+}
+.bean-bubble-bar > div {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--bean-accent);
+  transition: width 0.3s ease;
+}
+
+.bean-bubble-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in oklab, var(--bean-accent) 14%, var(--bean-border));
+}
+.bean-bubble-note {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--bean-text-dim);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bean-bubble-steps { display: flex; flex-direction: column; gap: 5px; }
+.bean-bubble-step { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--bean-text-dim); }
+.bean-bubble-step > span:first-child {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bean-control-border);
+}
+.bean-bubble-step > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bean-bubble-step > span:last-child { font: 10.5px ui-monospace, monospace; }
+.bean-bubble-step--done { color: var(--bean-text); }
+.bean-bubble-step--done > span:first-child { background: var(--bean-orb-check-ink); }
+.bean-bubble-step--now { color: var(--bean-text); font-weight: 600; }
+.bean-bubble-step--now > span:first-child { background: var(--bean-accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bean-bubble--new, .bean-bubble-caret { animation: none; }
+}

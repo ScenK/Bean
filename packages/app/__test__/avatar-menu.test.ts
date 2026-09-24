@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { AVATAR_DRAG_SIZE, AVATAR_HOVER_SIZE, AVATAR_MENU_SIZE, AVATAR_SIZE, avatarSizeForMode, clampAvatarBounds, dragBloomLayout, nextAvatarBounds } from "../src/avatar-menu.js";
+import { AVATAR_DRAG_SIZE, AVATAR_HOVER_SIZE, AVATAR_MENU_SIZE, AVATAR_SIZE, avatarSizeForMode, clampAvatarBounds, dragBloomLayout, nextAvatarBounds, statusLayout } from "../src/avatar-menu.js";
 
 test("growing to the menu size grows the window, centered on its current position", () => {
   const closed = { x: 100, y: 100, width: AVATAR_SIZE.width, height: AVATAR_SIZE.height };
@@ -72,4 +72,16 @@ test("bottom-edge panels open above without moving the bean vertically", () => {
   const { bounds, bean } = dragBloomLayout({ x: 800, y: 840 }, AVATAR_MENU_SIZE, WA);
   expect(bean.tilesAbove).toBe(true);
   expect(bounds.y + bean.y).toBe(840);
+});
+
+const statusWork = { x: 0, y: 0, width: 1440, height: 900 };
+test("statusLayout stacks bubbles above the bean, bean 44px from the right edge", () => {
+  const { bounds, bean } = statusLayout({ x: 1000, y: 700 }, 200, statusWork);
+  expect(bounds).toEqual({ x: 744, y: 440, width: 300, height: 320 });
+  expect(bean).toEqual({ x: 256, y: 260, bubblesBelow: false, stackMax: 640 });
+});
+test("statusLayout flips below the bean when the top of the screen lacks room", () => {
+  const { bounds, bean } = statusLayout({ x: 1000, y: 160 }, 200, statusWork);
+  expect(bounds.y).toBe(100);
+  expect(bean).toEqual({ x: 256, y: 60, bubblesBelow: true, stackMax: 680 });
 });
