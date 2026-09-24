@@ -192,3 +192,21 @@ export function makeOpenAIImageGenWithClient(client: ImageClient): ImageGenDeps[
 export function makeOpenAIImageGen(apiKey: string): ImageGenDeps["generate"] {
   return makeOpenAIImageGenWithClient(new OpenAI({ apiKey }) as unknown as ImageClient);
 }
+
+interface TranscribeClient {
+  audio: { transcriptions: { create: (a: { model: string; file: File }) => Promise<{ text: string }> } };
+}
+
+/** Speech-to-text for voice messages: audio bytes in, transcript out. */
+export type Transcribe = (audio: ArrayBuffer, filename: string, mimeType: string) => Promise<string>;
+
+export function makeOpenAITranscribeWithClient(client: TranscribeClient, model = "gpt-4o-mini-transcribe"): Transcribe {
+  return async (audio, filename, mimeType) => {
+    const res = await client.audio.transcriptions.create({ model, file: new File([audio], filename, { type: mimeType }) });
+    return res.text.trim();
+  };
+}
+
+export function makeOpenAITranscribe(apiKey: string): Transcribe {
+  return makeOpenAITranscribeWithClient(new OpenAI({ apiKey }) as unknown as TranscribeClient);
+}

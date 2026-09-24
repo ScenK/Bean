@@ -5,7 +5,7 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials,
@@ -39,6 +39,7 @@ const liveSessionProposals = new LiveSessionProposalStore();
 // Hosts delegates not tied to a project (a Jira ticket, research); spawn needs the cwd to exist.
 const scratchPath = scratchDir(dir);
 mkdirSync(scratchPath, { recursive: true });
+const transcribe = makeOpenAITranscribe(beanConfig.openaiApiKey);
 
 const bot = buildTeamsBot({
   chat: converseChat,
@@ -165,7 +166,25 @@ client.on("messageCreate", async (message) => {
       message.mentions.users.has(client.user?.id ?? "") ||
       message.mentions.repliedUser?.id === client.user?.id;
     if (!addressed && !capturing) return;
-    const text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
+    let text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
+    // Voice messages (and other audio clips ≤25MB, the transcription API cap) arrive with empty
+    // content — transcribe them into the turn's text so they get a normal reply. In a captured
+    // channel only someone who can steer the session pays for a transcription (onMessage would
+    // drop anyone else's turn anyway).
+    const canTranscribe = !capturing || liveSessions.canSteer(message.channelId, message.author.id);
+    let transcribeFailed = false;
+    for (const att of canTranscribe ? message.attachments.values() : []) {
+      if (!att.contentType?.startsWith("audio/") || att.size > 25 * 1024 * 1024) continue;
+      try {
+        const res = await fetch(att.url);
+        if (!res.ok) { console.error(`audio fetch failed: ${res.status}`); transcribeFailed = true; continue; }
+        const heard = await transcribe(await res.arrayBuffer(), att.name, att.contentType.split(";")[0]!.trim());
+        if (heard) text = text ? `${text}\n\n${heard}` : heard;
+      } catch (err) {
+        console.error("audio transcription failed:", err);
+        transcribeFailed = true;
+      }
+    }
     // Image attachments (supported vision formats, ≤10MB) ride along as vision input; an
     // image-only message still gets a turn. Skipped while a live session captures the
     // channel — the bridged agent only takes text, so downloading would silently drop them.
@@ -183,7 +202,10 @@ client.on("messageCreate", async (message) => {
         console.error("attachment fetch failed:", err);
       }
     }
-    if (!text && images.length === 0) return;
+    if (!text && images.length === 0) {
+      if (transcribeFailed) await message.reply("I couldn't transcribe that voice message — try again, or type it out.");
+      return;
+    }
     if ("sendTyping" in message.channel) await message.channel.sendTyping();
     // Discord's typing indicator lasts ~10s; refresh it while onMessage is still working.
     const typing = "sendTyping" in message.channel
