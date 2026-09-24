@@ -1,8 +1,24 @@
+import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { openDb } from "../db.js";
 import type { ChatTurn } from "../converse.js";
 
 interface TurnRow { seq: number; role: string; content: string }
+
+/** Archived sessions kept per conversation; older ones are deleted on the next archive. */
+export const MAX_ARCHIVED_SESSIONS = 10;
+
+/** An archived (post-`/new`) session, as listed by `/sessions`. */
+export interface ArchivedSession {
+  key: string;
+  lastActive: string;
+  turns: number;
+  preview: string;
+}
+
+// Archived sessions live in the same table under `<conversationId>#archived:<iso>:<rand>` —
+// resuming is a rename back, no schema change.
+const archivePrefix = (conversationId: string): string => `${conversationId}#archived:`;
 
 function toChatTurn(row: TurnRow): ChatTurn {
   return { role: row.role as ChatTurn["role"], content: row.content };
@@ -36,9 +52,57 @@ export class ConversationStore {
     ).run(conversationId, seq, turn.role, turn.content, new Date().toISOString());
   }
 
-  /** Deletes a conversation's entire history — backs the "/new" fresh-start command. */
+  /** Deletes a conversation's entire history. */
   clear(conversationId: string): void {
     this.db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ?").run(conversationId);
+  }
+
+  /** Moves the live history into a new archived session (backs "/new" and "/resume"), then
+   * trims archives beyond MAX_ARCHIVED_SESSIONS. No-op on an empty conversation. */
+  archive(conversationId: string): void {
+    this.moveToArchive(conversationId);
+    this.trimArchive(conversationId);
+  }
+
+  private moveToArchive(conversationId: string): void {
+    if (this.turnCount(conversationId) === 0) return;
+    const key = `${archivePrefix(conversationId)}${new Date().toISOString()}:${randomUUID().slice(0, 8)}`;
+    this.db.prepare("UPDATE chatops_turns SET conversation_id = ? WHERE conversation_id = ?").run(key, conversationId);
+  }
+
+  private trimArchive(conversationId: string): void {
+    for (const old of this.archived(conversationId).slice(MAX_ARCHIVED_SESSIONS)) this.clear(old.key);
+  }
+
+  /** Archived sessions for this conversation, most recently archived first (the key embeds the
+   * archive time) — so a just-resumed-then-re-archived session isn't the first one trimmed. */
+  archived(conversationId: string): ArchivedSession[] {
+    const prefix = archivePrefix(conversationId);
+    const rows = this.db.prepare(
+      "SELECT conversation_id AS key, MAX(created_at) AS lastActive, COUNT(*) AS turns, " +
+        "(SELECT content FROM chatops_turns u WHERE u.conversation_id = t.conversation_id AND u.role = 'user' ORDER BY seq LIMIT 1) AS preview " +
+        "FROM chatops_turns t WHERE substr(conversation_id, 1, ?) = ? GROUP BY conversation_id ORDER BY key DESC",
+    ).all(prefix.length, prefix) as unknown as (Omit<ArchivedSession, "preview"> & { preview: string | null })[];
+    return rows.map((r) => ({ ...r, preview: r.preview ?? "" }));
+  }
+
+  /** Swaps archived session `index` (0-based, as ordered by `archived()`) in as the live
+   * history, archiving the current one. Returns false for an out-of-range index. */
+  resume(conversationId: string, index: number): boolean {
+    const target = this.archived(conversationId)[index];
+    if (!target) return false;
+    this.db.exec("BEGIN");
+    try {
+      // Trim only after the target is live again — trimming first could delete it when it's the oldest.
+      this.moveToArchive(conversationId);
+      this.db.prepare("UPDATE chatops_turns SET conversation_id = ? WHERE conversation_id = ?").run(conversationId, target.key);
+      this.trimArchive(conversationId);
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+    return true;
   }
 
   /** Epoch ms of the newest ambient message already injected here; 0 when none. Durable
@@ -94,4 +158,39 @@ export class ConversationStore {
       throw err;
     }
   }
+}
+
+const clip = (text: string, max: number): string => {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+};
+
+function sessionList(store: ConversationStore, conversationId: string): string {
+  const sessions = store.archived(conversationId);
+  if (sessions.length === 0) return "No saved sessions yet — `/new` saves the current one before starting fresh.";
+  const lines = sessions.map((s, i) =>
+    `${i + 1}. ${new Date(s.lastActive).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} · ${s.turns} turns · ${clip(s.preview, 80) || "(no user message)"}`);
+  return `Saved sessions (resume with \`/resume <n>\`):\n${lines.join("\n")}`;
+}
+
+/** Handles the session keyword commands shared by every chatops surface — `new`, `sessions`,
+ * `resume [n]` — given the slash-stripped, lowercased command text. Returns the reply, or
+ * undefined when `cmd` isn't one of them. Callers also fence ambient chatter (setAmbientCutoff)
+ * so messages from the replaced session can't leak into the new one. */
+export function sessionCommand(store: ConversationStore, conversationId: string, cmd: string): string | undefined {
+  if (cmd === "new") {
+    store.archive(conversationId);
+    store.setAmbientCutoff(conversationId, Date.now());
+    return "Fresh start — previous conversation saved. `/sessions` lists saved ones, `/resume <n>` brings one back.";
+  }
+  if (cmd === "sessions" || cmd === "resume") return sessionList(store, conversationId);
+  const m = /^resume\s+(\d+)$/.exec(cmd);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  if (!store.resume(conversationId, n - 1)) return `No session ${n}.\n\n${sessionList(store, conversationId)}`;
+  store.setAmbientCutoff(conversationId, Date.now());
+  // Discord/Teams can't un-show the chat on screen, so recap what the model now remembers.
+  const recap = store.history(conversationId).filter((t) => t.role !== "system").slice(-3)
+    .map((t) => `> **${t.role === "user" ? "You" : "Bean"}:** ${clip(t.content, 200)}`);
+  return `Resumed session ${n}. Picking up from:\n${recap.join("\n")}`;
 }

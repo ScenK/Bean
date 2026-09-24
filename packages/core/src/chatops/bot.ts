@@ -14,7 +14,7 @@ import type { DelegateRequest } from "../delegate.js";
 import type { CardBuilders } from "./cards-api.js";
 import { formatAmbientBlock, type AmbientMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
-import type { ConversationStore } from "./conversation.js";
+import { sessionCommand, type ConversationStore } from "./conversation.js";
 import { maybeCompact } from "./compact.js";
 import type { PendingProposal, ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
@@ -507,7 +507,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
 
     async onMessage(msg: IncomingMessage, fx: BotEffects): Promise<void> {
       try {
-        // Keyword commands (stop/drivers/cancel/new) accept an optional leading slash: Discord
+        // Keyword commands (stop/drivers/cancel/new/sessions/resume) accept an optional leading slash: Discord
         // exposes them as real `/stop`-style slash commands, so users carry the slash habit to
         // Teams — which has no slash-command infra, leaving these to arrive as plain text that
         // must still match. `cmd` is the surface-agnostic normalized form used by every keyword
@@ -561,11 +561,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           await fx.reply(n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.");
           return;
         }
-        if (cmd === "new") {
-          deps.conversations.clear(msg.conversationId);
-          // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
-          deps.conversations.setAmbientCutoff(msg.conversationId, Date.now());
-          await fx.reply("Fresh start — I've cleared this conversation's context.");
+        const sessionReply = sessionCommand(deps.conversations, msg.conversationId, cmd);
+        if (sessionReply !== undefined) {
+          await fx.reply(sessionReply);
           return;
         }
         // Literal `/live-session <prompt>` typed as a message (not Discord's slash-command

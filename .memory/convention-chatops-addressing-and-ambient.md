@@ -31,6 +31,9 @@ Group channels (Discord/Teams) balance "natural" against "predictable" with one 
   trimmed on insert). Teams has no way to re-read channel history, so an in-memory store meant a
   restart dropped every not-yet-injected message — real pain while Bean restarts often. Discord
   doesn't use this store at all; its `fetchRecent` reads the channel live.
-- **`/new`** (like the `cancel` text command) clears the conversation via
-  `ConversationStore.clear()` and fences ambient with `setAmbientCutoff(now)`, so pre-reset
-  chatter can't leak back in.
+- **`/new` / `/sessions` / `/resume <n>`** (shared `sessionCommand()` in `chatops/conversation.ts`,
+  used by `bot.ts` keywords and Discord slash commands). `/new` *archives* rather than deletes:
+  rows are renamed to `<conversationId>#archived:<iso>:<rand>` in `chatops_turns` (last 10 kept),
+  and `/resume` renames one back. Every switch must fence ambient with `setAmbientCutoff(now)`,
+  so chatter from the replaced session can't leak in. The platform chat on screen can't be
+  cleared, so `/resume` replies with a recap of the restored turns.

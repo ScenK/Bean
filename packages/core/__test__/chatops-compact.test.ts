@@ -60,3 +60,14 @@ test("concurrent maybeCompact calls do not drop newer turns", async () => {
   expect(h).toHaveLength(22); // second pass is under the threshold, so it's a no-op
   expect(h[1]?.content).toBe("m40");
 });
+
+test("a /resume during summarization doesn't overwrite the restored session", async () => {
+  const s = new ConversationStore(file);
+  for (let i = 0; i < 70; i++) s.append("c1", { role: "user", content: `restored ${i}` });
+  s.archive("c1");
+  for (let i = 0; i < 61; i++) s.append("c1", { role: "user", content: `m${i}` });
+  const slow = { ...deps, chat: async () => { s.resume("c1", 0); return { content: "stale summary", toolCalls: [] }; } };
+  await maybeCompact("c1", s, slow);
+  expect(s.history("c1")).toHaveLength(70);
+  expect(s.history("c1")[0]?.content).toBe("restored 0");
+});
