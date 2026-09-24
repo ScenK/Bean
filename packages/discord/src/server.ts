@@ -5,7 +5,7 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  LiveSessionProposalStore, LiveSessionRegistry, sessionCommand, imagesDir, makeOpenAIImageGen, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials,
@@ -238,10 +238,10 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         return;
       }
       const channelId = interaction.channelId;
-      if (interaction.commandName === "new") {
-        conversations.clear(channelId);
-        conversations.setAmbientCutoff(channelId, Date.now()); // fence pre-reset chatter out of ambient
-        await interaction.reply({ content: "Fresh start — I've cleared this conversation's context.", ephemeral: true });
+      if (["new", "sessions", "resume"].includes(interaction.commandName)) {
+        const n = interaction.options.getInteger("session");
+        const cmd = n === null ? interaction.commandName : `${interaction.commandName} ${n}`;
+        await interaction.reply({ content: sessionCommand(conversations, channelId, cmd) ?? "", ephemeral: true });
         return;
       }
       if (interaction.commandName === "cancel") {
@@ -389,7 +389,16 @@ client.once("clientReady", async () => {
     ],
   };
   const commands: ApplicationCommandDataResolvable[] = [
-    { name: "new", description: "Clear this conversation's context (fresh start)", dmPermission: true },
+    { name: "new", description: "Start fresh (the current conversation is saved for /resume)", dmPermission: true },
+    { name: "sessions", description: "List saved conversations you can /resume", dmPermission: true },
+    {
+      name: "resume",
+      description: "Bring back a saved conversation",
+      dmPermission: true,
+      options: [
+        { type: ApplicationCommandOptionType.Integer, name: "session", description: "Number from /sessions (omit to list them)", required: false, minValue: 1 },
+      ],
+    },
     { name: "cancel", description: "Cancel any running background task(s)", dmPermission: true },
     { name: "stop", description: "Stop the live session bound to this channel", dmPermission: true },
     ...(liveEnabled ? [liveCmd] : []),
