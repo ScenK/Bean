@@ -6,7 +6,7 @@ show the delegate's instruction or the routine's steps. Expanded bubbles are **r
 decision: there's no Stop/Pause button, and a routine has no pause state to back one.
 
 - **Sources: delegate tasks + routine runs only.** `main.ts` feeds `task-status.ts`
-  (`upsert`/`finish`, where a finished job lingers 60s) from the delegate `send` wrapper and
+  (`upsert`/`finish`, where a finished job lingers 10s) from the delegate `send` wrapper and
   `runOneRoutine` (core `runRoutine`'s `onStep` hook). ChatOps activity is excluded because the
   bots are separate processes and the app only knows up/down. Showing it would need a new
   cross-process channel. Terminal launches stay untracked (convention-launch-hands-off-to-terminal).

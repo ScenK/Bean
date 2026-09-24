@@ -4,7 +4,7 @@ import { createTaskStatus, FINISHED_LINGER_MS, type TaskJob } from "../src/task-
 afterEach(() => { vi.useRealTimers(); });
 
 describe("createTaskStatus", () => {
-  it("creates, patches, lingers a finished job for a minute, then drops it", () => {
+  it("creates, patches, lingers a finished job briefly, then drops it", () => {
     vi.useFakeTimers();
     const sent: TaskJob[][] = [];
     const s = createTaskStatus((j) => sent.push(j));

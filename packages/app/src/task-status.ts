@@ -15,8 +15,9 @@ export interface TaskJob {
   state: "running" | "done" | "failed";
 }
 
-// The design: "Run finished. The bubble fades after a minute."
-export const FINISHED_LINGER_MS = 60_000;
+// How long a finished/failed/stopped bubble stays before it clears (the design said a minute;
+// 10s proved enough to notice the result).
+export const FINISHED_LINGER_MS = 10_000;
 
 export function createTaskStatus(
   send: (jobs: TaskJob[]) => void,
