@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ChatopsActivitySink } from "./activity.js";
 import { converse, type ConverseDeps, type ImageAttachment, type ProposedLiveSession } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
@@ -44,6 +45,8 @@ export interface IncomingMessage {
    * used by the live-session `+driver`/`-driver` commands. Surfaces that omit it can't use
    * mention-based co-driver management. */
   mentionedIds?: string[];
+  /** Human channel label for the desktop status bubble ("#general", "DM"); never message text. */
+  channelName?: string;
   /** Image attachments (image/*, ≤10MB) already downloaded by the surface — attached to this
    * turn only; history keeps a text placeholder. */
   images?: ImageAttachment[];
@@ -126,6 +129,8 @@ export interface TeamsBotDeps {
   scratchPath?: string;
   /** Enables the generate_image action tool; omit to disable image generation. */
   imageGen?: Pick<ImageGenDeps, "generate" | "model" | "imagesDir">;
+  /** Bean's turns (converse path only) for the desktop app's status bubbles (see activity.ts). */
+  onActivity?: ChatopsActivitySink;
 }
 
 const DESKTOP_ONLY =
@@ -506,6 +511,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     },
 
     async onMessage(msg: IncomingMessage, fx: BotEffects): Promise<void> {
+      // Set once the message reaches converse(); the finally reports the turn's end.
+      let turnId: string | undefined;
+      let turnError: string | undefined;
       try {
         // Keyword commands (stop/drivers/cancel/new) accept an optional leading slash: Discord
         // exposes them as real `/stop`-style slash commands, so users carry the slash habit to
@@ -576,6 +584,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           await fx.reply(await proposeLiveSessionFrom(msg.conversationId, liveCmd[1] ?? "", msg.fromName, fx));
           return;
         }
+        turnId = randomUUID();
+        deps.onActivity?.({ type: "turn", phase: "start", id: turnId, who: msg.fromName, where: msg.channelName });
         const [skills, projects, persona, memories, modelMemory, todoRoutines] = await Promise.all([
           loadActiveSkills(), deps.loadProjects(), deps.loadPersona(), deps.loadMemories(), deps.loadModelMemory(),
           deps.listTodoRoutines(),
@@ -624,6 +634,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           todoRoutines,
         };
         const result = await converse({ ...converseBase, history, latestUserText: msg.text, latestUserImages: msg.images });
+        turnError = result.error;
         deps.conversations.append(msg.conversationId, {
           role: "user",
           content: msg.images?.length ? `${msg.text}\n[image attached]` : msg.text,
@@ -740,7 +751,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }));
         deps.proposals.setCardActivityId(pending.id, activityId);
       } catch (err) {
-        await fx.reply(`Something went wrong: ${err instanceof Error ? err.message : String(err)}`);
+        turnError = err instanceof Error ? err.message : String(err);
+        await fx.reply(`Something went wrong: ${turnError}`);
+      } finally {
+        if (turnId) deps.onActivity?.({ type: "turn", phase: "end", id: turnId, who: msg.fromName, where: msg.channelName, error: turnError });
       }
     },
 

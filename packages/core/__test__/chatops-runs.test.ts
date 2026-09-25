@@ -179,3 +179,29 @@ test("start() tracks the delegate child's own pid, so a relaunch reclaims once t
   const reg2 = new RunRegistry(fn, { dir, botKind: "discord" });
   expect(await reg2.start(req, events(), meta)).toBe(true);
 });
+
+test("onActivity reports the run lifecycle under one id, named after the project", async () => {
+  const { fn, calls } = fakeRun();
+  const seen: unknown[] = [];
+  const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord", throttleMs: 5000, newId: () => "r1", onActivity: (e) => seen.push(e) });
+  const ev = events();
+  await reg.start({ ...req, projectPath: "/work/api" }, ev, meta);
+  calls[0]?.cb.onOutput("building");
+  vi.advanceTimersByTime(5000);
+  calls[0]?.cb.onDone("ok");
+  expect(seen).toEqual([
+    { type: "run", phase: "start", id: "r1", name: "api" },
+    { type: "run", phase: "tail", id: "r1", name: "api", line: "building" },
+    { type: "run", phase: "done", id: "r1", name: "api" },
+  ]);
+  expect(ev.onDone).toHaveBeenCalledWith("ok"); // caller's events still fire
+});
+
+test("onActivity reports a cancel as cancelled", async () => {
+  const { fn } = fakeRun();
+  const seen: { phase: string }[] = [];
+  const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord", onActivity: (e) => seen.push(e) });
+  await reg.start(req, events(), meta);
+  reg.cancel(req.projectPath);
+  expect(seen.map((e) => e.phase)).toEqual(["start", "cancelled"]);
+});

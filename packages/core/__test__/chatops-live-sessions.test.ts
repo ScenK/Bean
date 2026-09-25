@@ -56,6 +56,18 @@ describe("LiveSessionRegistry", () => {
     expect(reg.start({ channelId: "c", projectPath: "/p", instruction: "again", sink })).toBe(false);
   });
 
+  it("onActivity reports start and end (with the death reason) keyed by channel", () => {
+    const f = fakeStart();
+    const seen: unknown[] = [];
+    const reg = new LiveSessionRegistry(f.startFn as never, { dir: tmp(), onActivity: (e) => seen.push(e) });
+    reg.start({ channelId: "c", projectPath: "/work/api", instruction: "go", sink: fakeSink().sink });
+    f.cbs().onExit(new Error("boom"));
+    expect(seen).toEqual([
+      { type: "live", phase: "start", id: "c", name: "api" },
+      { type: "live", phase: "end", id: "c", name: "api", error: "boom" },
+    ]);
+  });
+
   it("pings typing on turn start and repeats it until the turn completes", async () => {
     const f = fakeStart();
     const reg = new LiveSessionRegistry(f.startFn as never, { dir: tmp() });

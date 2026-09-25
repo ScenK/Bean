@@ -291,3 +291,18 @@ describe("createChatopsServers", () => {
     });
   });
 });
+
+it("forwards a bot's IPC activity to onActivity, dropping malformed messages", () => {
+  const got: unknown[] = [];
+  const p = fakeProcess();
+  const servers = createChatopsServers({
+    repoRoot: "/repo", resolvedPath: "/usr/bin", send: () => {}, existsFn: () => true,
+    spawnFn: () => p.proc,
+    onActivity: (bot, e) => got.push([bot, e]),
+  });
+  servers.start("teams");
+  p.emit("message", { type: "run", phase: "start", id: "r1", name: "api" });
+  p.emit("message", { type: "rm -rf", phase: "start", id: "x" });
+  p.emit("message", "junk");
+  expect(got).toEqual([["teams", { type: "run", phase: "start", id: "r1", name: "api", line: undefined }]]);
+});
