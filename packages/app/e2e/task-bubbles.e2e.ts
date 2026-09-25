@@ -70,8 +70,16 @@ test("status bubbles grow the avatar around a fixed bean and collapse when jobs 
     await expect(page.locator(".bean-bubble-more")).toHaveText("+3 more · 1 failed");
     await page.locator(".bean-bubble-more").click();
     await expect(page.locator(".bean-bubble")).toHaveCount(7);
+    await expect(page.locator(".bean-bubble-more")).toHaveAttribute("aria-expanded", "true");
     await page.locator(".bean-bubble-more").click(); // "Show fewer"
     await expect(page.locator(".bean-bubble")).toHaveCount(4);
+    await expect(page.locator(".bean-bubble-more")).toBeFocused(); // keyboard focus survives the re-render
+
+    // An open job that folds into the pill doesn't leave the visible ones muted.
+    await page.locator('.bean-bubble[data-id="r3"]').click();
+    await expect(page.locator(".bean-bubble-line")).toHaveCount(1);
+    await push([...many, { id: "r6", kind: "delegate", name: "job 6", line: "Running…", detail: "", startedAt: now, state: "running" }]);
+    await expect(page.locator(".bean-bubble-line")).toHaveCount(4);
 
     await push([]);
     await expect(page.locator(".bean-bubble")).toHaveCount(0);
