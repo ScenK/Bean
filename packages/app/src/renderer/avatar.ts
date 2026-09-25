@@ -87,10 +87,21 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
 
   // Running delegates/routines float above the bean (design 2a). Main sizes the window to the
   // stack's height and replies with the bean's position via onAvatarDragLayout (placeBubbles).
-  const taskBubbles = createTaskBubbles(bubbles, (h) => window.bean.setAvatarStatusHeight(h));
+  const taskBubbles = createTaskBubbles(bubbles, (h) => window.bean.setAvatarStatusHeight(h), (id) => window.bean.dismissTask(id));
+  // When the last job ends the orb rests in "done" for a beat before going back to listening.
+  let wasRunning = false;
+  let doneTimer: ReturnType<typeof setTimeout> | undefined;
   window.bean.onTaskStatus((jobs) => {
     taskBubbles.update(jobs);
-    orb.setState(taskBubbles.running() ? "working" : "listening");
+    const running = taskBubbles.running();
+    if (running) {
+      clearTimeout(doneTimer);
+      orb.setState("working");
+    } else if (wasRunning) {
+      orb.setState("done");
+      doneTimer = setTimeout(() => orb.setState("listening"), 2000);
+    }
+    wasRunning = running;
   });
   // Bubbles right-align with the bean (272px wide, right edge 32px past its center — the tail at
   // right:22 then points at it) and end 36px from its center, where the hover capsule begins.

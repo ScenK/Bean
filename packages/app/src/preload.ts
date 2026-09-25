@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld("bean", {
   setAvatarStatusHeight: (height: number): void => ipcRenderer.send(IPC.setAvatarStatusHeight, height),
   onTaskStatus: (cb: (jobs: TaskJob[]) => void) =>
     ipcRenderer.on(IPC.taskStatus, (_e, jobs: TaskJob[]) => cb(jobs)),
+  dismissTask: (id: string): void => ipcRenderer.send(IPC.dismissTask, id),
   planFromDrop: (skillName: string, droppedUrl: string): void =>
     ipcRenderer.send(IPC.planFromDrop, skillName, droppedUrl),
   runInChat: (prompt: string, label: string, noteSlug?: string): void =>

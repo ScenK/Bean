@@ -81,10 +81,13 @@ app.whenReady().then(async () => {
   app.on("before-quit", () => { quitting = true; });
   const avatar = createAvatarWindow();
   const avatarControls = installAvatarControls(avatar);
-  // Running delegates/routines, pushed to the avatar's status bubbles (design 2a).
+  // What Bean is working on, and what failed — pushed to the avatar's status bubbles (design 2a).
   const taskStatus = createTaskStatus((jobs) => {
     if (!avatar.isDestroyed()) avatar.webContents.send(IPC.taskStatus, jobs);
   });
+  ipcMain.on(IPC.dismissTask, (_e, id: unknown) => { if (typeof id === "string") taskStatus.dismiss(id); });
+  // One local chat turn at a time (one chat window), so image progress can find its bubble.
+  let chatTurnId: string | undefined;
   let avatarReady = false;
   // Hoisted out of the `try` block below (where it's created) so the tray menu's click
   // handler — built further up in this function, long before that `try` runs — can read
@@ -443,7 +446,12 @@ app.whenReady().then(async () => {
       const firedAt = new Date().toISOString();
       for (const r of due) {
         void deliver({ body: r.text }, transports).then((outcomes) => {
-          for (const o of outcomes) if (!o.ok) console.error("bean: deliver failed", o.name, o.error);
+          for (const o of outcomes) {
+            if (o.ok) continue;
+            console.error("bean: deliver failed", o.name, o.error);
+            const why = o.error instanceof Error ? o.error.message : String(o.error);
+            taskStatus.error("reminder:error", { kind: "reminder", name: "Reminder", line: `Couldn't deliver: ${r.text}`, detail: `${o.name}: ${why}` });
+          }
         });
         r.firedAt = firedAt;
       }
@@ -490,7 +498,7 @@ app.whenReady().then(async () => {
           if (line) taskStatus.upsert(event.taskId, { line });
         } else if (event.type === "done") taskStatus.finish(event.taskId, "done", "Done");
         else if (event.type === "failed") taskStatus.finish(event.taskId, "failed", event.message);
-        else taskStatus.finish(event.taskId, "failed", "Stopped");
+        else taskStatus.finish(event.taskId, "failed", "Stopped", false); // the user's own Stop isn't a failure to chase
         const chat = componentWindows.get("chat");
         if (chat && !chat.isDestroyed()) sendToWindow(chat, IPC.delegateEvent, event);
       },
@@ -506,7 +514,10 @@ app.whenReady().then(async () => {
       repoRoot: chatopsRoot,
       resolvedPath,
       send: (event) => {
-        if (event.error) chatopsErrorSince[event.bot] = Date.now(); else delete chatopsErrorSince[event.bot];
+        if (event.error) {
+          chatopsErrorSince[event.bot] = Date.now();
+          taskStatus.error(`bot:${event.bot}`, { kind: "bot", name: event.bot === "discord" ? "Discord" : "Teams", line: event.error, detail: event.error });
+        } else delete chatopsErrorSince[event.bot];
         broadcast(IPC.chatopsEvent, event);
       },
       // Chained, not fire-and-forget: replaying two bots at boot (or a fast toggle) would
@@ -665,7 +676,10 @@ app.whenReady().then(async () => {
         // ponytail: imageModel read at boot; move into runtime-config if a Settings field ever exists
         getModel: () => cfg.imageModel,
         imagesDir: imagesDir(dir),
-        onStart: () => { componentWindows.get("chat")?.webContents.send(IPC.chatImageProgress); },
+        onStart: () => {
+          componentWindows.get("chat")?.webContents.send(IPC.chatImageProgress);
+          if (chatTurnId) taskStatus.upsert(chatTurnId, { line: "Drawing an image…" });
+        },
       },
       getConfig: () => ({
         openaiApiKey: runtime.getApiKey(),
@@ -694,6 +708,17 @@ app.whenReady().then(async () => {
       modelMemoryFile: modelMemoryFile(dir),
       delegateTasks,
       delegateAvailable: () => enabledClis().length > 0,
+      onChatTurn: () => {
+        const id = `chat:${randomUUID()}`;
+        chatTurnId = id;
+        taskStatus.upsert(id, { kind: "chat", name: "Chat", line: "Thinking…", startedAt: Date.now(), state: "running" });
+        return (error) => {
+          if (chatTurnId === id) chatTurnId = undefined;
+          // The reply is already in the chat window — a done bubble would only echo it.
+          taskStatus.dismiss(id);
+          if (error) taskStatus.error("chat:error", { kind: "chat", name: "Chat", line: error, detail: error });
+        };
+      },
       onLaunchError: (req, err) => {
         const label = req.mode === "open" ? "open the project in your editor" : `launch (${req.mode})`;
         dialog.showErrorBox("Bean", `Couldn't ${label}: ${err.message}`);

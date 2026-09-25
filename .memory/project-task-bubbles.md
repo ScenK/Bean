@@ -5,11 +5,21 @@ newest sits nearest the bean and is the only one with a tail. Clicking a bubble 
 show the delegate's instruction or the routine's steps. Expanded bubbles are **read-only** by
 decision: there's no Stop/Pause button, and a routine has no pause state to back one.
 
-- **Sources: delegate tasks + routine runs only.** `main.ts` feeds `task-status.ts`
-  (`upsert`/`finish`, where a finished job lingers 10s) from the delegate `send` wrapper and
-  `runOneRoutine` (core `runRoutine`'s `onStep` hook). ChatOps activity is excluded because the
-  bots are separate processes and the app only knows up/down. Showing it would need a new
-  cross-process channel. Terminal launches stay untracked (convention-launch-hands-off-to-terminal).
+- **Purpose: "Bean is alive / Bean is broken", not a mirror of any one window.** Sources:
+  delegate tasks, routine runs, local chat turns (bubble while `converse()` runs, dismissed on
+  reply — the chat window already shows it; "Drawing an image…" during image gen), and failures:
+  `converse()` model errors (`ConverseResult.error`), chatops bot crashes, reminder delivery.
+  Terminal launches stay untracked (convention-launch-hands-off-to-terminal).
+- **Failures are sticky; done lingers 10s.** `finish(..., "failed")` keeps the bubble until the
+  user clicks it open then clicks again (`bean:dismiss-task` → `dismiss()`); a user Stop passes
+  `sticky=false`. Standalone errors go through `error(id, …)` with a stable id (`bot:discord`,
+  `chat:error`, `reminder:error`) so repeats bump `count` ("failed ×3") instead of stacking.
+- **Plan — remaining phases (ChatOps activity):** bots are separate processes, so (2) add
+  `"ipc"` to the spawn stdio in `chatops-servers.ts` and let the servers `process.send?.()`
+  an activity event from an optional core `onActivity` dep (bot turn start/end, `RunRegistry`
+  run lifecycle, live sessions, handler errors); main validates the shape. Verify dev + packaged.
+  (3) map it to bubbles — sender + channel only, never message text; throttle run tails.
+  (4) cap simultaneous bubbles, extend `e2e/task-bubbles.e2e.ts`, update this entry.
 - **The window grows; it isn't click-through.** The renderer reports the stack height
   (`bean:set-avatar-status-height`), and `avatar-window.ts` uses `statusLayout()` for
   `normal`/`hover` while the height is > 0. The window is then 300 × (stack + 120) with the bean
@@ -24,5 +34,5 @@ decision: there's no Stop/Pause button, and a routine has no pause state to back
   (`--bean-tail-right`).
 - Menu/drag modes hide the bubbles with `opacity`, not `display:none`, so the measured height
   (and the window) doesn't jump under the tiles.
-- Guards: `task-status.test.ts`, the `statusLayout` + avatar-window unit tests, and
-  `e2e/task-bubbles.e2e.ts` (bean doesn't move, text is escaped, window collapses back).
+- Guards: `task-status.test.ts` (incl. sticky/merge), the `statusLayout` + avatar-window unit tests, and
+  `e2e/task-bubbles.e2e.ts` (bean doesn't move, text is escaped, error click-to-dismiss, window collapses back).

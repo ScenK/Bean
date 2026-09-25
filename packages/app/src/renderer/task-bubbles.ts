@@ -1,10 +1,14 @@
 import type { TaskJob } from "../task-status.js";
 
-// Design 2a "speech bubble": one bubble per running job, stacked above the bean, newest nearest
-// the bean and the only one with a tail. Click a bubble to expand its detail (read-only).
+// Design 2a "speech bubble": one bubble per running job or failure, stacked above the bean, newest
+// nearest the bean and the only one with a tail. Click a bubble to expand its detail (read-only);
+// clicking an expanded failure dismisses it — failures stay until then.
 const ICONS = {
   delegate: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   routine: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/><path d="M12 7v5l3 3"/>',
+  chat: '<path d="M7 12h.01"/><path d="M12 12h.01"/><path d="M17 12h.01"/>',
+  bot: '<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01"/><path d="M8 17h.01"/>',
+  reminder: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   done: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   failed: '<path d="M12 7v6"/><path d="M12 17h.01"/>',
 };
@@ -18,7 +22,7 @@ const clock = (ms: number): string => {
 };
 
 const meta = (j: TaskJob, now: number): string => {
-  if (j.state !== "running") return j.state;
+  if (j.state !== "running") return j.count && j.count > 1 ? `${j.state} ×${j.count}` : j.state;
   const elapsed = clock(now - j.startedAt);
   return j.steps && j.step !== undefined ? `${j.step + 1}/${j.steps.length} · ${elapsed}` : elapsed;
 };
@@ -36,8 +40,10 @@ function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh:
     const mark = cls === "now" ? "now" : cls === "done" && running ? "done" : "";
     return `<div class="bean-bubble-step bean-bubble-step--${cls || "todo"}"><span></span><span>${esc(label)}</span><span>${mark}</span></div>`;
   }).join("");
-  const detail = open && (j.detail || steps.length)
-    ? `<div class="bean-bubble-detail">${j.detail ? `<div class="bean-bubble-note">${esc(j.detail)}</div>` : ""}${stepRows ? `<div class="bean-bubble-steps">${stepRows}</div>` : ""}</div>`
+  const failed = j.state === "failed";
+  const hint = failed ? '<div class="bean-bubble-hint">Click again to dismiss</div>' : "";
+  const detail = open && (j.detail || steps.length || failed)
+    ? `<div class="bean-bubble-detail">${j.detail ? `<div class="bean-bubble-note">${esc(j.detail)}</div>` : ""}${stepRows ? `<div class="bean-bubble-steps">${stepRows}</div>` : ""}${hint}</div>`
     : "";
   const caret = running && j.kind === "delegate" ? '<span class="bean-bubble-caret"></span>' : "";
   return `
@@ -52,7 +58,7 @@ function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh:
     </button>`;
 }
 
-export function createTaskBubbles(container: HTMLElement, onHeight: (h: number) => void) {
+export function createTaskBubbles(container: HTMLElement, onHeight: (h: number) => void, onDismiss: (id: string) => void) {
   let jobs: TaskJob[] = [];
   let openId: string | undefined;
   // Pop-in plays once per job — every streamed output line re-renders the stack.
@@ -80,6 +86,7 @@ export function createTaskBubbles(container: HTMLElement, onHeight: (h: number) 
   stack.addEventListener("click", (e) => {
     const id = (e.target as HTMLElement).closest<HTMLElement>(".bean-bubble")?.dataset.id;
     if (!id) return;
+    if (openId === id && jobs.find((j) => j.id === id)?.state === "failed") onDismiss(id);
     openId = openId === id ? undefined : id;
     render();
   });

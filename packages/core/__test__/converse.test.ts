@@ -367,6 +367,7 @@ test("history turns are accepted and the function never throws on chat failure",
   });
   expect(res.proposedRun).toBeUndefined();
   expect(res.reply.length).toBeGreaterThan(0);
+  expect(res.error).toBe("network"); // surfaces as the avatar's error bubble
 });
 
 test("system prompt composes persona intro, behavior instructions, and catalog in order", async () => {
