@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
+import type { ChatopsActivitySink } from "./activity.js";
 import type { DelegateCallbacks, DelegateHandle, DelegateRequest } from "../delegate.js";
 import { outboxDir } from "../config.js";
 import { enqueueOutbox } from "../outbox.js";
@@ -26,6 +28,8 @@ export interface RunRegistryOptions {
   botKind: "discord" | "teams";
   newId?: () => string;
   throttleMs?: number;
+  /** Run lifecycle for the desktop app's status bubbles (see activity.ts). */
+  onActivity?: ChatopsActivitySink;
 }
 
 interface ActiveRun {
@@ -62,7 +66,7 @@ export class RunRegistry {
 
   // A run that fails to spawn settles synchronously: onError fires (and free() runs)
   // before start() ever reaches its map insert — `run.released` guards that hole.
-  async start(req: DelegateRequest, events: RunEvents, meta: RunMeta): Promise<boolean> {
+  async start(req: DelegateRequest, callerEvents: RunEvents, meta: RunMeta): Promise<boolean> {
     if (this.byProject.has(req.projectPath)) return false;
     const reservation = reserveRun(this.opts.dir, req.projectPath, process.pid, () => this.newId());
     if (!reservation) return false;
@@ -73,6 +77,20 @@ export class RunRegistry {
       releaseRun(this.opts.dir, req.projectPath);
       return false;
     }
+    const act = this.opts.onActivity;
+    const runId = this.newId();
+    const name = basename(req.projectPath) || "delegate";
+    // Every settle path goes through `events` except interruptAll(): that one runs as the bot
+    // process dies, and the app clears a dead bot's bubbles itself.
+    const events: RunEvents = act
+      ? {
+          onTail: callerEvents.onTail, // output stays in the channel; see activity.ts
+          onDone: (result) => { act({ type: "run", phase: "done", id: runId, name }); callerEvents.onDone(result); },
+          onError: (message) => { act({ type: "run", phase: "failed", id: runId, name }); callerEvents.onError(message); },
+          onCancelled: () => { act({ type: "run", phase: "cancelled", id: runId, name }); callerEvents.onCancelled(); },
+        }
+      : callerEvents;
+    act?.({ type: "run", phase: "start", id: runId, name });
     const throttleMs = this.opts.throttleMs ?? 5_000;
     let latest: string | undefined;
     const timer = setInterval(() => {

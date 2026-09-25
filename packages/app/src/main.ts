@@ -6,6 +6,7 @@ import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./ch
 import { createChatopsServers } from "./chatops-servers.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
+import { applyChatopsActivity, clearBotJobs } from "./chatops-activity.js";
 import { installAvatarControls } from "./avatar-window.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
@@ -513,11 +514,13 @@ app.whenReady().then(async () => {
     chatopsServers = createChatopsServers({
       repoRoot: chatopsRoot,
       resolvedPath,
+      onActivity: (bot, e) => applyChatopsActivity(taskStatus, bot, e),
       send: (event) => {
         if (event.error) {
           chatopsErrorSince[event.bot] = Date.now();
           taskStatus.error(`bot:${event.bot}`, { kind: "bot", name: event.bot === "discord" ? "Discord" : "Teams", line: event.error, detail: event.error });
         } else delete chatopsErrorSince[event.bot];
+        if (!event.running) clearBotJobs(taskStatus, event.bot);
         broadcast(IPC.chatopsEvent, event);
       },
       // Chained, not fire-and-forget: replaying two bots at boot (or a fast toggle) would

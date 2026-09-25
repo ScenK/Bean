@@ -14,12 +14,18 @@ decision: there's no Stop/Pause button, and a routine has no pause state to back
   user clicks it open then clicks again (`bean:dismiss-task` → `dismiss()`); a user Stop passes
   `sticky=false`. Standalone errors go through `error(id, …)` with a stable id (`bot:discord`,
   `chat:error`, `reminder:error`) so repeats bump `count` ("failed ×3") instead of stacking.
-- **Plan — remaining phases (ChatOps activity):** bots are separate processes, so (2) add
-  `"ipc"` to the spawn stdio in `chatops-servers.ts` and let the servers `process.send?.()`
-  an activity event from an optional core `onActivity` dep (bot turn start/end, `RunRegistry`
-  run lifecycle, live sessions, handler errors); main validates the shape. Verify dev + packaged.
-  (3) map it to bubbles — sender + channel only, never message text; throttle run tails.
-  (4) cap simultaneous bubbles, extend `e2e/task-bubbles.e2e.ts`, update this entry.
+- **ChatOps activity crosses the process boundary over Node IPC.** `chatops-servers.ts` spawns
+  the bots with `"ipc"` in stdio; the servers pass core's `parentActivitySink` (a no-op when run
+  standalone, and callback-form `process.send` so a closed channel can't crash the bot) as
+  `onActivity` to `buildTeamsBot` (converse turns only — commands/live-session steering don't
+  count), `RunRegistry` and `LiveSessionRegistry`. Main validates every message with
+  `parseChatopsActivity` (string type/phase checked before the `Object.hasOwn` lookup — a
+  crafted key object would throw in main — known values, 300-char caps) and `chatops-activity.ts` maps it to
+  bubbles under `<bot>:<type>:<id>` ids. Privacy: sender + channel name and phases only —
+  never message text, delegate output, or any error text (CLI stderr and thrown errors can quote
+  messages or secrets; codex flagged each in turn). Failures show "… — details in Discord". When a bot stops, `clearBotJobs` closes its still-running bubbles ("Bot stopped").
+- **Remaining (phase 4):** cap simultaneous bubbles; extend `e2e/task-bubbles.e2e.ts` with a
+  fake ChatOps event.
 - **The window grows; it isn't click-through.** The renderer reports the stack height
   (`bean:set-avatar-status-height`), and `avatar-window.ts` uses `statusLayout()` for
   `normal`/`hover` while the height is > 0. The window is then 300 × (stack + 120) with the bean

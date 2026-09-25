@@ -4,7 +4,7 @@ import {
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, MemoryProposalStore, NoteProposalStore, ProposalStore,
-  ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
+  ConsolidationProposalStore, RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
@@ -83,7 +83,7 @@ adapter.onTurnError = async (context, error) => {
 
 const clis = detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
 const cliModels = await loadCliModels(clisFile(builtinDir), clisFile(dir));
-const runs = new RunRegistry(runDelegate, { dir, botKind: "teams" });
+const runs = new RunRegistry(runDelegate, { dir, botKind: "teams", onActivity: parentActivitySink });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this conversation has no idea what it's retrying.
@@ -92,13 +92,14 @@ const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reas
 const conversations = new ConversationStore(dbFile(dir));
 // Hoisted (not inline in deps) so the /api/messages handler can check `has()` to capture
 // steer messages for a bound session, and the SIGTERM handler can kill them. Mirrors Discord.
-const liveSessions = new LiveSessionRegistry(undefined, { dir });
+const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink });
 const liveSessionProposals = new LiveSessionProposalStore();
 // Hosts delegates not tied to a project (a Jira ticket, research); spawn needs the cwd to exist.
 const scratchPath = scratchDir(dir);
 mkdirSync(scratchPath, { recursive: true });
 
 const bot = buildTeamsBot({
+  onActivity: parentActivitySink,
   chat: converseChat,
   model: beanConfig.model,
   loadSkills: () => loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
@@ -324,6 +325,7 @@ app.post("/api/messages", (req, res) => {
           conversationId: a.conversation.id, text: text || "(image)",
           images: images.length > 0 ? images : undefined,
           fromId: a.from.id, fromName: a.from.name ?? "someone", mentionedIds: mentionIds(a),
+          channelName: a.conversation.conversationType === "personal" ? "DM" : a.conversation.name,
         },
         fx,
       );

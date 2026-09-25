@@ -4,7 +4,7 @@ import {
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, MemoryProposalStore, NoteProposalStore, ProposalStore,
-  ConsolidationProposalStore, RunRegistry, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
+  ConsolidationProposalStore, RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
@@ -25,14 +25,14 @@ if (!beanConfig.openaiApiKey) throw new Error("openaiApiKey missing in ~/.bean/c
 
 const clis = detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
 const cliModels = await loadCliModels(clisFile(builtinDir), clisFile(dir));
-const runs = new RunRegistry(runDelegate, { dir, botKind: "discord" });
+const runs = new RunRegistry(runDelegate, { dir, botKind: "discord", onActivity: parentActivitySink });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this channel has no idea what it's retrying.
 // Hoisted out of the bot deps so the outbox loop's maybeCompact can reuse the same client.
 const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reasoningEffort);
 const conversations = new ConversationStore(dbFile(dir));
-const liveSessions = new LiveSessionRegistry(undefined, { dir });
+const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink });
 // Hoisted (not inline in deps) so the /live-session card's project/model dropdowns and the
 // edit-prompt modal can read and mutate the pending proposal before Start claims it.
 const liveSessionProposals = new LiveSessionProposalStore();
@@ -42,6 +42,7 @@ mkdirSync(scratchPath, { recursive: true });
 const transcribe = makeOpenAITranscribe(beanConfig.openaiApiKey);
 
 const bot = buildTeamsBot({
+  onActivity: parentActivitySink,
   chat: converseChat,
   model: beanConfig.model,
   loadSkills: () => loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
@@ -219,6 +220,7 @@ client.on("messageCreate", async (message) => {
           fromId: message.author.id, fromName: message.author.displayName,
           // Everyone @mentioned except Bean — feeds the live-session `+driver`/`-driver` commands.
           mentionedIds: [...message.mentions.users.keys()].filter((id) => id !== client.user?.id),
+          channelName: isDm ? "DM" : "name" in message.channel && message.channel.name ? `#${message.channel.name}` : undefined,
         },
         effectsFor(message.channel, message.id),
       );

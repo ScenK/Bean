@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
+import type { ChatopsActivitySink } from "./activity.js";
 import {
   startLiveSession as defaultStartLiveSession,
   type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type TurnSummary,
@@ -92,6 +94,8 @@ export interface LiveSessionRegistryOptions {
   throttleMs?: number;
   idleTimeoutMs?: number;
   newId?: () => string;
+  /** Session start/end for the desktop app's status bubbles (see activity.ts). */
+  onActivity?: ChatopsActivitySink;
 }
 
 /** channelId → active live session. One session per channel; while bound, the bot routes
@@ -167,6 +171,8 @@ export class LiveSessionRegistry {
       onEnded: input.onEnded,
     };
     this.byChannel.set(input.channelId, s);
+    // One session per channel, so the channel id doubles as the session's activity id.
+    this.opts.onActivity?.({ type: "live", phase: "start", id: input.channelId, name: basename(input.projectPath) || "live session" });
     s.handle = this.startFn(
       { projectPath: input.projectPath, prompt: input.instruction, model: input.model },
       {
@@ -260,6 +266,7 @@ export class LiveSessionRegistry {
     // runs from onExit, i.e. once the child has actually confirmed dead, same as
     // RunRegistry's free()/cancel() reasoning.
     releaseRun(this.opts.dir, s.projectPath);
+    this.opts.onActivity?.({ type: "live", phase: err ? "failed" : "end", id: channelId, name: basename(s.projectPath) || "live session" });
     // Wait for any flush already in flight before the final flush — otherwise flushSession's
     // own rendering guard makes this a no-op and content buffered during that window is lost.
     const wait = s.inFlight ?? Promise.resolve();

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { parseChatopsActivity, type ChatopsActivity } from "@bean/core";
 
 export type ChatopsBot = "discord" | "teams";
 /** `running` is the process; `enabled` is the user's switch — the two come apart while a crashed
@@ -15,6 +16,8 @@ export interface SpawnedProcess {
   /** Node gives `code === null` when the child died from a signal, with the name in `signal` —
    * both are needed to tell "we killed it" from "the OS killed it". */
   on(event: "exit", cb: (code: number | null, signal: string | null) => void): void;
+  /** IPC messages from the bot (process.send) — its activity for the status bubbles. */
+  on(event: "message", cb: (msg: unknown) => void): void;
   kill(): void;
 }
 
@@ -50,6 +53,8 @@ export interface ChatopsServersDeps {
    * Intent, not liveness: a crash or `stopAll()` at quit leaves the set alone, so main.ts can
    * restart them on the next boot. Only an explicit start/stop moves a bot in or out. */
   onEnabledChange?: (enabled: ChatopsBot[]) => void;
+  /** What a running bot is doing (turns, delegate runs, live sessions), already validated. */
+  onActivity?: (bot: ChatopsBot, e: ChatopsActivity) => void;
   spawnFn?: (command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => SpawnedProcess;
   existsFn?: (path: string) => boolean;
   nowFn?: () => number;
@@ -57,7 +62,7 @@ export interface ChatopsServersDeps {
 }
 
 export function createChatopsServers(deps: ChatopsServersDeps) {
-  const doSpawn = deps.spawnFn ?? ((command, args, cwd, env) => spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] }));
+  const doSpawn: NonNullable<ChatopsServersDeps["spawnFn"]> = deps.spawnFn ?? ((command, args, cwd, env) => spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe", "ipc"] }));
   const exists = deps.existsFn ?? existsSync;
   const serverEntries = deps.serverEntries ?? SERVER_ENTRY;
   const now = deps.nowFn ?? Date.now;
@@ -100,6 +105,11 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     // needs no local Node install — ELECTRON_RUN_AS_NODE makes execPath behave as `node <entry>`.
     const child = doSpawn(process.execPath, [entry], deps.repoRoot, { ...process.env, ...deps.extraEnv, PATH: deps.resolvedPath, ELECTRON_RUN_AS_NODE: "1" });
     child.stderr?.on("data", (chunk) => { lastErr = chunk.toString().trim() || lastErr; });
+    // A child process is a trust boundary: only well-formed activity gets through.
+    child.on("message", (msg) => {
+      const e = parseChatopsActivity(msg);
+      if (e) deps.onActivity?.(bot, e);
+    });
     procs.set(bot, child);
     liveness[bot] = { running: true };
     emit(bot);
