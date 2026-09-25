@@ -179,3 +179,15 @@
   font-size: 11px;
   color: var(--bean-text-dim);
 }
+.bean-bubble-more {
+  -webkit-app-region: no-drag;
+  align-self: flex-end;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--bean-control-border);
+  background: var(--bean-surface);
+  color: var(--bean-text-dim);
+  font: 11px ui-monospace, monospace;
+  cursor: pointer;
+}
+.bean-bubble-more:focus-visible { outline: 2px solid var(--bean-accent); outline-offset: 2px; }

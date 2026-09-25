@@ -57,8 +57,37 @@ test("status bubbles grow the avatar around a fixed bean and collapse when jobs 
     await failed.click();
     await expect.poll(() => app.evaluate(() => (globalThis as { dismissed?: string }).dismissed)).toBe("bot:discord");
 
+    // A busy chat channel: only the newest 4 show; the pill counts the rest (and their failures)
+    // and expands them. The ChatOps turn bubble is the newest, so it keeps the tail.
+    const many = [
+      { id: "old-fail", kind: "delegate", name: "api", line: "Failed", detail: "", startedAt: now, state: "failed" },
+      ...[1, 2, 3, 4, 5].map((n) => ({ id: `r${n}`, kind: "delegate", name: `job ${n}`, line: "Running…", detail: "", startedAt: now, state: "running" })),
+      { id: "discord:turn:t1", kind: "chat", name: "Discord · #dev", line: "Replying to alice…", detail: "", startedAt: now, state: "running" },
+    ];
+    await push(many);
+    await expect(page.locator(".bean-bubble")).toHaveCount(4);
+    await expect(page.locator(".bean-bubble--tail")).toHaveAttribute("data-id", "discord:turn:t1");
+    await expect(page.locator(".bean-bubble-more")).toHaveText("+3 more · 1 failed");
+    await page.locator(".bean-bubble-more").click();
+    await expect(page.locator(".bean-bubble")).toHaveCount(7);
+    await expect(page.locator(".bean-bubble-more")).toHaveAttribute("aria-expanded", "true");
+    await page.locator(".bean-bubble-more").click(); // "Show fewer"
+    await expect(page.locator(".bean-bubble")).toHaveCount(4);
+    await expect(page.locator(".bean-bubble-more")).toBeFocused(); // keyboard focus survives the re-render
+
+    // An open job that folds into the pill doesn't leave the visible ones muted.
+    await page.locator('.bean-bubble[data-id="r3"]').click();
+    await expect(page.locator(".bean-bubble-line")).toHaveCount(1);
+    await push([...many, { id: "r6", kind: "delegate", name: "job 6", line: "Running…", detail: "", startedAt: now, state: "running" }]);
+    await expect(page.locator(".bean-bubble-line")).toHaveCount(4);
+    // Focus on a job that then folds away lands on the newest bubble instead of vanishing.
+    await page.locator('.bean-bubble[data-id="r4"]').focus();
+    await push([...many, ...[6, 7].map((n) => ({ id: `r${n}`, kind: "delegate", name: `job ${n}`, line: "Running…", detail: "", startedAt: now, state: "running" }))]);
+    await expect(page.locator(".bean-bubble--tail")).toBeFocused();
+
     await push([]);
     await expect(page.locator(".bean-bubble")).toHaveCount(0);
+    await expect(page.locator(".bean-bubble-more")).toHaveCount(0);
     await expect.poll(avatarBounds).toEqual(idle);
 
     // Parked at the left screen edge, the bubble stays inside the window instead of spilling off.

@@ -58,9 +58,14 @@ function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh:
     </button>`;
 }
 
+// A busy Discord channel can stack many turns at once; past this, the oldest fold into a
+// "+N more" pill (which says how many of those failed, so a sticky error never hides silently).
+export const MAX_VISIBLE = 4;
+
 export function createTaskBubbles(container: HTMLElement, onHeight: (h: number) => void, onDismiss: (id: string) => void) {
   let jobs: TaskJob[] = [];
   let openId: string | undefined;
+  let showAll = false;
   // Pop-in plays once per job — every streamed output line re-renders the stack.
   let seen = new Set<string>();
   const stack = document.createElement("div");
@@ -72,18 +77,39 @@ export function createTaskBubbles(container: HTMLElement, onHeight: (h: number) 
   let below = false;
 
   const render = (): void => {
-    if (openId && !jobs.some((j) => j.id === openId)) openId = undefined;
     const now = Date.now();
-    // Streamed output re-renders every bubble; keep keyboard focus on the same job across it.
-    const focused = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(".bean-bubble")?.dataset.id;
-    const html = jobs.map((j, i) =>
-      bubble(j, j.id === openId, openId !== undefined && j.id !== openId, i === jobs.length - 1, !seen.has(j.id), now));
+    // Streamed output re-renders every bubble; keep keyboard focus on the same job (or the pill).
+    const active = document.activeElement as HTMLElement | null;
+    const focused = active?.closest<HTMLElement>(".bean-bubble")?.dataset.id;
+    const pillFocused = active?.classList.contains("bean-bubble-more") ?? false;
+    if (jobs.length <= MAX_VISIBLE) showAll = false;
+    const hidden = showAll ? [] : jobs.slice(0, Math.max(0, jobs.length - MAX_VISIBLE));
+    const shown = jobs.slice(hidden.length);
+    // An open job that left (or folded into the pill) would otherwise keep every visible one quiet.
+    if (openId && !shown.some((j) => j.id === openId)) openId = undefined;
+    const html = shown.map((j, i) =>
+      bubble(j, j.id === openId, openId !== undefined && j.id !== openId, i === shown.length - 1, !seen.has(j.id), now));
+    const failed = hidden.filter((j) => j.state === "failed").length;
+    // Oldest end of the stack (farthest from the bean), so it lands there in either direction.
+    if (hidden.length) html.unshift(`<button type="button" class="bean-bubble-more" aria-expanded="false">+${hidden.length} more${failed ? ` · ${failed} failed` : ""}</button>`);
+    else if (showAll) html.unshift('<button type="button" class="bean-bubble-more" aria-expanded="true">Show fewer</button>');
     stack.innerHTML = (below ? html.reverse() : html).join("");
     seen = new Set(jobs.map((j) => j.id));
-    if (focused) [...stack.querySelectorAll<HTMLElement>(".bean-bubble")].find((n) => n.dataset.id === focused)?.focus();
+    if (focused || pillFocused) {
+      const target = focused
+        ? [...stack.querySelectorAll<HTMLElement>(".bean-bubble")].find((n) => n.dataset.id === focused)
+        : stack.querySelector<HTMLElement>(".bean-bubble-more");
+      // The focused one left or folded away: land on the newest bubble rather than dropping focus.
+      (target ?? stack.querySelector<HTMLElement>(".bean-bubble--tail"))?.focus();
+    }
   };
 
   stack.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest(".bean-bubble-more")) {
+      showAll = !showAll;
+      render();
+      return;
+    }
     const id = (e.target as HTMLElement).closest<HTMLElement>(".bean-bubble")?.dataset.id;
     if (!id) return;
     if (openId === id && jobs.find((j) => j.id === id)?.state === "failed") onDismiss(id);

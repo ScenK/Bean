@@ -24,8 +24,11 @@ decision: there's no Stop/Pause button, and a routine has no pause state to back
   bubbles under `<bot>:<type>:<id>` ids. Privacy: sender + channel name and phases only —
   never message text, delegate output, or any error text (CLI stderr and thrown errors can quote
   messages or secrets; codex flagged each in turn). Failures show "… — details in Discord". When a bot stops, `clearBotJobs` closes its still-running bubbles ("Bot stopped").
-- **Remaining (phase 4):** cap simultaneous bubbles; extend `e2e/task-bubbles.e2e.ts` with a
-  fake ChatOps event.
+- **At most 4 bubbles show** (`MAX_VISIBLE`, renderer-only); older ones fold into a
+  `.bean-bubble-more` pill at the far end ("+3 more · 1 failed") that toggles them open. The
+  failed count is load-bearing: sticky errors are usually the oldest jobs, and the cap must not
+  hide them silently. A per-source Settings toggle was deliberately skipped — add it only if the
+  bubbles prove noisy in real use.
 - **The window grows; it isn't click-through.** The renderer reports the stack height
   (`bean:set-avatar-status-height`), and `avatar-window.ts` uses `statusLayout()` for
   `normal`/`hover` while the height is > 0. The window is then 300 × (stack + 120) with the bean
@@ -41,4 +44,4 @@ decision: there's no Stop/Pause button, and a routine has no pause state to back
 - Menu/drag modes hide the bubbles with `opacity`, not `display:none`, so the measured height
   (and the window) doesn't jump under the tiles.
 - Guards: `task-status.test.ts` (incl. sticky/merge), the `statusLayout` + avatar-window unit tests, and
-  `e2e/task-bubbles.e2e.ts` (bean doesn't move, text is escaped, error click-to-dismiss, window collapses back).
+  `e2e/task-bubbles.e2e.ts` (bean doesn't move, text is escaped, error click-to-dismiss, the 4-bubble cap + pill, window collapses back).
