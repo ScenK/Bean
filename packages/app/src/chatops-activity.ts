@@ -27,10 +27,9 @@ export function applyChatopsActivity(status: TaskStatus, bot: ChatopsBot, e: Cha
     else status.finish(id, "done", "Session ended");
     return;
   }
-  if (e.phase === "start") status.upsert(id, { kind: "delegate", name: `${e.name} · ${surface}`, line: "Starting…", startedAt, state: "running" });
-  else if (e.phase === "tail") { if (e.line?.trim()) status.upsert(id, { line: e.line.trim() }); }
+  if (e.phase === "start") status.upsert(id, { kind: "delegate", name: `${e.name} · ${surface}`, line: "Running…", startedAt, state: "running" });
   else if (e.phase === "done") status.finish(id, "done", "Done");
-  else if (e.phase === "failed") status.finish(id, "failed", e.line || "Failed");
+  else if (e.phase === "failed") status.finish(id, "failed", e.error || "Failed");
   else status.finish(id, "failed", "Stopped", false); // someone's own cancel isn't a failure to chase
 }
 

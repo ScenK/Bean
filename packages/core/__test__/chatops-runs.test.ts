@@ -180,7 +180,7 @@ test("start() tracks the delegate child's own pid, so a relaunch reclaims once t
   expect(await reg2.start(req, events(), meta)).toBe(true);
 });
 
-test("onActivity reports the run lifecycle under one id, named after the project", async () => {
+test("onActivity reports the run lifecycle under one id, named after the project, without output", async () => {
   const { fn, calls } = fakeRun();
   const seen: unknown[] = [];
   const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord", throttleMs: 5000, newId: () => "r1", onActivity: (e) => seen.push(e) });
@@ -191,9 +191,9 @@ test("onActivity reports the run lifecycle under one id, named after the project
   calls[0]?.cb.onDone("ok");
   expect(seen).toEqual([
     { type: "run", phase: "start", id: "r1", name: "api" },
-    { type: "run", phase: "tail", id: "r1", name: "api", line: "building" },
     { type: "run", phase: "done", id: "r1", name: "api" },
-  ]);
+  ]); // no tail: delegate output never leaves the channel
+  expect(ev.onTail).toHaveBeenCalledWith("building");
   expect(ev.onDone).toHaveBeenCalledWith("ok"); // caller's events still fire
 });
 

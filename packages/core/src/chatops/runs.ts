@@ -84,9 +84,9 @@ export class RunRegistry {
     // process dies, and the app clears a dead bot's bubbles itself.
     const events: RunEvents = act
       ? {
-          onTail: (line) => { act({ type: "run", phase: "tail", id: runId, name, line }); callerEvents.onTail(line); },
+          onTail: callerEvents.onTail, // output stays in the channel; see activity.ts
           onDone: (result) => { act({ type: "run", phase: "done", id: runId, name }); callerEvents.onDone(result); },
-          onError: (message) => { act({ type: "run", phase: "failed", id: runId, name, line: message }); callerEvents.onError(message); },
+          onError: (message) => { act({ type: "run", phase: "failed", id: runId, name, error: message }); callerEvents.onError(message); },
           onCancelled: () => { act({ type: "run", phase: "cancelled", id: runId, name }); callerEvents.onCancelled(); },
         }
       : callerEvents;

@@ -304,5 +304,5 @@ it("forwards a bot's IPC activity to onActivity, dropping malformed messages", (
   p.emit("message", { type: "run", phase: "start", id: "r1", name: "api" });
   p.emit("message", { type: "rm -rf", phase: "start", id: "x" });
   p.emit("message", "junk");
-  expect(got).toEqual([["teams", { type: "run", phase: "start", id: "r1", name: "api", line: undefined }]]);
+  expect(got).toEqual([["teams", { type: "run", phase: "start", id: "r1", name: "api", error: undefined }]]);
 });

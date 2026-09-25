@@ -19,9 +19,10 @@ decision: there's no Stop/Pause button, and a routine has no pause state to back
   standalone, and callback-form `process.send` so a closed channel can't crash the bot) as
   `onActivity` to `buildTeamsBot` (converse turns only — commands/live-session steering don't
   count), `RunRegistry` and `LiveSessionRegistry`. Main validates every message with
-  `parseChatopsActivity` (known type/phase, 300-char caps) and `chatops-activity.ts` maps it to
-  bubbles under `<bot>:<type>:<id>` ids. Privacy: sender + channel name only, never message
-  text. When a bot stops, `clearBotJobs` closes its still-running bubbles ("Bot stopped").
+  `parseChatopsActivity` (string type/phase checked before the `Object.hasOwn` lookup — a
+  crafted key object would throw in main — known values, 300-char caps) and `chatops-activity.ts` maps it to
+  bubbles under `<bot>:<type>:<id>` ids. Privacy: sender + channel name and errors only —
+  never message text or delegate output (a run reports phase only; codex review flagged tails). When a bot stops, `clearBotJobs` closes its still-running bubbles ("Bot stopped").
 - **Remaining (phase 4):** cap simultaneous bubbles; extend `e2e/task-bubbles.e2e.ts` with a
   fake ChatOps event.
 - **The window grows; it isn't click-through.** The renderer reports the stack height
