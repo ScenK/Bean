@@ -95,8 +95,13 @@ export function createTaskBubbles(container: HTMLElement, onHeight: (h: number) 
     else if (showAll) html.unshift('<button type="button" class="bean-bubble-more" aria-expanded="true">Show fewer</button>');
     stack.innerHTML = (below ? html.reverse() : html).join("");
     seen = new Set(jobs.map((j) => j.id));
-    if (focused) [...stack.querySelectorAll<HTMLElement>(".bean-bubble")].find((n) => n.dataset.id === focused)?.focus();
-    else if (pillFocused) stack.querySelector<HTMLElement>(".bean-bubble-more")?.focus();
+    if (focused || pillFocused) {
+      const target = focused
+        ? [...stack.querySelectorAll<HTMLElement>(".bean-bubble")].find((n) => n.dataset.id === focused)
+        : stack.querySelector<HTMLElement>(".bean-bubble-more");
+      // The focused one left or folded away: land on the newest bubble rather than dropping focus.
+      (target ?? stack.querySelector<HTMLElement>(".bean-bubble--tail"))?.focus();
+    }
   };
 
   stack.addEventListener("click", (e) => {

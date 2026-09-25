@@ -80,6 +80,10 @@ test("status bubbles grow the avatar around a fixed bean and collapse when jobs 
     await expect(page.locator(".bean-bubble-line")).toHaveCount(1);
     await push([...many, { id: "r6", kind: "delegate", name: "job 6", line: "Running…", detail: "", startedAt: now, state: "running" }]);
     await expect(page.locator(".bean-bubble-line")).toHaveCount(4);
+    // Focus on a job that then folds away lands on the newest bubble instead of vanishing.
+    await page.locator('.bean-bubble[data-id="r4"]').focus();
+    await push([...many, ...[6, 7].map((n) => ({ id: `r${n}`, kind: "delegate", name: `job ${n}`, line: "Running…", detail: "", startedAt: now, state: "running" }))]);
+    await expect(page.locator(".bean-bubble--tail")).toBeFocused();
 
     await push([]);
     await expect(page.locator(".bean-bubble")).toHaveCount(0);
