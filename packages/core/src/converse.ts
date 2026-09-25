@@ -83,6 +83,8 @@ export interface ConverseResult {
   /** Files produced by generate_image this turn — set by surface handlers (buildChatHandler
    * fills dataUrl for inline rendering), never by converse() itself; bots use sendFile instead. */
   generatedImages?: Array<{ path: string; dataUrl?: string }>;
+  /** Set when the model call itself failed; `reply` then carries the user-facing explanation. */
+  error?: string;
 }
 export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; }
 
@@ -489,7 +491,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       // params all land here, and blaming the API key for every one of them sent a past
       // debugging session down the wrong path entirely.
       const why = err instanceof Error ? err.message : String(err);
-      return { reply: `I couldn't reach the model (${deps.model}): ${why}`, model: deps.model };
+      return { reply: `I couldn't reach the model (${deps.model}): ${why}`, model: deps.model, error: why };
     }
 
     // A rejected proposal (hallucinated tool, unknown skill/project, blank args) must not end

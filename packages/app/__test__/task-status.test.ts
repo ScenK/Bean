@@ -31,4 +31,24 @@ describe("createTaskStatus", () => {
     vi.advanceTimersByTime(FINISHED_LINGER_MS * 2);
     expect(s.list()).toMatchObject([{ id: "a", state: "running" }]);
   });
+
+  it("keeps a failure until dismissed; a non-sticky failure (user Stop) still lingers out", () => {
+    vi.useFakeTimers();
+    const s = createTaskStatus(() => {});
+    s.upsert("a", { kind: "delegate", name: "repo" });
+    s.finish("a", "failed", "boom");
+    s.upsert("b", { kind: "delegate", name: "repo" });
+    s.finish("b", "failed", "Stopped", false);
+    vi.advanceTimersByTime(FINISHED_LINGER_MS * 10);
+    expect(s.list().map((j) => j.id)).toEqual(["a"]);
+    s.dismiss("a");
+    expect(s.list()).toEqual([]);
+  });
+
+  it("merges repeated errors on one id into a counted bubble", () => {
+    const s = createTaskStatus(() => {});
+    s.error("bot:discord", { kind: "bot", name: "Discord", line: "crash 1" });
+    s.error("bot:discord", { kind: "bot", name: "Discord", line: "crash 2" });
+    expect(s.list()).toMatchObject([{ id: "bot:discord", state: "failed", count: 2, line: "crash 2" }]);
+  });
 });

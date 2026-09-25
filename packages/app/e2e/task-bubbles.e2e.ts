@@ -44,6 +44,19 @@ test("status bubbles grow the avatar around a fixed bean and collapse when jobs 
     await expect(page.locator(".bean-bubble-step")).toHaveCount(3);
     if (process.env.BEAN_SHOT) { await page.waitForTimeout(800); await page.screenshot({ path: process.env.BEAN_SHOT }); }
 
+    // A failure stays until clicked away: first click expands it, the second asks main to dismiss.
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.on("bean:dismiss-task", (_e, id) => { (globalThis as { dismissed?: string }).dismissed = id; });
+    });
+    await push([{ id: "bot:discord", kind: "bot", name: "Discord", line: "exited unexpectedly (code 1)",
+      detail: "exited unexpectedly (code 1)", startedAt: now, state: "failed", count: 3 }]);
+    const failed = page.locator('.bean-bubble[data-id="bot:discord"]');
+    await expect(failed.locator(".bean-bubble-meta")).toHaveText("failed ×3");
+    await failed.click();
+    await expect(page.locator(".bean-bubble-hint")).toBeVisible();
+    await failed.click();
+    await expect.poll(() => app.evaluate(() => (globalThis as { dismissed?: string }).dismissed)).toBe("bot:discord");
+
     await push([]);
     await expect(page.locator(".bean-bubble")).toHaveCount(0);
     await expect.poll(avatarBounds).toEqual(idle);

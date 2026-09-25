@@ -84,6 +84,9 @@
 /* Same muted tile colors as the quick actions (avatar.ts TILE_COLORS). */
 .bean-bubble-icon--delegate { --chip: #7FA88B; }
 .bean-bubble-icon--routine { --chip: #C7A24E; }
+.bean-bubble-icon--chat { --chip: #7FA88B; }
+.bean-bubble-icon--bot,
+.bean-bubble-icon--reminder { --chip: #C7A24E; }
 .bean-bubble-icon--done { --chip: var(--bean-orb-check-ink); }
 .bean-bubble-icon--failed { --chip: var(--bean-accent-text); }
 
@@ -170,4 +173,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .bean-bubble--new, .bean-bubble-caret { animation: none; }
+}
+.bean-bubble-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--bean-text-dim);
 }

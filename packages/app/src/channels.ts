@@ -81,6 +81,7 @@ export const IPC = {
   avatarDragLayout: "bean:avatar-drag-layout",
   setAvatarStatusHeight: "bean:set-avatar-status-height",
   taskStatus: "bean:task-status",
+  dismissTask: "bean:dismiss-task",
   planFromDrop: "bean:plan-from-drop",
   getConfig: "bean:get-config",
   saveConfig: "bean:save-config",

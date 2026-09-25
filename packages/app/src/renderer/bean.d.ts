@@ -43,6 +43,7 @@ declare global {
       onAvatarDragLayout(cb: (p: { x: number; y: number; tilesAbove?: boolean; bubblesBelow?: boolean; stackMax?: number }) => void): void;
       setAvatarStatusHeight(height: number): void;
       onTaskStatus(cb: (jobs: TaskJob[]) => void): void;
+      dismissTask(id: string): void;
       planFromDrop(skillName: string, droppedUrl: string): void;
       runInChat(prompt: string, label: string, noteSlug?: string): void;
       getPendingChatPrompt(): Promise<{ prompt: string; label: string; noteSlug?: string } | undefined>;

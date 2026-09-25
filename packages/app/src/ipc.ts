@@ -581,6 +581,8 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
     cancel: (taskId: string) => void;
   };
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
+  /** Called as a chat turn starts; the returned fn is called when it ends (with the failure, if any). */
+  onChatTurn?: () => (error?: string) => void;
   loadRoutines?: () => Promise<Routine[]>;
   routineHandlers: ReturnType<typeof buildRoutineHandlers>;
   todoHandlers: ReturnType<typeof buildTodoHandlers>;
@@ -591,7 +593,17 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.route, (_e, input: RouteInput) => routeHandler(input));
 
   const chatHandler = buildChatHandler(deps);
-  ipcMain.handle(IPC.chat, (_e, req: ChatRequest) => chatHandler(req));
+  ipcMain.handle(IPC.chat, async (_e, req: ChatRequest) => {
+    const end = deps.onChatTurn?.();
+    try {
+      const result = await chatHandler(req);
+      end?.(result.error);
+      return result;
+    } catch (err) {
+      end?.(err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  });
   ipcMain.handle(IPC.getModel, () => deps.getModel());
 
   const listSkillsHandler = buildListSkillsHandler(deps);
