@@ -11,8 +11,8 @@ it("a bot turn shows while it runs and leaves only a failure behind", () => {
   applyChatopsActivity(s, "discord", { type: "turn", phase: "end", id: "t1", who: "alice" });
   expect(s.list()).toEqual([]);
   applyChatopsActivity(s, "discord", { type: "turn", phase: "start", id: "t2", who: "bob" });
-  applyChatopsActivity(s, "discord", { type: "turn", phase: "end", id: "t2", who: "bob", error: "401" });
-  expect(s.list()).toMatchObject([{ id: "discord:chat:error", state: "failed", line: "401" }]);
+  applyChatopsActivity(s, "discord", { type: "turn", phase: "end", id: "t2", who: "bob", failed: true });
+  expect(s.list()).toMatchObject([{ id: "discord:chat:error", state: "failed", line: "Reply failed — details in Discord" }]);
 });
 
 it("maps a run's lifecycle; a cancel lingers out, a failure sticks", () => {

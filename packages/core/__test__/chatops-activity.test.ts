@@ -3,7 +3,7 @@ import { parseChatopsActivity } from "../src/chatops/activity.js";
 
 test("accepts well-formed events and drops unknown fields", () => {
   expect(parseChatopsActivity({ type: "turn", phase: "start", id: "t1", who: "alice", where: "#dev", text: "secret" }))
-    .toEqual({ type: "turn", phase: "start", id: "t1", who: "alice", where: "#dev", error: undefined });
+    .toEqual({ type: "turn", phase: "start", id: "t1", who: "alice", where: "#dev", failed: false });
   // Runs never carry output or error text across (both come from the CLI's stdout/stderr).
   expect(parseChatopsActivity({ type: "run", phase: "failed", id: "r1", name: "api", error: "stderr", line: "output" }))
     .toEqual({ type: "run", phase: "failed", id: "r1", name: "api" });
@@ -21,6 +21,6 @@ test("rejects malformed events", () => {
 });
 
 test("caps string lengths", () => {
-  const e = parseChatopsActivity({ type: "turn", phase: "end", id: "t", who: "a", error: "x".repeat(5000) });
-  expect(e?.type === "turn" && e.error?.length).toBe(300);
+  const e = parseChatopsActivity({ type: "turn", phase: "end", id: "t", who: "x".repeat(5000), error: "secret" });
+  expect(e).toEqual({ type: "turn", phase: "end", id: "t", who: "x".repeat(300), where: undefined, failed: false });
 });

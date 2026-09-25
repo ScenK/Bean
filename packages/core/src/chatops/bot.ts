@@ -513,7 +513,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     async onMessage(msg: IncomingMessage, fx: BotEffects): Promise<void> {
       // Set once the message reaches converse(); the finally reports the turn's end.
       let turnId: string | undefined;
-      let turnError: string | undefined;
+      let turnFailed = false;
       try {
         // Keyword commands (stop/drivers/cancel/new) accept an optional leading slash: Discord
         // exposes them as real `/stop`-style slash commands, so users carry the slash habit to
@@ -634,7 +634,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           todoRoutines,
         };
         const result = await converse({ ...converseBase, history, latestUserText: msg.text, latestUserImages: msg.images });
-        turnError = result.error;
+        turnFailed = result.error !== undefined;
         deps.conversations.append(msg.conversationId, {
           role: "user",
           content: msg.images?.length ? `${msg.text}\n[image attached]` : msg.text,
@@ -751,10 +751,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }));
         deps.proposals.setCardActivityId(pending.id, activityId);
       } catch (err) {
-        turnError = err instanceof Error ? err.message : String(err);
-        await fx.reply(`Something went wrong: ${turnError}`);
+        turnFailed = true;
+        await fx.reply(`Something went wrong: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
-        if (turnId) deps.onActivity?.({ type: "turn", phase: "end", id: turnId, who: msg.fromName, where: msg.channelName, error: turnError });
+        if (turnId) deps.onActivity?.({ type: "turn", phase: "end", id: turnId, who: msg.fromName, where: msg.channelName, failed: turnFailed });
       }
     },
 

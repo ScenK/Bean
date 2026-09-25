@@ -162,16 +162,17 @@ test("onActivity brackets a converse turn with who/where, never the message text
   await buildTeamsBot(deps).onMessage({ ...msg, channelName: "#dev" }, fx());
   expect(seen.map((e) => e.phase)).toEqual(["start", "end"]);
   expect(seen[0]).toMatchObject({ type: "turn", who: "alice", where: "#dev" });
-  expect(seen[1]).toMatchObject({ id: seen[0]!.id, error: undefined });
+  expect(seen[1]).toMatchObject({ id: seen[0]!.id, failed: false });
   expect(JSON.stringify(seen)).not.toContain("hi bean");
 });
 
-test("onActivity carries a model failure on the turn's end; commands report no turn", async () => {
+test("onActivity flags a model failure on the turn's end without its text; commands report no turn", async () => {
   const seen: Record<string, unknown>[] = [];
   const { deps } = makeDeps({ onActivity: (e) => seen.push(e), chat: async () => { throw new Error("401 bad key"); } });
   const bot = buildTeamsBot(deps);
   await bot.onMessage(msg, fx());
-  expect(seen.at(-1)).toMatchObject({ type: "turn", phase: "end", error: "401 bad key" });
+  expect(seen.at(-1)).toMatchObject({ type: "turn", phase: "end", failed: true });
+  expect(JSON.stringify(seen)).not.toContain("401");
   seen.length = 0;
   await bot.onMessage({ ...msg, text: "/new" }, fx());
   expect(seen).toEqual([]);

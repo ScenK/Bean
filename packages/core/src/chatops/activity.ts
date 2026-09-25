@@ -1,11 +1,11 @@
 // What a chatops bot is doing, reported to the desktop app so the avatar's status bubbles can
 // show it. The bots are separate processes: they send these over Node's IPC channel
 // (process.send) when the app spawned them, and drop them when run standalone.
-// Privacy: carries who/where (sender + channel name) and a turn's model-API error, never message
-// text, delegate output, or delegate/live-session error text — those come from the CLI's
-// stdout/stderr and can quote messages or secrets, so runs and sessions report only a phase.
+// Privacy: carries who/where (sender + channel name) and phases only — never message text,
+// delegate output, or error text (CLI stderr and thrown errors can quote messages or secrets).
+// The details stay in the channel; the avatar just learns *that* something failed.
 export type ChatopsActivity =
-  | { type: "turn"; phase: "start" | "end"; id: string; who: string; where?: string; error?: string }
+  | { type: "turn"; phase: "start" | "end"; id: string; who: string; where?: string; failed?: boolean }
   | { type: "run"; phase: "start" | "done" | "failed" | "cancelled"; id: string; name: string }
   | { type: "live"; phase: "start" | "end" | "failed"; id: string; name: string };
 
@@ -29,7 +29,7 @@ export function parseChatopsActivity(v: unknown): ChatopsActivity | undefined {
   const id = str(o.id);
   if (!Object.hasOwn(PHASES, type) || !PHASES[type].includes(o.phase) || !id) return undefined;
   const phase = o.phase as never;
-  if (type === "turn") return { type, phase, id, who: str(o.who) ?? "someone", where: str(o.where), error: str(o.error) };
+  if (type === "turn") return { type, phase, id, who: str(o.who) ?? "someone", where: str(o.where), failed: o.failed === true };
   if (type === "run") return { type, phase, id, name: str(o.name) ?? "delegate" };
   return { type, phase, id, name: str(o.name) ?? "live session" };
 }

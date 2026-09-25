@@ -18,7 +18,7 @@ export function applyChatopsActivity(status: TaskStatus, bot: ChatopsBot, e: Cha
     }
     // Like a desktop chat turn: the reply is already in the channel, so only a failure stays.
     status.dismiss(id);
-    if (e.error) status.error(`${bot}:chat:error`, { kind: "chat", name: surface, line: e.error, detail: e.error });
+    if (e.failed) status.error(`${bot}:chat:error`, { kind: "chat", name: surface, line: `Reply failed — details in ${surface}` });
     return;
   }
   if (e.type === "live") {
