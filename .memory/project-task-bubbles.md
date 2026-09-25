@@ -21,8 +21,9 @@ decision: there's no Stop/Pause button, and a routine has no pause state to back
   count), `RunRegistry` and `LiveSessionRegistry`. Main validates every message with
   `parseChatopsActivity` (string type/phase checked before the `Object.hasOwn` lookup — a
   crafted key object would throw in main — known values, 300-char caps) and `chatops-activity.ts` maps it to
-  bubbles under `<bot>:<type>:<id>` ids. Privacy: sender + channel name and errors only —
-  never message text or delegate output (a run reports phase only; codex review flagged tails). When a bot stops, `clearBotJobs` closes its still-running bubbles ("Bot stopped").
+  bubbles under `<bot>:<type>:<id>` ids. Privacy: sender + channel name and a turn's model-API
+  error only — never message text, delegate output, or delegate/live error text (CLI stdout/
+  stderr can quote messages or secrets); runs/sessions show "Failed — details in Discord". When a bot stops, `clearBotJobs` closes its still-running bubbles ("Bot stopped").
 - **Remaining (phase 4):** cap simultaneous bubbles; extend `e2e/task-bubbles.e2e.ts` with a
   fake ChatOps event.
 - **The window grows; it isn't click-through.** The renderer reports the stack height

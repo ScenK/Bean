@@ -266,7 +266,7 @@ export class LiveSessionRegistry {
     // runs from onExit, i.e. once the child has actually confirmed dead, same as
     // RunRegistry's free()/cancel() reasoning.
     releaseRun(this.opts.dir, s.projectPath);
-    this.opts.onActivity?.({ type: "live", phase: "end", id: channelId, name: basename(s.projectPath) || "live session", error: err?.message });
+    this.opts.onActivity?.({ type: "live", phase: err ? "failed" : "end", id: channelId, name: basename(s.projectPath) || "live session" });
     // Wait for any flush already in flight before the final flush — otherwise flushSession's
     // own rendering guard makes this a no-op and content buffered during that window is lost.
     const wait = s.inFlight ?? Promise.resolve();

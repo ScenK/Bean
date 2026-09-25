@@ -23,13 +23,13 @@ export function applyChatopsActivity(status: TaskStatus, bot: ChatopsBot, e: Cha
   }
   if (e.type === "live") {
     if (e.phase === "start") status.upsert(id, { kind: "delegate", name: `${e.name} · live`, line: `Live session on ${surface}`, startedAt, state: "running" });
-    else if (e.error) status.finish(id, "failed", e.error);
+    else if (e.phase === "failed") status.finish(id, "failed", `Session died — details in ${surface}`);
     else status.finish(id, "done", "Session ended");
     return;
   }
   if (e.phase === "start") status.upsert(id, { kind: "delegate", name: `${e.name} · ${surface}`, line: "Running…", startedAt, state: "running" });
   else if (e.phase === "done") status.finish(id, "done", "Done");
-  else if (e.phase === "failed") status.finish(id, "failed", e.error || "Failed");
+  else if (e.phase === "failed") status.finish(id, "failed", `Failed — details in ${surface}`);
   else status.finish(id, "failed", "Stopped", false); // someone's own cancel isn't a failure to chase
 }
 

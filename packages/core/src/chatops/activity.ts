@@ -1,12 +1,13 @@
 // What a chatops bot is doing, reported to the desktop app so the avatar's status bubbles can
 // show it. The bots are separate processes: they send these over Node's IPC channel
 // (process.send) when the app spawned them, and drop them when run standalone.
-// Privacy: carries who/where (sender + channel name) and error text, never message text or
-// delegate output (which can quote messages or secrets) — a run reports only its phase.
+// Privacy: carries who/where (sender + channel name) and a turn's model-API error, never message
+// text, delegate output, or delegate/live-session error text — those come from the CLI's
+// stdout/stderr and can quote messages or secrets, so runs and sessions report only a phase.
 export type ChatopsActivity =
   | { type: "turn"; phase: "start" | "end"; id: string; who: string; where?: string; error?: string }
-  | { type: "run"; phase: "start" | "done" | "failed" | "cancelled"; id: string; name: string; error?: string }
-  | { type: "live"; phase: "start" | "end"; id: string; name: string; error?: string };
+  | { type: "run"; phase: "start" | "done" | "failed" | "cancelled"; id: string; name: string }
+  | { type: "live"; phase: "start" | "end" | "failed"; id: string; name: string };
 
 export type ChatopsActivitySink = (e: ChatopsActivity) => void;
 
@@ -15,7 +16,7 @@ const str = (v: unknown): string | undefined => (typeof v === "string" ? v.slice
 const PHASES: Record<ChatopsActivity["type"], readonly string[]> = {
   turn: ["start", "end"],
   run: ["start", "done", "failed", "cancelled"],
-  live: ["start", "end"],
+  live: ["start", "end", "failed"],
 };
 
 /** Validate an event that crossed the process boundary; anything malformed is dropped. */
@@ -28,10 +29,9 @@ export function parseChatopsActivity(v: unknown): ChatopsActivity | undefined {
   const id = str(o.id);
   if (!Object.hasOwn(PHASES, type) || !PHASES[type].includes(o.phase) || !id) return undefined;
   const phase = o.phase as never;
-  const error = str(o.error);
-  if (type === "turn") return { type, phase, id, who: str(o.who) ?? "someone", where: str(o.where), error };
-  if (type === "run") return { type, phase, id, name: str(o.name) ?? "delegate", error };
-  return { type, phase, id, name: str(o.name) ?? "live session", error };
+  if (type === "turn") return { type, phase, id, who: str(o.who) ?? "someone", where: str(o.where), error: str(o.error) };
+  if (type === "run") return { type, phase, id, name: str(o.name) ?? "delegate" };
+  return { type, phase, id, name: str(o.name) ?? "live session" };
 }
 
 /** Sink for a bot server: forwards to the parent app over IPC, a no-op when there is none.

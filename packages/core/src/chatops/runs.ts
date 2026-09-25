@@ -86,7 +86,7 @@ export class RunRegistry {
       ? {
           onTail: callerEvents.onTail, // output stays in the channel; see activity.ts
           onDone: (result) => { act({ type: "run", phase: "done", id: runId, name }); callerEvents.onDone(result); },
-          onError: (message) => { act({ type: "run", phase: "failed", id: runId, name, error: message }); callerEvents.onError(message); },
+          onError: (message) => { act({ type: "run", phase: "failed", id: runId, name }); callerEvents.onError(message); },
           onCancelled: () => { act({ type: "run", phase: "cancelled", id: runId, name }); callerEvents.onCancelled(); },
         }
       : callerEvents;

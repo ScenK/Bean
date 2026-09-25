@@ -22,9 +22,9 @@ it("maps a run's lifecycle; a cancel lingers out, a failure sticks", () => {
   expect(s.list()).toMatchObject([{ id: "teams:run:r1", kind: "delegate", name: "api · Teams", line: "Running…" }]);
   applyChatopsActivity(s, "teams", { type: "run", phase: "cancelled", id: "r1", name: "api" });
   applyChatopsActivity(s, "teams", { type: "run", phase: "start", id: "r2", name: "web" });
-  applyChatopsActivity(s, "teams", { type: "run", phase: "failed", id: "r2", name: "web", error: "exit 1" });
+  applyChatopsActivity(s, "teams", { type: "run", phase: "failed", id: "r2", name: "web" });
   vi.advanceTimersByTime(FINISHED_LINGER_MS);
-  expect(s.list()).toMatchObject([{ id: "teams:run:r2", state: "failed", line: "exit 1" }]);
+  expect(s.list()).toMatchObject([{ id: "teams:run:r2", state: "failed", line: "Failed — details in Teams" }]);
 });
 
 it("a stopped bot closes only its own running jobs", () => {
