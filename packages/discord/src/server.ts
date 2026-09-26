@@ -5,7 +5,7 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials,
@@ -40,6 +40,7 @@ const liveSessionProposals = new LiveSessionProposalStore();
 const scratchPath = scratchDir(dir);
 mkdirSync(scratchPath, { recursive: true });
 const transcribe = makeOpenAITranscribe(beanConfig.openaiApiKey);
+const speak = makeOpenAISpeak(beanConfig.openaiApiKey);
 
 const bot = buildTeamsBot({
   onActivity: parentActivitySink,
@@ -119,13 +120,24 @@ async function liveSessionCardFor(
   });
 }
 
-function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string): BotEffects {
+// `voiceReply`: the user spoke this turn, so each reply also carries a spoken mp3 — text stays
+// for reading where audio can't be played.
+function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voiceReply = false): BotEffects {
   const send = async (options: string | MessageCreateOptions): Promise<Message> => {
     if (!("send" in channel)) throw new Error("channel is not sendable");
     return channel.send(options as MessageCreateOptions);
   };
   return {
-    reply: async (text) => { for (const c of chunkText(text)) await send(c); },
+    reply: async (text) => {
+      for (const c of chunkText(text)) await send(c);
+      if (!voiceReply || !text.trim()) return;
+      // Audio is a bonus on top of the text already sent — a TTS failure must not fail the turn.
+      try {
+        await send({ files: [{ attachment: await speak(text), name: "bean-reply.mp3" }] });
+      } catch (err) {
+        console.error("voice reply failed:", err);
+      }
+    },
     post: async (text) => { for (const c of chunkText(text)) await send(c); },
     postCard: async (card) => (await send(card as MessageCreateOptions)).id,
     updateCard: async (activityId, card) => {
@@ -174,13 +186,14 @@ client.on("messageCreate", async (message) => {
     // drop anyone else's turn anyway).
     const canTranscribe = !capturing || liveSessions.canSteer(message.channelId, message.author.id);
     let transcribeFailed = false;
+    let heardAudio = false;
     for (const att of canTranscribe ? message.attachments.values() : []) {
       if (!att.contentType?.startsWith("audio/") || att.size > 25 * 1024 * 1024) continue;
       try {
         const res = await fetch(att.url);
         if (!res.ok) { console.error(`audio fetch failed: ${res.status}`); transcribeFailed = true; continue; }
         const heard = await transcribe(await res.arrayBuffer(), att.name, att.contentType.split(";")[0]!.trim());
-        if (heard) text = text ? `${text}\n\n${heard}` : heard;
+        if (heard) { text = text ? `${text}\n\n${heard}` : heard; heardAudio = true; }
       } catch (err) {
         console.error("audio transcription failed:", err);
         transcribeFailed = true;
@@ -222,7 +235,7 @@ client.on("messageCreate", async (message) => {
           mentionedIds: [...message.mentions.users.keys()].filter((id) => id !== client.user?.id),
           channelName: isDm ? "DM" : "name" in message.channel && message.channel.name ? `#${message.channel.name}` : undefined,
         },
-        effectsFor(message.channel, message.id),
+        effectsFor(message.channel, message.id, heardAudio),
       );
     } finally {
       clearInterval(typing);
