@@ -210,3 +210,24 @@ export function makeOpenAITranscribeWithClient(client: TranscribeClient, model =
 export function makeOpenAITranscribe(apiKey: string): Transcribe {
   return makeOpenAITranscribeWithClient(new OpenAI({ apiKey }) as unknown as TranscribeClient);
 }
+
+interface SpeakClient {
+  audio: { speech: { create: (a: { model: string; voice: string; input: string; response_format: "mp3" }) => Promise<{ arrayBuffer: () => Promise<ArrayBuffer> }> } };
+}
+
+/** Text-to-speech for voice replies: text in, mp3 bytes out. */
+export type Speak = (text: string) => Promise<Buffer>;
+
+// The speech endpoint rejects input over 4096 chars — a long reply gets its opening read aloud.
+const MAX_SPEECH_CHARS = 4096;
+
+export function makeOpenAISpeakWithClient(client: SpeakClient, model = "gpt-4o-mini-tts", voice = "alloy"): Speak {
+  return async (text) => {
+    const res = await client.audio.speech.create({ model, voice, input: text.slice(0, MAX_SPEECH_CHARS), response_format: "mp3" });
+    return Buffer.from(await res.arrayBuffer());
+  };
+}
+
+export function makeOpenAISpeak(apiKey: string): Speak {
+  return makeOpenAISpeakWithClient(new OpenAI({ apiKey }) as unknown as SpeakClient);
+}

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { makeOpenAIChatWithClient, makeOpenAIConverseWithClient, makeOpenAITranscribeWithClient } from "../src/openai-chat.js";
+import { makeOpenAIChatWithClient, makeOpenAIConverseWithClient, makeOpenAISpeakWithClient, makeOpenAITranscribeWithClient } from "../src/openai-chat.js";
 
 // A fake /v1/responses client that records the request and replays a canned output[].
 function fakeResponses(output: unknown[] = [{ type: "message", content: [{ type: "output_text", text: "ok" }] }]) {
@@ -232,4 +232,15 @@ test("makeOpenAITranscribeWithClient sends the audio as a named file and returns
   expect(sent?.model).toBe("gpt-4o-mini-transcribe");
   expect(sent?.file.name).toBe("voice-message.ogg");
   expect(sent?.file.type).toBe("audio/ogg");
+});
+
+test("makeOpenAISpeakWithClient returns mp3 bytes and caps input at the API's 4096 chars", async () => {
+  let sent: { model: string; voice: string; input: string; response_format: "mp3" } | undefined;
+  const speak = makeOpenAISpeakWithClient({
+    audio: { speech: { create: async (a) => { sent = a; return { arrayBuffer: async () => new TextEncoder().encode("mp3").buffer }; } } },
+  });
+  expect((await speak("x".repeat(5000))).toString()).toBe("mp3");
+  expect(sent?.model).toBe("gpt-4o-mini-tts");
+  expect(sent?.response_format).toBe("mp3");
+  expect(sent?.input).toHaveLength(4096);
 });
