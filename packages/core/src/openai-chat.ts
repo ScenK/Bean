@@ -212,7 +212,7 @@ export function makeOpenAITranscribe(apiKey: string): Transcribe {
 }
 
 interface SpeakClient {
-  audio: { speech: { create: (a: { model: string; voice: string; input: string; response_format: "mp3" }) => Promise<{ arrayBuffer: () => Promise<ArrayBuffer> }> } };
+  audio: { speech: { create: (a: { model: string; voice: string; input: string; instructions: string; response_format: "mp3" }) => Promise<{ arrayBuffer: () => Promise<ArrayBuffer> }> } };
 }
 
 /** Text-to-speech for voice replies: text in, mp3 bytes out. */
@@ -221,9 +221,12 @@ export type Speak = (text: string) => Promise<Buffer>;
 // The speech endpoint rejects input over 4096 chars — a long reply gets its opening read aloud.
 const MAX_SPEECH_CHARS = 4096;
 
-export function makeOpenAISpeakWithClient(client: SpeakClient, model = "gpt-4o-mini-tts", voice = "alloy"): Speak {
+// ponytail: voice + tone hardcoded (picked by ear: warm, soft, professional); add a config knob if it needs switching.
+const SPEECH_INSTRUCTIONS = "Speak in a warm, soft, professional tone. Calm, relaxed pace, gentle and reassuring.";
+
+export function makeOpenAISpeakWithClient(client: SpeakClient, model = "gpt-4o-mini-tts", voice = "marin"): Speak {
   return async (text) => {
-    const res = await client.audio.speech.create({ model, voice, input: text.slice(0, MAX_SPEECH_CHARS), response_format: "mp3" });
+    const res = await client.audio.speech.create({ model, voice, input: text.slice(0, MAX_SPEECH_CHARS), instructions: SPEECH_INSTRUCTIONS, response_format: "mp3" });
     return Buffer.from(await res.arrayBuffer());
   };
 }
