@@ -670,7 +670,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             const text = followup.reply.trim() ||
               `The ${run.skillName} skill didn't produce a reply — try asking me directly instead.`;
             deps.conversations.append(msg.conversationId, { role: "assistant", content: text });
-            await fx.post(text);
+            // reply, not post: this is the turn's answer, so surface extras (Discord voice
+            // replies) apply to it too.
+            await fx.reply(text);
             await deliverImages(); // the follow-up hop can call generate_image too
             return;
           }

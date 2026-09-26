@@ -466,6 +466,20 @@ test("chat-target propose_run runs on Bean's own model and replies in the same c
   expect(effects.cards).toHaveLength(0);
 });
 
+test("chat-target skill answer goes through reply, so voice turns get it spoken", async () => {
+  let calls = 0;
+  const { deps } = makeDeps({
+    loadSkills: async () => [{ name: "summarize", description: "d", body: "SUM BODY", target: "chat", enabled: true }],
+    chat: async () => (++calls === 1
+      ? { content: "", toolCalls: [{ name: "propose_run", args: { skill: "summarize", instruction: "summarize" } }] }
+      : { content: "Here's the summary.", toolCalls: [] }),
+  });
+  const replies: string[] = [];
+  const effects = { ...fx(), reply: async (t: string) => { replies.push(t); } };
+  await buildTeamsBot(deps).onMessage(msg, effects);
+  expect(replies).toContain("Here's the summary.");
+});
+
 // Second hop goes pure tool-use with no text (nested proposals are one-hop-ignored):
 // the user must still get a message, never silence.
 test("chat-target run whose second hop returns no text posts a fallback, not silence", async () => {
