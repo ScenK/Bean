@@ -15,7 +15,7 @@ transcript replay: `claude -p --resume <id>` (id from the `system`/`init` event)
 resume … -- <id> <prompt>` (`thread.started.thread_id`), `opencode run --format json --session
 <id>` (`sessionID` on every event — why opencode delegates now run `--format json`). All three
 exit 1 on an unknown id; `runDelegate` treats "non-zero exit before the session-started event"
-as a rejected resume and re-spawns fresh once (result prefixed with a notice). The dead first child leaves the
-reservation reclaimable, so `beforeRespawn` re-owns it (id-checked) before the retry and
-`onRespawn` moves it to the new child — never fail the run for it. `/new` clears the
+as a rejected resume and re-spawns fresh once (result prefixed with a notice). A resumed run's reservation stays on the bot's own pid
+until the session-started event (`onSessionStart`), because a rejected first child dies and
+would make the project reclaimable mid-run — don't armor that with ownership checks — never fail the run for it. `/new` clears the
 thread's sessions too, and a run launched before the `/new` doesn't store its id afterwards. Routine `DelegateStepRequest.resume` is not wired yet (follow-up).

@@ -142,11 +142,9 @@ export interface DelegateCallbacks {
   /** sessionId: the CLI's own session id when it reported one — pass it back as `resume`. */
   onDone: (result: string, sessionId?: string) => void;
   onError: (err: Error) => void;
-  /** A rejected `resume` is about to re-spawn fresh. The old child is already dead, so a
-   * reservation tracking its pid is reclaimable: re-own it here, or return false to give up. */
-  beforeRespawn?: () => boolean;
-  /** The fresh child's pid (reservations track the child). */
-  onRespawn?: (pid: number | undefined) => void;
+  /** The CLI reported its session started, from the child with this pid. After this point a
+   * rejected-resume retry can no longer happen, so the child's pid is safe to track. */
+  onSessionStart?: (pid: number | undefined) => void;
 }
 
 export interface DelegateHandle {
@@ -220,7 +218,10 @@ export function runDelegate(
       callbacks.onOutput(line);
       return;
     }
-    sessionId ??= sessionIdOf(req.cli, event);
+    if (!sessionId) {
+      sessionId = sessionIdOf(req.cli, event);
+      if (sessionId) callbacks.onSessionStart?.(child.pid);
+    }
     if (req.cli === "claude") {
       const r = claudeResult(event);
       if (r !== undefined) {
@@ -286,11 +287,10 @@ export function runDelegate(
       }
       // Died before the session started: the CLI rejected the resume id (store cleared, other
       // cwd, …). Never fail the run for that — start fresh once and say so in the result.
-      if (resume && !sessionId && (callbacks.beforeRespawn?.() ?? true)) {
+      if (resume && !sessionId) {
         notice = `(Couldn't resume the earlier ${req.cli} session, so this run started fresh.)\n\n`;
         resume = undefined;
         spawnAttempt();
-        callbacks.onRespawn?.(child.pid);
         callbacks.onOutput(notice.trim());
         return;
       }

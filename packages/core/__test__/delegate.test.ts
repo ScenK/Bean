@@ -316,18 +316,18 @@ describe("runDelegate", () => {
     second.pid = 4242;
     const children = [first, second];
     const argsSeen: string[][] = [];
-    const respawned: (number | undefined)[] = [];
+    const started: (number | undefined)[] = [];
     const sessions: (string | undefined)[] = [];
     const { cbs, outputs, dones, errors } = collect();
     runDelegate(
       { cli: "codex", projectPath: "/p", prompt: "go", resume: "gone" },
-      { ...cbs, onDone: (r, id) => { dones.push(r); sessions.push(id); }, onRespawn: (pid) => respawned.push(pid) },
+      { ...cbs, onDone: (r, id) => { dones.push(r); sessions.push(id); }, onSessionStart: (pid) => started.push(pid) },
       (_c, args) => { argsSeen.push(args); return asChild(children.shift()!); },
     );
     first.stderr.emit("data", Buffer.from("Error: no rollout found for thread id gone\n"));
     first.emit("close", 1);
     expect(argsSeen[1]).not.toContain("resume");
-    expect(respawned).toEqual([4242]);
+    expect(started).toEqual([]); // the rejected attempt never started a session
     second.stdout.emit("data", Buffer.from(
       '{"type":"thread.started","thread_id":"t-new"}\n' +
       '{"type":"item.completed","item":{"type":"agent_message","text":"fresh answer"}}\n',
@@ -338,16 +338,7 @@ describe("runDelegate", () => {
     expect(dones).toHaveLength(1);
     expect(dones[0]).toMatch(/^\(Couldn't resume the earlier codex session.*\n\nfresh answer$/s);
     expect(sessions).toEqual(["t-new"]);
-  });
-
-  it("a rejected resume reports the error instead of retrying when beforeRespawn declines", () => {
-    const child = new FakeChild();
-    const spawnFn = vi.fn(() => asChild(child));
-    const { cbs, errors } = collect();
-    runDelegate({ cli: "codex", projectPath: "/p", prompt: "go", resume: "gone" }, { ...cbs, beforeRespawn: () => false }, spawnFn);
-    child.emit("close", 1);
-    expect(spawnFn).toHaveBeenCalledTimes(1);
-    expect(errors).toHaveLength(1);
+    expect(started).toEqual([4242]);
   });
 
   it("a resumed session that started and then failed is a real error, not a fresh retry", () => {

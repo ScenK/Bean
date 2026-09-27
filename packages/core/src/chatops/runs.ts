@@ -127,20 +127,19 @@ export class RunRegistry {
         free();
         events.onError(err.message);
       },
-      // A rejected resume re-spawns the CLI. The dead first child's pid made the reservation
-      // reclaimable, so hand it to this (live) process first — and only if it's still ours —
-      // then to the new child.
-      beforeRespawn: () =>
-        !run.released && updateReservationPid(this.opts.dir, req.projectPath, process.pid, reservation.id),
-      onRespawn: (pid) => {
-        if (!run.released && pid !== undefined) updateReservationPid(this.opts.dir, req.projectPath, pid, reservation.id);
+      // A resumed run may re-spawn fresh if the CLI rejects the id; the first child is dead by
+      // then, so a reservation on its pid would be reclaimable mid-run. Keep this (live) process's
+      // pid until the session has started and no retry can happen.
+      // ponytail: a bot killed in that ~1s window leaves the reservation on its own dead pid.
+      onSessionStart: (pid) => {
+        if (req.resume && !run.released && pid !== undefined) updateReservationPid(this.opts.dir, req.projectPath, pid);
       },
     });
     // The reservation was created against this process's own pid (nothing else to track before
     // the child exists); switch it to the child's real pid now so a later interruptAll() can
     // leave the reservation in place and have the next reserveRun() correctly track *that
     // child*, not this (possibly about-to-exit) process. See run-queue.ts's doc comment.
-    if (!run.released && run.handle.pid !== undefined) {
+    if (!req.resume && !run.released && run.handle.pid !== undefined) {
       updateReservationPid(this.opts.dir, req.projectPath, run.handle.pid);
     }
     if (!run.released) this.byProject.set(req.projectPath, run);

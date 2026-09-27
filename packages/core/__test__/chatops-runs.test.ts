@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -206,21 +206,15 @@ test("onActivity reports a cancel as cancelled", async () => {
   expect(seen.map((e) => e.phase)).toEqual(["start", "cancelled"]);
 });
 
-test("resume fallback: re-owns the reservation for the respawn, and refuses once another process reclaimed it", async () => {
+test("a resumed run keeps the reservation on this live process until the session starts", async () => {
   const dir = tmp();
   const { fn, calls } = fakeRun();
-  const reg = new RunRegistry(fn, { dir, botKind: "discord" });
+  const pids = [111];
+  const reg = new RunRegistry((r, cb) => ({ ...fn(r, cb), pid: pids[0] }), { dir, botKind: "discord" });
   await reg.start({ ...req, resume: "s-1" }, events(), meta);
   const file = join(dir, "runs", readdirSync(join(dir, "runs"))[0]!);
-  const cb = calls[0]!.cb;
-  expect(cb.beforeRespawn?.()).toBe(true);
+  // Not the first child's pid: it may die on a rejected resume and make the project reclaimable.
   expect(JSON.parse(readFileSync(file, "utf8")).pid).toBe(process.pid);
-  cb.onRespawn?.(4242);
+  calls[0]!.cb.onSessionStart?.(4242);
   expect(JSON.parse(readFileSync(file, "utf8")).pid).toBe(4242);
-  // Another process reclaimed the project in the dead-child window: not ours any more.
-  const theirs = { id: "other", projectPath: "/p", pid: 1, createdAt: new Date().toISOString() };
-  writeFileSync(file, JSON.stringify(theirs));
-  expect(cb.beforeRespawn?.()).toBe(false);
-  cb.onRespawn?.(5555);
-  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(theirs);
 });
