@@ -3,7 +3,9 @@
 Group channels (Discord/Teams) balance "natural" against "predictable" with one rule:
 **ambient awareness may only improve what Bean says once invoked — never whether Bean acts.**
 
-- **Only an explicit address gets a turn**: DM, platform @mention, or reply-to-Bean. Everything
+- **Only an explicit address gets a turn**: DM, platform @mention, reply-to-Bean, or (Discord) any
+  message in a thread Bean opened (`isBeanThread` — `ownerId` is the bot, so it survives restarts;
+  those threads skip ambient `fetchRecent` entirely). Everything
   else in a channel is ambient context and gets no reply. Bean's name appearing in the text
   ("we should add an x function to bean") is a message *about* Bean, not *to* it — it must stay
   silent. There used to be a `mentionsBotName` word-boundary matcher (`chatops/addressing.ts`)

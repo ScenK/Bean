@@ -5,10 +5,10 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, MemoryProposalStore, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
-  ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials,
+  ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, ThreadAutoArchiveDuration,
   type ApplicationCommandDataResolvable,
   type Interaction, type Message, type MessageCreateOptions, type TextBasedChannel,
 } from "discord.js";
@@ -100,6 +100,11 @@ const selections = new Map<string, { cli?: string; model?: string; skillName?: s
 
 const allowed = (userId: string): boolean => discordConfig.allowedUserIds.includes(userId);
 
+// A thread Bean opened is a session: every message in it is addressed to Bean. The Discord
+// API's ownerId survives restarts, so no local record of owned threads is needed.
+const isBeanThread = (channel: TextBasedChannel): boolean =>
+  channel.isThread() && channel.ownerId === client.user?.id;
+
 // Rebuild the live-session proposal card from the current (possibly edited) proposal — used to
 // re-render in place after the Edit-prompt modal changes the text.
 async function liveSessionCardFor(
@@ -147,7 +152,8 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voi
     },
     sendFile: async (path, caption) => { await send({ content: caption ?? "", files: [path] }); },
     fetchRecent: async (sinceMs) => {
-      if (!("messages" in channel)) return [];
+      // Everything in a Bean thread is already a turn in its history — no ambient chatter.
+      if (!("messages" in channel) || isBeanThread(channel)) return [];
       const fetched = await channel.messages.fetch({ limit: 50 });
       return [...fetched.values()]
         // Messages addressed to Bean are already in the conversation history — only
@@ -176,6 +182,7 @@ client.on("messageCreate", async (message) => {
     // passing ("we should add x to bean") is about Bean, not to it — it stays ambient context.
     const addressed =
       isDm ||
+      isBeanThread(message.channel) ||
       message.mentions.users.has(client.user?.id ?? "") ||
       message.mentions.repliedUser?.id === client.user?.id;
     if (!addressed && !capturing) return;
@@ -220,22 +227,37 @@ client.on("messageCreate", async (message) => {
       if (transcribeFailed) await message.reply("I couldn't transcribe that voice message — try again, or type it out.");
       return;
     }
-    if ("sendTyping" in message.channel) await message.channel.sendTyping();
+    // A top-level address in a plain text channel opens a session thread on that message; the
+    // turn (and its cards, runs, results) then lives in the thread. Not while a live session
+    // captures the channel — that session owns the channel's turns.
+    let channel: TextBasedChannel = message.channel;
+    if (!capturing && message.channel.type === ChannelType.GuildText) {
+      try {
+        channel = await message.startThread({
+          name: await threadTitle(text || "(image)", { chat: converseChat, model: beanConfig.model }),
+          autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+        });
+      } catch (err) {
+        // Missing Create Public Threads permission, etc. — answer in the channel as before.
+        console.error("startThread failed, replying in channel:", err);
+      }
+    }
+    if ("sendTyping" in channel) await channel.sendTyping();
     // Discord's typing indicator lasts ~10s; refresh it while onMessage is still working.
-    const typing = "sendTyping" in message.channel
-      ? setInterval(() => message.channel.sendTyping().catch(() => {}), 8000)
+    const typing = "sendTyping" in channel
+      ? setInterval(() => channel.sendTyping().catch(() => {}), 8000)
       : undefined;
     try {
       await bot.onMessage(
         {
-          conversationId: message.channelId, text: text || "(image)",
+          conversationId: channel.id, text: text || "(image)",
           images: images.length > 0 ? images : undefined,
           fromId: message.author.id, fromName: message.author.displayName,
           // Everyone @mentioned except Bean — feeds the live-session `+driver`/`-driver` commands.
           mentionedIds: [...message.mentions.users.keys()].filter((id) => id !== client.user?.id),
           channelName: isDm ? "DM" : "name" in message.channel && message.channel.name ? `#${message.channel.name}` : undefined,
         },
-        effectsFor(message.channel, message.id, heardAudio),
+        effectsFor(channel, message.id, heardAudio),
       );
     } finally {
       clearInterval(typing);
