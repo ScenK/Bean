@@ -468,7 +468,7 @@ app.whenReady().then(async () => {
     const cfg = await loadConfig(cfgPath, dir);
 
     const runtime = createRuntimeConfig(
-      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, reasoningEffort: cfg.reasoningEffort, routineDigestContext: cfg.routineDigestContext, disabledClis: cfg.disabledClis },
+      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, reasoningEffort: cfg.reasoningEffort, routineDigestContext: cfg.routineDigestContext, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch },
       {
         makeChat: makeOpenAIChat,
         makeConverse: makeOpenAIConverse,
@@ -694,6 +694,7 @@ app.whenReady().then(async () => {
         reasoningEffort: runtime.getReasoningEffort(),
         routineDigestContext: runtime.getRoutineDigestContext(),
         disabledClis: runtime.getDisabledClis(),
+        webSearch: runtime.getWebSearch(),
         paths: {
           config: configFile(dir),
           skills: skillsDir(dir),
@@ -711,6 +712,7 @@ app.whenReady().then(async () => {
       modelMemoryFile: modelMemoryFile(dir),
       delegateTasks,
       delegateAvailable: () => enabledClis().length > 0,
+      webSearch: () => runtime.getWebSearch(),
       onChatTurn: () => {
         const id = `chat:${randomUUID()}`;
         chatTurnId = id;

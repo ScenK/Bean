@@ -34,7 +34,9 @@ export interface ToolCall { id?: string; name: string; args: unknown; }
 // which is confirm-first. run() returns a plain-text result fed back to the model.
 export interface ActionTool { spec: ToolSpec; run: (args: unknown) => Promise<string>; }
 export interface ConverseDeps {
-  chat: (a: { model: string; messages: ConvoMsg[]; tools: ToolSpec[] }) => Promise<{
+  /** webSearch = also offer the provider's built-in web search (OpenAI Responses `web_search`),
+   * which runs server-side inside the same model call — no tool round trip on Bean's side. */
+  chat: (a: { model: string; messages: ConvoMsg[]; tools: ToolSpec[]; webSearch?: boolean }) => Promise<{
     content: string;
     toolCalls: ToolCall[];
   }>;
@@ -93,25 +95,38 @@ export interface ChatRequest { history: ChatTurn[]; message: string; droppedUrl?
 // harness); everything else routes to propose_delegate.
 // delegateOffered mirrors whether propose_delegate is in this request's tools — the hand-off
 // rule must not promise an agent that isn't there (desktop with no enabled CLI).
-const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean): string =>
+// webSearch splits "the web" into public vs private: public lookups Bean searches itself; the
+// user's own systems are stated as never being on the public web (a fact, not a prohibition),
+// so the model doesn't search, find nothing, and guess. Flag off = today's wording, verbatim.
+const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean, webSearch = false): string =>
   // Routing is decided by Bean's OWN closed capability set, not by guessing what the
   // delegated harness can do — that set (MCP servers, auth, skills) is invisible from here.
   // See .memory/convention-route-by-own-capabilities.md.
   "You yourself can only talk, plus call the tools you are given in this request. You have " +
-  "no access to files, repositories, a shell, the web or current data, or external systems " +
-  "(issue trackers such as Jira, GitHub, email, calendars, docs). Decide by what the task " +
+  (webSearch
+    ? "no access to files, repositories, a shell, or external systems " +
+      "(issue trackers such as Jira, GitHub, email, calendars, docs). You CAN search the public " +
+      "web with your web search tool: use it for public information (news, documentation, " +
+      "software releases, general facts), then answer and end with one short 'Source:' line. " +
+      "Anything about the user's own repositories, tickets, mail, calendar, team, deployments, " +
+      "or accounts is never on the public web, so a search cannot find it — don't search for " +
+      "it; say it isn't on the public web and " +
+      (delegateOffered ? "hand it off as described below. " : "that you can't reach it here. ")
+    : "no access to files, repositories, a shell, the web or current data, or external systems " +
+      "(issue trackers such as Jira, GitHub, email, calendars, docs). ") +
+  "Decide by what the task " +
   "needs, not by its topic: if the complete result can be given as chat text (answering, " +
   "explaining, drafting or rewriting text, brainstorming, summarizing what the user pasted), " +
   "or one of your own tools covers it, handle it yourself. " +
   (delegateOffered
-    ? "If finishing it needs files, a shell, the web or current data, or a change in an " +
+    ? "If finishing it needs files, a shell, " + (webSearch ? "the user's own private data" : "the web or current data") + ", or a change in an " +
       "external system (e.g. actually creating a ticket, not drafting one), it is a job for " +
       "the separate agent, which runs with the user's own tools and credentials — hand it " +
       "off right away instead of drafting it in chat or asking clarifying questions first; " +
       "put what you know into the instruction and let the agent ask. When unsure whether it " +
       "needs those, hand off: the user confirms the card before anything runs, so an unneeded " +
       "hand-off costs one click, while a made-up answer about code or external data costs trust. "
-    : "If finishing it needs files, a shell, the web or current data, or a change in an " +
+    : "If finishing it needs files, a shell, " + (webSearch ? "the user's own private data" : "the web or current data") + ", or a change in an " +
       "external system, say plainly that you can't do that here — never pretend you did it. ") +
   "Your own tools (reminders etc.) you DO execute yourself — call them " +
   "directly when the user asks, then confirm what you did in one short sentence. " +
@@ -392,6 +407,9 @@ export interface ConverseInput {
   /** false where confirming a run couldn't execute anything (chatops — no desktop, no terminal). */
   runAvailable?: boolean;
   todoRoutines?: string[];
+  /** Offer the built-in public web search (config `webSearch`). Per chat, not per turn: it
+   * changes the leading system message, which must stay byte-stable for prompt caching. */
+  webSearch?: boolean;
 }
 
 export async function converse(input: ConverseInput): Promise<ConverseResult> {
@@ -416,6 +434,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     rememberAvailable = false,
     runAvailable = true,
     todoRoutines = [],
+    webSearch = false,
   } = input;
   // The leading system message must stay byte-stable for the life of a chat: OpenAI prompt
   // caching is exact-prefix, so anything per-turn here (a clock, per-message memory ranking)
@@ -424,7 +443,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   const delegateOffered = delegateAvailable && (projects.length > 0 || scratchPath !== undefined);
   const systemParts = [
     composePersonaPrompt(persona),
-    behaviorInstructions(runAvailable, delegateOffered),
+    behaviorInstructions(runAvailable, delegateOffered, webSearch),
     catalog(skills, projects),
   ];
   if (linkedNote) {
@@ -483,7 +502,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   for (let round = 0; round < 3; round++) {
     let toolCalls: ToolCall[] = [];
     try {
-      const res = await deps.chat({ model: deps.model, messages, tools });
+      const res = await deps.chat({ model: deps.model, messages, tools, webSearch });
       content = res.content;
       toolCalls = res.toolCalls;
     } catch (err) {

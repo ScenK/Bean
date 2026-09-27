@@ -175,6 +175,8 @@ export interface ChatHandlerDeps {
   dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
+  /** Config `webSearch`, read per chat request so a Settings toggle applies without restart. */
+  webSearch?: () => boolean;
   /** Its scratch workspace hosts delegates that aren't about a project (main.ts creates it). */
   beanDirPath?: string;
   loadRoutines?: () => Promise<Routine[]>;
@@ -218,6 +220,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       delegateAvailable: deps.delegateAvailable?.() ?? false,
       scratchPath: deps.beanDirPath ? scratchDir(deps.beanDirPath) : undefined,
       todoRoutines,
+      webSearch: deps.webSearch?.() ?? false,
     });
     if (imageTool && imageTool.paths.length > 0) {
       result.generatedImages = await Promise.all(imageTool.paths.map(async (path) => ({
@@ -555,6 +558,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
+  webSearch?: () => boolean;
   imageGen?: ChatHandlerDeps["imageGen"];
   broadcast: (channel: string, payload: unknown) => void;
   openComponent: (kind: ComponentKind, droppedUrl?: string) => void;

@@ -41,6 +41,7 @@ export function SettingsWindow() {
   const [systemControls, setSystemControls] = useState(false);
   const [reasoningEffort, setReasoningEffort] = useState("");
   const [routineDigestContext, setRoutineDigestContext] = useState(false);
+  const [webSearch, setWebSearch] = useState(false);
   const [detectedClis, setDetectedClis] = useState<CliName[]>([]);
   const [disabledClis, setDisabledClis] = useState<string[]>([]);
   const [paths, setPaths] = useState<ConfigView["paths"] | undefined>(undefined);
@@ -75,6 +76,7 @@ export function SettingsWindow() {
       setSystemControls(c.systemControls);
       setReasoningEffort(c.reasoningEffort);
       setRoutineDigestContext(c.routineDigestContext);
+      setWebSearch(c.webSearch);
       setDisabledClis(c.disabledClis);
       setPaths(c.paths);
     });
@@ -100,6 +102,7 @@ export function SettingsWindow() {
         reasoningEffort,
         routineDigestContext,
         disabledClis,
+        webSearch,
       });
       setSave("saved");
     } catch (err) {
@@ -244,6 +247,19 @@ export function SettingsWindow() {
                   onChange={(e) => { setSystemControls((e.target as HTMLInputElement).checked); setSave("idle"); }}
                 />
                 <span class="bean-chatops-label">Allow volume / media / app control from chat</span>
+              </label>
+            </div>
+          </div>
+          <div class="bean-settings-row">
+            <span class="bean-settings-row-label">Web search</span>
+            <div class="bean-settings-row-control">
+              <label class="bean-chatops-row" title="Lets Bean's chat (desktop, Discord, Teams) search the public web for news, docs, and releases. Your own repos, tickets, and mail still go to a delegated agent. Each search is billed by OpenAI.">
+                <input
+                  type="checkbox"
+                  checked={webSearch}
+                  onChange={(e) => { setWebSearch((e.target as HTMLInputElement).checked); setSave("idle"); }}
+                />
+                <span class="bean-chatops-label">Allow public web search from chat</span>
               </label>
             </div>
           </div>

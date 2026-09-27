@@ -246,3 +246,18 @@ test("makeOpenAISpeakWithClient returns mp3 bytes and caps input at the API's 40
   expect(sent?.response_format).toBe("mp3");
   expect(sent?.input).toHaveLength(4096);
 });
+
+test("converse adapter appends the built-in web_search tool only when asked, and drops its call items", async () => {
+  const { client, seen } = fakeResponses([
+    { type: "web_search_call", id: "ws_1", status: "completed" },
+    { type: "message", content: [{ type: "output_text", text: "Electron 40.\nSource: electronjs.org" }] },
+  ]);
+  const chat = makeOpenAIConverseWithClient(client as never);
+  const tool = { name: "set_reminder", description: "d", parameters: {} };
+  const out = await chat({ model: "m", messages: [{ role: "user", content: "hi" }], tools: [tool], webSearch: true });
+  expect((seen.args?.tools as Array<{ type: string }>).map((t) => t.type)).toEqual(["function", "web_search"]);
+  expect(out).toEqual({ content: "Electron 40.\nSource: electronjs.org", toolCalls: [] });
+
+  await chat({ model: "m", messages: [{ role: "user", content: "hi" }], tools: [tool] });
+  expect((seen.args?.tools as Array<{ type: string }>).map((t) => t.type)).toEqual(["function"]);
+});

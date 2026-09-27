@@ -120,6 +120,8 @@ export interface TeamsBotDeps {
   cards: CardBuilders;
   /** Gates the system_control action tool, same as main.ts's desktop wiring. */
   systemControlsEnabled: () => boolean;
+  /** Config `webSearch`: offer converse() the built-in public web search. */
+  webSearchEnabled?: () => boolean;
   /** Active chat-bridged agent sessions; while a channel is bound, its messages bypass converse. */
   liveSessions: LiveSessionRegistry;
   liveSessionProposals: LiveSessionProposalStore;
@@ -632,6 +634,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           rememberAvailable: true,
           runAvailable: false,
           todoRoutines,
+          webSearch: deps.webSearchEnabled?.() ?? false,
         };
         const result = await converse({ ...converseBase, history, latestUserText: msg.text, latestUserImages: msg.images });
         turnFailed = result.error !== undefined;

@@ -358,6 +358,47 @@ test("leading system message is byte-stable across turns (prompt-cache prefix)",
   expect(systems[1]).toBe(systems[0]);
 });
 
+describe("web search", () => {
+  const capture = () => {
+    const seen: { system: string; webSearch?: boolean }[] = [];
+    const deps: ConverseDeps = {
+      model: "m",
+      chat: async ({ messages, webSearch }) => { seen.push({ system: messages[0]!.content as string, webSearch }); return { content: "ok", toolCalls: [] }; },
+    };
+    return { seen, deps };
+  };
+
+  it("off by default: no search offered and today's 'no web' wording", async () => {
+    const { seen, deps } = capture();
+    await conv({ latestUserText: "hi", deps, delegateAvailable: true, scratchPath: "/s" });
+    expect(seen[0]!.webSearch).toBe(false);
+    expect(seen[0]!.system).toContain("the web or current data");
+    expect(seen[0]!.system).not.toContain("public web");
+  });
+
+  it("on: offers search and splits public lookups from the user's private systems", async () => {
+    const { seen, deps } = capture();
+    await conv({ latestUserText: "hi", deps, delegateAvailable: true, scratchPath: "/s", webSearch: true });
+    const { system, webSearch } = seen[0]!;
+    expect(webSearch).toBe(true);
+    expect(system).not.toContain("the web or current data");
+    // The private case is worded as a fact so the model doesn't search, find nothing, and guess.
+    expect(system).toContain("is never on the public web");
+    expect(system).toMatch(/repositories, tickets, mail, calendar, team, deployments/);
+    expect(system).toContain("hand it off");
+    expect(system).toContain("'Source:' line");
+    // Existing hand-off bias stays.
+    expect(system).toContain("When unsure whether it needs those, hand off");
+  });
+
+  it("on without a delegate: private data is declined, never promised to an agent", async () => {
+    const { seen, deps } = capture();
+    await conv({ latestUserText: "hi", deps, webSearch: true });
+    expect(seen[0]!.system).toContain("that you can't reach it here");
+    expect(seen[0]!.system).not.toContain("hand it off");
+  });
+});
+
 test("history turns are accepted and the function never throws on chat failure", async () => {
   const deps: ConverseDeps = { model: "m", chat: async () => { throw new Error("network"); } };
   const res = await conv({

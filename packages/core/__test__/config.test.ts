@@ -63,7 +63,7 @@ test("saveConfig writes only persisted config fields (no beanDir)", async () => 
   const file = join(dir, "config.json");
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m", terminalApp: "" });
   const parsed = JSON.parse(await readFile(file, "utf8"));
-  expect(Object.keys(parsed).sort()).toEqual(["delegateCli", "disabledClis", "editorApp", "imageModel", "liveSessions", "model", "openaiApiKey", "reasoningEffort", "routineDigestContext", "systemControls", "terminalApp"]);
+  expect(Object.keys(parsed).sort()).toEqual(["delegateCli", "disabledClis", "editorApp", "imageModel", "liveSessions", "model", "openaiApiKey", "reasoningEffort", "routineDigestContext", "systemControls", "terminalApp", "webSearch"]);
 });
 
 test("loads config and defaults terminalApp to empty string", async () => {
@@ -176,6 +176,15 @@ test("routineDigestContext defaults off and round-trips", async () => {
   expect((await loadConfig(file, "/b")).routineDigestContext).toBe(false);
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m", routineDigestContext: true });
   expect((await loadConfig(file, "/b")).routineDigestContext).toBe(true);
+});
+
+test("webSearch defaults off, round-trips, and survives a save that omits it", async () => {
+  const file = join(dir, "config.json");
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
+  expect((await loadConfig(file, "/b")).webSearch).toBe(false);
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m", webSearch: true });
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
+  expect((await loadConfig(file, "/b")).webSearch).toBe(true);
 });
 
 test("reasoningEffort defaults to \"\" and is preserved by a save that omits it", async () => {

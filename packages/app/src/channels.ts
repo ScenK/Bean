@@ -12,6 +12,7 @@ export interface ConfigView {
   reasoningEffort: string;
   routineDigestContext: boolean;
   disabledClis: string[];
+  webSearch: boolean;
   paths: { config: string; skills: string; projects: string; persona: string };
 }
 export interface ConfigUpdate {
@@ -24,6 +25,7 @@ export interface ConfigUpdate {
   reasoningEffort: string;
   routineDigestContext: boolean;
   disabledClis: string[];
+  webSearch: boolean;
 }
 export interface AppInfo {
   version: string;
