@@ -10,7 +10,7 @@ export type RunDelegateFn = (req: DelegateRequest, callbacks: DelegateCallbacks)
 
 export interface RunEvents {
   onTail: (line: string) => void;
-  onDone: (result: string) => void;
+  onDone: (result: string, sessionId?: string) => void;
   onError: (message: string) => void;
   onCancelled: () => void;
 }
@@ -85,7 +85,7 @@ export class RunRegistry {
     const events: RunEvents = act
       ? {
           onTail: callerEvents.onTail, // output stays in the channel; see activity.ts
-          onDone: (result) => { act({ type: "run", phase: "done", id: runId, name }); callerEvents.onDone(result); },
+          onDone: (result, sessionId) => { act({ type: "run", phase: "done", id: runId, name }); callerEvents.onDone(result, sessionId); },
           onError: (message) => { act({ type: "run", phase: "failed", id: runId, name }); callerEvents.onError(message); },
           onCancelled: () => { act({ type: "run", phase: "cancelled", id: runId, name }); callerEvents.onCancelled(); },
         }
@@ -117,22 +117,29 @@ export class RunRegistry {
       onOutput: (line) => {
         if (!run.released) latest = line;
       },
-      onDone: (result) => {
+      onDone: (result, sessionId) => {
         if (run.released) return;
         free();
-        events.onDone(result);
+        events.onDone(result, sessionId);
       },
       onError: (err) => {
         if (run.released) return;
         free();
         events.onError(err.message);
       },
+      // A resumed run may re-spawn fresh if the CLI rejects the id; the first child is dead by
+      // then, so a reservation on its pid would be reclaimable mid-run. Keep this (live) process's
+      // pid until the session has started and no retry can happen.
+      // ponytail: a bot killed in that ~1s window leaves the reservation on its own dead pid.
+      onSessionStart: (pid) => {
+        if (req.resume && !run.released && pid !== undefined) updateReservationPid(this.opts.dir, req.projectPath, pid);
+      },
     });
     // The reservation was created against this process's own pid (nothing else to track before
     // the child exists); switch it to the child's real pid now so a later interruptAll() can
     // leave the reservation in place and have the next reserveRun() correctly track *that
     // child*, not this (possibly about-to-exit) process. See run-queue.ts's doc comment.
-    if (!run.released && run.handle.pid !== undefined) {
+    if (!req.resume && !run.released && run.handle.pid !== undefined) {
       updateReservationPid(this.opts.dir, req.projectPath, run.handle.pid);
     }
     if (!run.released) this.byProject.set(req.projectPath, run);

@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -35,8 +35,8 @@ test("second start on the same project is rejected while the first runs", async 
   const ev = events();
   expect(await reg.start(req, ev, meta)).toBe(true);
   expect(await reg.start(req, ev, meta)).toBe(false);
-  calls[0]?.cb.onDone("result");
-  expect(ev.onDone).toHaveBeenCalledWith("result");
+  calls[0]?.cb.onDone("result", "sess-1");
+  expect(ev.onDone).toHaveBeenCalledWith("result", "sess-1");
   expect(await reg.start(req, ev, meta)).toBe(true); // freed after completion
 });
 
@@ -194,7 +194,7 @@ test("onActivity reports the run lifecycle under one id, named after the project
     { type: "run", phase: "done", id: "r1", name: "api" },
   ]); // no tail: delegate output never leaves the channel
   expect(ev.onTail).toHaveBeenCalledWith("building");
-  expect(ev.onDone).toHaveBeenCalledWith("ok"); // caller's events still fire
+  expect(ev.onDone).toHaveBeenCalledWith("ok", undefined); // caller's events still fire
 });
 
 test("onActivity reports a cancel as cancelled", async () => {
@@ -204,4 +204,17 @@ test("onActivity reports a cancel as cancelled", async () => {
   await reg.start(req, events(), meta);
   reg.cancel(req.projectPath);
   expect(seen.map((e) => e.phase)).toEqual(["start", "cancelled"]);
+});
+
+test("a resumed run keeps the reservation on this live process until the session starts", async () => {
+  const dir = tmp();
+  const { fn, calls } = fakeRun();
+  const pids = [111];
+  const reg = new RunRegistry((r, cb) => ({ ...fn(r, cb), pid: pids[0] }), { dir, botKind: "discord" });
+  await reg.start({ ...req, resume: "s-1" }, events(), meta);
+  const file = join(dir, "runs", readdirSync(join(dir, "runs"))[0]!);
+  // Not the first child's pid: it may die on a rejected resume and make the project reclaimable.
+  expect(JSON.parse(readFileSync(file, "utf8")).pid).toBe(process.pid);
+  calls[0]!.cb.onSessionStart?.(4242);
+  expect(JSON.parse(readFileSync(file, "utf8")).pid).toBe(4242);
 });

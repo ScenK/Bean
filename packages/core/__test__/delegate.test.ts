@@ -7,6 +7,9 @@ import {
   claudeResult,
   codexTailLine,
   codexResult,
+  opencodeTailLine,
+  opencodeResult,
+  sessionIdOf,
   runDelegate,
   DELEGATE_TIMEOUT_MS,
   GIT_TRAILER_INSTRUCTION,
@@ -55,17 +58,73 @@ describe("delegateCommand", () => {
   it("maps opencode to headless run with auto approval", () => {
     const { command, args } = delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "fix the bug" });
     expect(command).toBe("opencode");
-    expect(args).toEqual(["run", "--auto", "fix the bug" + GIT_TRAILER_INSTRUCTION]);
+    expect(args).toEqual(["run", "--auto", "--format", "json", "fix the bug" + GIT_TRAILER_INSTRUCTION]);
   });
 
   it("appends --model with the verbatim model string", () => {
     const { args } = delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "fix", model: "github-copilot/claude-sonnet-5" });
-    expect(args).toEqual(["run", "--auto", "--model", "github-copilot/claude-sonnet-5", "fix" + GIT_TRAILER_INSTRUCTION]);
+    expect(args).toEqual(["run", "--auto", "--format", "json", "--model", "github-copilot/claude-sonnet-5", "fix" + GIT_TRAILER_INSTRUCTION]);
   });
 
   it("omits --model when no model was picked", () => {
     const { args } = delegateCommand({ cli: "claude", projectPath: "/p", prompt: "fix" });
     expect(args).not.toContain("--model");
+  });
+});
+
+describe("delegateCommand resume", () => {
+  it("claude continues the session with --resume", () => {
+    const { args } = delegateCommand({ cli: "claude", projectPath: "/p", prompt: "more", resume: "c-1" });
+    expect(args.slice(args.indexOf("--resume"), args.indexOf("--resume") + 2)).toEqual(["--resume", "c-1"]);
+  });
+
+  it("codex uses the exec resume subcommand with the id before the prompt", () => {
+    const { args } = delegateCommand({ cli: "codex", projectPath: "/p", prompt: "more", resume: "t-1" });
+    expect(args.slice(0, 3)).toEqual(["exec", "resume", "--json"]);
+    expect(args.slice(-3)).toEqual(["--", "t-1", "more" + GIT_TRAILER_INSTRUCTION]);
+  });
+
+  it("opencode continues the session with --session", () => {
+    const { args } = delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "more", resume: "ses_1" });
+    expect(args).toEqual(["run", "--auto", "--format", "json", "--session", "ses_1", "more" + GIT_TRAILER_INSTRUCTION]);
+  });
+
+  it("adds no resume args without an id", () => {
+    for (const cli of ["claude", "codex", "opencode"] as const) {
+      const { args } = delegateCommand({ cli, projectPath: "/p", prompt: "x" });
+      expect(args).not.toContain("--resume");
+      expect(args).not.toContain("resume");
+      expect(args).not.toContain("--session");
+    }
+  });
+});
+
+describe("sessionIdOf", () => {
+  it("claude: only from the system/init event, not an error result echoing the id", () => {
+    expect(sessionIdOf("claude", { type: "system", subtype: "init", session_id: "c-1" })).toBe("c-1");
+    expect(sessionIdOf("claude", { type: "result", is_error: true, session_id: "c-1" })).toBeUndefined();
+  });
+
+  it("codex: from thread.started", () => {
+    expect(sessionIdOf("codex", { type: "thread.started", thread_id: "t-1" })).toBe("t-1");
+    expect(sessionIdOf("codex", { type: "turn.started" })).toBeUndefined();
+  });
+
+  it("opencode: from any event's sessionID", () => {
+    expect(sessionIdOf("opencode", { type: "step_start", sessionID: "ses_1" })).toBe("ses_1");
+    expect(sessionIdOf("opencode", { type: "step_start" })).toBeUndefined();
+  });
+});
+
+describe("opencode --format json events", () => {
+  it("tails text and tool_use parts; the text is the result", () => {
+    const text = { type: "text", sessionID: "s", part: { type: "text", text: "done" } };
+    const tool = { type: "tool_use", sessionID: "s", part: { type: "tool", tool: "bash" } };
+    expect(opencodeTailLine(text)).toBe("done");
+    expect(opencodeTailLine(tool)).toBe("▸ bash");
+    expect(opencodeTailLine({ type: "step_finish", part: {} })).toBeUndefined();
+    expect(opencodeResult(text)).toBe("done");
+    expect(opencodeResult(tool)).toBeUndefined();
   });
 });
 
@@ -171,7 +230,7 @@ describe("runDelegate", () => {
       collect().cbs,
       (command, args, cwd) => { seen.push({ command, args, cwd }); return asChild(child); },
     );
-    expect(seen).toEqual([{ command: "opencode", args: ["run", "--auto", "go" + GIT_TRAILER_INSTRUCTION], cwd: "/my/project" }]);
+    expect(seen).toEqual([{ command: "opencode", args: ["run", "--auto", "--format", "json", "go" + GIT_TRAILER_INSTRUCTION], cwd: "/my/project" }]);
   });
 
   it("claude: streams tail lines and resolves onDone with the result event", () => {
@@ -222,15 +281,75 @@ describe("runDelegate", () => {
     expect(dones).toEqual(["DONE hello"]);
   });
 
-  it("opencode: every line is tail and the whole stdout is the result, including a trailing partial line", () => {
+  it("opencode: parses --format json across chunk boundaries; last text is the result", () => {
     const child = new FakeChild();
     const { cbs, outputs, dones } = collect();
     runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, cbs, () => asChild(child));
-    child.stdout.emit("data", Buffer.from("line one\nline "));
-    child.stdout.emit("data", Buffer.from("two"));
+    const tool = JSON.stringify({ type: "tool_use", sessionID: "ses_1", part: { tool: "bash" } });
+    const text = JSON.stringify({ type: "text", sessionID: "ses_1", part: { text: "all done" } });
+    child.stdout.emit("data", Buffer.from(tool + "\n" + text.slice(0, 10)));
+    child.stdout.emit("data", Buffer.from(text.slice(10)));
     child.emit("close", 0);
-    expect(outputs).toEqual(["line one", "line two"]);
-    expect(dones).toEqual(["line one\nline two"]);
+    expect(outputs).toEqual(["▸ bash", "all done"]);
+    expect(dones).toEqual(["all done"]);
+  });
+
+  it("hands the started session id to onDone", () => {
+    const child = new FakeChild();
+    const sessions: (string | undefined)[] = [];
+    runDelegate(
+      { cli: "claude", projectPath: "/p", prompt: "go" },
+      { ...collect().cbs, onDone: (_r, id) => sessions.push(id) },
+      () => asChild(child),
+    );
+    child.stdout.emit("data", Buffer.from(
+      JSON.stringify({ type: "system", subtype: "init", session_id: "c-9" }) + "\n" +
+      JSON.stringify({ type: "result", result: "ok", session_id: "c-9" }) + "\n",
+    ));
+    child.emit("close", 0);
+    expect(sessions).toEqual(["c-9"]);
+  });
+
+  it("a rejected resume re-spawns fresh once, says so, and reports the new session", () => {
+    const first = new FakeChild();
+    const second = new FakeChild();
+    second.pid = 4242;
+    const children = [first, second];
+    const argsSeen: string[][] = [];
+    const started: (number | undefined)[] = [];
+    const sessions: (string | undefined)[] = [];
+    const { cbs, outputs, dones, errors } = collect();
+    runDelegate(
+      { cli: "codex", projectPath: "/p", prompt: "go", resume: "gone" },
+      { ...cbs, onDone: (r, id) => { dones.push(r); sessions.push(id); }, onSessionStart: (pid) => started.push(pid) },
+      (_c, args) => { argsSeen.push(args); return asChild(children.shift()!); },
+    );
+    first.stderr.emit("data", Buffer.from("Error: no rollout found for thread id gone\n"));
+    first.emit("close", 1);
+    expect(argsSeen[1]).not.toContain("resume");
+    expect(started).toEqual([]); // the rejected attempt never started a session
+    second.stdout.emit("data", Buffer.from(
+      '{"type":"thread.started","thread_id":"t-new"}\n' +
+      '{"type":"item.completed","item":{"type":"agent_message","text":"fresh answer"}}\n',
+    ));
+    second.emit("close", 0);
+    expect(errors).toEqual([]);
+    expect(outputs[0]).toContain("started fresh");
+    expect(dones).toHaveLength(1);
+    expect(dones[0]).toMatch(/^\(Couldn't resume the earlier codex session.*\n\nfresh answer$/s);
+    expect(sessions).toEqual(["t-new"]);
+    expect(started).toEqual([4242]);
+  });
+
+  it("a resumed session that started and then failed is a real error, not a fresh retry", () => {
+    const child = new FakeChild();
+    const spawnFn = vi.fn(() => asChild(child));
+    const { cbs, errors } = collect();
+    runDelegate({ cli: "claude", projectPath: "/p", prompt: "go", resume: "c-1" }, cbs, spawnFn);
+    child.stdout.emit("data", Buffer.from(JSON.stringify({ type: "system", subtype: "init", session_id: "c-1" }) + "\n"));
+    child.emit("close", 1);
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveLength(1);
   });
 
   it("reports a non-zero exit as onError with the stderr tail", () => {
