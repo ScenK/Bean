@@ -95,11 +95,13 @@ export function reserveRun(dir: string, projectPath: string, pid: number, newId:
  * in place instead of releasing it blind, and the next reserveRun's liveness check will
  * correctly track whether *that child* — not the about-to-exit parent — is still running. No-op
  * if the reservation is already gone (settled faster than this update landed). */
-export function updateReservationPid(dir: string, projectPath: string, pid: number): void {
+export function updateReservationPid(dir: string, projectPath: string, pid: number, ownerId?: string): boolean {
   const path = reservationFile(dir, projectPath);
   const existing = readReservation(path);
-  if (!existing) return;
+  // ownerId: only touch the caller's own reservation — another process may have reclaimed it.
+  if (!existing || (ownerId !== undefined && existing.id !== ownerId)) return false;
   writeReservation(path, { ...existing, pid }, "w");
+  return true;
 }
 
 export function releaseRun(dir: string, projectPath: string): void {

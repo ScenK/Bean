@@ -127,9 +127,13 @@ export class RunRegistry {
         free();
         events.onError(err.message);
       },
-      // A rejected resume re-spawned the CLI: keep the reservation on the live child.
+      // A rejected resume re-spawns the CLI. The dead first child's pid made the reservation
+      // reclaimable, so hand it to this (live) process first — and only if it's still ours —
+      // then to the new child.
+      beforeRespawn: () =>
+        !run.released && updateReservationPid(this.opts.dir, req.projectPath, process.pid, reservation.id),
       onRespawn: (pid) => {
-        if (!run.released && pid !== undefined) updateReservationPid(this.opts.dir, req.projectPath, pid);
+        if (!run.released && pid !== undefined) updateReservationPid(this.opts.dir, req.projectPath, pid, reservation.id);
       },
     });
     // The reservation was created against this process's own pid (nothing else to track before

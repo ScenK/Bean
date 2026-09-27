@@ -340,6 +340,16 @@ describe("runDelegate", () => {
     expect(sessions).toEqual(["t-new"]);
   });
 
+  it("a rejected resume reports the error instead of retrying when beforeRespawn declines", () => {
+    const child = new FakeChild();
+    const spawnFn = vi.fn(() => asChild(child));
+    const { cbs, errors } = collect();
+    runDelegate({ cli: "codex", projectPath: "/p", prompt: "go", resume: "gone" }, { ...cbs, beforeRespawn: () => false }, spawnFn);
+    child.emit("close", 1);
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveLength(1);
+  });
+
   it("a resumed session that started and then failed is a real error, not a fresh retry", () => {
     const child = new FakeChild();
     const spawnFn = vi.fn(() => asChild(child));

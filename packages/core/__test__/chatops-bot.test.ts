@@ -361,6 +361,18 @@ test("a thread's follow-up delegate resumes the same CLI's session; another CLI 
   expect(deps.conversations.threadSession("other-thread", "claude")).toBeUndefined();
 });
 
+test("/new while a delegate runs: its session is not stored afterwards", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+  await bot.onMessage({ ...msg, text: "/new" }, fx());
+  delegateCalls[0]?.cb.onDone("late result", "pre-reset-sess");
+  await vi.waitFor(() => expect(effects.posted).toContain("late result"));
+  expect(deps.conversations.threadSession("c1", "claude")).toBeUndefined();
+});
+
 test("confirm re-composes the prompt from the skill picked on the card", async () => {
   const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
   const effects = fx();

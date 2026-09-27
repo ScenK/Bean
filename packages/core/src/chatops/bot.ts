@@ -162,6 +162,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     console.error("chatops run effect failed:", err);
   }
 
+  // `/new` count per conversation (this process): a run launched before a reset must not
+  // store its session afterwards and resurrect the pre-reset agent.
+  const resets = new Map<string, number>();
+
   async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();
     const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? p.proposal.projectPath;
@@ -185,6 +189,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     // Thread sessions: continue this thread's earlier agent for the same CLI; another CLI
     // starts fresh (see .memory/project-thread-sessions.md).
     const resume = deps.conversations.threadSession(p.conversationId, cli);
+    const resetsAtLaunch = resets.get(p.conversationId) ?? 0;
     const req: DelegateRequest = {
       cli,
       projectPath: p.proposal.projectPath,
@@ -205,7 +210,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         },
         onDone: (result, sessionId) => {
           void (async () => {
-            if (sessionId) deps.conversations.setThreadSession(p.conversationId, cli, sessionId);
+            if (sessionId && (resets.get(p.conversationId) ?? 0) === resetsAtLaunch) {
+              deps.conversations.setThreadSession(p.conversationId, cli, sessionId);
+            }
             deps.conversations.append(p.conversationId, { role: "assistant", content: `[delegate result] ${result}` });
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done" })).catch(logRunEffectError);
             await fx.post(result);
@@ -576,6 +583,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }
         if (cmd === "new") {
           deps.conversations.clear(msg.conversationId);
+          resets.set(msg.conversationId, (resets.get(msg.conversationId) ?? 0) + 1);
           // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
           deps.conversations.setAmbientCutoff(msg.conversationId, Date.now());
           await fx.reply("Fresh start — I've cleared this conversation's context.");
