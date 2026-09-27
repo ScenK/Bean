@@ -8,7 +8,7 @@ import {
   LiveSessionProposalStore, LiveSessionRegistry, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
-  ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, ThreadAutoArchiveDuration,
+  ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
   type ApplicationCommandDataResolvable,
   type Interaction, type Message, type MessageCreateOptions, type TextBasedChannel,
 } from "discord.js";
@@ -231,7 +231,14 @@ client.on("messageCreate", async (message) => {
     // turn (and its cards, runs, results) then lives in the thread. Not while a live session
     // captures the channel — that session owns the channel's turns.
     let channel: TextBasedChannel = message.channel;
-    if (!capturing && message.channel.type === ChannelType.GuildText) {
+    // Both permissions are checked up front: creating a thread Bean can't then post in would
+    // swallow the answer, while skipping it falls back to answering in the channel.
+    if (
+      !capturing && message.channel.type === ChannelType.GuildText && client.user &&
+      message.channel.permissionsFor(client.user)?.has([
+        PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.SendMessagesInThreads,
+      ])
+    ) {
       try {
         channel = await message.startThread({
           name: await threadTitle(text || "(image)", { chat: converseChat, model: beanConfig.model }),
