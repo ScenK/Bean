@@ -10,7 +10,8 @@ endpoint. Design: `docs/superpowers/specs/2026-07-10-discord-adapter-design.md`.
    Under *Privileged Gateway Intents*, enable **Message Content Intent**.
 2. **Invite it**: OAuth2 → URL Generator → scopes `bot` **and `applications.commands`**
    (the second is required for slash commands to register — without it Bean's `/` menu stays
-   empty) → permissions: View Channels, Send Messages, Read Message History → open the URL,
+   empty) → permissions: View Channels, Send Messages, Read Message History, Create Public Threads,
+   Send Messages in Threads → open the URL,
    add to your private server.
 3. **Your user id**: Discord settings → Advanced → enable Developer Mode, then right-click
    your name → "Copy User ID".
@@ -27,7 +28,12 @@ endpoint. Design: `docs/superpowers/specs/2026-07-10-discord-adapter-design.md`.
 @mention the bot in a server channel, reply to one of its messages, or DM it (no mention
 needed in DMs). Merely naming it ("we should add x to bean") is deliberately not an address —
 that message is kept as ambient context, not answered. Only allowlisted user ids get
-responses; everyone else is silently ignored. Saying a CLI/model in the message ("with
+responses; everyone else is silently ignored.
+
+Sessions are threads: a top-level @mention in a server text channel opens a thread on that
+message (named by the model) and Bean answers inside it. Every message in a Bean-opened thread
+is addressed to Bean — no @mention needed — and each thread keeps its own history, so parallel
+work is just another top-level @mention. DMs stay a single session. Saying a CLI/model in the message ("with
 opencode on GPT-5.5") is honored; delegate runs are confirm-first via buttons and execute on
 THIS machine.
 
