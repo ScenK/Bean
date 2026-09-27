@@ -100,6 +100,10 @@ const selections = new Map<string, { cli?: string; model?: string; skillName?: s
 
 const allowed = (userId: string): boolean => discordConfig.allowedUserIds.includes(userId);
 
+// bot.ts's keyword commands (same optional leading slash). They act on the channel and answer
+// in one line, so they never open a session thread.
+const KEYWORD_COMMAND = /^\/*(?:(?:cancel|new|stop|drivers)$|live-session\b)/i;
+
 // A thread Bean opened is a session: every message in it is addressed to Bean. The Discord
 // API's ownerId survives restarts, so no local record of owned threads is needed.
 const isBeanThread = (channel: TextBasedChannel): boolean =>
@@ -235,10 +239,13 @@ client.on("messageCreate", async (message) => {
     // swallow the answer, while skipping it falls back to answering in the channel.
     if (
       !capturing && message.channel.type === ChannelType.GuildText && client.user &&
+      !KEYWORD_COMMAND.test(text.trim()) &&
       message.channel.permissionsFor(client.user)?.has([
         PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.SendMessagesInThreads,
       ])
     ) {
+      // The title call + startThread take a moment; show Bean working in the meantime.
+      await message.channel.sendTyping();
       try {
         channel = await message.startThread({
           name: await threadTitle(text || "(image)", { chat: converseChat, model: beanConfig.model }),
