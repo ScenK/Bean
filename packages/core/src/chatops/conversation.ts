@@ -36,9 +36,26 @@ export class ConversationStore {
     ).run(conversationId, seq, turn.role, turn.content, new Date().toISOString());
   }
 
-  /** Deletes a conversation's entire history — backs the "/new" fresh-start command. */
+  /** Deletes a conversation's entire history — backs the "/new" fresh-start command. Its
+   * resumable delegate sessions go too: a fresh start shouldn't resume the old agent. */
   clear(conversationId: string): void {
     this.db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ?").run(conversationId);
+    this.db.prepare("DELETE FROM thread_sessions WHERE conversation_id = ?").run(conversationId);
+  }
+
+  /** The CLI's own session id from this thread's last delegate run with that CLI, if any. */
+  threadSession(conversationId: string, cli: string): string | undefined {
+    const row = this.db.prepare(
+      "SELECT session_id FROM thread_sessions WHERE conversation_id = ? AND cli = ?",
+    ).get(conversationId, cli) as { session_id: string } | undefined;
+    return row?.session_id;
+  }
+
+  setThreadSession(conversationId: string, cli: string, sessionId: string): void {
+    this.db.prepare(
+      "INSERT INTO thread_sessions (conversation_id, cli, session_id, updated_at) VALUES (?, ?, ?, ?) " +
+        "ON CONFLICT(conversation_id, cli) DO UPDATE SET session_id = excluded.session_id, updated_at = excluded.updated_at",
+    ).run(conversationId, cli, sessionId, new Date().toISOString());
   }
 
   /** Epoch ms of the newest ambient message already injected here; 0 when none. Durable

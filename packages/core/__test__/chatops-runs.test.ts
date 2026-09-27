@@ -35,8 +35,8 @@ test("second start on the same project is rejected while the first runs", async 
   const ev = events();
   expect(await reg.start(req, ev, meta)).toBe(true);
   expect(await reg.start(req, ev, meta)).toBe(false);
-  calls[0]?.cb.onDone("result");
-  expect(ev.onDone).toHaveBeenCalledWith("result");
+  calls[0]?.cb.onDone("result", "sess-1");
+  expect(ev.onDone).toHaveBeenCalledWith("result", "sess-1");
   expect(await reg.start(req, ev, meta)).toBe(true); // freed after completion
 });
 
@@ -194,7 +194,7 @@ test("onActivity reports the run lifecycle under one id, named after the project
     { type: "run", phase: "done", id: "r1", name: "api" },
   ]); // no tail: delegate output never leaves the channel
   expect(ev.onTail).toHaveBeenCalledWith("building");
-  expect(ev.onDone).toHaveBeenCalledWith("ok"); // caller's events still fire
+  expect(ev.onDone).toHaveBeenCalledWith("ok", undefined); // caller's events still fire
 });
 
 test("onActivity reports a cancel as cancelled", async () => {

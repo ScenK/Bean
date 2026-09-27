@@ -7,6 +7,9 @@ export interface DelegateRequest {
   projectPath: string;
   prompt: string;
   model?: string; // literal --model value (clis.json); flag omitted when unset
+  /** This CLI's own session id to continue (thread sessions); runDelegate falls back to a
+   * fresh run if the CLI rejects it. */
+  resume?: string;
 }
 
 // Bean commits under its own identity, not the local user's — see .memory (git identity for delegate commits).
@@ -29,6 +32,7 @@ export const GIT_TRAILER_INSTRUCTION =
 export function delegateCommand(req: DelegateRequest): { command: string; args: string[] } {
   const modelArgs = req.model ? ["--model", req.model] : [];
   const prompt = req.prompt + GIT_TRAILER_INSTRUCTION;
+  const resume = req.resume;
   if (req.cli === "claude") {
     return {
       command: "claude",
@@ -40,6 +44,7 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
         // and `--permission-mode auto`'s classifier doesn't run headless (verified 2026-07,
         // v2.1.214 — every would-ask action is denied), so an allowlist stalls night routines.
         "--dangerously-skip-permissions",
+        ...(resume ? ["--resume", resume] : []),
         ...modelArgs,
       ],
     };
@@ -48,7 +53,9 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
     return {
       command: "codex",
       args: [
+        // `codex exec resume <id> <prompt>` takes the same flags as `codex exec` (codex-cli 0.157).
         "exec",
+        ...(resume ? ["resume"] : []),
         "--json",
         // Full bypass, matching the claude branch above: headless runs can't answer
         // approval prompts, and the workspace-write sandbox blocks network (git push).
@@ -59,11 +66,16 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
         // `--` terminates option parsing so a prompt starting with "-"/"--" (a markdown
         // bullet, "---" frontmatter, "--help") is read as text, not parsed as a codex flag.
         "--",
+        ...(resume ? [resume] : []),
         prompt,
       ],
     };
   }
-  return { command: "opencode", args: ["run", "--auto", ...modelArgs, prompt] };
+  // --format json: the only opencode output that carries the session id (sessionID on every event).
+  return {
+    command: "opencode",
+    args: ["run", "--auto", "--format", "json", ...(resume ? ["--session", resume] : []), ...modelArgs, prompt],
+  };
 }
 
 export function claudeTailLine(event: unknown): string | undefined {
@@ -101,15 +113,42 @@ export function codexResult(event: unknown): string | undefined {
   return typeof e.item.text === "string" ? e.item.text : undefined;
 }
 
+export function opencodeTailLine(event: unknown): string | undefined {
+  const e = event as { type?: unknown; part?: { text?: unknown; tool?: unknown } } | null;
+  if (e?.type === "text") return typeof e.part?.text === "string" && e.part.text.trim() ? e.part.text.trim() : undefined;
+  if (e?.type === "tool_use" && typeof e.part?.tool === "string") return `▸ ${e.part.tool}`;
+  return undefined;
+}
+
+// Same shape as codex: the final answer is the last text part, so the last one wins.
+export function opencodeResult(event: unknown): string | undefined {
+  const e = event as { type?: unknown; part?: { text?: unknown } } | null;
+  return e?.type === "text" && typeof e.part?.text === "string" ? e.part.text : undefined;
+}
+
+/** The CLI's own session id, taken only from the event that proves the session actually
+ * started (a rejected claude --resume still echoes the id on its error `result`). */
+export function sessionIdOf(cli: CliName, event: unknown): string | undefined {
+  const e = event as { type?: unknown; subtype?: unknown; session_id?: unknown; thread_id?: unknown; sessionID?: unknown } | null;
+  const id =
+    cli === "claude" ? (e?.type === "system" && e.subtype === "init" ? e.session_id : undefined)
+    : cli === "codex" ? (e?.type === "thread.started" ? e.thread_id : undefined)
+    : e?.sessionID;
+  return typeof id === "string" && id ? id : undefined;
+}
+
 export interface DelegateCallbacks {
   onOutput: (line: string) => void;
-  onDone: (result: string) => void;
+  /** sessionId: the CLI's own session id when it reported one — pass it back as `resume`. */
+  onDone: (result: string, sessionId?: string) => void;
   onError: (err: Error) => void;
+  /** A rejected `resume` re-spawned a fresh child: its new pid (reservations track the child). */
+  onRespawn?: (pid: number | undefined) => void;
 }
 
 export interface DelegateHandle {
   cancel: (onCancelled?: () => void) => void;
-  // The spawned child's pid, once known (undefined only if spawnFn's process object never got
+  // The first spawned child's pid, once known (undefined only if spawnFn's process object never got
   // one — practically always defined). Lets a caller track *this specific process*, not just
   // "whoever was calling runDelegate", for cross-restart liveness checks (see run-queue.ts's
   // updateReservationPid / .memory/project-durable-run-queue.md).
@@ -129,8 +168,9 @@ export function runDelegate(
   spawnFn: DelegateSpawnFn = defaultDelegateSpawn,
   timeoutMs: number = DELEGATE_TIMEOUT_MS,
 ): DelegateHandle {
-  const { command, args } = delegateCommand(req);
-  const child = spawnFn(command, args, req.projectPath);
+  let resume = req.resume;
+  let command = "";
+  let child!: ChildProcess;
 
   let settled = false;
   let cancelling = false;
@@ -138,9 +178,11 @@ export function runDelegate(
   let onCancelled: (() => void) | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
   let result: string | undefined;
-  const rawLines: string[] = [];
+  let sessionId: string | undefined;
+  let rawLines: string[] = [];
   let stdoutBuf = "";
   let stderrBuf = "";
+  let notice = "";
 
   const settle = (fn: () => void): void => {
     if (settled) return;
@@ -168,10 +210,6 @@ export function runDelegate(
   const handleLine = (line: string): void => {
     if (!line.trim() || settled || cancelling) return;
     rawLines.push(line);
-    if (req.cli === "opencode") {
-      callbacks.onOutput(line);
-      return;
-    }
     let event: unknown;
     try {
       event = JSON.parse(line);
@@ -179,6 +217,7 @@ export function runDelegate(
       callbacks.onOutput(line);
       return;
     }
+    sessionId ??= sessionIdOf(req.cli, event);
     if (req.cli === "claude") {
       const r = claudeResult(event);
       if (r !== undefined) {
@@ -189,46 +228,75 @@ export function runDelegate(
       if (tail) callbacks.onOutput(tail);
       return;
     }
-    // codex: an agent_message is both the running tail AND the (latest) result.
-    const r = codexResult(event);
+    // codex/opencode: a message is both the running tail AND the (latest) result.
+    const r = req.cli === "codex" ? codexResult(event) : opencodeResult(event);
     if (r !== undefined) {
       result = r;
     }
-    const tail = codexTailLine(event);
+    const tail = req.cli === "codex" ? codexTailLine(event) : opencodeTailLine(event);
     if (tail) callbacks.onOutput(tail);
   };
 
-  child.stdout?.on("data", (chunk: Buffer) => {
-    stdoutBuf += chunk.toString("utf8");
-    for (let i = stdoutBuf.indexOf("\n"); i !== -1; i = stdoutBuf.indexOf("\n")) {
-      handleLine(stdoutBuf.slice(0, i));
-      stdoutBuf = stdoutBuf.slice(i + 1);
-    }
-  });
+  const spawnAttempt = (): void => {
+    const cmd = delegateCommand({ ...req, resume });
+    command = cmd.command;
+    result = undefined;
+    sessionId = undefined;
+    rawLines = [];
+    stdoutBuf = "";
+    stderrBuf = "";
+    const c = spawnFn(cmd.command, cmd.args, req.projectPath);
+    child = c;
 
-  child.stderr?.on("data", (chunk: Buffer) => {
-    stderrBuf = (stderrBuf + chunk.toString("utf8")).slice(-4000);
-  });
+    c.stdout?.on("data", (chunk: Buffer) => {
+      if (child !== c) return;
+      stdoutBuf += chunk.toString("utf8");
+      for (let i = stdoutBuf.indexOf("\n"); i !== -1; i = stdoutBuf.indexOf("\n")) {
+        handleLine(stdoutBuf.slice(0, i));
+        stdoutBuf = stdoutBuf.slice(i + 1);
+      }
+    });
 
-  child.on("error", (err: Error) => settle(() => callbacks.onError(err)));
-  child.on("close", (code: number | null) => {
-    if (settled) return;
-    if (timedOut) {
-      settle(() => callbacks.onError(new Error(`delegate timed out after ${Math.round(timeoutMs / 60_000)} minutes`)));
-      return;
-    }
-    if (cancelling) {
-      settle(() => onCancelled?.());
-      return;
-    }
-    if (stdoutBuf.trim()) handleLine(stdoutBuf);
-    if (code === 0) {
-      settle(() => callbacks.onDone(result ?? rawLines.join("\n")));
-      return;
-    }
-    const tail = stderrBuf.trim().split("\n").slice(-5).join("\n");
-    settle(() => callbacks.onError(new Error(`${command} exited with code ${code}${tail ? ` - ${tail}` : ""}`)));
-  });
+    c.stderr?.on("data", (chunk: Buffer) => {
+      if (child !== c) return;
+      stderrBuf = (stderrBuf + chunk.toString("utf8")).slice(-4000);
+    });
+
+    c.on("error", (err: Error) => {
+      if (child === c) settle(() => callbacks.onError(err));
+    });
+    c.on("close", (code: number | null) => {
+      if (settled || child !== c) return;
+      if (timedOut) {
+        settle(() => callbacks.onError(new Error(`delegate timed out after ${Math.round(timeoutMs / 60_000)} minutes`)));
+        return;
+      }
+      if (cancelling) {
+        settle(() => onCancelled?.());
+        return;
+      }
+      if (stdoutBuf.trim()) handleLine(stdoutBuf);
+      if (code === 0) {
+        const out = result ?? rawLines.join("\n");
+        settle(() => callbacks.onDone(notice + out, sessionId));
+        return;
+      }
+      // Died before the session started: the CLI rejected the resume id (store cleared, other
+      // cwd, …). Never fail the run for that — start fresh once and say so in the result.
+      if (resume && !sessionId) {
+        notice = `(Couldn't resume the earlier ${req.cli} session, so this run started fresh.)\n\n`;
+        resume = undefined;
+        spawnAttempt();
+        callbacks.onRespawn?.(child.pid);
+        callbacks.onOutput(notice.trim());
+        return;
+      }
+      const tail = stderrBuf.trim().split("\n").slice(-5).join("\n");
+      settle(() => callbacks.onError(new Error(`${command} exited with code ${code}${tail ? ` - ${tail}` : ""}`)));
+    });
+  };
+
+  spawnAttempt();
 
   return {
     pid: child.pid,

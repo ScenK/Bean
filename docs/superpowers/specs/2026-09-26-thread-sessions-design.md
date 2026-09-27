@@ -94,6 +94,10 @@ top-level message instead); leave it working, don't extend it.
 
 ### Step 3 — `--resume` (the delegate context fix)
 
+> **As built (#167):** resume is per-CLI, not claude-only — `thread_sessions(conversation_id,
+> cli, session_id, updated_at)`, each CLI's own resume mechanism, fresh-run fallback on a
+> rejected id. See `.memory/project-thread-sessions.md`. The claude-only sketch below is superseded.
+
 - `packages/core/src/delegate.ts`: `DelegateRequest.resume?: string`; claude branch adds
   `--resume <id>`. Capture `session_id` from the stream-json `system`/`init` event and hand
   it to `onDone` (extend `DelegateCallbacks` or the result shape).

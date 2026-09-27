@@ -10,7 +10,7 @@ export type RunDelegateFn = (req: DelegateRequest, callbacks: DelegateCallbacks)
 
 export interface RunEvents {
   onTail: (line: string) => void;
-  onDone: (result: string) => void;
+  onDone: (result: string, sessionId?: string) => void;
   onError: (message: string) => void;
   onCancelled: () => void;
 }
@@ -85,7 +85,7 @@ export class RunRegistry {
     const events: RunEvents = act
       ? {
           onTail: callerEvents.onTail, // output stays in the channel; see activity.ts
-          onDone: (result) => { act({ type: "run", phase: "done", id: runId, name }); callerEvents.onDone(result); },
+          onDone: (result, sessionId) => { act({ type: "run", phase: "done", id: runId, name }); callerEvents.onDone(result, sessionId); },
           onError: (message) => { act({ type: "run", phase: "failed", id: runId, name }); callerEvents.onError(message); },
           onCancelled: () => { act({ type: "run", phase: "cancelled", id: runId, name }); callerEvents.onCancelled(); },
         }
@@ -117,15 +117,19 @@ export class RunRegistry {
       onOutput: (line) => {
         if (!run.released) latest = line;
       },
-      onDone: (result) => {
+      onDone: (result, sessionId) => {
         if (run.released) return;
         free();
-        events.onDone(result);
+        events.onDone(result, sessionId);
       },
       onError: (err) => {
         if (run.released) return;
         free();
         events.onError(err.message);
+      },
+      // A rejected resume re-spawned the CLI: keep the reservation on the live child.
+      onRespawn: (pid) => {
+        if (!run.released && pid !== undefined) updateReservationPid(this.opts.dir, req.projectPath, pid);
       },
     });
     // The reservation was created against this process's own pid (nothing else to track before

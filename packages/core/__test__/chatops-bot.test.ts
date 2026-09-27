@@ -338,6 +338,29 @@ test("confirm starts the run, updates the card, and persists model memory", asyn
   expect(deps.conversations.history("c1").at(-1)).toEqual({ role: "assistant", content: "[delegate result] all fixed" });
 });
 
+test("a thread's follow-up delegate resumes the same CLI's session; another CLI starts fresh", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult, detectClis: () => ["claude", "opencode"] });
+  const bot = buildTeamsBot(deps);
+  const confirm = async (cli: string): Promise<void> => {
+    const effects = fx();
+    const id = await proposeThenGetId(deps, effects);
+    await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli } }, effects);
+  };
+  await confirm("claude");
+  expect(delegateCalls[0]?.req.resume).toBeUndefined();
+  delegateCalls[0]?.cb.onDone("report", "claude-sess-1");
+  await vi.waitFor(() => expect(deps.conversations.threadSession("c1", "claude")).toBe("claude-sess-1"));
+
+  await confirm("claude");
+  expect(delegateCalls[1]?.req.resume).toBe("claude-sess-1");
+  delegateCalls[1]?.cb.onDone("follow-up", "claude-sess-1");
+  await vi.waitFor(() => expect(deps.conversations.history("c1").at(-1)?.content).toContain("follow-up"));
+
+  await confirm("opencode");
+  expect(delegateCalls[2]?.req.resume).toBeUndefined();
+  expect(deps.conversations.threadSession("other-thread", "claude")).toBeUndefined();
+});
+
 test("confirm re-composes the prompt from the skill picked on the card", async () => {
   const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
   const effects = fx();

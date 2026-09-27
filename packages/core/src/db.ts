@@ -87,6 +87,16 @@ CREATE TABLE IF NOT EXISTS chatops_ambient (
 );
 CREATE INDEX IF NOT EXISTS chatops_ambient_conv ON chatops_ambient(conversation_id, at);
 
+-- A thread's resumable delegate session, one per CLI (each CLI keeps its own session store),
+-- so a follow-up delegate in the thread continues the agent that produced the earlier result.
+CREATE TABLE IF NOT EXISTS thread_sessions (
+  conversation_id TEXT NOT NULL,
+  cli             TEXT NOT NULL,
+  session_id      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  PRIMARY KEY (conversation_id, cli)
+);
+
 CREATE TABLE IF NOT EXISTS todos (
   id             TEXT PRIMARY KEY,
   routine        TEXT NOT NULL,
