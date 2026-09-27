@@ -28,3 +28,11 @@ tool-call turn, appends one `role: "tool"` result per executed action, and
 shape. Reminders fire from a 30s poll in `main.ts` via Electron `Notification`; the store
 mirrors `memory-store.ts`. New helper capabilities (notes, routines) should follow this
 ActionTool shape, keeping IO pure/DI in core.
+
+**Web search is not an ActionTool.** It's the provider's built-in tool, passed as
+`webSearch: true` on `ConverseDeps["chat"]` (not in `tools: ToolSpec[]`) and appended as
+`{ type: "web_search" }` by `openai-chat.ts`. OpenAI runs it inside the same response, so
+there's no round in `converse()`'s tool loop; the adapter drops `web_search_call` output
+items like reasoning items. Gated by config `webSearch` on desktop/Discord/Teams (bots read
+config at startup — restart to apply) and by the per-routine `webSearch` flag for routine
+chat steps (never the digest call).

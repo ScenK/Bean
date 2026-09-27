@@ -126,6 +126,16 @@ describe("runRoutine", () => {
     expect(res.results[0]!.output).toBe("saved it");
   });
 
+  it("chat steps get web search only when the routine opts in", async () => {
+    const seen: (boolean | undefined)[] = [];
+    const chat: RoutineRunnerDeps["chat"] = async (a) => { seen.push(a.webSearch); return { content: "ok", toolCalls: [] }; };
+    const steps: Routine["steps"] = [{ kind: "chat", instruction: "latest electron release?" }];
+    await runRoutine(routine(steps), baseDeps(chat));
+    await runRoutine({ ...routine(steps), webSearch: true }, baseDeps(chat));
+    // A lone step is delivered verbatim (no digest call), so one call per run.
+    expect(seen).toEqual([false, true]);
+  });
+
   it("chat step uses the skill body when the step names a skill", async () => {
     const { fn, calls } = chatStub([{ content: "out" }, { content: "digest" }]);
     await runRoutine(

@@ -22,6 +22,9 @@ export interface Routine {
   /** true = the steps are a pipeline run once per queued todo; the scheduled run is
    * skipped entirely while the routine's queue has no pending items. */
   todoDriven?: boolean;
+  /** Opt-in: this routine's chat steps may search the public web. Off by default — report
+   * routines don't need it and each search is billed. No panel toggle; set it in the JSON. */
+  webSearch?: boolean;
   steps: RoutineStep[];
   sinks: RoutineSinks;
 }
@@ -75,6 +78,7 @@ export function describeRoutineError(v: unknown): string | null {
   if (!str(r.cron)) return "cron schedule is required";
   if (!isValidCron(r.cron)) return `cron schedule ${JSON.stringify(r.cron)} is not a valid 5-field cron expression`;
   if (r.todoDriven !== undefined && typeof r.todoDriven !== "boolean") return "todoDriven must be true or false";
+  if (r.webSearch !== undefined && typeof r.webSearch !== "boolean") return "webSearch must be true or false";
   if (!Array.isArray(r.steps) || r.steps.length === 0) return "add at least one step";
   for (let i = 0; i < r.steps.length; i++) {
     const stepError = describeStepError(r.steps[i], i);

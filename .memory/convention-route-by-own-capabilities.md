@@ -10,6 +10,16 @@ hand-off cheap). The hand-off wording is only included when `propose_delegate` i
 offered; otherwise Bean is told to say it can't. Don't over-widen it to "anything created":
 that sends plain drafting work to the harness.
 
+**Web search (config `webSearch`, default off) splits "the web" into public vs private.**
+With it on, Bean searches the public web itself (OpenAI's built-in `web_search`, run
+server-side in the same call) for news/docs/releases/facts and ends with a `Source:` line.
+The user's own repos, tickets, mail, calendar, team, deployments, and accounts are worded
+as a *fact* — "never on the public web" — not a prohibition, so the model doesn't search,
+find nothing, and guess; those still hand off (or are declined without a delegate). Flag
+off keeps the old "web or current data → agent" wording byte-for-byte. Any edit to this
+wording must re-run the live guardrails: `converse-web-search.live.test.ts` (skipped
+without `BEAN_LIVE_OPENAI_KEY`) — the fake-chat unit tests can't see routing behavior.
+
 **Why:** the old rule described the *harness's* job ("project work", "inspect a linked
 project"). The harness's real reach (MCP servers like Jira, auth, skills) is invisible to
 Bean, so anything in between got misrouted. Seen in practice: "create a Jira ticket" in Teams

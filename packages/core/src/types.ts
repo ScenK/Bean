@@ -85,5 +85,8 @@ export interface BeanConfig {
   /** Detected CLIs the user has switched off — a denylist so a newly installed CLI is
    * enabled by default (auto-detect sets the initial status; spec: codex-cli-support). */
   disabledClis: CliName[];
+  /** Opt-in: converse() may search the public web (OpenAI's built-in web_search) on every
+   * surface. Off by default — each search is billed. Routines opt in per routine instead. */
+  webSearch: boolean;
   beanDir: string; // resolved absolute path to ~/.bean
 }

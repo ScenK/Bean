@@ -144,6 +144,7 @@ test("disabledClis is exposed and updated by apply", async () => {
     delegateCli: "",
     systemControls: false,
     disabledClis: [],
+    webSearch: false,
   });
   expect(runtime.getDisabledClis()).toEqual([]);
   expect(saved[0]).toMatchObject({ disabledClis: [] });
@@ -163,6 +164,7 @@ test("reasoning effort reaches the converse client and is rebuilt on save", asyn
       reasoningEffort: "low",
       routineDigestContext: false,
       disabledClis: [],
+      webSearch: false,
     },
     {
       makeChat: () => (async () => "") as never,
@@ -184,6 +186,7 @@ test("reasoning effort reaches the converse client and is rebuilt on save", asyn
     reasoningEffort: "high",
     routineDigestContext: false,
     disabledClis: [],
+    webSearch: false,
   });
 
   // Rebuilt, not just stored — the effort is baked into the client at construction.

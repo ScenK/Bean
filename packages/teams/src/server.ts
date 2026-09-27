@@ -141,6 +141,7 @@ const bot = buildTeamsBot({
     liveSessionProposalCard, liveSessionResultCard,
   },
   systemControlsEnabled: () => beanConfig.systemControls,
+  webSearchEnabled: () => beanConfig.webSearch,
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
 });
 

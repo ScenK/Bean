@@ -221,7 +221,7 @@ Two layers:
 Per-user, outside the repo. Path helpers live in `core/src/config.ts`.
 
 - `~/.bean/config.json` → `{ "openaiApiKey", "model", "terminalApp", "editorApp",
-  "delegateCli", "systemControls" }`. Only `openaiApiKey`/`model` are load-bearing (`model`
+  "delegateCli", "systemControls", "webSearch" }`. Only `openaiApiKey`/`model` are load-bearing (`model`
   defaults to `gpt-4o-mini`); the rest default to `""`/`false`. A missing config throws; an
   empty `openaiApiKey` shows an error dialog but the app still opens.
 - `~/.bean/clis.json` → optional per-provider model lists overriding the repo default

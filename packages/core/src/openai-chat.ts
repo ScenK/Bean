@@ -67,7 +67,7 @@ interface ResponsesClient {
     create: (args: {
       model: string;
       input: ResponsesItem[];
-      tools?: Array<{ type: "function"; name: string; description: string; parameters: object; strict: boolean }>;
+      tools?: Array<{ type: "function"; name: string; description: string; parameters: object; strict: boolean } | { type: "web_search" }>;
       tool_choice?: "auto";
       reasoning?: { effort: string };
       store?: boolean;
@@ -112,7 +112,7 @@ function toResponsesItems(message: ConvoMsg): ResponsesItem[] {
 }
 
 export function makeOpenAIConverseWithClient(client: ResponsesClient, reasoningEffort = ""): ConverseDeps["chat"] {
-  return async ({ model, messages, tools }) => {
+  return async ({ model, messages, tools, webSearch }) => {
     const res = await client.responses.create({
       model,
       input: messages.flatMap(toResponsesItems),
@@ -120,7 +120,12 @@ export function makeOpenAIConverseWithClient(client: ResponsesClient, reasoningE
       // strict schema makes EVERY property required. That silently broke the optional
       // arguments converse() relies on — propose_run's no-project scratch run became
       // unreachable, and propose_delegate's optional skill/cli/model were forced.
-      tools: tools.map((t) => ({ type: "function", name: t.name, description: t.description, parameters: stripEmptyEnums(t.parameters), strict: false })),
+      // The built-in web_search runs server-side within this one call: its `web_search_call`
+      // output items are dropped below like reasoning items, and the answer arrives as text.
+      tools: [
+        ...tools.map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: stripEmptyEnums(t.parameters), strict: false })),
+        ...(webSearch ? [{ type: "web_search" as const }] : []),
+      ],
       tool_choice: "auto",
       // Omitted unless the user picked one in Settings: sending reasoning.effort to a model
       // that has no reasoning (gpt-4o-mini, gpt-5.4-nano) is a hard 400, so "" must mean

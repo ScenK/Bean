@@ -175,13 +175,15 @@ test("chat handler passes the linked note through to converse (system prompt + p
   expect(out.proposedNote?.slug).toBe("flaky");
 });
 
-test("chat handler passes delegate availability through to converse", async () => {
+test("chat handler passes delegate availability and web search through to converse", async () => {
   let seenTools: string[] = [];
+  let seenWebSearch: boolean | undefined;
   const handler = buildChatHandler({
     loadSkills: async () => [{ name: "review-code", description: "r", body: "BODY" }] as Skill[],
     loadProjects: async () => [{ name: "api", path: "/work/api" }] as Project[],
     loadPersona: async () => ({ name: "Bean", tags: ["Warm"] }) as Persona,
-    converse: async ({ tools }) => {
+    converse: async ({ tools, webSearch }) => {
+      seenWebSearch = webSearch;
       seenTools = tools.map((t) => t.name);
       return { content: "ok", toolCalls: [] };
     },
@@ -194,9 +196,11 @@ test("chat handler passes delegate availability through to converse", async () =
     loadMemories: async () => [],
     dbFile: "/b/memory.json",
     delegateAvailable: () => true,
+    webSearch: () => true,
   });
   await handler({ history: [], message: "delegate this" });
   expect(seenTools).toContain("propose_delegate");
+  expect(seenWebSearch).toBe(true);
 });
 
 test("buildChatHandler passes todo-driven routine names into converse", async () => {

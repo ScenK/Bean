@@ -95,7 +95,7 @@ async function runChatStep(
   const byName = new Map(deps.tools.map((t) => [t.spec.name, t]));
   let content = "";
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const res = await deps.chat({ model: step.model ?? deps.model, messages, tools });
+    const res = await deps.chat({ model: step.model ?? deps.model, messages, tools, webSearch: routine.webSearch === true });
     content = res.content;
     const actionCalls = res.toolCalls.filter((c: ToolCall) => byName.has(c.name));
     if (actionCalls.length === 0) return content;
