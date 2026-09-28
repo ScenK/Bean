@@ -73,6 +73,20 @@ describe("parseBuildResult", () => {
     expect(r.skills.map((s) => s.name)).toEqual(["pr-notes"]);
   });
 
+  it("survives a drafted skill whose markdown contains its own ```json fence, and trailing prose", () => {
+    const skills = [{ name: "notes", markdown: "Output:\n```json\n{}\n```" }];
+    const text = "done\n```json\n" + JSON.stringify({ routine: { watch: { kind: "command", command: "c" } }, skills }) + "\n```\nAll set {ok}.";
+    const r = parseBuildResult(text, brief);
+    expect(r.routine?.watch).toMatchObject({ command: "c" });
+    expect(r.skills[0]?.markdown).toContain("```json");
+  });
+
+  it("parses a huge adversarial input in linear time", () => {
+    const t = Date.now();
+    expect(() => parseBuildResult("```json\n".repeat(20_000), brief)).toThrow();
+    expect(Date.now() - t).toBeLessThan(2000);
+  });
+
   it("returns the test error instead of a routine", () => {
     const r = parseBuildResult('```json\n{"routine":{},"testError":{"message":"gh auth login","exitCode":4}}\n```', brief);
     expect(r).toEqual({ skills: [], testError: { message: "gh auth login", exitCode: 4 } });

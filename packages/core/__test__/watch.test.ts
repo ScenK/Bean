@@ -36,6 +36,13 @@ describe("parseFeed", () => {
   });
 });
 
+it("parseFeed stays linear on adversarial input", () => {
+  const t = Date.now();
+  expect(parseFeed("<item>a".repeat(50_000))).toEqual([]);
+  expect(parseFeed("<item ".repeat(50_000))).toEqual([]);
+  expect(Date.now() - t).toBeLessThan(2000);
+});
+
 describe("parseCommandOutput", () => {
   it("accepts JSON lines and a single JSON array", () => {
     const lines = '{"id":"1","text":"one"}\n{"id":2,"text":"two"}\n';

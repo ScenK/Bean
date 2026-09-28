@@ -172,18 +172,32 @@ export interface BuildResult {
   testError?: { message: string; exitCode?: number };
 }
 
+const MAX_AGENT_OUTPUT = 1024 * 1024;
+
+/** The object in the last ```json fence that parses (the agent's output is untrusted, so an
+ * index scan rather than a backtracking fence regex — CodeQL js/polynomial-redos). Walks fences
+ * from the last one back, since a drafted skill's markdown can itself contain ```json. */
+function lastJsonFence(raw: string): Record<string, unknown> | undefined {
+  const text = raw.slice(-MAX_AGENT_OUTPUT);
+  for (let at = text.lastIndexOf("```json"); at >= 0; at = at === 0 ? -1 : text.lastIndexOf("```json", at - 1)) {
+    const bodyStart = text.indexOf("\n", at);
+    if (bodyStart < 0) continue;
+    // JSON can't hold a raw newline inside a string, so the first "\n```" after the opener is
+    // this fence's real closer even when a skill's markdown contains fences of its own.
+    const close = text.indexOf("\n```", bodyStart);
+    try {
+      return parseJsonObject(text.slice(bodyStart + 1, close < 0 ? undefined : close));
+    } catch { /* not this fence — try the previous one */ }
+  }
+  try { return parseJsonObject(unfence(text)); } catch { return undefined; }
+}
+
 /** The build agent's output contract: the LAST fenced ```json block of its final message,
  * `{ routine, skills? }` or `{ routine, testError }`. The brief's name/sinks override the
  * agent's; the result is validated like any saved routine. */
 export function parseBuildResult(text: string, brief: RoutineBrief): BuildResult {
-  const fences = [...text.matchAll(/```json[^\n]*\n([\s\S]*?)\n\s*```/g)];
-  const body = fences.length > 0 ? fences[fences.length - 1]![1]! : unfence(text);
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = parseJsonObject(body);
-  } catch {
-    throw new Error("the build agent didn't return the routine JSON");
-  }
+  const parsed = lastJsonFence(text);
+  if (!parsed) throw new Error("the build agent didn't return the routine JSON");
   const te = parsed.testError as Record<string, unknown> | string | undefined;
   if (te) {
     const message = str(te) ? te : str(te.message) ? te.message : "the watch command failed its test";

@@ -74,7 +74,7 @@ describe("routine builder", () => {
   });
 
   it("refuses a name that already exists, and never overwrites an existing skill", async () => {
-    const t = setup(ok.replace('"steps"', '"skills":[{"name":"build-routine","markdown":"x"},{"name":"fresh","markdown":"# y"}],"steps"').replace('}}\n```', '}}\n```'));
+    const t = setup(ok.replace('"steps"', '"skills":[{"name":"build-routine","markdown":"x"},{"name":"fresh","markdown":"# y"}],"steps"'));
     await t.builder.start(brief());
     await flush();
     await expect(t.builder.start(brief())).rejects.toThrow(/already exists/);

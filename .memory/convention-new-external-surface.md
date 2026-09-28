@@ -24,3 +24,6 @@ up front keeps review rounds short.
   addressable by guessable name.
 - **Gating order** — do the expensive/authenticated work *after* the "is this message even
   for us" gate, not before.
+- **No backtracking regex over untrusted bodies** — fetched pages/feeds and agent output get
+  an `indexOf` scan, not `[\s\S]*?`-between-delimiters regexes (CodeQL js/polynomial-redos,
+  flagged on PR #174's feed parser + build-result fence parser). Keep a linear-time test.

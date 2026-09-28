@@ -27,9 +27,34 @@ function decode(s: string): string {
     .trim();
 }
 
+/** Bodies of every `<name …>…</name>` (case-insensitive; self-closing = ""), by a linear
+ * indexOf scan — feed bodies come from the internet, so no backtracking regex over them
+ * (CodeQL js/polynomial-redos). `pos` only moves forward. */
+function elements(xml: string, name: string): string[] {
+  const lower = xml.toLowerCase();
+  const open = `<${name}`;
+  const close = `</${name}>`;
+  const out: string[] = [];
+  let pos = 0;
+  for (;;) {
+    const start = lower.indexOf(open, pos);
+    if (start < 0) break;
+    pos = start + open.length;
+    if (!/[\s>/]/.test(lower[pos] ?? "")) continue; // <entryfoo>, <identity> …
+    const openEnd = lower.indexOf(">", pos);
+    if (openEnd < 0) break;
+    if (lower[openEnd - 1] === "/") { out.push(""); pos = openEnd + 1; continue; }
+    const end = lower.indexOf(close, openEnd);
+    if (end < 0) break;
+    out.push(xml.slice(openEnd + 1, end));
+    pos = end + close.length;
+  }
+  return out;
+}
+
 const tag = (block: string, name: string): string | undefined => {
-  const m = new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "i").exec(block);
-  return m ? decode(m[1]!) : undefined;
+  const body = elements(block, name)[0];
+  return body === undefined ? undefined : decode(body);
 };
 
 const attr = (el: string, name: string): string | undefined => {
@@ -41,8 +66,8 @@ const attr = (el: string, name: string): string | undefined => {
  * when a feed omits the id. Hand parser on purpose — no XML dependency for two element shapes. */
 export function parseFeed(xml: string): WatchItem[] {
   const items: WatchItem[] = [];
-  for (const [, block] of xml.matchAll(/<(?:entry|item)(?:\s[^>]*)?>([\s\S]*?)<\/(?:entry|item)>/gi)) {
-    const body = block!;
+  const kind = /<entry[\s>]/i.test(xml) ? "entry" : "item"; // Atom or RSS — a feed is one or the other
+  for (const body of elements(xml, kind)) {
     // Atom links are `<link href="…"/>` (prefer rel=alternate); RSS links are `<link>…</link>`.
     const atomLinks = [...body.matchAll(/<link\b[^>]*>/gi)].map((m) => m[0]);
     const atomLink = atomLinks.find((l) => !/rel\s*=/i.test(l) || /rel\s*=\s*["']alternate["']/i.test(l));
