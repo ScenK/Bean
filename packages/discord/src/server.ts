@@ -161,6 +161,8 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voi
       if (voiceReply) voiceCards.add(id);
       return id;
     },
+    // Live-session stream messages: plain sends, so they never land in voiceCards (no click claims them).
+    postStream: async (text) => (await send(text)).id,
     updateCard: async (activityId, card) => {
       if (!("messages" in channel)) return;
       const msg = await channel.messages.fetch(activityId);
