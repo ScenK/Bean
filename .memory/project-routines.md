@@ -1,6 +1,6 @@
 # project-routines
 
-Routines: cron-scheduled multi-step automations. Definitions in `~/.bean/routines/<name>.json`
+Routines: cron-scheduled (or watch-triggered — see project-watch-triggers.md) multi-step automations. Definitions in `~/.bean/routines/<name>.json`
 (panel-edited, hand-editable), runtime state + capped history in `~/.bean/routines/.state.json`.
 Core: `cron.ts` (own 5-field parser — no dep), `routine-store.ts`, `routine-runner.ts` (pure,
 DI'd; chat steps get act-now tools incl. `save_note`, NO propose_* — routine runs are

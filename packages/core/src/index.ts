@@ -8,6 +8,9 @@ export * from "./persona.js";
 export * from "./persona-store.js";
 export * from "./note-store.js";
 export * from "./todo-store.js";
+export * from "./watch.js";
+export * from "./watch-store.js";
+export * from "./routine-brief.js";
 export * from "./memory/memory.js";
 export * from "./memory/store.js";
 export * from "./memory/extract.js";
@@ -47,13 +50,13 @@ export * from "./chatops/resolve.js";
 export { parseCron, isValidCron, nextRun } from "./cron.js";
 export type { CronSpec } from "./cron.js";
 export {
-  appendRunRecord, deleteRoutine, isValidRoutine, loadRoutines,
+  appendRunRecord, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines, watchEveryMinutes, DEFAULT_WATCH_MINUTES,
   loadRoutineStates, resolveTodoRoutine, saveRoutine, saveRoutineStates,
 } from "./routine-store.js";
 export type {
-  Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RunRecord,
+  Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord,
 } from "./routine-store.js";
-export { runRoutine, ROUTINE_STEP_TIMEOUT_MS } from "./routine-runner.js";
+export { runRoutine, unfence, ROUTINE_STEP_TIMEOUT_MS, RunBusyError } from "./routine-runner.js";
 export type { DelegateStepRequest, RoutineRunnerDeps, RoutineRunResult, StepResult } from "./routine-runner.js";
 export { claimOutbox, enqueueOutbox } from "./outbox.js";
 export type { OutboxMessage } from "./outbox.js";

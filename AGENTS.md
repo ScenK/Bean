@@ -47,8 +47,8 @@ The desktop app is one of **three surfaces**, all sharing the same core brain:
   (`node dist/server.js`) that let you drive Bean from a Discord server/DM or a Teams chat.
   They render the same confirm-first cards (run / note / memory / skill) through core's shared
   `chatops/` layer; the per-surface `*-config.ts` holds tokens/IDs.
-- **Routines** — scheduled work. A routine (`~/.bean/routines/<name>.json`) is a cron-fired
-  pipeline of `delegate`/`chat` steps with optional todo-queue draining; `routine-runner.ts`
+- **Routines** — scheduled work. A routine (`~/.bean/routines/<name>.json`) is a cron- or
+  watch-fired (polled feed/command, no model per check) pipeline of `delegate`/`chat` steps with optional todo-queue draining; `routine-runner.ts`
   runs it and fans results to sinks (chatops channel / note / desktop notification).
 - **System control** — `system-control.ts` lets `converse()` drive the Mac (volume, mute,
   media playback, launch/quit apps) via a closed verb union, opt-in behind a Settings toggle.

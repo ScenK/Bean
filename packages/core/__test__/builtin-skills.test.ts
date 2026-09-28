@@ -5,7 +5,7 @@ import { loadSkills } from "../src/skill-library.js";
 test("ships the built-in skills at <repo-root>/.bean/skills", async () => {
   const skills = await loadSkills(skillsDir(projectBeanDir()));
   expect(skills.map((s) => s.name).sort()).toEqual([
-    "bean", "generate-skill"
+    "bean", "build-routine", "generate-skill"
   ]);
 });
 
@@ -14,4 +14,11 @@ test("built-in content skills are chat-target", async () => {
   for (const name of ["bean", "generate-skill"]) {
     expect(skills.find((s) => s.name === name)?.target, name).toBe("chat");
   }
+});
+
+test("build-routine is a hidden terminal skill (runs on the delegate CLI, never listed)", async () => {
+  const skills = await loadSkills(skillsDir(projectBeanDir()));
+  const skill = skills.find((s) => s.name === "build-routine");
+  expect(skill?.hidden).toBe(true);
+  expect(skill?.target).not.toBe("chat");
 });

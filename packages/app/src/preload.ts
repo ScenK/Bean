@@ -3,11 +3,14 @@ import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, 
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine, TodoItem,
+  RoutineBrief, RoutineWatch, WatchItem,
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
 import type { TaskJob } from "./task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
-import type { RoutineStateView, InterruptedRunNotice } from "./ipc.js";
+import type { RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft } from "./ipc.js";
+import type { RoutineBuildView } from "./routine-builder.js";
+import type { WatchCheckResult } from "./routine-scheduler.js";
 
 contextBridge.exposeInMainWorld("bean", {
   route: (input: RouteInput): Promise<RouteSuggestion> => ipcRenderer.invoke(IPC.route, input),
@@ -96,6 +99,15 @@ contextBridge.exposeInMainWorld("bean", {
   routinesDelete: (name: string): Promise<void> => ipcRenderer.invoke(IPC.routinesDelete, name),
   routinesState: (): Promise<Record<string, RoutineStateView>> => ipcRenderer.invoke(IPC.routinesState),
   routinesRunNow: (name: string): Promise<{ started: boolean; reason?: string }> => ipcRenderer.invoke(IPC.routinesRunNow, name),
+  routinesCheckNow: (name: string): Promise<WatchCheckResult> => ipcRenderer.invoke(IPC.routinesCheckNow, name),
+  routinesPreviewWatch: (watch: RoutineWatch): Promise<WatchItem[]> => ipcRenderer.invoke(IPC.routinesPreviewWatch, watch),
+  routinesEnableWatch: (name: string, queueExisting: boolean): Promise<{ count: number }> => ipcRenderer.invoke(IPC.routinesEnableWatch, name, queueExisting),
+  routinesSinkRecipients: (): Promise<SinkRecipients> => ipcRenderer.invoke(IPC.routinesSinkRecipients),
+  routinesDraftBrief: (sentence: string, previous?: RoutineBrief): Promise<BriefDraft> => ipcRenderer.invoke(IPC.routinesDraftBrief, sentence, previous),
+  routinesBuild: (brief: RoutineBrief): Promise<void> => ipcRenderer.invoke(IPC.routinesBuild, brief),
+  routinesBuilds: (): Promise<RoutineBuildView[]> => ipcRenderer.invoke(IPC.routinesBuilds),
+  routinesCancelBuild: (name: string): Promise<void> => ipcRenderer.invoke(IPC.routinesCancelBuild, name),
+  routinesDismissBuild: (name: string): Promise<void> => ipcRenderer.invoke(IPC.routinesDismissBuild, name),
   todosList: (routine: string): Promise<TodoItem[]> => ipcRenderer.invoke(IPC.todosList, routine),
   todosListAll: (): Promise<TodoItem[]> => ipcRenderer.invoke(IPC.todosListAll),
   todosAdd: (routine: string, text: string): Promise<TodoItem> => ipcRenderer.invoke(IPC.todosAdd, routine, text),

@@ -1,6 +1,6 @@
 // packages/core/__test__/routine-runner.test.ts
 import { describe, expect, it, vi } from "vitest";
-import { runRoutine, type RoutineRunnerDeps } from "../src/routine-runner.js";
+import { runRoutine, RunBusyError, type RoutineRunnerDeps } from "../src/routine-runner.js";
 import type { Routine } from "../src/routine-store.js";
 import type { ActionTool, ConvoMsg, ToolSpec } from "../src/converse.js";
 import type { Skill } from "../src/types.js";
@@ -335,5 +335,33 @@ describe("todo-driven routines", () => {
     });
     expect(calls).toHaveLength(2); // one per step, no todo loop
     expect(todos.statusLog).toHaveLength(0);
+  });
+
+  it("watch routines pass the todo id; a busy project defers the todo back to pending", async () => {
+    const watch: Routine = { name: "nightly", enabled: true, watch: { kind: "command", command: "c" }, todoDriven: true,
+      steps: [{ kind: "delegate", skill: "review", instruction: "review" }], sinks: {} };
+    const todos = fakeTodos([todo("1", "PR 1"), todo("2", "PR 2")]);
+    const seen: (string | undefined)[] = [];
+    const result = await runRoutine(watch, {
+      chat: async () => ({ content: "digest", toolCalls: [] }),
+      model: "m",
+      delegate: async (req) => {
+        seen.push(req.todoId);
+        if (req.todoId === "2") throw new RunBusyError("busy");
+        return "reviewed";
+      },
+      tools: [], findSkill: () => undefined,
+      todos: todos.dep,
+    });
+    expect(seen).toEqual(["1", "2"]);
+    expect(todos.statusLog.filter((l) => l.id === "2").map((l) => l.status)).toEqual(["running", "pending"]);
+    expect(result.deferred).toBeUndefined(); // todo 1 ran, so the run is real
+    const onlyBusy = fakeTodos([todo("3", "PR 3")]);
+    const deferred = await runRoutine(watch, {
+      chat: async () => ({ content: "digest", toolCalls: [] }), model: "m",
+      delegate: async () => { throw new RunBusyError("busy"); },
+      tools: [], findSkill: () => undefined, todos: onlyBusy.dep,
+    });
+    expect(deferred.deferred).toBe(true);
   });
 });

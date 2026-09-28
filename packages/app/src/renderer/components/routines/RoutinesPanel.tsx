@@ -1,22 +1,18 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { Routine, RoutineStep, Skill, Project, TodoItem } from "@bean/core";
+import type { Routine, RoutineBrief, RoutineWatch, Skill, Project, TodoItem } from "@bean/core";
 import { nextRun, parseCron } from "@bean/core/cron";
-import { ChipMenu } from "../../shared/ChipMenu.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import type { RoutineStateView } from "../../../ipc.js";
+import type { RoutineBuildView } from "../../../routine-builder.js";
+import { StepsEditor } from "./StepsEditor.js";
+import { BuildPane, DescribePane, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
+import { everyMinutes, failureCount, needsReview, watchRowSub, watchStatusLine } from "./watch-status.js";
 
 const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 
-// Electron's ipcRenderer.invoke wraps a thrown main-process Error as
-// `Error invoking remote method '<channel>': Error: <message>` — peel that boilerplate off so
-// the specific reason (e.g. which step/field failed validation) reaches the user directly.
-function ipcErrorMessage(e: unknown): string | undefined {
-  if (!(e instanceof Error)) return undefined;
-  const m = /^Error invoking remote method '[^']*': (?:Error: )?([\s\S]*)$/.exec(e.message);
-  return m ? m[1] : e.message;
-}
+const WATCH_MINUTES = [1, 5, 10, 15, 30, 60];
 
 const emptyRoutine = (): Routine => ({
   name: "",
@@ -122,12 +118,14 @@ function nextRunView(cron: string): { ok: boolean; text: string } {
 // see whether it's healthy, and the Dashboard is where the whole kept history lives.
 const HISTORY_SHOWN = 3;
 
-type DotKind = "running" | "failed" | "enabled" | "off";
+type DotKind = "running" | "failed" | "enabled" | "off" | "review";
 
 // Enabled = green, running = glowing green, failed/missed = red, disabled = grey — the pill's
 // on/off state always wins over run history so a paused routine never reads as healthy.
-function dotKind(enabled: boolean, state: RoutineStateView | undefined): DotKind {
-  if (!enabled) return "off";
+function dotKind(r: Routine, state: RoutineStateView | undefined): DotKind {
+  if (needsReview(r, state)) return "review";
+  if (!r.enabled) return "off";
+  if (r.watch && failureCount(state) > 0) return "failed"; // matches the row's "check failing"
   if (state?.running) return "running";
   if (state?.missed || state?.history[0]?.status === "failed") return "failed";
   return "enabled";
@@ -176,6 +174,16 @@ export function RoutinesPanel() {
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [customCron, setCustomCron] = useState(false);
+  // The describe-it builder (2a) is what ＋ New routine opens; builds (2b) live in main.
+  const [describing, setDescribing] = useState(false);
+  const [drafting, setDrafting] = useState(false);
+  const [briefSeed, setBriefSeed] = useState<RoutineBrief | undefined>(undefined);
+  const [builds, setBuilds] = useState<RoutineBuildView[]>([]);
+  const [selectedBuild, setSelectedBuild] = useState<string | undefined>(undefined);
+  // Needs-review routines open on the review card (2c) unless "Open in editor" was picked.
+  const [editorFor, setEditorFor] = useState<string | undefined>(undefined);
+  const [checking, setChecking] = useState(false);
+  const [notice, setNotice] = useState("");
   // Catalogs that back the per-step skill / project / model pickers (same sources the
   // ProposalCard/DelegateCard chips use).
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -184,8 +192,6 @@ export function RoutinesPanel() {
   const enabledSkills = useMemo(() => skills.filter((s) => s.enabled !== false), [skills]);
   const [projects, setProjects] = useState<Project[]>([]);
   const { clis, models } = useCliAvailability();
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [overIndex, setOverIndex] = useState<number | null>(null);
   const [triggering, setTriggering] = useState(false);
   // The todo queue for a todo-driven routine — only loaded when there's a saved routine
   // selected and it's todo-driven; empty otherwise (mirrors refreshTodos()'s own guard).
@@ -201,9 +207,10 @@ export function RoutinesPanel() {
   const [todoOverId, setTodoOverId] = useState<string | null>(null);
 
   const refresh = async (): Promise<void> => {
-    const [list, st] = await Promise.all([window.bean.routinesList(), window.bean.routinesState()]);
+    const [list, st, bs] = await Promise.all([window.bean.routinesList(), window.bean.routinesState(), window.bean.routinesBuilds()]);
     setRoutines(list);
     setStates(st);
+    setBuilds(bs);
   };
 
   const refreshTodos = async (): Promise<void> => {
@@ -224,11 +231,35 @@ export function RoutinesPanel() {
     }, 5000);
     return () => clearInterval(t);
   }, [selected, draft.todoDriven]);
+  // Builds tick faster while one runs; when one finishes its routine appears (needs review).
+  const anyBuilding = builds.some((b) => b.status === "building");
   useEffect(() => {
+    if (!anyBuilding) return;
+    const t = setInterval(() => {
+      void window.bean.routinesBuilds().then((bs) => {
+        setBuilds(bs);
+        if (bs.length !== builds.length || bs.some((b, i) => b.status !== builds[i]?.status)) void refresh();
+      });
+    }, 1500);
+    return () => clearInterval(t);
+  }, [anyBuilding, builds]);
+  // A selected build that finished successfully becomes its (needs-review) routine.
+  useEffect(() => {
+    if (selectedBuild && !builds.some((b) => b.name === selectedBuild) && routines.some((r) => r.name === selectedBuild)) {
+      setSelected(selectedBuild);
+      setSelectedBuild(undefined);
+    }
+  }, [builds, routines, selectedBuild]);
+  // Keyed on the selected routine's saved content, not the list's identity: a refresh for some
+  // other routine (a build finishing) must not wipe unsaved edits here.
+  const savedJson = JSON.stringify(routines.find((r) => r.name === selected) ?? null);
+  useEffect(() => {
+    if (!selected) return;
     setDraft(routines.find((r) => r.name === selected) ?? emptyRoutine());
     setError("");
+    setNotice("");
     setCustomCron(false);
-  }, [selected, routines]);
+  }, [selected, savedJson]);
   useEffect(() => { void refreshTodos(); }, [selected, draft.todoDriven]);
 
   const filtered = useMemo(() => {
@@ -240,31 +271,65 @@ export function RoutinesPanel() {
     return [...list].sort((a, b) => Number(b.enabled) - Number(a.enabled));
   }, [routines, query]);
 
-  const setStep = (i: number, step: RoutineStep): void =>
-    setDraft({ ...draft, steps: draft.steps.map((s, j) => (j === i ? step : s)) });
-
-  // Reorder by drag (the ⠿ handle is the drag source, each step card a drop target).
-  const reorderStep = (from: number, to: number): void => {
-    if (from === to) return;
-    const steps = [...draft.steps];
-    const [moved] = steps.splice(from, 1);
-    steps.splice(to, 0, moved!);
-    setDraft({ ...draft, steps });
+  const select = (name: string): void => {
+    setSelected(name); setCreating(false); setDescribing(false); setSelectedBuild(undefined); setEditorFor(undefined); setError("");
+  };
+  const selectBuild = (name: string): void => {
+    setSelectedBuild(name); setSelected(undefined); setCreating(false); setDescribing(false);
+  };
+  const startNew = (): void => {
+    setSelected(undefined); setSelectedBuild(undefined); setCreating(false); setBriefSeed(undefined); setDescribing(true); setError("");
+  };
+  const startBlank = (): void => {
+    setDescribing(false); setSelected(undefined); setCreating(true); setDraft(emptyRoutine()); setError("");
+  };
+  const openDraftInEditor = (routine: Routine): void => {
+    setDescribing(false); setSelected(undefined); setCreating(true); setDraft(routine); setError("");
+  };
+  const startBuild = async (brief: RoutineBrief): Promise<void> => {
+    await window.bean.routinesBuild(brief);
+    setBriefSeed(undefined);
+    setDescribing(false);
+    await refresh();
+    selectBuild(brief.name);
   };
 
-  // skill/model live on both step kinds; project only on delegate. Cast keeps the union spread
-  // legible without widening the kind.
-  const setSkill = (i: number, step: RoutineStep, name?: string): void =>
-    setStep(i, step.kind === "delegate" ? { ...step, skill: name ?? "" } : { ...step, skill: name });
-  const setModel = (i: number, step: RoutineStep, id?: string): void =>
-    setStep(i, { ...step, model: id } as RoutineStep);
-  const switchKind = (i: number, step: RoutineStep, kind: RoutineStep["kind"]): void =>
-    setStep(i, kind === "delegate"
-      ? { kind: "delegate", skill: step.skill ?? "", model: step.model, instruction: step.instruction }
-      : { kind: "chat", skill: step.skill || undefined, model: step.model, instruction: step.instruction });
+  const checkNow = async (): Promise<void> => {
+    if (!selected) return;
+    setChecking(true);
+    try {
+      const r = await window.bean.routinesCheckNow(selected);
+      setNotice(r.error ? "" : r.newItems > 0 ? `${r.newItems} new` : "nothing new");
+      if (r.error && !r.error.includes("fail")) setError(r.error);
+      await refresh();
+    } finally {
+      setChecking(false);
+    }
+  };
 
-  const select = (name: string): void => { setSelected(name); setCreating(false); setError(""); };
-  const startNew = (): void => { setSelected(undefined); setCreating(true); setDraft(emptyRoutine()); setError(""); };
+  // Trigger: Schedule XOR Watch (cron and watch are mutually exclusive in the saved JSON).
+  const setTrigger = (kind: "schedule" | "watch"): void => {
+    if (kind === "watch" && !draft.watch) {
+      const { cron: _cron, ...rest } = draft;
+      setDraft({ ...rest, watch: { kind: "command", command: "", everyMinutes: 15 }, todoDriven: rest.steps.length > 0 ? true : undefined });
+    } else if (kind === "schedule" && draft.watch) {
+      const { watch: _watch, ...rest } = draft;
+      setDraft({ ...rest, cron: "0 8 * * *", steps: rest.steps.length > 0 ? rest.steps : [{ kind: "chat", instruction: "" }] });
+    }
+  };
+  const setWatch = (watch: RoutineWatch): void => setDraft({ ...draft, watch });
+  const setWatchKind = (kind: RoutineWatch["kind"]): void => {
+    const every = draft.watch?.everyMinutes;
+    setWatch(kind === "feed"
+      ? { kind: "feed", url: "", ...(every ? { everyMinutes: every } : {}) }
+      : { kind: "command", command: "", ...(every ? { everyMinutes: every } : {}) });
+  };
+  // Watch type: notify-only (no steps) or run the steps on each item (todo-driven). Local only —
+  // switching to steps needs an instruction before it can validate, so it saves with the rest.
+  const setWatchNotifyOnly = (notifyOnly: boolean): void =>
+    setDraft(notifyOnly
+      ? { ...draft, steps: [], todoDriven: undefined }
+      : { ...draft, steps: draft.steps.length > 0 ? draft.steps : [{ kind: "chat", instruction: "" }], todoDriven: true });
 
   const toggleEnabled = async (r: Routine): Promise<void> => {
     await window.bean.routinesSave({ ...r, enabled: !r.enabled });
@@ -330,14 +395,14 @@ export function RoutinesPanel() {
 
   const remove = async (): Promise<void> => {
     if (!selected) return;
-    if (!confirm(`Delete routine "${selected}"?`)) return;
+    if (!confirm(`${needsReview(draft, states[selected]) ? "Discard" : "Delete"} routine "${selected}"?`)) return;
     await window.bean.routinesDelete(selected);
     setSelected(undefined);
     await refresh();
   };
 
   // --- cadence derivations --------------------------------------------------
-  const sentence = toSentence(draft.cron);
+  const sentence = toSentence(draft.cron ?? "");
   const cadenceCustom = customCron || sentence === null;
   const day: DaySel = sentence?.day ?? "everyday";
   const timeValue = sentence ? `${sentence.hour}:${sentence.minute}` : "8:0";
@@ -346,7 +411,7 @@ export function RoutinesPanel() {
     const [h, m] = timeValue.split(":").map(Number) as [number, number];
     return [{ value: timeValue, label: timeLabel(h, m) }, ...TIME_OPTIONS];
   }, [timeValue]);
-  const nrv = nextRunView(draft.cron);
+  const nrv = nextRunView(draft.cron ?? "");
 
   const setDay = (v: string): void => {
     if (v === "custom") { setCustomCron(true); return; }
@@ -365,29 +430,57 @@ export function RoutinesPanel() {
   const routineRow = (r: Routine) => (
     <div
       key={r.name}
-      class={`bean-skills-row bean-routines-row${r.enabled ? "" : " bean-routines-row--off"}${selected === r.name ? " bean-skills-row--selected" : ""}`}
+      class={`bean-skills-row bean-routines-row${r.enabled ? "" : " bean-routines-row--off"}${needsReview(r, states[r.name]) ? " bean-routines-row--review" : ""}${selected === r.name ? " bean-skills-row--selected" : ""}`}
       onClick={() => select(r.name)}
     >
       <button
         type="button"
         class={`bean-skills-pill${r.enabled ? " bean-skills-pill--on" : ""}`}
         title={r.enabled ? "Runs automatically — click to pause" : "Paused — click to enable"}
-        onClick={(e) => { e.stopPropagation(); void toggleEnabled(r); }}
+        // A needs-review watch enables from its review card (re-check + seed), not a bare flip.
+        onClick={(e) => { e.stopPropagation(); if (needsReview(r, states[r.name])) select(r.name); else void toggleEnabled(r); }}
       >
         <span class="bean-skills-pill-knob" />
       </button>
       <div class="bean-skills-row-main">
         <div class="bean-skills-row-name">{r.name}</div>
         <div class="bean-routines-row-sub">
-          {humanCadence(r.cron)} · {r.enabled ? `${r.steps.length} step${r.steps.length === 1 ? "" : "s"}` : "paused"}
-          {r.todoDriven ? " · ⚡ todo-driven" : ""}
+          {r.watch ? (
+            <span class={watchRowSub(r, states[r.name]).bad ? "bean-routines-row-sub--bad" : undefined}>{watchRowSub(r, states[r.name]).text}</span>
+          ) : (
+            <>
+              {humanCadence(r.cron ?? "")} · {r.enabled ? `${r.steps.length} step${r.steps.length === 1 ? "" : "s"}` : "paused"}
+              {r.todoDriven ? " · ⚡ todo-driven" : ""}
+            </>
+          )}
         </div>
       </div>
-      <span class={`bean-routines-dot bean-routines-dot--${dotKind(r.enabled, states[r.name])}`} />
+      <span class={`bean-routines-dot bean-routines-dot--${dotKind(r, states[r.name])}`} />
+    </div>
+  );
+
+  const buildRow = (b: RoutineBuildView) => (
+    <div
+      key={`build:${b.name}`}
+      class={`bean-skills-row bean-routines-row bean-routines-row--build${selectedBuild === b.name ? " bean-skills-row--selected" : ""}`}
+      onClick={() => selectBuild(b.name)}
+    >
+      <span class={`bean-routines-build-mark${b.status === "failed" ? " bean-routines-build-mark--failed" : ""}`}>{b.status === "failed" ? "!" : ""}</span>
+      <div class="bean-skills-row-main">
+        <div class="bean-skills-row-name">{b.name}</div>
+        <div class={`bean-routines-row-sub${b.status === "failed" ? " bean-routines-row-sub--bad" : ""}`}>
+          {b.status === "failed" ? "build failed · open to retry" : `building… · ${buildElapsed(b)}`}
+        </div>
+      </div>
     </div>
   );
 
   const selectedState = selected ? states[selected] : undefined;
+  const savedRoutine = selected ? routines.find((r) => r.name === selected) : undefined;
+  const reviewing = Boolean(savedRoutine && needsReview(savedRoutine, selectedState) && editorFor !== selected);
+  const buildView = selectedBuild ? builds.find((b) => b.name === selectedBuild) : undefined;
+  const notifyOnly = Boolean(draft.watch) && draft.steps.length === 0;
+  const status = draft.watch ? watchStatusLine(savedRoutine?.watch ? savedRoutine : draft, selectedState, new Date()) : undefined;
   const isRunningSelected = triggering || Boolean(selectedState?.running);
   const pendingCount = todos.filter((t) => t.status === "pending").length;
   const emptyTodoQueue = Boolean(draft.todoDriven) && pendingCount === 0;
@@ -405,7 +498,17 @@ export function RoutinesPanel() {
           />
         </div>
         <div class="bean-skills-list-label">Your routines · {routines.length}</div>
-        {routines.length === 0 ? (
+        {describing ? (
+          <div class="bean-skills-row bean-routines-row bean-routines-row--build bean-skills-row--selected">
+            <span class="bean-skills-pill"><span class="bean-skills-pill-knob" /></span>
+            <div class="bean-skills-row-main">
+              <div class="bean-skills-row-name">New routine</div>
+              <div class="bean-routines-row-sub">{drafting ? "drafting…" : "describe it"}</div>
+            </div>
+          </div>
+        ) : null}
+        {builds.map(buildRow)}
+        {routines.length === 0 && builds.length === 0 && !describing ? (
           <div class="bean-panel-empty">No routines yet — set up something Bean should run on a schedule.</div>
         ) : filtered.length === 0 ? (
           <div class="bean-panel-empty">No routines match "{query}".</div>
@@ -418,7 +521,41 @@ export function RoutinesPanel() {
       </div>
 
       <div class="bean-skills-detail">
-        {!selected && !creating ? (
+        {describing ? (
+          <DescribePane
+            initial={briefSeed}
+            skills={enabledSkills}
+            projects={projects}
+            clis={clis}
+            models={models}
+            onCancel={() => { setDescribing(false); setBriefSeed(undefined); }}
+            onBlank={startBlank}
+            onBuild={startBuild}
+            onOpenEditor={openDraftInEditor}
+            onDrafting={setDrafting}
+          />
+        ) : buildView ? (
+          <BuildPane
+            build={buildView}
+            onCancel={() => void window.bean.routinesCancelBuild(buildView.name).then(() => { setSelectedBuild(undefined); void refresh(); })}
+            onEditBrief={(brief) => void window.bean.routinesDismissBuild(buildView.name).then(() => {
+              setSelectedBuild(undefined); setBriefSeed(brief); setDescribing(true); void refresh();
+            })}
+            onRetry={(brief) => void window.bean.routinesBuild(brief).then(refresh)
+              .catch((e) => setError(ipcErrorMessage(e) ?? "couldn't restart the build"))}
+            onDismiss={() => void window.bean.routinesDismissBuild(buildView.name).then(() => { setSelectedBuild(undefined); void refresh(); })}
+          />
+        ) : reviewing && savedRoutine ? (
+          <ReviewPane
+            routine={savedRoutine}
+            state={selectedState}
+            models={models}
+            projects={projects}
+            onDiscard={() => void remove()}
+            onOpenEditor={() => setEditorFor(savedRoutine.name)}
+            onEnabled={(note) => { void refresh().then(() => { setEditorFor(savedRoutine.name); setNotice(note); }); }}
+          />
+        ) : !selected && !creating ? (
           <PanelEmptyState message="Select a routine to view it, or set up a new one." />
         ) : (
         <>
@@ -472,42 +609,105 @@ export function RoutinesPanel() {
         </div>
 
         <div class="bean-skills-projects">
-          <div class="bean-field-label">CADENCE</div>
-          {cadenceCustom ? (
-            <div class="bean-routines-sentence">
-              Run on a{" "}
-              <span class="bean-routines-tz">custom schedule</span> —{" "}
-              <input
-                class="bean-input bean-input--boxed bean-routines-cron-input"
-                type="text"
-                placeholder="cron (5 fields)"
-                value={draft.cron}
-                onInput={(e) => setDraft({ ...draft, cron: (e.target as HTMLInputElement).value })}
-              />
-              {sentence ? (
-                <button type="button" class="bean-routines-custom-link" onClick={() => setCustomCron(false)}>use the simple picker</button>
-              ) : null}
+          <div class="bean-routines-section-head">
+            <div class="bean-field-label">TRIGGER</div>
+            <div class="bean-rb-seg bean-rb-seg--small">
+              <button type="button" class={`bean-rb-seg-btn${draft.watch ? "" : " bean-rb-seg-btn--on"}`} onClick={() => setTrigger("schedule")}>Schedule</button>
+              <button type="button" class={`bean-rb-seg-btn${draft.watch ? " bean-rb-seg-btn--on" : ""}`} onClick={() => setTrigger("watch")}>Watch</button>
             </div>
-          ) : (
-            <div class="bean-routines-sentence">
-              Run every{" "}
-              <select class="bean-routines-chip-select" value={day} onChange={(e) => setDay((e.target as HTMLSelectElement).value)}>
-                {DAY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                <option value="custom">custom…</option>
-              </select>{" "}
-              at{" "}
-              <select class="bean-routines-chip-select" value={timeValue} onChange={(e) => setTime((e.target as HTMLSelectElement).value)}>
-                {timeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>{" "}
-              <span class="bean-routines-tz">in local time</span>.
-            </div>
-          )}
-          <div class="bean-routines-cadence-meta">
-            <span class="bean-routines-cron-cap">cron&nbsp;&nbsp;{draft.cron}</span>
-            <span class={`bean-routines-next${nrv.ok ? "" : " bean-routines-next--bad"}`}>
-              <span class="bean-routines-next-dot" />{nrv.text}{draft.todoDriven ? " · only if the queue has items" : ""}
-            </span>
           </div>
+          {draft.watch ? (
+            <>
+              <div class="bean-routines-sentence">
+                Check{" "}
+                <select class="bean-routines-chip-select" value={draft.watch.kind} onChange={(e) => setWatchKind((e.target as HTMLSelectElement).value as RoutineWatch["kind"])}>
+                  <option value="command">a command</option>
+                  <option value="feed">a feed</option>
+                </select>{" "}
+                every{" "}
+                <select
+                  class="bean-routines-chip-select"
+                  value={String(everyMinutes(draft))}
+                  onChange={(e) => setWatch({ ...draft.watch!, everyMinutes: Number((e.target as HTMLSelectElement).value) })}
+                >
+                  {[...new Set([...WATCH_MINUTES, everyMinutes(draft)])].sort((a, b) => a - b).map((m) => <option key={m} value={String(m)}>{m} min</option>)}
+                </select>{" "}
+                and {notifyOnly ? "notify me" : "queue each new item"}.
+              </div>
+              {draft.watch.kind === "command" ? (
+                <textarea
+                  class="bean-routines-watch-command"
+                  spellcheck={false}
+                  placeholder={'gh search prs --review-requested=@me --state=open --json url,title --jq \'.[] | {id: .url, text: "\\(.url) \\(.title)"}\''}
+                  value={draft.watch.command}
+                  onInput={(e) => setWatch({ ...(draft.watch as Extract<RoutineWatch, { kind: "command" }>), command: (e.target as HTMLTextAreaElement).value })}
+                />
+              ) : (
+                <input
+                  class="bean-input bean-input--boxed bean-routines-watch-url"
+                  type="url"
+                  placeholder="https://www.youtube.com/feeds/videos.xml?channel_id=UC…"
+                  value={draft.watch.url}
+                  onInput={(e) => setWatch({ ...(draft.watch as Extract<RoutineWatch, { kind: "feed" }>), url: (e.target as HTMLInputElement).value })}
+                />
+              )}
+              {status ? (
+                <div class="bean-routines-cadence-meta">
+                  <span class={`bean-routines-next bean-routines-next--${status.tone}`}>
+                    <span class="bean-routines-next-dot" />{status.text}
+                  </span>
+                  {savedRoutine?.watch && savedRoutine.enabled ? (
+                    <button type="button" class="bean-btn bean-btn--ghost bean-routines-check" disabled={checking} onClick={() => void checkNow()}>
+                      {checking ? "Checking…" : "Check now"}
+                    </button>
+                  ) : null}
+                  {notice ? <span class="bean-routines-section-note">{notice}</span> : null}
+                </div>
+              ) : null}
+              {status?.detail ? <div class={`bean-routines-watch-error bean-routines-watch-error--${status.tone}`}>{status.detail}</div> : null}
+              <span class="bean-routines-section-note">
+                Editing the {draft.watch.kind === "command" ? "command" : "feed URL"} re-seeds — what's there now won't fire.
+              </span>
+            </>
+          ) : (
+            <>
+            {cadenceCustom ? (
+              <div class="bean-routines-sentence">
+                Run on a{" "}
+                <span class="bean-routines-tz">custom schedule</span> —{" "}
+                <input
+                  class="bean-input bean-input--boxed bean-routines-cron-input"
+                  type="text"
+                  placeholder="cron (5 fields)"
+                  value={draft.cron}
+                  onInput={(e) => setDraft({ ...draft, cron: (e.target as HTMLInputElement).value })}
+                />
+                {sentence ? (
+                  <button type="button" class="bean-routines-custom-link" onClick={() => setCustomCron(false)}>use the simple picker</button>
+                ) : null}
+              </div>
+            ) : (
+              <div class="bean-routines-sentence">
+                Run every{" "}
+                <select class="bean-routines-chip-select" value={day} onChange={(e) => setDay((e.target as HTMLSelectElement).value)}>
+                  {DAY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  <option value="custom">custom…</option>
+                </select>{" "}
+                at{" "}
+                <select class="bean-routines-chip-select" value={timeValue} onChange={(e) => setTime((e.target as HTMLSelectElement).value)}>
+                  {timeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>{" "}
+                <span class="bean-routines-tz">in local time</span>.
+              </div>
+            )}
+            <div class="bean-routines-cadence-meta">
+              <span class="bean-routines-cron-cap">cron&nbsp;&nbsp;{draft.cron}</span>
+              <span class={`bean-routines-next${nrv.ok ? "" : " bean-routines-next--bad"}`}>
+                <span class="bean-routines-next-dot" />{nrv.text}{draft.todoDriven ? " · only if the queue has items" : ""}
+              </span>
+            </div>
+            </>
+          )}
         </div>
 
         <div class="bean-routines-divider" />
@@ -516,6 +716,27 @@ export function RoutinesPanel() {
           <div class="bean-routines-section-head">
             <div class="bean-field-label">TYPE</div>
           </div>
+          {draft.watch ? (
+            <div class="bean-routines-type-row">
+              <div class="bean-routines-type-buttons">
+                <button
+                  type="button"
+                  class={`bean-btn bean-btn--ghost bean-routines-type-btn${notifyOnly ? " bean-routines-type-btn--on" : ""}`}
+                  onClick={() => setWatchNotifyOnly(true)}
+                >Just notify me</button>
+                <button
+                  type="button"
+                  class={`bean-btn bean-btn--ghost bean-routines-type-btn${notifyOnly ? "" : " bean-routines-type-btn--on"}`}
+                  onClick={() => setWatchNotifyOnly(false)}
+                >⚡ Run steps on each new item</button>
+              </div>
+              <span class="bean-routines-section-note">
+                {notifyOnly
+                  ? "each new item goes straight to the sinks below — no model, no steps"
+                  : "each new item is queued as a todo and runs the steps below"}
+              </span>
+            </div>
+          ) : (
           <div class="bean-routines-type-row">
             <div class="bean-routines-type-buttons">
               <button
@@ -535,6 +756,7 @@ export function RoutinesPanel() {
                 : "runs the steps below on every scheduled fire"}
             </span>
           </div>
+          )}
         </div>
 
         {draft.todoDriven && !selected ? (
@@ -554,11 +776,13 @@ export function RoutinesPanel() {
             <div class="bean-routines-section-head">
               <div class="bean-field-label">QUEUE</div>
               <span class="bean-routines-section-note">
-                a backlog you fill — each pending item runs through the steps below
+                {draft.watch
+                  ? "the watch fills this — you can still add by hand"
+                  : "a backlog you fill — each pending item runs through the steps below"}
               </span>
             </div>
             <div class="bean-routines-queue-meta">
-              {pendingCount} pending · gates this routine
+              {pendingCount} pending{draft.watch ? "" : " · gates this routine"}
             </div>
             {(() => {
               // Reorder targets: pending items already arrive order-ASC from todosList, so this
@@ -677,6 +901,8 @@ export function RoutinesPanel() {
           </div>
         ) : null}
 
+        {notifyOnly ? null : (
+        <>
         <div class="bean-routines-divider" />
 
         <div class="bean-skills-projects">
@@ -684,172 +910,21 @@ export function RoutinesPanel() {
             <div class="bean-field-label">WHAT BEAN DOES</div>
             <span class="bean-routines-section-note">
               {draft.steps.length} step{draft.steps.length === 1 ? "" : "s"}
-              {draft.todoDriven ? " · run in order on each queued todo · one digest at the end" : " · run in order · one digest at the end"}
+              {draft.watch ? " · run in order on each new item" : draft.todoDriven ? " · run in order on each queued todo · one digest at the end" : " · run in order · one digest at the end"}
             </span>
           </div>
-          <div class="bean-routines-steps">
-            {draft.steps.map((step, i) => {
-              const skillLabel = step.skill ? `skill · ${step.skill}` : (step.kind === "delegate" ? "skill · choose…" : "skill · none");
-              const projName = projects.find((p) => p.path === (step.kind === "delegate" ? step.project : undefined))?.name;
-              const modelLabel = step.model ? (models.find((m) => m.id === step.model)?.label ?? step.model) : "Bean picks model";
-              return (
-                <div
-                  key={i}
-                  class={`bean-routines-step${dragIndex === i ? " bean-routines-step--dragging" : ""}${overIndex === i && dragIndex !== null ? " bean-routines-step--drop" : ""}`}
-                  onDragOver={(e) => { if (dragIndex !== null) { e.preventDefault(); setOverIndex(i); } }}
-                  onDragLeave={() => setOverIndex((v) => (v === i ? null : v))}
-                  onDrop={(e) => { e.preventDefault(); if (dragIndex !== null) reorderStep(dragIndex, i); setDragIndex(null); setOverIndex(null); }}
-                >
-                  <div class="bean-routines-step-rail">
-                    <span class="bean-routines-step-num">{i + 1}</span>
-                    {i < draft.steps.length - 1 ? <span class="bean-routines-step-line" /> : null}
-                  </div>
-                  <div class="bean-routines-step-card">
-                    <div class="bean-routines-pill-row">
-                      <ChipMenu chipLabel={<span class="bean-routines-chip-label">{step.kind}</span>}>
-                        {(close) => (
-                          <div class="bean-chip-menu-list">
-                            {(["delegate", "chat"] as const).map((k) => (
-                              <button
-                                key={k}
-                                type="button"
-                                class={`bean-chip-menu-row${step.kind === k ? " bean-chip-menu-row--on" : ""}`}
-                                onClick={() => { switchKind(i, step, k); close(); }}
-                              >
-                                <span class="bean-chip-menu-row-title">{step.kind === k ? "✓ " : ""}{k}</span>
-                                <span class="bean-chip-menu-caption">
-                                  {k === "delegate" ? "coding agent (opencode / claude / codex)" : "Bean's own model + tools, in chat"}
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </ChipMenu>
-
-                      <ChipMenu chipClass="bean-chip-menu-trigger--accent" chipLabel={<span class="bean-routines-chip-label">{skillLabel}</span>} menuWidth={340}>
-                        {(close) => (
-                          <div class="bean-chip-menu-list">
-                            {step.kind === "chat" ? (
-                              <button
-                                type="button"
-                                class={`bean-chip-menu-row${step.skill ? "" : " bean-chip-menu-row--on"}`}
-                                onClick={() => { setSkill(i, step, undefined); close(); }}
-                              >{step.skill ? "" : "✓ "}No skill</button>
-                            ) : null}
-                            {enabledSkills.map((s) => (
-                              <button
-                                key={s.name}
-                                type="button"
-                                class={`bean-chip-menu-row${step.skill === s.name ? " bean-chip-menu-row--on" : ""}`}
-                                onClick={() => { setSkill(i, step, s.name); close(); }}
-                              >
-                                <span class="bean-chip-menu-row-title">{step.skill === s.name ? "✓ " : ""}{s.name}</span>
-                                {s.description ? <span class="bean-chip-menu-caption">{s.description}</span> : null}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </ChipMenu>
-
-                      {step.kind === "delegate" ? (
-                        <ChipMenu
-                          chipClass={step.project ? undefined : "bean-chip-menu-trigger--dashed"}
-                          chipLabel={<span class="bean-routines-chip-label">{step.project ? `📁 ${projName ?? step.project}` : "no project"}</span>}
-                        >
-                          {(close) => (
-                            <div class="bean-chip-menu-list">
-                              {projects.map((p) => (
-                                <button
-                                  key={p.path}
-                                  type="button"
-                                  class={`bean-chip-menu-row${step.project === p.path ? " bean-chip-menu-row--on" : ""}`}
-                                  onClick={() => { setStep(i, { ...step, project: p.path }); close(); }}
-                                >{step.project === p.path ? "✓ " : ""}{p.name}</button>
-                              ))}
-                              <div class="bean-chip-menu-divider" />
-                              <button
-                                type="button"
-                                class={`bean-chip-menu-row${step.project ? "" : " bean-chip-menu-row--on"}`}
-                                onClick={() => { setStep(i, { ...step, project: undefined }); close(); }}
-                              >{step.project ? "" : "✓ "}No project — runs in a scratch workspace</button>
-                            </div>
-                          )}
-                        </ChipMenu>
-                      ) : null}
-
-                      <ChipMenu
-                        chipClass={step.model ? undefined : "bean-chip-menu-trigger--dashed"}
-                        chipLabel={<span class="bean-routines-chip-label">{modelLabel}</span>}
-                        menuWidth={320}
-                      >
-                        {(close) => (
-                          <div class="bean-chip-menu-list">
-                            <button
-                              type="button"
-                              class={`bean-chip-menu-row${step.model ? "" : " bean-chip-menu-row--on"}`}
-                              onClick={() => { setModel(i, step, undefined); close(); }}
-                            >{step.model ? "" : "✓ "}Bean picks the model</button>
-                            <div class="bean-chip-menu-divider" />
-                            {models.map((m) => {
-                              const available = m.availableOn.some((candidate) => clis.includes(candidate));
-                              return (
-                                <button
-                                  key={m.id}
-                                  type="button"
-                                  disabled={!available}
-                                  class={`bean-chip-menu-row bean-chip-menu-row--model${step.model === m.id ? " bean-chip-menu-row--on" : ""}${available ? "" : " bean-chip-menu-row--dimmed"}`}
-                                  onClick={() => { if (available) { setModel(i, step, m.id); close(); } }}
-                                >
-                                  <span class="bean-chip-menu-row-title">{step.model === m.id ? "✓ " : ""}{m.label}</span>
-                                  <span class="bean-chip-menu-caption">
-                                    {m.availableOn.join("  /  ") || "no CLI support"}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </ChipMenu>
-
-                      <span class="bean-skills-spacer" />
-                      <span
-                        class="bean-routines-handle"
-                        title="Drag to reorder"
-                        draggable
-                        onDragStart={(e) => { setDragIndex(i); e.dataTransfer?.setData("text/plain", String(i)); }}
-                        onDragEnd={() => { setDragIndex(null); setOverIndex(null); }}
-                      >⠿</span>
-                    </div>
-                    <textarea
-                      class="bean-routines-step-instruction"
-                      placeholder="What should this step do?"
-                      value={step.instruction}
-                      onInput={(e) => setStep(i, { ...step, instruction: (e.target as HTMLTextAreaElement).value })}
-                    />
-                    <div class="bean-routines-step-actions">
-                      <span class="bean-skills-spacer" />
-                      <button
-                        type="button"
-                        class="bean-skills-delete-link"
-                        disabled={draft.steps.length === 1}
-                        onClick={() => setDraft({ ...draft, steps: draft.steps.filter((_, j) => j !== i) })}
-                      >Remove</button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-            <button
-              type="button"
-              class="bean-routines-add"
-              onClick={() => setDraft({ ...draft, steps: [...draft.steps, { kind: "chat", instruction: "" }] })}
-            >
-              <span class="bean-routines-add-plus">＋</span>
-              Add a step
-              <span class="bean-routines-add-hint">— another delegate under this cadence</span>
-            </button>
-          </div>
+          <StepsEditor
+            steps={draft.steps}
+            onSteps={(steps) => setDraft({ ...draft, steps })}
+            skills={enabledSkills}
+            projects={projects}
+            clis={clis}
+            models={models}
+            {...(draft.watch ? { addHint: "— runs on each new item, in order" } : {})}
+          />
         </div>
+        </>
+        )}
 
         <div class="bean-routines-divider" />
 
@@ -942,7 +1017,7 @@ export function RoutinesPanel() {
               : "No digest sink — results stay in run history."}
           </span>
           <span class="bean-skills-spacer" />
-          {selected ? (
+          {selected && !notifyOnly ? (
             <>
               <button
                 type="button"
@@ -952,7 +1027,7 @@ export function RoutinesPanel() {
               >
                 {isRunningSelected ? "Running…" : "Run now"}
               </button>
-              {emptyTodoQueue ? <span class="bean-routines-section-note">queue a todo first</span> : null}
+              {emptyTodoQueue ? <span class="bean-routines-section-note">{draft.watch ? "nothing queued yet" : "queue a todo first"}</span> : null}
             </>
           ) : null}
           <button type="button" class="bean-btn" onClick={() => void save()}>Save routine</button>

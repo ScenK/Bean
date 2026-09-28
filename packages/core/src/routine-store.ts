@@ -12,13 +12,25 @@ export type RoutineStep =
   | { kind: "delegate"; skill: string; project?: string; model?: string; instruction: string }
   | { kind: "chat"; skill?: string; model?: string; instruction: string };
 
+/** Deterministic polled trigger — no model per check. `everyMinutes` defaults to 15. */
+export type RoutineWatch =
+  | { kind: "feed"; url: string; everyMinutes?: number }
+  | { kind: "command"; command: string; everyMinutes?: number };
+
+export const DEFAULT_WATCH_MINUTES = 15;
+export const watchEveryMinutes = (w: RoutineWatch): number => w.everyMinutes ?? DEFAULT_WATCH_MINUTES;
+
 /** A saved routine definition (~/.bean/routines/<name>.json). Runtime state (last run,
  * history) lives separately in .state.json so definitions stay clean and shareable. */
 export interface Routine {
   name: string;
   description?: string;
   enabled: boolean;
-  cron: string; // 5-field cron, local time
+  /** 5-field cron, local time. Exactly one of `cron` / `watch` is set. */
+  cron?: string;
+  /** Poll a feed or command; each new item fires the routine. Steps `[]` = notify-only;
+   * otherwise the routine must be todoDriven (each new item is queued as a todo). */
+  watch?: RoutineWatch;
   /** true = the steps are a pipeline run once per queued todo; the scheduled run is
    * skipped entirely while the routine's queue has no pending items. */
   todoDriven?: boolean;
@@ -41,6 +53,8 @@ export interface RoutineState {
   lastRun?: string; // ISO of the last started run (schedule base)
   missed?: boolean; // a scheduled fire time passed while Bean was closed
   history: RunRecord[]; // newest first, capped
+  lastPoll?: string;  // ISO of the last watch poll attempt (ok or failed)
+  pollError?: string; // last poll's error; absent when the last poll succeeded
 }
 
 const HISTORY_CAP = 20;
@@ -65,6 +79,23 @@ function describeStepError(v: unknown, index: number): string | null {
   return `${at} has an unknown kind`;
 }
 
+function describeWatchError(v: unknown): string | null {
+  if (typeof v !== "object" || v === null) return "watch must be an object";
+  const w = v as Record<string, unknown>;
+  if (w.everyMinutes !== undefined && (!Number.isInteger(w.everyMinutes) || (w.everyMinutes as number) < 1)) {
+    return "watch interval must be a whole number of minutes, at least 1";
+  }
+  if (w.kind === "feed") {
+    if (!str(w.url) || !/^https?:\/\//i.test(w.url.trim())) return "the watched feed needs an http(s) URL";
+    return null;
+  }
+  if (w.kind === "command") {
+    if (!str(w.command) || !w.command.trim()) return "the watch needs a command to run";
+    return null;
+  }
+  return 'watch kind must be "feed" or "command"';
+}
+
 /** Validates a routine and describes the first problem found, or null if valid. Used both to
  * decide validity (isValidRoutine) and to give the save-time error a specific, actionable
  * reason instead of a bare "invalid routine". */
@@ -75,11 +106,21 @@ export function describeRoutineError(v: unknown): string | null {
   if (badName.test(r.name)) return `routine name ${JSON.stringify(r.name)} can't contain "/", "\\", or ".."`;
   if (r.description !== undefined && !str(r.description)) return "description must be text";
   if (typeof r.enabled !== "boolean") return "enabled must be true or false";
-  if (!str(r.cron)) return "cron schedule is required";
-  if (!isValidCron(r.cron)) return `cron schedule ${JSON.stringify(r.cron)} is not a valid 5-field cron expression`;
+  if (r.cron !== undefined && r.watch !== undefined) return "a routine runs on a schedule or a watch, not both";
+  if (r.watch !== undefined) {
+    const watchError = describeWatchError(r.watch);
+    if (watchError) return watchError;
+  } else {
+    if (!str(r.cron)) return "cron schedule is required";
+    if (!isValidCron(r.cron)) return `cron schedule ${JSON.stringify(r.cron)} is not a valid 5-field cron expression`;
+  }
   if (r.todoDriven !== undefined && typeof r.todoDriven !== "boolean") return "todoDriven must be true or false";
   if (r.webSearch !== undefined && typeof r.webSearch !== "boolean") return "webSearch must be true or false";
-  if (!Array.isArray(r.steps) || r.steps.length === 0) return "add at least one step";
+  if (!Array.isArray(r.steps)) return "steps must be a list";
+  if (r.steps.length === 0 && r.watch === undefined) return "add at least one step";
+  if (r.watch !== undefined && r.steps.length > 0 && r.todoDriven !== true) {
+    return "a watch routine with steps must be todo-driven — each new item is queued as a todo";
+  }
   for (let i = 0; i < r.steps.length; i++) {
     const stepError = describeStepError(r.steps[i], i);
     if (stepError) return stepError;
@@ -157,6 +198,8 @@ export async function loadRoutineStates(file: string): Promise<Record<string, Ro
         lastRun: str(st.lastRun) ? st.lastRun : undefined,
         missed: st.missed === true ? true : undefined,
         history: Array.isArray(st.history) ? (st.history as RunRecord[]) : [],
+        lastPoll: str(st.lastPoll) ? st.lastPoll : undefined,
+        pollError: str(st.pollError) ? st.pollError : undefined,
       };
     }
     return out;
@@ -173,6 +216,7 @@ export async function saveRoutineStates(file: string, states: Record<string, Rou
 /** Newest-first history, capped; a completed run clears any missed flag. */
 export function appendRunRecord(state: RoutineState | undefined, record: RunRecord): RoutineState {
   return {
+    ...state,
     lastRun: record.startedAt,
     missed: false,
     history: [record, ...(state?.history ?? [])].slice(0, HISTORY_CAP),
