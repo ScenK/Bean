@@ -172,7 +172,7 @@ test("onActivity flags a model failure on the turn's end without its text; comma
   const bot = buildTeamsBot(deps);
   await bot.onMessage(msg, fx());
   expect(seen.at(-1)).toMatchObject({ type: "turn", phase: "end", failed: true });
-  expect(JSON.stringify(seen)).not.toContain("401");
+  expect(JSON.stringify(seen)).not.toContain("bad key");
   seen.length = 0;
   await bot.onMessage({ ...msg, text: "/new" }, fx());
   expect(seen).toEqual([]);
