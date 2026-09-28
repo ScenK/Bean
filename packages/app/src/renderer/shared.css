@@ -1374,6 +1374,36 @@ button, input, textarea, select, a {
 .bean-md a:focus-visible { outline: 2px solid var(--bean-link); outline-offset: 2px; border-radius: 2px; }
 .bean-md input[type="checkbox"] { margin-right: 6px; accent-color: var(--bean-accent-text); }
 .bean-md input[type="checkbox"]:not([disabled]) { cursor: pointer; }
+/* GFM tables (routine reports are table-heavy). Tints are --bean-text mixed into transparent
+   so they read on whichever surface hosts the markdown, in both themes. `display: block` lets a
+   wide table scroll inside its box; cells opt out of `.bean-md`'s `anywhere`, which would
+   otherwise collapse every column to one character wide. */
+.bean-md table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 8px 0;
+  border-collapse: collapse;
+  border: 1px solid var(--bean-border);
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.bean-md th, .bean-md td {
+  padding: 5px 10px;
+  border: 1px solid var(--bean-border);
+  overflow-wrap: normal;
+  vertical-align: top;
+}
+.bean-md th {
+  background: color-mix(in oklch, var(--bean-text) 9%, transparent);
+  border-bottom-color: var(--bean-control-border);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.bean-md th:not([align]) { text-align: left; }
+.bean-md tbody tr:nth-child(even) { background: color-mix(in oklch, var(--bean-text) 4%, transparent); }
+.bean-md tbody td:first-child { font-weight: 600; }
 
 /* Routines (mockup 1a — "Routine as a recipe") */
 
