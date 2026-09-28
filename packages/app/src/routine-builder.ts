@@ -69,8 +69,14 @@ export function createRoutineBuilder(deps: RoutineBuilderDeps) {
     await deps.saveRoutine({ ...routine, enabled: false });
     // Drafted skills go in after the routine landed, and only under a free name — never
     // overwrite one the user has. A skill-save failure leaves a disabled routine to review.
-    const taken = new Set((await deps.loadSkills()).map((s) => s.name));
-    for (const s of skills) if (!taken.has(s.name)) await deps.saveSkill(s.name, s.markdown);
+    // Best-effort: the routine is saved (and reviewable) either way, so a skill write failure
+    // must not flip the build to "failed · nothing was saved".
+    try {
+      const taken = new Set((await deps.loadSkills()).map((s) => s.name));
+      for (const s of skills) if (!taken.has(s.name)) await deps.saveSkill(s.name, s.markdown);
+    } catch (err) {
+      console.error(`bean: couldn't save a skill drafted for "${routine.name}"`, err);
+    }
     builds.delete(entry.name);
   }
 

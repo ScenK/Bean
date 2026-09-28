@@ -302,10 +302,12 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       try {
         const at = now().toISOString();
         const items = [...new Map((await deps.pollWatch(routine.watch)).map((i) => [i.id, i])).values()];
-        deps.watchSeen.seed(name, watchSourceKey(routine.watch), items.map((i) => i.id));
+        // Queue first, seed after: a crash or failed insert in between leaves the watch unseeded
+        // (still "needs review"), so the opted-in items are re-offered rather than lost.
         if (queueExisting && routine.todoDriven && routine.steps.length > 0) {
           for (const item of items) await deps.addTodo?.(name, watchTodoText(item));
         }
+        deps.watchSeen.seed(name, watchSourceKey(routine.watch), items.map((i) => i.id));
         failures.delete(name);
         await updateState(name, (s) => ({ ...(s ?? { history: [] }), lastPoll: at, pollError: undefined }));
         await deps.saveRoutine({ ...routine, enabled: true });

@@ -216,4 +216,12 @@ describe("watch triggers", () => {
     await t.sched.tick();
     expect(t.deps.pollWatch).toHaveBeenCalledTimes(2);
   });
+
+  it("enableWatch with queueExisting leaves the watch unseeded when a queue insert fails", async () => {
+    const t = setup([queue({ enabled: false })], { addTodo: vi.fn(async () => { throw new Error("locked"); }) });
+    t.setItems([{ id: "a", text: "A" }]);
+    await expect(t.sched.enableWatch("prs", true)).rejects.toThrow(/locked/);
+    expect(t.deps.watchSeen!.isSeeded("prs", "command:gh …")).toBe(false); // still needs review
+    expect(t.deps.saveRoutine).not.toHaveBeenCalled();
+  });
 });
