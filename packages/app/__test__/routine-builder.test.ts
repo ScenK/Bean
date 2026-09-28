@@ -90,4 +90,10 @@ describe("routine builder", () => {
     expect(cancel).toHaveBeenCalled();
     expect(t.builder.list()).toEqual([]);
   });
+
+  it("refuses a name that could escape the scratch dir", async () => {
+    const t = setup(ok);
+    await expect(t.builder.start(brief({ name: "x/../.." }))).rejects.toThrow(/lowercase/);
+    expect(t.deps.startAgent).not.toHaveBeenCalled();
+  });
 });

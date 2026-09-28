@@ -235,9 +235,19 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
         );
       } catch (err) {
         if (!(err instanceof RunBusyError)) throw err;
-        // Project busy: back to pending untouched, stop draining — the next tick retries.
-        await deps.todos.setStatus(item.id, "pending");
-        break;
+        if (scoped.length === 0) {
+          // Busy before anything ran: back to pending untouched, stop draining — the next tick retries.
+          await deps.todos.setStatus(item.id, "pending");
+          break;
+        }
+        // Busy after earlier steps already ran (and may have had side effects): replaying the
+        // todo would repeat them, so it fails like any step — visible and manually retryable.
+        const busy: StepResult = { index: scoped.length, kind: "delegate", ok: false, output: labelPrefix + err.message };
+        results.push(...scoped, busy);
+        await deps.todos.setStatus(item.id, "failed", err.message.slice(0, SUMMARY_CAP));
+        allOk = false;
+        soleLabelPrefix = labelPrefix;
+        continue;
       }
       soleLabelPrefix = labelPrefix;
       results.push(...scoped);

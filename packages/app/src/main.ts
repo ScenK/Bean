@@ -22,7 +22,7 @@ import {
   composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
-  pollWatch, isWatchSeeded, seedWatch, markNewItems, clearWatch, watchSourceKey, briefMessages, parseBrief,
+  pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
   reserveRun, releaseRun, RunBusyError,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult, TodoStatus, CliName } from "@bean/core";
@@ -685,6 +685,7 @@ app.whenReady().then(async () => {
       watchSeen: {
         isSeeded: (r, source) => isWatchSeeded(dbFile(dir), r, source),
         seed: (r, source, ids) => seedWatch(dbFile(dir), r, source, ids),
+        unseen: (r, ids) => unseenIds(dbFile(dir), r, ids),
         markNew: (r, ids) => markNewItems(dbFile(dir), r, ids),
       },
       addTodo: async (r, text) => { await addTodo(dbFile(dir), r, text); },
@@ -707,7 +708,7 @@ app.whenReady().then(async () => {
       startAgent: (prompt, brief, onLine) => {
         const choice = resolveDelegateSelection(cliModels, enabledClis(), brief.builder?.cli ?? runtime.getDelegateCli(), brief.builder?.model);
         if (!choice) return { done: Promise.reject(new Error("No enabled delegate CLI found — enable one in Settings.")), cancel: () => {} };
-        const cwd = join(scratchDir(dir), `build-${brief.name}`);
+        const cwd = join(scratchDir(dir), `build-${brief.name}`); // name validated kebab-case in builder.start
         mkdirSync(cwd, { recursive: true });
         let cancel = (): void => {};
         const done = new Promise<string>((resolve, reject) => {

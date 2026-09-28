@@ -364,4 +364,18 @@ describe("todo-driven routines", () => {
     });
     expect(deferred.deferred).toBe(true);
   });
+
+  it("busy after an earlier step already ran fails the todo instead of replaying its side effects", async () => {
+    const watch: Routine = { name: "nightly", enabled: true, watch: { kind: "command", command: "c" }, todoDriven: true,
+      steps: [{ kind: "chat", instruction: "save a note" }, { kind: "delegate", skill: "review", project: "/p", instruction: "review" }], sinks: {} };
+    const todos = fakeTodos([todo("1", "PR 1")]);
+    const result = await runRoutine(watch, {
+      chat: async () => ({ content: "noted", toolCalls: [] }), model: "m",
+      delegate: async () => { throw new RunBusyError("p is busy"); },
+      tools: [], findSkill: () => undefined, todos: todos.dep,
+    });
+    expect(todos.statusLog.map((l) => l.status)).toEqual(["running", "failed"]);
+    expect(result.record.status).toBe("failed");
+    expect(result.deferred).toBeUndefined();
+  });
 });

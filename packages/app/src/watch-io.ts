@@ -15,10 +15,28 @@ export async function fetchText(url: string): Promise<string> {
   // line says "→ consent.youtube.com" instead of a bare parse failure.
   const landed = res.url && new URL(res.url).host !== new URL(url).host ? ` → ${new URL(res.url).host}` : "";
   if (!res.ok) throw new Error(`feed returned HTTP ${res.status}${landed}`);
-  const body = await res.text();
-  if (body.length > FETCH_MAX_BYTES) throw new Error("feed is larger than 5 MB");
+  const body = await readCapped(res, FETCH_MAX_BYTES);
   if (landed && !/<(rss|feed)[\s>]/i.test(body.slice(0, 2000))) throw new Error(`feed redirected${landed}`);
   return body;
+}
+
+/** Reads a response body, aborting as soon as it passes `max` bytes (never buffers past it). */
+async function readCapped(res: Response, max: number): Promise<string> {
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel();
+      throw new Error(`feed is larger than ${Math.round(max / 1024 / 1024)} MB`);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 /** `/bin/sh -c` with the resolved login-shell PATH (same shape as resolvedPathSpawnFn), so a

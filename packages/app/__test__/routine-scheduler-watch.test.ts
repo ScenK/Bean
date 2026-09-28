@@ -20,6 +20,7 @@ function fakeSeen(): WatchSeenDeps {
       return false;
     },
     seed: (r, source, ids) => { sources.set(r, source); seen.set(r, new Set(ids)); },
+    unseen: (r, ids) => ids.filter((id) => !(seen.get(r) ?? new Set<string>()).has(id)),
     markNew: (r, ids) => {
       const set = seen.get(r) ?? new Set<string>();
       const fresh = ids.filter((id) => !set.has(id));
@@ -174,5 +175,45 @@ describe("watch triggers", () => {
     expect(t.states().yt?.missed).toBeUndefined();
     t.sched.stop();
     vi.useRealTimers();
+  });
+
+  it("at-least-once: a failed todo insert marks nothing seen, reports the failure, and retries next poll", async () => {
+    let failInsert = true;
+    const t = setup([queue()], {
+      addTodo: vi.fn(async () => { if (failInsert) throw new Error("database is locked"); }),
+    });
+    await t.sched.tick(); // seed (empty)
+    t.setItems([{ id: "pr1", text: "PR 1" }]);
+    t.advance(5);
+    await t.sched.tick();
+    expect(t.states().prs?.pollError).toMatch(/locked/);
+    failInsert = false;
+    t.advance(5);
+    await t.sched.tick();
+    expect(t.deps.addTodo).toHaveBeenCalledTimes(2); // offered again, not dropped
+    expect(t.states().prs?.pollError).toBeUndefined();
+  });
+
+  it("drops a poll's results when the source was edited while it was in flight", async () => {
+    const routines = [notify()];
+    const t = setup(routines, {
+      pollWatch: vi.fn(async () => {
+        routines[0] = notify({ watch: { kind: "feed", url: "https://edited", everyMinutes: 15 } });
+        return [{ id: "old", text: "Old" }];
+      }),
+    });
+    await t.sched.tick();
+    expect(t.states().yt?.lastPoll).toBeUndefined(); // nothing seeded or stamped for the new source
+  });
+
+  it("a throwing due check doesn't leave the routine stuck as running", async () => {
+    let boom = true;
+    const t = setup([queue()], { hasPendingTodos: async () => { if (boom) throw new Error("locked"); return false; } });
+    await t.sched.tick();
+    expect(t.sched.isRunning("prs")).toBe(false);
+    boom = false;
+    t.advance(5);
+    await t.sched.tick();
+    expect(t.deps.pollWatch).toHaveBeenCalledTimes(2);
   });
 });

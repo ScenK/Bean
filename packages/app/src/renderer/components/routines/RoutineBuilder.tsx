@@ -83,6 +83,8 @@ export function DescribePane(props: CatalogProps & {
       : brief.trigger === "schedule" && !brief.cron?.trim() ? "set a schedule"
       : !(brief.trigger === "watch" && brief.notifyOnly) && brief.steps.some((s) => !s.instruction.trim()) ? "every step needs an instruction"
       : !(brief.trigger === "watch" && brief.notifyOnly) && brief.steps.length === 0 ? "add a step, or choose Just notify me"
+      : brief.trigger === "watch" && brief.notifyOnly && !brief.sinks.chatops?.length && !brief.sinks.note && !brief.sinks.notify
+        ? "pick where to send new items — a notify-only watch with no destination tells no one"
       : "";
     if (problem) { setError(problem); return; }
     if (brief.trigger === "schedule") {

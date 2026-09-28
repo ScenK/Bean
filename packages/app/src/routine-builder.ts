@@ -32,6 +32,8 @@ export interface RoutineBuilderDeps {
   now?: () => Date;
 }
 
+const BRIEF_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
 /** Builds live in the main process, so closing the Routines window never loses one — it stays in
  * the list as "building…" (or "build failed") until it finishes or is dismissed. */
 export function createRoutineBuilder(deps: RoutineBuilderDeps) {
@@ -57,7 +59,7 @@ export function createRoutineBuilder(deps: RoutineBuilderDeps) {
     return feed;
   }
 
-  async function save(entry: RoutineBuildView, routine: Routine): Promise<void> {
+  async function save(entry: RoutineBuildView, routine: Routine, skills: { name: string; markdown: string }[] = []): Promise<void> {
     const error = describeRoutineError(routine);
     if (error) throw new Error(`the built routine is invalid: ${error}`);
     if ((await deps.loadRoutines()).some((r) => r.name === routine.name)) {
@@ -65,6 +67,10 @@ export function createRoutineBuilder(deps: RoutineBuilderDeps) {
     }
     if (!live(entry)) return; // cancelled while validating
     await deps.saveRoutine({ ...routine, enabled: false });
+    // Drafted skills go in after the routine landed, and only under a free name — never
+    // overwrite one the user has. A skill-save failure leaves a disabled routine to review.
+    const taken = new Set((await deps.loadSkills()).map((s) => s.name));
+    for (const s of skills) if (!taken.has(s.name)) await deps.saveSkill(s.name, s.markdown);
     builds.delete(entry.name);
   }
 
@@ -106,15 +112,16 @@ export function createRoutineBuilder(deps: RoutineBuilderDeps) {
     } catch (err) {
       throw new Error(`Bean re-ran the command and it failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-    // Drafted skills are saved only under a free name — never overwrite one the user has.
-    const taken = new Set((await deps.loadSkills()).map((s) => s.name));
-    for (const s of result.skills) if (!taken.has(s.name)) await deps.saveSkill(s.name, s.markdown);
-    await save(entry, routine);
+    await save(entry, routine, result.skills);
   }
 
   return {
     list: (): RoutineBuildView[] => [...builds.values()].map((b) => ({ ...b })),
     async start(brief: RoutineBrief): Promise<void> {
+      // Trust boundary: the name becomes a file and a scratch dir name — kebab-case only.
+      if (typeof brief?.name !== "string" || !BRIEF_NAME.test(brief.name)) {
+        throw new Error("routine names are lowercase letters, digits and dashes (e.g. review-queue)");
+      }
       if (brief.trigger !== "watch") throw new Error("only watch routines are built — a scheduled one opens in the editor");
       if (builds.get(brief.name)?.status === "building") throw new Error(`"${brief.name}" is already building`);
       if ((await deps.loadRoutines()).some((r) => r.name === brief.name)) {

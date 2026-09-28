@@ -34,6 +34,13 @@ export function seedWatch(file: string, routine: string, source: string, ids: st
   }
 }
 
+/** Read-only: the ids not seen yet, in input order. The caller marks them (markNewItems) only
+ * after their todo/digest is durably handed off — at-least-once, never silently dropped. */
+export function unseenIds(file: string, routine: string, ids: string[]): string[] {
+  const q = openDb(file).prepare("SELECT 1 FROM watch_seen WHERE routine = ? AND item_id = ?");
+  return ids.filter((id) => q.get(routine, id) === undefined);
+}
+
 /** Records `ids` as seen and returns the ones that weren't already — in input order. Keeps the
  * newest `max(500, 2 × ids.length)` rows so a feed's current page is never evicted. */
 export function markNewItems(file: string, routine: string, ids: string[], now: () => Date = () => new Date()): string[] {

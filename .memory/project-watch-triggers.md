@@ -32,5 +32,14 @@ Decisions worth keeping:
   drafted skills only under free names, and saves the routine **disabled**. Feed briefs skip the
   agent (`discoverFeedUrl`). Schedule briefs just open the manual editor. Builds live in main
   (`app/routine-builder.ts`) so closing the window doesn't lose them.
-- Known limits: command timeout SIGTERMs only the shell; a crash between seen-set write and
-  `addTodo` drops those items; `acli` PATH detection wasn't verified on a machine that has it.
+- **Hand-off is at-least-once**: an item is marked seen only after its todo insert / digest
+  delivery succeeded; a failed hand-off counts as a poll failure (status line + alarm) and the
+  item is re-offered next poll. Results of a poll whose source was edited mid-flight are dropped.
+- Busy project (`RunBusyError`) defers the todo to pending **only if none of its steps ran yet**;
+  after an earlier step (possible side effects) it fails the todo instead of replaying it.
+- **Accepted trust model (review round 1, not fixed):** the build agent runs on the same
+  bypass-permissions delegate path as every other delegate, so the skill's "never write
+  `~/.bean`" is a prompt rule, and Bean re-running the agent's command before review adds no
+  capability the agent didn't already have. Sandboxing the builder is its own follow-up.
+- Known limits: command timeout SIGTERMs only the shell; `acli` PATH detection wasn't verified
+  on a machine that has it.

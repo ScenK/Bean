@@ -6,6 +6,8 @@ import type { Routine, RoutineRunResult, RoutineState, RoutineWatch, WatchItem }
 export interface WatchSeenDeps {
   isSeeded: (routine: string, source: string) => boolean;
   seed: (routine: string, source: string, ids: string[]) => void;
+  /** Read-only: ids not seen yet. */
+  unseen: (routine: string, ids: string[]) => string[];
   /** Records ids as seen; returns the ones that weren't. */
   markNew: (routine: string, ids: string[]) => string[];
 }
@@ -110,41 +112,56 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     const watch = routine.watch;
     if (!watch || !deps.pollWatch || !deps.watchSeen) return { newItems: 0, error: "watch polling isn't available" };
     if (polling.has(routine.name)) return { newItems: 0, error: "already checking" };
+    const at = now().toISOString();
+    // A failed check OR a failed hand-off (todo insert, digest delivery) is one failure: it
+    // shows on the status line and counts toward the alarm, and nothing gets marked seen.
+    const fail = async (err: unknown): Promise<WatchCheckResult> => {
+      const error = err instanceof Error ? err.message : String(err);
+      const count = (failures.get(routine.name) ?? 0) + 1;
+      failures.set(routine.name, count);
+      if (count === ALARM_AFTER) deps.alarm?.(routine, error);
+      await updateState(routine.name, (s) => ({ ...(s ?? { history: [] }), lastPoll: at, pollError: error })).catch(() => {});
+      return { newItems: 0, error };
+    };
     polling.add(routine.name);
     try {
-      const at = now().toISOString();
       let items: WatchItem[];
       try {
         items = await deps.pollWatch(watch);
       } catch (err) {
-        const error = err instanceof Error ? err.message : String(err);
-        const count = (failures.get(routine.name) ?? 0) + 1;
-        failures.set(routine.name, count);
-        if (count === ALARM_AFTER) deps.alarm?.(routine, error);
-        await updateState(routine.name, (s) => ({ ...(s ?? { history: [] }), lastPoll: at, pollError: error }));
-        return { newItems: 0, error };
+        return await fail(err);
       }
-      failures.delete(routine.name);
+      // Edited while this poll was in flight: these results belong to the old source — drop
+      // them rather than seeding/stamping the new one with them.
+      const current = (await deps.loadRoutines()).find((r) => r.name === routine.name);
+      if (!current?.watch || watchSourceKey(current.watch) !== watchSourceKey(watch)) return { newItems: 0 };
       const unique = [...new Map(items.map((i) => [i.id, i])).values()];
+      const ids = unique.map((i) => i.id);
       const source = watchSourceKey(watch);
       let fresh: WatchItem[] = [];
       if (!deps.watchSeen.isSeeded(routine.name, source)) {
-        deps.watchSeen.seed(routine.name, source, unique.map((i) => i.id));
+        deps.watchSeen.seed(routine.name, source, ids);
       } else {
-        const ids = new Set(deps.watchSeen.markNew(routine.name, unique.map((i) => i.id)));
-        fresh = unique.filter((i) => ids.has(i.id));
+        const unseen = new Set(deps.watchSeen.unseen(routine.name, ids));
+        fresh = unique.filter((i) => unseen.has(i.id));
+        // At-least-once: an item is marked seen only after its todo/digest is handed off, so a
+        // crash or failed insert re-offers it next poll instead of silently dropping it.
+        if (fresh.length > 0 && routine.steps.length === 0) {
+          await fireNotify(routine, fresh, at);
+        } else {
+          for (const item of fresh) {
+            await deps.addTodo?.(routine.name, watchTodoText(item));
+            deps.watchSeen.markNew(routine.name, [item.id]);
+          }
+        }
+        deps.watchSeen.markNew(routine.name, ids); // refresh seen_at for everything still there
       }
+      failures.delete(routine.name);
       await updateState(routine.name, (s) => ({ ...(s ?? { history: [] }), lastPoll: at, pollError: undefined }));
-      if (fresh.length > 0) {
-        if (routine.steps.length === 0) await fireNotify(routine, fresh, at);
-        // ponytail: seen-set is written before the todos — a crash in between drops those items;
-        // a pending-write journal would close it if that ever matters.
-        else for (const item of fresh) await deps.addTodo?.(routine.name, watchTodoText(item));
-      }
       return { newItems: fresh.length };
     } catch (err) {
       console.error(`bean: watch "${routine.name}" poll failed`, err);
-      return { newItems: 0, error: err instanceof Error ? err.message : String(err) };
+      return await fail(err);
     } finally {
       polling.delete(routine.name);
     }
@@ -168,6 +185,18 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     // Runs start only after every poll in this pass, so one long run can't stall other watches.
     const due: Routine[] = [];
     for (const routine of candidates) {
+      try {
+        await consider(routine);
+      } catch (err) {
+        // A transient failure (e.g. a SQLite lock in hasPendingTodos) must not leave the name
+        // flagged running — later ticks would skip it for the rest of the session.
+        console.error(`bean: routine "${routine.name}" due check failed`, err);
+        running.delete(routine.name);
+      }
+    }
+    for (const routine of due) await execute(routine);
+
+    async function consider(routine: Routine): Promise<void> {
       const state = states[routine.name];
       if (routine.watch) {
         // No cron, no missed-marking: a watch is due when its queue has work.
@@ -176,18 +205,18 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
           ? await deps.hasPendingTodos(routine.name) : false;
         if (hasWork) due.push(routine);
         else running.delete(routine.name);
-        continue;
+        return;
       }
       // A missed schedule stays missed until someone actually runs it (execute() clears the
       // flag) — no catch-up by design, otherwise nextRun(cron, stale lastRun) would keep
       // returning the same past due time and tick() would auto-run it on its very next pass.
-      if (missedNames.has(routine.name)) { running.delete(routine.name); continue; }
+      if (missedNames.has(routine.name)) { running.delete(routine.name); return; }
       let dueAt: Date;
       try {
         dueAt = nextRun(routine.cron ?? "", scheduleBase(state));
       } catch {
         running.delete(routine.name);
-        continue; // unparseable cron in a hand-edited file — skip, panel save validates
+        return; // unparseable cron in a hand-edited file — skip, panel save validates
       }
       if (dueAt.getTime() <= nowT.getTime()) {
         if (routine.todoDriven && deps.hasPendingTodos && !(await deps.hasPendingTodos(routine.name))) {
@@ -195,14 +224,13 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
           // refires every tick forever (same shape as the missed/no-catch-up rule).
           await updateState(routine.name, (prior) => ({ ...(prior ?? { history: [] }), lastRun: now().toISOString(), missed: undefined }));
           running.delete(routine.name);
-          continue;
+          return;
         }
         due.push(routine);
       } else {
         running.delete(routine.name);
       }
     }
-    for (const routine of due) await execute(routine);
   }
 
   /** Flag routines whose fire time passed while Bean was closed (base = lastRun, fire < startedAt). */
