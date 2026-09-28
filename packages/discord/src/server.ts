@@ -130,10 +130,10 @@ async function liveSessionCardFor(
   });
 }
 
-// Channels whose latest addressed turn was a voice message: a Run click on that turn's delegate
-// card arrives as a separate interaction, and this is how its result knows to be spoken too.
-// ponytail: per-channel, not per-proposal — a typed turn between voice turn and Run click mutes it.
-const voiceChannels = new Set<string>();
+// Cards posted while answering a voice message, by message id: a Run click on one arrives as a
+// separate interaction, and this is how its delegate result knows to be spoken too. Claimed
+// (deleted) on the card's first button click, like `selections`.
+const voiceCards = new Set<string>();
 
 // `voiceReply`: the user spoke this turn, so each reply also carries a spoken mp3 — text stays
 // for reading where audio can't be played.
@@ -156,7 +156,11 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voi
     reply,
     postResult: reply,
     post: async (text) => { for (const c of chunkText(text)) await send(c); },
-    postCard: async (card) => (await send(card as MessageCreateOptions)).id,
+    postCard: async (card) => {
+      const { id } = await send(card as MessageCreateOptions);
+      if (voiceReply) voiceCards.add(id);
+      return id;
+    },
     updateCard: async (activityId, card) => {
       if (!("messages" in channel)) return;
       const msg = await channel.messages.fetch(activityId);
@@ -264,8 +268,6 @@ client.on("messageCreate", async (message) => {
         console.error("startThread failed, replying in channel:", err);
       }
     }
-    if (heardAudio) voiceChannels.add(channel.id);
-    else voiceChannels.delete(channel.id);
     if ("sendTyping" in channel) await channel.sendTyping();
     // Discord's typing indicator lasts ~10s; refresh it while onMessage is still working.
     const typing = "sendTyping" in channel
@@ -397,16 +399,16 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       return;
     }
     if (!interaction.channel) return;
-    const fx = effectsFor(interaction.channel, undefined, voiceChannels.has(interaction.channelId));
     if (action === "cancel-run") {
       await bot.onCardAction(
         { conversationId: interaction.channelId, fromId: interaction.user.id, fromName: interaction.user.displayName, value: { beanAction: "cancel-run", projectPath: payload } },
-        fx,
+        effectsFor(interaction.channel),
       );
       return;
     }
     const sel = selections.get(interaction.message.id) ?? {};
     selections.delete(interaction.message.id);
+    const fx = effectsFor(interaction.channel, undefined, voiceCards.delete(interaction.message.id));
     await bot.onCardAction(
       {
         conversationId: interaction.channelId,
