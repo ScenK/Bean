@@ -130,6 +130,11 @@ async function liveSessionCardFor(
   });
 }
 
+// Cards posted while answering a voice message, by message id: a Run click on one arrives as a
+// separate interaction, and this is how its delegate result knows to be spoken too. Claimed
+// (deleted) on the card's first button click, like `selections`.
+const voiceCards = new Set<string>();
+
 // `voiceReply`: the user spoke this turn, so each reply also carries a spoken mp3 — text stays
 // for reading where audio can't be played.
 function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voiceReply = false): BotEffects {
@@ -137,19 +142,27 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voi
     if (!("send" in channel)) throw new Error("channel is not sendable");
     return channel.send(options as MessageCreateOptions);
   };
+  const reply = async (text: string): Promise<void> => {
+    for (const c of chunkText(text)) await send(c);
+    if (!voiceReply || !text.trim()) return;
+    // Audio is a bonus on top of the text already sent — a TTS failure must not fail the turn.
+    try {
+      await send({ files: [{ attachment: await speak(text), name: "bean-reply.mp3" }] });
+    } catch (err) {
+      console.error("voice reply failed:", err);
+    }
+  };
   return {
-    reply: async (text) => {
-      for (const c of chunkText(text)) await send(c);
-      if (!voiceReply || !text.trim()) return;
-      // Audio is a bonus on top of the text already sent — a TTS failure must not fail the turn.
-      try {
-        await send({ files: [{ attachment: await speak(text), name: "bean-reply.mp3" }] });
-      } catch (err) {
-        console.error("voice reply failed:", err);
-      }
-    },
+    reply,
+    postResult: reply,
     post: async (text) => { for (const c of chunkText(text)) await send(c); },
-    postCard: async (card) => (await send(card as MessageCreateOptions)).id,
+    postCard: async (card) => {
+      const { id } = await send(card as MessageCreateOptions);
+      if (voiceReply) voiceCards.add(id);
+      return id;
+    },
+    // Live-session stream messages: plain sends, so they never land in voiceCards (no click claims them).
+    postStream: async (text) => (await send(text)).id,
     updateCard: async (activityId, card) => {
       if (!("messages" in channel)) return;
       const msg = await channel.messages.fetch(activityId);
@@ -388,16 +401,16 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       return;
     }
     if (!interaction.channel) return;
-    const fx = effectsFor(interaction.channel);
     if (action === "cancel-run") {
       await bot.onCardAction(
         { conversationId: interaction.channelId, fromId: interaction.user.id, fromName: interaction.user.displayName, value: { beanAction: "cancel-run", projectPath: payload } },
-        fx,
+        effectsFor(interaction.channel),
       );
       return;
     }
     const sel = selections.get(interaction.message.id) ?? {};
     selections.delete(interaction.message.id);
+    const fx = effectsFor(interaction.channel, undefined, voiceCards.delete(interaction.message.id));
     await bot.onCardAction(
       {
         conversationId: interaction.channelId,

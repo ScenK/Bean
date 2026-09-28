@@ -338,6 +338,21 @@ test("confirm starts the run, updates the card, and persists model memory", asyn
   expect(deps.conversations.history("c1").at(-1)).toEqual({ role: "assistant", content: "[delegate result] all fixed" });
 });
 
+test("a delegate result goes through postResult when the surface supplies it", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const effects = fx();
+  const results: string[] = [];
+  effects.postResult = async (text) => { results.push(text); };
+  const id = await proposeThenGetId(deps, effects);
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude" } },
+    effects,
+  );
+  delegateCalls[0]?.cb.onDone("spoken answer");
+  await vi.waitFor(() => expect(results).toEqual(["spoken answer"]));
+  expect(effects.posted).not.toContain("spoken answer");
+});
+
 test("a thread's follow-up delegate resumes the same CLI's session; another CLI starts fresh", async () => {
   const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult, detectClis: () => ["claude", "opencode"] });
   const bot = buildTeamsBot(deps);
