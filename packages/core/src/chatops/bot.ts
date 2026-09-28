@@ -80,6 +80,10 @@ export interface BotEffects {
   /** Deliver a local file (generated image) to the conversation. Optional: surfaces without it
    * get a plain-text path notice instead. */
   sendFile?: (path: string, caption?: string) => Promise<void>;
+  /** Deliver a delegate run's result — the late answer to an earlier turn. Optional, falls back
+   * to `post`; Discord uses it to speak the result when that turn was a voice message. Not
+   * `reply`: Teams' reply rides the original turn context, long gone by the time a run ends. */
+  postResult?: (text: string) => Promise<void>;
 }
 
 export interface TeamsBotDeps {
@@ -217,7 +221,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             }
             deps.conversations.append(p.conversationId, { role: "assistant", content: `[delegate result] ${result}` });
             await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done" })).catch(logRunEffectError);
-            await fx.post(result);
+            await (fx.postResult ?? fx.post)(result);
           })().catch(logRunEffectError);
         },
         onError: (message) => {

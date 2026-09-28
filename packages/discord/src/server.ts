@@ -130,6 +130,11 @@ async function liveSessionCardFor(
   });
 }
 
+// Channels whose latest addressed turn was a voice message: a Run click on that turn's delegate
+// card arrives as a separate interaction, and this is how its result knows to be spoken too.
+// ponytail: per-channel, not per-proposal — a typed turn between voice turn and Run click mutes it.
+const voiceChannels = new Set<string>();
+
 // `voiceReply`: the user spoke this turn, so each reply also carries a spoken mp3 — text stays
 // for reading where audio can't be played.
 function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voiceReply = false): BotEffects {
@@ -137,17 +142,19 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voi
     if (!("send" in channel)) throw new Error("channel is not sendable");
     return channel.send(options as MessageCreateOptions);
   };
+  const reply = async (text: string): Promise<void> => {
+    for (const c of chunkText(text)) await send(c);
+    if (!voiceReply || !text.trim()) return;
+    // Audio is a bonus on top of the text already sent — a TTS failure must not fail the turn.
+    try {
+      await send({ files: [{ attachment: await speak(text), name: "bean-reply.mp3" }] });
+    } catch (err) {
+      console.error("voice reply failed:", err);
+    }
+  };
   return {
-    reply: async (text) => {
-      for (const c of chunkText(text)) await send(c);
-      if (!voiceReply || !text.trim()) return;
-      // Audio is a bonus on top of the text already sent — a TTS failure must not fail the turn.
-      try {
-        await send({ files: [{ attachment: await speak(text), name: "bean-reply.mp3" }] });
-      } catch (err) {
-        console.error("voice reply failed:", err);
-      }
-    },
+    reply,
+    postResult: reply,
     post: async (text) => { for (const c of chunkText(text)) await send(c); },
     postCard: async (card) => (await send(card as MessageCreateOptions)).id,
     updateCard: async (activityId, card) => {
@@ -257,6 +264,8 @@ client.on("messageCreate", async (message) => {
         console.error("startThread failed, replying in channel:", err);
       }
     }
+    if (heardAudio) voiceChannels.add(channel.id);
+    else voiceChannels.delete(channel.id);
     if ("sendTyping" in channel) await channel.sendTyping();
     // Discord's typing indicator lasts ~10s; refresh it while onMessage is still working.
     const typing = "sendTyping" in channel
@@ -388,7 +397,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       return;
     }
     if (!interaction.channel) return;
-    const fx = effectsFor(interaction.channel);
+    const fx = effectsFor(interaction.channel, undefined, voiceChannels.has(interaction.channelId));
     if (action === "cancel-run") {
       await bot.onCardAction(
         { conversationId: interaction.channelId, fromId: interaction.user.id, fromName: interaction.user.displayName, value: { beanAction: "cancel-run", projectPath: payload } },
