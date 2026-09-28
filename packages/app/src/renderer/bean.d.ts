@@ -1,12 +1,15 @@
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine, TodoItem,
+  RoutineBrief, RoutineWatch, WatchItem,
 } from "@bean/core";
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
 import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
-import type { RoutineStateView, InterruptedRunNotice } from "../ipc.js";
+import type { RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft } from "../ipc.js";
+import type { RoutineBuildView } from "../routine-builder.js";
+import type { WatchCheckResult } from "../routine-scheduler.js";
 
 declare global {
   interface Window {
@@ -78,6 +81,15 @@ declare global {
       routinesDelete(name: string): Promise<void>;
       routinesState(): Promise<Record<string, RoutineStateView>>;
       routinesRunNow(name: string): Promise<{ started: boolean; reason?: string }>;
+      routinesCheckNow(name: string): Promise<WatchCheckResult>;
+      routinesPreviewWatch(watch: RoutineWatch): Promise<WatchItem[]>;
+      routinesEnableWatch(name: string, queueExisting: boolean): Promise<{ count: number }>;
+      routinesSinkRecipients(): Promise<SinkRecipients>;
+      routinesDraftBrief(sentence: string, previous?: RoutineBrief): Promise<BriefDraft>;
+      routinesBuild(brief: RoutineBrief): Promise<void>;
+      routinesBuilds(): Promise<RoutineBuildView[]>;
+      routinesCancelBuild(name: string): Promise<void>;
+      routinesDismissBuild(name: string): Promise<void>;
       todosList(routine: string): Promise<TodoItem[]>;
       todosListAll(): Promise<TodoItem[]>;
       todosAdd(routine: string, text: string): Promise<TodoItem>;

@@ -64,8 +64,9 @@ describe("routine scheduler", () => {
     });
     const sched = createRoutineScheduler(deps);
     const first = sched.tick();
-    await Promise.resolve(); // let the run start
-    expect(sched.isRunning("morning")).toBe(true);
+    await Promise.resolve();
+    expect(sched.isRunning("morning")).toBe(true); // flagged within one microtask of the tick
+    await vi.waitFor(() => expect(deps.runRoutine).toHaveBeenCalledOnce()); // let the run start
     await sched.tick(); // second tick while running
     expect(deps.runRoutine).toHaveBeenCalledTimes(1);
     resolveRun(runResult());

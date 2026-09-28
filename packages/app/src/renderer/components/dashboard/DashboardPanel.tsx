@@ -9,6 +9,7 @@ import {
   type DashRun, type DashStep, type RunBucket,
 } from "./runs.js";
 import type { RoutineStateView } from "../../../ipc.js";
+import { watchDashboardText } from "../routines/watch-status.js";
 
 // Renderer-only view prefs (see .memory/convention-renderer-view-prefs-in-localstorage.md):
 // which runs you've marked reviewed, and which day headers are folded. Nothing in main or
@@ -61,11 +62,13 @@ const stepTitle = (step: DashStep): string => {
   return step.todo ? `Failed on todo: ${step.todo}` : "Failed on a queued todo";
 };
 
-function nextRunText(routine: Routine | undefined): string {
+function nextRunText(routine: Routine | undefined, state: RoutineStateView | undefined): string {
   if (!routine) return "routine deleted — history kept";
   if (!routine.enabled) return "paused — won't run again until you enable it";
+  // A watch has no "next run" — say what it's waiting for instead.
+  if (routine.watch) return watchDashboardText(routine, state, new Date());
   try {
-    return `next run ${clock(nextRun(routine.cron, new Date()).toISOString())}`;
+    return `next run ${clock(nextRun(routine.cron ?? "", new Date()).toISOString())}`;
   } catch {
     return "invalid cron — won't be scheduled";
   }
@@ -353,7 +356,7 @@ export function DashboardPanel() {
             </div>
             <div class="bean-dash-health-text">
               {plural(health.length, "run")}, {health.filter((h) => h.status === "failed").length} failed
-              {" · "}{nextRunText(routine)}
+              {" · "}{nextRunText(routine, routine ? states[routine.name] : undefined)}
             </div>
             <button type="button" class="bean-dash-link" onClick={() => void window.bean.openComponent("routines")}>
               Open routines →
@@ -407,7 +410,7 @@ export function DashboardPanel() {
             </div>
 
             <div class="bean-dash-footer">
-              <span>{nextRunText(routine)} — anything here stays until the history rolls over.</span>
+              <span>{nextRunText(routine, routine ? states[routine.name] : undefined)} — anything here stays until the history rolls over.</span>
             </div>
           </>
         )}

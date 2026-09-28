@@ -51,6 +51,19 @@ export async function makeBeanHome(options: BeanHomeOptions = {}): Promise<BeanH
   });
   await writeFile(join(routinesPath, "nightly.json"), JSON.stringify(routine("nightly", "0 22 * * *"), null, 2), "utf8");
   await writeFile(join(routinesPath, "weekly.json"), JSON.stringify(routine("weekly", "0 8 * * 1"), null, 2), "utf8");
+  // Watch routines, so the list renders the watch captions: an enabled notify-only feed whose
+  // source refuses connections (port 9 — fails fast, never leaves the machine, shows "check
+  // failing"), and a disabled, never-seeded command watch ("needs review").
+  await writeFile(join(routinesPath, "yt-creator.json"), JSON.stringify({
+    name: "yt-creator", enabled: true, watch: { kind: "feed", url: "http://127.0.0.1:9/feed.xml", everyMinutes: 15 },
+    steps: [], sinks: { notify: true },
+  }, null, 2), "utf8");
+  await writeFile(join(routinesPath, "review-queue.json"), JSON.stringify({
+    name: "review-queue", enabled: false, todoDriven: true,
+    watch: { kind: "command", command: "printf '{\"id\":\"1\",\"text\":\"PR 1 Fix the flaky test\"}\\n'", everyMinutes: 5 },
+    steps: [{ kind: "delegate", skill: "review-pr", instruction: "Review the PR in the queued task" }],
+    sinks: { chatops: [{ transport: "discord" }], note: true },
+  }, null, 2), "utf8");
   const run = (startedAt: string, finishedAt: string, ok: boolean) => ({
     startedAt,
     finishedAt,

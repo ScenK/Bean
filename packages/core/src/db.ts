@@ -108,6 +108,18 @@ CREATE TABLE IF NOT EXISTS todos (
   ord            INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS todos_routine ON todos(routine);
+
+CREATE TABLE IF NOT EXISTS watch_seen (
+  routine TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  seen_at TEXT NOT NULL,
+  PRIMARY KEY (routine, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS watch_source (
+  routine TEXT PRIMARY KEY,
+  source  TEXT NOT NULL
+);
 `;
 
 const cache = new Map<string, DatabaseSync>();

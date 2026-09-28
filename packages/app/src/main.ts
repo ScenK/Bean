@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { basename, join, dirname } from "node:path";
@@ -22,6 +22,8 @@ import {
   composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
+  pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
+  reserveRun, releaseRun, RunBusyError,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult, TodoStatus, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
@@ -38,6 +40,8 @@ import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
 import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } from "./delegate-tasks.js";
 import { createRoutineScheduler } from "./routine-scheduler.js";
+import { createRoutineBuilder } from "./routine-builder.js";
+import { detectTools, execWatchCommand, fetchText, sinkRecipients } from "./watch-io.js";
 import { createTaskStatus } from "./task-status.js";
 import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
 
@@ -554,6 +558,10 @@ app.whenReady().then(async () => {
     // resolved login-shell PATH spawn as delegate-tasks (safety-packaged-app-path-detection)
     // and enforces the 15-minute routine step timeout explicitly (runDelegate's own default
     // is 30 minutes, meant for the interactive chat delegate button, not routines).
+    // Watch-fired todo runs (req.todoId set): a project-less step gets its own scratch subdir
+    // (removed afterwards) so it neither collides with the shared ~/.bean/workspace reservation
+    // nor piles up clones; a project step must win the cross-process run reservation, else the
+    // todo goes back to pending (RunBusyError) and the next tick retries it.
     const delegateStep = (req: DelegateStepRequest): Promise<string> =>
       new Promise((resolve, reject) => {
         const choice = resolveDelegateCli(req.model);
@@ -561,14 +569,30 @@ app.whenReady().then(async () => {
         const prompt =
           (req.skill ? composePrompt(req.skill, req.instruction) : req.instruction) +
           (req.priorOutputs ? `\n\nOutput of this routine's earlier steps:\n${req.priorOutputs}` : "");
+        const perTodo = req.todoId && !req.projectPath ? join(scratchDir(dir), req.todoId) : undefined;
+        const projectPath = req.projectPath ?? perTodo ?? scratchDir(dir);
+        const reserved = Boolean(req.todoId && req.projectPath);
+        if (reserved && !reserveRun(dir, projectPath, process.pid, randomUUID)) {
+          reject(new RunBusyError(`${basename(projectPath)} is busy with another run`));
+          return;
+        }
+        if (perTodo) mkdirSync(perTodo, { recursive: true });
+        const cleanup = (): void => {
+          if (reserved) releaseRun(dir, projectPath);
+          if (perTodo) rmSync(perTodo, { recursive: true, force: true });
+        };
         runDelegate(
           {
             cli: choice.cli,
-            projectPath: req.projectPath ?? scratchDir(dir),
+            projectPath,
             prompt,
             ...(choice.model ? { model: choice.model } : {}),
           },
-          { onOutput: () => {}, onDone: resolve, onError: reject },
+          {
+            onOutput: () => {},
+            onDone: (out) => { cleanup(); resolve(out); },
+            onError: (err) => { cleanup(); reject(err); },
+          },
           resolvedPathSpawnFn(resolvedPath),
           ROUTINE_STEP_TIMEOUT_MS,
         );
@@ -649,6 +673,7 @@ app.whenReady().then(async () => {
       }
     };
 
+    const watchPoll = { fetchText, exec: execWatchCommand(resolvedPath) };
     const routineScheduler = createRoutineScheduler({
       loadRoutines: () => loadRoutines(routinesPath),
       loadStates: () => loadRoutineStates(routineStatePath),
@@ -656,7 +681,50 @@ app.whenReady().then(async () => {
       runRoutine: runOneRoutine,
       deliverDigest,
       hasPendingTodos: async (r) => (await listTodos(dbFile(dir), r)).some((t) => t.status === "pending"),
+      pollWatch: (w) => pollWatch(w, watchPoll),
+      watchSeen: {
+        isSeeded: (r, source) => isWatchSeeded(dbFile(dir), r, source),
+        seed: (r, source, ids) => seedWatch(dbFile(dir), r, source, ids),
+        unseen: (r, ids) => unseenIds(dbFile(dir), r, ids),
+        markNew: (r, ids) => markNewItems(dbFile(dir), r, ids),
+      },
+      addTodo: async (r, text) => { await addTodo(dbFile(dir), r, text); },
+      saveRoutine: (r) => saveRoutine(routinesPath, r),
+      alarm: (routine, error) => {
+        if (notificationTransport.available()) {
+          void notificationTransport.send({ title: `Routine: ${routine.name}`, body: `Can't check for new items — ${error}` });
+        }
+      },
     });
+    const tools = detectTools(resolvedPath);
+    const routineBuilder = createRoutineBuilder({
+      loadRoutines: () => loadRoutines(routinesPath),
+      saveRoutine: (r) => saveRoutine(routinesPath, r),
+      loadSkills: () => loadLayeredSkills(skillsDir(projectDir), skillsDir(dir)),
+      saveSkill: (name, md) => saveSkill(skillsDir(dir), name, md),
+      pollWatch: (w) => pollWatch(w, watchPoll),
+      fetchText,
+      tools: () => tools,
+      startAgent: (prompt, brief, onLine) => {
+        const choice = resolveDelegateSelection(cliModels, enabledClis(), brief.builder?.cli ?? runtime.getDelegateCli(), brief.builder?.model);
+        if (!choice) return { done: Promise.reject(new Error("No enabled delegate CLI found — enable one in Settings.")), cancel: () => {} };
+        const cwd = join(scratchDir(dir), `build-${brief.name}`); // name validated kebab-case in builder.start
+        mkdirSync(cwd, { recursive: true });
+        let cancel = (): void => {};
+        const done = new Promise<string>((resolve, reject) => {
+          const cleanup = (): void => rmSync(cwd, { recursive: true, force: true });
+          const handle = runDelegate(
+            { cli: choice.cli, projectPath: cwd, prompt, ...(choice.model ? { model: choice.model } : {}) },
+            { onOutput: onLine, onDone: (out) => { cleanup(); resolve(out); }, onError: (err) => { cleanup(); reject(err); } },
+            resolvedPathSpawnFn(resolvedPath),
+            ROUTINE_STEP_TIMEOUT_MS,
+          );
+          cancel = () => handle.cancel(cleanup);
+        });
+        return { done, cancel: () => cancel() };
+      },
+    });
+    app.on("before-quit", () => routineBuilder.cancelAll());
     routineScheduler.start();
     app.on("before-quit", () => routineScheduler.stop());
 
@@ -773,7 +841,38 @@ app.whenReady().then(async () => {
         loadStates: () => loadRoutineStates(routineStatePath),
         isRunning: (name) => routineScheduler.isRunning(name),
         runNow: (name) => routineScheduler.runNow(name),
-        onRoutineDeleted: (name) => deleteTodosForRoutine(dbFile(dir), name),
+        onRoutineDeleted: async (name) => {
+          await deleteTodosForRoutine(dbFile(dir), name);
+          clearWatch(dbFile(dir), name);
+        },
+        watch: {
+          isSeeded: (r) => (r.watch ? isWatchSeeded(dbFile(dir), r.name, watchSourceKey(r.watch)) : true),
+          queueCounts: async (name) => {
+            const todos = await listTodos(dbFile(dir), name);
+            return { pending: todos.filter((t) => t.status === "pending").length, running: todos.filter((t) => t.status === "running").length };
+          },
+          pollFailures: (name) => routineScheduler.pollFailures(name),
+          checkNow: (name) => routineScheduler.checkNow(name),
+          previewWatch: (w) => pollWatch(w, watchPoll),
+          enableWatch: (name, queueExisting) => routineScheduler.enableWatch(name, queueExisting),
+          sinkRecipients: () => sinkRecipients(dir),
+          draftBrief: async (sentence, previous) => {
+            const [skills, projects] = await Promise.all([
+              loadLayeredSkills(skillsDir(projectDir), skillsDir(dir)), loadProjects(projectsFile(dir)),
+            ]);
+            const ctx = {
+              tools,
+              projects: projects.map((p) => ({ name: p.name, path: p.path })),
+              skills: skills.filter((s) => !s.hidden && s.enabled !== false).map((s) => ({ name: s.name, description: s.description })),
+              clis: enabledClis(),
+            };
+            // Plain structured-output call on /v1/responses with no tools — not a propose_* tool,
+            // so converse()'s byte-stable tool list is untouched.
+            const res = await runtime.converse({ model: runtime.getModel(), messages: briefMessages(sentence, ctx, previous), tools: [] });
+            return { brief: parseBrief(res.content, ctx), tools };
+          },
+          builds: routineBuilder,
+        },
       }),
       todoHandlers: buildTodoHandlers({
         dbFile: dbFile(dir),

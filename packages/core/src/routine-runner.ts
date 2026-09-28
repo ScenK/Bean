@@ -10,7 +10,14 @@ export interface DelegateStepRequest {
   instruction: string;
   model?: string;
   priorOutputs: string;
+  /** Watch-fired todo runs: the queued todo's id. A project-less step runs in its own scratch
+   * subdir (removed afterwards) and a project step must win the cross-process run reservation. */
+  todoId?: string;
 }
+
+/** Thrown by a delegate adapter when the step's project is already claimed by another run.
+ * The todo goes back to pending and the drain stops — the next tick retries it. */
+export class RunBusyError extends Error {}
 
 export interface RoutineRunnerDeps {
   chat: ConverseDeps["chat"];
@@ -41,7 +48,8 @@ function resolveSkill(deps: RoutineRunnerDeps, name: string | undefined): Skill 
 }
 
 export interface StepResult { index: number; kind: "delegate" | "chat"; ok: boolean; output: string }
-export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[] }
+/** `deferred`: nothing ran (a todo's project was busy) — record and deliver nothing. */
+export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[]; deferred?: boolean }
 
 export const ROUTINE_STEP_TIMEOUT_MS = 15 * 60_000;
 const MAX_TOOL_ROUNDS = 5;
@@ -158,6 +166,7 @@ async function runSteps(
   results: StepResult[],
   instructionSuffix: string,
   labelPrefix: string,
+  todoId?: string,
 ): Promise<boolean> {
   let allOk = true;
   for (const [index, step] of routine.steps.entries()) {
@@ -172,10 +181,12 @@ async function runSteps(
             instruction: effective.instruction,
             model: effective.model,
             priorOutputs: prior,
+            ...(todoId ? { todoId } : {}),
           })
         : await withTimeout(runChatStep(routine, effective, index, prior, deps), timeoutMs, `step ${index + 1}`);
       results.push({ index, kind: step.kind, ok: true, output: labelPrefix + output });
     } catch (err) {
+      if (err instanceof RunBusyError) throw err;
       const message = err instanceof Error ? err.message : String(err);
       results.push({ index, kind: step.kind, ok: false, output: labelPrefix + message });
       allOk = false;
@@ -214,12 +225,31 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
       await deps.todos.setStatus(item.id, "running");
       const scoped: StepResult[] = []; // prior-outputs chain is per-todo, never cross-todo
       const labelPrefix = `[todo: ${item.text}] `;
+      let ok: boolean;
+      try {
+        ok = await runSteps(
+          routine, deps, timeoutMs, scoped,
+          `\n\nQueued task:\n${item.text}`,
+          labelPrefix,
+          routine.watch ? item.id : undefined,
+        );
+      } catch (err) {
+        if (!(err instanceof RunBusyError)) throw err;
+        if (scoped.length === 0) {
+          // Busy before anything ran: back to pending untouched, stop draining — the next tick retries.
+          await deps.todos.setStatus(item.id, "pending");
+          break;
+        }
+        // Busy after earlier steps already ran (and may have had side effects): replaying the
+        // todo would repeat them, so it fails like any step — visible and manually retryable.
+        const busy: StepResult = { index: scoped.length, kind: "delegate", ok: false, output: labelPrefix + err.message };
+        results.push(...scoped, busy);
+        await deps.todos.setStatus(item.id, "failed", err.message.slice(0, SUMMARY_CAP));
+        allOk = false;
+        soleLabelPrefix = labelPrefix;
+        continue;
+      }
       soleLabelPrefix = labelPrefix;
-      const ok = await runSteps(
-        routine, deps, timeoutMs, scoped,
-        `\n\nQueued task:\n${item.text}`,
-        labelPrefix,
-      );
       results.push(...scoped);
       const last = scoped[scoped.length - 1];
       // Strip the label prefix for the setStatus summary — it's redundant there since the
@@ -228,6 +258,10 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
       const summary = rawOutput.slice(0, SUMMARY_CAP);
       await deps.todos.setStatus(item.id, ok ? "done" : "failed", summary);
       if (!ok) allOk = false;
+    }
+    if (results.length === 0) {
+      const digest = `Routine "${routine.name}" deferred — its project is busy.`;
+      return { record: { startedAt, finishedAt: now().toISOString(), status: "ok", digest, steps: [] }, digest, results: [], deferred: true };
     }
   } else {
     allOk = await runSteps(routine, deps, timeoutMs, results, "", "");
