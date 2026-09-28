@@ -119,6 +119,13 @@ export function DescribePane(props: CatalogProps & {
     patch({ sinks }, ["sinks"]);
   };
   const hasChatops = (t: "discord" | "teams"): boolean => Boolean(brief?.sinks.chatops?.some((c) => c.transport === t));
+  // Blank = DM (the default); a value targets that discord channel / teams conversation id.
+  const setChannel = (t: "discord" | "teams", value: string): void => {
+    if (!brief) return;
+    const channel = value.trim();
+    const chatops = (brief.sinks.chatops ?? []).map((c) => (c.transport === t ? { transport: t, ...(channel ? { channel } : {}) } : c));
+    patch({ sinks: { ...brief.sinks, chatops } }, ["sinks"]);
+  };
 
   const watch = brief?.trigger === "watch";
   const feed = watch && brief?.sourceKind === "feed";
@@ -275,8 +282,8 @@ export function DescribePane(props: CatalogProps & {
               <span class="bean-rb-label">Send to</span>
               <div class="bean-rb-field bean-rb-field--wrap">
                 {([
-                  ["discord", "Discord · DM", hasChatops("discord")],
-                  ["teams", "Teams · DM", hasChatops("teams")],
+                  ["discord", "Discord", hasChatops("discord")],
+                  ["teams", "Teams", hasChatops("teams")],
                   ["note", "Save as note", brief.sinks.note === true],
                   ["notify", "Desktop notification", brief.sinks.notify === true],
                 ] as const).map(([key, label, on]) => (
@@ -286,6 +293,19 @@ export function DescribePane(props: CatalogProps & {
                 ))}
               </div>
             </div>
+            {(brief.sinks.chatops ?? []).map((c) => (
+              <div key={c.transport} class="bean-rb-row">
+                <span class="bean-rb-label">{c.transport === "discord" ? "Discord" : "Teams"}</span>
+                <div class="bean-rb-field">
+                  <input
+                    class="bean-input bean-input--boxed bean-rb-grow"
+                    placeholder={c.transport === "discord" ? "channel id — blank to DM you" : "conversation id — blank to DM you"}
+                    value={c.channel ?? ""}
+                    onInput={(e) => setChannel(c.transport, (e.target as HTMLInputElement).value)}
+                  />
+                </div>
+              </div>
+            ))}
             {missingFor("sinks") ? <div class="bean-rb-question">{missingFor("sinks")}</div> : null}
             {watch && !feed ? (
               <>

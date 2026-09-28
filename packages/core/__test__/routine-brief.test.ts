@@ -16,14 +16,14 @@ describe("parseBrief", () => {
         { kind: "delegate", skill: "code-review", project: "/nope", instruction: "Review it" },
         { kind: "chat", skill: "made-up", instruction: "Summarise" },
       ],
-      sinks: { chatops: [{ transport: "discord" }, { transport: "slack" }], note: true },
+      sinks: { chatops: [{ transport: "discord", channel: " 123 " }, { transport: "teams", channel: "" }, { transport: "slack" }], note: true },
       missing: [{ field: "steps.0.project", question: "Which repo?" }, { field: "x" }],
     }), ctx);
     expect(brief.steps).toEqual([
       { kind: "delegate", skill: "code-review", instruction: "Review it" },
       { kind: "chat", instruction: "Summarise" },
     ]);
-    expect(brief.sinks).toEqual({ chatops: [{ transport: "discord" }], note: true });
+    expect(brief.sinks).toEqual({ chatops: [{ transport: "discord", channel: "123" }, { transport: "teams" }], note: true });
     expect(brief.missing).toEqual([{ field: "steps.0.project", question: "Which repo?" }]);
     expect(brief.everyMinutes).toBe(5);
     expect(brief.notifyOnly).toBe(false);

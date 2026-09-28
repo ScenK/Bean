@@ -1,6 +1,6 @@
 import type { ConvoMsg } from "./converse.js";
 import type { CliName } from "./launcher.js";
-import { describeRoutineError, type Routine, type RoutineSinks, type RoutineStep, type RoutineWatch } from "./routine-store.js";
+import { describeRoutineError, type Routine, type RoutineChatopsSink, type RoutineSinks, type RoutineStep, type RoutineWatch } from "./routine-store.js";
 import { unfence } from "./routine-runner.js";
 
 /** The editable brief Bean drafts from one sentence (screen 2a). It covers the whole saved
@@ -50,7 +50,7 @@ export function briefMessages(sentence: string, ctx: BriefContext, previous?: Ro
  "everyMinutes": 15,
  "notifyOnly": true | false,
  "steps": [{"kind": "delegate", "skill": "<skill name>", "project": "<project path>", "instruction": "..."} | {"kind": "chat", "skill": "<optional>", "instruction": "..."}],
- "sinks": {"chatops": [{"transport": "discord" | "teams"}], "note": true, "notify": true},
+ "sinks": {"chatops": [{"transport": "discord" | "teams", "channel"?: "id"}], "note": true, "notify": true},
  "missing": [{"field": "steps.0.project" | "sinks" | "source" | "cron" | ..., "question": "plain question"}]}`,
     "Rules:",
     "- trigger is \"watch\" when the user wants something to happen when something new appears (a new video, post, PR, ticket, assignment); \"schedule\" for a fixed time.",
@@ -58,7 +58,7 @@ export function briefMessages(sentence: string, ctx: BriefContext, previous?: Ro
     "- notifyOnly = true when the user only wants to be told (\"ping me\", \"let me know\"); then steps is []. Otherwise one step per thing Bean should do to each new item; delegate for code/repo/review work, chat for summarising/writing.",
     "- everyMinutes: 5 for work queues (PRs, tickets), 15 for feeds, unless the user says otherwise.",
     "- Pick a step skill only from the skill list; for a delegate step set project only when the user named one from the project list.",
-    "- Destinations: DM on Discord/Teams = a chatops sink with no channel. Only include sinks the user asked for; if none, ask in missing.",
+    "- Destinations: DM on Discord/Teams = a chatops sink with no channel; set channel only when the user gives a specific channel/conversation id. Only include sinks the user asked for; if none, ask in missing.",
     "- missing: only what the sentence truly leaves open. Leave a field out rather than invent it.",
     `Installed CLIs: ${ctx.tools.join(", ") || "none detected"}.`,
     `Coding agents: ${ctx.clis.join(", ") || "none"}.`,
@@ -96,13 +96,13 @@ function cleanStep(v: unknown, ctx: BriefContext): RoutineStep | undefined {
 function cleanSinks(v: unknown): RoutineSinks {
   if (typeof v !== "object" || v === null) return {};
   const s = v as Record<string, unknown>;
-  const chatops = Array.isArray(s.chatops)
-    ? s.chatops
-      .map((c) => (c as Record<string, unknown> | null)?.transport)
-      .filter((t): t is "discord" | "teams" => t === "discord" || t === "teams")
-      .filter((t, i, all) => all.indexOf(t) === i)
-      .map((transport) => ({ transport }))
-    : [];
+  const chatops: RoutineChatopsSink[] = [];
+  for (const c of Array.isArray(s.chatops) ? s.chatops as (Record<string, unknown> | null)[] : []) {
+    const transport = c?.transport;
+    if ((transport !== "discord" && transport !== "teams") || chatops.some((x) => x.transport === transport)) continue;
+    const channel = typeof c?.channel === "string" ? c.channel.trim() : "";
+    chatops.push({ transport, ...(channel ? { channel } : {}) });
+  }
   return {
     ...(chatops.length > 0 ? { chatops } : {}),
     ...(s.note === true ? { note: true } : {}),
