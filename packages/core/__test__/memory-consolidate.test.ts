@@ -38,12 +38,12 @@ test("a merged id is not also reported as a standalone drop", async () => {
   expect(result.drops).toEqual([]);
 });
 
-test("a chat failure returns an empty result instead of throwing", async () => {
+test("a chat failure returns an empty result flagged failed instead of throwing", async () => {
   const result = await proposeMemoryConsolidation([m("a", "x")], {
     chat: async () => { throw new Error("down"); },
     model: "m",
   });
-  expect(result).toEqual({ merges: [], drops: [] });
+  expect(result).toEqual({ merges: [], drops: [], failed: true });
 });
 
 test("a single-id merge is a rewrite (e.g. relative → absolute date), and facts carry their saved date", async () => {

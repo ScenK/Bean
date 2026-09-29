@@ -751,7 +751,9 @@ app.whenReady().then(async () => {
           // Chat close is the idle point, so it's also where dream is checked — no timer, no
           // boot cost. The digest goes to a bubble + Persona only, never into a transcript
           // (it would be re-extracted as a "fact").
-          const dream = await maybeDream({ dbFile: dbFile(dir), chat: runtime.converse, model: runtime.getModel() });
+          const dream = await maybeDream({
+            dbFile: dbFile(dir), chat: runtime.converse, model: runtime.getModel(), exclude: batch.map((m) => m.id),
+          });
           if (dream) {
             const parts = [
               dream.merged ? `merged ${dream.merged}` : "", dream.rewritten ? `rewrote ${dream.rewritten}` : "",

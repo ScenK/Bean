@@ -153,7 +153,11 @@ export async function applyConsolidation(file: string, plan: DreamPlan, nowMs: n
         ins.run(id, g.text, g.projectPath ?? null, createdAt);
         hist.run(plan.runId, grp, "after", id, g.text, g.projectPath ?? null, createdAt, at);
       });
-      db.prepare("DELETE FROM memories_history WHERE at < ?").run(new Date(nowMs - HISTORY_KEEP_MS).toISOString());
+      const cutoff = new Date(nowMs - HISTORY_KEEP_MS).toISOString();
+      db.prepare("DELETE FROM memories_history WHERE at < ?").run(cutoff);
+      // A digest whose history was just pruned can't be undone or detailed — stop offering it.
+      const prev = readMeta(db, "lastDream") as DreamDigest | undefined;
+      if (prev && prev.at < cutoff) db.prepare("DELETE FROM memory_meta WHERE key = 'lastDream'").run();
       writeMeta(db, "lastDreamAt", at);
       if (plan.groups.length > 0) writeMeta(db, "lastDream", plan.digest);
     });
@@ -180,8 +184,10 @@ function historyGroups(db: DatabaseSync, runId: string): Map<number, HistoryRow[
 export async function restoreDreamRun(file: string, runId: string): Promise<{ restored: number; skipped: number }> {
   const db = openDb(file);
   return tx(db, () => {
+    // Only the current last dream is undoable — checked inside the transaction, since a newer
+    // dream could commit between the caller's read and this restore.
     const digest = readMeta(db, "lastDream") as DreamDigest | undefined;
-    if (digest?.runId === runId && digest.undone) return { restored: 0, skipped: 0 }; // already undone
+    if (digest?.runId !== runId || digest.undone) return { restored: 0, skipped: 0 };
     const get = db.prepare("SELECT text, project_path FROM memories WHERE id = ?");
     const del = db.prepare("DELETE FROM memories WHERE id = ?");
     const ins = db.prepare("INSERT OR IGNORE INTO memories (id, text, project_path, created_at) VALUES (?, ?, ?, ?)");
@@ -198,7 +204,7 @@ export async function restoreDreamRun(file: string, runId: string): Promise<{ re
       for (const r of rows.filter((x) => x.phase === "before")) ins.run(r.memory_id, r.text, r.project_path, r.created_at);
       restored++;
     }
-    if (digest?.runId === runId) writeMeta(db, "lastDream", { ...digest, undone: true });
+    writeMeta(db, "lastDream", { ...digest, undone: true });
     return { restored, skipped };
   });
 }

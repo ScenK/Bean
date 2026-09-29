@@ -4,6 +4,9 @@ import type { Memory } from "./memory.js";
 export interface ConsolidationResult {
   merges: { ids: string[]; mergedText: string }[];
   drops: string[];
+  /** The model call itself failed — not the same as "nothing to tidy" (dream must not advance
+   * its watermark on an outage). */
+  failed?: boolean;
 }
 
 const CONSOLIDATE_INSTRUCTIONS =
@@ -69,7 +72,7 @@ export async function proposeMemoryConsolidation(memories: Memory[], deps: Conve
     const res = await deps.chat({ model: deps.model, messages, tools: [mergeTool(ids), dropTool(ids)] });
     toolCalls = res.toolCalls;
   } catch {
-    return { merges: [], drops: [] };
+    return { merges: [], drops: [], failed: true };
   }
 
   const known = new Set(ids);

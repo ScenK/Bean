@@ -146,3 +146,30 @@ test("Undo last dream restores the run, skips a group edited since, and keeps FT
   await deleteMemories(file, ["a"]);
   expect(fts('"fact a"')).toBe(0);
 });
+
+test("the pending auto-save batch is left out of the run", async () => {
+  await appendMemories(file, five());
+  let seen = "";
+  const chat: ConverseDeps["chat"] = async ({ messages }) => { seen = String(messages[1]!.content); return { content: "", toolCalls: [] }; };
+  await maybeDream({ ...deps(chat), exclude: ["e"] });
+  expect(seen).toContain("fact a");
+  expect(seen).not.toContain("fact e");
+});
+
+test("a model outage doesn't advance the watermark, so the next close retries", async () => {
+  await appendMemories(file, five());
+  expect(await maybeDream(deps(async () => { throw new Error("503"); }))).toBeUndefined();
+  expect(await getMemoryMeta(file, "lastDreamAt")).toBeUndefined();
+  expect((await maybeDream(deps(chatCalling([{ name: "drop_memory", args: { id: "a" } }]))))?.removed).toBe(1);
+});
+
+test("an old digest is dropped with its pruned history, and only the current last dream is undoable", async () => {
+  await appendMemories(file, five());
+  const first = (await maybeDream(deps(chatCalling([{ name: "drop_memory", args: { id: "a" } }]))))!;
+  await appendMemories(file, ["f", "g", "h", "i", "j"].map((id) => m(id, `fact ${id}`, new Date(T0 + 1000).toISOString())));
+  // 31 days later a no-change run prunes the first run's history — its Undo must go too.
+  expect(await maybeDream(deps(chatCalling([]), T0 + 31 * DAY))).toBeUndefined();
+  expect(await getMemoryMeta(file, "lastDream")).toBeUndefined();
+  expect(await restoreDreamRun(file, first.runId)).toEqual({ restored: 0, skipped: 0 });
+  expect(await texts()).not.toContain("fact a");
+});
