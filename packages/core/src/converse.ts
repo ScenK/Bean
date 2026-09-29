@@ -96,8 +96,9 @@ export interface ConverseResult {
   /** Set when the model call itself failed; `reply` then carries the user-facing explanation. */
   error?: string;
 }
-/** `source` is the latest message's provenance: the memory tools are offered only for "typed". */
-export interface ChatRequest { history: ChatTurn[]; message: string; source?: TurnSource; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; }
+/** `source` is the latest message's provenance: the memory tools are offered only for "typed".
+ * `incognito` (the chat's off-the-record chip) withholds them too — an incognito chat writes nothing. */
+export interface ChatRequest { history: ChatTurn[]; message: string; source?: TurnSource; incognito?: boolean; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; }
 
 // runAvailable=false (chatops: Discord/Teams) — no terminal exists there, so propose_run
 // is only offered for `target: chat` skills (which run on Bean's own model, no agent

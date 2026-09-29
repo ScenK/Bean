@@ -116,9 +116,6 @@ export interface TeamsBotDeps {
   appendMemories: (additions: Memory[]) => Promise<void>;
   /** Idempotent per-id delete (remember card's Forget button, forget_memory tool). */
   deleteMemories: (ids: string[]) => Promise<number>;
-  /** Whole-list replace, only for consolidation's merge/drop apply (a genuine read-modify-write,
-   * gated behind a one-shot claimed proposal so it isn't the same race as free-form appends). */
-  saveMemories: (memories: Memory[]) => Promise<void>;
   consolidationProposals: ConsolidationProposalStore;
   conversations: ConversationStore;
   cards: CardBuilders;
@@ -450,16 +447,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     try {
+      // Targeted delete + insert, never a whole-list replace: auto-remember, a direct remember,
+      // or a Persona edit can land between the proposal and this tap (safety-memory-append-vs-replace).
       const existing = await deps.loadMemories();
-      const mergedIds = new Set(pending.result.merges.flatMap((m) => m.ids));
-      const droppedIds = new Set(pending.result.drops);
-      const kept = existing.filter((m) => !mergedIds.has(m.id) && !droppedIds.has(m.id));
       const now = new Date().toISOString();
       const merged: Memory[] = pending.result.merges.map((m) => {
         const projectPath = existing.find((mm) => m.ids.includes(mm.id) && mm.projectPath)?.projectPath;
         return { id: randomUUID(), text: m.mergedText, projectPath, createdAt: now };
       });
-      await deps.saveMemories([...kept, ...merged]);
+      await deps.deleteMemories([...pending.result.merges.flatMap((m) => m.ids), ...pending.result.drops]);
+      await deps.appendMemories(merged);
       await updateTo(deps.cards.consolidationResultCard({ outcome: "applied" }));
       await fx.post("Memory tidied up.");
     } catch (err) {

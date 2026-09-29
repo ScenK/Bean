@@ -126,7 +126,6 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     listTodoRoutines: async () => [],
     appendMemories: async (additions) => { savedMemories.push(additions); },
     deleteMemories: async (ids) => { forgotten.push(...ids); return ids.length; },
-    saveMemories: async (mems) => { savedMemories.push(mems); },
     consolidationProposals: new ConsolidationProposalStore(),
     conversations: new ConversationStore(dbFile(runsBeanDir)),
     cards: fakeCards as CardBuilders,
@@ -744,7 +743,7 @@ function rememberDepsOverThreshold(consolidateToolCalls: { name: string; args: o
   let call = 0;
   const chat: TeamsBotDeps["chat"] = async () => {
     call++;
-    if (call === 1) return { content: "", toolCalls: [{ name: "remember", args: { text: "Prefers tabs over spaces", quote: "prefer tabs" } }] };
+    if (call === 1) return { content: "", toolCalls: [{ name: "remember", args: { text: "Prefers tabs over spaces", quote: "I prefer tabs over spaces" } }] };
     if (call === 2) return { content: "ok", toolCalls: [] };
     return { content: "", toolCalls: consolidateToolCalls };
   };
@@ -752,7 +751,7 @@ function rememberDepsOverThreshold(consolidateToolCalls: { name: string; args: o
     chat,
     loadMemories: async () => current,
     appendMemories: async (additions) => { current = [...current, ...additions]; },
-    saveMemories: async (mems) => { current = mems; },
+    deleteMemories: async (ids) => { const before = current.length; current = current.filter((m) => !ids.includes(m.id)); return before - current.length; },
   });
   return { deps, getCurrent: () => current };
 }

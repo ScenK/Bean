@@ -41,14 +41,36 @@ export function rememberToolSpec(projects: Project[], description?: string): Too
 
 // Code-level rejects — prompt wording alone doesn't stop a model that was talked into it.
 // A memory is a fact *about* the user, never a standing order to Bean.
-const INSTRUCTION_SHAPED =
-  /^\s*(?:always|ignore|disregard|from now on|whenever|when (?:asked|someone|anyone|the user)|you (?:must|should|will|are to)|do not|don't)\b|\b(?:ignore|disregard) (?:all|any|previous|prior|the above|your)\b|\bsystem prompt\b/i;
+const INSTRUCTION_SHAPED = new RegExp([
+  /^\s*(?:always|ignore|disregard|from now on|whenever|when (?:asked|someone|anyone|the user)|for (?:every|all|each|any)|you (?:must|should|will|are to)|do not|don't)\b/.source,
+  /\b(?:ignore|disregard) (?:all|any|previous|prior|the above|your)\b/.source,
+  /\b(?:bean|you|the assistant|assistant)(?:'s)? (?:should|must|shall|will|always|never|is to)\b/.source,
+  /\b(?:bypass|skip|disable|override|turn off)\b[^.]*\b(?:confirm\w*|checks?|safety|rules?|guard\w*)\b/.source,
+  /\bsystem prompt\b/.source,
+].join("|"), "i");
 // ponytail: known key prefixes + long mixed alnum runs + 9+ digit runs. Misses exotic token
 // formats; add a prefix here when one shows up.
 const SECRET_SHAPED =
   /\b(?:sk-|sk_live_|rk_live_|ghp_|gho_|ghs_|github_pat_|xox[abpr]-|AKIA|AIza)[A-Za-z0-9_-]{8,}|\b(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}\b|(?:\d[\s-]?){9,}/;
 
 const norm = (s: string): string => s.toLowerCase().replace(/[“”"'‘’`]/g, "").replace(/\s+/g, " ").trim();
+
+// Framing and function words a paraphrase adds ("User prefers X over Y") that the user's own
+// phrasing needn't contain.
+const FRAMING = new Set([
+  "user", "users", "their", "they", "them", "about", "over", "than", "with", "from", "that", "this",
+  "into", "when", "what", "also", "just", "very", "more", "most", "some", "uses", "likes", "wants",
+  "prefers", "does", "doesnt", "have", "has", "been", "being", "should", "would", "project",
+]);
+const words = (s: string): string[] => norm(s).split(/[^a-z0-9]+/).filter(Boolean);
+// ponytail: 5-char prefix match stands in for stemming ("prefers" ~ "prefer"); words under 4
+// chars are ignored, so a forged 3-letter token (a tool name) can slip through.
+function supports(quote: string, fact: string): boolean {
+  const q = words(quote);
+  const content = words(fact).filter((w) => w.length >= 4 && !FRAMING.has(w));
+  if (content.length === 0) return false;
+  return content.every((w) => q.some((x) => x.slice(0, 5) === w.slice(0, 5)));
+}
 
 /** Validates one model-proposed remember call against the user's own words. Returns the
  * candidate, or a short reason it was rejected (fed back to the model on the chat path). */
@@ -64,12 +86,10 @@ export function validateCandidate(
   if (quote.length < 3 || !citable.some((c) => norm(c).includes(quote))) {
     return "the quote must be the user's own words from their message.";
   }
-  // The quote must actually support the fact — at least one content word in common, so a
-  // stray "ok" from the user can't launder an unrelated fact through the span check.
-  const factWords = new Set(norm(text).split(/[^a-z0-9]+/));
-  if (!quote.split(/[^a-z0-9]+/).some((w) => w.length >= 4 && factWords.has(w))) {
-    return "the quote doesn't support that fact.";
-  }
+  // The quote must support the whole fact: every content word of the fact has to appear in the
+  // quote, so a generic shared word ("project") can't launder a claim ("…works on Acme") that
+  // only a fetched page or delegate result made.
+  if (!supports(quote, text)) return "the quote doesn't support that fact — use the user's own words.";
   if (INSTRUCTION_SHAPED.test(text)) return "memories are facts about the user, not instructions.";
   if (SECRET_SHAPED.test(text)) return "that looks like a secret or ID number — not stored.";
   const projectPath = typeof a.projectPath === "string" && projects.some((p) => p.path === a.projectPath)

@@ -214,7 +214,7 @@ export function ChatWindow() {
       }));
 
     try {
-      const res = await window.bean.chat({ history, message, source, linkedNote: linkedNoteRef.current, images });
+      const res = await window.bean.chat({ history, message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images });
       if (res.model) setModel(res.model);
 
       setItems((prev) => {

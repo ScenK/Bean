@@ -16,33 +16,14 @@ export async function loadMemories(file: string): Promise<Memory[]> {
   return rows.map(toMemory);
 }
 
-// Whole-array replace, matching the old JSON file's "save the full list" contract — one
-// transaction so a reader never sees a half-cleared table.
-export async function saveMemories(file: string, memories: Memory[]): Promise<void> {
-  const db = openDb(file);
-  const del = db.prepare("DELETE FROM memories");
-  const insert = db.prepare(
-    "INSERT INTO memories (id, text, project_path, created_at) VALUES (?, ?, ?, ?)",
-  );
-  db.exec("BEGIN");
-  try {
-    del.run();
-    for (const m of memories) insert.run(m.id, m.text, m.projectPath ?? null, m.createdAt);
-    db.exec("COMMIT");
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
-  }
-}
-
-// Insert-only, no read step — unlike saveMemories (load full list, mutate in JS, replace whole
-// list), which is exactly the multi-process lost-update race this migration exists to fix: two
+// Insert-only, no read step. A load → mutate in JS → replace-whole-list round trip is exactly the
+// multi-process lost-update race this migration exists to fix (why saveMemories was deleted): two
 // concurrent load-then-replace round trips can each read the same snapshot and one clobbers the
 // other's addition, no matter how the underlying storage is locked — SQLite's transaction
 // guarantees only cover a single statement/transaction, not two separate JS-level calls. Every
 // path adding new facts (auto-remember at chat close, the remember tool) must use this, and every
 // edit/delete goes through the per-row updateMemory/deleteMemories below — never
-// load+mutate+saveMemories. See .memory/safety-memory-append-vs-replace.md.
+// load+mutate+replace. See .memory/safety-memory-append-vs-replace.md.
 export async function appendMemories(file: string, additions: Memory[]): Promise<void> {
   const db = openDb(file);
   const insert = db.prepare(

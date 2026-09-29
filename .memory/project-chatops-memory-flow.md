@@ -7,6 +7,10 @@ to #178 — group channels mix several people's words, and chatops has no "conve
   `latestUserText: msg.text` — the addressed person's own typed text is the only citable source.
   The chat-skill follow-up hop reuses `converseBase` *without* these tools (its latest text is a
   composed prompt, not the user's words).
+- Both tools are intent-gated in code (`makeMemoryTools`): `remember` is offered only when the
+  typed text says remember/keep in mind/note that, `forget_memory` only on forget/delete/remove —
+  so injected page or delegate text on an ordinary turn can't save or delete. The quote must
+  support *every* content word of the fact (`supports()` in extract.ts), not just share one.
 - `remember` saves directly (no confirm card); each saved fact gets a `rememberedCard` receipt
   with a **Forget** button. The button carries the memory id in the generic `proposalId` slot
   (`bean:forget-memory:<uuid>` on Discord, ~55 of 100 custom_id chars); delete is idempotent, so

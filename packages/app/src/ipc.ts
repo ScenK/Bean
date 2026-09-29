@@ -212,7 +212,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       : undefined;
     // Direct remember/forget only on a turn the user typed — never on a delegate loopback or
     // a composed skill prompt, whose text isn't the user's own words (memory/extract.ts).
-    const memoryTools = req.source === "typed"
+    const memoryTools = req.source === "typed" && req.incognito !== true
       ? makeMemoryTools({
           append: (m) => deps.appendMemories(deps.dbFile, m),
           forget: (ids) => deps.deleteMemories(deps.dbFile, ids),

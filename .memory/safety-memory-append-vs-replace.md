@@ -14,7 +14,7 @@ the rule is now absolute for everything except consolidation apply:
 - editing one → `updateMemory(id, text)`; removing → `deleteMemories(ids)` (idempotent);
 - the Persona panel uses only those three (the old `saveMemories` IPC channel is gone).
 
-`saveMemories` survives only for chatops consolidation apply (`bot.ts`
-`handleConsolidationAction`, gated by a one-shot `ConsolidationProposalStore` claim) until the
-dream pass replaces it with a fingerprint-checked transactional apply. Don't route any new call
-site through it — its signature looks like it'd work, until two writers race.
+`saveMemories` itself is **deleted** — consolidation apply now does a targeted
+`deleteMemories(merged+dropped ids)` + `appendMemories(merged)`. Don't reintroduce a whole-list
+replace; any "rewrite the set" need goes through per-row ops (or, for dream, one transaction that
+checks each touched row is unchanged).
