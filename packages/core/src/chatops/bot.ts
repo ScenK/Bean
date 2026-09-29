@@ -4,7 +4,6 @@ import { converse, type ConverseDeps, type ImageAttachment, type ProposedLiveSes
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
 import { makeMemoryTools } from "../memory/tools.js";
-import { proposeMemoryConsolidation } from "../memory/consolidate.js";
 import { availableModels } from "../models.js";
 import type { Skill, Project } from "../types.js";
 import type { Persona } from "../persona.js";
@@ -20,7 +19,6 @@ import { maybeCompact } from "./compact.js";
 import type { PendingProposal, ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
 import type { TodoProposalStore } from "./todo-proposals.js";
-import type { ConsolidationProposalStore } from "./consolidation-proposals.js";
 import type { SkillProposalStore } from "./skill-proposals.js";
 import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
 import { systemControlTool } from "../system-control.js";
@@ -28,16 +26,15 @@ import type { RunRegistry } from "./runs.js";
 import { LiveSessionProposalStore, type PendingLiveSession } from "./live-session-proposals.js";
 import { LiveSessionRegistry, type LiveSessionSink } from "./live-sessions.js";
 
-// Above this many total memories, a remember also offers a tidy-up (merge
-// duplicates/drop stale) proposal — piggybacking on the existing extraction flow rather than
-// a separate scheduler, per .memory/project-bean-memory.md.
-const CONSOLIDATION_THRESHOLD = 30;
-
 /** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
  * onMessage — surfaces keep untagged channel chatter as ambient context instead. */
 export interface IncomingMessage {
   conversationId: string;
   text: string;
+  /** Set when `text` also carries non-typed content (Discord appends audio transcripts, which may
+   * be a third party's recording): only this part is the sender's own words for remember.
+   * Absent = all of `text` was typed. */
+  typedText?: string;
   fromId: string;
   fromName: string;
   /** User-ids @mentioned in this message (excluding the bot), if the surface supplies them —
@@ -116,7 +113,6 @@ export interface TeamsBotDeps {
   appendMemories: (additions: Memory[]) => Promise<void>;
   /** Idempotent per-id delete (remember card's Forget button, forget_memory tool). */
   deleteMemories: (ids: string[]) => Promise<number>;
-  consolidationProposals: ConsolidationProposalStore;
   conversations: ConversationStore;
   cards: CardBuilders;
   /** Gates the system_control action tool, same as main.ts's desktop wiring. */
@@ -417,53 +413,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     await fx.post(n > 0 ? `Forgot (by ${actor}): ${text ?? "that fact"}` : "Already forgotten.");
   }
 
-  async function maybeProposeConsolidation(memories: Memory[], conversationId: string, fx: BotEffects): Promise<void> {
-    if (memories.length <= CONSOLIDATION_THRESHOLD) return;
-    const result = await proposeMemoryConsolidation(memories, { chat: deps.chat, model: deps.model });
-    if (result.merges.length === 0 && result.drops.length === 0) return;
-    const pending = deps.consolidationProposals.add({ result, conversationId });
-    const merges = result.merges.map((m) => ({ mergedText: m.mergedText, count: m.ids.length }));
-    const drops = result.drops.map((id) => memories.find((m) => m.id === id)?.text ?? id);
-    const activityId = await fx.postCard(deps.cards.consolidationProposalCard({ proposalId: pending.id, merges, drops }));
-    deps.consolidationProposals.setCardActivityId(pending.id, activityId);
-  }
-
-  async function handleConsolidationAction(
-    kind: "confirm-consolidation" | "cancel-consolidation",
-    proposalId: string | undefined,
-    fx: BotEffects,
-  ): Promise<void> {
-    if (!proposalId) return;
-    const pending = deps.consolidationProposals.claim(proposalId);
-    if (!pending) {
-      await fx.post("That tidy-up suggestion expired.");
-      return;
-    }
-    const updateTo = async (card: object): Promise<void> => {
-      if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
-    };
-    if (kind === "cancel-consolidation") {
-      await updateTo(deps.cards.consolidationResultCard({ outcome: "cancelled" }));
-      return;
-    }
-    try {
-      // Targeted delete + insert, never a whole-list replace: auto-remember, a direct remember,
-      // or a Persona edit can land between the proposal and this tap (safety-memory-append-vs-replace).
-      const existing = await deps.loadMemories();
-      const now = new Date().toISOString();
-      const merged: Memory[] = pending.result.merges.map((m) => {
-        const projectPath = existing.find((mm) => m.ids.includes(mm.id) && mm.projectPath)?.projectPath;
-        return { id: randomUUID(), text: m.mergedText, projectPath, createdAt: now };
-      });
-      await deps.deleteMemories([...pending.result.merges.flatMap((m) => m.ids), ...pending.result.drops]);
-      await deps.appendMemories(merged);
-      await updateTo(deps.cards.consolidationResultCard({ outcome: "applied" }));
-      await fx.post("Memory tidied up.");
-    } catch (err) {
-      await fx.post(`Couldn't tidy up memory: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
   // Post a live-session proposal from a verbatim instruction — no converse()/LLM in the path, so
   // the prompt reaches the card (and then claude) exactly as typed. Shared by the /live-session
   // slash command and its literal-text form in onMessage. Returns a one-line status for the caller.
@@ -597,7 +546,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // The msg.text is what this person typed, so it's the one citable source for remember;
         // the chat-skill follow-up below reuses converseBase without these tools.
         const memoryTools = makeMemoryTools({
-          append: deps.appendMemories, forget: deps.deleteMemories, memories, projects, latestUserText: msg.text,
+          append: deps.appendMemories, forget: deps.deleteMemories, memories, projects, latestUserText: msg.typedText ?? msg.text,
         });
         // runAvailable=false: propose_run is never offered here — confirming one couldn't
         // execute anything from Teams/Discord; propose_delegate is the only run path.
@@ -643,7 +592,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               memoryId: m.id, text: m.text, projectName: m.projectPath ? nameFor(m.projectPath) : undefined,
             }));
           }
-          await maybeProposeConsolidation(await deps.loadMemories(), msg.conversationId, fx);
         }
         void maybeCompact(msg.conversationId, deps.conversations, { chat: deps.chat, model: deps.model });
         if (result.proposedRun) {
@@ -756,10 +704,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (beanAction === "forget-memory") {
         // proposalId carries the memory id here (the surfaces' generic id slot).
         await handleForget(proposalId, action.fromName, fx);
-        return;
-      }
-      if (beanAction === "confirm-consolidation" || beanAction === "cancel-consolidation") {
-        await handleConsolidationAction(beanAction, proposalId, fx);
         return;
       }
       if (beanAction === "start-live" || beanAction === "cancel-live") {

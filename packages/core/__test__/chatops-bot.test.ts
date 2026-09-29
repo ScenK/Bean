@@ -9,7 +9,6 @@ import { dbFile } from "../src/config.js";
 import { ProposalStore } from "../src/chatops/proposals.js";
 import { NoteProposalStore } from "../src/chatops/note-proposals.js";
 import { TodoProposalStore } from "../src/chatops/todo-proposals.js";
-import { ConsolidationProposalStore } from "../src/chatops/consolidation-proposals.js";
 import { RunRegistry } from "../src/chatops/runs.js";
 import type { CardBuilders } from "../src/chatops/cards-api.js";
 import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index.js";
@@ -27,8 +26,6 @@ const fakeCards = {
   todoProposalCard: (i: object) => ({ kind: "todo-proposal", ...i }),
   todoResultCard: (i: object) => ({ kind: "todo-result", ...i }),
   rememberedCard: (i: object) => ({ kind: "remembered", ...i }),
-  consolidationProposalCard: (i: object) => ({ kind: "consolidation-proposal", ...i }),
-  consolidationResultCard: (i: object) => ({ kind: "consolidation-result", ...i }),
   skillProposalCard: (i: object) => ({ kind: "skill-proposal", ...i }),
   skillResultCard: (i: object) => ({ kind: "skill-result", ...i }),
   // Mirrors the real discord/teams builders: a "start-live"/"cancel-live" beanAction lives
@@ -126,7 +123,6 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     listTodoRoutines: async () => [],
     appendMemories: async (additions) => { savedMemories.push(additions); },
     deleteMemories: async (ids) => { forgotten.push(...ids); return ids.length; },
-    consolidationProposals: new ConsolidationProposalStore(),
     conversations: new ConversationStore(dbFile(runsBeanDir)),
     cards: fakeCards as CardBuilders,
     skillProposals: new SkillProposalStore(),
@@ -731,80 +727,6 @@ test("forget-memory deletes that id and is idempotent", async () => {
   const effects2 = fx();
   await buildTeamsBot(gone.deps).onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "forget-memory", proposalId: "m1" } }, effects2);
   expect(effects2.posted).toContain("Already forgotten.");
-});
-
-// A stateful fake store (not the plain array makeDeps() defaults to): appendMemories/saveMemories
-// mutate the same underlying list that loadMemories reads back, so maybeProposeConsolidation's
-// post-remember threshold check sees the real accumulated count.
-function rememberDepsOverThreshold(consolidateToolCalls: { name: string; args: object }[]) {
-  let current = Array.from({ length: 30 }, (_, i) => ({
-    id: `e${i}`, text: `fact ${i}`, createdAt: "2026-01-01T00:00:00.000Z",
-  }));
-  let call = 0;
-  const chat: TeamsBotDeps["chat"] = async () => {
-    call++;
-    if (call === 1) return { content: "", toolCalls: [{ name: "remember", args: { text: "Prefers tabs over spaces", quote: "I prefer tabs over spaces" } }] };
-    if (call === 2) return { content: "ok", toolCalls: [] };
-    return { content: "", toolCalls: consolidateToolCalls };
-  };
-  const { deps } = makeDeps({
-    chat,
-    loadMemories: async () => current,
-    appendMemories: async (additions) => { current = [...current, ...additions]; },
-    deleteMemories: async (ids) => { const before = current.length; current = current.filter((m) => !ids.includes(m.id)); return before - current.length; },
-  });
-  return { deps, getCurrent: () => current };
-}
-
-test("a remember past the consolidation threshold posts a follow-up tidy-up card", async () => {
-  const { deps } = rememberDepsOverThreshold([{ name: "drop_memory", args: { id: "e0" } }]);
-  const effects = fx();
-  await buildTeamsBot(deps).onMessage(rememberMsg, effects);
-  expect(effects.cards).toHaveLength(2);
-  expect(JSON.stringify(effects.cards[1])).toContain("consolidation-proposal");
-});
-
-test("an empty consolidation result posts no follow-up card", async () => {
-  const { deps } = rememberDepsOverThreshold([]); // model finds nothing to tidy
-  const effects = fx();
-  await buildTeamsBot(deps).onMessage(rememberMsg, effects);
-  expect(effects.cards).toHaveLength(1);
-});
-
-test("confirm-consolidation applies drops and merges, then saves the reduced list", async () => {
-  const { deps, getCurrent } = rememberDepsOverThreshold([
-    { name: "merge_memories", args: { ids: ["e1", "e2"], mergedText: "facts 1 and 2 combined" } },
-    { name: "drop_memory", args: { id: "e3" } },
-  ]);
-  const effects = fx();
-  await buildTeamsBot(deps).onMessage(rememberMsg, effects);
-  const card = JSON.stringify(effects.cards[1]);
-  const consId = /"proposalId":"(cons-\d+)"/.exec(card)?.[1];
-  expect(consId).toBeDefined();
-  await buildTeamsBot(deps).onCardAction(
-    { conversationId: "c1", fromName: "bob", value: { beanAction: "confirm-consolidation", proposalId: consId } },
-    effects,
-  );
-  const finalSave = getCurrent();
-  expect(finalSave.some((m) => m.text === "facts 1 and 2 combined")).toBe(true);
-  expect(finalSave.some((m) => m.id === "e1" || m.id === "e2")).toBe(false);
-  expect(finalSave.some((m) => m.id === "e3")).toBe(false);
-  expect(effects.posted.some((p) => p.includes("tidied up"))).toBe(true);
-});
-
-test("cancel-consolidation updates the card and saves nothing further", async () => {
-  const { deps, getCurrent } = rememberDepsOverThreshold([{ name: "drop_memory", args: { id: "e0" } }]);
-  const effects = fx();
-  await buildTeamsBot(deps).onMessage(rememberMsg, effects);
-  const countBefore = getCurrent().length;
-  const card = JSON.stringify(effects.cards[1]);
-  const consId = /"proposalId":"(cons-\d+)"/.exec(card)?.[1];
-  await buildTeamsBot(deps).onCardAction(
-    { conversationId: "c1", fromName: "bob", value: { beanAction: "cancel-consolidation", proposalId: consId } },
-    effects,
-  );
-  expect(getCurrent()).toHaveLength(countBefore);
-  expect(JSON.stringify(effects.updates.at(-1)?.card)).toContain("cancelled");
 });
 
 test("proposedDelegate with no CLI detected posts an error and no card", async () => {

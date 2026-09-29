@@ -4,7 +4,7 @@ import {
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, appendMemories, deleteMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
-  ConsolidationProposalStore, RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
+  RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
@@ -69,7 +69,6 @@ const bot = buildTeamsBot({
   saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
   appendMemories: (m) => appendMemories(dbFile(dir), m),
   deleteMemories: (ids) => deleteMemories(dbFile(dir), ids),
-  consolidationProposals: new ConsolidationProposalStore(),
   conversations,
   liveSessions,
   liveSessionProposals,
@@ -211,6 +210,9 @@ client.on("messageCreate", async (message) => {
     const canTranscribe = !capturing || liveSessions.canSteer(message.channelId, message.author.id);
     let transcribeFailed = false;
     let heardAudio = false;
+    // What the sender typed, before any transcript is appended: an attached clip may be someone
+    // else's recording, so only this is a direct-memory source (IncomingMessage.typedText).
+    const typed = text;
     for (const att of canTranscribe ? message.attachments.values() : []) {
       if (!att.contentType?.startsWith("audio/") || att.size > 25 * 1024 * 1024) continue;
       try {
@@ -277,7 +279,7 @@ client.on("messageCreate", async (message) => {
     try {
       await bot.onMessage(
         {
-          conversationId: channel.id, text: text || "(image)",
+          conversationId: channel.id, text: text || "(image)", typedText: heardAudio ? typed : undefined,
           images: images.length > 0 ? images : undefined,
           fromId: message.author.id, fromName: message.author.displayName,
           // Everyone @mentioned except Bean — feeds the live-session `+driver`/`-driver` commands.

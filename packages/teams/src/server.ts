@@ -4,7 +4,7 @@ import {
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, appendMemories, deleteMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
-  ConsolidationProposalStore, RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
+  RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
@@ -18,7 +18,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   finishedCard, rememberedCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
-  consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
 import { loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
@@ -125,7 +125,6 @@ const bot = buildTeamsBot({
   saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
   appendMemories: (m) => appendMemories(dbFile(dir), m),
   deleteMemories: (ids) => deleteMemories(dbFile(dir), ids),
-  consolidationProposals: new ConsolidationProposalStore(),
   conversations,
   liveSessions,
   liveSessionProposals,
@@ -136,7 +135,7 @@ const bot = buildTeamsBot({
   scratchPath,
   cards: {
     proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, rememberedCard,
-    consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+    skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
     liveSessionProposalCard, liveSessionResultCard,
   },
   systemControlsEnabled: () => beanConfig.systemControls,

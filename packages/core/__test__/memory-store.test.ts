@@ -140,4 +140,7 @@ test("memory tools are only offered when the typed message asks to remember or f
   expect(offered("summarize this page")).toEqual([]);
   expect(offered("remember that I use tabs")).toEqual(["remember"]);
   expect(offered("forget the tabs thing")).toEqual(["forget_memory"]);
+  expect(offered("review the delete API docs")).toEqual([]);
+  expect(offered("note that the build is slow")).toEqual([]);
+  expect(offered("please delete that memory about tabs")).toEqual(["forget_memory"]);
 });

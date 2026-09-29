@@ -67,18 +67,6 @@ export interface RememberedCardInput {
   projectName?: string;
 }
 
-export interface ConsolidationProposalCardInput {
-  proposalId: string;
-  /** Each merge group's combined text and how many facts it replaces. */
-  merges: { mergedText: string; count: number }[];
-  /** Text of each fact proposed for dropping. */
-  drops: string[];
-}
-
-export interface ConsolidationResultCardInput {
-  outcome: "applied" | "cancelled";
-}
-
 export interface SkillProposalCardInput {
   proposalId: string;
   name: string;
@@ -128,8 +116,6 @@ export interface CardBuilders {
   todoProposalCard: (input: TodoProposalCardInput) => object;
   todoResultCard: (input: TodoResultCardInput) => object;
   rememberedCard: (input: RememberedCardInput) => object;
-  consolidationProposalCard: (input: ConsolidationProposalCardInput) => object;
-  consolidationResultCard: (input: ConsolidationResultCardInput) => object;
   skillProposalCard: (input: SkillProposalCardInput) => object;
   skillResultCard: (input: SkillResultCardInput) => object;
   liveSessionProposalCard: (input: LiveSessionProposalCardInput) => object;

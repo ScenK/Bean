@@ -62,6 +62,8 @@ const FRAMING = new Set([
   "into", "when", "what", "also", "just", "very", "more", "most", "some", "uses", "likes", "wants",
   "prefers", "does", "doesnt", "have", "has", "been", "being", "should", "would", "project",
 ]);
+// Tested on norm()'d text, which strips apostrophes ("don't" → "dont").
+const NEGATION = /\b(?:not|no|never|none|nothing|without|avoid\w*|dislikes?|hates?|stopped|dont|doesnt|didnt|isnt|arent|wasnt|wont|cant|cannot|couldnt|shouldnt)\b/;
 const words = (s: string): string[] => norm(s).split(/[^a-z0-9]+/).filter(Boolean);
 // ponytail: 5-char prefix match stands in for stemming ("prefers" ~ "prefer"); words under 4
 // chars are ignored, so a forged 3-letter token (a tool name) can slip through.
@@ -90,6 +92,8 @@ export function validateCandidate(
   // quote, so a generic shared word ("project") can't launder a claim ("…works on Acme") that
   // only a fetched page or delegate result made.
   if (!supports(quote, text)) return "the quote doesn't support that fact — use the user's own words.";
+  // Same words, opposite meaning ("I never use Docker" → "Uses Docker") must not pass.
+  if (NEGATION.test(quote) !== NEGATION.test(norm(text))) return "the fact flips the meaning of the quote.";
   if (INSTRUCTION_SHAPED.test(text)) return "memories are facts about the user, not instructions.";
   if (SECRET_SHAPED.test(text)) return "that looks like a secret or ID number — not stored.";
   const projectPath = typeof a.projectPath === "string" && projects.some((p) => p.path === a.projectPath)

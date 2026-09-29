@@ -20,5 +20,6 @@ to #178 — group channels mix several people's words, and chatops has no "conve
 - `ConversationStore` (`chatops/conversation.ts`) is `bean.db`-backed (`chatops_turns`); `bot.ts`
   fires `maybeCompact()` after every reply — above 60 raw turns the oldest 40 become one
   `role: "system"` summary. Silent/automatic (pure efficiency, not a memory decision).
-- Memory consolidation (merge/drop) still piggybacks on a remember that pushes the list past 30 —
-  see project-bean-memory.md.
+- `IncomingMessage.typedText`: Discord appends audio transcripts to `text`; a clip may be a third
+  party's recording, so the adapter passes the typed part separately and only it feeds the tools.
+- No chatops consolidation card anymore (deleted in #177) — see project-bean-memory.md.

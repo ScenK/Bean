@@ -44,7 +44,6 @@ export * from "./chatops/proposals.js";
 export * from "./chatops/note-proposals.js";
 export * from "./chatops/todo-proposals.js";
 export * from "./chatops/skill-proposals.js";
-export * from "./chatops/consolidation-proposals.js";
 export * from "./chatops/runs.js";
 export * from "./chatops/resolve.js";
 export { parseCron, isValidCron, nextRun } from "./cron.js";

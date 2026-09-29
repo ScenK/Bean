@@ -14,7 +14,7 @@ the rule is now absolute for everything except consolidation apply:
 - editing one → `updateMemory(id, text)`; removing → `deleteMemories(ids)` (idempotent);
 - the Persona panel uses only those three (the old `saveMemories` IPC channel is gone).
 
-`saveMemories` itself is **deleted** — consolidation apply now does a targeted
-`deleteMemories(merged+dropped ids)` + `appendMemories(merged)`. Don't reintroduce a whole-list
-replace; any "rewrite the set" need goes through per-row ops (or, for dream, one transaction that
-checks each touched row is unchanged).
+`saveMemories` itself is **deleted**, and so is the chatops consolidation apply that last used
+it (a stale card could overwrite a newer edit even with targeted deletes). Don't reintroduce a
+whole-list replace; a "rewrite the set" need goes through one transaction that verifies each
+touched row is unchanged since it was read.

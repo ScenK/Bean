@@ -1,7 +1,6 @@
 import type {
   CardBuilders, FinishedCardInput, RememberedCardInput,
   NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
-  ConsolidationProposalCardInput, ConsolidationResultCardInput,
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput,
 } from "@bean/core";
@@ -185,25 +184,6 @@ function rememberedCard(input: RememberedCardInput): object {
   };
 }
 
-function consolidationProposalCard(input: ConsolidationProposalCardInput): object {
-  const lines = [
-    ...input.merges.map((m) => `Merge ${m.count} → ${m.mergedText}`),
-    ...input.drops.map((d) => `Drop: ${d}`),
-  ];
-  return {
-    embeds: [{ title: "Bean suggests tidying up memory", description: lines.join("\n").slice(0, 4096) }],
-    components: [row([
-      { type: BUTTON, style: 3, label: "Apply", custom_id: `bean:confirm-consolidation:${input.proposalId}` },
-      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-consolidation:${input.proposalId}` },
-    ])],
-  };
-}
-
-function consolidationResultCard(input: ConsolidationResultCardInput): object {
-  const title = input.outcome === "applied" ? "Memory tidied up." : "Tidy-up cancelled.";
-  return { embeds: [{ title }], components: [] };
-}
-
 // Discord embed description cap; also the modal text-input cap, so a stored prompt never
 // overflows what the Edit modal can hold.
 const LIVE_PROMPT_LIMIT = 4000;
@@ -275,6 +255,6 @@ function liveSessionResultCard(input: LiveSessionResultCardInput): object {
 
 export const discordCards: CardBuilders = {
   proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, rememberedCard,
-  consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 };

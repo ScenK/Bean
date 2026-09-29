@@ -131,3 +131,9 @@ test("a quote must support every content word of the fact", () => {
   expect(validateCandidate({ text: "Prefers dark mode", quote: "I prefer dark mode" }, ["I prefer dark mode"], projects))
     .toEqual({ text: "Prefers dark mode", projectPath: undefined });
 });
+
+test("a fact that flips the quote's polarity is rejected", () => {
+  expect(validateCandidate({ text: "Uses Docker", quote: "I never use Docker" }, ["I never use Docker"], projects)).toMatch(/flips/);
+  expect(validateCandidate({ text: "Doesn't use Docker", quote: "I don't use Docker" }, ["I don't use Docker"], projects))
+    .toEqual({ text: "Doesn't use Docker", projectPath: undefined });
+});

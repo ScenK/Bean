@@ -33,14 +33,11 @@ see `db.ts`'s `migrateFromFiles`.
 - **Enabled-skills filter** lives in `buildChatHandler` (app `ipc.ts`), not in `converse()`.
 - **Edit surface:** Persona's MEMORY section, per-row `updateMemory`/`deleteMemories`/
   `appendMemories` only — see [[safety-memory-append-vs-replace]].
-- **Consolidation:** chatops-only for now. `memory/consolidate.ts`'s `proposeMemoryConsolidation()`
-  mirrors `extractMemories`'s one-call/tool-spec shape but reviews the *existing* list for
-  merge/drop candidates. Triggered from `bot.ts`'s `onMessage` right after a
-  remember pushes the total count over 30 — piggybacks on the existing extraction flow
-  rather than a new scheduler. Confirm-first via `ConsolidationProposalStore` (same
-  Map+seq+10-min-expiry shape as the other proposal stores) and a `consolidationProposalCard`/
-  `consolidationResultCard` pair in `cards-api.ts`. No desktop equivalent yet (Settings already
-  lets you edit the list directly) — flagged as a follow-up if desktop parity is wanted.
+- **Consolidation:** `memory/consolidate.ts`'s `proposeMemoryConsolidation()` (merge/drop over
+  the existing list) currently has no caller: the chatops confirm-first tidy-up card, its
+  `ConsolidationProposalStore`, and its apply were deleted in #177 PR 1 — a stale card's apply
+  could overwrite a Persona edit made after the proposal. Background "dream" consolidation
+  (PR 2) replaces it with a lease-guarded, fingerprint-checked transactional apply.
 
 Design spec: `docs/superpowers/specs/2026-07-03-bean-memory-design.md`.
 
