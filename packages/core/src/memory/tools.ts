@@ -18,9 +18,13 @@ export interface MemoryToolDeps {
 
 // Code-side intent gate: a tool is only offered when the typed message actually asks for it, so
 // injected page/tool text on an ordinary turn can't talk the model into saving or deleting.
-// Memory-directed phrasing only — a bare "note that" or "delete the API docs" isn't a memory ask.
-const REMEMBER_INTENT = /\b(?:remember|memori[sz]e|keep in mind)\b/i;
-const FORGET_INTENT = /\bforget\b|\b(?:delete|remove|erase|drop|clear)\b[^.?!]*\b(?:memor(?:y|ies)|remember\w*|facts?)\b/i;
+// Memory-directed phrasing only — "I can't remember the command", "note that the build is slow",
+// "forget the last draft", or "delete the API docs" aren't asks to change Bean's memory.
+// ponytail: phrase heuristics; a miss just means the user rephrases or uses Persona.
+const REMEMBER_INTENT =
+  /(?<!\b(?:can'?t|cannot|don'?t|do not|never|not)\s)\b(?:remember|memori[sz]e)\s+(?:that|this|my|me|i|i'm|we|our|to|how|what)\b|\bkeep in mind\b|\b(?:save|add)\b[^.?!]*\b(?:to|in)\s+(?:your\s+)?memory\b/i;
+const FORGET_INTENT =
+  /\bforget\s+(?:that|what|about|this|my|everything|i|i'm)\b|\b(?:delete|remove|erase|drop|clear)\b[^.?!]*\b(?:memor(?:y|ies)|remember\w*)\b/i;
 
 /** Per-turn factory for the direct remember / forget_memory action tools (no confirm card —
  * memory is internal and undoable). `remembered`/`forgotten` collect what this one turn did so

@@ -121,7 +121,7 @@ test("remember/forget_memory tools save only quoted facts and forget only known 
     forget: (ids) => deleteMemories(file, ids),
     memories: await loadMemories(file),
     projects: [],
-    latestUserText: "remember I prefer tabs over spaces, and forget that I use vitest",
+    latestUserText: "remember that I prefer tabs over spaces, and forget that I use vitest",
   });
   const [remember, forget] = t.tools;
   expect(await remember!.run({ text: "Prefers tabs over spaces", quote: "I prefer tabs over spaces" })).toMatch(/^Remembered/);
@@ -139,7 +139,10 @@ test("memory tools are only offered when the typed message asks to remember or f
   }).tools.map((t) => t.spec.name);
   expect(offered("summarize this page")).toEqual([]);
   expect(offered("remember that I use tabs")).toEqual(["remember"]);
-  expect(offered("forget the tabs thing")).toEqual(["forget_memory"]);
+  expect(offered("please keep in mind I'm on a Mac")).toEqual(["remember"]);
+  expect(offered("forget that I like tabs")).toEqual(["forget_memory"]);
+  expect(offered("I can't remember the command")).toEqual([]);
+  expect(offered("Forget the last draft and try again")).toEqual([]);
   expect(offered("review the delete API docs")).toEqual([]);
   expect(offered("note that the build is slow")).toEqual([]);
   expect(offered("please delete that memory about tabs")).toEqual(["forget_memory"]);

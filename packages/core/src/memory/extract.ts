@@ -65,13 +65,30 @@ const FRAMING = new Set([
 // Tested on norm()'d text, which strips apostrophes ("don't" → "dont").
 const NEGATION = /\b(?:not|no|never|none|nothing|without|avoid\w*|dislikes?|hates?|stopped|dont|doesnt|didnt|isnt|arent|wasnt|wont|cant|cannot|couldnt|shouldnt)\b/;
 const words = (s: string): string[] => norm(s).split(/[^a-z0-9]+/).filter(Boolean);
-// ponytail: 5-char prefix match stands in for stemming ("prefers" ~ "prefer"); words under 4
-// chars are ignored, so a forged 3-letter token (a tool name) can slip through.
-function supports(quote: string, fact: string): boolean {
-  const q = words(quote);
-  const content = words(fact).filter((w) => w.length >= 4 && !FRAMING.has(w));
-  if (content.length === 0) return false;
-  return content.every((w) => q.some((x) => x.slice(0, 5) === w.slice(0, 5)));
+const CLAUSE = /[,;:.!?]|\b(?:but|and|while|although|though|whereas)\b/;
+const clauses = (s: string): string[] => s.split(CLAUSE).map((c) => c.trim()).filter(Boolean);
+const content = (s: string): string[] =>
+  words(s).filter((w) => w.length >= 4 && !FRAMING.has(w) && !NEGATION.test(w));
+const has = (q: string[], w: string): boolean => q.some((x) => x.slice(0, 5) === w.slice(0, 5));
+
+/** Every clause of the fact must be carried by one clause of the quote — all its content words
+ * there, with the same polarity. So a generic shared word ("project") can't launder a claim only
+ * a fetched page made, "I never use Docker" can't become "Uses Docker", and in "I do not use
+ * Docker, but I use pnpm" the "not" stays with Docker.
+ * ponytail: 5-char prefix match stands in for stemming ("prefers" ~ "prefer"); words under 4
+ * chars are ignored, so a forged 3-letter token (a tool name) can slip through. */
+function backedBy(quote: string, fact: string): "ok" | "unsupported" | "flipped" {
+  const qs = clauses(quote).map((c) => ({ words: words(c), neg: NEGATION.test(c) }));
+  let checked = 0;
+  for (const fc of clauses(norm(fact))) {
+    const need = content(fc);
+    if (need.length === 0) continue;
+    checked++;
+    const carriers = qs.filter((q) => need.every((w) => has(q.words, w)));
+    if (carriers.length === 0) return "unsupported";
+    if (!carriers.some((q) => q.neg === NEGATION.test(fc))) return "flipped";
+  }
+  return checked > 0 ? "ok" : "unsupported";
 }
 
 /** Validates one model-proposed remember call against the user's own words. Returns the
@@ -88,12 +105,9 @@ export function validateCandidate(
   if (quote.length < 3 || !citable.some((c) => norm(c).includes(quote))) {
     return "the quote must be the user's own words from their message.";
   }
-  // The quote must support the whole fact: every content word of the fact has to appear in the
-  // quote, so a generic shared word ("project") can't launder a claim ("…works on Acme") that
-  // only a fetched page or delegate result made.
-  if (!supports(quote, text)) return "the quote doesn't support that fact — use the user's own words.";
-  // Same words, opposite meaning ("I never use Docker" → "Uses Docker") must not pass.
-  if (NEGATION.test(quote) !== NEGATION.test(norm(text))) return "the fact flips the meaning of the quote.";
+  const verdict = backedBy(quote, text);
+  if (verdict === "unsupported") return "the quote doesn't support that fact — use the user's own words.";
+  if (verdict === "flipped") return "the fact flips the meaning of the quote.";
   if (INSTRUCTION_SHAPED.test(text)) return "memories are facts about the user, not instructions.";
   if (SECRET_SHAPED.test(text)) return "that looks like a secret or ID number — not stored.";
   const projectPath = typeof a.projectPath === "string" && projects.some((p) => p.path === a.projectPath)

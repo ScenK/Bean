@@ -54,9 +54,9 @@ test("candidates duplicating existing memory (case-insensitive) are dropped", as
   const existing: Memory[] = [{ id: "1", text: "Uses pnpm", createdAt: "2026-07-03T00:00:00.000Z" }];
   const deps = depsReturning([
     { name: "remember", args: { text: "uses pnpm", quote: "use pnpm" } },
-    { name: "remember", args: { text: "never uses npm", quote: "never npm" } },
+    { name: "remember", args: { text: "Auth lives in core", quote: "auth lives in core" } },
   ]);
-  expect(await extractMemories(transcript, existing, projects, deps)).toEqual([{ text: "never uses npm", projectPath: undefined }]);
+  expect(await extractMemories(transcript, existing, projects, deps)).toEqual([{ text: "Auth lives in core", projectPath: undefined }]);
 });
 
 test("a chat failure yields no candidates (never throws)", async () => {
@@ -133,6 +133,9 @@ test("a quote must support every content word of the fact", () => {
 });
 
 test("a fact that flips the quote's polarity is rejected", () => {
+  const mixed = "I do not use Docker, but I use pnpm";
+  expect(validateCandidate({ text: "Does not use pnpm", quote: mixed }, [mixed], projects)).toMatch(/flips/);
+  expect(validateCandidate({ text: "Uses pnpm", quote: mixed }, [mixed], projects)).toEqual({ text: "Uses pnpm", projectPath: undefined });
   expect(validateCandidate({ text: "Uses Docker", quote: "I never use Docker" }, ["I never use Docker"], projects)).toMatch(/flips/);
   expect(validateCandidate({ text: "Doesn't use Docker", quote: "I don't use Docker" }, ["I don't use Docker"], projects))
     .toEqual({ text: "Doesn't use Docker", projectPath: undefined });
