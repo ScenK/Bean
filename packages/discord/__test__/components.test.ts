@@ -120,34 +120,17 @@ test("note proposal clamps a long body to Discord's 4096-char embed description 
   expect(desc).toContain("the full note is saved");
 });
 
-test("memory proposal message has a multi-select of facts and remember/cancel buttons", () => {
-  const card = discordCards.memoryProposalCard({
-    proposalId: "mem-1",
-    facts: [{ text: "prefers tabs" }, { text: "uses vitest", projectName: "bean" }],
-  }) as { components: { components: { type: number; custom_id?: string; max_values?: number; options?: unknown[] }[] }[] };
+test("remembered card shows the fact and a Forget button carrying the memory id within Discord's 100-char custom_id", () => {
+  const id = "0f8c2a4e-6b1d-4c3e-9a7f-2d5b8e1c4a90";
+  const card = discordCards.rememberedCard({ memoryId: id, text: "uses vitest", projectName: "bean" }) as {
+    components: { components: { custom_id: string; label: string }[] }[];
+  };
   const s = JSON.stringify(card);
-  expect(s).toContain("prefers tabs");
-  expect(s).toContain("bean:pick-memories:mem-1");
-  expect(s).toContain("bean:save-memories:mem-1");
-  expect(s).toContain("bean:cancel-memories:mem-1");
-  const select = card.components[0]!.components[0]!;
-  expect(select.type).toBe(3); // string select
-  expect(select.max_values).toBe(2);
-  expect(select.options).toHaveLength(2);
-});
-
-test("memory result message has no components and states the outcome", () => {
-  const card = discordCards.memoryResultCard({ count: 2, savedBy: "scen", outcome: "saved" }) as { components: unknown[] };
-  expect(card.components).toEqual([]);
-  expect(JSON.stringify(card)).toContain("saved");
-});
-
-test("memory proposal clamps a long fact label to Discord's 100-char option limit", () => {
-  const card = discordCards.memoryProposalCard({
-    proposalId: "mem-1", facts: [{ text: "x".repeat(200) }],
-  }) as { components: { components: { options?: { label: string }[] }[] }[] };
-  const label = card.components[0]!.components[0]!.options![0]!.label;
-  expect(label.length).toBeLessThanOrEqual(100);
+  expect(s).toContain("(bean) uses vitest");
+  const button = card.components[0]!.components[0]!;
+  expect(button.label).toBe("Forget");
+  expect(button.custom_id).toBe(`bean:forget-memory:${id}`);
+  expect(button.custom_id.length).toBeLessThanOrEqual(100);
 });
 
 test("live-session card renders project/skill/cli/model dropdowns, edit+start+cancel, defaults selected", () => {

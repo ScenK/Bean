@@ -1,9 +1,9 @@
 import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories, deleteMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
-  buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, MemoryProposalStore, NoteProposalStore, ProposalStore,
+  buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
@@ -67,8 +67,8 @@ const bot = buildTeamsBot({
   listTodoRoutines: async () => (await loadRoutines(routinesDir(dir))).filter((r) => r.todoDriven).map((r) => r.name),
   skillProposals: new SkillProposalStore(),
   saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
-  memoryProposals: new MemoryProposalStore(),
   appendMemories: (m) => appendMemories(dbFile(dir), m),
+  deleteMemories: (ids) => deleteMemories(dbFile(dir), ids),
   saveMemories: (m) => saveMemories(dbFile(dir), m),
   consolidationProposals: new ConsolidationProposalStore(),
   conversations,
@@ -97,7 +97,7 @@ const client = new Client({
 // Latest select-menu choices per proposal message id — Discord sends each select change
 // as its own interaction, so the values must be cached until the Run button is pressed.
 // Entries die with the proposal (deleted on confirm/cancel).
-const selections = new Map<string, { cli?: string; model?: string; skillName?: string; memoryPicks?: string[] }>();
+const selections = new Map<string, { cli?: string; model?: string; skillName?: string }>();
 
 const allowed = (userId: string): boolean => discordConfig.allowedUserIds.includes(userId);
 
@@ -384,7 +384,6 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       if (action === "cli") sel.cli = interaction.values[0];
       if (action === "model") sel.model = interaction.values[0];
       if (action === "skill") sel.skillName = interaction.values[0];
-      if (action === "pick-memories") sel.memoryPicks = interaction.values;
       selections.set(interaction.message.id, sel);
       return;
     }
@@ -416,7 +415,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         conversationId: interaction.channelId,
         fromId: interaction.user.id,
         fromName: interaction.user.displayName,
-        value: { beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, skillName: sel.skillName, memoryPicks: sel.memoryPicks },
+        value: { beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, skillName: sel.skillName },
       },
       fx,
     );

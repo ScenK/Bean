@@ -32,6 +32,7 @@ describe("ChatWindow delegate state", () => {
     expect(result.loopback).toEqual({
       text: `[delegate result for "check it"]: fixed\n\nBriefly summarize this outcome for the user in your own words.`,
       display: "📦 Delegate finished",
+      source: "loopback",
     });
   });
 
@@ -48,6 +49,7 @@ describe("ChatWindow delegate state", () => {
     expect(result.loopbacks).toEqual([{
       text: `[delegate result for "edited prompt"]: fixed\n\nBriefly summarize this outcome for the user in your own words.`,
       display: "📦 Delegate finished",
+      source: "loopback",
     }]);
   });
 

@@ -9,7 +9,7 @@ import {
   buildPendingUpdateStore, buildUpdateHandlers, buildTodoHandlers,
 } from "../src/ipc.js";
 import type { ConfigView, ConfigUpdate } from "../src/channels.js";
-import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate, Routine } from "@bean/core";
+import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate, Routine, ChatTurn } from "@bean/core";
 import type { LaunchSpawnFn } from "@bean/core";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
@@ -144,7 +144,7 @@ test("chat handler drops disabled skills and injects recalled memories", async (
     dbFile: "/b/memory.json",
   });
   await handler({ history: [], message: "hi" });
-  expect(systemContent).toContain("What you remember:");
+  expect(systemContent).toContain("What you remember (saved facts");
   expect(systemContent).toContain("prefers pnpm");
 });
 
@@ -446,14 +446,16 @@ test("dropped-url store lets a late subscriber pull the pending drop (same drop-
   expect(store.get()).toBeUndefined();
 });
 
-test("memory handlers list, save, append, and extract through injected deps", async () => {
-  let saved: unknown[] = [];
-  let appended: unknown[] = [];
-  const existing = [{ id: "1", text: "prefers pnpm", createdAt: "2026-07-03T00:00:00.000Z" }];
+function memoryHandlersFor(over: Partial<Parameters<typeof buildMemoryHandlers>[0]> = {}) {
+  const appended: Memory[][] = [];
+  const deleted: string[][] = [];
+  const batches: Memory[][] = [];
+  const existing: Memory[] = [{ id: "1", text: "prefers pnpm", createdAt: "2026-07-03T00:00:00.000Z" }];
   const handlers = buildMemoryHandlers({
     loadMemories: async () => existing,
-    saveMemories: async (_file, memories) => { saved = memories; },
-    appendMemories: async (_file, additions) => { appended = additions; },
+    appendMemories: async (_file, additions) => { appended.push(additions); },
+    updateMemory: async () => {},
+    deleteMemories: async (_file, ids) => { deleted.push(ids); return ids.length; },
     extractMemories: async (transcript, ex, projects) => {
       expect(ex).toEqual(existing);
       expect(projects).toEqual([{ name: "api", path: "/work/api" }]);
@@ -462,16 +464,52 @@ test("memory handlers list, save, append, and extract through injected deps", as
     loadProjects: async () => [{ name: "api", path: "/work/api" }],
     converse: async () => ({ content: "", toolCalls: [] }),
     getModel: () => "m",
-    dbFile: "/b/memory.json",
+    autoMemory: () => true,
+    onMemoryBatch: (b) => { batches.push(b); },
+    dbFile: "/b/bean.db",
     projectsFile: "/b/projects.json",
+    ...over,
   });
+  return { handlers, appended, deleted, batches, existing };
+}
 
-  expect(await handlers.list()).toEqual(existing);
-  await handlers.save([{ id: "2", text: "x", createdAt: "2026-07-03T00:00:00.000Z" }]);
-  expect(saved).toHaveLength(1);
-  await handlers.append([{ id: "3", text: "y", createdAt: "2026-07-03T00:00:00.000Z" }]);
-  expect(appended).toHaveLength(1);
-  expect(await handlers.extract([{ role: "user", content: "hi" }])).toEqual([{ text: "new fact", projectPath: undefined }]);
+const typed: ChatTurn[] = [{ role: "user", content: "I prefer pnpm", source: "typed" }];
+
+test("rememberOnClose extracts and appends in the background, then Undo deletes exactly that batch", async () => {
+  const { handlers, appended, deleted, batches } = memoryHandlersFor();
+  const batch = await handlers.rememberOnClose(typed, {});
+  expect(batch.map((m) => m.text)).toEqual(["new fact"]);
+  expect(appended).toEqual([batch]);
+  expect(batches).toEqual([batch]);
+  expect(handlers.batch()?.ids).toEqual(batch.map((m) => m.id));
+  expect(await handlers.undoBatch()).toBe(1);
+  expect(deleted).toEqual([batch.map((m) => m.id)]);
+  expect(handlers.batch()).toBeUndefined();
+  expect(await handlers.undoBatch()).toBe(0);
+});
+
+test("an incognito chat writes nothing and never calls extraction", async () => {
+  let extracted = false;
+  const { handlers, appended, batches } = memoryHandlersFor({ extractMemories: async () => { extracted = true; return []; } });
+  expect(await handlers.rememberOnClose(typed, { incognito: true })).toEqual([]);
+  expect(extracted).toBe(false);
+  expect(appended).toEqual([]);
+  expect(batches).toEqual([]);
+});
+
+test("autoMemory off means no background extraction", async () => {
+  let extracted = false;
+  const { handlers, appended } = memoryHandlersFor({ autoMemory: () => false, extractMemories: async () => { extracted = true; return []; } });
+  expect(await handlers.rememberOnClose(typed, {})).toEqual([]);
+  expect(extracted).toBe(false);
+  expect(appended).toEqual([]);
+});
+
+test("no candidates means no batch and no bubble", async () => {
+  const { handlers, batches } = memoryHandlersFor({ extractMemories: async () => [] });
+  expect(await handlers.rememberOnClose(typed, {})).toEqual([]);
+  expect(batches).toEqual([]);
+  expect(handlers.batch()).toBeUndefined();
 });
 
 test("config save handler forwards the update to applyConfig", async () => {

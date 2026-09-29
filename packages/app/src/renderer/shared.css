@@ -1175,13 +1175,12 @@ button, input, textarea, select, a {
 .bean-memory-review { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); z-index: 10; }
 .bean-memory-review-card { background: var(--bean-surface, #fff); border-radius: 12px; padding: 16px; width: 88%; max-width: 380px; box-shadow: 0 8px 30px rgba(0,0,0,0.25); }
 .bean-memory-review-title { font-weight: 600; margin-bottom: 10px; }
-.bean-memory-review-row { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; font-size: 13px; }
-.bean-memory-review-tag { color: var(--bean-text-dim); font-style: normal; }
-.bean-memory-review-loading { font-size: 13px; font-style: italic; color: var(--bean-text-dim); }
 
 .bean-memory-group-label { font-size: 11px; text-transform: uppercase; color: var(--bean-text-dim); margin: 10px 0 4px; }
 .bean-memory-empty { font-size: 13px; color: var(--bean-text-dim); padding: 2px 0 6px; }
 .bean-memory-item { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.bean-memory-just { border: 1px solid var(--bean-control-border); border-radius: 8px; padding: 2px 8px 4px; margin: 6px 0 10px; }
+.bean-memory-just-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .bean-memory-input { flex: 1; }
 .bean-memory-del { border: none; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; color: var(--bean-text-dim); }
 .bean-memory-del:hover { color: var(--bean-text); }
@@ -1199,6 +1198,10 @@ button, input, textarea, select, a {
 .bean-chat-unlink { border: none; background: transparent; cursor: pointer; font-size: 11px; color: var(--bean-text-dim); padding: 0 2px; }
 .bean-chat-unlink:hover { opacity: 1; }
 .bean-notes-title { flex: none; }
+/* Off: an outlined control on the surface (a plain .bean-chip is accent-filled, which would read as "on"). */
+.bean-chat-incognito { background: transparent; color: var(--bean-text-dim); border: 1px solid var(--bean-control-border); cursor: pointer; }
+/* Accent fill + ink when on — a real state change, not an opacity dim (convention-theme-contrast). */
+.bean-chat-incognito--on { background: var(--bean-accent); color: var(--bean-accent-ink); border-color: var(--bean-accent); }
 .bean-chat-notechip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; white-space: nowrap; }
 .bean-chat-notechip-title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .bean-save-notes {

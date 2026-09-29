@@ -13,6 +13,7 @@ export interface ConfigView {
   routineDigestContext: boolean;
   disabledClis: string[];
   webSearch: boolean;
+  autoMemory: boolean;
   paths: { config: string; skills: string; projects: string; persona: string };
 }
 export interface ConfigUpdate {
@@ -26,6 +27,7 @@ export interface ConfigUpdate {
   routineDigestContext: boolean;
   disabledClis: string[];
   webSearch: boolean;
+  autoMemory: boolean;
 }
 export interface AppInfo {
   version: string;
@@ -100,9 +102,12 @@ export const IPC = {
   starNote: "bean:star-note",
   noteHistory: "bean:note-history",
   listMemories: "bean:list-memories",
-  saveMemories: "bean:save-memories",
   appendMemories: "bean:append-memories",
-  extractMemories: "bean:extract-memories",
+  updateMemory: "bean:update-memory",
+  deleteMemories: "bean:delete-memories",
+  rememberOnClose: "bean:remember-on-close",
+  getMemoryBatch: "bean:get-memory-batch",
+  undoMemoryBatch: "bean:undo-memory-batch",
   reviewBeforeClose: "bean:review-before-close",
   allowChatClose: "bean:allow-chat-close",
   chatopsStatus: "bean:chatops-status",

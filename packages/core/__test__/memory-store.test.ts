@@ -3,7 +3,8 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { loadMemories, saveMemories, appendMemories, selectRelevantMemories } from "../src/memory/store.js";
+import { loadMemories, saveMemories, appendMemories, updateMemory, deleteMemories, selectRelevantMemories } from "../src/memory/store.js";
+import { makeMemoryTools } from "../src/memory/tools.js";
 import { closeDb } from "../src/db.js";
 import { dbFile } from "../src/config.js";
 import type { Memory } from "../src/memory/memory.js";
@@ -103,4 +104,37 @@ test("selectRelevantMemories ranks by relevance above the threshold and force-in
   expect(picked.some((mm) => mm.id === "scoped")).toBe(true);
   expect(picked.some((mm) => mm.id === "roadmap")).toBe(true);
   expect(picked.length).toBeLessThanOrEqual(5);
+});
+
+test("a Persona edit racing a concurrent appendMemories loses neither write", async () => {
+  await appendMemories(file, [m("a", "old text")]);
+  await Promise.all([updateMemory(file, "a", "edited text"), appendMemories(file, [m("b", "auto-remembered")])]);
+  expect(await loadMemories(file)).toEqual([m("a", "edited text"), m("b", "auto-remembered")]);
+});
+
+test("deleteMemories removes exactly those ids, is idempotent, and keeps FTS in step", async () => {
+  await appendMemories(file, [m("a", "one"), m("b", "two"), m("c", "three")]);
+  expect(await deleteMemories(file, ["a", "c"])).toBe(2);
+  expect(await deleteMemories(file, ["a", "c"])).toBe(0);
+  expect(await deleteMemories(file, [])).toBe(0);
+  expect(await loadMemories(file)).toEqual([m("b", "two")]);
+});
+
+test("remember/forget_memory tools save only quoted facts and forget only known ids", async () => {
+  await appendMemories(file, [m("keep", "uses vitest")]);
+  const t = makeMemoryTools({
+    append: (a) => appendMemories(file, a),
+    forget: (ids) => deleteMemories(file, ids),
+    memories: await loadMemories(file),
+    projects: [],
+    latestUserText: "remember I prefer tabs over spaces",
+  });
+  const [remember, forget] = t.tools;
+  expect(await remember!.run({ text: "Prefers tabs over spaces", quote: "I prefer tabs" })).toMatch(/^Remembered/);
+  expect(await remember!.run({ text: "Prefers email for passwords", quote: "passwords" })).toMatch(/^error/);
+  expect(await remember!.run({ text: "prefers tabs over spaces", quote: "prefer tabs" })).toBe("Already remembered.");
+  expect(t.remembered.map((x) => x.text)).toEqual(["Prefers tabs over spaces"]);
+  expect(await forget!.run({ ids: ["nope"] })).toMatch(/^error/);
+  expect(await forget!.run({ ids: ["keep"] })).toBe("Forgot 1 fact(s).");
+  expect((await loadMemories(file)).map((x) => x.text)).toEqual(["Prefers tabs over spaces"]);
 });

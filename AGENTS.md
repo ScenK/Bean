@@ -45,7 +45,7 @@ The desktop app is one of **three surfaces**, all sharing the same core brain:
 
 - **Remote chatops** — `@bean/discord` and `@bean/teams` are standalone Node bot servers
   (`node dist/server.js`) that let you drive Bean from a Discord server/DM or a Teams chat.
-  They render the same confirm-first cards (run / note / memory / skill) through core's shared
+  They render the same confirm-first cards (run / note / skill; memory saves directly with a Forget receipt) through core's shared
   `chatops/` layer; the per-surface `*-config.ts` holds tokens/IDs.
 - **Routines** — scheduled work. A routine (`~/.bean/routines/<name>.json`) is a cron- or
   watch-fired (polled feed/command, no model per check) pipeline of `delegate`/`chat` steps with optional todo-queue draining; `routine-runner.ts`
@@ -221,8 +221,8 @@ Two layers:
 Per-user, outside the repo. Path helpers live in `core/src/config.ts`.
 
 - `~/.bean/config.json` → `{ "openaiApiKey", "model", "terminalApp", "editorApp",
-  "delegateCli", "systemControls", "webSearch" }`. Only `openaiApiKey`/`model` are load-bearing (`model`
-  defaults to `gpt-4o-mini`); the rest default to `""`/`false`. A missing config throws; an
+  "delegateCli", "systemControls", "webSearch", "autoMemory" }`. Only `openaiApiKey`/`model` are load-bearing (`model`
+  defaults to `gpt-4o-mini`); the rest default to `""`/`false` (except `autoMemory`, default `true`). A missing config throws; an
   empty `openaiApiKey` shows an error dialog but the app still opens.
 - `~/.bean/clis.json` → optional per-provider model lists overriding the repo default
   `.bean/clis.json`: `[{ "provider": "claude", "models": ["sonnet", ...] }]`. A user entry

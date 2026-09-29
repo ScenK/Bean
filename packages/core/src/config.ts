@@ -70,13 +70,14 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
       ? parsed.disabledClis.filter((c): c is CliName => (CLI_NAMES as readonly string[]).includes(c as string))
       : [],
     webSearch: parsed.webSearch ?? false,
+    autoMemory: parsed.autoMemory ?? true,
     beanDir: beanDirPath,
   };
 }
 
 export async function saveConfig(
   file: string,
-  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; reasoningEffort?: string; imageModel?: string; liveSessions?: boolean; routineDigestContext?: boolean; disabledClis?: string[]; webSearch?: boolean },
+  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; reasoningEffort?: string; imageModel?: string; liveSessions?: boolean; routineDigestContext?: boolean; disabledClis?: string[]; webSearch?: boolean; autoMemory?: boolean },
 ): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   // No Settings UI toggle exists for liveSessions, so a desktop Settings save calls this with
@@ -99,6 +100,7 @@ export async function saveConfig(
     routineDigestContext: config.routineDigestContext ?? existing.routineDigestContext ?? false,
     disabledClis: config.disabledClis ?? existing.disabledClis ?? [],
     webSearch: config.webSearch ?? existing.webSearch ?? false,
+    autoMemory: config.autoMemory ?? existing.autoMemory ?? true,
   };
   await writeFile(file, JSON.stringify(out, null, 2) + "\n", "utf8");
 }

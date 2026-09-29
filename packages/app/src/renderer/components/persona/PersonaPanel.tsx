@@ -1,6 +1,12 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { PERSONA_TAGS, type Persona, type PersonaTag } from "@bean/core/persona";
 import type { Memory, Project } from "@bean/core";
+import type { MemoryBatch } from "../../../ipc.js";
+
+const ago = (iso: string): string => {
+  const min = Math.round((Date.now() - Date.parse(iso)) / 60_000);
+  return min < 1 ? "just now" : min < 60 ? `${min} min ago` : `${Math.round(min / 60)} h ago`;
+};
 
 const SAMPLE_VOICE = "“Done — left two notes on the retry loop. Want me to open the PR?”";
 
@@ -15,19 +21,31 @@ export function PersonaPanel() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [memError, setMemError] = useState<string | undefined>(undefined);
+  const [batch, setBatch] = useState<MemoryBatch | undefined>(undefined);
+  const justRef = useRef<HTMLDivElement>(null);
 
   const refresh = async (): Promise<void> => {
-    const [p, mem, projs] = await Promise.all([
+    const [p, mem, projs, b] = await Promise.all([
       window.bean.getPersona(),
       window.bean.listMemories(),
       window.bean.listProjects(),
+      window.bean.getMemoryBatch(),
     ]);
     setPersona(p);
     setMemories(mem);
     setProjects(projs);
+    setBatch(b);
   };
 
-  useEffect(() => { void refresh(); }, []);
+  // The avatar's "Remembered N" bubble opens (or focuses) this window: refetch on focus so a
+  // batch that landed while it was open shows up, then bring "Just remembered" into view.
+  useEffect(() => {
+    void refresh();
+    const onFocus = (): void => { void refresh(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+  useEffect(() => { if (batch) justRef.current?.scrollIntoView({ block: "nearest" }); }, [batch?.at]);
 
   const startEdit = (): void => {
     if (!persona) return;
@@ -60,19 +78,42 @@ export function PersonaPanel() {
     }
   };
 
-  const persist = async (next: Memory[]): Promise<void> => {
-    setMemories(next);
-    try { await window.bean.saveMemories(next); setMemError(undefined); }
+  // Every write is per-row (update/delete/append) — never a whole-list replace, which would
+  // silently drop a fact auto-remember or a chatops bot saved while this panel was open.
+  const run = async (op: () => Promise<unknown>): Promise<void> => {
+    try { await op(); setMemError(undefined); }
     catch (err) { setMemError(err instanceof Error ? err.message : String(err)); }
   };
   const editMemory = (id: string, text: string): void =>
     setMemories((prev) => prev.map((m) => (m.id === id ? { ...m, text } : m)));
-  const commitMemories = (): void => { void persist(memories); };
-  const deleteMemory = (id: string): void => { void persist(memories.filter((m) => m.id !== id)); };
-  const addMemory = (projectPath?: string): void => {
-    const entry: Memory = { id: `${Date.now()}`, text: "", projectPath, createdAt: new Date().toISOString() };
-    void persist([...memories, entry]);
+  const commitMemory = (m: Memory): void => { void run(() => window.bean.updateMemory(m.id, m.text)); };
+  const deleteMemory = (id: string): void => {
+    setMemories((prev) => prev.filter((m) => m.id !== id));
+    void run(() => window.bean.deleteMemories([id]));
   };
+  const addMemory = (projectPath?: string): void => {
+    const entry: Memory = { id: crypto.randomUUID(), text: "", projectPath, createdAt: new Date().toISOString() };
+    setMemories((prev) => [...prev, entry]);
+    void run(() => window.bean.appendMemories([entry]));
+  };
+  const undoBatch = (): void => {
+    void run(async () => { await window.bean.undoMemoryBatch(); await refresh(); });
+  };
+
+  const batchIds = new Set(batch?.ids ?? []);
+  const justRemembered = memories.filter((m) => batchIds.has(m.id));
+  const rest = memories.filter((m) => !batchIds.has(m.id));
+  const row = (m: Memory) => (
+    <div key={m.id} class="bean-memory-item">
+      <input
+        class="bean-input bean-memory-input"
+        value={m.text}
+        onInput={(e) => editMemory(m.id, (e.target as HTMLInputElement).value)}
+        onBlur={() => commitMemory(m)}
+      />
+      <button type="button" class="bean-memory-del" onClick={() => deleteMemory(m.id)} aria-label="Delete">×</button>
+    </div>
+  );
 
   if (!persona) {
     return (
@@ -132,38 +173,28 @@ export function PersonaPanel() {
       <div class="bean-persona-label">MEMORY</div>
       {memError ? <div class="bean-persona-error">Save failed: {memError}</div> : null}
 
+      {batch && justRemembered.length > 0 ? (
+        <div class="bean-memory-just" ref={justRef}>
+          <div class="bean-memory-just-head">
+            <span class="bean-memory-group-label">Just remembered · {ago(batch.at)}</span>
+            <button type="button" class="bean-btn bean-btn--ghost" onClick={undoBatch}>Undo</button>
+          </div>
+          {justRemembered.map(row)}
+        </div>
+      ) : null}
+
       <div class="bean-memory-group-label">About you</div>
-      {memories.filter((m) => !m.projectPath).length === 0 ? (
+      {rest.filter((m) => !m.projectPath).length === 0 ? (
         <div class="bean-memory-empty">Nothing yet.</div>
       ) : (
-        memories.filter((m) => !m.projectPath).map((m) => (
-          <div key={m.id} class="bean-memory-item">
-            <input
-              class="bean-input bean-memory-input"
-              value={m.text}
-              onInput={(e) => editMemory(m.id, (e.target as HTMLInputElement).value)}
-              onBlur={commitMemories}
-            />
-            <button type="button" class="bean-memory-del" onClick={() => deleteMemory(m.id)} aria-label="Delete">×</button>
-          </div>
-        ))
+        rest.filter((m) => !m.projectPath).map(row)
       )}
       <button type="button" class="bean-btn bean-btn--ghost" onClick={() => addMemory(undefined)}>+ Add about you</button>
 
-      {projects.filter((p) => memories.some((m) => m.projectPath === p.path)).map((p) => (
+      {projects.filter((p) => rest.some((m) => m.projectPath === p.path)).map((p) => (
         <div key={p.path}>
           <div class="bean-memory-group-label">{p.name}</div>
-          {memories.filter((m) => m.projectPath === p.path).map((m) => (
-            <div key={m.id} class="bean-memory-item">
-              <input
-                class="bean-input bean-memory-input"
-                value={m.text}
-                onInput={(e) => editMemory(m.id, (e.target as HTMLInputElement).value)}
-                onBlur={commitMemories}
-              />
-              <button type="button" class="bean-memory-del" onClick={() => deleteMemory(m.id)} aria-label="Delete">×</button>
-            </div>
-          ))}
+          {rest.filter((m) => m.projectPath === p.path).map(row)}
         </div>
       ))}
     </div>

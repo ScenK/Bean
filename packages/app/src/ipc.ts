@@ -1,5 +1,5 @@
 import {
-  route, converse, launchInTerminal, scratchDir, makeGenerateImageTool, type ImageGenDeps,
+  route, converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, type ImageGenDeps,
   availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
@@ -9,6 +9,7 @@ import {
 } from "@bean/core";
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { WatchCheckResult } from "./routine-scheduler.js";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";
 import { BrowserWindow, dialog, screen, shell, type IpcMain } from "electron";
@@ -167,6 +168,8 @@ export interface ChatHandlerDeps {
   loadProjects: (file: string) => Promise<Project[]>;
   loadPersona: (userFile: string, projectFile: string) => Promise<Persona>;
   loadMemories: (file: string) => Promise<Memory[]>;
+  appendMemories: (file: string, additions: Memory[]) => Promise<void>;
+  deleteMemories: (file: string, ids: string[]) => Promise<number>;
   converse: ConverseDeps["chat"];
   getModel: () => string;
   projectSkillsDir: string;
@@ -207,6 +210,16 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
           onStart: deps.imageGen.onStart,
         })
       : undefined;
+    // Direct remember/forget only on a turn the user typed — never on a delegate loopback or
+    // a composed skill prompt, whose text isn't the user's own words (memory/extract.ts).
+    const memoryTools = req.source === "typed"
+      ? makeMemoryTools({
+          append: (m) => deps.appendMemories(deps.dbFile, m),
+          forget: (ids) => deps.deleteMemories(deps.dbFile, ids),
+          memories, projects, latestUserText: req.message,
+        })
+      : undefined;
+    const actions = [...(deps.actions ?? []), ...(imageTool ? [imageTool.tool] : []), ...(memoryTools?.tools ?? [])];
     const result = await converse({
       history: req.history,
       latestUserText: req.message,
@@ -217,7 +230,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       memories,
       deps: { chat: deps.converse, model: deps.getModel() },
       droppedUrl: req.droppedUrl,
-      actions: imageTool ? [...(deps.actions ?? []), imageTool.tool] : deps.actions,
+      actions,
       linkedNote: req.linkedNote,
       delegateAvailable: deps.delegateAvailable?.() ?? false,
       scratchPath: deps.beanDirPath ? scratchDir(deps.beanDirPath) : undefined,
@@ -230,6 +243,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
         dataUrl: `data:image/png;base64,${(await readFile(path)).toString("base64")}`,
       })));
     }
+    if (memoryTools && memoryTools.remembered.length > 0) result.remembered = memoryTools.remembered;
     return result;
   };
 }
@@ -383,34 +397,73 @@ export function buildPersonaHandlers(deps: PersonaHandlerDeps) {
 
 export interface MemoryHandlerDeps {
   loadMemories: (file: string) => Promise<Memory[]>;
-  saveMemories: (file: string, memories: Memory[]) => Promise<void>;
-  // Insert-only add — unlike saveMemories (whole-list replace), this can't lose a concurrent
-  // writer's addition (e.g. a chatops bot remembering something at the same moment as this
-  // chat-close review). See @bean/core's memory/store.ts appendMemories doc comment.
+  // Every write is insert-only or per-row: auto-remember, a chatops bot, and the Persona panel
+  // can all write at once, and a whole-list replace would silently drop one of them
+  // (.memory/safety-memory-append-vs-replace.md).
   appendMemories: (file: string, additions: Memory[]) => Promise<void>;
+  updateMemory: (file: string, id: string, text: string) => Promise<void>;
+  deleteMemories: (file: string, ids: string[]) => Promise<number>;
   extractMemories: (
     transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps,
   ) => Promise<MemoryCandidate[]>;
   loadProjects: (file: string) => Promise<Project[]>;
   converse: ConverseDeps["chat"];
   getModel: () => string;
+  /** Config `autoMemory`, read per close so a Settings toggle applies without restart. */
+  autoMemory: () => boolean;
+  /** A non-empty auto-remember batch landed — main shows the avatar bubble. */
+  onMemoryBatch?: (batch: Memory[]) => void;
   dbFile: string;
   projectsFile: string;
 }
 
+/** The latest auto-remember batch — Persona's "Just remembered" + Undo. Held in main's memory
+ * only: the Undo window lasts until the next batch (or an app restart). */
+export interface MemoryBatch { ids: string[]; at: string }
+
 export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
+  let lastBatch: MemoryBatch | undefined;
   return {
     list: (): Promise<Memory[]> => deps.loadMemories(deps.dbFile),
-    save: (memories: Memory[]): Promise<void> => deps.saveMemories(deps.dbFile, memories),
     append: (additions: Memory[]): Promise<void> => deps.appendMemories(deps.dbFile, additions),
-    extract: async (transcript: ChatTurn[]): Promise<MemoryCandidate[]> => {
+    update: (id: string, text: string): Promise<void> => deps.updateMemory(deps.dbFile, id, text),
+    delete: (ids: string[]): Promise<number> => deps.deleteMemories(deps.dbFile, ids),
+    /** Chat-window close: extract → validate → append in the background, no review card. */
+    rememberOnClose: async (transcript: ChatTurn[], opts: { incognito?: boolean }): Promise<Memory[]> => {
+      if (opts.incognito || !deps.autoMemory()) return [];
       const [existing, projects] = await Promise.all([
         deps.loadMemories(deps.dbFile),
         deps.loadProjects(deps.projectsFile),
       ]);
-      return deps.extractMemories(transcript, existing, projects, { chat: deps.converse, model: deps.getModel() });
+      const candidates = await deps.extractMemories(transcript, existing, projects, { chat: deps.converse, model: deps.getModel() });
+      if (candidates.length === 0) return [];
+      const at = new Date().toISOString();
+      const batch: Memory[] = candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at }));
+      await deps.appendMemories(deps.dbFile, batch);
+      lastBatch = { ids: batch.map((m) => m.id), at };
+      deps.onMemoryBatch?.(batch);
+      return batch;
+    },
+    batch: (): MemoryBatch | undefined => lastBatch,
+    /** Deletes exactly the last batch's ids (rows edited since are still that batch's rows). */
+    undoBatch: async (): Promise<number> => {
+      if (!lastBatch) return 0;
+      const n = await deps.deleteMemories(deps.dbFile, lastBatch.ids);
+      lastBatch = undefined;
+      return n;
     },
   };
+}
+
+// Renderer payloads are erased types by the time they cross IPC — keep only well-formed turns.
+function toTranscript(v: unknown): ChatTurn[] {
+  if (!Array.isArray(v)) return [];
+  const sources = new Set(["typed", "loopback", "ambient", "skill", "summary"]);
+  return v.flatMap((t): ChatTurn[] => {
+    const o = t as Partial<ChatTurn> | null;
+    if (!o || (o.role !== "user" && o.role !== "assistant") || typeof o.content !== "string") return [];
+    return [{ role: o.role, content: o.content, source: sources.has(o.source as string) ? o.source : undefined }];
+  });
 }
 
 export interface NotesHandlerDeps {
@@ -602,9 +655,12 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   personaFile: string;
   projectPersonaFile: string;
   loadMemories: (file: string) => Promise<Memory[]>;
-  saveMemories: (file: string, memories: Memory[]) => Promise<void>;
   appendMemories: MemoryHandlerDeps["appendMemories"];
+  updateMemory: MemoryHandlerDeps["updateMemory"];
+  deleteMemories: MemoryHandlerDeps["deleteMemories"];
   extractMemories: MemoryHandlerDeps["extractMemories"];
+  autoMemory: MemoryHandlerDeps["autoMemory"];
+  onMemoryBatch?: MemoryHandlerDeps["onMemoryBatch"];
   loadNotes: NotesHandlerDeps["loadNotes"];
   saveNote: NotesHandlerDeps["saveNote"];
   deleteNote: NotesHandlerDeps["deleteNote"];
@@ -739,9 +795,18 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
 
   const memoryHandlers = buildMemoryHandlers(deps);
   ipcMain.handle(IPC.listMemories, () => memoryHandlers.list());
-  ipcMain.handle(IPC.saveMemories, (_e, memories: Memory[]) => memoryHandlers.save(memories));
   ipcMain.handle(IPC.appendMemories, (_e, additions: Memory[]) => memoryHandlers.append(additions));
-  ipcMain.handle(IPC.extractMemories, (_e, transcript: ChatTurn[]) => memoryHandlers.extract(transcript));
+  ipcMain.handle(IPC.updateMemory, (_e, id: string, text: string) => memoryHandlers.update(id, text));
+  ipcMain.handle(IPC.deleteMemories, (_e, ids: string[]) => memoryHandlers.delete(ids));
+  // Fire-and-forget: the chat window is already closing. Failures just mean nothing was saved.
+  ipcMain.on(IPC.rememberOnClose, (_e, transcript: unknown, opts: unknown) => {
+    const incognito = (opts as { incognito?: unknown } | null)?.incognito === true;
+    memoryHandlers.rememberOnClose(toTranscript(transcript), { incognito }).catch((err) => {
+      console.error("auto-remember failed:", err);
+    });
+  });
+  ipcMain.handle(IPC.getMemoryBatch, () => memoryHandlers.batch());
+  ipcMain.handle(IPC.undoMemoryBatch, () => memoryHandlers.undoBatch());
 
   const notesHandlers = buildNotesHandlers(deps);
   ipcMain.handle(IPC.listNotes, () => notesHandlers.list());

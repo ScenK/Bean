@@ -1,13 +1,13 @@
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
-  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine, TodoItem,
+  Memory, ChatTurn, Note, NoteDraft, AvailableModel, Routine, TodoItem,
   RoutineBrief, RoutineWatch, WatchItem,
 } from "@bean/core";
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
 import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
-import type { RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft } from "../ipc.js";
+import type { RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch } from "../ipc.js";
 import type { RoutineBuildView } from "../routine-builder.js";
 import type { WatchCheckResult } from "../routine-scheduler.js";
 
@@ -99,9 +99,13 @@ declare global {
       todosClearFinished(routine: string): Promise<void>;
       todosRetry(id: string): Promise<void>;
       listMemories(): Promise<Memory[]>;
-      saveMemories(memories: Memory[]): Promise<void>;
       appendMemories(additions: Memory[]): Promise<void>;
-      extractMemories(transcript: ChatTurn[]): Promise<MemoryCandidate[]>;
+      updateMemory(id: string, text: string): Promise<void>;
+      deleteMemories(ids: string[]): Promise<number>;
+      /** Fire-and-forget at chat close: main extracts + saves in the background. */
+      rememberOnClose(transcript: ChatTurn[], opts: { incognito: boolean }): void;
+      getMemoryBatch(): Promise<MemoryBatch | undefined>;
+      undoMemoryBatch(): Promise<number>;
       onReviewBeforeClose(cb: () => void): void;
       allowChatClose(): void;
       chatopsStatus(): Promise<Record<ChatopsBot, ChatopsState>>;

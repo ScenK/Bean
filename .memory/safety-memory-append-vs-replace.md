@@ -1,27 +1,20 @@
-# saveMemories vs appendMemories — don't collapse these back into one
+# Memory writes are insert-only or per-row — never list+replace
 
-`saveMemories(file, memories)` is a **whole-list replace** (delete-all + reinsert, one
-transaction). Moving memory storage to SQLite (`~/.bean/bean.db`) does **not**, by itself, fix
-the multi-process lost-update race this was supposed to close: SQLite's transaction/locking
-guarantees only cover a single statement or transaction, not two separate JS-level calls. The
-desktop app's chat-close review and a chatops bot's `propose_remember` flow both used to do
-`list → compute additions in JS → save the merged array` — two concurrent instances of that
-three-step round trip can each read the same snapshot, and whichever writes last silently drops
-the other's addition. This is exactly the same shape of race whether the backing store is
-`memory.json` or a SQLite table; the storage engine change didn't touch it. Verified with a
-throwaway script hitting the built `dist/` output: two concurrent `list+save` round trips lost
-one write; two concurrent `appendMemories` calls did not.
+`saveMemories(file, memories)` is a **whole-list replace** (delete-all + reinsert). SQLite's
+locking only covers one statement/transaction, not two JS-level calls, so any
+`loadMemories → mutate in JS → saveMemories` round trip loses a concurrent writer's change.
+Verified with a throwaway script against the built `dist/`: two concurrent list+save round trips
+lost one write; two concurrent `appendMemories` calls did not.
 
-The fix: `appendMemories(file, additions)` in `core/src/memory/store.ts` is insert-only, no read
-step — two concurrent callers each just insert their own new rows, and SQLite serializes the two
-`INSERT` transactions with no data loss. Every path that's *adding new facts* (chatops
-`bot.ts`'s `handleMemoryAction`, desktop `ChatWindow.tsx`'s `rememberSelected`) must call
-`appendMemories`/`window.bean.appendMemories`, never `listMemories` + `saveMemories`.
+With automatic memory (#177) there are always background writers — auto-remember at chat close
+(desktop main), the `remember`/`forget_memory` tools (every surface), and the Persona panel — so
+the rule is now absolute for everything except consolidation apply:
 
-`saveMemories` (whole-list replace) is still correct and still needed for the cases that are
-genuinely a read-modify-write over the full set: the persona panel's Settings-editable memory
-list (single actor editing arbitrarily — not a concurrent-writer scenario), and consolidation's
-merge/drop apply (`bot.ts`'s `handleConsolidationAction`, gated behind a one-shot claimed
-`ConsolidationProposalStore` proposal so it can't double-apply). Don't "simplify" either of those
-back onto `saveMemories`-only, and don't route new-fact-adding call sites through `saveMemories`
-even though its signature looks like it'd work — it will, until two processes race.
+- adding facts → `appendMemories` (insert-only);
+- editing one → `updateMemory(id, text)`; removing → `deleteMemories(ids)` (idempotent);
+- the Persona panel uses only those three (the old `saveMemories` IPC channel is gone).
+
+`saveMemories` survives only for chatops consolidation apply (`bot.ts`
+`handleConsolidationAction`, gated by a one-shot `ConsolidationProposalStore` claim) until the
+dream pass replaces it with a fingerprint-checked transactional apply. Don't route any new call
+site through it — its signature looks like it'd work, until two writers race.

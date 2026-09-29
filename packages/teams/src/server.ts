@@ -1,9 +1,9 @@
 import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories, deleteMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
-  buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, MemoryProposalStore, NoteProposalStore, ProposalStore,
+  buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   ConsolidationProposalStore, RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
@@ -17,7 +17,7 @@ import { mkdirSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
-  finishedCard, memoryProposalCard, memoryResultCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
+  finishedCard, rememberedCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
   consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
@@ -123,8 +123,8 @@ const bot = buildTeamsBot({
   listTodoRoutines: async () => (await loadRoutines(routinesDir(dir))).filter((r) => r.todoDriven).map((r) => r.name),
   skillProposals: new SkillProposalStore(),
   saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
-  memoryProposals: new MemoryProposalStore(),
   appendMemories: (m) => appendMemories(dbFile(dir), m),
+  deleteMemories: (ids) => deleteMemories(dbFile(dir), ids),
   saveMemories: (m) => saveMemories(dbFile(dir), m),
   consolidationProposals: new ConsolidationProposalStore(),
   conversations,
@@ -136,7 +136,7 @@ const bot = buildTeamsBot({
   liveSessionsEnabled: () => clis.includes("claude"),
   scratchPath,
   cards: {
-    proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
+    proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, rememberedCard,
     consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
     liveSessionProposalCard, liveSessionResultCard,
   },
@@ -282,9 +282,6 @@ app.post("/api/messages", (req, res) => {
     const fx = effectsFor(context);
     const value = a.value as Record<string, string> | undefined;
     if (value?.beanAction) {
-      const memoryPicks = value.beanAction === "save-memories"
-        ? Object.keys(value).filter((k) => /^fact-\d+$/.test(k) && value[k] === "true").map((k) => k.slice(5))
-        : undefined;
       await bot.onCardAction(
         {
           conversationId: a.conversation.id,
@@ -292,7 +289,7 @@ app.post("/api/messages", (req, res) => {
           fromName: a.from.name ?? "someone",
           value: {
             beanAction: value.beanAction, proposalId: value.proposalId, projectPath: value.projectPath,
-            cli: value.cli, model: value.model, memoryPicks,
+            cli: value.cli, model: value.model,
             skillName: value.skillName, steering: value.steering, instruction: value.instruction,
           },
         },

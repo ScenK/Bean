@@ -3,31 +3,26 @@ import { ChatPanel } from "./ChatPanel.js";
 import { newId, type ChatItem } from "../../shared/chat-types.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import type {
-  ChatTurn, CliName, ImageAttachment, LinkedNote, MemoryCandidate, Memory, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill,
+  ChatTurn, CliName, ImageAttachment, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
 import type { InterruptedRunNotice } from "../../../ipc.js";
 
-// Extraction is a real LLM call — a reasoning model (e.g. gpt-5-mini) routinely takes ~5s and
-// longer for bigger transcripts. This is only a backstop against a genuinely hung request, so it
-// must comfortably exceed real latency; a too-short value silently discards valid memories (the
-// promise loses the race and resolves to []), which is exactly the bug this replaced.
-const REVIEW_TIMEOUT_MS = 20000;
-function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
+// Closing with a delegate still running asks Keep/Stop first; everything else closes at once
+// (memory is extracted in main after the window is gone). `null` = no card.
+type CloseFlow = { stage: "delegates" } | null;
+
+// Transcript handed to rememberOnClose: user turns keep their provenance (only "typed" ones are
+// fact sources); replies are assistant turns.
+export function closeTranscript(items: ChatItem[]): ChatTurn[] {
+  return items
+    .filter((it): it is Extract<ChatItem, { kind: "user" | "reply" }> => it.kind === "user" || it.kind === "reply")
+    .map((it) => (it.kind === "user"
+      ? { role: "user" as const, content: it.text, source: it.source }
+      : { role: "assistant" as const, content: it.text }));
 }
 
-// Drives the "before I go" card shown when the chat window closes with a non-empty
-// transcript: ask first (no LLM call yet, so the wait that follows is expected rather than
-// a silent hang) → loading (extraction in flight) → review (pick which candidates to keep).
-// `null` means no card — the window closes normally.
-type CloseFlow =
-  | { stage: "delegates" }
-  | { stage: "confirm" }
-  | { stage: "loading" }
-  | { stage: "review"; items: { text: string; projectPath?: string; checked: boolean }[] };
-
-type QueuedSend = { text: string; display?: string };
+type QueuedSend = { text: string; display?: string; source?: TurnSource };
 
 export function markDelegateStarting(items: ChatItem[], id: string): ChatItem[] {
   return items.map((it) => (it.kind === "delegate" && it.id === id ? { ...it, state: "starting" as const } : it));
@@ -61,6 +56,7 @@ export function applyDelegateEventToItems(
     loopback: e.type === "done" ? {
       text: `[delegate result for "${match.proposal.instruction}"]: ${e.result}\n\nBriefly summarize this outcome for the user in your own words.`,
       display: "📦 Delegate finished",
+      source: "loopback",
     } : undefined,
   };
 }
@@ -90,7 +86,12 @@ export function ChatWindow() {
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState("model");
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
-  const [closeFlow, setCloseFlow] = useState<CloseFlow | null>(null);
+  const [closeFlow, setCloseFlow] = useState<CloseFlow>(null);
+  // Off the record: this chat is never remembered. Per window (a new chat starts off), read at
+  // close — so switching it on mid-chat still covers the whole chat.
+  const [incognito, setIncognito] = useState(false);
+  const incognitoRef = useRef(false);
+  incognitoRef.current = incognito;
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
   // Settings invalidates this catalog, so an already-open card immediately stops offering a
   // CLI the user just disabled.
@@ -111,13 +112,9 @@ export function ChatWindow() {
   // note through a ref too — state alone would be a stale closure there.
   const linkedNoteRef = useRef<LinkedNote | undefined>(undefined);
   linkedNoteRef.current = linkedNote;
-  // Captured once when the confirm card appears; `confirmExtract` reads it later, after the
-  // user has clicked "Extract" — a ref (not state) so the click handler always sees the
-  // transcript as of close time, not whatever `items` has become since.
-  const closeTranscriptRef = useRef<ChatTurn[]>([]);
   // The mount effect below runs once, so it must reach sendMessage through a ref — a direct
   // reference would close over the first render's stale `busy`/`items`.
-  const sendRef = useRef<(text: string, display?: string, queueIfBusy?: boolean, images?: ImageAttachment[]) => Promise<void>>(async () => {});
+  const sendRef = useRef<(text: string, display?: string, queueIfBusy?: boolean, images?: ImageAttachment[], source?: TurnSource) => Promise<void>>(async () => {});
 
   useEffect(() => {
     const setTheme = (theme: string): void => {
@@ -147,7 +144,7 @@ export function ChatWindow() {
             setLinkedNote(linked);
           }
         }
-        await sendRef.current(p.prompt, `▶ ${p.label}`);
+        await sendRef.current(p.prompt, `▶ ${p.label}`, false, undefined, "skill");
       })();
     };
     window.bean.getPendingChatPrompt().then((p) => { if (p) runPrompt(p); });
@@ -171,16 +168,11 @@ export function ChatWindow() {
       setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it)));
     });
     window.bean.onReviewBeforeClose(() => {
-      const transcript: ChatTurn[] = itemsRef.current
-        .filter((it): it is Extract<ChatItem, { kind: "user" | "reply" }> => it.kind === "user" || it.kind === "reply")
-        .map((it) => ({ role: it.kind === "user" ? "user" : "assistant", content: it.text }));
-      closeTranscriptRef.current = transcript;
       if (hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size)) {
         setCloseFlow({ stage: "delegates" });
         return;
       }
-      if (transcript.length === 0) { window.bean.allowChatClose(); return; }
-      setCloseFlow({ stage: "confirm" });
+      closeNow();
     });
   }, []);
 
@@ -193,11 +185,13 @@ export function ChatWindow() {
     return () => clearTimeout(t);
   }, [droppedUrl]);
 
-  const sendMessage = async (text: string, display?: string, queueIfBusy = false, images?: ImageAttachment[]): Promise<void> => {
+  const sendMessage = async (
+    text: string, display?: string, queueIfBusy = false, images?: ImageAttachment[], source: TurnSource = "typed",
+  ): Promise<void> => {
     const message = text.trim();
     if (!message) return;
     if (busyRef.current) {
-      if (queueIfBusy) queuedSendsRef.current.push({ text: message, display });
+      if (queueIfBusy) queuedSendsRef.current.push({ text: message, display, source });
       return;
     }
     busyRef.current = true;
@@ -205,7 +199,7 @@ export function ChatWindow() {
     setStatus("working");
     const workingId = newId();
     setItems((prev) => [...prev, {
-      kind: "user", id: newId(), text: message, display,
+      kind: "user", id: newId(), text: message, display, source,
       images: images?.map((i) => `data:${i.mimeType};base64,${i.data}`),
     }, { kind: "working", id: workingId, text: "Spinning up" }]);
 
@@ -216,10 +210,11 @@ export function ChatWindow() {
       .map((it) => ({
         role: it.kind === "user" ? "user" : "assistant",
         content: it.kind === "user" && it.images?.length ? `${it.text}\n[image attached]` : it.text,
+        source: it.kind === "user" ? it.source : undefined,
       }));
 
     try {
-      const res = await window.bean.chat({ history, message, linkedNote: linkedNoteRef.current, images });
+      const res = await window.bean.chat({ history, message, source, linkedNote: linkedNoteRef.current, images });
       if (res.model) setModel(res.model);
 
       setItems((prev) => {
@@ -241,6 +236,7 @@ export function ChatWindow() {
         if (res.proposedSkill) next.push({ kind: "skill", id: newId(), skill: res.proposedSkill, state: "pending" });
         if (res.proposedTodo) next.push({ kind: "todo", id: newId(), todo: res.proposedTodo, state: "pending" });
         if (res.proposedDelegate) next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
+        for (const m of res.remembered ?? []) next.push({ kind: "status", id: newId(), text: `🧠 Remembered — ${m.text}`, tone: "done" });
         return next;
       });
       setStatus("idle");
@@ -251,7 +247,7 @@ export function ChatWindow() {
       busyRef.current = false;
       setBusy(false);
       const next = queuedSendsRef.current.shift();
-      if (next) void sendMessage(next.text, next.display, true);
+      if (next) void sendMessage(next.text, next.display, true, undefined, next.source);
     }
   };
   sendRef.current = sendMessage;
@@ -270,7 +266,7 @@ export function ChatWindow() {
     ]);
     if (choice.model) void window.bean.setModelMemory(run.skillName, choice.model);
     if (inChat) {
-      void sendMessage(editedPrompt, `▶ ${run.skillName}`);
+      void sendMessage(editedPrompt, `▶ ${run.skillName}`, false, undefined, "skill");
       return;
     }
     window.bean.launch({
@@ -297,7 +293,7 @@ export function ChatWindow() {
       pendingDelegateEventsRef.current.delete(taskId);
       const result = attachDelegateTaskId(itemsRef.current, id, taskId, prompt, buffered);
       setItems(result.items);
-      for (const loopback of result.loopbacks) void sendRef.current(loopback.text, loopback.display, true);
+      for (const loopback of result.loopbacks) void sendRef.current(loopback.text, loopback.display, true, undefined, loopback.source);
     } finally {
       pendingDelegateStartsRef.current.delete(id);
     }
@@ -387,7 +383,7 @@ export function ChatWindow() {
   // Composer's 📝 button: an explicit ask, so the model drafts the confirm card even when it
   // wouldn't have offered on its own.
   const saveToNotes = (): void => {
-    void sendMessage("Save this conversation as a note (use the propose_note tool).", "📝 Save to notes");
+    void sendMessage("Save this conversation as a note (use the propose_note tool).", "📝 Save to notes", false, undefined, "skill");
   };
 
   const applyDelegateEvent = (e: DelegateEvent): void => {
@@ -403,12 +399,17 @@ export function ChatWindow() {
       pendingDelegateEventsRef.current.delete(e.taskId);
     }
     setItems((prev) => applyDelegateEventToItems(prev, e).items);
-    if (loopback) void sendRef.current(loopback.text, loopback.display, true);
+    if (loopback) void sendRef.current(loopback.text, loopback.display, true, undefined, loopback.source);
   };
 
-  // Shared by the confirm-stage "Skip" and the review-stage "Skip" — both mean "close with
-  // no write", they just fire from different stages of the same flow.
-  const dismissClose = (): void => { setCloseFlow(null); window.bean.allowChatClose(); };
+  // Hand the transcript to main (fire-and-forget) and close immediately — no review card.
+  // Main extracts in the background; Undo lives in Persona via the avatar bubble.
+  const closeNow = (): void => {
+    setCloseFlow(null);
+    const transcript = closeTranscript(itemsRef.current);
+    if (transcript.length > 0) window.bean.rememberOnClose(transcript, { incognito: incognitoRef.current });
+    window.bean.allowChatClose();
+  };
 
   const keepWorking = (): void => setCloseFlow(null);
 
@@ -427,49 +428,8 @@ export function ChatWindow() {
         window.bean.delegateCancel(taskId);
       }
     }
-    if (closeTranscriptRef.current.length === 0) { dismissClose(); return; }
-    setCloseFlow({ stage: "confirm" });
+    closeNow();
   };
-
-  const confirmExtract = (): void => {
-    setCloseFlow({ stage: "loading" });
-    void withTimeout(window.bean.extractMemories(closeTranscriptRef.current), REVIEW_TIMEOUT_MS, [] as MemoryCandidate[])
-      .then((candidates) => {
-        if (candidates.length === 0) { dismissClose(); return; }
-        setCloseFlow({
-          stage: "review",
-          items: candidates.map((c) => ({ text: c.text, projectPath: c.projectPath, checked: true })),
-        });
-      })
-      .catch(dismissClose);
-  };
-
-  const rememberSelected = async (): Promise<void> => {
-    const picked = (closeFlow?.stage === "review" ? closeFlow.items : []).filter((r) => r.checked);
-    if (picked.length > 0) {
-      const now = new Date().toISOString();
-      // randomUUID, not Date.now()-based: `id` is a SQLite PRIMARY KEY, so a chatops bot
-      // generating an id in the same millisecond (same picked-index) would collide and fail
-      // the INSERT instead of just saving alongside it.
-      const additions: Memory[] = picked.map((r) => ({
-        id: crypto.randomUUID(),
-        text: r.text,
-        projectPath: r.projectPath,
-        createdAt: now,
-      }));
-      // Insert-only: a chatops bot could be remembering something else at the same moment —
-      // list-then-replace would silently lose whichever wrote second.
-      await window.bean.appendMemories(additions);
-    }
-    setCloseFlow(null);
-    window.bean.allowChatClose();
-  };
-  const toggleReview = (idx: number): void =>
-    setCloseFlow((prev) =>
-      prev?.stage === "review"
-        ? { ...prev, items: prev.items.map((r, i) => (i === idx ? { ...r, checked: !r.checked } : r)) }
-        : prev,
-    );
 
   return (
     <div class="bean-dashboard bean-chat-window">
@@ -480,41 +440,6 @@ export function ChatWindow() {
             <div class="bean-card-actions">
               <button type="button" class="bean-btn" onClick={keepWorking}>Keep working</button>
               <button type="button" class="bean-btn bean-btn--ghost" onClick={stopDelegatesAndClose}>Stop & close</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-      {closeFlow?.stage === "confirm" ? (
-        <div class="bean-memory-review">
-          <div class="bean-memory-review-card">
-            <div class="bean-memory-review-title">Before I go — want me to look for things to remember?</div>
-            <div class="bean-card-actions">
-              <button type="button" class="bean-btn" onClick={confirmExtract}>Extract</button>
-              <button type="button" class="bean-btn bean-btn--ghost" onClick={dismissClose}>Skip</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-      {closeFlow?.stage === "loading" ? (
-        <div class="bean-memory-review">
-          <div class="bean-memory-review-card">
-            <div class="bean-memory-review-loading">Thinking about what to remember…</div>
-          </div>
-        </div>
-      ) : null}
-      {closeFlow?.stage === "review" ? (
-        <div class="bean-memory-review">
-          <div class="bean-memory-review-card">
-            <div class="bean-memory-review-title">Before I go — remember these?</div>
-            {closeFlow.items.map((r, i) => (
-              <label key={i} class="bean-memory-review-row">
-                <input type="checkbox" checked={r.checked} onChange={() => toggleReview(i)} />
-                <span>{r.text}{r.projectPath ? <em class="bean-memory-review-tag"> · project</em> : null}</span>
-              </label>
-            ))}
-            <div class="bean-card-actions">
-              <button type="button" class="bean-btn" onClick={() => void rememberSelected()}>Remember</button>
-              <button type="button" class="bean-btn bean-btn--ghost" onClick={dismissClose}>Skip</button>
             </div>
           </div>
         </div>
@@ -545,6 +470,8 @@ export function ChatWindow() {
         onDelegateCancelTask={cancelDelegateTask}
         onSaveToNotes={saveToNotes}
         onUnlink={() => setLinkedNote(undefined)}
+        incognito={incognito}
+        onToggleIncognito={() => setIncognito((v) => !v)}
       />
     </div>
   );

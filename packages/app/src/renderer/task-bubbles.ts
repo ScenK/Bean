@@ -2,13 +2,16 @@ import type { TaskJob } from "../task-status.js";
 
 // Design 2a "speech bubble": one bubble per running job or failure, stacked above the bean, newest
 // nearest the bean and the only one with a tail. Click a bubble to expand its detail (read-only);
-// clicking an expanded failure dismisses it — failures stay until then.
+// clicking an expanded failure dismisses it — failures stay until then. A memory bubble is the
+// exception: its click opens Persona's "Just remembered" (where Undo lives) — never an undo itself,
+// so a misclick can't lose data.
 const ICONS = {
   delegate: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   routine: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/><path d="M12 7v5l3 3"/>',
   chat: '<path d="M7 12h.01"/><path d="M12 12h.01"/><path d="M17 12h.01"/>',
   bot: '<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01"/><path d="M8 17h.01"/>',
   reminder: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
+  memory: '<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 3 5 3 3 0 0 0 5 1V5a3 3 0 0 0-3-1z"/><path d="M15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-3 5 3 3 0 0 1-5 1"/>',
   done: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   failed: '<path d="M12 7v6"/><path d="M12 17h.01"/>',
 };
@@ -62,7 +65,9 @@ function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh:
 // "+N more" pill (which says how many of those failed, so a sticky error never hides silently).
 export const MAX_VISIBLE = 4;
 
-export function createTaskBubbles(container: HTMLElement, onHeight: (h: number) => void, onDismiss: (id: string) => void) {
+export function createTaskBubbles(
+  container: HTMLElement, onHeight: (h: number) => void, onDismiss: (id: string) => void, onOpenMemory: () => void = () => {},
+) {
   let jobs: TaskJob[] = [];
   let openId: string | undefined;
   let showAll = false;
@@ -112,6 +117,11 @@ export function createTaskBubbles(container: HTMLElement, onHeight: (h: number) 
     }
     const id = (e.target as HTMLElement).closest<HTMLElement>(".bean-bubble")?.dataset.id;
     if (!id) return;
+    if (jobs.find((j) => j.id === id)?.kind === "memory") {
+      onDismiss(id);
+      onOpenMemory();
+      return;
+    }
     if (openId === id && jobs.find((j) => j.id === id)?.state === "failed") onDismiss(id);
     openId = openId === id ? undefined : id;
     render();
