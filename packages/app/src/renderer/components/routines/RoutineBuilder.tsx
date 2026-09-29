@@ -5,6 +5,7 @@ import type {
 import type { RoutineStateView, SinkRecipients } from "../../../ipc.js";
 import type { RoutineBuildView } from "../../../routine-builder.js";
 import { StepsEditor } from "./StepsEditor.js";
+import { intervalText, WATCH_MINUTES } from "./watch-status.js";
 
 // The describe-it builder: 2a (sentence → editable brief), 2b (building, cancellable), 2c
 // (review before enabling). The manual editor stays one link away ("Start from a blank form").
@@ -20,7 +21,6 @@ const TRY = [
   "Triage Jira tickets assigned to me",
   "Draft release notes every Friday 5pm",
 ];
-const MINUTES = [1, 5, 10, 15, 30, 60];
 const CLI_LABEL: Record<string, string> = { claude: "Claude Code", codex: "Codex", opencode: "OpenCode" };
 const cliLabel = (cli: string | undefined): string => (cli ? CLI_LABEL[cli] ?? cli : "your coding agent");
 
@@ -224,9 +224,9 @@ export function DescribePane(props: CatalogProps & {
                       value={String(brief.everyMinutes ?? 15)}
                       onChange={(e) => patch({ everyMinutes: Number((e.target as HTMLSelectElement).value) }, ["everyMinutes"])}
                     >
-                      {[...new Set([...MINUTES, brief.everyMinutes ?? 15])].sort((a, b) => a - b).map((m) => <option key={m} value={String(m)}>{m} min</option>)}
+                      {[...new Set([...WATCH_MINUTES, brief.everyMinutes ?? 15])].sort((a, b) => a - b).map((m) => <option key={m} value={String(m)}>{intervalText(m)}</option>)}
                     </select>
-                    <span class="bean-rb-caption">a few minutes' lag — no tokens spent per check</span>
+                    <span class="bean-rb-caption">{(brief.everyMinutes ?? 15) < 60 ? "a few minutes' lag — " : ""}no tokens spent per check</span>
                   </div>
                 </div>
                 <div class="bean-rb-row">
@@ -541,7 +541,7 @@ export function ReviewPane(props: {
         <div class="bean-routines-section-head">
           <div class="bean-field-label">1 · WATCHES</div>
           <span class="bean-routines-section-note">
-            {watch.kind === "command" ? <>runs this exact command every <b>{every} min</b> — no model involved</> : <>reads this feed every <b>{every} min</b> — no model involved</>}
+            {watch.kind === "command" ? <>runs this exact command every <b>{intervalText(every)}</b> — no model involved</> : <>reads this feed every <b>{intervalText(every)}</b> — no model involved</>}
           </span>
         </div>
         <pre class="bean-rb-command">{watch.kind === "command" ? watch.command : watch.url}</pre>
