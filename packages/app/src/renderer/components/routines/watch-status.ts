@@ -25,6 +25,10 @@ export function intervalText(m: number): string {
 export const intervalShort = (m: number): string =>
   m % 1440 === 0 ? `${m / 1440}d` : m % 60 === 0 ? `${m / 60}h` : `${m}m`;
 
+/** "45m", "1h 29m", "23h" — exact to the minute, so a retry hint never understates the wait. */
+const durationText = (mins: number): string =>
+  mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ""}`;
+
 export function agoText(iso: string | undefined, now: Date): string {
   if (!iso) return "never";
   const mins = Math.max(0, Math.round((now.getTime() - new Date(iso).getTime()) / 60000));
@@ -58,7 +62,7 @@ export function watchStatusLine(r: Routine, s: RoutineStateView | undefined, now
     const retryIn = Math.max(0, Math.round((retryAt - now.getTime()) / 60000));
     return {
       tone: "warn",
-      text: `Last check failed · ${agoText(s?.lastPoll, now)} · retrying ${retryIn > 0 ? `in ${retryIn < 60 ? `${retryIn}m` : `${Math.round(retryIn / 60)}h`}` : "soon"}`,
+      text: `Last check failed · ${agoText(s?.lastPoll, now)} · retrying ${retryIn > 0 ? `in ${durationText(retryIn)}` : "soon"}`,
       ...(s?.pollError ? { detail: s.pollError } : {}),
     };
   }

@@ -53,5 +53,7 @@ describe("watch intervals", () => {
     expect(watchStatusLine(daily, st({ lastPoll: ago(2) }), now).text).toBe("Checks every day · last checked 2m ago · nothing new");
     expect(watchRowSub(daily, st()).text).toBe("Watch · 1d · ⚡ todo-driven");
     expect(watchStatusLine(daily, st({ lastPoll: ago(60), pollError: "x" }), now).text).toBe("Last check failed · 1h ago · retrying in 23h");
+    const hourly = r({ watch: { kind: "command", command: "c", everyMinutes: 120 } });
+    expect(watchStatusLine(hourly, st({ lastPoll: ago(31), pollError: "x" }), now).text).toBe("Last check failed · 31m ago · retrying in 1h 29m");
   });
 });
