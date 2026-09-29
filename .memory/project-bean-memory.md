@@ -33,11 +33,21 @@ see `db.ts`'s `migrateFromFiles`.
 - **Enabled-skills filter** lives in `buildChatHandler` (app `ipc.ts`), not in `converse()`.
 - **Edit surface:** Persona's MEMORY section, per-row `updateMemory`/`deleteMemories`/
   `appendMemories` only — see [[safety-memory-append-vs-replace]].
-- **Consolidation:** `memory/consolidate.ts`'s `proposeMemoryConsolidation()` (merge/drop over
-  the existing list) currently has no caller: the chatops confirm-first tidy-up card, its
-  `ConsolidationProposalStore`, and its apply were deleted in #177 PR 1 — a stale card's apply
-  could overwrite a Persona edit made after the proposal. Background "dream" consolidation
-  (PR 2) replaces it with a lease-guarded, fingerprint-checked transactional apply.
+- **Dream (background consolidation, #177 PR 2):** `memory/dream.ts` `maybeDream()` is checked
+  after each desktop auto-save (chat close = idle point; no timer, no boot cost). Due when ≥24h
+  since `lastDreamAt` **and** ≥5 memories created since (a `created_at` count — no counter). A
+  `dreamLease` row in `memory_meta` is claimed with one `INSERT … ON CONFLICT DO UPDATE … WHERE
+  expired` statement (10-min expiry, stale taken over) and the due-check is repeated under it; no
+  transaction spans the model call. `proposeMemoryConsolidation()` sees each fact's saved date
+  (newer wins) and may merge one id (a rewrite, e.g. relative → absolute date). `planDream()`
+  validates in code: disjoint groups, same-`projectPath` merges only, non-empty text, drops capped
+  at max(3, 20%), oldest 150 per run. `applyConsolidation()` is one `BEGIN IMMEDIATE`: lease still
+  ours + every touched row unchanged, else abort with no partial mutation; before/after images go
+  to `memories_history` (pruned after 30 days). Merged rows keep the group's newest `created_at`
+  so a dream never counts toward the next one's "5 new". **Undo last dream** (`restoreDreamRun`)
+  restores only groups whose after-image is still intact and reports the rest as kept edits. The
+  digest is a `memory:dream` bubble + Persona's "Last dream" row — never written into a transcript
+  (it would be re-extracted).
 
 Design spec: `docs/superpowers/specs/2026-07-03-bean-memory-design.md`.
 

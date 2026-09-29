@@ -46,9 +46,14 @@ test("a chat failure returns an empty result instead of throwing", async () => {
   expect(result).toEqual({ merges: [], drops: [] });
 });
 
-test("a merge with fewer than 2 ids is dropped", async () => {
-  const memories = [m("a", "x")];
-  const toolCalls: ToolCall[] = [{ name: "merge_memories", args: { ids: ["a"], mergedText: "x" } }];
-  const result = await proposeMemoryConsolidation(memories, { chat: async () => ({ content: "", toolCalls }), model: "m" });
-  expect(result.merges).toEqual([]);
+test("a single-id merge is a rewrite (e.g. relative → absolute date), and facts carry their saved date", async () => {
+  const memories = [m("a", "trip is next week")];
+  let prompt = "";
+  const toolCalls: ToolCall[] = [{ name: "merge_memories", args: { ids: ["a"], mergedText: "trip is the week of 2026-01-08" } }];
+  const result = await proposeMemoryConsolidation(memories, {
+    chat: async ({ messages }) => { prompt = String(messages[1]!.content); return { content: "", toolCalls }; },
+    model: "m",
+  });
+  expect(prompt).toContain("[a] (saved 2026-01-01) trip is next week");
+  expect(result.merges).toEqual([{ ids: ["a"], mergedText: "trip is the week of 2026-01-08" }]);
 });

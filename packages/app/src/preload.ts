@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
-  Memory, ChatTurn, Note, NoteDraft, AvailableModel, Routine, TodoItem,
+  Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem,
   RoutineBrief, RoutineWatch, WatchItem,
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
@@ -124,6 +124,9 @@ contextBridge.exposeInMainWorld("bean", {
     ipcRenderer.send(IPC.rememberOnClose, transcript, opts),
   getMemoryBatch: (): Promise<MemoryBatch | undefined> => ipcRenderer.invoke(IPC.getMemoryBatch),
   undoMemoryBatch: (): Promise<number> => ipcRenderer.invoke(IPC.undoMemoryBatch),
+  getLastDream: (): Promise<DreamDigest | undefined> => ipcRenderer.invoke(IPC.getLastDream),
+  undoLastDream: (): Promise<{ restored: number; skipped: number }> => ipcRenderer.invoke(IPC.undoLastDream),
+  dreamDetails: (): Promise<{ before: string[]; after?: string }[]> => ipcRenderer.invoke(IPC.dreamDetails),
   onReviewBeforeClose: (cb: () => void) => ipcRenderer.on(IPC.reviewBeforeClose, () => cb()),
   allowChatClose: (): void => ipcRenderer.send(IPC.allowChatClose),
   chatopsStatus: (): Promise<Record<ChatopsBot, ChatopsState>> => ipcRenderer.invoke(IPC.chatopsStatus),

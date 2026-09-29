@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { PERSONA_TAGS, type Persona, type PersonaTag } from "@bean/core/persona";
-import type { Memory, Project } from "@bean/core";
+import type { DreamDigest, Memory, Project } from "@bean/core";
 import type { MemoryBatch } from "../../../ipc.js";
 
 const ago = (iso: string): string => {
@@ -22,15 +22,20 @@ export function PersonaPanel() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [memError, setMemError] = useState<string | undefined>(undefined);
   const [batch, setBatch] = useState<MemoryBatch | undefined>(undefined);
+  const [dream, setDream] = useState<DreamDigest | undefined>(undefined);
+  const [dreamDetails, setDreamDetails] = useState<{ before: string[]; after?: string }[] | undefined>(undefined);
+  const [dreamNote, setDreamNote] = useState<string | undefined>(undefined);
   const justRef = useRef<HTMLDivElement>(null);
 
   const refresh = async (): Promise<void> => {
-    const [p, mem, projs, b] = await Promise.all([
+    const [p, mem, projs, b, d] = await Promise.all([
       window.bean.getPersona(),
       window.bean.listMemories(),
       window.bean.listProjects(),
       window.bean.getMemoryBatch(),
+      window.bean.getLastDream(),
     ]);
+    setDream(d);
     setPersona(p);
     setMemories(mem);
     setProjects(projs);
@@ -99,6 +104,23 @@ export function PersonaPanel() {
   const undoBatch = (): void => {
     void run(async () => { await window.bean.undoMemoryBatch(); await refresh(); });
   };
+
+  const undoDream = (): void => {
+    void run(async () => {
+      const { skipped } = await window.bean.undoLastDream();
+      setDreamDetails(undefined);
+      setDreamNote(skipped > 0 ? `${skipped} ${skipped === 1 ? "entry" : "entries"} changed since — kept your edit` : undefined);
+      await refresh();
+    });
+  };
+  const toggleDreamDetails = (): void => {
+    if (dreamDetails) { setDreamDetails(undefined); return; }
+    void run(async () => setDreamDetails(await window.bean.dreamDetails()));
+  };
+  const dreamSummary = dream
+    ? [dream.merged ? `merged ${dream.merged}` : "", dream.rewritten ? `rewrote ${dream.rewritten}` : "", dream.removed ? `removed ${dream.removed}` : ""]
+      .filter(Boolean).join(", ")
+    : "";
 
   const batchIds = new Set(batch?.ids ?? []);
   const justRemembered = memories.filter((m) => batchIds.has(m.id));
@@ -182,6 +204,28 @@ export function PersonaPanel() {
           {justRemembered.map(row)}
         </div>
       ) : null}
+
+      {dream && !dream.undone ? (
+        <div class="bean-memory-just">
+          <div class="bean-memory-just-head">
+            <span class="bean-memory-group-label">
+              Last dream · {new Date(dream.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })} · {dreamSummary}
+            </span>
+            <span>
+              <button type="button" class="bean-btn bean-btn--ghost" onClick={undoDream}>Undo</button>
+              <button type="button" class="bean-btn bean-btn--ghost" aria-expanded={dreamDetails !== undefined} onClick={toggleDreamDetails}>
+                Details {dreamDetails ? "▾" : "▸"}
+              </button>
+            </span>
+          </div>
+          {dreamDetails?.map((g, i) => (
+            <div key={i} class="bean-memory-dream-row">
+              {g.before.join(" · ")} → {g.after ?? <em>removed</em>}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {dreamNote ? <div class="bean-memory-empty">{dreamNote}</div> : null}
 
       <div class="bean-memory-group-label">About you</div>
       {rest.filter((m) => !m.projectPath).length === 0 ? (
