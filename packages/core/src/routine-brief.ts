@@ -56,7 +56,7 @@ export function briefMessages(sentence: string, ctx: BriefContext, previous?: Ro
     "- trigger is \"watch\" when the user wants something to happen when something new appears (a new video, post, PR, ticket, assignment); \"schedule\" for a fixed time.",
     "- For a YouTube handle like @name use source \"https://www.youtube.com/@name\" and sourceKind \"feed\".",
     "- notifyOnly = true when the user only wants to be told (\"ping me\", \"let me know\"); then steps is []. Otherwise one step per thing Bean should do to each new item; delegate for code/repo/review work, chat for summarising/writing.",
-    "- everyMinutes: 5 for work queues (PRs, tickets), 15 for feeds, unless the user says otherwise.",
+    "- everyMinutes: 5 for work queues (PRs, tickets), 15 for feeds, unless the user says otherwise (hourly = 60, daily = 1440).",
     "- Pick a step skill only from the skill list; for a delegate step set project only when the user named one from the project list.",
     "- Destinations: DM on Discord/Teams = a chatops sink with no channel; set channel only when the user gives a specific channel/conversation id. Only include sinks the user asked for; if none, ask in missing.",
     "- missing: only what the sentence truly leaves open. Leave a field out rather than invent it.",

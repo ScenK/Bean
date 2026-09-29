@@ -9,6 +9,22 @@ const DEFAULT_WATCH_MINUTES = 15; // mirrors routine-store.ts (renderer can't im
 
 export const everyMinutes = (r: Routine): number => r.watch?.everyMinutes ?? DEFAULT_WATCH_MINUTES;
 
+/** Interval picker choices, shared by the panel and the builder. Capped at 12h: a failed poll
+ * retries only after a full interval, so longer picks turn one blip into a day-plus delay.
+ * A longer value hand-set in the JSON still shows (the pickers merge in the current value). */
+export const WATCH_MINUTES = [1, 5, 10, 15, 30, 60, 180, 360, 720];
+
+/** "5 min", "hour", "6 hours", "day", "2 days" — reads after "every". Uneven values stay in minutes. */
+export function intervalText(m: number): string {
+  if (m % 1440 === 0) return m === 1440 ? "day" : `${m / 1440} days`;
+  if (m % 60 === 0) return m === 60 ? "hour" : `${m / 60} hours`;
+  return `${m} min`;
+}
+
+/** Compact form for row captions: "5m", "6h", "1d". */
+export const intervalShort = (m: number): string =>
+  m % 1440 === 0 ? `${m / 1440}d` : m % 60 === 0 ? `${m / 60}h` : `${m}m`;
+
 export function agoText(iso: string | undefined, now: Date): string {
   if (!iso) return "never";
   const mins = Math.max(0, Math.round((now.getTime() - new Date(iso).getTime()) / 60000));
@@ -31,7 +47,7 @@ export interface WatchStatus { tone: "ok" | "warn" | "bad" | "off"; text: string
 /** The panel's status line (takes the "next run" slot). Shows the error from the FIRST failure,
  * with the next retry; turns red once the 3-in-a-row alarm has fired. */
 export function watchStatusLine(r: Routine, s: RoutineStateView | undefined, now: Date): WatchStatus {
-  const every = `Checks every ${everyMinutes(r)} min`;
+  const every = `Checks every ${intervalText(everyMinutes(r))}`;
   if (!r.enabled) return { tone: "off", text: needsReview(r, s) ? "Not checking yet — Enable to start" : "Paused — won't check until you enable it" };
   const fails = failureCount(s);
   if (fails >= ALARM_AFTER) {
@@ -42,7 +58,7 @@ export function watchStatusLine(r: Routine, s: RoutineStateView | undefined, now
     const retryIn = Math.max(0, Math.round((retryAt - now.getTime()) / 60000));
     return {
       tone: "warn",
-      text: `Last check failed · ${agoText(s?.lastPoll, now)} · retrying ${retryIn > 0 ? `in ${retryIn}m` : "soon"}`,
+      text: `Last check failed · ${agoText(s?.lastPoll, now)} · retrying ${retryIn > 0 ? `in ${retryIn < 60 ? `${retryIn}m` : `${Math.round(retryIn / 60)}h`}` : "soon"}`,
       ...(s?.pollError ? { detail: s.pollError } : {}),
     };
   }
@@ -59,7 +75,7 @@ export function watchStatusLine(r: Routine, s: RoutineStateView | undefined, now
 /** List-row caption: "Watch · 5m · ⚡ todo-driven", "Watch · 15m · notify only", "… · check failing". */
 export function watchRowSub(r: Routine, s: RoutineStateView | undefined): { text: string; bad: boolean } {
   if (needsReview(r, s)) return { text: "needs review · Enable to start", bad: false };
-  const base = `Watch · ${everyMinutes(r)}m`;
+  const base = `Watch · ${intervalShort(everyMinutes(r))}`;
   if (!r.enabled) return { text: `${base} · paused`, bad: false };
   if (failureCount(s) > 0) return { text: `${base} · check failing`, bad: true };
   return { text: `${base} · ${r.steps.length === 0 ? "notify only" : "⚡ todo-driven"}`, bad: false };

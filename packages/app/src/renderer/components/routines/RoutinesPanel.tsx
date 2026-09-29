@@ -7,12 +7,11 @@ import type { RoutineStateView } from "../../../ipc.js";
 import type { RoutineBuildView } from "../../../routine-builder.js";
 import { StepsEditor } from "./StepsEditor.js";
 import { BuildPane, DescribePane, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
-import { everyMinutes, failureCount, needsReview, watchRowSub, watchStatusLine } from "./watch-status.js";
+import { everyMinutes, failureCount, intervalText, needsReview, WATCH_MINUTES, watchRowSub, watchStatusLine } from "./watch-status.js";
 
 const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 
-const WATCH_MINUTES = [1, 5, 10, 15, 30, 60];
 
 const emptyRoutine = (): Routine => ({
   name: "",
@@ -630,7 +629,7 @@ export function RoutinesPanel() {
                   value={String(everyMinutes(draft))}
                   onChange={(e) => setWatch({ ...draft.watch!, everyMinutes: Number((e.target as HTMLSelectElement).value) })}
                 >
-                  {[...new Set([...WATCH_MINUTES, everyMinutes(draft)])].sort((a, b) => a - b).map((m) => <option key={m} value={String(m)}>{m} min</option>)}
+                  {[...new Set([...WATCH_MINUTES, everyMinutes(draft)])].sort((a, b) => a - b).map((m) => <option key={m} value={String(m)}>{intervalText(m)}</option>)}
                 </select>{" "}
                 and {notifyOnly ? "notify me" : "queue each new item"}.
               </div>
