@@ -737,7 +737,7 @@ app.whenReady().then(async () => {
       loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories, restoreDreamRun, dreamDetails,
       getLastDream: async (file) => (await getMemoryMeta(file, "lastDream")) as DreamDigest | undefined,
       autoMemory: () => runtime.getAutoMemory(),
-      onMemoryBatch: (batch) => {
+      onMemoryBatch: (batch, pendingIds) => {
         void (async () => {
           // One-time heads-up the first time memory saves itself (same one-shot flag-file shape
           // as the notification-permission prompt).
@@ -752,7 +752,7 @@ app.whenReady().then(async () => {
           // boot cost. The digest goes to a bubble + Persona only, never into a transcript
           // (it would be re-extracted as a "fact").
           const dream = await maybeDream({
-            dbFile: dbFile(dir), chat: runtime.converse, model: runtime.getModel(), exclude: batch.map((m) => m.id),
+            dbFile: dbFile(dir), chat: runtime.converse, model: runtime.getModel(), exclude: pendingIds,
           });
           if (dream) {
             const parts = [

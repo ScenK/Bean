@@ -411,8 +411,9 @@ export interface MemoryHandlerDeps {
   getModel: () => string;
   /** Config `autoMemory`, read per close so a Settings toggle applies without restart. */
   autoMemory: () => boolean;
-  /** A non-empty auto-remember batch landed — main shows the avatar bubble (and checks dream). */
-  onMemoryBatch?: (batch: Memory[]) => void;
+  /** A non-empty auto-remember batch landed — main shows the avatar bubble (and checks dream).
+   * `pendingIds` reads the batch whose Undo is live *now* (a later close may have replaced it). */
+  onMemoryBatch?: (batch: Memory[], pendingIds: () => string[]) => void;
   getLastDream: (file: string) => Promise<DreamDigest | undefined>;
   restoreDreamRun: (file: string, runId: string) => Promise<{ restored: number; skipped: number }>;
   dreamDetails: (file: string, runId: string) => Promise<{ before: string[]; after?: string }[]>;
@@ -442,9 +443,17 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       if (candidates.length === 0) return [];
       const at = new Date().toISOString();
       const batch: Memory[] = candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at }));
-      await deps.appendMemories(deps.dbFile, batch);
+      // Pending before the insert lands, so a dream snapshot can never see these rows without
+      // also seeing them as the live Undo batch it must leave alone.
+      const prevBatch = lastBatch;
       lastBatch = { ids: batch.map((m) => m.id), at };
-      deps.onMemoryBatch?.(batch);
+      try {
+        await deps.appendMemories(deps.dbFile, batch);
+      } catch (err) {
+        lastBatch = prevBatch;
+        throw err;
+      }
+      deps.onMemoryBatch?.(batch, () => lastBatch?.ids ?? []);
       return batch;
     },
     batch: (): MemoryBatch | undefined => lastBatch,

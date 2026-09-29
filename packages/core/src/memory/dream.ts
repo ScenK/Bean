@@ -55,9 +55,11 @@ export function planDream(memories: Memory[], result: ConsolidationResult, runId
 export interface DreamDeps extends ConverseDeps {
   dbFile: string;
   now?: () => Date;
-  /** Ids to leave alone this run — the auto-save batch whose Undo is still pending (merging it
-   * would swap its ids out from under "Just remembered"). */
-  exclude?: string[];
+  /** Ids to leave alone — the auto-save batch whose Undo is live (merging it would swap its ids
+   * out from under "Just remembered"). A getter, read at snapshot time: a later close can
+   * replace the pending batch while this run waits. Rows saved after the snapshot are never
+   * in the plan, so they're safe either way. */
+  exclude?: () => string[];
 }
 
 async function isDue(dbFile: string, now: Date): Promise<boolean> {
@@ -81,7 +83,7 @@ export async function maybeDream(deps: DreamDeps): Promise<DreamDigest | undefin
     try {
       // Re-check under the lease: another run may have committed between the check and the claim.
       if (!(await isDue(deps.dbFile, now()))) return undefined;
-      const skip = new Set(deps.exclude ?? []);
+      const skip = new Set(deps.exclude?.() ?? []);
       const memories = (await loadMemories(deps.dbFile)).filter((m) => !skip.has(m.id)).slice(0, MAX_PER_RUN);
       const result = await proposeMemoryConsolidation(memories, { chat: deps.chat, model: deps.model });
       if (result.failed) return undefined; // an outage leaves the watermark alone — retried next close

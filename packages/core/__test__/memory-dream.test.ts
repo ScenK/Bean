@@ -151,9 +151,12 @@ test("the pending auto-save batch is left out of the run", async () => {
   await appendMemories(file, five());
   let seen = "";
   const chat: ConverseDeps["chat"] = async ({ messages }) => { seen = String(messages[1]!.content); return { content: "", toolCalls: [] }; };
-  await maybeDream({ ...deps(chat), exclude: ["e"] });
+  let pending = ["a"];
+  const deferred = maybeDream({ ...deps(chat), exclude: () => pending });
+  pending = ["e"]; // a later close replaced the pending batch before the snapshot
+  await deferred;
   expect(seen).toContain("fact a");
-  expect(seen).not.toContain("fact e");
+  expect(seen).not.toContain("fact e"); // read at snapshot time, not when the run was triggered
 });
 
 test("a model outage doesn't advance the watermark, so the next close retries", async () => {
