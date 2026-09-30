@@ -31,7 +31,8 @@ export type ChatItem =
       state: "pending" | "starting" | "running" | "done" | "failed" | "cancelled" | "dismissed";
       taskId?: string; tail: string[]; result?: string; error?: string }
   // A propose_note draft awaiting confirmation — notes are never saved silently.
-  | { kind: "note"; id: string; note: ProposedNote; state: "pending" | "saved" | "dismissed" }
+  // `images` = the latest chat turn's attached images (data URLs), offered for the saved note.
+  | { kind: "note"; id: string; note: ProposedNote; state: "pending" | "saved" | "dismissed"; images?: string[] }
   // A propose_skill draft awaiting confirmation — skills are never written silently.
   | { kind: "skill"; id: string; skill: ProposedSkill; state: "pending" | "saved" | "dismissed" }
   // A propose_todo draft awaiting confirmation — todos are never queued silently.

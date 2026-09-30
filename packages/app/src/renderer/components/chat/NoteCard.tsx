@@ -8,6 +8,7 @@ export function NoteCard({
   note,
   state,
   linkedVersion,
+  images,
   onSave,
   onDismiss,
 }: {
@@ -15,12 +16,16 @@ export function NoteCard({
   state: "pending" | "saved" | "dismissed";
   /** Current version of the linked note, when updating in place. */
   linkedVersion?: number;
-  onSave: (edited: ProposedNote, asNew: boolean) => void;
+  /** The chat's latest attached images (data URLs), saved into the note when checked. */
+  images?: string[];
+  onSave: (edited: ProposedNote, asNew: boolean, images?: string[]) => void;
   onDismiss: () => void;
 }) {
   const [title, setTitle] = useState(note.title);
   const [body, setBody] = useState(note.body);
+  const [withImages, setWithImages] = useState(true);
   const done = state !== "pending";
+  const carried = images?.length && withImages ? images : undefined;
   const updating = note.slug !== undefined;
 
   return (
@@ -44,12 +49,18 @@ export function NoteCard({
         disabled={done}
         onInput={(e) => setBody((e.target as HTMLTextAreaElement).value)}
       />
+      {images?.length ? (
+        <label class="bean-card-check">
+          <input type="checkbox" checked={withImages} disabled={done} onChange={(e) => setWithImages((e.target as HTMLInputElement).checked)} />
+          {" "}{images.length} image(s) attached
+        </label>
+      ) : null}
       <div class="bean-card-actions">
-        <button type="button" class="bean-btn" disabled={done} onClick={() => onSave({ ...note, title, body }, false)}>
+        <button type="button" class="bean-btn" disabled={done} onClick={() => onSave({ ...note, title, body }, false, carried)}>
           {state === "saved" ? "Saved" : updating ? "Update note" : "Save note"}
         </button>
         {updating ? (
-          <button type="button" class="bean-btn bean-btn--ghost" disabled={done} onClick={() => onSave({ ...note, title, body }, true)}>
+          <button type="button" class="bean-btn bean-btn--ghost" disabled={done} onClick={() => onSave({ ...note, title, body }, true, carried)}>
             Save as new note
           </button>
         ) : null}

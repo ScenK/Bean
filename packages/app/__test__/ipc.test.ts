@@ -235,6 +235,31 @@ test("buildChatHandler passes todo-driven routine names into converse", async ()
   expect(seenTools).toContain("propose_todo");
 });
 
+test("note image handlers accept raw bytes only and serve stored rows as data: URLs", async () => {
+  const stored: Uint8Array[] = [];
+  const saves: { body: string }[] = [];
+  const handlers = buildNotesHandlers({
+    loadNotes: async () => [],
+    saveNote: async (_f, draft) => { saves.push({ body: draft.body }); return "s"; },
+    deleteNote: async () => {},
+    starNote: async () => {},
+    loadNoteHistory: async () => [],
+    saveNoteImage: async (_f, bytes) => { stored.push(bytes); return "abcdef12-2222-4333-8444-555555555555"; },
+    loadNoteImage: async (_f, id) => (id === "known" ? { mime: "image/png", bytes: Uint8Array.from([1, 2]) } : undefined),
+    dbFile: "/b/bean.db",
+  });
+  await expect(handlers.saveImage("/Users/me/secret.png")).rejects.toThrow(/raw bytes/);
+  await expect(handlers.saveImage({ path: "/etc/passwd" })).rejects.toThrow(/raw bytes/);
+  await expect(handlers.saveImage(new Uint8Array(10 * 1024 * 1024 + 1))).rejects.toThrow(/10 MB/);
+  expect(stored).toHaveLength(0);
+  expect(await handlers.saveImage(Uint8Array.from([9]))).toMatch(/^abcdef12/);
+  expect(await handlers.image("known")).toBe("data:image/png;base64,AQI=");
+  expect(await handlers.image("missing")).toBeUndefined();
+  expect(await handlers.image(42)).toBeUndefined();
+  await handlers.save({ title: "T", body: "B" }, [{ data: "AQI=", mimeType: "image/png" }]);
+  expect(saves[0]!.body).toBe("B\n\n![image](bean-image:abcdef12-2222-4333-8444-555555555555)\n");
+});
+
 test("notes handlers pass the configured dir through to the injected store fns", async () => {
   const calls: unknown[][] = [];
   const handlers = buildNotesHandlers({

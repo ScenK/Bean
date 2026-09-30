@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
 import { newId, type ChatItem } from "../../shared/chat-types.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
+import { dataUrlToAttachment } from "../../shared/note-images.js";
 import type {
   ChatTurn, CliName, ImageAttachment, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
@@ -232,7 +233,13 @@ export function ChatWindow() {
             if (modelId) setLastUsedModels((prev) => ({ ...prev, [skillName]: modelId }));
           });
         }
-        if (res.proposedNote) next.push({ kind: "note", id: newId(), note: res.proposedNote, state: "pending" });
+        if (res.proposedNote) {
+          // Offer the images from the chat's latest turn that had any (chatops does the same).
+          const withImages = [...next].reverse().find(
+            (it): it is Extract<ChatItem, { kind: "user" }> => it.kind === "user" && (it.images?.length ?? 0) > 0,
+          );
+          next.push({ kind: "note", id: newId(), note: res.proposedNote, state: "pending", images: withImages?.images });
+        }
         if (res.proposedSkill) next.push({ kind: "skill", id: newId(), skill: res.proposedSkill, state: "pending" });
         if (res.proposedTodo) next.push({ kind: "todo", id: newId(), todo: res.proposedTodo, state: "pending" });
         if (res.proposedDelegate) next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
@@ -319,15 +326,16 @@ export function ChatWindow() {
     if (taskId) window.bean.delegateCancel(taskId);
   };
 
-  const saveNote = async (id: string, edited: ProposedNote, asNew: boolean): Promise<void> => {
+  const saveNote = async (id: string, edited: ProposedNote, asNew: boolean, images?: string[]): Promise<void> => {
     try {
+      const attachments = (images ?? []).map(dataUrlToAttachment).filter((a): a is ImageAttachment => a !== undefined);
       const slug = await window.bean.saveNote({
         title: edited.title,
         body: edited.body,
         project: edited.project,
         slug: asNew ? undefined : edited.slug,
         source: "chat",
-      });
+      }, attachments.length > 0 ? attachments : undefined);
       // Keep the linked chip current after an in-place update (v3 → v4).
       if (!asNew && edited.slug !== undefined) {
         const fresh = (await window.bean.listNotes()).find((n) => n.slug === slug);
@@ -459,7 +467,7 @@ export function ChatWindow() {
         onSend={(text, images) => void sendMessage(text, undefined, false, images)}
         onConfirm={confirmProposal}
         onCancel={cancelProposal}
-        onNoteSave={(id, edited, asNew) => void saveNote(id, edited, asNew)}
+        onNoteSave={(id, edited, asNew, images) => void saveNote(id, edited, asNew, images)}
         onNoteDismiss={dismissNote}
         onSkillSave={(id, edited) => void saveSkill(id, edited)}
         onSkillDismiss={dismissSkill}

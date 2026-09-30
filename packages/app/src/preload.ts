@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
-  Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem,
+  Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem,
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
@@ -90,7 +90,9 @@ contextBridge.exposeInMainWorld("bean", {
   installUpdate: (): Promise<InstallUpdateResult | undefined> => ipcRenderer.invoke(IPC.installUpdate),
   openUpdateReleasePage: (): void => ipcRenderer.send(IPC.openUpdateReleasePage),
   listNotes: (): Promise<Note[]> => ipcRenderer.invoke(IPC.listNotes),
-  saveNote: (draft: NoteDraft): Promise<string> => ipcRenderer.invoke(IPC.saveNote, draft),
+  saveNote: (draft: NoteDraft, images?: ImageAttachment[]): Promise<string> => ipcRenderer.invoke(IPC.saveNote, draft, images),
+  saveNoteImage: (bytes: Uint8Array): Promise<string> => ipcRenderer.invoke(IPC.saveNoteImage, bytes),
+  noteImage: (id: string): Promise<string | undefined> => ipcRenderer.invoke(IPC.noteImage, id),
   deleteNote: (slug: string): Promise<void> => ipcRenderer.invoke(IPC.deleteNote, slug),
   starNote: (slug: string, starred: boolean): Promise<void> => ipcRenderer.invoke(IPC.starNote, slug, starred),
   noteHistory: (slug: string): Promise<Note[]> => ipcRenderer.invoke(IPC.noteHistory, slug),

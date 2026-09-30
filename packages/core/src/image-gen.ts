@@ -10,6 +10,9 @@ export interface ImageGenDeps {
   /** Fired when a generation actually starts — surfaces show a "🎨 working" indicator
    * (generation routinely takes tens of seconds). */
   onStart?: () => void;
+  /** Also stores the image in bean.db's note_images so the model can embed it in a note as
+   * `bean-image:<id>` (note-images.ts). Omit and the tool result carries only the file path. */
+  saveNoteImage?: (bytes: Uint8Array) => Promise<string>;
 }
 
 const slug = (s: string): string =>
@@ -43,9 +46,14 @@ export function makeGenerateImageTool(deps: ImageGenDeps): { tool: ActionTool; p
         // UUID chunk: concurrent generations with matching prompt slugs in the same
         // millisecond must not race writeFile into the same path.
         const file = join(deps.imagesDir, `${Date.now()}-${randomUUID().slice(0, 8)}-${slug(prompt)}.png`);
-        await writeFile(file, Buffer.from(b64, "base64"));
+        const bytes = Buffer.from(b64, "base64");
+        await writeFile(file, bytes);
         paths.push(file);
-        return `Image generated and saved to ${file}. It is already shown to the user — describe it in one short sentence.`;
+        // Best-effort: the image is already generated and shown, so a failed note-image insert
+        // only drops the embed hint rather than reporting the whole generation as failed.
+        const id = await deps.saveNoteImage?.(bytes).catch(() => undefined);
+        const embed = id ? ` To embed it in a note, use ![short description](bean-image:${id}).` : "";
+        return `Image generated and saved to ${file}. It is already shown to the user — describe it in one short sentence.${embed}`;
       } catch (err) {
         return `error: image generation failed — ${err instanceof Error ? err.message : String(err)}`;
       }

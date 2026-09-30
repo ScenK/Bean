@@ -97,7 +97,13 @@ export function noteProposalCard(input: NoteProposalCardInput): object {
     body: [
       { type: "TextBlock", size: "medium", weight: "bolder", text: input.updating ? "Bean proposes a note update" : "Bean proposes a note" },
       { type: "TextBlock", weight: "bolder", text: input.title, wrap: true },
-      { type: "FactSet", facts: [{ title: "Note", value: input.projectName ?? "general" }] },
+      {
+        type: "FactSet",
+        facts: [
+          { title: "Note", value: input.projectName ?? "general" },
+          ...(input.imageCount ? [{ title: "Images", value: `${input.imageCount} image(s) attached` }] : []),
+        ],
+      },
       { type: "TextBlock", text: input.body, wrap: true },
     ],
     actions: [

@@ -1,6 +1,6 @@
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
-  Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem,
+  Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem,
 } from "@bean/core";
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
@@ -72,7 +72,9 @@ declare global {
       installUpdate(): Promise<InstallUpdateResult | undefined>;
       openUpdateReleasePage(): void;
       listNotes(): Promise<Note[]>;
-      saveNote(draft: NoteDraft): Promise<string>;
+      saveNote(draft: NoteDraft, images?: ImageAttachment[]): Promise<string>;
+      saveNoteImage(bytes: Uint8Array): Promise<string>;
+      noteImage(id: string): Promise<string | undefined>;
       deleteNote(slug: string): Promise<void>;
       starNote(slug: string, starred: boolean): Promise<void>;
       noteHistory(slug: string): Promise<Note[]>;

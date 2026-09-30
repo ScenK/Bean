@@ -21,6 +21,7 @@ import type { NoteProposalStore } from "./note-proposals.js";
 import type { TodoProposalStore } from "./todo-proposals.js";
 import type { SkillProposalStore } from "./skill-proposals.js";
 import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
+import { attachNoteImages } from "../note-images.js";
 import { systemControlTool } from "../system-control.js";
 import type { RunRegistry } from "./runs.js";
 import { LiveSessionProposalStore, type PendingLiveSession } from "./live-session-proposals.js";
@@ -98,6 +99,9 @@ export interface TeamsBotDeps {
   noteProposals: NoteProposalStore;
   /** Persists a confirmed note to the shared bean.db (server injects the db path). */
   saveNote: (draft: NoteDraft) => Promise<string>;
+  /** Stores one image in bean.db's note_images (server injects the db path). Enables carrying
+   * chat images into a saved note and the generate_image embed hint; omit to disable both. */
+  saveNoteImage?: (bytes: Uint8Array) => Promise<string>;
   /** FTS5 search over saved notes (server injects the db path); backs retrieve_note. */
   searchNotes: (query: string) => Promise<Note[]>;
   todoProposals: TodoProposalStore;
@@ -315,10 +319,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     kind: "save-note" | "cancel-note",
     proposalId: string | undefined,
     actor: string,
+    conversationId: string,
     fx: BotEffects,
   ): Promise<void> {
     if (!proposalId) return;
-    const pending = deps.noteProposals.claim(proposalId);
+    const pending = deps.noteProposals.claim(proposalId, conversationId);
     if (!pending) {
       await fx.post("That note draft expired — ask me to take the note again.");
       return;
@@ -333,8 +338,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     try {
+      const body = pending.images?.length && deps.saveNoteImage
+        ? await attachNoteImages(deps.saveNoteImage, pending.note.body, pending.images)
+        : pending.note.body;
       await deps.saveNote({
-        title: pending.note.title, body: pending.note.body,
+        title: pending.note.title, body,
         project: pending.note.project, slug: pending.note.slug, source: "chat",
       });
       await updateTo(resultCard("saved"));
@@ -538,6 +546,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const imageTool = deps.imageGen
           ? makeGenerateImageTool({
               ...deps.imageGen,
+              saveNoteImage: deps.saveNoteImage,
               // .catch, not void: a rejected progress post (rate limit, transient network)
               // fires outside onMessage's try — unhandled, it kills the whole bot process.
               onStart: () => { fx.post("🎨 Working on your image — this can take a minute…").catch(() => {}); },
@@ -568,6 +577,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           history, latestUserText: msg.text, latestUserImages: msg.images,
         });
         turnFailed = result.error !== undefined;
+        // History keeps only "[image attached]"; the bytes stay in bounded memory for a
+        // follow-up "save that to a note". Before any proposal is added so the cap's
+        // oldest-first eviction drops this slot, not the new proposal holding the same images.
+        if (deps.saveNoteImage && msg.images?.length) deps.noteProposals.rememberImages(msg.conversationId, msg.images);
         deps.conversations.append(msg.conversationId, {
           role: "user",
           content: msg.images?.length ? `${msg.text}\n[image attached]` : msg.text,
@@ -631,9 +644,17 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           const projectName = note.project
             ? (projects.find((p) => p.path === note.project)?.name ?? note.project)
             : undefined;
-          const pending = deps.noteProposals.add({ note, conversationId: msg.conversationId, proposedBy: msg.fromName });
+          // This turn's images, else the conversation's recent slot ("save that image" as a
+          // follow-up). Refs are appended by code on Save, bound to the stored ids.
+          const images = deps.saveNoteImage
+            ? (msg.images?.length ? msg.images : deps.noteProposals.recentImages(msg.conversationId))
+            : undefined;
+          const pending = deps.noteProposals.add({
+            note, conversationId: msg.conversationId, proposedBy: msg.fromName, images,
+          });
           const activityId = await fx.postCard(deps.cards.noteProposalCard({
             proposalId: pending.id, title: note.title, body: note.body, projectName, updating: note.slug !== undefined,
+            imageCount: images?.length,
           }));
           deps.noteProposals.setCardActivityId(pending.id, activityId);
           return;
@@ -690,7 +711,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         return;
       }
       if (beanAction === "save-note" || beanAction === "cancel-note") {
-        await handleNoteAction(beanAction, proposalId, action.fromName, fx);
+        await handleNoteAction(beanAction, proposalId, action.fromName, action.conversationId, fx);
         return;
       }
       if (beanAction === "save-skill" || beanAction === "cancel-skill") {

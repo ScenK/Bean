@@ -78,6 +78,15 @@ CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
   INSERT INTO notes_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
 END;
 
+-- Images embedded in notes (note-images.ts). Raw BLOBs, referenced from a note body as
+-- bean-image:<id>; never deleted automatically (history versions may still reference them).
+CREATE TABLE IF NOT EXISTS note_images (
+  id      TEXT PRIMARY KEY,
+  mime    TEXT NOT NULL,
+  bytes   BLOB NOT NULL,
+  created TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS chatops_turns (
   conversation_id TEXT NOT NULL,
   seq             INTEGER NOT NULL,

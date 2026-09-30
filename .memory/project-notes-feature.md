@@ -27,5 +27,14 @@ Mechanics (v1, mockup `Notes.dc.html` in the Claude Design project):
   slug, so Save **updates in place** (version bump; prior row copied into `notes_history` —
   updates are never destructive, `saveNote`'s `BEGIN IMMEDIATE` transaction makes the read-then-
   write atomic against a concurrent save of the same slug). "Save as new" / chip ✕ opt out.
+- Images (#182): bytes live in `bean.db`'s `note_images` table as raw BLOBs (`core/note-images.ts`);
+  a body references one as `![alt](bean-image:<uuid>)`, and the renderer swaps refs for `data:`
+  URLs (`renderer/shared/note-images.ts`) *before* Markdown — DOMPurify is never loosened.
+  `saveNoteImage` sniffs magic bytes (png/jpeg/webp only, 10 MB) and is the one ingest gate
+  (editor paste/drop via byte-only `bean:save-note-image`, desktop/chatops chat images on note
+  Save, `generate_image`'s embed hint). Refs from chat are appended by code, never model-written.
+  Chatops holds a per-conversation recent-images slot + pending-note images in
+  `NoteProposalStore` (10 min, 64 MB global, oldest evicted). Rows are never auto-deleted
+  (history may reference them) — ceiling: orphans from cancelled drafts/unused generations.
 - Deliberately cut: "source conversation" link (no transcript persistence exists), history
   browser UI (files are kept, no viewer), open-question badge on the avatar tile.

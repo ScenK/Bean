@@ -38,6 +38,8 @@ export interface NoteProposalCardInput {
   projectName?: string;
   /** True when this updates an existing linked note in place rather than creating one. */
   updating: boolean;
+  /** Chat images that Save will store and append to the note ("N image(s) attached"). */
+  imageCount?: number;
 }
 
 export interface NoteResultCardInput {

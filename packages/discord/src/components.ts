@@ -122,7 +122,10 @@ function noteProposalCard(input: NoteProposalCardInput): object {
     embeds: [{
       title: input.updating ? "Bean proposes a note update" : "Bean proposes a note",
       description: noteDescription(input.title, input.body),
-      fields: [{ name: "Note", value: input.projectName ?? "general", inline: true }],
+      fields: [
+        { name: "Note", value: input.projectName ?? "general", inline: true },
+        ...(input.imageCount ? [{ name: "Images", value: `${input.imageCount} image(s) attached`, inline: true }] : []),
+      ],
     }],
     components: [row([
       { type: BUTTON, style: 3, label: input.updating ? "Update note" : "Save note", custom_id: `bean:save-note:${input.proposalId}` },

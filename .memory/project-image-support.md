@@ -5,7 +5,8 @@ Spec: `docs/superpowers/specs/2026-07-26-image-support-design.md`.
 - **Recognition is latest-turn-only.** `ConverseInput.latestUserImages` attaches images to
   the current user turn; `ChatTurn`/history stays text with a `[image attached]` placeholder
   (all surfaces do this). Deliberate ceiling: multi-turn follow-ups about the same image lose
-  the pixels — widen `ChatTurn` only if that ever matters. Never store base64 in bean.db.
+  the pixels — widen `ChatTurn` only if that ever matters. Never store base64 in bean.db — note images (#182) are
+  raw BLOBs in their own `note_images` table, referenced by id, so prompt/search/history rows stay small.
 - **Generation is a per-request tool.** `makeGenerateImageTool()` (core `image-gen.ts`) must
   be built fresh per converse() call — its `paths` array collects that one turn's generated
   files (a shared instance leaks paths across requests). `converse()` never sets
