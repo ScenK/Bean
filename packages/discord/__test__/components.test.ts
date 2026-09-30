@@ -202,3 +202,23 @@ test("running card clamps a long tail to Discord's 1024-char field limit, keepin
   expect(value.length).toBeLessThanOrEqual(1024);
   expect(value).toContain("END\n```");
 });
+
+test("delegate proposal has Edit prompt / Run / Cancel buttons, in that order", () => {
+  const card = discordCards.proposalCard(proposalInput) as {
+    components: { components: { type: number; label?: string; custom_id: string }[] }[];
+  };
+  const buttons = card.components.flatMap((r) => r.components).filter((c) => c.type === 2);
+  expect(buttons.map((b) => b.label)).toEqual(["Edit prompt", "Run", "Cancel"]);
+  expect(buttons[0]?.custom_id).toBe("bean:delegate-edit:prop-1");
+});
+
+test("a re-rendered delegate proposal uses the supplied select defaults", () => {
+  const card = discordCards.proposalCard({ ...proposalInput, skillName: "review-code", defaultCli: "opencode", defaultModel: "gpt-5-5" }) as {
+    components: { components: { custom_id: string; options?: { value: string; default?: boolean }[] }[] }[];
+  };
+  const selects = card.components.flatMap((r) => r.components).filter((c) => c.options);
+  const pick = (id: string): string | undefined => selects.find((c) => c.custom_id === id)?.options?.find((o) => o.default)?.value;
+  expect(pick("bean:skill:prop-1")).toBe("review-code");
+  expect(pick("bean:cli:prop-1")).toBe("opencode");
+  expect(pick("bean:model:prop-1")).toBe("gpt-5-5");
+});

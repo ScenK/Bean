@@ -5,7 +5,7 @@ import {
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  LiveSessionProposalStore, LiveSessionRegistry, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -36,6 +36,9 @@ const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: paren
 // Hoisted (not inline in deps) so the /live-session card's project/model dropdowns and the
 // edit-prompt modal can read and mutate the pending proposal before Start claims it.
 const liveSessionProposals = new LiveSessionProposalStore();
+// Hoisted for the same reason: the delegate card's Edit-prompt modal edits the pending proposal
+// before Run claims it.
+const proposals = new ProposalStore();
 // Hosts delegates not tied to a project (a Jira ticket, research); spawn needs the cwd to exist.
 const scratchPath = scratchDir(dir);
 mkdirSync(scratchPath, { recursive: true });
@@ -55,7 +58,7 @@ const bot = buildTeamsBot({
   detectClis: () => clis,
   cliModels,
   runs,
-  proposals: new ProposalStore(),
+  proposals,
   noteProposals: new NoteProposalStore(),
   saveNote: (draft) => saveNote(dbFile(dir), draft),
   searchNotes: (query) => searchNotes(dbFile(dir), query),
@@ -125,6 +128,27 @@ async function liveSessionCardFor(
     steering: proposal.steering,
     projects: projects.map((p) => ({ name: p.name, path: p.path })), models,
     skills: skills.filter((s) => !s.hidden && s.enabled !== false).map((s) => ({ name: s.name })), clis: clis.filter((c) => c === "claude"),
+  });
+}
+
+// Rebuild the delegate proposal card after an Edit-prompt change. The select defaults come from
+// the message's pending `selections` (what Run will send), falling back to the proposal's own.
+async function delegateCardFor(pending: PendingProposal, sel: { cli?: string; model?: string; skillName?: string }): Promise<object> {
+  const [projects, skills] = await Promise.all([
+    loadProjects(projectsFile(dir)),
+    loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
+  ]);
+  const skillName = sel.skillName !== undefined
+    ? (sel.skillName === "__none__" ? undefined : sel.skillName)
+    : pending.proposal.skillName;
+  return discordCards.proposalCard({
+    proposalId: pending.id,
+    projectName: projects.find((p) => p.path === pending.proposal.projectPath)?.name ?? pending.proposal.projectPath,
+    skillName, instruction: pending.proposal.instruction, clis,
+    skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name })),
+    models: availableModels(cliModels, clis),
+    defaultCli: clis.find((c) => c === sel.cli) ?? pending.defaultCli,
+    defaultModel: sel.model ?? pending.defaultModel,
   });
 }
 
@@ -339,6 +363,18 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     // Edit-prompt modal submit: apply the new text, then re-render the card in place.
     if (interaction.isModalSubmit()) {
       if (!allowed(interaction.user.id)) return;
+      const d = /^bean:delegate-editsubmit:(.*)$/.exec(interaction.customId);
+      if (d?.[1] && interaction.isFromMessage()) {
+        const pending = proposals.get(d[1]);
+        if (!pending || pending.conversationId !== interaction.channelId) {
+          await interaction.reply({ content: "Already started or expired — edit not applied.", ephemeral: true });
+          return;
+        }
+        const text = interaction.fields.getTextInputValue("prompt").trim();
+        if (text && text.length <= MAX_INSTRUCTION_CHARS) proposals.updateInstruction(pending.id, text);
+        await interaction.update(await delegateCardFor(pending, selections.get(interaction.message.id) ?? {}));
+        return;
+      }
       const m = /^bean:live-editsubmit:(.*)$/.exec(interaction.customId);
       if (!m?.[1] || !interaction.isFromMessage()) return;
       const proposalId = m[1];
@@ -351,6 +387,23 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     }
     // Edit-prompt button: open the modal prefilled with the current prompt. MUST run before any
     // deferUpdate below — showModal has to be the interaction's first response.
+    if (interaction.isButton() && interaction.customId.startsWith("bean:delegate-edit:")) {
+      if (!allowed(interaction.user.id)) return;
+      const pending = proposals.get(interaction.customId.slice("bean:delegate-edit:".length));
+      if (!pending || pending.conversationId !== interaction.channelId) {
+        await interaction.reply({ content: "Already started or expired — edit not applied.", ephemeral: true });
+        return;
+      }
+      await interaction.showModal({
+        custom_id: `bean:delegate-editsubmit:${pending.id}`,
+        title: "Edit the prompt",
+        components: [{ type: 1, components: [{
+          type: 4, custom_id: "prompt", label: "Instruction (the skill is still applied)",
+          style: 2, required: true, max_length: MAX_INSTRUCTION_CHARS, value: pending.proposal.instruction.slice(0, MAX_INSTRUCTION_CHARS),
+        }] }],
+      });
+      return;
+    }
     if (interaction.isButton() && interaction.customId.startsWith("bean:live-edit:")) {
       if (!allowed(interaction.user.id)) return;
       const proposalId = interaction.customId.slice("bean:live-edit:".length);

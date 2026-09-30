@@ -16,7 +16,7 @@ import { formatAmbientBlock, type AmbientMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
 import { maybeCompact } from "./compact.js";
-import type { PendingProposal, ProposalStore } from "./proposals.js";
+import { MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
 import type { TodoProposalStore } from "./todo-proposals.js";
 import type { SkillProposalStore } from "./skill-proposals.js";
@@ -738,7 +738,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // (each guard is a no-op when the field is absent).
         const v = action.value;
         if (v.projectPath) pending.proposal.projectPath = v.projectPath;
-        if (v.instruction) pending.proposal.instruction = v.instruction;
+        const liveText = typeof v.instruction === "string" ? v.instruction.trim() : "";
+        if (liveText) pending.proposal.instruction = liveText;
         if (v.model !== undefined) pending.proposal.model = v.model || undefined;
         if (v.skillName !== undefined) pending.proposal.skillName = v.skillName === "__none__" ? undefined : (v.skillName || undefined);
         if (v.steering === "open" || v.steering === "restricted") pending.proposal.steering = v.steering;
@@ -747,6 +748,24 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (!proposalId) return;
       if (beanAction !== "cancel-proposal" && beanAction !== "confirm") return;
+      // Bind the card to its conversation before claiming: ids are sequential, so a forged
+      // submit from another conversation could otherwise launch (or inject text into) a
+      // proposal whose run resumes this thread's agent session. Refused without consuming it.
+      const peek = deps.proposals.get(proposalId);
+      if (peek && peek.conversationId !== action.conversationId) {
+        await fx.post("That proposal belongs to another conversation.");
+        return;
+      }
+      // Edited instruction (Teams' Input.Text merges it into the Run submit). Client-supplied:
+      // trim, blank keeps the proposal's text, over-cap is rejected before claim so the card
+      // stays usable.
+      const edited = beanAction === "confirm" && typeof action.value.instruction === "string"
+        ? action.value.instruction.trim()
+        : "";
+      if (edited.length > MAX_INSTRUCTION_CHARS) {
+        await fx.post(`That prompt is too long (${edited.length} chars, max ${MAX_INSTRUCTION_CHARS}) — shorten it and press Run again.`);
+        return;
+      }
       const p = deps.proposals.claim(proposalId);
       if (beanAction === "cancel-proposal") {
         if (p?.cardActivityId !== undefined) {
@@ -765,6 +784,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       // On-card skill pick (same sentinel as the live-session card). Teams merges its
       // ChoiceSet value into the Run submit; Discord applies it from its per-message selections.
+      if (edited) p.proposal = { ...p.proposal, instruction: edited };
       const picked = action.value.skillName;
       if (picked !== undefined) p.proposal.skillName = picked === "__none__" ? undefined : (picked || undefined);
       const detected = deps.detectClis();

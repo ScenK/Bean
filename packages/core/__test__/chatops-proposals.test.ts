@@ -31,3 +31,27 @@ test("setCardActivityId records the card message id for later edits", () => {
 test("claim of an unknown id returns undefined", () => {
   expect(new ProposalStore().claim("nope")).toBeUndefined();
 });
+
+test("get peeks without removing, and is undefined after claim or expiry", () => {
+  let now = 0;
+  const s = new ProposalStore(() => now);
+  const a = s.add(base);
+  expect(s.get(a.id)?.id).toBe(a.id);
+  expect(s.get(a.id)?.id).toBe(a.id); // still there
+  s.claim(a.id);
+  expect(s.get(a.id)).toBeUndefined();
+  const b = s.add(base);
+  now = 10 * 60_000 + 1;
+  expect(s.get(b.id)).toBeUndefined();
+});
+
+test("updateInstruction edits the pending text but doesn't extend expiry", () => {
+  let now = 0;
+  const s = new ProposalStore(() => now);
+  const p = s.add(base);
+  now = 9 * 60_000;
+  s.updateInstruction(p.id, "edited");
+  expect(s.get(p.id)?.proposal.instruction).toBe("edited");
+  now = 10 * 60_000 + 1;
+  expect(s.claim(p.id)).toBeUndefined();
+});

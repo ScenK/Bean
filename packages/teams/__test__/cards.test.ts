@@ -26,6 +26,16 @@ test("proposal card shows the verbatim instruction and wires confirm/cancel data
   expect(s).toContain('"proposalId":"prop-1"');
 });
 
+test("proposal card's instruction is a required, capped, prefilled multiline input", () => {
+  const card = proposalCard({
+    proposalId: "p", projectName: "bean", instruction: "fix it", skills: [],
+    clis: ["claude"], models, defaultCli: "claude",
+  }) as { body: { type: string; id?: string }[] };
+  expect(card.body.find((b) => b.id === "instruction")).toMatchObject({
+    type: "Input.Text", isMultiline: true, isRequired: true, maxLength: 4000, value: "fix it",
+  });
+});
+
 test("proposal card pre-selects the resolved cli and model in ChoiceSets", () => {
   const card = proposalCard({
     proposalId: "p", projectName: "bean", instruction: "x", skills: [{ name: "fix-bug" }],
