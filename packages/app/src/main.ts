@@ -203,11 +203,14 @@ app.whenReady().then(async () => {
   const keepAwakePath = keepAwakeFile(app.getPath("userData"));
   let keepAwakeSave: Promise<void> = Promise.resolve();
   let keepAwakeTouched = false;
+  let keepAwakeSaved = false; // last value on disk; a failed save reverts to it
+  let keepAwakeRev = 0;
   const toggleKeepAwake = (on: boolean): void => {
     keepAwakeTouched = true;
     keepAwake.setAlwaysOn(on);
-    keepAwakeSave = keepAwakeSave.then(() => saveKeepAwake(keepAwakePath, on)).catch((e: unknown) => {
-      if (keepAwake.alwaysOn() === on) keepAwake.setAlwaysOn(!on);
+    const rev = ++keepAwakeRev;
+    keepAwakeSave = keepAwakeSave.then(() => saveKeepAwake(keepAwakePath, on)).then(() => { keepAwakeSaved = on; }, (e: unknown) => {
+      if (rev === keepAwakeRev) keepAwake.setAlwaysOn(keepAwakeSaved);
       dialog.showErrorBox("Keep Mac Awake", `Couldn't save the setting: ${e instanceof Error ? e.message : String(e)}`);
     });
   };
@@ -225,7 +228,7 @@ app.whenReady().then(async () => {
   tray = new Tray(trayIcon);
   if (trayIcon.isEmpty()) tray.setTitle("🫘");
   tray.setToolTip(keepAwake.held() ? "Bean — keeping Mac awake" : "Bean");
-  void loadKeepAwake(keepAwakePath).then((on) => { if (!keepAwakeTouched) keepAwake.setAlwaysOn(on); });
+  void loadKeepAwake(keepAwakePath).then((on) => { if (!keepAwakeTouched) { keepAwakeSaved = on; keepAwake.setAlwaysOn(on); } });
   // A hidden avatar (tucked away by Cmd+W) is re-summoned by the first tray click; when the
   // bean is already visible, the click pops the menu as usual.
   tray.on("click", () => {

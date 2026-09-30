@@ -20,7 +20,7 @@ export function createKeepAwake(deps: {
     // A power failure must never break the task-status update that triggered it.
     try {
       if (want) id = deps.start();
-      else { const cur = id!; id = undefined; deps.stop(cur); }
+      else { deps.stop(id!); id = undefined; }
     } catch { /* keep the old state; next change retries */ }
     deps.onChange?.(id !== undefined);
   };

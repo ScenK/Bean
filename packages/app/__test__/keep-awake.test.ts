@@ -66,6 +66,19 @@ describe("keep awake controller", () => {
     expect(() => ka.setAlwaysOn(true)).not.toThrow();
     expect(ka.held()).toBe(false);
   });
+
+  it("keeps the id when stop throws, so the next change retries", () => {
+    const stop = vi.fn().mockImplementationOnce(() => { throw new Error("nope"); });
+    const start = vi.fn(() => 7);
+    const ka = createKeepAwake({ start, stop });
+    ka.setAlwaysOn(true);
+    ka.setAlwaysOn(false);
+    expect(ka.held()).toBe(true);
+    ka.setJobs([]);
+    expect(ka.held()).toBe(false);
+    expect(stop).toHaveBeenCalledTimes(2);
+    expect(start).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("keep awake store", () => {
