@@ -228,7 +228,8 @@ app.whenReady().then(async () => {
   tray = new Tray(trayIcon);
   if (trayIcon.isEmpty()) tray.setTitle("🫘");
   tray.setToolTip(keepAwake.held() ? "Bean — keeping Mac awake" : "Bean");
-  void loadKeepAwake(keepAwakePath).then((on) => { if (!keepAwakeTouched) { keepAwakeSaved = on; keepAwake.setAlwaysOn(on); } });
+  // Head of the save chain, so the persisted baseline is set before any early toggle's save runs.
+  keepAwakeSave = loadKeepAwake(keepAwakePath).then((on) => { keepAwakeSaved = on; if (!keepAwakeTouched) keepAwake.setAlwaysOn(on); });
   // A hidden avatar (tucked away by Cmd+W) is re-summoned by the first tray click; when the
   // bean is already visible, the click pops the menu as usual.
   tray.on("click", () => {
