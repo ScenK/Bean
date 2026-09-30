@@ -72,9 +72,11 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
     };
   }
   // --format json: the only opencode output that carries the session id (sessionID on every event).
+  // `--` as in the codex branch: opencode's yargs otherwise parses a "-"-leading prompt as flags
+  // and prints help instead of running (verified opencode 1.18.32).
   return {
     command: "opencode",
-    args: ["run", "--auto", "--format", "json", ...(resume ? ["--session", resume] : []), ...modelArgs, prompt],
+    args: ["run", "--auto", "--format", "json", ...(resume ? ["--session", resume] : []), ...modelArgs, "--", prompt],
   };
 }
 

@@ -58,12 +58,17 @@ describe("delegateCommand", () => {
   it("maps opencode to headless run with auto approval", () => {
     const { command, args } = delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "fix the bug" });
     expect(command).toBe("opencode");
-    expect(args).toEqual(["run", "--auto", "--format", "json", "fix the bug" + GIT_TRAILER_INSTRUCTION]);
+    expect(args).toEqual(["run", "--auto", "--format", "json", "--", "fix the bug" + GIT_TRAILER_INSTRUCTION]);
+  });
+
+  it("passes the prompt after -- so a dash-leading task is not parsed as a flag", () => {
+    const { args } = delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "- fix the bug" });
+    expect(args.slice(-2)).toEqual(["--", "- fix the bug" + GIT_TRAILER_INSTRUCTION]);
   });
 
   it("appends --model with the verbatim model string", () => {
     const { args } = delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "fix", model: "github-copilot/claude-sonnet-5" });
-    expect(args).toEqual(["run", "--auto", "--format", "json", "--model", "github-copilot/claude-sonnet-5", "fix" + GIT_TRAILER_INSTRUCTION]);
+    expect(args).toEqual(["run", "--auto", "--format", "json", "--model", "github-copilot/claude-sonnet-5", "--", "fix" + GIT_TRAILER_INSTRUCTION]);
   });
 
   it("omits --model when no model was picked", () => {
@@ -86,7 +91,7 @@ describe("delegateCommand resume", () => {
 
   it("opencode continues the session with --session", () => {
     const { args } = delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "more", resume: "ses_1" });
-    expect(args).toEqual(["run", "--auto", "--format", "json", "--session", "ses_1", "more" + GIT_TRAILER_INSTRUCTION]);
+    expect(args).toEqual(["run", "--auto", "--format", "json", "--session", "ses_1", "--", "more" + GIT_TRAILER_INSTRUCTION]);
   });
 
   it("adds no resume args without an id", () => {
@@ -230,7 +235,7 @@ describe("runDelegate", () => {
       collect().cbs,
       (command, args, cwd) => { seen.push({ command, args, cwd }); return asChild(child); },
     );
-    expect(seen).toEqual([{ command: "opencode", args: ["run", "--auto", "--format", "json", "go" + GIT_TRAILER_INSTRUCTION], cwd: "/my/project" }]);
+    expect(seen).toEqual([{ command: "opencode", args: ["run", "--auto", "--format", "json", "--", "go" + GIT_TRAILER_INSTRUCTION], cwd: "/my/project" }]);
   });
 
   it("claude: streams tail lines and resolves onDone with the result event", () => {
