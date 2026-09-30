@@ -503,6 +503,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }
         if (cmd === "new") {
           deps.conversations.clear(msg.conversationId);
+          deps.noteProposals.forgetImages(msg.conversationId);
           resets.set(msg.conversationId, (resets.get(msg.conversationId) ?? 0) + 1);
           // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
           deps.conversations.setAmbientCutoff(msg.conversationId, Date.now());

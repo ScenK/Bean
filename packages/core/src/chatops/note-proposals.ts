@@ -45,6 +45,11 @@ export class NoteProposalStore {
     this.prune();
   }
 
+  /** `/new`: a fresh conversation must not carry pre-reset images into its next note. */
+  forgetImages(conversationId: string): void {
+    this.recent.delete(conversationId);
+  }
+
   recentImages(conversationId: string): ImageAttachment[] | undefined {
     const r = this.recent.get(conversationId);
     return r && this.nowMs() - r.at <= EXPIRY_MS ? r.images : undefined;

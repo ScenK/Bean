@@ -32,6 +32,7 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "discord", onActivity:
 // Hoisted out of the bot deps so the outbox loop's maybeCompact can reuse the same client.
 const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reasoningEffort);
 const conversations = new ConversationStore(dbFile(dir));
+const noteProposals = new NoteProposalStore();
 const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink });
 // Hoisted (not inline in deps) so the /live-session card's project/model dropdowns and the
 // edit-prompt modal can read and mutate the pending proposal before Start claims it.
@@ -59,7 +60,7 @@ const bot = buildTeamsBot({
   cliModels,
   runs,
   proposals,
-  noteProposals: new NoteProposalStore(),
+  noteProposals,
   saveNote: (draft) => saveNote(dbFile(dir), draft),
   saveNoteImage: (bytes) => saveNoteImage(dbFile(dir), bytes),
   searchNotes: (query) => searchNotes(dbFile(dir), query),
@@ -334,6 +335,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       const channelId = interaction.channelId;
       if (interaction.commandName === "new") {
         conversations.clear(channelId);
+        noteProposals.forgetImages(channelId);
         conversations.setAmbientCutoff(channelId, Date.now()); // fence pre-reset chatter out of ambient
         await interaction.reply({ content: "Fresh start — I've cleared this conversation's context.", ephemeral: true });
         return;

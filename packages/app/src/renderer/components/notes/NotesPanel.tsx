@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { Markdown } from "../../shared/Markdown.js";
 import { storeNoteImageFiles, useResolvedNoteBody } from "../../shared/note-images.js";
 import { imageFileGuard } from "../../shared/chat-types.js";
@@ -47,6 +47,9 @@ export function NotesPanel() {
   const [history, setHistory] = useState<Note[] | undefined>(undefined);
   const [viewVersion, setViewVersion] = useState<Note | undefined>(undefined);
   const [collapsed, setCollapsed] = useState<string[]>(loadCollapsed);
+  // Bumped whenever the editor switches drafts, so an image upload that finishes after the
+  // user moved on can't splice its ref into a different note at stale offsets.
+  const draftGen = useRef(0);
 
   const refresh = async (): Promise<void> => {
     const [nextNotes, nextProjects] = await Promise.all([
@@ -127,6 +130,7 @@ export function NotesPanel() {
   };
 
   const select = (slug: string): void => {
+    draftGen.current += 1;
     setSelectedSlug(slug); setMode("view"); setSaveError(undefined);
     setHistory(undefined); setViewVersion(undefined);
   };
@@ -161,6 +165,7 @@ export function NotesPanel() {
 
   const startEdit = (): void => {
     if (!selected) return;
+    draftGen.current += 1;
     setDraftTitle(selected.title);
     setDraftBody(selected.body);
     setSaveError(undefined);
@@ -168,6 +173,7 @@ export function NotesPanel() {
   };
 
   const startAdd = (): void => {
+    draftGen.current += 1;
     setDraftTitle("");
     setDraftBody("");
     setSaveError(undefined);
@@ -296,7 +302,9 @@ export function NotesPanel() {
   // the cursor. Non-image pastes/drops fall through to the textarea's default behavior.
   const insertImages = async (el: HTMLTextAreaElement, files: File[]): Promise<void> => {
     const { selectionStart: start, selectionEnd: end } = el;
+    const gen = draftGen.current;
     const { refs, error } = await storeNoteImageFiles(files, (type, size) => imageFileGuard(type, size));
+    if (gen !== draftGen.current) return;
     setSaveError(error);
     if (refs.length === 0) return;
     const text = `${refs.join("\n")}\n`;
@@ -335,7 +343,7 @@ export function NotesPanel() {
       {saveError ? <div class="bean-status bean-status--error">{saveError}</div> : null}
       <div class="bean-card-actions">
         <button type="button" class="bean-btn" onClick={() => void save()}>Save</button>
-        <button type="button" class="bean-btn bean-btn--ghost" onClick={() => { setMode("view"); setSaveError(undefined); }}>Cancel</button>
+        <button type="button" class="bean-btn bean-btn--ghost" onClick={() => { draftGen.current += 1; setMode("view"); setSaveError(undefined); }}>Cancel</button>
       </div>
     </>
   );

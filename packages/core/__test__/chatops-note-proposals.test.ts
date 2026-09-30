@@ -74,3 +74,10 @@ test("expired entries are pruned on insert, not only on claim", () => {
   expect(s.recentImages("c2")).toHaveLength(1);
   expect(s.claim(p.id)).toBeUndefined();
 });
+
+test("forgetImages clears a conversation's recent slot (/new)", () => {
+  const s = new NoteProposalStore(() => 0);
+  s.rememberImages("c1", [img(1)]);
+  s.forgetImages("c1");
+  expect(s.recentImages("c1")).toBeUndefined();
+});
