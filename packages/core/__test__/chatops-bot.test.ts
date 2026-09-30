@@ -423,6 +423,60 @@ test("confirm with the no-skill sentinel runs the bare instruction", async () =>
   expect(delegateCalls[0]?.req.prompt).toBe("fix it");
 });
 
+test("confirm applies an edited instruction, still composed with the card's skill pick", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude", skillName: "fix-bug", instruction: "  fix it properly  " } },
+    effects,
+  );
+  expect(delegateCalls[0]?.req.prompt).toBe("b\n\n## Task\nfix it properly");
+  expect(JSON.stringify(effects.updates.at(-1)?.card)).toContain("fix it properly");
+});
+
+test("confirm with a blank edited instruction keeps the proposal's text", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  await buildTeamsBot(deps).onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude", instruction: "   " } },
+    effects,
+  );
+  expect(delegateCalls[0]?.req.prompt).toBe("fix it");
+});
+
+test("confirm rejects an over-4000-char instruction without consuming the proposal", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  const bot = buildTeamsBot(deps);
+  await bot.onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude", instruction: "x".repeat(4001) } },
+    effects,
+  );
+  expect(delegateCalls).toHaveLength(0);
+  expect(effects.posted.some((m) => m.includes("too long"))).toBe(true);
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+  expect(delegateCalls).toHaveLength(1);
+});
+
+test("confirm from another conversation is refused and leaves the proposal claimable", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  const bot = buildTeamsBot(deps);
+  await bot.onCardAction(
+    { conversationId: "c2", fromName: "eve", value: { beanAction: "confirm", proposalId: id, cli: "claude", instruction: "rm -rf" } },
+    effects,
+  );
+  await bot.onCardAction({ conversationId: "c2", fromName: "eve", value: { beanAction: "cancel-proposal", proposalId: id } }, effects);
+  expect(delegateCalls).toHaveLength(0);
+  expect(effects.posted.some((m) => m.includes("another conversation"))).toBe(true);
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+  expect(delegateCalls[0]?.req.prompt).toBe("fix it");
+});
+
 test("confirm on an expired proposal posts an expiry message", async () => {
   const { deps } = makeDeps({ converseResult: delegateResult });
   const effects = fx();
@@ -889,6 +943,17 @@ test("start-live card action starts the session and binds the channel", async ()
   const proposalId = latestLiveProposalId(effects.cards);
   await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId } }, effects);
   expect(deps.liveSessions.has("c1")).toBe(true);
+});
+
+test("start-live ignores a whitespace-only edited instruction", async () => {
+  const { bot, fx: effects, deps } = makeBotWithLiveSessionProposal();
+  await bot.onMessage({ conversationId: "c1", text: "start live session", fromId: "u", fromName: "sam" }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  const original = deps.liveSessionProposals.get(proposalId)?.proposal.instruction;
+  const start = vi.spyOn(deps.liveSessions, "start");
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId, instruction: "  \n " } }, effects);
+  expect(original).toBeTruthy();
+  expect(start.mock.calls[0]?.[0].instruction).toContain(original!);
 });
 
 test("cancel-live card action updates the card to cancelled without starting a session", async () => {

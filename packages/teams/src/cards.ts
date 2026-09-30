@@ -7,8 +7,8 @@ import type {
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
 
-/** Confirm-first proposal: verbatim instruction, skill/cli/model ChoiceSets, Run/Cancel.
- * Input ids "skillName"/"cli"/"model" come back merged into the Action.Submit data. */
+/** Confirm-first proposal: editable instruction, skill/cli/model ChoiceSets, Run/Cancel.
+ * Input ids "instruction"/"skillName"/"cli"/"model" come back merged into the Action.Submit data. */
 export function proposalCard(input: ProposalCardInput): object {
   const modelChoices = input.models.filter((m) => m.availableOn.length > 0);
   return {
@@ -18,7 +18,8 @@ export function proposalCard(input: ProposalCardInput): object {
     body: [
       { type: "TextBlock", size: "medium", weight: "bolder", text: "Bean proposes a delegate run" },
       { type: "FactSet", facts: [{ title: "Project", value: input.projectName }] },
-      { type: "TextBlock", text: input.instruction, wrap: true },
+      // Editable before Run; the value merges into the Run submit and core validates it.
+      { type: "Input.Text", id: "instruction", label: "Prompt", isMultiline: true, isRequired: true, maxLength: 4000, value: input.instruction },
       ...(input.skills.length > 0 ? [{
         type: "Input.ChoiceSet",
         id: "skillName",
@@ -51,7 +52,8 @@ export function proposalCard(input: ProposalCardInput): object {
         style: "positive",
         data: { beanAction: "confirm", proposalId: input.proposalId },
       },
-      { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-proposal", proposalId: input.proposalId } },
+      // associatedInputs "none": the required prompt input must not block Cancel.
+      { type: "Action.Submit", title: "Cancel", associatedInputs: "none", data: { beanAction: "cancel-proposal", proposalId: input.proposalId } },
     ],
   };
 }

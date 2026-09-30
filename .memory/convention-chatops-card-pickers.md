@@ -33,5 +33,11 @@ Discord **embed field values cap at 1024 chars** (description 4096). Anything dy
 the running card's progress tail is often a delegate's whole final answer — must be clamped in
 `components.ts`; an over-limit edit is a 400, and it once crashed the bot mid-run (lost result).
 
+**Edit prompt** on the delegate card edits the *instruction* only (skill still composed at
+launch). Teams sends it as an `Input.Text` in the Run submit; Discord uses a modal +
+`ProposalStore.updateInstruction`. Confirm peeks with `get()` and refuses a proposal from another
+`conversationId` (ids are sequential `prop-N`; a forged submit would inject into another thread's
+resumed session) and rejects >4000 chars — both *before* `claim()`, so the real card stays usable.
+
 Related: [project-live-sessions.md](project-live-sessions.md),
 [project-config-driven-cli-models.md](project-config-driven-cli-models.md).

@@ -62,6 +62,7 @@ function proposalCard(input: ProposalCardInput): object {
   };
   const skillRows = skillSelectRows(`bean:skill:${input.proposalId}`, input.skills, input.skillName);
   const buttons = [
+    { type: BUTTON, style: 2, label: "Edit prompt", custom_id: `bean:delegate-edit:${input.proposalId}` },
     { type: BUTTON, style: 3, label: "Run", custom_id: `bean:confirm:${input.proposalId}` },
     { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-proposal:${input.proposalId}` },
   ];
