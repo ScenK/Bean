@@ -78,6 +78,21 @@ test("finished message has no components", () => {
   expect(JSON.stringify(card)).toContain("done");
 });
 
+test("delegate cards clamp a long instruction to Discord's 4096-char embed description limit", () => {
+  const instruction = "y".repeat(5000);
+  const base = { projectName: "bean", instruction, startedBy: "scen" };
+  const cards = [
+    discordCards.proposalCard({ ...proposalInput, instruction }),
+    discordCards.runningCard({ ...base, tail: "", projectPath: "/p/bean" }),
+    discordCards.finishedCard({ ...base, outcome: "done" }),
+  ] as { embeds: { description: string }[] }[];
+  for (const card of cards) {
+    const desc = card.embeds[0]?.description ?? "";
+    expect(desc.length).toBe(4096);
+    expect(desc.endsWith("…")).toBe(true);
+  }
+});
+
 test("note proposal message shows the title/body and wires save/cancel customIds", () => {
   const s = JSON.stringify(discordCards.noteProposalCard({
     proposalId: "note-1", title: "Our chat", body: "## Summary\n\nwe talked", projectName: "bean", updating: false,

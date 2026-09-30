@@ -34,6 +34,13 @@ function skillSelectRows(customId: string, skills: { name: string }[], skillName
   }])];
 }
 
+// Discord rejects an embed whose description exceeds 4096 chars. The delegate cards show the
+// model-written instruction there, so clamp the *display* only — the stored instruction runs in full.
+const EMBED_DESC_LIMIT = 4096;
+function clampInstruction(instruction: string): string {
+  return instruction.length <= EMBED_DESC_LIMIT ? instruction : instruction.slice(0, EMBED_DESC_LIMIT - 1) + "…";
+}
+
 function proposalCard(input: ProposalCardInput): object {
   const cliSelect = {
     type: STRING_SELECT,
@@ -61,7 +68,7 @@ function proposalCard(input: ProposalCardInput): object {
   return {
     embeds: [{
       title: "Bean proposes a delegate run",
-      description: input.instruction,
+      description: clampInstruction(input.instruction),
       fields: [{ name: "Project", value: input.projectName, inline: true }],
     }],
     components: [...skillRows, row([cliSelect]), row([modelSelect]), row(buttons)],
@@ -80,7 +87,7 @@ function runningCard(input: RunningCardInput): object {
   return {
     embeds: [{
       title: `Running in ${input.projectName}… (started by ${input.startedBy})`,
-      description: input.instruction,
+      description: clampInstruction(input.instruction),
       ...(input.tail ? { fields: [{ name: "Progress", value: `\`\`\`\n${clampTail(input.tail)}\n\`\`\`` }] } : {}),
     }],
     // cancel-run carries the projectPath in the customId's id slot; server.ts resolves it
@@ -94,16 +101,14 @@ function finishedCard(input: FinishedCardInput): object {
   return {
     embeds: [{
       title: `Run ${input.outcome} in ${input.projectName} (started by ${input.startedBy})`,
-      description: input.instruction,
+      description: clampInstruction(input.instruction),
     }],
     components: [],
   };
 }
 
-// Discord rejects an embed whose description exceeds 4096 chars, which would drop the whole
-// Save/Cancel card for a long-but-valid note. Clamp the *display* only — NoteProposalStore
-// keeps the full draft, so Save still writes every character.
-const EMBED_DESC_LIMIT = 4096;
+// A long-but-valid note would likewise drop the whole Save/Cancel card. Clamp the *display*
+// only — NoteProposalStore keeps the full draft, so Save still writes every character.
 function noteDescription(title: string, body: string): string {
   const full = `**${title}**\n\n${body}`;
   if (full.length <= EMBED_DESC_LIMIT) return full;
