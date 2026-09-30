@@ -1,10 +1,10 @@
 import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, saveMemories, appendMemories,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, appendMemories, deleteMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
-  buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, MemoryProposalStore, NoteProposalStore, ProposalStore,
-  ConsolidationProposalStore, RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
+  buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
+  RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
@@ -67,10 +67,8 @@ const bot = buildTeamsBot({
   listTodoRoutines: async () => (await loadRoutines(routinesDir(dir))).filter((r) => r.todoDriven).map((r) => r.name),
   skillProposals: new SkillProposalStore(),
   saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
-  memoryProposals: new MemoryProposalStore(),
   appendMemories: (m) => appendMemories(dbFile(dir), m),
-  saveMemories: (m) => saveMemories(dbFile(dir), m),
-  consolidationProposals: new ConsolidationProposalStore(),
+  deleteMemories: (ids) => deleteMemories(dbFile(dir), ids),
   conversations,
   liveSessions,
   liveSessionProposals,
@@ -97,7 +95,7 @@ const client = new Client({
 // Latest select-menu choices per proposal message id — Discord sends each select change
 // as its own interaction, so the values must be cached until the Run button is pressed.
 // Entries die with the proposal (deleted on confirm/cancel).
-const selections = new Map<string, { cli?: string; model?: string; skillName?: string; memoryPicks?: string[] }>();
+const selections = new Map<string, { cli?: string; model?: string; skillName?: string }>();
 
 const allowed = (userId: string): boolean => discordConfig.allowedUserIds.includes(userId);
 
@@ -212,6 +210,9 @@ client.on("messageCreate", async (message) => {
     const canTranscribe = !capturing || liveSessions.canSteer(message.channelId, message.author.id);
     let transcribeFailed = false;
     let heardAudio = false;
+    // What the sender typed, before any transcript is appended: an attached clip may be someone
+    // else's recording, so only this is a direct-memory source (IncomingMessage.typedText).
+    const typed = text;
     for (const att of canTranscribe ? message.attachments.values() : []) {
       if (!att.contentType?.startsWith("audio/") || att.size > 25 * 1024 * 1024) continue;
       try {
@@ -278,7 +279,7 @@ client.on("messageCreate", async (message) => {
     try {
       await bot.onMessage(
         {
-          conversationId: channel.id, text: text || "(image)",
+          conversationId: channel.id, text: text || "(image)", typedText: heardAudio ? typed : undefined,
           images: images.length > 0 ? images : undefined,
           fromId: message.author.id, fromName: message.author.displayName,
           // Everyone @mentioned except Bean — feeds the live-session `+driver`/`-driver` commands.
@@ -384,7 +385,6 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       if (action === "cli") sel.cli = interaction.values[0];
       if (action === "model") sel.model = interaction.values[0];
       if (action === "skill") sel.skillName = interaction.values[0];
-      if (action === "pick-memories") sel.memoryPicks = interaction.values;
       selections.set(interaction.message.id, sel);
       return;
     }
@@ -416,7 +416,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         conversationId: interaction.channelId,
         fromId: interaction.user.id,
         fromName: interaction.user.displayName,
-        value: { beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, skillName: sel.skillName, memoryPicks: sel.memoryPicks },
+        value: { beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, skillName: sel.skillName },
       },
       fx,
     );

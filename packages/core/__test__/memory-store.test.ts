@@ -3,7 +3,8 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { loadMemories, saveMemories, appendMemories, selectRelevantMemories } from "../src/memory/store.js";
+import { loadMemories, appendMemories, updateMemory, deleteMemories, selectRelevantMemories } from "../src/memory/store.js";
+import { makeMemoryTools } from "../src/memory/tools.js";
 import { closeDb } from "../src/db.js";
 import { dbFile } from "../src/config.js";
 import type { Memory } from "../src/memory/memory.js";
@@ -28,25 +29,19 @@ test("a fresh db returns an empty array", async () => {
 test("save then load round-trips and creates missing parent dirs", async () => {
   const nested = dbFile(join(dir, "nested"));
   const memories = [m("a", "prefers pnpm"), { ...m("b", "auth in core"), projectPath: "/work/api" }];
-  await saveMemories(nested, memories);
+  await appendMemories(nested, memories);
   expect(await loadMemories(nested)).toEqual(memories);
   closeDb(nested);
 });
 
-test("saveMemories replaces the whole set, not an append", async () => {
-  await saveMemories(file, [m("a", "one")]);
-  await saveMemories(file, [m("b", "two")]);
-  expect(await loadMemories(file)).toEqual([m("b", "two")]);
-});
-
-test("appendMemories adds without touching existing rows, unlike saveMemories", async () => {
-  await saveMemories(file, [m("a", "one")]);
+test("appendMemories adds without touching existing rows", async () => {
+  await appendMemories(file, [m("a", "one")]);
   await appendMemories(file, [m("b", "two")]);
   expect(await loadMemories(file)).toEqual([m("a", "one"), m("b", "two")]);
 });
 
-test("two concurrent appendMemories calls both survive (the race saveMemories loses)", async () => {
-  await saveMemories(file, [m("base", "existing fact")]);
+test("two concurrent appendMemories calls both survive (the race a list+replace loses)", async () => {
+  await appendMemories(file, [m("base", "existing fact")]);
   await Promise.all([appendMemories(file, [m("a", "from A")]), appendMemories(file, [m("b", "from B")])]);
   const ids = (await loadMemories(file)).map((mm) => mm.id).sort();
   expect(ids).toEqual(["a", "b", "base"]);
@@ -103,4 +98,52 @@ test("selectRelevantMemories ranks by relevance above the threshold and force-in
   expect(picked.some((mm) => mm.id === "scoped")).toBe(true);
   expect(picked.some((mm) => mm.id === "roadmap")).toBe(true);
   expect(picked.length).toBeLessThanOrEqual(5);
+});
+
+test("a Persona edit racing a concurrent appendMemories loses neither write", async () => {
+  await appendMemories(file, [m("a", "old text")]);
+  await Promise.all([updateMemory(file, "a", "edited text"), appendMemories(file, [m("b", "auto-remembered")])]);
+  expect(await loadMemories(file)).toEqual([m("a", "edited text"), m("b", "auto-remembered")]);
+});
+
+test("deleteMemories removes exactly those ids, is idempotent, and keeps FTS in step", async () => {
+  await appendMemories(file, [m("a", "one"), m("b", "two"), m("c", "three")]);
+  expect(await deleteMemories(file, ["a", "c"])).toBe(2);
+  expect(await deleteMemories(file, ["a", "c"])).toBe(0);
+  expect(await deleteMemories(file, [])).toBe(0);
+  expect(await loadMemories(file)).toEqual([m("b", "two")]);
+});
+
+test("remember/forget_memory tools save only quoted facts and forget only known ids", async () => {
+  await appendMemories(file, [m("keep", "uses vitest")]);
+  const t = makeMemoryTools({
+    append: (a) => appendMemories(file, a),
+    forget: (ids) => deleteMemories(file, ids),
+    memories: await loadMemories(file),
+    projects: [],
+    latestUserText: "remember that I prefer tabs over spaces, and forget that I use vitest",
+  });
+  const [remember, forget] = t.tools;
+  expect(await remember!.run({ text: "Prefers tabs over spaces", quote: "I prefer tabs over spaces" })).toMatch(/^Remembered/);
+  expect(await remember!.run({ text: "Prefers email for passwords", quote: "passwords" })).toMatch(/^error/);
+  expect(await remember!.run({ text: "prefers tabs over spaces", quote: "I prefer tabs over spaces" })).toBe("Already remembered.");
+  expect(t.remembered.map((x) => x.text)).toEqual(["Prefers tabs over spaces"]);
+  expect(await forget!.run({ ids: ["nope"] })).toMatch(/^error/);
+  expect(await forget!.run({ ids: ["keep"] })).toBe("Forgot 1 fact(s).");
+  expect((await loadMemories(file)).map((x) => x.text)).toEqual(["Prefers tabs over spaces"]);
+});
+
+test("memory tools are only offered when the typed message asks to remember or forget", () => {
+  const offered = (text: string) => makeMemoryTools({
+    append: async () => {}, forget: async () => 0, memories: [], projects: [], latestUserText: text,
+  }).tools.map((t) => t.spec.name);
+  expect(offered("summarize this page")).toEqual([]);
+  expect(offered("remember that I use tabs")).toEqual(["remember"]);
+  expect(offered("please keep in mind I'm on a Mac")).toEqual(["remember"]);
+  expect(offered("forget that I like tabs")).toEqual(["forget_memory"]);
+  expect(offered("I can't remember the command")).toEqual([]);
+  expect(offered("Forget the last draft and try again")).toEqual([]);
+  expect(offered("review the delete API docs")).toEqual([]);
+  expect(offered("note that the build is slow")).toEqual([]);
+  expect(offered("please delete that memory about tabs")).toEqual(["forget_memory"]);
 });

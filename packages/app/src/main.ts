@@ -14,7 +14,7 @@ import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
   modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
-  makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, saveMemories, appendMemories, extractMemories,
+  makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
   loadReminders, saveReminders, dueReminders, extractPageText,
   loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, searchNotes, retrieveNoteTool, detectClis, loginShellPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
@@ -251,14 +251,16 @@ app.whenReady().then(async () => {
     trackComponentWindow(componentWindows, kind, win);
     if (kind === "chat") {
       win.on("close", (e) => {
-        // First close attempt: hold the window open, let the renderer extract + confirm
-        // memories, then re-issue the close via allowChatClose. quitting/allowClose bypass it
+        // First close attempt: hold the window open just long enough for the renderer to hand its
+        // transcript to rememberOnClose (main extracts in the background — no review card) or
+        // show the running-delegates Keep/Stop prompt, then re-issue the close via
+        // allowChatClose. quitting/allowClose bypass it
         // so app-quit and the second close aren't blocked (safety-window-behavior: chat is its
         // own window, so this never touches avatar/intake).
         if (quitting || allowClose.has(win)) return;
         e.preventDefault();
         // trackComponentWindow's once("close") fired on this same cancelable close and dropped our
-        // map entry; we're keeping the window open for the memory review, so re-register it — otherwise
+        // map entry; we're keeping the window open for that hand-off, so re-register it — otherwise
         // a reopen would spawn a second chat window instead of focusing this one.
         componentWindows.set(kind, win);
         sendToWindow(win, IPC.reviewBeforeClose, undefined);
@@ -346,6 +348,7 @@ app.whenReady().then(async () => {
   // the OS prompt only appears the first time a Notification is actually constructed/shown —
   // so fire one once, ever (tracked via notificationPermissionFile), rather than on every launch.
   const notifPermissionPath = notificationPermissionFile(app.getPath("userData"));
+  const memoryNoticePath = join(app.getPath("userData"), "auto-memory-notice.json");
   void (async () => {
     if (!Notification.isSupported()) return;
     if (await hasRequestedNotificationPermission(notifPermissionPath)) return;
@@ -472,7 +475,7 @@ app.whenReady().then(async () => {
     const cfg = await loadConfig(cfgPath, dir);
 
     const runtime = createRuntimeConfig(
-      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, reasoningEffort: cfg.reasoningEffort, routineDigestContext: cfg.routineDigestContext, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch },
+      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, reasoningEffort: cfg.reasoningEffort, routineDigestContext: cfg.routineDigestContext, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch, autoMemory: cfg.autoMemory },
       {
         makeChat: makeOpenAIChat,
         makeConverse: makeOpenAIConverse,
@@ -730,7 +733,21 @@ app.whenReady().then(async () => {
 
     registerIpc(ipcMain, {
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
-      loadMemories, saveMemories, appendMemories, extractMemories,
+      loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
+      autoMemory: () => runtime.getAutoMemory(),
+      onMemoryBatch: (batch) => {
+        void (async () => {
+          // One-time heads-up the first time memory saves itself (same one-shot flag-file shape
+          // as the notification-permission prompt).
+          const first = !(await hasRequestedNotificationPermission(memoryNoticePath));
+          if (first) await markNotificationPermissionRequested(memoryNoticePath);
+          const id = "memory:batch";
+          taskStatus.upsert(id, { kind: "memory", name: "Memory", startedAt: Date.now(), state: "running" });
+          taskStatus.finish(id, "done", first
+            ? "I remember things automatically now · click to review or turn off"
+            : `🧠 Remembered ${batch.length} · click to review`);
+        })();
+      },
       loadNotes, saveNote, deleteNote, starNote, loadNoteHistory,
       dbFile: dbFile(dir),
       chat: runtime.chat,
@@ -763,6 +780,7 @@ app.whenReady().then(async () => {
         routineDigestContext: runtime.getRoutineDigestContext(),
         disabledClis: runtime.getDisabledClis(),
         webSearch: runtime.getWebSearch(),
+        autoMemory: runtime.getAutoMemory(),
         paths: {
           config: configFile(dir),
           skills: skillsDir(dir),

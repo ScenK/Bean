@@ -3,12 +3,11 @@ import type { ChatopsActivitySink } from "./activity.js";
 import { converse, type ConverseDeps, type ImageAttachment, type ProposedLiveSession } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
-import { extractMemories } from "../memory/extract.js";
-import { proposeMemoryConsolidation } from "../memory/consolidate.js";
+import { makeMemoryTools } from "../memory/tools.js";
 import { availableModels } from "../models.js";
 import type { Skill, Project } from "../types.js";
 import type { Persona } from "../persona.js";
-import type { Memory, MemoryCandidate } from "../memory/memory.js";
+import type { Memory } from "../memory/memory.js";
 import type { CliName } from "../launcher.js";
 import type { CliModels } from "../cli-models.js";
 import type { DelegateRequest } from "../delegate.js";
@@ -20,8 +19,6 @@ import { maybeCompact } from "./compact.js";
 import type { PendingProposal, ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
 import type { TodoProposalStore } from "./todo-proposals.js";
-import type { MemoryProposalStore } from "./memory-proposals.js";
-import type { ConsolidationProposalStore } from "./consolidation-proposals.js";
 import type { SkillProposalStore } from "./skill-proposals.js";
 import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
 import { systemControlTool } from "../system-control.js";
@@ -29,16 +26,15 @@ import type { RunRegistry } from "./runs.js";
 import { LiveSessionProposalStore, type PendingLiveSession } from "./live-session-proposals.js";
 import { LiveSessionRegistry, type LiveSessionSink } from "./live-sessions.js";
 
-// Above this many total memories, a successful save-memories also offers a tidy-up (merge
-// duplicates/drop stale) proposal — piggybacking on the existing extraction flow rather than
-// a separate scheduler, per .memory/project-bean-memory.md.
-const CONSOLIDATION_THRESHOLD = 30;
-
 /** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
  * onMessage — surfaces keep untagged channel chatter as ambient context instead. */
 export interface IncomingMessage {
   conversationId: string;
   text: string;
+  /** Set when `text` also carries non-typed content (Discord appends audio transcripts, which may
+   * be a third party's recording): only this part is the sender's own words for remember.
+   * Absent = all of `text` was typed. */
+  typedText?: string;
   fromId: string;
   fromName: string;
   /** User-ids @mentioned in this message (excluding the bot), if the surface supplies them —
@@ -58,7 +54,7 @@ export interface CardAction {
    * the live-session start path uses it as the session owner. */
   fromId?: string;
   fromName: string;
-  value: { beanAction?: string; proposalId?: string; projectPath?: string; cli?: string; model?: string; memoryPicks?: string[]; skillName?: string; steering?: string; instruction?: string };
+  value: { beanAction?: string; proposalId?: string; projectPath?: string; cli?: string; model?: string; skillName?: string; steering?: string; instruction?: string };
 }
 
 export interface BotEffects {
@@ -112,14 +108,11 @@ export interface TeamsBotDeps {
   skillProposals: SkillProposalStore;
   /** Persists a confirmed skill draft to the user's ~/.bean/skills (server injects the dir). */
   saveSkill: (name: string, body: string) => Promise<void>;
-  memoryProposals: MemoryProposalStore;
   /** Insert-only add of new facts — never lose a concurrent writer's addition (see
    * memory/store.ts's appendMemories doc comment). */
   appendMemories: (additions: Memory[]) => Promise<void>;
-  /** Whole-list replace, only for consolidation's merge/drop apply (a genuine read-modify-write,
-   * gated behind a one-shot claimed proposal so it isn't the same race as free-form appends). */
-  saveMemories: (memories: Memory[]) => Promise<void>;
-  consolidationProposals: ConsolidationProposalStore;
+  /** Idempotent per-id delete (remember card's Forget button, forget_memory tool). */
+  deleteMemories: (ids: string[]) => Promise<number>;
   conversations: ConversationStore;
   cards: CardBuilders;
   /** Gates the system_control action tool, same as main.ts's desktop wiring. */
@@ -411,100 +404,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
   }
 
-  async function handleMemoryAction(
-    kind: "save-memories" | "cancel-memories",
-    proposalId: string | undefined,
-    memoryPicks: string[] | undefined,
-    actor: string,
-    fx: BotEffects,
-  ): Promise<void> {
-    if (!proposalId) return;
-    const pending = deps.memoryProposals.claim(proposalId);
-    if (!pending) {
-      await fx.post("That memory batch expired — ask me to remember again.");
-      return;
-    }
-    const resultCard = (outcome: "saved" | "cancelled", count: number): object =>
-      deps.cards.memoryResultCard({ count, savedBy: actor, outcome });
-    const updateTo = async (card: object): Promise<void> => {
-      if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
-    };
-    if (kind === "cancel-memories") {
-      await updateTo(resultCard("cancelled", 0));
-      return;
-    }
-    // undefined picks = the platform's "all selected" default (e.g. Discord's untouched menu).
-    const selected = memoryPicks === undefined
-      ? pending.candidates
-      : memoryPicks.map((i) => pending.candidates[Number(i)]).filter((c): c is MemoryCandidate => c !== undefined);
-    if (selected.length === 0) {
-      await updateTo(resultCard("cancelled", 0));
-      await fx.post("Didn't remember anything — nothing was selected.");
-      return;
-    }
-    try {
-      const now = new Date().toISOString();
-      // randomUUID, not Date.now()-based: `id` is a SQLite PRIMARY KEY, so two processes
-      // generating an id in the same millisecond would collide and fail the INSERT.
-      const additions: Memory[] = selected.map((c) => ({
-        id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: now,
-      }));
-      // Insert-only: never lose a concurrent writer's addition (see appendMemories's doc comment).
-      await deps.appendMemories(additions);
-      await updateTo(resultCard("saved", selected.length));
-      await fx.post(`Remembered ${selected.length} fact(s).`);
-      const all = await deps.loadMemories();
-      await maybeProposeConsolidation(all, pending.conversationId, fx);
-    } catch (err) {
-      await fx.post(`Couldn't save memory: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  async function maybeProposeConsolidation(memories: Memory[], conversationId: string, fx: BotEffects): Promise<void> {
-    if (memories.length <= CONSOLIDATION_THRESHOLD) return;
-    const result = await proposeMemoryConsolidation(memories, { chat: deps.chat, model: deps.model });
-    if (result.merges.length === 0 && result.drops.length === 0) return;
-    const pending = deps.consolidationProposals.add({ result, conversationId });
-    const merges = result.merges.map((m) => ({ mergedText: m.mergedText, count: m.ids.length }));
-    const drops = result.drops.map((id) => memories.find((m) => m.id === id)?.text ?? id);
-    const activityId = await fx.postCard(deps.cards.consolidationProposalCard({ proposalId: pending.id, merges, drops }));
-    deps.consolidationProposals.setCardActivityId(pending.id, activityId);
-  }
-
-  async function handleConsolidationAction(
-    kind: "confirm-consolidation" | "cancel-consolidation",
-    proposalId: string | undefined,
-    fx: BotEffects,
-  ): Promise<void> {
-    if (!proposalId) return;
-    const pending = deps.consolidationProposals.claim(proposalId);
-    if (!pending) {
-      await fx.post("That tidy-up suggestion expired.");
-      return;
-    }
-    const updateTo = async (card: object): Promise<void> => {
-      if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
-    };
-    if (kind === "cancel-consolidation") {
-      await updateTo(deps.cards.consolidationResultCard({ outcome: "cancelled" }));
-      return;
-    }
-    try {
-      const existing = await deps.loadMemories();
-      const mergedIds = new Set(pending.result.merges.flatMap((m) => m.ids));
-      const droppedIds = new Set(pending.result.drops);
-      const kept = existing.filter((m) => !mergedIds.has(m.id) && !droppedIds.has(m.id));
-      const now = new Date().toISOString();
-      const merged: Memory[] = pending.result.merges.map((m) => {
-        const projectPath = existing.find((mm) => m.ids.includes(mm.id) && mm.projectPath)?.projectPath;
-        return { id: randomUUID(), text: m.mergedText, projectPath, createdAt: now };
-      });
-      await deps.saveMemories([...kept, ...merged]);
-      await updateTo(deps.cards.consolidationResultCard({ outcome: "applied" }));
-      await fx.post("Memory tidied up.");
-    } catch (err) {
-      await fx.post(`Couldn't tidy up memory: ${err instanceof Error ? err.message : String(err)}`);
-    }
+  // Forget button on a remembered card. The id rides the button itself and delete is
+  // idempotent, so no proposal store: a second tap (or a stale card) just says so.
+  async function handleForget(memoryId: string | undefined, actor: string, fx: BotEffects): Promise<void> {
+    if (!memoryId) return;
+    const text = (await deps.loadMemories()).find((m) => m.id === memoryId)?.text;
+    const n = await deps.deleteMemories([memoryId]);
+    await fx.post(n > 0 ? `Forgot (by ${actor}): ${text ?? "that fact"}` : "Already forgotten.");
   }
 
   // Post a live-session proposal from a verbatim instruction — no converse()/LLM in the path, so
@@ -637,6 +543,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               onStart: () => { fx.post("🎨 Working on your image — this can take a minute…").catch(() => {}); },
             })
           : undefined;
+        // The msg.text is what this person typed, so it's the one citable source for remember;
+        // the chat-skill follow-up below reuses converseBase without these tools.
+        const memoryTools = makeMemoryTools({
+          append: deps.appendMemories, forget: deps.deleteMemories, memories, projects, latestUserText: msg.typedText ?? msg.text,
+        });
         // runAvailable=false: propose_run is never offered here — confirming one couldn't
         // execute anything from Teams/Discord; propose_delegate is the only run path.
         const converseBase = {
@@ -648,12 +559,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           liveSessionAvailable: deps.liveSessionsEnabled() && detected.includes("claude"),
           availableClis: detected,
           models: availableModels(deps.cliModels, detected),
-          rememberAvailable: true,
           runAvailable: false,
           todoRoutines,
           webSearch: deps.webSearchEnabled?.() ?? false,
         };
-        const result = await converse({ ...converseBase, history, latestUserText: msg.text, latestUserImages: msg.images });
+        const result = await converse({
+          ...converseBase, actions: [...converseBase.actions, ...memoryTools.tools],
+          history, latestUserText: msg.text, latestUserImages: msg.images,
+        });
         turnFailed = result.error !== undefined;
         deps.conversations.append(msg.conversationId, {
           role: "user",
@@ -672,6 +585,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           }
         };
         await deliverImages();
+        if (memoryTools.remembered.length > 0) {
+          const nameFor = (path: string): string => projects.find((p) => p.path === path)?.name ?? path;
+          for (const m of memoryTools.remembered) {
+            await fx.postCard(deps.cards.rememberedCard({
+              memoryId: m.id, text: m.text, projectName: m.projectPath ? nameFor(m.projectPath) : undefined,
+            }));
+          }
+        }
         void maybeCompact(msg.conversationId, deps.conversations, { chat: deps.chat, model: deps.model });
         if (result.proposedRun) {
           // A `target: chat` skill runs on Bean's own model: resend the composed prompt
@@ -735,24 +656,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps.todoProposals.setCardActivityId(pending.id, activityId);
           return;
         }
-        if (result.proposedRemember) {
-          const transcript = [...history, { role: "user" as const, content: msg.text }];
-          const candidates = await extractMemories(
-            transcript, memories, projects, { chat: deps.chat, model: deps.model },
-          );
-          if (candidates.length === 0) {
-            await fx.post("Nothing here worth remembering long-term.");
-            return;
-          }
-          const nameFor = (path: string): string => projects.find((p) => p.path === path)?.name ?? path;
-          const facts = candidates.map((c) => ({
-            text: c.text, projectName: c.projectPath ? nameFor(c.projectPath) : undefined,
-          }));
-          const pending = deps.memoryProposals.add({ candidates, conversationId: msg.conversationId, proposedBy: msg.fromName });
-          const activityId = await fx.postCard(deps.cards.memoryProposalCard({ proposalId: pending.id, facts }));
-          deps.memoryProposals.setCardActivityId(pending.id, activityId);
-          return;
-        }
         const proposal = result.proposedDelegate;
         if (!proposal) return;
         const choice = resolveCliModel(detected, { cli: proposal.cli, model: proposal.model }, modelMemory, deps.cliModels);
@@ -798,12 +701,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         await handleTodoAction(beanAction, proposalId, action.fromName, fx);
         return;
       }
-      if (beanAction === "save-memories" || beanAction === "cancel-memories") {
-        await handleMemoryAction(beanAction, proposalId, action.value.memoryPicks, action.fromName, fx);
-        return;
-      }
-      if (beanAction === "confirm-consolidation" || beanAction === "cancel-consolidation") {
-        await handleConsolidationAction(beanAction, proposalId, fx);
+      if (beanAction === "forget-memory") {
+        // proposalId carries the memory id here (the surfaces' generic id slot).
+        await handleForget(proposalId, action.fromName, fx);
         return;
       }
       if (beanAction === "start-live" || beanAction === "cancel-live") {

@@ -42,6 +42,7 @@ export function SettingsWindow() {
   const [reasoningEffort, setReasoningEffort] = useState("");
   const [routineDigestContext, setRoutineDigestContext] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
+  const [autoMemory, setAutoMemory] = useState(true);
   const [detectedClis, setDetectedClis] = useState<CliName[]>([]);
   const [disabledClis, setDisabledClis] = useState<string[]>([]);
   const [paths, setPaths] = useState<ConfigView["paths"] | undefined>(undefined);
@@ -77,6 +78,7 @@ export function SettingsWindow() {
       setReasoningEffort(c.reasoningEffort);
       setRoutineDigestContext(c.routineDigestContext);
       setWebSearch(c.webSearch);
+      setAutoMemory(c.autoMemory);
       setDisabledClis(c.disabledClis);
       setPaths(c.paths);
     });
@@ -103,6 +105,7 @@ export function SettingsWindow() {
         routineDigestContext,
         disabledClis,
         webSearch,
+        autoMemory,
       });
       setSave("saved");
     } catch (err) {
@@ -260,6 +263,19 @@ export function SettingsWindow() {
                   onChange={(e) => { setWebSearch((e.target as HTMLInputElement).checked); setSave("idle"); }}
                 />
                 <span class="bean-chatops-label">Allow public web search from chat</span>
+              </label>
+            </div>
+          </div>
+          <div class="bean-settings-row">
+            <span class="bean-settings-row-label">Memory</span>
+            <div class="bean-settings-row-control">
+              <label class="bean-chatops-row" title="When a desktop chat closes, Bean saves durable facts you told it (undo them in Persona) and periodically tidies its memory. Off: Bean only remembers or forgets when you ask.">
+                <input
+                  type="checkbox"
+                  checked={autoMemory}
+                  onChange={(e) => { setAutoMemory((e.target as HTMLInputElement).checked); setSave("idle"); }}
+                />
+                <span class="bean-chatops-label">Remember things automatically</span>
               </label>
             </div>
           </div>

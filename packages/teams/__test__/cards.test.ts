@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  finishedCard, memoryProposalCard, memoryResultCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
+  finishedCard, rememberedCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
 } from "../src/cards.js";
 
@@ -89,26 +89,11 @@ test("todo result card states the outcome and has no actions", () => {
   expect(flatten(card)).toContain("Queued by bob");
 });
 
-test("memory proposal card renders a toggle per fact and wires remember/cancel", () => {
-  const s = flatten(memoryProposalCard({
-    proposalId: "mem-1",
-    facts: [{ text: "prefers tabs" }, { text: "uses vitest", projectName: "bean" }],
-  }));
+test("remembered card shows the fact and a Forget action carrying the memory id", () => {
+  const s = flatten(rememberedCard({ memoryId: "m-1", text: "prefers tabs" }));
   expect(s).toContain("prefers tabs");
-  expect(s).toContain("uses vitest");
-  expect(s).toContain('"id":"fact-0"');
-  expect(s).toContain('"id":"fact-1"');
-  expect(s).toContain('"beanAction":"save-memories"');
-  expect(s).toContain('"beanAction":"cancel-memories"');
-  expect(s).toContain('"proposalId":"mem-1"');
-});
-
-test("memory result card states the count/outcome and has no actions", () => {
-  const card = memoryResultCard({ count: 2, savedBy: "bob", outcome: "saved" }) as { actions?: unknown[] };
-  expect(card.actions ?? []).toHaveLength(0);
-  const s = flatten(card);
-  expect(s).toContain("saved");
-  expect(s).toContain("2");
+  expect(s).toContain('"beanAction":"forget-memory"');
+  expect(s).toContain('"proposalId":"m-1"');
 });
 
 test("skill proposal card shows name and body and wires save/cancel data", () => {

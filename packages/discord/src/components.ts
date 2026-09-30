@@ -1,7 +1,6 @@
 import type {
-  CardBuilders, FinishedCardInput, MemoryProposalCardInput, MemoryResultCardInput,
+  CardBuilders, FinishedCardInput, RememberedCardInput,
   NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
-  ConsolidationProposalCardInput, ConsolidationResultCardInput,
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput,
 } from "@bean/core";
@@ -172,69 +171,17 @@ function skillResultCard(input: SkillResultCardInput): object {
   };
 }
 
-// Discord select option labels are capped at 100 chars; the full fact is kept in the
-// MemoryProposalStore, so Remember still saves the untruncated text.
-const OPTION_LABEL_LIMIT = 100;
-function clampLabel(text: string): string {
-  return text.length <= OPTION_LABEL_LIMIT ? text : text.slice(0, OPTION_LABEL_LIMIT - 1) + "…";
-}
-
-function memoryProposalCard(input: MemoryProposalCardInput): object {
-  const facts = input.facts.slice(0, 25); // Discord select menus allow at most 25 options
-  const select = {
-    type: STRING_SELECT,
-    custom_id: `bean:pick-memories:${input.proposalId}`,
-    placeholder: "Facts to remember",
-    min_values: 0,
-    max_values: facts.length,
-    options: facts.map((f, i) => ({
-      label: clampLabel(f.projectName ? `[${f.projectName}] ${f.text}` : f.text),
-      value: String(i),
-      default: true,
-    })),
-  };
+// custom_id caps at 100 chars; a UUID memory id plus the prefix is ~55.
+function rememberedCard(input: RememberedCardInput): object {
   return {
     embeds: [{
-      title: "Bean wants to remember",
-      description: facts
-        .map((f, i) => `${i + 1}. ${f.projectName ? `(${f.projectName}) ` : ""}${f.text}`)
-        .join("\n")
-        .slice(0, 4096),
+      title: "🧠 Got it — remembered",
+      description: `${input.projectName ? `(${input.projectName}) ` : ""}${input.text}`.slice(0, 4096),
     }],
-    components: [
-      row([select]),
-      row([
-        { type: BUTTON, style: 3, label: "Remember selected", custom_id: `bean:save-memories:${input.proposalId}` },
-        { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-memories:${input.proposalId}` },
-      ]),
-    ],
-  };
-}
-
-function memoryResultCard(input: MemoryResultCardInput): object {
-  const title = input.outcome === "saved"
-    ? `Memory saved: remembered ${input.count} fact(s) (by ${input.savedBy})`
-    : `Memory cancelled (by ${input.savedBy})`;
-  return { embeds: [{ title }], components: [] };
-}
-
-function consolidationProposalCard(input: ConsolidationProposalCardInput): object {
-  const lines = [
-    ...input.merges.map((m) => `Merge ${m.count} → ${m.mergedText}`),
-    ...input.drops.map((d) => `Drop: ${d}`),
-  ];
-  return {
-    embeds: [{ title: "Bean suggests tidying up memory", description: lines.join("\n").slice(0, 4096) }],
     components: [row([
-      { type: BUTTON, style: 3, label: "Apply", custom_id: `bean:confirm-consolidation:${input.proposalId}` },
-      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-consolidation:${input.proposalId}` },
+      { type: BUTTON, style: 2, label: "Forget", custom_id: `bean:forget-memory:${input.memoryId}` },
     ])],
   };
-}
-
-function consolidationResultCard(input: ConsolidationResultCardInput): object {
-  const title = input.outcome === "applied" ? "Memory tidied up." : "Tidy-up cancelled.";
-  return { embeds: [{ title }], components: [] };
 }
 
 // Discord embed description cap; also the modal text-input cap, so a stored prompt never
@@ -307,7 +254,7 @@ function liveSessionResultCard(input: LiveSessionResultCardInput): object {
 }
 
 export const discordCards: CardBuilders = {
-  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, memoryProposalCard, memoryResultCard,
-  consolidationProposalCard, consolidationResultCard, skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, rememberedCard,
+  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 };

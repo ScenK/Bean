@@ -8,32 +8,36 @@ migration (see [[safety-memory-append-vs-replace]]), the old `~/.bean/memory.jso
 `~/.bean/notes/*.md` files are imported once on first `openDb()` call and then left untouched —
 see `db.ts`'s `migrateFromFiles`.
 
-- **Extract:** `extractMemories()` (`memory/extract.ts`) runs a `remember`-tool pass over a
-  finished transcript; strict "durable facts only" prompt; dedups against existing; never throws.
-- **Recall:** `converse()` takes a `memories` param, ranks it via `selectRelevantMemories()`
-  (`memory/store.ts`) before formatting the "What you remember:" block. Below 20 total memories
-  it's still the old "inject everything" behavior; above that it's an FTS5 bm25 top-12 rank
-  against the latest user message (a throwaway `:memory:` FTS5 table per call — cheap at this
-  scale). `converse()` has no "current project" signal to force-include by (LinkedNote doesn't
-  carry one), so that force-include path exists in the function but is unused from this call site.
+- **Automatic, no confirm card (#177):** closing the chat window is instant — the renderer sends
+  `rememberOnClose(transcript, { incognito })` fire-and-forget and calls `allowChatClose` (the
+  `reviewBeforeClose` intercept survives only for the running-delegates Keep/Stop prompt). Main
+  (`buildMemoryHandlers` in `ipc.ts`) runs `extractMemories` → `appendMemories` and keeps the id
+  batch in memory; a non-empty batch shows a `kind: "memory"` avatar bubble whose click opens
+  Persona (never undoes — its old click meaning was dismiss). Persona's **Just remembered · Undo**
+  deletes exactly that batch's ids; the Undo window lasts until the next batch or app restart.
+  A one-shot `auto-memory-notice.json` flag (userData) makes the first bubble explain itself.
+  Config `autoMemory` (default true; Settings → Memory) off = explicit remember/forget only.
+  The per-window `🕶` chip (incognito) makes a chat write nothing.
+- **Trust boundary:** `ChatTurn.source` is recorded when a turn arrives; only `role: "user"` +
+  `source: "typed"` turns are citable (`isCitable`). A delegate loopback, a composed skill prompt,
+  the Save-to-notes command, ambient chatter, and compaction summaries all travel as role "user",
+  so the role can't be trusted. Every candidate must `quote` a span of a typed turn sharing a
+  content word with the fact (`validateCandidate`), and instruction-/secret-shaped facts are
+  rejected in code. The recall block frames memories as data and tags them `[id]`.
+- **Explicit remember/forget:** `makeMemoryTools()` → direct `remember` + `forget_memory` action
+  tools, offered only on a typed turn (`ChatRequest.source === "typed"` on desktop). Desktop
+  shows a `🧠 Remembered — …` status line; chatops posts a Forget card
+  (see [[project-chatops-memory-flow]]).
+- **Recall:** `converse()` ranks via `selectRelevantMemories()` — below 20 memories inject all;
+  above, an FTS5 bm25 top-12 against the latest user message.
 - **Enabled-skills filter** lives in `buildChatHandler` (app `ipc.ts`), not in `converse()`.
-- **Confirm-at-close:** main intercepts the chat window's `close` (guarded by `quitting` +
-  an `allowClose` WeakSet), sends `reviewBeforeClose`; the renderer extracts (20s backstop —
-  a real reasoning-model extraction takes ~5s, so the timeout must exceed it or it silently
-  discards valid memories), shows a review card, then calls `allowChatClose` to re-issue the
-  close. Empty transcript or no candidates closes immediately. It persists the picked facts via
-  `window.bean.appendMemories` (insert-only), **not** `listMemories`+`saveMemories` — see
-  [[safety-memory-append-vs-replace]].
-- **Edit surface:** the persona panel's MEMORY section (list/edit/delete/add), persisted via
-  `saveMemories` (whole-list replace is correct there — single actor, not a concurrent-writer path).
-- **Consolidation:** chatops-only for now. `memory/consolidate.ts`'s `proposeMemoryConsolidation()`
-  mirrors `extractMemories`'s one-call/tool-spec shape but reviews the *existing* list for
-  merge/drop candidates. Triggered from `bot.ts`'s `handleMemoryAction` right after a successful
-  save-memories pushes the total count over 30 — piggybacks on the existing extraction flow
-  rather than a new scheduler. Confirm-first via `ConsolidationProposalStore` (same
-  Map+seq+10-min-expiry shape as the other proposal stores) and a `consolidationProposalCard`/
-  `consolidationResultCard` pair in `cards-api.ts`. No desktop equivalent yet (Settings already
-  lets you edit the list directly) — flagged as a follow-up if desktop parity is wanted.
+- **Edit surface:** Persona's MEMORY section, per-row `updateMemory`/`deleteMemories`/
+  `appendMemories` only — see [[safety-memory-append-vs-replace]].
+- **Consolidation:** `memory/consolidate.ts`'s `proposeMemoryConsolidation()` (merge/drop over
+  the existing list) currently has no caller: the chatops confirm-first tidy-up card, its
+  `ConsolidationProposalStore`, and its apply were deleted in #177 PR 1 — a stale card's apply
+  could overwrite a Persona edit made after the proposal. Background "dream" consolidation
+  (PR 2) replaces it with a lease-guarded, fingerprint-checked transactional apply.
 
 Design spec: `docs/superpowers/specs/2026-07-03-bean-memory-design.md`.
 

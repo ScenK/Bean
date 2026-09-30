@@ -3,7 +3,7 @@ import type { RouterDeps, ConverseDeps } from "@bean/core";
 export interface RuntimeConfigDeps {
   makeChat: (apiKey: string) => RouterDeps["chat"];
   makeConverse: (apiKey: string, reasoningEffort: string) => ConverseDeps["chat"];
-  saveConfigFile: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; reasoningEffort: string; routineDigestContext: boolean; disabledClis: string[]; webSearch: boolean }) => Promise<void>;
+  saveConfigFile: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; reasoningEffort: string; routineDigestContext: boolean; disabledClis: string[]; webSearch: boolean; autoMemory: boolean }) => Promise<void>;
 }
 
 export interface RuntimeConfig {
@@ -19,14 +19,15 @@ export interface RuntimeConfig {
   getRoutineDigestContext: () => boolean;
   getDisabledClis: () => string[];
   getWebSearch: () => boolean;
-  apply: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; reasoningEffort: string; routineDigestContext: boolean; disabledClis: string[]; webSearch: boolean }) => Promise<void>;
+  getAutoMemory: () => boolean;
+  apply: (update: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; reasoningEffort: string; routineDigestContext: boolean; disabledClis: string[]; webSearch: boolean; autoMemory: boolean }) => Promise<void>;
 }
 
 // Holds the live OpenAI clients + model behind stable wrapper functions. IPC handlers close
 // over the wrappers once at startup; apply() swaps the underlying clients in place so a Settings
 // save takes effect on the next chat/route with no restart (see the Settings window).
 export function createRuntimeConfig(
-  initial: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; reasoningEffort: string; routineDigestContext: boolean; disabledClis: string[]; webSearch: boolean },
+  initial: { openaiApiKey: string; model: string; terminalApp: string; editorApp: string; delegateCli: string; systemControls: boolean; reasoningEffort: string; routineDigestContext: boolean; disabledClis: string[]; webSearch: boolean; autoMemory: boolean },
   deps: RuntimeConfigDeps,
 ): RuntimeConfig {
   let apiKey = initial.openaiApiKey;
@@ -39,6 +40,7 @@ export function createRuntimeConfig(
   let routineDigestContext = initial.routineDigestContext;
   let disabledClis = initial.disabledClis;
   let webSearch = initial.webSearch;
+  let autoMemory = initial.autoMemory;
   // ponytail: the OpenAI SDK throws in its constructor when apiKey is "", so building the
   // clients eagerly would crash startup before the user ever gets to Settings. Build lazily
   // per-call instead; a missing key just surfaces as an auth error from the actual chat call.
@@ -64,6 +66,7 @@ export function createRuntimeConfig(
     getRoutineDigestContext: () => routineDigestContext,
     getDisabledClis: () => disabledClis,
     getWebSearch: () => webSearch,
+    getAutoMemory: () => autoMemory,
     apply: async (update) => {
       const nextChatClient = update.openaiApiKey ? deps.makeChat(update.openaiApiKey) : null;
       const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey, update.reasoningEffort) : null;
@@ -75,6 +78,7 @@ export function createRuntimeConfig(
         routineDigestContext: update.routineDigestContext,
         disabledClis: update.disabledClis,
         webSearch: update.webSearch,
+        autoMemory: update.autoMemory,
       });
       apiKey = update.openaiApiKey;
       model = update.model;
@@ -86,6 +90,7 @@ export function createRuntimeConfig(
       routineDigestContext = update.routineDigestContext;
       disabledClis = update.disabledClis;
       webSearch = update.webSearch;
+      autoMemory = update.autoMemory;
       chatClient = nextChatClient;
       converseClient = nextConverseClient;
     },

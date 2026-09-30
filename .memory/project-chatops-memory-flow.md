@@ -1,26 +1,25 @@
-# chatops memory capture
+# chatops memory
 
-Teams/Discord bots can save durable memories via a confirm-first card, mirroring the notes flow.
+Teams/Discord bots remember only on an explicit ask (background extraction there is deferred
+to #178 — group channels mix several people's words, and chatops has no "conversation end").
 
-- Trigger: a **gated** `propose_remember` tool in `converse()` (argless). Enabled only when
-  `rememberAvailable` is passed (the bot passes `true`; the desktop app does NOT, so its
-  extract-at-close review stays the only desktop memory path — don't remove the gate).
-- The tool is a trigger only: the model decides WHEN, `extractMemories()` (run by `bot.ts`)
-  decides WHAT.
-- Selection is normalized to `CardAction.value.memoryPicks` (fact indices). **undefined = all**
-  — this is how Discord's untouched (all-default-selected) select menu is handled. Teams always
-  sends explicit `fact-<i>: "true"` toggles.
-- `MemoryProposalStore.claim()` is one-shot (like NoteProposalStore) so two people tapping
-  Remember can't double-save.
-- Saving a confirmed batch calls `deps.appendMemories()` (insert-only), not `saveMemories()` —
-  see [[safety-memory-append-vs-replace]]. `saveMemories` (whole-list replace) is reserved for
-  consolidation's merge/drop apply, which is a genuine read-modify-write and is gated behind a
-  one-shot claimed proposal.
-- `ConversationStore` (`chatops/conversation.ts`) is now `bean.db`-backed (`chatops_turns` table)
-  instead of an in-memory `Map` — history survives a bot restart. `bot.ts` fires
-  `maybeCompact()` (`chatops/compact.ts`) after every reply, fire-and-forget: above 60 raw turns
-  it summarizes the oldest 40 into one `role: "system"` turn via a `deps.chat()` call. This is
-  silent/automatic (no confirm card) — same "old context eventually falls away" tradeoff as the
-  previous in-memory `MAX_TURNS=40` slice, just smarter.
-- Memory consolidation (merge duplicates/drop stale) piggybacks on this same save-memories path —
-  see project-bean-memory.md's Consolidation section.
+- `bot.ts` builds `makeMemoryTools()` (core `memory/tools.ts`) per converse turn with
+  `latestUserText: msg.text` — the addressed person's own typed text is the only citable source.
+  The chat-skill follow-up hop reuses `converseBase` *without* these tools (its latest text is a
+  composed prompt, not the user's words).
+- Both tools are intent-gated in code (`makeMemoryTools`): `remember` is offered only when the
+  typed text says remember/keep in mind/note that, `forget_memory` only on forget/delete/remove —
+  so injected page or delegate text on an ordinary turn can't save or delete. The quote must
+  support *every* content word of the fact (`supports()` in extract.ts), not just share one.
+- `remember` saves directly (no confirm card); each saved fact gets a `rememberedCard` receipt
+  with a **Forget** button. The button carries the memory id in the generic `proposalId` slot
+  (`bean:forget-memory:<uuid>` on Discord, ~55 of 100 custom_id chars); delete is idempotent, so
+  no proposal store — a second tap says "Already forgotten."
+- `forget_memory(ids)` is the text-command equivalent; ids come from the `[id]`-tagged recall
+  block in `converse()`.
+- `ConversationStore` (`chatops/conversation.ts`) is `bean.db`-backed (`chatops_turns`); `bot.ts`
+  fires `maybeCompact()` after every reply — above 60 raw turns the oldest 40 become one
+  `role: "system"` summary. Silent/automatic (pure efficiency, not a memory decision).
+- `IncomingMessage.typedText`: Discord appends audio transcripts to `text`; a clip may be a third
+  party's recording, so the adapter passes the typed part separately and only it feeds the tools.
+- No chatops consolidation card anymore (deleted in #177) — see project-bean-memory.md.

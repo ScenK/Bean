@@ -2,13 +2,13 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
-  Memory, MemoryCandidate, ChatTurn, Note, NoteDraft, AvailableModel, Routine, TodoItem,
+  Memory, ChatTurn, Note, NoteDraft, AvailableModel, Routine, TodoItem,
   RoutineBrief, RoutineWatch, WatchItem,
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
 import type { TaskJob } from "./task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
-import type { RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft } from "./ipc.js";
+import type { RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch } from "./ipc.js";
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { WatchCheckResult } from "./routine-scheduler.js";
 
@@ -117,10 +117,13 @@ contextBridge.exposeInMainWorld("bean", {
   todosClearFinished: (routine: string): Promise<void> => ipcRenderer.invoke(IPC.todosClearFinished, routine),
   todosRetry: (id: string): Promise<void> => ipcRenderer.invoke(IPC.todosRetry, id),
   listMemories: (): Promise<Memory[]> => ipcRenderer.invoke(IPC.listMemories),
-  saveMemories: (memories: Memory[]): Promise<void> => ipcRenderer.invoke(IPC.saveMemories, memories),
   appendMemories: (additions: Memory[]): Promise<void> => ipcRenderer.invoke(IPC.appendMemories, additions),
-  extractMemories: (transcript: ChatTurn[]): Promise<MemoryCandidate[]> =>
-    ipcRenderer.invoke(IPC.extractMemories, transcript),
+  updateMemory: (id: string, text: string): Promise<void> => ipcRenderer.invoke(IPC.updateMemory, id, text),
+  deleteMemories: (ids: string[]): Promise<number> => ipcRenderer.invoke(IPC.deleteMemories, ids),
+  rememberOnClose: (transcript: ChatTurn[], opts: { incognito: boolean }): void =>
+    ipcRenderer.send(IPC.rememberOnClose, transcript, opts),
+  getMemoryBatch: (): Promise<MemoryBatch | undefined> => ipcRenderer.invoke(IPC.getMemoryBatch),
+  undoMemoryBatch: (): Promise<number> => ipcRenderer.invoke(IPC.undoMemoryBatch),
   onReviewBeforeClose: (cb: () => void) => ipcRenderer.on(IPC.reviewBeforeClose, () => cb()),
   allowChatClose: (): void => ipcRenderer.send(IPC.allowChatClose),
   chatopsStatus: (): Promise<Record<ChatopsBot, ChatopsState>> => ipcRenderer.invoke(IPC.chatopsStatus),

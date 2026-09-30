@@ -16,34 +16,14 @@ export async function loadMemories(file: string): Promise<Memory[]> {
   return rows.map(toMemory);
 }
 
-// Whole-array replace, matching the old JSON file's "save the full list" contract — one
-// transaction so a reader never sees a half-cleared table.
-export async function saveMemories(file: string, memories: Memory[]): Promise<void> {
-  const db = openDb(file);
-  const del = db.prepare("DELETE FROM memories");
-  const insert = db.prepare(
-    "INSERT INTO memories (id, text, project_path, created_at) VALUES (?, ?, ?, ?)",
-  );
-  db.exec("BEGIN");
-  try {
-    del.run();
-    for (const m of memories) insert.run(m.id, m.text, m.projectPath ?? null, m.createdAt);
-    db.exec("COMMIT");
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
-  }
-}
-
-// Insert-only, no read step — unlike saveMemories (load full list, mutate in JS, replace whole
-// list), which is exactly the multi-process lost-update race this migration exists to fix: two
-// concurrent load-then-replace round trips (a chatops bot and the desktop app both proposing
-// facts around the same time) can each read the same snapshot and one clobbers the other's
-// addition, no matter how the underlying storage is locked — SQLite's transaction guarantees
-// only cover a single statement/transaction, not two separate JS-level calls. Callers adding new
-// facts (chatops's handleMemoryAction, desktop's chat-close review) must use this, not
-// load+concat+saveMemories. saveMemories stays whole-replace for the Settings panel's arbitrary
-// bulk edits (single actor, not a concurrent-writer scenario) and consolidation's merge/drop.
+// Insert-only, no read step. A load → mutate in JS → replace-whole-list round trip is exactly the
+// multi-process lost-update race this migration exists to fix (why saveMemories was deleted): two
+// concurrent load-then-replace round trips can each read the same snapshot and one clobbers the
+// other's addition, no matter how the underlying storage is locked — SQLite's transaction
+// guarantees only cover a single statement/transaction, not two separate JS-level calls. Every
+// path adding new facts (auto-remember at chat close, the remember tool) must use this, and every
+// edit/delete goes through the per-row updateMemory/deleteMemories below — never
+// load+mutate+replace. See .memory/safety-memory-append-vs-replace.md.
 export async function appendMemories(file: string, additions: Memory[]): Promise<void> {
   const db = openDb(file);
   const insert = db.prepare(
@@ -57,6 +37,19 @@ export async function appendMemories(file: string, additions: Memory[]): Promise
     db.exec("ROLLBACK");
     throw err;
   }
+}
+
+// Per-row edit: touches one row, so a concurrent append (auto-remember finishing while the
+// Persona panel is open) can't be lost the way a whole-list replace would lose it.
+export async function updateMemory(file: string, id: string, text: string): Promise<void> {
+  openDb(file).prepare("UPDATE memories SET text = ? WHERE id = ?").run(text, id);
+}
+
+/** Deletes exactly these ids; idempotent (already-gone ids are ignored). Returns rows removed. */
+export async function deleteMemories(file: string, ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const res = openDb(file).prepare(`DELETE FROM memories WHERE id IN (${ids.map(() => "?").join(",")})`).run(...ids);
+  return Number(res.changes);
 }
 
 /** Pure top-K relevance ranking for memoriesBlock(): small memory sets are still injected

@@ -58,28 +58,13 @@ export interface TodoResultCardInput {
   outcome: "queued" | "cancelled";
 }
 
-export interface MemoryProposalCardInput {
-  proposalId: string;
-  /** Candidate facts to confirm; projectName is the resolved display name or absent for global. */
-  facts: { text: string; projectName?: string }[];
-}
-
-export interface MemoryResultCardInput {
-  count: number;
-  savedBy: string;
-  outcome: "saved" | "cancelled";
-}
-
-export interface ConsolidationProposalCardInput {
-  proposalId: string;
-  /** Each merge group's combined text and how many facts it replaces. */
-  merges: { mergedText: string; count: number }[];
-  /** Text of each fact proposed for dropping. */
-  drops: string[];
-}
-
-export interface ConsolidationResultCardInput {
-  outcome: "applied" | "cancelled";
+/** A fact the remember tool saved directly (no confirm step) — the card is the receipt,
+ * and its Forget button carries the memory id. */
+export interface RememberedCardInput {
+  memoryId: string;
+  text: string;
+  /** Resolved display name of the fact's project; absent = a global fact. */
+  projectName?: string;
 }
 
 export interface SkillProposalCardInput {
@@ -130,10 +115,7 @@ export interface CardBuilders {
   noteResultCard: (input: NoteResultCardInput) => object;
   todoProposalCard: (input: TodoProposalCardInput) => object;
   todoResultCard: (input: TodoResultCardInput) => object;
-  memoryProposalCard: (input: MemoryProposalCardInput) => object;
-  memoryResultCard: (input: MemoryResultCardInput) => object;
-  consolidationProposalCard: (input: ConsolidationProposalCardInput) => object;
-  consolidationResultCard: (input: ConsolidationResultCardInput) => object;
+  rememberedCard: (input: RememberedCardInput) => object;
   skillProposalCard: (input: SkillProposalCardInput) => object;
   skillResultCard: (input: SkillResultCardInput) => object;
   liveSessionProposalCard: (input: LiveSessionProposalCardInput) => object;

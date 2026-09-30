@@ -88,6 +88,8 @@ export function ChatPanel({
   onDelegateCancelTask,
   onSaveToNotes,
   onUnlink,
+  incognito,
+  onToggleIncognito,
 }: {
   items: ChatItem[];
   busy: boolean;
@@ -126,6 +128,9 @@ export function ChatPanel({
   onDelegateCancelTask: (id: string) => void;
   onSaveToNotes: () => void;
   onUnlink: () => void;
+  // Off the record: nothing from this chat is remembered at close.
+  incognito: boolean;
+  onToggleIncognito: () => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -268,6 +273,15 @@ export function ChatPanel({
           <span class={`bean-chat-state bean-chat-state--${status}`} />
           <span>{status}</span>
           <span class="bean-chat-meta-spacer" />
+          <button
+            type="button"
+            class={`bean-chip bean-chat-incognito${incognito ? " bean-chat-incognito--on" : ""}`}
+            aria-pressed={incognito}
+            title={incognito ? "This chat won't be remembered" : "Go off the record: this chat won't be remembered"}
+            onClick={onToggleIncognito}
+          >
+            🕶 {incognito ? "off the record" : "record"}
+          </button>
           {/* The linked-note chip replaces the model chip (mockup 1d) — both don't fit. */}
           {linkedNote ? (
             <span class="bean-chip bean-chat-notechip" title={`Saving from this chat updates "${linkedNote.title}" in place`}>

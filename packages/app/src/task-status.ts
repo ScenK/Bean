@@ -3,7 +3,7 @@
 // broken. Main owns the list and pushes the whole thing on every change.
 export interface TaskJob {
   id: string;
-  kind: "delegate" | "routine" | "chat" | "bot" | "reminder";
+  kind: "delegate" | "routine" | "chat" | "bot" | "reminder" | "memory";
   name: string;
   /** One-line status: latest delegate output line, or the routine's current step label. */
   line: string;

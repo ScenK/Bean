@@ -1,4 +1,4 @@
-import type { ProposedDelegate, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo } from "@bean/core";
+import type { ProposedDelegate, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, TurnSource } from "@bean/core";
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 // Renderer copies of core's SUPPORTED_IMAGE_MIMES / MAX_IMAGES_PER_MESSAGE (converse.ts) —
@@ -19,7 +19,8 @@ export type ChatItem =
   // `text` (what the model gets) still drives the history.
   // `images` are data URLs for attached-image thumbnails; presence also drives the
   // "[image attached]" history placeholder (the bytes go only to the current turn's API call).
-  | { kind: "user"; id: string; text: string; display?: string; images?: string[] }
+  // `source` = provenance for memory extraction: only "typed" turns are the user's own words.
+  | { kind: "user"; id: string; text: string; display?: string; images?: string[]; source?: TurnSource }
   // Same `display`/`text` split as above, in the other direction: an interrupted-run notice
   // needs its full instruction in `text` so a later "retry" has context (it drives history the
   // same as any other reply), but shows a short `display` instead of dumping that wall of text.

@@ -88,5 +88,8 @@ export interface BeanConfig {
   /** Opt-in: converse() may search the public web (OpenAI's built-in web_search) on every
    * surface. Off by default — each search is billed. Routines opt in per routine instead. */
   webSearch: boolean;
+  /** Default on: facts are remembered automatically at desktop chat close (undoable), and
+   * dream consolidation runs. Off = explicit remember/forget only — no confirm-card fallback. */
+  autoMemory: boolean;
   beanDir: string; // resolved absolute path to ~/.bean
 }
