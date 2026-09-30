@@ -43,3 +43,8 @@ Decisions worth keeping:
   capability the agent didn't already have. Sandboxing the builder is its own follow-up.
 - Known limits: command timeout SIGTERMs only the shell; `acli` PATH detection wasn't verified
   on a machine that has it.
+- **Watches are not time-accurate, by design (decided in PR #176):** the poll interval is measured
+  from `lastPoll`, and there is no time-of-day option. Anything that must run at a set time is a
+  `cron` routine. The picker stops at 12h (`WATCH_MINUTES`) because a failed poll only retries after
+  a full interval, so a daily watch turns one blip into a 24h+ delay. Don't add daily or
+  time-of-day watch options unless failed polls get a shorter retry first.

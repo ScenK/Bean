@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Routine } from "@bean/core";
-import { watchDashboardText, watchRowSub, watchStatusLine } from "../src/renderer/components/routines/watch-status.js";
+import { intervalShort, intervalText, watchDashboardText, watchRowSub, watchStatusLine } from "../src/renderer/components/routines/watch-status.js";
 import type { RoutineStateView } from "../src/ipc.js";
 
 const now = new Date("2026-09-28T12:00:00Z");
@@ -39,5 +39,21 @@ describe("watch status wording", () => {
     expect(watchDashboardText(r(), st({ lastPoll: ago(2), pollError: "x", pollFailures: 2 }), now)).toContain("watching");
     expect(watchDashboardText(r({ watch: { kind: "feed", url: "https://f" } }), st({ lastPoll: ago(18), pollError: "x", pollFailures: 3 }), now))
       .toBe("can't check the feed · failing since 18m ago");
+  });
+});
+
+describe("watch intervals", () => {
+  it("reads hour/day multiples as hours/days, anything else as minutes", () => {
+    expect([15, 60, 360, 1440, 2880, 90].map(intervalText)).toEqual(["15 min", "hour", "6 hours", "day", "2 days", "90 min"]);
+    expect([15, 360, 1440].map(intervalShort)).toEqual(["15m", "6h", "1d"]);
+  });
+
+  it("daily watches say so in the status line, row caption, and retry hint", () => {
+    const daily = r({ watch: { kind: "command", command: "c", everyMinutes: 1440 } });
+    expect(watchStatusLine(daily, st({ lastPoll: ago(2) }), now).text).toBe("Checks every day · last checked 2m ago · nothing new");
+    expect(watchRowSub(daily, st()).text).toBe("Watch · 1d · ⚡ todo-driven");
+    expect(watchStatusLine(daily, st({ lastPoll: ago(60), pollError: "x" }), now).text).toBe("Last check failed · 1h ago · retrying in 23h");
+    const hourly = r({ watch: { kind: "command", command: "c", everyMinutes: 120 } });
+    expect(watchStatusLine(hourly, st({ lastPoll: ago(31), pollError: "x" }), now).text).toBe("Last check failed · 31m ago · retrying in 1h 29m");
   });
 });
