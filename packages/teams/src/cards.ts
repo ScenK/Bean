@@ -52,7 +52,8 @@ export function proposalCard(input: ProposalCardInput): object {
         style: "positive",
         data: { beanAction: "confirm", proposalId: input.proposalId },
       },
-      { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-proposal", proposalId: input.proposalId } },
+      // associatedInputs "none": the required prompt input must not block Cancel.
+      { type: "Action.Submit", title: "Cancel", associatedInputs: "none", data: { beanAction: "cancel-proposal", proposalId: input.proposalId } },
     ],
   };
 }

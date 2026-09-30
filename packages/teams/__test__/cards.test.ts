@@ -34,6 +34,7 @@ test("proposal card's instruction is a required, capped, prefilled multiline inp
   expect(card.body.find((b) => b.id === "instruction")).toMatchObject({
     type: "Input.Text", isMultiline: true, isRequired: true, maxLength: 4000, value: "fix it",
   });
+  expect(JSON.stringify(card)).toContain('"associatedInputs":"none"');
 });
 
 test("proposal card pre-selects the resolved cli and model in ChoiceSets", () => {

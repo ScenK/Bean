@@ -145,7 +145,7 @@ async function delegateCardFor(pending: PendingProposal, sel: { cli?: string; mo
     proposalId: pending.id,
     projectName: projects.find((p) => p.path === pending.proposal.projectPath)?.name ?? pending.proposal.projectPath,
     skillName, instruction: pending.proposal.instruction, clis,
-    skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name })),
+    skills: skills.filter((s) => !s.hidden && s.enabled !== false).map((s) => ({ name: s.name })),
     models: availableModels(cliModels, clis),
     defaultCli: clis.find((c) => c === sel.cli) ?? pending.defaultCli,
     defaultModel: sel.model ?? pending.defaultModel,
