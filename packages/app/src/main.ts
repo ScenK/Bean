@@ -168,10 +168,33 @@ app.whenReady().then(async () => {
     }
     return items;
   };
+  // Open at Login: the OS login-item registration is the source of truth (no Bean state), read
+  // fresh on every rebuild so removing Bean in System Settings → Login Items shows here. Packaged
+  // only — dev would register node_modules' Electron.app — and only from /Applications, since a
+  // DMG or translocated copy registers a path that later disappears.
+  const buildLoginItemRows = (): MenuItemConstructorOptions[] => {
+    if (!app.isPackaged) return [];
+    if (!app.isInApplicationsFolder()) {
+      return [{ label: "Move Bean to Applications to open at login", icon: symbol("power"), enabled: false }];
+    }
+    const { openAtLogin, status } = app.getLoginItemSettings();
+    const rows: MenuItemConstructorOptions[] = [{
+      label: "Open at Login",
+      icon: symbol("power"),
+      type: "checkbox",
+      checked: openAtLogin && status !== "requires-approval",
+      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
+    }];
+    if (status === "requires-approval") {
+      rows.push({ label: "Approve Bean in System Settings → General → Login Items", enabled: false });
+    }
+    return rows;
+  };
   const buildTrayMenu = (): Menu => Menu.buildFromTemplate([
     { label: "Bring Bean Back", icon: symbol("location"), click: () => avatarControls.bringBack() },
     { label: "Settings", icon: symbol("gearshape"), accelerator: "Cmd+,", click: () => openComponent("settings") },
     { label: "Chat Bots", icon: symbol("message"), submenu: buildChatopsSubmenu() },
+    ...buildLoginItemRows(),
     { label: "Persona", icon: symbol("person.crop.circle"), accelerator: "Cmd+P", click: () => openComponent("persona") },
     { label: "About", icon: symbol("info.circle"), click: () => openComponent("about") },
     { label: "Exit", icon: symbol("rectangle.portrait.and.arrow.right"), accelerator: "Cmd+Q", click: () => app.quit() },
