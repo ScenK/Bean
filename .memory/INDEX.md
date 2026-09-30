@@ -27,6 +27,7 @@
 - [safety-updater-needs-original-fs.md](safety-updater-needs-original-fs.md) — Electron's patched `fs` treats `app.asar` as a read-only virtual dir, so recursive rm/cp over an app bundle fails silently; updater must use `original-fs` or `Bean.app.old` skeletons and temp-dir leaks persist.
 - [safety-dependabot-release-age-cooldown.md](safety-dependabot-release-age-cooldown.md) — pnpm 11 rejects lockfile entries younger than 24h, so dependabot PRs opened at release time fail CI and stay red; `minimumReleaseAge` (pnpm-workspace.yaml), dependabot's `cooldown`, and the CI sync step's error message must stay in step — don't "fix" it by disabling the policy.
 - [safety-release-attach-must-retry.md](safety-release-attach-must-retry.md) — `mac-installer.yml`'s "Attach to release" step must stay retrying + idempotent; v0.20.0/v0.20.1 both failed there on a transient GitHub API 503 after a fully successful build. Don't collapse it back to a single bare `gh release create`.
+- [safety-markdown-no-remote-images.md](safety-markdown-no-remote-images.md) — shared `Markdown` keeps an `<img>` only for inline raster `data:` URLs; remote/local images become alt text + link, because a rendered remote image is an exfiltration beacon (no CSP). Resolve images to data: URLs; don't widen the allowlist.
 
 ## convention — how we do things here
 
