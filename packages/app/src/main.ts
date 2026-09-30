@@ -8,7 +8,7 @@ import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { applyChatopsActivity, clearBotJobs } from "./chatops-activity.js";
 import { installAvatarControls } from "./avatar-window.js";
-import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell } from "electron";
+import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
@@ -44,6 +44,7 @@ import { createRoutineScheduler } from "./routine-scheduler.js";
 import { createRoutineBuilder } from "./routine-builder.js";
 import { detectTools, execWatchCommand, fetchText, sinkRecipients } from "./watch-io.js";
 import { createTaskStatus } from "./task-status.js";
+import { createKeepAwake, keepAwakeFile, loadKeepAwake, saveKeepAwake } from "./keep-awake.js";
 import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
 
 // dist/main.js sits next to package.json (esbuild output isn't relocated).
@@ -87,8 +88,15 @@ app.whenReady().then(async () => {
   app.on("before-quit", () => { quitting = true; });
   const avatar = createAvatarWindow();
   const avatarControls = installAvatarControls(avatar);
+  // Keep the Mac awake while Bean works, or always if the tray toggle is on (#188).
+  const keepAwake = createKeepAwake({
+    start: () => powerSaveBlocker.start("prevent-app-suspension"),
+    stop: (id) => powerSaveBlocker.stop(id),
+    onChange: (held) => tray?.setToolTip(held ? "Bean — keeping Mac awake" : "Bean"),
+  });
   // What Bean is working on, and what failed — pushed to the avatar's status bubbles (design 2a).
   const taskStatus = createTaskStatus((jobs) => {
+    keepAwake.setJobs(jobs); // before the avatar check: the hold must track work even without a window
     if (!avatar.isDestroyed()) avatar.webContents.send(IPC.taskStatus, jobs);
   });
   ipcMain.on(IPC.dismissTask, (_e, id: unknown) => { if (typeof id === "string") taskStatus.dismiss(id); });
@@ -190,10 +198,27 @@ app.whenReady().then(async () => {
     }
     return rows;
   };
+  // Always-on persists in userData; loaded right after the tray exists, outside the OpenAI-config
+  // `try`, so a bad API key can't leave it off. Writes are chained (fixed temp name, one writer).
+  const keepAwakePath = keepAwakeFile(app.getPath("userData"));
+  let keepAwakeSave: Promise<void> = Promise.resolve();
+  let keepAwakeTouched = false;
+  let keepAwakeSaved = false; // last value on disk; a failed save reverts to it
+  let keepAwakeRev = 0;
+  const toggleKeepAwake = (on: boolean): void => {
+    keepAwakeTouched = true;
+    keepAwake.setAlwaysOn(on);
+    const rev = ++keepAwakeRev;
+    keepAwakeSave = keepAwakeSave.then(() => saveKeepAwake(keepAwakePath, on)).then(() => { keepAwakeSaved = on; }, (e: unknown) => {
+      if (rev === keepAwakeRev) keepAwake.setAlwaysOn(keepAwakeSaved);
+      dialog.showErrorBox("Keep Mac Awake", `Couldn't save the setting: ${e instanceof Error ? e.message : String(e)}`);
+    });
+  };
   const buildTrayMenu = (): Menu => Menu.buildFromTemplate([
     { label: "Bring Bean Back", icon: symbol("location"), click: () => avatarControls.bringBack() },
     { label: "Settings", icon: symbol("gearshape"), accelerator: "Cmd+,", click: () => openComponent("settings") },
     { label: "Chat Bots", icon: symbol("message"), submenu: buildChatopsSubmenu() },
+    { label: "Keep Mac Awake", icon: symbol("cup.and.saucer"), type: "checkbox", checked: keepAwake.alwaysOn(), click: (item) => toggleKeepAwake(item.checked) },
     ...buildLoginItemRows(),
     { label: "Persona", icon: symbol("person.crop.circle"), accelerator: "Cmd+P", click: () => openComponent("persona") },
     { label: "About", icon: symbol("info.circle"), click: () => openComponent("about") },
@@ -202,7 +227,9 @@ app.whenReady().then(async () => {
   let trayMenu = buildTrayMenu();
   tray = new Tray(trayIcon);
   if (trayIcon.isEmpty()) tray.setTitle("🫘");
-  tray.setToolTip("Bean");
+  tray.setToolTip(keepAwake.held() ? "Bean — keeping Mac awake" : "Bean");
+  // Head of the save chain, so the persisted baseline is set before any early toggle's save runs.
+  keepAwakeSave = loadKeepAwake(keepAwakePath).then((on) => { keepAwakeSaved = on; if (!keepAwakeTouched) keepAwake.setAlwaysOn(on); });
   // A hidden avatar (tucked away by Cmd+W) is re-summoned by the first tray click; when the
   // bean is already visible, the click pops the menu as usual.
   tray.on("click", () => {
