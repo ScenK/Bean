@@ -26,6 +26,26 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
   INSERT INTO memories_fts(rowid, text) VALUES (new.rowid, new.text);
 END;
 
+-- Dream bookkeeping (memory/dream.ts): lastDreamAt, the lastDream digest, and the dreamLease
+-- that keeps two processes/triggers from consolidating at once. Plain KV, JSON values.
+CREATE TABLE IF NOT EXISTS memory_meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+-- Before/after images of each dream run, per merge/drop group, for Undo last dream and Details.
+-- Pruned after 30 days inside the next dream.
+CREATE TABLE IF NOT EXISTS memories_history (
+  run_id       TEXT NOT NULL,
+  grp          INTEGER NOT NULL,
+  phase        TEXT NOT NULL CHECK (phase IN ('before', 'after')),
+  memory_id    TEXT NOT NULL,
+  text         TEXT NOT NULL,
+  project_path TEXT,
+  created_at   TEXT NOT NULL,
+  at           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS memories_history_run ON memories_history(run_id);
+
 CREATE TABLE IF NOT EXISTS notes (
   slug    TEXT PRIMARY KEY,
   title   TEXT NOT NULL,

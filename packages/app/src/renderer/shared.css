@@ -1181,6 +1181,7 @@ button, input, textarea, select, a {
 .bean-memory-item { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
 .bean-memory-just { border: 1px solid var(--bean-control-border); border-radius: 8px; padding: 2px 8px 4px; margin: 6px 0 10px; }
 .bean-memory-just-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bean-memory-dream-row { font-size: 12px; color: var(--bean-text-dim); padding: 2px 0 4px; }
 .bean-memory-input { flex: 1; }
 .bean-memory-del { border: none; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; color: var(--bean-text-dim); }
 .bean-memory-del:hover { color: var(--bean-text); }

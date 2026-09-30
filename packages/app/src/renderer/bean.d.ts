@@ -1,6 +1,6 @@
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
-  Memory, ChatTurn, Note, NoteDraft, AvailableModel, Routine, TodoItem,
+  Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem,
   RoutineBrief, RoutineWatch, WatchItem,
 } from "@bean/core";
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
@@ -106,6 +106,10 @@ declare global {
       rememberOnClose(transcript: ChatTurn[], opts: { incognito: boolean }): void;
       getMemoryBatch(): Promise<MemoryBatch | undefined>;
       undoMemoryBatch(): Promise<number>;
+      getLastDream(): Promise<DreamDigest | undefined>;
+      /** Restores the last dream run; `skipped` groups were edited since and kept. */
+      undoLastDream(): Promise<{ restored: number; skipped: number }>;
+      dreamDetails(): Promise<{ before: string[]; after?: string }[]>;
       onReviewBeforeClose(cb: () => void): void;
       allowChatClose(): void;
       chatopsStatus(): Promise<Record<ChatopsBot, ChatopsState>>;

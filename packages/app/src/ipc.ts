@@ -5,7 +5,7 @@ import {
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
   type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
-  type TodoItem, type CliModels, type RoutineBrief, type RoutineWatch, type WatchItem,
+  type TodoItem, type CliModels, type DreamDigest, type RoutineBrief, type RoutineWatch, type WatchItem,
 } from "@bean/core";
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { WatchCheckResult } from "./routine-scheduler.js";
@@ -411,8 +411,12 @@ export interface MemoryHandlerDeps {
   getModel: () => string;
   /** Config `autoMemory`, read per close so a Settings toggle applies without restart. */
   autoMemory: () => boolean;
-  /** A non-empty auto-remember batch landed — main shows the avatar bubble. */
-  onMemoryBatch?: (batch: Memory[]) => void;
+  /** A non-empty auto-remember batch landed — main shows the avatar bubble (and checks dream).
+   * `pendingIds` reads the batch whose Undo is live *now* (a later close may have replaced it). */
+  onMemoryBatch?: (batch: Memory[], pendingIds: () => string[]) => void;
+  getLastDream: (file: string) => Promise<DreamDigest | undefined>;
+  restoreDreamRun: (file: string, runId: string) => Promise<{ restored: number; skipped: number }>;
+  dreamDetails: (file: string, runId: string) => Promise<{ before: string[]; after?: string }[]>;
   dbFile: string;
   projectsFile: string;
 }
@@ -439,12 +443,30 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       if (candidates.length === 0) return [];
       const at = new Date().toISOString();
       const batch: Memory[] = candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at }));
-      await deps.appendMemories(deps.dbFile, batch);
+      // Pending before the insert lands, so a dream snapshot can never see these rows without
+      // also seeing them as the live Undo batch it must leave alone.
+      const prevBatch = lastBatch;
       lastBatch = { ids: batch.map((m) => m.id), at };
-      deps.onMemoryBatch?.(batch);
+      try {
+        await deps.appendMemories(deps.dbFile, batch);
+      } catch (err) {
+        lastBatch = prevBatch;
+        throw err;
+      }
+      deps.onMemoryBatch?.(batch, () => lastBatch?.ids ?? []);
       return batch;
     },
     batch: (): MemoryBatch | undefined => lastBatch,
+    lastDream: (): Promise<DreamDigest | undefined> => deps.getLastDream(deps.dbFile),
+    /** Undo last dream: restores only groups untouched since; `skipped` = kept user edits. */
+    undoLastDream: async (): Promise<{ restored: number; skipped: number }> => {
+      const d = await deps.getLastDream(deps.dbFile);
+      return d && !d.undone ? deps.restoreDreamRun(deps.dbFile, d.runId) : { restored: 0, skipped: 0 };
+    },
+    dreamDetails: async (): Promise<{ before: string[]; after?: string }[]> => {
+      const d = await deps.getLastDream(deps.dbFile);
+      return d ? deps.dreamDetails(deps.dbFile, d.runId) : [];
+    },
     /** Deletes exactly the last batch's ids (rows edited since are still that batch's rows). */
     undoBatch: async (): Promise<number> => {
       if (!lastBatch) return 0;
@@ -661,6 +683,9 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   extractMemories: MemoryHandlerDeps["extractMemories"];
   autoMemory: MemoryHandlerDeps["autoMemory"];
   onMemoryBatch?: MemoryHandlerDeps["onMemoryBatch"];
+  getLastDream: MemoryHandlerDeps["getLastDream"];
+  restoreDreamRun: MemoryHandlerDeps["restoreDreamRun"];
+  dreamDetails: MemoryHandlerDeps["dreamDetails"];
   loadNotes: NotesHandlerDeps["loadNotes"];
   saveNote: NotesHandlerDeps["saveNote"];
   deleteNote: NotesHandlerDeps["deleteNote"];
@@ -807,6 +832,9 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   });
   ipcMain.handle(IPC.getMemoryBatch, () => memoryHandlers.batch());
   ipcMain.handle(IPC.undoMemoryBatch, () => memoryHandlers.undoBatch());
+  ipcMain.handle(IPC.getLastDream, () => memoryHandlers.lastDream());
+  ipcMain.handle(IPC.undoLastDream, () => memoryHandlers.undoLastDream());
+  ipcMain.handle(IPC.dreamDetails, () => memoryHandlers.dreamDetails());
 
   const notesHandlers = buildNotesHandlers(deps);
   ipcMain.handle(IPC.listNotes, () => notesHandlers.list());

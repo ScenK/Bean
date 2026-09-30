@@ -466,6 +466,9 @@ function memoryHandlersFor(over: Partial<Parameters<typeof buildMemoryHandlers>[
     getModel: () => "m",
     autoMemory: () => true,
     onMemoryBatch: (b) => { batches.push(b); },
+    getLastDream: async () => undefined,
+    restoreDreamRun: async () => ({ restored: 0, skipped: 0 }),
+    dreamDetails: async () => [],
     dbFile: "/b/bean.db",
     projectsFile: "/b/projects.json",
     ...over,
@@ -503,6 +506,22 @@ test("autoMemory off means no background extraction", async () => {
   expect(await handlers.rememberOnClose(typed, {})).toEqual([]);
   expect(extracted).toBe(false);
   expect(appended).toEqual([]);
+});
+
+test("Undo last dream restores the recorded run once; an undone or absent run is a no-op", async () => {
+  const restored: string[] = [];
+  let digest: { runId: string; at: string; merged: number; rewritten: number; removed: number; undone?: boolean } | undefined =
+    { runId: "r1", at: "2026-09-01T00:00:00.000Z", merged: 1, rewritten: 0, removed: 2 };
+  const { handlers } = memoryHandlersFor({
+    getLastDream: async () => digest,
+    restoreDreamRun: async (_f, runId) => { restored.push(runId); return { restored: 2, skipped: 1 }; },
+  });
+  expect(await handlers.undoLastDream()).toEqual({ restored: 2, skipped: 1 });
+  digest = { ...digest!, undone: true };
+  expect(await handlers.undoLastDream()).toEqual({ restored: 0, skipped: 0 });
+  digest = undefined;
+  expect(await handlers.undoLastDream()).toEqual({ restored: 0, skipped: 0 });
+  expect(restored).toEqual(["r1"]);
 });
 
 test("no candidates means no batch and no bubble", async () => {
