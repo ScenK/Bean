@@ -1,7 +1,7 @@
 import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, appendMemories, deleteMemories,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
@@ -114,6 +114,7 @@ const bot = buildTeamsBot({
   proposals: new ProposalStore(),
   noteProposals: new NoteProposalStore(),
   saveNote: (draft) => saveNote(dbFile(dir), draft),
+  saveNoteImage: (bytes) => saveNoteImage(dbFile(dir), bytes),
   searchNotes: (query) => searchNotes(dbFile(dir), query),
   todoProposals: new TodoProposalStore(),
   queueTodo: async (routine, text) => {

@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { Markdown } from "../../shared/Markdown.js";
+import { storeNoteImageFiles, useResolvedNoteBody } from "../../shared/note-images.js";
+import { imageFileGuard } from "../../shared/chat-types.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import type { Note, Project } from "@bean/core";
 
@@ -25,6 +27,13 @@ function loadCollapsed(): string[] {
   }
 }
 
+/** A note body rendered with its bean-image refs resolved to the stored images. */
+function NoteBody({ body, onToggleTask }: { body: string; onToggleTask?: (index: number) => void }) {
+  return <Markdown text={useResolvedNoteBody(body)} onToggleTask={onToggleTask} />;
+}
+
+const imageFiles = (files: Iterable<File> | undefined): File[] => [...(files ?? [])].filter((f) => f.type.startsWith("image/"));
+
 // Reuses the Skills panel anatomy (and its bean-skills-* styles): list left, detail right.
 export function NotesPanel() {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -38,6 +47,9 @@ export function NotesPanel() {
   const [history, setHistory] = useState<Note[] | undefined>(undefined);
   const [viewVersion, setViewVersion] = useState<Note | undefined>(undefined);
   const [collapsed, setCollapsed] = useState<string[]>(loadCollapsed);
+  // Bumped whenever the editor switches drafts, so an image upload that finishes after the
+  // user moved on can't splice its ref into a different note at stale offsets.
+  const draftGen = useRef(0);
 
   const refresh = async (): Promise<void> => {
     const [nextNotes, nextProjects] = await Promise.all([
@@ -83,7 +95,7 @@ export function NotesPanel() {
   }, [filtered, projects]);
 
   const snippet = (body: string): string => {
-    const line = body.split("\n").map((l) => l.trim()).find((l) => l.length > 0 && !l.startsWith("#")) ?? "";
+    const line = body.split("\n").map((l) => l.trim()).find((l) => l.length > 0 && !l.startsWith("#") && !l.startsWith("![")) ?? "";
     return line.length > 90 ? `${line.slice(0, 90)}…` : line;
   };
 
@@ -118,6 +130,7 @@ export function NotesPanel() {
   };
 
   const select = (slug: string): void => {
+    draftGen.current += 1;
     setSelectedSlug(slug); setMode("view"); setSaveError(undefined);
     setHistory(undefined); setViewVersion(undefined);
   };
@@ -152,6 +165,7 @@ export function NotesPanel() {
 
   const startEdit = (): void => {
     if (!selected) return;
+    draftGen.current += 1;
     setDraftTitle(selected.title);
     setDraftBody(selected.body);
     setSaveError(undefined);
@@ -159,6 +173,7 @@ export function NotesPanel() {
   };
 
   const startAdd = (): void => {
+    draftGen.current += 1;
     setDraftTitle("");
     setDraftBody("");
     setSaveError(undefined);
@@ -283,6 +298,19 @@ export function NotesPanel() {
     );
   };
 
+  // Paste/drop an image into the editor: bytes go to note_images, a bean-image ref goes in at
+  // the cursor. Non-image pastes/drops fall through to the textarea's default behavior.
+  const insertImages = async (el: HTMLTextAreaElement, files: File[]): Promise<void> => {
+    const { selectionStart: start, selectionEnd: end } = el;
+    const gen = draftGen.current;
+    const { refs, error } = await storeNoteImageFiles(files, (type, size) => imageFileGuard(type, size));
+    if (gen !== draftGen.current) return;
+    setSaveError(error);
+    if (refs.length === 0) return;
+    const text = `${refs.join("\n")}\n`;
+    setDraftBody((prev) => prev.slice(0, start) + text + prev.slice(end));
+  };
+
   const editor = (
     <>
       <input
@@ -294,14 +322,28 @@ export function NotesPanel() {
       />
       <textarea
         class="bean-skills-editor"
-        placeholder={"## Summary\n\n## Key ideas\n\n## Open questions\n- [ ] …"}
+        placeholder={"## Summary\n\n## Key ideas\n\n## Open questions\n- [ ] …\n\nPaste or drop images"}
         value={draftBody}
         onInput={(e) => setDraftBody((e.target as HTMLTextAreaElement).value)}
+        onPaste={(e) => {
+          const files = imageFiles([...(e.clipboardData?.items ?? [])].map((i) => i.getAsFile()).filter((f): f is File => f !== null));
+          if (files.length === 0) return;
+          e.preventDefault();
+          void insertImages(e.currentTarget as HTMLTextAreaElement, files);
+        }}
+        onDragOver={(e) => { if (e.dataTransfer?.types.includes("Files")) e.preventDefault(); }}
+        onDrop={(e) => {
+          // Always swallow file drops: the default would navigate the window to the file.
+          if (!e.dataTransfer?.types.includes("Files")) return;
+          e.preventDefault();
+          const files = imageFiles(e.dataTransfer.files);
+          if (files.length > 0) void insertImages(e.currentTarget as HTMLTextAreaElement, files);
+        }}
       />
       {saveError ? <div class="bean-status bean-status--error">{saveError}</div> : null}
       <div class="bean-card-actions">
         <button type="button" class="bean-btn" onClick={() => void save()}>Save</button>
-        <button type="button" class="bean-btn bean-btn--ghost" onClick={() => { setMode("view"); setSaveError(undefined); }}>Cancel</button>
+        <button type="button" class="bean-btn bean-btn--ghost" onClick={() => { draftGen.current += 1; setMode("view"); setSaveError(undefined); }}>Cancel</button>
       </div>
     </>
   );
@@ -441,7 +483,7 @@ export function NotesPanel() {
                   Viewing v{viewVersion.version} — "{viewVersion.title}"
                 </div>
                 <div class="bean-skills-preview-box bean-notes-body">
-                  <Markdown text={viewVersion.body} />
+                  <NoteBody body={viewVersion.body} />
                 </div>
                 <div class="bean-card-actions">
                   <button type="button" class="bean-btn" onClick={() => void restoreVersion(viewVersion)}>
@@ -454,7 +496,7 @@ export function NotesPanel() {
               </>
             ) : (
               <div class="bean-skills-preview-box bean-notes-body">
-                <Markdown text={selected.body} onToggleTask={(i) => void toggleTask(i)} />
+                <NoteBody body={selected.body} onToggleTask={(i) => void toggleTask(i)} />
               </div>
             )}
 

@@ -657,6 +657,59 @@ test("save-note saves the draft, updates the card, and confirms", async () => {
   expect(effects.posted.some((p) => p.includes('Saved note "Our chat"'))).toBe(true);
 });
 
+const pic = { data: "iVBORw0KGgo=", mimeType: "image/png" };
+const imageSaver = () => {
+  const stored: string[] = [];
+  const saveNoteImage = async (bytes: Uint8Array): Promise<string> => {
+    stored.push(Buffer.from(bytes).toString("base64"));
+    return `00000000-0000-4000-8000-00000000000${stored.length}`;
+  };
+  return { stored, saveNoteImage };
+};
+
+test("save-note stores this turn's images and appends refs bound to the stored ids", async () => {
+  const { stored, saveNoteImage } = imageSaver();
+  const { deps, savedNotes } = makeDeps({ chat: noteChat, saveNoteImage });
+  const effects = fx();
+  const bot = buildTeamsBot(deps);
+  await bot.onMessage({ ...msg, images: [pic, pic] }, effects);
+  expect(JSON.stringify(effects.cards[0])).toContain('"imageCount":2');
+  const id = /"proposalId":"(note-\d+)"/.exec(JSON.stringify(effects.cards[0]))![1]!;
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "save-note", proposalId: id } }, effects);
+  expect(stored).toEqual([pic.data, pic.data]);
+  expect(savedNotes[0]!.body).toBe(
+    "## Summary\n\nwe talked\n\n![image](bean-image:00000000-0000-4000-8000-000000000001)\n" +
+      "![image](bean-image:00000000-0000-4000-8000-000000000002)\n",
+  );
+});
+
+test("a follow-up 'save that image' turn carries the conversation's recent images", async () => {
+  const { stored, saveNoteImage } = imageSaver();
+  let calls = 0;
+  const chat: TeamsBotDeps["chat"] = async (args) => (++calls === 1 ? { content: "nice pic", toolCalls: [] } : noteChat(args));
+  const { deps, savedNotes } = makeDeps({ chat, saveNoteImage });
+  const effects = fx();
+  const bot = buildTeamsBot(deps);
+  await bot.onMessage({ ...msg, images: [pic] }, effects);
+  await bot.onMessage({ ...msg, text: "save that image to a note" }, effects);
+  const id = /"proposalId":"(note-\d+)"/.exec(JSON.stringify(effects.cards.at(-1)))![1]!;
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "save-note", proposalId: id } }, effects);
+  expect(stored).toHaveLength(1);
+  expect(savedNotes[0]!.body).toContain("bean-image:00000000-0000-4000-8000-000000000001");
+});
+
+test("save-note tapped from another conversation saves nothing", async () => {
+  const { stored, saveNoteImage } = imageSaver();
+  const { deps, savedNotes } = makeDeps({ chat: noteChat, saveNoteImage });
+  const effects = fx();
+  const bot = buildTeamsBot(deps);
+  await bot.onMessage({ ...msg, images: [pic] }, effects);
+  const id = /"proposalId":"(note-\d+)"/.exec(JSON.stringify(effects.cards[0]))![1]!;
+  await bot.onCardAction({ conversationId: "elsewhere", fromName: "eve", value: { beanAction: "save-note", proposalId: id } }, effects);
+  expect(savedNotes).toHaveLength(0);
+  expect(stored).toHaveLength(0);
+});
+
 test("cancel-note updates the card to cancelled without saving", async () => {
   const { deps, savedNotes } = makeDeps({ chat: noteChat });
   const effects = fx();

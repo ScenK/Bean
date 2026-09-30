@@ -17,7 +17,7 @@ import {
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
   maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, type DreamDigest,
   loadReminders, saveReminders, dueReminders, extractPageText,
-  loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, searchNotes, retrieveNoteTool, detectClis, loginShellPath, deliver,
+  loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate,
   composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
@@ -787,7 +787,7 @@ app.whenReady().then(async () => {
           }
         })().catch((err) => console.error("memory bubble/dream failed:", err));
       },
-      loadNotes, saveNote, deleteNote, starNote, loadNoteHistory,
+      loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage,
       dbFile: dbFile(dir),
       chat: runtime.chat,
       converse: runtime.converse,
@@ -803,6 +803,7 @@ app.whenReady().then(async () => {
         // ponytail: imageModel read at boot; move into runtime-config if a Settings field ever exists
         getModel: () => cfg.imageModel,
         imagesDir: imagesDir(dir),
+        saveNoteImage: (bytes) => saveNoteImage(dbFile(dir), bytes),
         onStart: () => {
           componentWindows.get("chat")?.webContents.send(IPC.chatImageProgress);
           if (chatTurnId) taskStatus.upsert(chatTurnId, { line: "Drawing an image…" });

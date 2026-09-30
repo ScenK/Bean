@@ -1364,6 +1364,8 @@ button, input, textarea, select, a {
 }
 .bean-md ul, .bean-md ol { padding-left: 20px; }
 .bean-md li { margin: 2px 0; }
+.bean-md img { max-width: 100%; height: auto; }
+.bean-card-check { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--bean-text-dim); }
 .bean-md code {
   font: 12px ui-monospace, monospace;
   background: var(--bean-surface-2);

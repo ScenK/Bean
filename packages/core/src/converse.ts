@@ -179,7 +179,9 @@ function proposeNoteTool(projects: Project[], linkedNote?: LinkedNote): ToolSpec
       description:
         "the note as markdown with exactly these sections: '## Summary' (a short paragraph), " +
         "'## Key ideas' (bullets), and — only if threads are unresolved — '## Open questions' " +
-        "with one unchecked '- [ ]' item per question",
+        "with one unchecked '- [ ]' item per question. To embed an image generated in this " +
+        "conversation, add the ![...](bean-image:<id>) line its generate_image result gave; keep " +
+        "existing bean-image lines verbatim",
     },
   };
   if (projects.length > 0) {

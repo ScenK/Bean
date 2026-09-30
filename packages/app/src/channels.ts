@@ -101,6 +101,8 @@ export const IPC = {
   deleteNote: "bean:delete-note",
   starNote: "bean:star-note",
   noteHistory: "bean:note-history",
+  saveNoteImage: "bean:save-note-image",
+  noteImage: "bean:note-image",
   listMemories: "bean:list-memories",
   appendMemories: "bean:append-memories",
   updateMemory: "bean:update-memory",

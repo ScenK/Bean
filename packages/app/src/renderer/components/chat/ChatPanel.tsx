@@ -117,7 +117,7 @@ export function ChatPanel({
     choice: { cli?: CliName; projectPath?: string; model?: string },
   ) => void;
   onCancel: (id: string) => void;
-  onNoteSave: (id: string, edited: ProposedNote, asNew: boolean) => void;
+  onNoteSave: (id: string, edited: ProposedNote, asNew: boolean, images?: string[]) => void;
   onNoteDismiss: (id: string) => void;
   onSkillSave: (id: string, edited: ProposedSkill) => void;
   onSkillDismiss: (id: string) => void;
@@ -334,7 +334,8 @@ export function ChatPanel({
                 note={it.note}
                 state={it.state}
                 linkedVersion={it.note.slug !== undefined && it.note.slug === linkedNote?.slug ? linkedNote.version : undefined}
-                onSave={(edited, asNew) => onNoteSave(it.id, edited, asNew)}
+                images={it.images}
+                onSave={(edited, asNew, images) => onNoteSave(it.id, edited, asNew, images)}
                 onDismiss={() => onNoteDismiss(it.id)}
               />
             );

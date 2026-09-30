@@ -1,7 +1,7 @@
 import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, searchNotes, appendMemories, deleteMemories,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
   detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
@@ -32,6 +32,7 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "discord", onActivity:
 // Hoisted out of the bot deps so the outbox loop's maybeCompact can reuse the same client.
 const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reasoningEffort);
 const conversations = new ConversationStore(dbFile(dir));
+const noteProposals = new NoteProposalStore();
 const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink });
 // Hoisted (not inline in deps) so the /live-session card's project/model dropdowns and the
 // edit-prompt modal can read and mutate the pending proposal before Start claims it.
@@ -59,8 +60,9 @@ const bot = buildTeamsBot({
   cliModels,
   runs,
   proposals,
-  noteProposals: new NoteProposalStore(),
+  noteProposals,
   saveNote: (draft) => saveNote(dbFile(dir), draft),
+  saveNoteImage: (bytes) => saveNoteImage(dbFile(dir), bytes),
   searchNotes: (query) => searchNotes(dbFile(dir), query),
   todoProposals: new TodoProposalStore(),
   queueTodo: async (routine, text) => {
@@ -261,7 +263,10 @@ client.on("messageCreate", async (message) => {
         const res = await fetch(att.url);
         // A CDN error page base64'd as image bytes would poison the vision call.
         if (!res.ok) { console.error(`attachment fetch failed: ${res.status}`); continue; }
-        images.push({ data: Buffer.from(await res.arrayBuffer()).toString("base64"), mimeType: mime });
+        // The declared att.size is Discord's claim; the downloaded bytes are what we'd keep.
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.byteLength > 10 * 1024 * 1024) continue;
+        images.push({ data: buf.toString("base64"), mimeType: mime });
       } catch (err) {
         console.error("attachment fetch failed:", err);
       }
@@ -330,6 +335,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       const channelId = interaction.channelId;
       if (interaction.commandName === "new") {
         conversations.clear(channelId);
+        noteProposals.forgetImages(channelId);
         conversations.setAmbientCutoff(channelId, Date.now()); // fence pre-reset chatter out of ambient
         await interaction.reply({ content: "Fresh start — I've cleared this conversation's context.", ephemeral: true });
         return;

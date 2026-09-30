@@ -30,6 +30,25 @@ describe("makeGenerateImageTool", () => {
     expect(result).toContain(paths[0]!);
   });
 
+  it("stores the image for notes and hands the model a bean-image ref; a failed store only drops the hint", async () => {
+    const saved: string[] = [];
+    const ok = makeGenerateImageTool({
+      generate: async () => ({ b64: Buffer.from("png-bytes").toString("base64") }),
+      model: "m", imagesDir: dir,
+      saveNoteImage: async (b) => { saved.push(Buffer.from(b).toString()); return "abc-id"; },
+    });
+    expect(await ok.tool.run({ prompt: "cat" })).toContain("![short description](bean-image:abc-id)");
+    expect(saved).toEqual(["png-bytes"]);
+    const failing = makeGenerateImageTool({
+      generate: async () => ({ b64: "eA==" }), model: "m", imagesDir: dir,
+      saveNoteImage: async () => { throw new Error("db locked"); },
+    });
+    const result = await failing.tool.run({ prompt: "cat" });
+    expect(result).not.toContain("error");
+    expect(result).not.toContain("bean-image:");
+    expect(failing.paths).toHaveLength(1);
+  });
+
   it("returns an error string instead of throwing when the API fails", async () => {
     const { tool, paths } = makeGenerateImageTool({
       generate: async () => { throw new Error("quota exceeded"); },

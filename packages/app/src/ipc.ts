@@ -1,5 +1,6 @@
 import {
   route, converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, type ImageGenDeps,
+  attachNoteImages, MAX_NOTE_IMAGE_BYTES, type ImageAttachment,
   availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
@@ -187,7 +188,10 @@ export interface ChatHandlerDeps {
   loadRoutines?: () => Promise<Routine[]>;
   /** Enables the generate_image action tool. getModel (not a value): imageModel may live
    * behind runtime config someday; onStart drives the chat window's 🎨 working indicator. */
-  imageGen?: { generate: ImageGenDeps["generate"]; getModel: () => string; imagesDir: string; onStart?: () => void };
+  imageGen?: {
+    generate: ImageGenDeps["generate"]; getModel: () => string; imagesDir: string; onStart?: () => void;
+    saveNoteImage?: ImageGenDeps["saveNoteImage"];
+  };
 }
 
 export function buildChatHandler(deps: ChatHandlerDeps) {
@@ -208,6 +212,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
           model: deps.imageGen.getModel(),
           imagesDir: deps.imageGen.imagesDir,
           onStart: deps.imageGen.onStart,
+          saveNoteImage: deps.imageGen.saveNoteImage,
         })
       : undefined;
     // Direct remember/forget only on a turn the user typed — never on a delegate loopback or
@@ -494,13 +499,37 @@ export interface NotesHandlerDeps {
   deleteNote: (file: string, slug: string) => Promise<void>;
   starNote: (file: string, slug: string, starred: boolean) => Promise<void>;
   loadNoteHistory: (file: string, slug: string) => Promise<Note[]>;
+  saveNoteImage: (file: string, bytes: Uint8Array) => Promise<string>;
+  loadNoteImage: (file: string, id: string) => Promise<{ mime: string; bytes: Uint8Array } | undefined>;
   dbFile: string;
 }
 
 export function buildNotesHandlers(deps: NotesHandlerDeps) {
+  const storeImage = (bytes: Uint8Array): Promise<string> => deps.saveNoteImage(deps.dbFile, bytes);
   return {
     list: (): Promise<Note[]> => deps.loadNotes(deps.dbFile),
-    save: (draft: NoteDraft): Promise<string> => deps.saveNote(deps.dbFile, draft),
+    // `images` = the chat's latest attached images carried into a desktop propose_note save;
+    // core stores them and appends code-written bean-image refs (limits re-checked there).
+    save: async (draft: NoteDraft, images?: unknown): Promise<string> => {
+      const valid = Array.isArray(images)
+        ? images.filter((i): i is ImageAttachment => typeof (i as ImageAttachment)?.data === "string")
+        : [];
+      const body = valid.length > 0 ? await attachNoteImages(storeImage, draft.body, valid) : draft.body;
+      return deps.saveNote(deps.dbFile, { ...draft, body });
+    },
+    // Trust boundary for editor paste/drop: bytes only, never a path; size capped here before
+    // storing, format checked by magic bytes in core.
+    saveImage: (bytes: unknown): Promise<string> => {
+      if (!(bytes instanceof Uint8Array)) return Promise.reject(new Error("note image must be raw bytes"));
+      if (bytes.byteLength > MAX_NOTE_IMAGE_BYTES) return Promise.reject(new Error("image is larger than 10 MB"));
+      return storeImage(bytes);
+    },
+    /** A stored note image as a data: URL, or undefined for an unknown/malformed id. */
+    image: async (id: unknown): Promise<string | undefined> => {
+      if (typeof id !== "string") return undefined;
+      const img = await deps.loadNoteImage(deps.dbFile, id);
+      return img ? `data:${img.mime};base64,${Buffer.from(img.bytes).toString("base64")}` : undefined;
+    },
     delete: (slug: string): Promise<void> => deps.deleteNote(deps.dbFile, slug),
     star: (slug: string, starred: boolean): Promise<void> => deps.starNote(deps.dbFile, slug, starred),
     history: (slug: string): Promise<Note[]> => deps.loadNoteHistory(deps.dbFile, slug),
@@ -691,6 +720,8 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   deleteNote: NotesHandlerDeps["deleteNote"];
   starNote: NotesHandlerDeps["starNote"];
   loadNoteHistory: NotesHandlerDeps["loadNoteHistory"];
+  saveNoteImage: NotesHandlerDeps["saveNoteImage"];
+  loadNoteImage: NotesHandlerDeps["loadNoteImage"];
   dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
@@ -838,7 +869,9 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
 
   const notesHandlers = buildNotesHandlers(deps);
   ipcMain.handle(IPC.listNotes, () => notesHandlers.list());
-  ipcMain.handle(IPC.saveNote, (_e, draft: NoteDraft) => notesHandlers.save(draft));
+  ipcMain.handle(IPC.saveNote, (_e, draft: NoteDraft, images?: unknown) => notesHandlers.save(draft, images));
+  ipcMain.handle(IPC.saveNoteImage, (_e, bytes: unknown) => notesHandlers.saveImage(bytes));
+  ipcMain.handle(IPC.noteImage, (_e, id: unknown) => notesHandlers.image(id));
   ipcMain.handle(IPC.deleteNote, (_e, slug: string) => notesHandlers.delete(slug));
   // === true, not a cast: the renderer's types are erased by the time a value crosses IPC,
   // and every truthy payload ("false" included) would otherwise star the note.
