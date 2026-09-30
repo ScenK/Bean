@@ -30,6 +30,17 @@ const baseDeps = (chat: RoutineRunnerDeps["chat"], over: Partial<RoutineRunnerDe
 });
 
 describe("runRoutine", () => {
+  it("passes a delegate step's timeoutMinutes through to the delegate impl", async () => {
+    const seen: (number | undefined)[] = [];
+    await runRoutine(routine([
+      { kind: "delegate", skill: "s", timeoutMinutes: 180, instruction: "long" },
+      { kind: "delegate", skill: "s", instruction: "short" },
+    ]), baseDeps(async () => ({ content: "digest", toolCalls: [] }), {
+      delegate: async (req) => { seen.push(req.timeoutMinutes); return "ok"; },
+    }));
+    expect(seen).toEqual([180, undefined]);
+  });
+
   it("reports each step index via onStep as it starts", async () => {
     const { fn } = chatStub([{ content: "a" }, { content: "b" }, { content: "the digest" }]);
     const seen: number[] = [];
