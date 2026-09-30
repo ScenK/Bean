@@ -53,6 +53,12 @@ describe("describeRoutineError", () => {
     expect(describeRoutineError(routine({
       steps: [{ kind: "delegate", skill: "", instruction: "go" }],
     }))).toMatch(/step 1 \(delegate\) needs a skill/);
+    expect(describeRoutineError(routine({
+      steps: [{ kind: "delegate", skill: "s", timeoutMinutes: 0, instruction: "go" }],
+    }))).toMatch(/step 1 timeout must be a whole number/);
+    expect(describeRoutineError(routine({
+      steps: [{ kind: "delegate", skill: "s", timeoutMinutes: 180, instruction: "go" }],
+    }))).toBeNull();
     expect(describeRoutineError(routine({ sinks: { chatops: [{ transport: "slack" }] } }))).toMatch(/chatops sink 1 needs transport/);
   });
 });

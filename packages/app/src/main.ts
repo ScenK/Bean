@@ -598,7 +598,7 @@ app.whenReady().then(async () => {
             onError: (err) => { cleanup(); reject(err); },
           },
           resolvedPathSpawnFn(resolvedPath),
-          ROUTINE_STEP_TIMEOUT_MS,
+          req.timeoutMinutes ? req.timeoutMinutes * 60_000 : ROUTINE_STEP_TIMEOUT_MS,
         );
       });
 

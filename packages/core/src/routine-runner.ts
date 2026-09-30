@@ -9,6 +9,8 @@ export interface DelegateStepRequest {
   projectPath?: string; // undefined = no-project scratch run (caller supplies the scratch dir)
   instruction: string;
   model?: string;
+  /** The step's own timeout override; undefined = the impl's default. */
+  timeoutMinutes?: number;
   priorOutputs: string;
   /** Watch-fired todo runs: the queued todo's id. A project-less step runs in its own scratch
    * subdir (removed afterwards) and a project step must win the cross-process run reservation. */
@@ -180,6 +182,7 @@ async function runSteps(
             projectPath: effective.project,
             instruction: effective.instruction,
             model: effective.model,
+            ...(effective.timeoutMinutes ? { timeoutMinutes: effective.timeoutMinutes } : {}),
             priorOutputs: prior,
             ...(todoId ? { todoId } : {}),
           })

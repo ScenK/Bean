@@ -9,7 +9,9 @@ export interface RoutineChatopsSink { transport: "teams" | "discord"; channel?: 
 export interface RoutineSinks { chatops?: RoutineChatopsSink[]; note?: boolean; notify?: boolean }
 
 export type RoutineStep =
-  | { kind: "delegate"; skill: string; project?: string; model?: string; instruction: string }
+  /** `timeoutMinutes` overrides the default delegate step timeout (ROUTINE_STEP_TIMEOUT_MS)
+   * for long unattended runs, e.g. implement + review loops. No panel field; set it in the JSON. */
+  | { kind: "delegate"; skill: string; project?: string; model?: string; timeoutMinutes?: number; instruction: string }
   | { kind: "chat"; skill?: string; model?: string; instruction: string };
 
 /** Deterministic polled trigger — no model per check. `everyMinutes` defaults to 15. */
@@ -70,6 +72,9 @@ function describeStepError(v: unknown, index: number): string | null {
   if (s.kind === "delegate") {
     if (!str(s.skill) || !s.skill) return `${at} (delegate) needs a skill`;
     if (s.project !== undefined && !str(s.project)) return `${at} has an invalid project`;
+    if (s.timeoutMinutes !== undefined && (!Number.isInteger(s.timeoutMinutes) || (s.timeoutMinutes as number) < 1)) {
+      return `${at} timeout must be a whole number of minutes, at least 1`;
+    }
     return null;
   }
   if (s.kind === "chat") {
