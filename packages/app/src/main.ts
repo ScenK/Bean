@@ -19,7 +19,7 @@ import {
   loadReminders, saveReminders, dueReminders, extractPageText,
   loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
-  routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate,
+  routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate, killAllDelegates,
   composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
@@ -264,6 +264,9 @@ app.whenReady().then(async () => {
   let interruptAllDelegates: () => void = () => {};
   app.on("before-quit", () => {
     interruptAllDelegates();
+    // Delegates run in their own process group (detached) and would outlive us — routine steps
+    // and builder agents included. SIGKILL them now; cancel()'s 5s escalation can't fire after exit.
+    killAllDelegates();
     // Spawned chatops servers do NOT die with us — without this they survive as launchd-owned
     // orphans, holding port 3978 and answering webhooks with whatever build they booted with.
     // The servers' own exitWhenOrphaned() watchdog covers the paths that never reach here

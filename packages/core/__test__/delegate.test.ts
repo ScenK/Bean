@@ -11,6 +11,7 @@ import {
   opencodeResult,
   sessionIdOf,
   runDelegate,
+  killAllDelegates,
   DELEGATE_TIMEOUT_MS,
   GIT_TRAILER_INSTRUCTION,
   type DelegateCallbacks,
@@ -403,6 +404,28 @@ describe("runDelegate", () => {
     expect(signals).toEqual(["SIGTERM"]);
     vi.advanceTimersByTime(5_000);
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  it("killAllDelegates SIGKILLs every running delegate at once, skipping settled ones", () => {
+    killAllDelegates(); // drop anything earlier tests left running
+    const signalsOf = (c: FakeChild): NodeJS.Signals[] => {
+      const s: NodeJS.Signals[] = [];
+      c.kill = (signal?: NodeJS.Signals | number) => { s.push(signal as NodeJS.Signals); return true; };
+      return s;
+    };
+    const a = new FakeChild(), b = new FakeChild(), done = new FakeChild();
+    const sa = signalsOf(a), sb = signalsOf(b), sd = signalsOf(done);
+    runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, collect().cbs, () => asChild(a));
+    runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, collect().cbs, () => asChild(b));
+    runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, collect().cbs, () => asChild(done));
+    done.emit("close", 0);
+
+    killAllDelegates();
+    expect(sa).toEqual(["SIGKILL"]);
+    expect(sb).toEqual(["SIGKILL"]);
+    expect(sd).toEqual([]);
+    killAllDelegates();
+    expect(sa).toEqual(["SIGKILL"]); // cleared after the first sweep
   });
 
   it("timeout waits for close before reporting onError", () => {

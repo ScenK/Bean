@@ -109,3 +109,12 @@ Routines' `delegateStep` (`main.ts`) calls `runDelegate` directly, bypassing bot
 
 No literal "resume" of a dead detached child (no fd to reattach to) — the reported message just
 prompts the user to re-ask.
+
+## Quit must SIGKILL, not just cancel (#190)
+
+Delegates spawn `detached` (own process group), and `cancel()`'s SIGTERM→5s→SIGKILL escalation
+never reaches SIGKILL when the app exits right after — routine-step `claude -p` runs survived quit
+as orphans (SIGTERM alone didn't stop them). `delegate.ts` keeps every unsettled run in a module
+registry and `killAllDelegates()` group-SIGKILLs them synchronously; `main.ts`'s first
+`before-quit` handler calls it right after `interruptAllDelegates()` (which still writes the outbox
+notices). One call covers every `runDelegate` caller — don't replace it with per-caller handle sets.
