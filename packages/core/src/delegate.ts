@@ -218,7 +218,8 @@ export function runDelegate(
     }
   };
 
-  const killNow = (): void => kill("SIGKILL");
+  // Guarded: a synchronous spawnFn throw leaves no child, and one throwing entry would abort the sweep.
+  const killNow = (): void => { if (child) kill("SIGKILL"); };
   liveKills.add(killNow);
 
   const timer = setTimeout(() => {

@@ -428,6 +428,17 @@ describe("runDelegate", () => {
     expect(sa).toEqual(["SIGKILL"]); // cleared after the first sweep
   });
 
+  it("killAllDelegates survives a delegate whose spawn threw", () => {
+    killAllDelegates();
+    expect(() => runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, collect().cbs, () => { throw new Error("bad arg"); })).toThrow();
+    const c = new FakeChild();
+    const signals: NodeJS.Signals[] = [];
+    c.kill = (signal?: NodeJS.Signals | number) => { signals.push(signal as NodeJS.Signals); return true; };
+    runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, collect().cbs, () => asChild(c));
+    expect(() => killAllDelegates()).not.toThrow();
+    expect(signals).toEqual(["SIGKILL"]);
+  });
+
   it("timeout waits for close before reporting onError", () => {
     vi.useFakeTimers();
     const child = new FakeChild();
