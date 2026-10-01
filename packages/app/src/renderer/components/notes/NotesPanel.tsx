@@ -3,6 +3,7 @@ import { Markdown } from "../../shared/Markdown.js";
 import { storeNoteImageFiles, useResolvedNoteBody } from "../../shared/note-images.js";
 import { imageFileGuard } from "../../shared/chat-types.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
+import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import type { Note, Project } from "@bean/core";
 
 type Mode = "view" | "edit" | "add";
@@ -37,6 +38,7 @@ const imageFiles = (files: Iterable<File> | undefined): File[] => [...(files ?? 
 // Reuses the Skills panel anatomy (and its bean-skills-* styles): list left, detail right.
 export function NotesPanel() {
   const [notes, setNotes] = useState<Note[]>([]);
+  const [listFolded, toggleListFold] = useListFold("bean.notes.listFolded");
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedSlug, setSelectedSlug] = useState<string | undefined>(undefined);
   const [mode, setMode] = useState<Mode>("view");
@@ -349,8 +351,9 @@ export function NotesPanel() {
   );
 
   return (
-    <div class="bean-skills">
-      <div class="bean-skills-list">
+    <div class={listFolded ? "bean-skills bean-skills--folded" : "bean-skills"}>
+      <ListFoldToggle folded={listFolded} onToggle={toggleListFold} listId="bean-notes-list" />
+      <div class="bean-skills-list" id="bean-notes-list">
         <div class="bean-skills-search">
           <input
             type="text"

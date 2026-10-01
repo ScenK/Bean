@@ -4,6 +4,7 @@ import { parseFrontmatter, setFrontmatter } from "@bean/core/frontmatter";
 import { bestProjectForSkill } from "@bean/core/project-select";
 import { composePrompt } from "@bean/core/prompt";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
+import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 
 type Mode = "view" | "edit" | "add";
 
@@ -13,6 +14,7 @@ export function SkillsPanel({
   onRunSkill?: (run: RouteSuggestion) => void;
 }) {
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [listFolded, toggleListFold] = useListFold("bean.skills.listFolded");
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedName, setSelectedName] = useState<string | undefined>(undefined);
   const [mode, setMode] = useState<Mode>("view");
@@ -214,8 +216,9 @@ export function SkillsPanel({
   };
 
   return (
-    <div class="bean-skills">
-      <div class="bean-skills-list">
+    <div class={listFolded ? "bean-skills bean-skills--folded" : "bean-skills"}>
+      <ListFoldToggle folded={listFolded} onToggle={toggleListFold} listId="bean-skills-list" />
+      <div class="bean-skills-list" id="bean-skills-list">
         <div class="bean-skills-search">
           <input
             type="text"

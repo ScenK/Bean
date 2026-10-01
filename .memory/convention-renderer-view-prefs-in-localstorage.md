@@ -2,7 +2,8 @@
 
 A UI-shape preference that nothing outside the window needs — which notes groups are folded,
 a remembered tab, a collapsed section — is stored by the renderer in `localStorage`, not
-through an IPC channel into `~/.bean`. First user: `NotesPanel`'s `bean.notes.collapsedGroups`.
+through an IPC channel into `~/.bean`. First user: `NotesPanel`'s `bean.notes.collapsedGroups`; the split windows' list fold
+(`shared/ListFold.tsx`, `bean.<window>.listFolded`, one key per window) reuses it.
 
 This works: Bean's component windows load over `file://` (`win.loadFile`), and Electron gives
 those pages real, per-`userData` localStorage that **survives an app restart** — verified by
