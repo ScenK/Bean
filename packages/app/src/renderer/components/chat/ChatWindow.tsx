@@ -49,9 +49,10 @@ export function applyDelegateEventToItems(
     items: items.map((it) => {
       if (it.kind !== "delegate" || it.taskId !== e.taskId) return it;
       if (e.type === "output") return { ...it, tail: [...it.tail.slice(-29), e.line] };
-      if (e.type === "done") return { ...it, state: "done" as const, result: e.result };
-      if (e.type === "failed") return { ...it, state: "failed" as const, error: e.message };
-      if (e.type === "cancelled") return { ...it, state: "cancelled" as const };
+      const receipt = e.type !== "started" && e.receipt ? { receipt: e.receipt } : {};
+      if (e.type === "done") return { ...it, state: "done" as const, result: e.result, ...receipt };
+      if (e.type === "failed") return { ...it, state: "failed" as const, error: e.message, ...receipt };
+      if (e.type === "cancelled") return { ...it, state: "cancelled" as const, ...receipt };
       return it;
     }),
     loopback: e.type === "done" ? {

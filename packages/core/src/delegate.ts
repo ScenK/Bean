@@ -145,8 +145,10 @@ export interface DelegateCallbacks {
   onDone: (result: string, sessionId?: string) => void;
   onError: (err: Error) => void;
   /** The CLI reported its session started, from the child with this pid. After this point a
-   * rejected-resume retry can no longer happen, so the child's pid is safe to track. */
-  onSessionStart?: (pid: number | undefined) => void;
+   * rejected-resume retry can no longer happen, so the child's pid is safe to track. Fires at
+   * most once per run, so callers can keep `sessionId` for every terminal outcome (done, error,
+   * cancelled, timeout) — not just onDone. */
+  onSessionStart?: (pid: number | undefined, sessionId: string) => void;
 }
 
 export interface DelegateHandle {
@@ -240,7 +242,7 @@ export function runDelegate(
     }
     if (!sessionId) {
       sessionId = sessionIdOf(req.cli, event);
-      if (sessionId) callbacks.onSessionStart?.(child.pid);
+      if (sessionId) callbacks.onSessionStart?.(child.pid, sessionId);
     }
     if (req.cli === "claude") {
       const r = claudeResult(event);

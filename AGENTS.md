@@ -234,7 +234,8 @@ Per-user, outside the repo. Path helpers live in `core/src/config.ts`.
   (`defaultSkill` optional; the first project + its default skill is the router fallback).
 - `~/.bean/routines/*.json` → one routine per file; runtime state (last run, history) lives
   beside them in `.state.json` so definitions stay clean and shareable.
-- `~/.bean/bean.db` → SQLite (FTS5) store for memories, notes, and chatops history — replaces
+- `~/.bean/bean.db` → SQLite (FTS5) store for memories, notes, chatops history, and the
+  `delegate_runs` session log ([`.memory/project-delegate-session-receipts.md`](.memory/project-delegate-session-receipts.md)) — replaces
   the old flat `memory.json` + `notes/*.md`. Other files: `persona.json`, `reminders.json`.
 
 All path helpers live in `core/src/config.ts` — check there for the current set, don't

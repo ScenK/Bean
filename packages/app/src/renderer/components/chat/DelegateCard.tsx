@@ -17,6 +17,20 @@ const STATE_LABEL: Record<DelegateItem["state"], string> = {
   dismissed: "Dismissed",
 };
 
+// Copies `cd '<project>' && <cli resume id>` so the user can reopen the session by hand.
+function ResumeReceipt({ receipt }: { receipt: NonNullable<DelegateItem["receipt"]> }) {
+  const [copied, setCopied] = useState(false);
+  const copy = (): void => {
+    navigator.clipboard.writeText(receipt.command).then(() => setCopied(true), () => {});
+  };
+  return (
+    <div class="bean-card-chips">
+      <span class="bean-chip" title={receipt.command}>{receipt.label}</span>
+      <button type="button" class="bean-btn bean-btn--ghost" onClick={copy}>{copied ? "Copied" : "Copy resume command"}</button>
+    </div>
+  );
+}
+
 export function DelegateCard({
   item,
   onConfirm,
@@ -126,6 +140,7 @@ export function DelegateCard({
         </>
       ) : null}
       {item.state === "failed" && item.error ? <div class="bean-status bean-status--error">{item.error}</div> : null}
+      {item.receipt ? <ResumeReceipt receipt={item.receipt} /> : null}
       <div class="bean-card-actions">
         <button type="button" class="bean-btn" disabled={!pending || !selection} onClick={() => onConfirm(prompt, modelChoice)}>
           {running || starting

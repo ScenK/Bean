@@ -103,6 +103,7 @@ function finishedCard(input: FinishedCardInput): object {
     embeds: [{
       title: `Run ${input.outcome} in ${input.projectName} (started by ${input.startedBy})`,
       description: clampInstruction(input.instruction),
+      ...(input.resume ? { fields: [{ name: `Resume (${input.projectName})`, value: `\`${input.resume}\`` }] } : {}),
     }],
     components: [],
   };

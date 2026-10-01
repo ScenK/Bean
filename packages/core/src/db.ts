@@ -126,6 +126,18 @@ CREATE TABLE IF NOT EXISTS thread_sessions (
   PRIMARY KEY (conversation_id, cli)
 );
 
+-- Append-only log of every delegate run's CLI session id (delegate-runs.ts), so the user can
+-- reopen a session by hand. Repeated session_ids are expected: a thread follow-up resumes one.
+CREATE TABLE IF NOT EXISTS delegate_runs (
+  id           INTEGER PRIMARY KEY,
+  started_at   TEXT NOT NULL,
+  surface      TEXT NOT NULL,
+  cli          TEXT NOT NULL,
+  session_id   TEXT NOT NULL,
+  project_path TEXT NOT NULL,
+  instruction  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS todos (
   id             TEXT PRIMARY KEY,
   routine        TEXT NOT NULL,

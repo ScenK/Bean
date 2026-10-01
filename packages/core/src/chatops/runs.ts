@@ -2,17 +2,20 @@ import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
 import type { DelegateCallbacks, DelegateHandle, DelegateRequest } from "../delegate.js";
-import { outboxDir } from "../config.js";
+import { dbFile, outboxDir } from "../config.js";
+import { isValidSessionId, recordDelegateSession } from "../delegate-runs.js";
 import { enqueueOutbox } from "../outbox.js";
 import { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice } from "../run-queue.js";
 
 export type RunDelegateFn = (req: DelegateRequest, callbacks: DelegateCallbacks) => DelegateHandle;
 
+/** `sessionId` on every terminal event is the started session's validated id (absent if the
+ * run died before its session started) — the finished card's resume receipt. */
 export interface RunEvents {
   onTail: (line: string) => void;
   onDone: (result: string, sessionId?: string) => void;
-  onError: (message: string) => void;
-  onCancelled: () => void;
+  onError: (message: string, sessionId?: string) => void;
+  onCancelled: (sessionId?: string) => void;
 }
 
 /** Reporting context for a run — carried only so interruptAll() can tell the requesting
@@ -42,6 +45,7 @@ interface ActiveRun {
    * run on the same project path. */
   released: boolean;
   meta: RunMeta;
+  sessionId?: string;
 }
 
 /** One active delegate run per project path; tail output throttled to one card
@@ -86,8 +90,8 @@ export class RunRegistry {
       ? {
           onTail: callerEvents.onTail, // output stays in the channel; see activity.ts
           onDone: (result, sessionId) => { act({ type: "run", phase: "done", id: runId, name }); callerEvents.onDone(result, sessionId); },
-          onError: (message) => { act({ type: "run", phase: "failed", id: runId, name }); callerEvents.onError(message); },
-          onCancelled: () => { act({ type: "run", phase: "cancelled", id: runId, name }); callerEvents.onCancelled(); },
+          onError: (message, sessionId) => { act({ type: "run", phase: "failed", id: runId, name }); callerEvents.onError(message, sessionId); },
+          onCancelled: (sessionId) => { act({ type: "run", phase: "cancelled", id: runId, name }); callerEvents.onCancelled(sessionId); },
         }
       : callerEvents;
     act?.({ type: "run", phase: "start", id: runId, name });
@@ -117,22 +121,27 @@ export class RunRegistry {
       onOutput: (line) => {
         if (!run.released) latest = line;
       },
-      onDone: (result, sessionId) => {
+      onDone: (result) => {
         if (run.released) return;
         free();
-        events.onDone(result, sessionId);
+        events.onDone(result, run.sessionId);
       },
       onError: (err) => {
         if (run.released) return;
         free();
-        events.onError(err.message);
+        events.onError(err.message, run.sessionId);
       },
       // A resumed run may re-spawn fresh if the CLI rejects the id; the first child is dead by
       // then, so a reservation on its pid would be reclaimable mid-run. Keep this (live) process's
       // pid until the session has started and no retry can happen.
       // ponytail: a bot killed in that ~1s window leaves the reservation on its own dead pid.
-      onSessionStart: (pid) => {
+      onSessionStart: (pid, sessionId) => {
         if (req.resume && !run.released && pid !== undefined) updateReservationPid(this.opts.dir, req.projectPath, pid);
+        // Every started run is recorded (not just resumes), so failed/cancelled ones can be reopened.
+        if (isValidSessionId(sessionId)) run.sessionId = sessionId;
+        recordDelegateSession(dbFile(this.opts.dir), {
+          surface: this.opts.botKind, cli: req.cli, sessionId, projectPath: req.projectPath, instruction: run.meta.instruction,
+        });
       },
     });
     // The reservation was created against this process's own pid (nothing else to track before
@@ -158,7 +167,7 @@ export class RunRegistry {
     // ignoring it) is still alive.
     run.handle?.cancel(() => {
       releaseRun(this.opts.dir, projectPath);
-      run.events.onCancelled();
+      run.events.onCancelled(run.sessionId);
     });
     return true;
   }

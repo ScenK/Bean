@@ -82,6 +82,9 @@ export function finishedCard(input: FinishedCardInput): object {
     body: [
       { type: "TextBlock", weight: "bolder", text: `Run ${input.outcome} in ${input.projectName} (started by ${input.startedBy})` },
       { type: "TextBlock", text: input.instruction, wrap: true, isSubtle: true },
+      ...(input.resume
+        ? [{ type: "TextBlock", text: `Resume (${input.projectName}):` }, { type: "TextBlock", text: input.resume, fontType: "monospace", wrap: true }]
+        : []),
     ],
     actions: [],
   };

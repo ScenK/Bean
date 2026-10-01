@@ -357,11 +357,13 @@ test("a thread's follow-up delegate resumes the same CLI's session; another CLI 
   };
   await confirm("claude");
   expect(delegateCalls[0]?.req.resume).toBeUndefined();
+  delegateCalls[0]?.cb.onSessionStart?.(1, "claude-sess-1");
   delegateCalls[0]?.cb.onDone("report", "claude-sess-1");
   await vi.waitFor(() => expect(deps.conversations.threadSession("c1", "claude")).toBe("claude-sess-1"));
 
   await confirm("claude");
   expect(delegateCalls[1]?.req.resume).toBe("claude-sess-1");
+  delegateCalls[1]?.cb.onSessionStart?.(2, "claude-sess-1");
   delegateCalls[1]?.cb.onDone("follow-up", "claude-sess-1");
   await vi.waitFor(() => expect(deps.conversations.history("c1").at(-1)?.content).toContain("follow-up"));
 
@@ -855,6 +857,18 @@ test("run onError posts the failure message and updates the card", async () => {
   await vi.waitFor(() => expect(effects.posted.some((p) => p.includes("Delegate run failed: boom"))).toBe(true));
   const last = effects.updates.at(-1);
   expect(JSON.stringify(last?.card)).toContain("error");
+});
+
+test("a failed run's finished card carries the resume command; an unregistered project shows its folder name, never the path", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  deps.loadProjects = async () => []; // unregistered by launch time
+  await buildTeamsBot(deps).onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+  delegateCalls[0]?.cb.onSessionStart?.(1, "sess-9");
+  delegateCalls[0]?.cb.onError(new Error("boom"));
+  await vi.waitFor(() => expect(effects.updates.at(-1)?.card).toMatchObject({ outcome: "error", resume: "claude --resume sess-9", projectName: "bean" }));
+  expect(JSON.stringify(effects.updates.at(-1)?.card)).not.toContain("/p/bean");
 });
 
 test("cancel-run on an idle project posts a message and does nothing else", async () => {

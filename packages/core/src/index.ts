@@ -31,6 +31,7 @@ export * from "./launcher.js";
 export * from "./system-control.js";
 export * from "./image-gen.js";
 export * from "./delegate.js";
+export * from "./delegate-runs.js";
 export * from "./drop-plan.js";
 export * from "./updater.js";
 export * from "./update-public-key.js";
@@ -57,7 +58,7 @@ export {
 export type {
   Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord,
 } from "./routine-store.js";
-export { runRoutine, unfence, ROUTINE_STEP_TIMEOUT_MS, RunBusyError } from "./routine-runner.js";
+export { runRoutine, unfence, withResumeFooter, ROUTINE_STEP_TIMEOUT_MS, RunBusyError } from "./routine-runner.js";
 export type { DelegateStepRequest, RoutineRunnerDeps, RoutineRunResult, StepResult } from "./routine-runner.js";
 export { claimOutbox, enqueueOutbox } from "./outbox.js";
 export type { OutboxMessage } from "./outbox.js";

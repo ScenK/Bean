@@ -92,7 +92,7 @@ const defaultSpawn: LaunchSpawnFn = (command, args) => spawn(command, args, { st
 
 // Single-quote a shell argument so arbitrary prompt text (quotes, newlines, $, `, ..)
 // embeds losslessly: close the quote, escape a literal ', reopen it.
-function shQuote(arg: string): string {
+export function shQuote(arg: string): string {
   return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 

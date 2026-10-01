@@ -28,6 +28,9 @@ export interface FinishedCardInput {
   instruction: string;
   startedBy: string;
   outcome: "done" | "error" | "cancelled";
+  /** Resume command for the run's CLI session (e.g. `claude --resume <id>`), once it started.
+   * Never carries a path — this card is posted to a shared channel. */
+  resume?: string;
 }
 
 export interface NoteProposalCardInput {
