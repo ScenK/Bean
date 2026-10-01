@@ -206,17 +206,21 @@ app.whenReady().then(async () => {
   // writer (fixed temp name) that writes the full state.
   const keepAwakePath = keepAwakeFile(app.getPath("userData"));
   let keepAwakeSave: Promise<void> = Promise.resolve();
-  let keepAwakeTouched = false;
+  const keepAwakeTouched = new Set<keyof KeepAwakeState>(); // clicked before the load landed
   let keepAwakeSaved: KeepAwakeState = { alwaysOn: false, display: false }; // on disk; a failed save reverts to it
   let keepAwakeRev = 0;
   const toggleKeepAwake = (field: keyof KeepAwakeState, on: boolean): void => {
     shell.beep();
-    keepAwakeTouched = true;
+    keepAwakeTouched.add(field);
     if (field === "alwaysOn") keepAwake.setAlwaysOn(on);
     else keepAwake.setDisplay(on);
-    const state: KeepAwakeState = { alwaysOn: keepAwake.alwaysOn(), display: keepAwake.display() };
     const rev = ++keepAwakeRev;
-    keepAwakeSave = keepAwakeSave.then(() => saveKeepAwake(keepAwakePath, state)).then(() => { keepAwakeSaved = state; }, (e: unknown) => {
+    // Snapshot when the save runs (after the load), so an untouched field keeps its persisted value.
+    let state: KeepAwakeState;
+    keepAwakeSave = keepAwakeSave.then(() => {
+      state = { alwaysOn: keepAwake.alwaysOn(), display: keepAwake.display() };
+      return saveKeepAwake(keepAwakePath, state);
+    }).then(() => { keepAwakeSaved = state; }, (e: unknown) => {
       // Back to what's on disk — only fields whose save never landed actually change.
       if (rev === keepAwakeRev) { keepAwake.setAlwaysOn(keepAwakeSaved.alwaysOn); keepAwake.setDisplay(keepAwakeSaved.display); }
       dialog.showErrorBox(field === "alwaysOn" ? "Keep Mac Awake" : "Keep Display On", `Couldn't save the setting: ${e instanceof Error ? e.message : String(e)}`);
@@ -241,7 +245,8 @@ app.whenReady().then(async () => {
   // Head of the save chain, so the persisted baseline is set before any early toggle's save runs.
   keepAwakeSave = loadKeepAwake(keepAwakePath).then((state) => {
     keepAwakeSaved = state;
-    if (!keepAwakeTouched) { keepAwake.setDisplay(state.display); keepAwake.setAlwaysOn(state.alwaysOn); }
+    if (!keepAwakeTouched.has("display")) keepAwake.setDisplay(state.display);
+    if (!keepAwakeTouched.has("alwaysOn")) keepAwake.setAlwaysOn(state.alwaysOn);
   });
   // A hidden avatar (tucked away by Cmd+W) is re-summoned by the first tray click; when the
   // bean is already visible, the click pops the menu as usual.
