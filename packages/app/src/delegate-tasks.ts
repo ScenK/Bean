@@ -1,17 +1,22 @@
 import { spawn } from "node:child_process";
 import {
-  runDelegate, reserveRun, releaseRun, updateReservationPid, enqueueOutbox, outboxDir,
+  runDelegate, reserveRun, releaseRun, updateReservationPid, enqueueOutbox, outboxDir, dbFile,
   interruptedRunNotice, BEAN_GIT_IDENTITY, availableModels, resolveCliModelSelection,
+  isValidSessionId, recordDelegateSession, resumeCommand, shQuote,
 } from "@bean/core";
 import type { CliModelSelection, CliModels, CliName, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
+
+/** The started CLI session, for the delegate card's Copy chip: `label` is `claude · 3f2a…`,
+ * `command` is `cd '<projectPath>' && claude --resume <id>`. Never put into chat text. */
+export interface DelegateReceipt { label: string; command: string }
 
 export type DelegateEvent =
   // projectPath/instruction label the avatar's status bubble (task-status.ts); chat ignores them.
   | { taskId: string; type: "started"; projectPath: string; instruction: string }
   | { taskId: string; type: "output"; line: string }
-  | { taskId: string; type: "done"; result: string }
-  | { taskId: string; type: "failed"; message: string }
-  | { taskId: string; type: "cancelled" };
+  | { taskId: string; type: "done"; result: string; receipt?: DelegateReceipt }
+  | { taskId: string; type: "failed"; message: string; receipt?: DelegateReceipt }
+  | { taskId: string; type: "cancelled"; receipt?: DelegateReceipt };
 
 export interface DelegateStartRequest {
   projectPath: string;
@@ -80,6 +85,7 @@ interface Task {
   cancelling: boolean;
   projectPath: string;
   instruction: string;
+  receipt: () => { receipt?: DelegateReceipt };
 }
 
 export function createDelegateTasks(deps: DelegateTasksDeps) {
@@ -125,6 +131,8 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       // immediate failure) — before `tasks.set` below has run, so emit()'s terminal-release
       // above finds no task yet and releases nothing; handled explicitly after `run()` returns.
       let settled = false;
+      // Set up before run(): its callbacks can fire synchronously.
+      let receipt: { receipt?: DelegateReceipt } = {};
       const handle = run(
         {
           cli: choice.cli,
@@ -134,8 +142,19 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
         },
         {
           onOutput: (line) => emit({ taskId, type: "output", line }),
-          onDone: (result) => { settled = true; emit({ taskId, type: "done", result }); },
-          onError: (err) => { settled = true; emit({ taskId, type: "failed", message: err.message }); },
+          onDone: (result) => { settled = true; emit({ taskId, type: "done", result, ...receipt }); },
+          onError: (err) => { settled = true; emit({ taskId, type: "failed", message: err.message, ...receipt }); },
+          onSessionStart: (_pid, sessionId) => {
+            recordDelegateSession(dbFile(deps.dir), {
+              surface: "desktop", cli: choice.cli, sessionId, projectPath: req.projectPath, instruction: req.instruction,
+            });
+            if (isValidSessionId(sessionId)) {
+              receipt = { receipt: {
+                label: `${choice.cli} · ${sessionId.slice(0, 4)}…`,
+                command: `cd ${shQuote(req.projectPath)} && ${resumeCommand(choice.cli, sessionId)}`,
+              } };
+            }
+          },
         },
         spawnFn,
       );
@@ -148,7 +167,11 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       // can leave the reservation in place and have the next reserveRun() correctly track *that
       // child*, not this (possibly about-to-exit) process. See run-queue.ts's doc comment.
       if (handle.pid !== undefined) updateReservationPid(deps.dir, req.projectPath, handle.pid);
-      tasks.set(taskId, { cancel: handle.cancel, cancelling: false, projectPath: req.projectPath, instruction: req.instruction });
+      tasks.set(taskId, {
+        cancel: handle.cancel,
+        cancelling: false, projectPath: req.projectPath, instruction: req.instruction,
+        receipt: () => receipt,
+      });
       emit({ taskId, type: "started", projectPath: req.projectPath, instruction: req.instruction });
       return taskId;
     },
@@ -158,14 +181,14 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       if (!t) return;
       if (t.cancelling) return;
       t.cancelling = true;
-      t.cancel(() => emit({ taskId, type: "cancelled" }));
+      t.cancel(() => emit({ taskId, type: "cancelled", ...t.receipt() }));
     },
 
     cancelAll(): void {
       for (const [taskId, t] of [...tasks]) {
         if (t.cancelling) continue;
         t.cancelling = true;
-        t.cancel(() => emit({ taskId, type: "cancelled" }));
+        t.cancel(() => emit({ taskId, type: "cancelled", ...t.receipt() }));
       }
     },
 

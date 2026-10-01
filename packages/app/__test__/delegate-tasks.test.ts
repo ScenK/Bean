@@ -1,6 +1,7 @@
 import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { createDelegateTasks, resolveDelegateSelection, type DelegateEvent } from "../src/delegate-tasks.js";
 import type { CliModels, CliName, DelegateCallbacks, DelegateHandle, DelegateRequest } from "@bean/core";
@@ -208,3 +209,46 @@ describe("createDelegateTasks", () => {
     expect(readdirSync(join(dir, "runs"))).toEqual([]); // released only now
   });
 });
+
+describe("delegate session receipts", () => {
+  it("a session id reported synchronously during spawn still reaches the failed event; the run is recorded", async () => {
+    const dir = tmp();
+    const sent: DelegateEvent[] = [];
+    let captured: DelegateCallbacks | undefined;
+    const tasks = createDelegateTasks({
+      resolveCli: () => ({ cli: "claude" }),
+      send: (e) => { sent.push(e); },
+      newId: () => "t1",
+      dir,
+      run: (_req, cbs) => {
+        cbs.onSessionStart?.(1, "sess-1");
+        captured = cbs;
+        return { cancel: () => {} };
+      },
+    });
+    await tasks.start({ projectPath: "/it's/p", prompt: "composed", instruction: "fix it" });
+    captured!.onError(new Error("boom"));
+    expect(sent.at(-1)).toEqual({
+      taskId: "t1", type: "failed", message: "boom",
+      receipt: { label: "claude · sess…", command: "cd '/it'\\''s/p' && claude --resume sess-1" },
+    });
+    const db = new DatabaseSync(join(dir, "bean.db"));
+    const rows = db.prepare("SELECT surface, instruction FROM delegate_runs").all();
+    db.close();
+    expect(rows.map((r) => ({ ...r }))).toEqual([{ surface: "desktop", instruction: "fix it" }]);
+  });
+
+  it("a cancelled run carries the receipt; a run with no valid session id has none", async () => {
+    const h = harness();
+    await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "go" });
+    h.cbs().onSessionStart?.(1, "sess-2");
+    h.tasks.cancel("task-1");
+    h.cancelCallbacks[0]!();
+    expect(h.sent.at(-1)).toMatchObject({ type: "cancelled", receipt: { command: "cd '/p' && claude --resume sess-2" } });
+    await h.tasks.start({ projectPath: "/q", prompt: "go", instruction: "go" });
+    h.cbs().onSessionStart?.(2, "--help");
+    h.cbs().onDone("ok");
+    expect(h.sent.at(-1)).toEqual({ taskId: "task-2", type: "done", result: "ok" });
+  });
+});
+

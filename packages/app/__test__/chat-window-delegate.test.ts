@@ -36,6 +36,15 @@ describe("ChatWindow delegate state", () => {
     });
   });
 
+  it("keeps the resume receipt on the card but never in the loopback text", () => {
+    const receipt = { label: "claude · abcd…", command: "cd '/p' && claude --resume abcd-1" };
+    const done = applyDelegateEventToItems([delegate], { taskId: "t1", type: "done", result: "fixed", receipt });
+    expect(done.items[0]).toMatchObject({ state: "done", receipt });
+    expect(JSON.stringify(done.loopback)).not.toContain("abcd");
+    const failed = applyDelegateEventToItems([delegate], { taskId: "t1", type: "failed", message: "x", receipt });
+    expect(failed.items[0]).toMatchObject({ state: "failed", receipt });
+  });
+
   it("replays buffered events after a fast delegate finishes before taskId is attached", () => {
     const starting = { ...delegate, state: "starting", taskId: undefined } satisfies ChatItem;
     const buffered = [

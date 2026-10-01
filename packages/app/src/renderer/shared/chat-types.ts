@@ -29,7 +29,9 @@ export type ChatItem =
   | { kind: "proposal"; id: string; run: ProposedRun; state: "pending" | "confirmed" | "cancelled" }
   | { kind: "delegate"; id: string; proposal: ProposedDelegate;
       state: "pending" | "starting" | "running" | "done" | "failed" | "cancelled" | "dismissed";
-      taskId?: string; tail: string[]; result?: string; error?: string }
+      taskId?: string; tail: string[]; result?: string; error?: string;
+      // The started CLI session's Copy chip (terminal states only) — never chat/loopback text.
+      receipt?: { label: string; command: string } }
   // A propose_note draft awaiting confirmation — notes are never saved silently.
   // `images` = the latest chat turn's attached images (data URLs), offered for the saved note.
   | { kind: "note"; id: string; note: ProposedNote; state: "pending" | "saved" | "dismissed"; images?: string[] }

@@ -12,6 +12,7 @@ import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, M
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
+  isValidSessionId, recordDelegateSession, resumeCommand, withResumeFooter,
   modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
@@ -616,7 +617,9 @@ app.whenReady().then(async () => {
     // (removed afterwards) so it neither collides with the shared ~/.bean/workspace reservation
     // nor piles up clones; a project step must win the cross-process run reservation, else the
     // todo goes back to pending (RunBusyError) and the next tick retries it.
-    const delegateStep = (req: DelegateStepRequest): Promise<string> =>
+    // onSession: the step's started CLI session (already recorded in bean.db) for the run's
+    // resume footer — see runOneRoutine.
+    const delegateStep = (req: DelegateStepRequest, onSession?: (cli: CliName, sessionId: string, projectPath: string) => void): Promise<string> =>
       new Promise((resolve, reject) => {
         const choice = resolveDelegateCli(req.model);
         if (!choice) { reject(new Error("No enabled delegate CLI found — enable one in Settings.")); return; }
@@ -646,6 +649,10 @@ app.whenReady().then(async () => {
             onOutput: () => {},
             onDone: (out) => { cleanup(); resolve(out); },
             onError: (err) => { cleanup(); reject(err); },
+            onSessionStart: (_pid, sessionId) => {
+              recordDelegateSession(dbFile(dir), { surface: "routine", cli: choice.cli, sessionId, projectPath, instruction: req.instruction });
+              if (isValidSessionId(sessionId)) onSession?.(choice.cli, sessionId, projectPath);
+            },
           },
           resolvedPathSpawnFn(resolvedPath),
           req.timeoutMinutes ? req.timeoutMinutes * 60_000 : ROUTINE_STEP_TIMEOUT_MS,
@@ -683,12 +690,21 @@ app.whenReady().then(async () => {
       const steps = routine.steps.map((st) => st.skill || (st.instruction.length > 60 ? `${st.instruction.slice(0, 59)}…` : st.instruction));
       taskStatus.upsert(id, { kind: "routine", name: routine.name, line: steps[0] ?? "", detail: routine.description ?? "", steps, step: 0, startedAt: Date.now(), state: "running" });
       let result: RoutineRunResult | undefined;
+      // Run-scoped, so concurrent routines never mix receipts. Bean writes the footer itself —
+      // the model never sees or retypes an id.
+      const receipts: string[] = [];
+      let stepIndex = 0;
       try {
         result = await runRoutine(routine, {
-          onStep: (i) => taskStatus.upsert(id, { step: i, line: steps[i] ?? "" }),
+          onStep: (i) => { stepIndex = i; taskStatus.upsert(id, { step: i, line: steps[i] ?? "" }); },
           chat: runtime.converse,
           model: runtime.getModel(),
-          delegate: delegateStep,
+          delegate: (req) => {
+            const step = stepIndex + 1;
+            return delegateStep(req, (cli, sessionId, projectPath) => {
+              receipts.push(`step ${step} (${req.projectPath ? basename(projectPath) : "workspace"}) — ${resumeCommand(cli, sessionId)}`);
+            });
+          },
           tools: [...actionTools, saveNoteTool],
           findSkill: (name) => skills.find((s) => s.name === name),
           todos: {
@@ -697,6 +713,8 @@ app.whenReady().then(async () => {
               updateTodoStatus(dbFile(dir), todoId, status, resultSummary),
           },
         });
+        // Before the scheduler saves the record and delivers it to sinks.
+        result = withResumeFooter(result, receipts);
         return result;
       } finally {
         const failed = !result || result.record.status === "failed";
@@ -759,6 +777,8 @@ app.whenReady().then(async () => {
       pollWatch: (w) => pollWatch(w, watchPoll),
       fetchText,
       tools: () => tools,
+      // Not recorded in delegate_runs: the builder is internal tooling whose scratch session the
+      // user never asked to revisit (see .memory/project-delegate-session-receipts.md).
       startAgent: (prompt, brief, onLine) => {
         const choice = resolveDelegateSelection(cliModels, enabledClis(), brief.builder?.cli ?? runtime.getDelegateCli(), brief.builder?.model);
         if (!choice) return { done: Promise.reject(new Error("No enabled delegate CLI found — enable one in Settings.")), cancel: () => {} };

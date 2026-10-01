@@ -323,10 +323,11 @@ describe("runDelegate", () => {
     const argsSeen: string[][] = [];
     const started: (number | undefined)[] = [];
     const sessions: (string | undefined)[] = [];
+    const startedIds: string[] = [];
     const { cbs, outputs, dones, errors } = collect();
     runDelegate(
       { cli: "codex", projectPath: "/p", prompt: "go", resume: "gone" },
-      { ...cbs, onDone: (r, id) => { dones.push(r); sessions.push(id); }, onSessionStart: (pid) => started.push(pid) },
+      { ...cbs, onDone: (r, id) => { dones.push(r); sessions.push(id); }, onSessionStart: (pid, id) => { started.push(pid); startedIds.push(id); } },
       (_c, args) => { argsSeen.push(args); return asChild(children.shift()!); },
     );
     first.stderr.emit("data", Buffer.from("Error: no rollout found for thread id gone\n"));
@@ -344,6 +345,31 @@ describe("runDelegate", () => {
     expect(dones[0]).toMatch(/^\(Couldn't resume the earlier codex session.*\n\nfresh answer$/s);
     expect(sessions).toEqual(["t-new"]);
     expect(started).toEqual([4242]);
+    expect(startedIds).toEqual(["t-new"]);
+  });
+
+  it("onSessionStart gets the id exactly once, even when opencode repeats it, before a timeout", () => {
+    vi.useFakeTimers();
+    try {
+      const child = new FakeChild();
+      const ids: string[] = [];
+      const { cbs, errors } = collect();
+      runDelegate(
+        { cli: "opencode", projectPath: "/p", prompt: "go" },
+        { ...cbs, onSessionStart: (_pid, id) => ids.push(id) },
+        () => asChild(child),
+        1_000,
+      );
+      child.stdout.emit("data", Buffer.from(
+        '{"type":"step_start","sessionID":"ses_1"}\n{"type":"text","sessionID":"ses_1","part":{"text":"hi"}}\n',
+      ));
+      vi.advanceTimersByTime(1_000);
+      child.emit("close", null);
+      expect(ids).toEqual(["ses_1"]);
+      expect(errors[0]).toMatch(/timed out/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a resumed session that started and then failed is a real error, not a fresh retry", () => {

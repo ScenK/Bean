@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { DelegateCallbacks, DelegateRequest } from "../src/index.js";
 import { RunRegistry } from "../src/chatops/runs.js";
+import { dbFile } from "../src/config.js";
+import { closeDb, openDb } from "../src/db.js";
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -35,6 +37,7 @@ test("second start on the same project is rejected while the first runs", async 
   const ev = events();
   expect(await reg.start(req, ev, meta)).toBe(true);
   expect(await reg.start(req, ev, meta)).toBe(false);
+  calls[0]?.cb.onSessionStart?.(123, "sess-1");
   calls[0]?.cb.onDone("result", "sess-1");
   expect(ev.onDone).toHaveBeenCalledWith("result", "sess-1");
   expect(await reg.start(req, ev, meta)).toBe(true); // freed after completion
@@ -61,7 +64,7 @@ test("error frees the project and reports the message", async () => {
   const ev = events();
   await reg.start(req, ev, meta);
   calls[0]?.cb.onError(new Error("boom"));
-  expect(ev.onError).toHaveBeenCalledWith("boom");
+  expect(ev.onError).toHaveBeenCalledWith("boom", undefined);
   expect(reg.isRunning("/p")).toBe(false);
 });
 
@@ -82,7 +85,7 @@ test("a run that settles synchronously (spawn failure) leaves the project free",
   }, { dir: tmp(), botKind: "discord" });
   const ev = events();
   expect(await reg.start(req, ev, meta)).toBe(true);
-  expect(ev.onError).toHaveBeenCalledWith("spawn failed");
+  expect(ev.onError).toHaveBeenCalledWith("spawn failed", undefined);
   expect(reg.isRunning("/p")).toBe(false);
   expect(await reg.start(req, events(), meta)).toBe(true); // path not stuck busy
 });
@@ -215,6 +218,31 @@ test("a resumed run keeps the reservation on this live process until the session
   const file = join(dir, "runs", readdirSync(join(dir, "runs"))[0]!);
   // Not the first child's pid: it may die on a rejected resume and make the project reclaimable.
   expect(JSON.parse(readFileSync(file, "utf8")).pid).toBe(process.pid);
-  calls[0]!.cb.onSessionStart?.(4242);
+  calls[0]!.cb.onSessionStart?.(4242, "s-1");
   expect(JSON.parse(readFileSync(file, "utf8")).pid).toBe(4242);
+});
+
+test("every started run (not just resumes) is recorded, and error/cancel carry the session id", async () => {
+  const { fn, calls } = fakeRun();
+  const dir = tmp();
+  const reg = new RunRegistry(fn, { dir, botKind: "teams" });
+  const ev = events();
+  await reg.start(req, ev, meta);
+  calls[0]?.cb.onSessionStart?.(123, "s-err");
+  calls[0]?.cb.onError(new Error("boom"));
+  expect(ev.onError).toHaveBeenCalledWith("boom", "s-err");
+  await reg.start(req, ev, meta);
+  calls[1]?.cb.onSessionStart?.(124, "s-cancel");
+  reg.cancel("/p");
+  expect(ev.onCancelled).toHaveBeenCalledWith("s-cancel");
+  await reg.start(req, ev, meta);
+  calls[2]?.cb.onSessionStart?.(125, "--help"); // option-like: no row, no receipt
+  calls[2]?.cb.onDone("ok", "--help");
+  expect(ev.onDone).toHaveBeenCalledWith("ok", undefined);
+  const rows = openDb(dbFile(dir)).prepare("SELECT surface, cli, session_id, project_path, instruction FROM delegate_runs ORDER BY id").all();
+  expect(rows.map((r) => ({ ...r }))).toEqual([
+    { surface: "teams", cli: "claude", session_id: "s-err", project_path: "/p", instruction: "do the thing" },
+    { surface: "teams", cli: "claude", session_id: "s-cancel", project_path: "/p", instruction: "do the thing" },
+  ]);
+  closeDb(dbFile(dir));
 });

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
 import { converse, type ConverseDeps, type ImageAttachment, type ProposedLiveSession } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
@@ -11,6 +12,7 @@ import type { Memory } from "../memory/memory.js";
 import type { CliName } from "../launcher.js";
 import type { CliModels } from "../cli-models.js";
 import type { DelegateRequest } from "../delegate.js";
+import { resumeCommand } from "../delegate-runs.js";
 import type { CardBuilders } from "./cards-api.js";
 import { formatAmbientBlock, type AmbientMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
@@ -171,7 +173,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
 
   async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();
-    const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? p.proposal.projectPath;
+    // Shared channel: an unregistered project shows its folder name, never the absolute path.
+    const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? (basename(p.proposal.projectPath) || "project");
     // Recomposed here, not taken from proposal.composedPrompt: the card's skill picker can
     // swap the skill after converse() composed it, so the body must be re-applied at launch.
     const skill = p.proposal.skillName
@@ -200,6 +203,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       ...(model !== undefined ? { model } : {}),
       ...(resume ? { resume } : {}),
     };
+    const receipt = (sessionId: string | undefined): { resume?: string } =>
+      sessionId ? { resume: resumeCommand(cli, sessionId) } : {};
     const cardId = p.cardActivityId;
     const updateTo = async (card: object): Promise<void> => {
       if (cardId !== undefined) await fx.updateCard(cardId, card);
@@ -217,19 +222,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               deps.conversations.setThreadSession(p.conversationId, cli, sessionId);
             }
             deps.conversations.append(p.conversationId, { role: "assistant", content: `[delegate result] ${result}` });
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done" })).catch(logRunEffectError);
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "done", ...receipt(sessionId) })).catch(logRunEffectError);
             await (fx.postResult ?? fx.post)(result);
           })().catch(logRunEffectError);
         },
-        onError: (message) => {
+        onError: (message, sessionId) => {
           void (async () => {
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error" })).catch(logRunEffectError);
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "error", ...receipt(sessionId) })).catch(logRunEffectError);
             await fx.post(`Delegate run failed: ${message}`);
           })().catch(logRunEffectError);
         },
-        onCancelled: () => {
+        onCancelled: (sessionId) => {
           void (async () => {
-            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled" })).catch(logRunEffectError);
+            await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled", ...receipt(sessionId) })).catch(logRunEffectError);
             await fx.post("Run cancelled.");
           })().catch(logRunEffectError);
         },
