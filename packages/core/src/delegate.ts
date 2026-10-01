@@ -165,6 +165,19 @@ const defaultDelegateSpawn: DelegateSpawnFn = (command, args, cwd) =>
 
 export const DELEGATE_TIMEOUT_MS = 30 * 60_000;
 
+// Every unsettled delegate's immediate group-kill. Children are spawned `detached` (own process
+// group), so they don't die with the host — and cancel()'s SIGTERM→5s→SIGKILL escalation never
+// reaches its SIGKILL when the host exits right after. killAllDelegates() is the quit-time backstop.
+const liveKills = new Set<() => void>();
+
+/** SIGKILL every running delegate's process group, synchronously. For app quit only: no
+ * callbacks fire (the host is exiting). Covers every caller of runDelegate — chat tasks,
+ * routine steps, the routine builder. */
+export function killAllDelegates(): void {
+  for (const k of [...liveKills]) k();
+  liveKills.clear();
+}
+
 export function runDelegate(
   req: DelegateRequest,
   callbacks: DelegateCallbacks,
@@ -190,6 +203,7 @@ export function runDelegate(
   const settle = (fn: () => void): void => {
     if (settled) return;
     settled = true;
+    liveKills.delete(killNow);
     clearTimeout(timer);
     if (killTimer) clearTimeout(killTimer);
     fn();
@@ -203,6 +217,10 @@ export function runDelegate(
       child.kill(signal);
     }
   };
+
+  // Guarded: a synchronous spawnFn throw leaves no child, and one throwing entry would abort the sweep.
+  const killNow = (): void => { if (child) kill("SIGKILL"); };
+  liveKills.add(killNow);
 
   const timer = setTimeout(() => {
     timedOut = true;
