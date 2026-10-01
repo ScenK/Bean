@@ -4,6 +4,7 @@ import type { Routine } from "@bean/core";
 import { nextRun } from "@bean/core/cron";
 import { Markdown } from "../../shared/Markdown.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
+import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import {
   flattenRuns, groupRuns, reviewRuns, splitSteps, stepLabel, unreadRuns,
   type DashRun, type DashStep, type RunBucket,
@@ -81,6 +82,7 @@ function nextRunText(routine: Routine | undefined, state: RoutineStateView | und
 // day, not per run) and every step that passed collapses into its run's RESOLVED line.
 export function DashboardPanel() {
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const [listFolded, toggleListFold] = useListFold("bean.dashboard.listFolded");
   const [states, setStates] = useState<Record<string, RoutineStateView>>({});
   const [selectedKey, setSelectedKey] = useState<string | undefined>(undefined);
   const [openResolved, setOpenResolved] = useState<string[]>([]);
@@ -320,8 +322,9 @@ export function DashboardPanel() {
   let needCursor = 0;
 
   return (
-    <div class="bean-skills">
-      <div class="bean-skills-list">
+    <div class={listFolded ? "bean-skills bean-skills--folded" : "bean-skills"}>
+      <ListFoldToggle folded={listFolded} onToggle={toggleListFold} listId="bean-dashboard-list" />
+      <div class="bean-skills-list" id="bean-dashboard-list">
         <div class="bean-skills-list-label">Runs · {runs.length}</div>
         {runs.length === 0 ? (
           <div class="bean-panel-empty">Nothing has run yet — routines report here once they finish.</div>

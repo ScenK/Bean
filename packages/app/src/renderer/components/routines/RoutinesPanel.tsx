@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/ho
 import type { Routine, RoutineBrief, RoutineWatch, Skill, Project, TodoItem } from "@bean/core";
 import { nextRun, parseCron } from "@bean/core/cron";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
+import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import type { RoutineStateView } from "../../../ipc.js";
 import type { RoutineBuildView } from "../../../routine-builder.js";
@@ -149,6 +150,20 @@ function AutoTextarea(props: { value: string; onValue: (v: string) => void; clas
     el.style.height = `${el.scrollHeight}px`;
   };
   useLayoutEffect(fit, [props.value]);
+  // Refit when the width changes too (window resize, list fold) — wrapping changes the height.
+  // Height-only callbacks are fit()'s own doing; skip them so it can't loop.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let width = el.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      fit();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   return (
     <textarea
       ref={ref}
@@ -165,6 +180,7 @@ function AutoTextarea(props: { value: string; onValue: (v: string) => void; clas
 // cadence reads as a sentence, the fan-out is a numbered timeline of delegate steps.
 export function RoutinesPanel() {
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const [listFolded, toggleListFold] = useListFold("bean.routines.listFolded");
   const [states, setStates] = useState<Record<string, RoutineStateView>>({});
   const [selected, setSelected] = useState<string | undefined>(undefined);
   // Nothing selected and not creating = the detail pane starts blank, not a create form.
@@ -485,8 +501,9 @@ export function RoutinesPanel() {
   const emptyTodoQueue = Boolean(draft.todoDriven) && pendingCount === 0;
 
   return (
-    <div class="bean-skills">
-      <div class="bean-skills-list">
+    <div class={listFolded ? "bean-skills bean-skills--folded" : "bean-skills"}>
+      <ListFoldToggle folded={listFolded} onToggle={toggleListFold} listId="bean-routines-list" />
+      <div class="bean-skills-list" id="bean-routines-list">
         <div class="bean-skills-search">
           <input
             type="text"
