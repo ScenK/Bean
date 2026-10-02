@@ -376,6 +376,7 @@ export function ChatPanel({
                 cliOptions={clis}
                 modelOptions={runModels}
                 projectOptions={assignedDelegate.length > 0 ? assignedDelegate : projects}
+                browser={skills.find((s) => s.name === it.proposal.skillName)?.browser === true}
                 onConfirm={(edited, model) => onDelegateConfirm(it.id, edited, model)}
                 onDismiss={() => onDelegateDismiss(it.id)}
                 onCancelTask={() => onDelegateCancelTask(it.id)}

@@ -26,6 +26,7 @@ export async function loadSkills(dir: string): Promise<Skill[]> {
       quickLaunch: fm["quick-launch"]?.toLowerCase() !== "false",
       target: fm.target?.toLowerCase() === "chat" ? "chat" : undefined,
       hidden: fm.hidden?.toLowerCase() === "true",
+      browser: fm.browser?.toLowerCase() === "true",
     });
   }
   return skills;

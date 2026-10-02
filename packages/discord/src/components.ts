@@ -4,6 +4,7 @@ import type {
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput,
 } from "@bean/core";
+import { BROWSER_SKILL_NOTE } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
 // Plain JSON keeps the builders pure/testable and discord.js accepts them directly.
@@ -16,7 +17,7 @@ const row = (components: object[]): object => ({ type: 1, components });
 // reject the whole payload) and the picked skill is hoisted to the front — truncation must
 // never drop the option the card defaults to. "__none__" is the no-skill sentinel: double
 // underscores so it can't collide with a real kebab-case skill name.
-function skillSelectRows(customId: string, skills: { name: string }[], skillName?: string): object[] {
+function skillSelectRows(customId: string, skills: { name: string; browser?: boolean }[], skillName?: string): object[] {
   const selectable = skills.filter((s) => s.name.length <= 100);
   const options = [
     ...selectable.filter((s) => s.name === skillName),
@@ -29,7 +30,10 @@ function skillSelectRows(customId: string, skills: { name: string }[], skillName
     placeholder: "Skill (optional)",
     options: [
       { label: "— no skill —", value: "__none__", default: !skillName },
-      ...options.map((s) => ({ label: s.name, value: s.name, default: s.name === skillName })),
+      ...options.map((s) => ({
+        label: s.name, value: s.name, default: s.name === skillName,
+        ...(s.browser ? { description: BROWSER_SKILL_NOTE } : {}),
+      })),
     ],
   }])];
 }

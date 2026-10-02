@@ -568,6 +568,8 @@ app.whenReady().then(async () => {
       resolvedPath,
       dir,
       resolveCli: resolveDelegateCli,
+      skillBrowser: async (name) =>
+        (await loadLayeredSkills(skillsDir(projectDir), skillsDir(dir))).find((s) => s.name === name)?.browser === true,
       send: (event) => {
         if (event.type === "started") {
           taskStatus.upsert(event.taskId, {
@@ -666,6 +668,7 @@ app.whenReady().then(async () => {
             projectPath,
             prompt,
             ...(choice.model ? { model: choice.model } : {}),
+            ...(req.skill?.browser ? { browser: true } : {}),
           },
           {
             onOutput: () => {},

@@ -398,6 +398,37 @@ test("confirm re-composes the prompt from the skill picked on the card", async (
   expect(delegateCalls[0]?.req.prompt).toBe("b\n\n## Task\nfix it");
 });
 
+test("browser access comes only from the re-resolved skill's frontmatter", async () => {
+  const { deps, delegateCalls } = makeDeps({
+    converseResult: delegateResult,
+    loadSkills: async () => [
+      { name: "fix-bug", description: "d", body: "b", enabled: true },
+      { name: "web-post", description: "d", body: "w", enabled: true, browser: true },
+    ],
+  });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  expect(JSON.stringify(effects.cards[0])).toContain("\"browser\":true");
+  const bot = buildTeamsBot(deps);
+  await bot.onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude", skillName: "web-post", browser: true } },
+    effects,
+  );
+  expect(delegateCalls[0]?.req.browser).toBe(true);
+});
+
+test("a submitted browser flag without a browser skill grants nothing", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  const bot = buildTeamsBot(deps);
+  await bot.onCardAction(
+    { conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude", skillName: "fix-bug", browser: true } },
+    effects,
+  );
+  expect(delegateCalls[0]?.req.browser).toBeUndefined();
+});
+
 test("confirm with a skill that no longer exists refuses instead of running bare", async () => {
   const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
   const effects = fx();

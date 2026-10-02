@@ -12,6 +12,9 @@ You are authoring a Bean skill. A skill is one markdown file in `~/.bean/skills/
     concrete about *when* to use the skill, not just what it is.
   - `target: chat` — only if the skill should run directly in the chat on Bean's own model
     (summaries, drafting, explaining). Omit it for skills meant for a terminal coding agent.
+  - `browser: true` — only if a delegated run must use the user's logged-in browser (reading or
+    posting on a site behind login). Name the browser in the body if it matters ("use Microsoft
+    Edge"). Omit it otherwise — it hands an unattended agent the user's browser sessions.
 - Body — the full instructions. Write for the agent that will execute them: state the goal,
   the steps, the output format, and what to avoid. Keep it short; every line should earn its place.
 

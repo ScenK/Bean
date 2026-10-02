@@ -13,9 +13,15 @@ import {
   runDelegate,
   killAllDelegates,
   DELEGATE_TIMEOUT_MS,
-  GIT_TRAILER_INSTRUCTION,
+  GIT_TRAILER_INSTRUCTION as GIT_TRAILER,
+  FAILED_SENTINEL_INSTRUCTION,
+  OPENCODE_BROWSER_REFUSAL,
+  failedReason,
   type DelegateCallbacks,
 } from "../src/delegate.js";
+
+// Every delegate prompt carries both contract suffixes.
+const GIT_TRAILER_INSTRUCTION = GIT_TRAILER + FAILED_SENTINEL_INSTRUCTION;
 
 class FakeChild extends EventEmitter {
   stdout = new EventEmitter();
@@ -53,6 +59,7 @@ describe("delegateCommand", () => {
       "--output-format", "stream-json",
       "--verbose",
       "--dangerously-skip-permissions",
+      "--no-chrome",
     ]);
   });
 
@@ -513,5 +520,88 @@ describe("runDelegate", () => {
 
   it("exports a 30-minute default timeout", () => {
     expect(DELEGATE_TIMEOUT_MS).toBe(30 * 60_000);
+  });
+});
+
+describe("browser skills", () => {
+  it("claude gets --chrome with browser and --no-chrome without, on resume too", () => {
+    expect(delegateCommand({ cli: "claude", projectPath: "/p", prompt: "x", browser: true }).args).toContain("--chrome");
+    expect(delegateCommand({ cli: "claude", projectPath: "/p", prompt: "x" }).args).toContain("--no-chrome");
+    const resumed = delegateCommand({ cli: "claude", projectPath: "/p", prompt: "x", resume: "c-1", browser: true }).args;
+    expect(resumed).toContain("--chrome");
+    expect(resumed).not.toContain("--no-chrome");
+  });
+
+  it("codex argv is unchanged by browser", () => {
+    const req = { cli: "codex" as const, projectPath: "/p", prompt: "x" };
+    expect(delegateCommand({ ...req, browser: true })).toEqual(delegateCommand(req));
+  });
+
+  it("opencode + browser is refused before spawn, with no timer left behind", () => {
+    vi.useFakeTimers();
+    const spawnFn = vi.fn();
+    const { cbs, errors, dones } = collect();
+    const handle = runDelegate({ cli: "opencode", projectPath: "/p", prompt: "x", browser: true }, cbs, spawnFn);
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(errors).toEqual([OPENCODE_BROWSER_REFUSAL]);
+    expect(dones).toEqual([]);
+    expect(handle.pid).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("FAILED: sentinel", () => {
+  it("failedReason reads only the first line, CRLF-safe", () => {
+    expect(failedReason("FAILED: browser — tools not available\r\nmore")).toBe("browser — tools not available");
+    expect(failedReason("  \nFAILED: x")).toBe("x");
+    expect(failedReason("All good.\nFAILED: not really")).toBeUndefined();
+    expect(failedReason("FAILED:")).toMatch(/could not complete/);
+    expect(failedReason("")).toBeUndefined();
+  });
+
+  const finish = (cli: "claude" | "codex", lines: string[], extra: Partial<Parameters<typeof runDelegate>[0]> = {}) => {
+    const child = new FakeChild();
+    const c = collect();
+    runDelegate({ cli, projectPath: "/p", prompt: "go", ...extra }, c.cbs, () => asChild(child));
+    const text = lines.join("\n") + "\n";
+    // Chunked mid-line: the sentinel must survive split reads.
+    child.stdout.emit("data", Buffer.from(text.slice(0, 15)));
+    child.stdout.emit("data", Buffer.from(text.slice(15)));
+    child.emit("close", 0);
+    return c;
+  };
+  const claudeResultLine = (r: string): string => JSON.stringify({ type: "result", subtype: "success", is_error: false, result: r });
+  const codexMsg = (t: string): string => JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: t } });
+
+  it("exit 0 with a FAILED: first line is onError with the reason", () => {
+    const { errors, dones } = finish("claude", [claudeResultLine("FAILED: browser unreachable\r\nTried Edge.")]);
+    expect(errors).toEqual(["browser unreachable"]);
+    expect(dones).toEqual([]);
+  });
+
+  it("no sentinel, or FAILED: mid-text, is success", () => {
+    expect(finish("claude", [claudeResultLine("Posted it.")]).dones).toEqual(["Posted it."]);
+    expect(finish("claude", [claudeResultLine("Posted.\nEarlier step FAILED: retried")]).errors).toEqual([]);
+  });
+
+  it("codex: a later final message supersedes an earlier FAILED one", () => {
+    const { errors, dones } = finish("codex", [codexMsg("FAILED: first try"), codexMsg("Done after all.")]);
+    expect(errors).toEqual([]);
+    expect(dones).toEqual(["Done after all."]);
+  });
+
+  it("the resume notice doesn't mask the sentinel, and a semantic failure is not retried", () => {
+    const first = new FakeChild();
+    const second = new FakeChild();
+    const children = [first, second];
+    const spawnFn = vi.fn(() => asChild(children.shift()!));
+    const { cbs, errors, dones } = collect();
+    runDelegate({ cli: "codex", projectPath: "/p", prompt: "go", resume: "gone" }, cbs, spawnFn);
+    first.emit("close", 1); // rejected resume → one fresh retry
+    second.stdout.emit("data", Buffer.from('{"type":"thread.started","thread_id":"t2"}\n' + codexMsg("FAILED: login needed") + "\n"));
+    second.emit("close", 0);
+    expect(errors).toEqual(["login needed"]);
+    expect(dones).toEqual([]);
+    expect(spawnFn).toHaveBeenCalledTimes(2);
   });
 });
