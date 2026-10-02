@@ -224,4 +224,58 @@ describe("watch triggers", () => {
     expect(t.deps.watchSeen!.isSeeded("prs", "command:gh …")).toBe(false); // still needs review
     expect(t.deps.saveRoutine).not.toHaveBeenCalled();
   });
+
+  describe("watch window", () => {
+    // setup()'s clock starts at 09:00 local; window opens at 20:00.
+    const windowed = (over: Partial<Routine> = {}) =>
+      queue({ watch: { kind: "command", command: "gh …", everyMinutes: 5, window: { from: "20:00" } }, ...over });
+
+    it("outside the window a tick doesn't poll or touch lastPoll/failures; checkNow still polls", async () => {
+      const t = setup([windowed()]);
+      t.fail(new Error("boom"));
+      await t.sched.tick();
+      expect(t.deps.pollWatch).not.toHaveBeenCalled();
+      expect(t.states().prs?.lastPoll).toBeUndefined();
+      expect(t.sched.pollFailures("prs")).toBe(0);
+      t.fail(undefined);
+      expect(await t.sched.checkNow("prs")).toEqual({ newItems: 0 }); // seeds
+      expect(t.deps.pollWatch).toHaveBeenCalledOnce();
+    });
+
+    it("polls once the window opens", async () => {
+      const t = setup([windowed()]);
+      t.advance(11 * 60); // 20:00
+      await t.sched.tick();
+      expect(t.deps.pollWatch).toHaveBeenCalledOnce();
+    });
+
+    it("draining isn't gated: a hand-added todo runs outside the window", async () => {
+      const t = setup([windowed()]);
+      t.pending.push("by hand");
+      await t.sched.tick();
+      expect(t.deps.pollWatch).not.toHaveBeenCalled();
+      expect(t.deps.runRoutine).toHaveBeenCalledOnce();
+    });
+
+    it("checks the window against now() at poll time, after a slow earlier poll", async () => {
+      const slow = notify({ name: "slow", watch: { kind: "feed", url: "https://s" } });
+      let t!: ReturnType<typeof setup>;
+      t = setup([slow, windowed()], {
+        pollWatch: vi.fn(async (w) => { if (w.kind === "feed") t.advance(11 * 60); return []; }),
+      });
+      await t.sched.tick();
+      expect(t.deps.pollWatch).toHaveBeenCalledTimes(2); // the 09:00 tick reached prs at 20:00
+    });
+
+    it("a manual check during a tick's poll returns already checking, one poll only", async () => {
+      let release!: () => void;
+      const t = setup([queue()], { pollWatch: vi.fn(() => new Promise<WatchItem[]>((r) => { release = () => r([]); })) });
+      const tick = t.sched.tick();
+      await vi.waitFor(() => expect(t.deps.pollWatch).toHaveBeenCalledOnce());
+      expect(await t.sched.checkNow("prs")).toEqual({ newItems: 0, error: "already checking" });
+      release();
+      await tick;
+      expect(t.deps.pollWatch).toHaveBeenCalledOnce();
+    });
+  });
 });

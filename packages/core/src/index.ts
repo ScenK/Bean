@@ -51,6 +51,7 @@ export * from "./chatops/runs.js";
 export * from "./chatops/resolve.js";
 export { parseCron, isValidCron, nextRun } from "./cron.js";
 export type { CronSpec } from "./cron.js";
+export * from "./watch-window.js";
 export {
   appendRunRecord, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines, watchEveryMinutes, DEFAULT_WATCH_MINUTES,
   loadRoutineStates, resolveTodoRoutine, saveRoutine, saveRoutineStates,

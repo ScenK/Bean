@@ -43,8 +43,14 @@ Decisions worth keeping:
   capability the agent didn't already have. Sandboxing the builder is its own follow-up.
 - Known limits: command timeout SIGTERMs only the shell; `acli` PATH detection wasn't verified
   on a machine that has it.
-- **Watches are not time-accurate, by design (decided in PR #176):** the poll interval is measured
-  from `lastPoll`, and there is no time-of-day option. Anything that must run at a set time is a
-  `cron` routine. The picker stops at 12h (`WATCH_MINUTES`) because a failed poll only retries after
-  a full interval, so a daily watch turns one blip into a 24h+ delay. Don't add daily or
-  time-of-day watch options unless failed polls get a shorter retry first.
+- **Watches are not time-accurate, by design (PR #176):** the poll interval is measured from
+  `lastPoll`; anything that must run at a set time is a `cron` routine. The picker stops at 12h
+  (`WATCH_MINUTES`) because a failed poll only retries after a full interval.
+- **Watch window (#213, supersedes #176's "no time-of-day option"):** optional
+  `watch.window: {from, to?}` (local `HH:MM`, `to` exclusive, absent = midnight, `from > to`
+  wraps, validated in core). It gates **scheduled polls only** — checked against `now()` right
+  before each poll; a skipped poll stamps nothing. Draining queued todos and manual checks
+  (Check now, and Run now on an empty queue, which calls Check now) ignore it. Not part of
+  `watchSourceKey`, so window edits never re-seed. All window math is in node-free
+  `core/watch-window.ts` (`@bean/core/watch-window`) so scheduler, panel, and Dashboard agree.
+  The interval > window case is a non-blocking panel note (`windowTooShortNote`), not a save error.

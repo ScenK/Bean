@@ -1,4 +1,5 @@
 import type { Routine } from "@bean/core";
+import { inWatchWindow, nextWindowStart, watchWindowMinutes, watchWindowText } from "@bean/core/watch-window";
 import type { RoutineStateView } from "../../../ipc.js";
 
 // Wording for watch routines, shared by the Routines panel (2d) and the Dashboard (2e). Pure so
@@ -29,6 +30,17 @@ export const intervalShort = (m: number): string =>
 const durationText = (mins: number): string =>
   mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ""}`;
 
+/** The interval + window phrase: "every 15 min" or "every 15 min, 20:00–06:00". */
+const everyText = (r: Routine): string =>
+  `every ${intervalText(everyMinutes(r))}${r.watch?.window ? `, ${watchWindowText(r.watch.window)}` : ""}`;
+
+/** Inline warning when the interval outlasts the window, so some days get no check at all. */
+export function windowTooShortNote(r: Routine): string | undefined {
+  const w = r.watch?.window;
+  if (!w || everyMinutes(r) <= watchWindowMinutes(w)) return undefined;
+  return `Checks every ${intervalText(everyMinutes(r))}, longer than this ${durationText(watchWindowMinutes(w))} window. Some days won't get a check.`;
+}
+
 export function agoText(iso: string | undefined, now: Date): string {
   if (!iso) return "never";
   const mins = Math.max(0, Math.round((now.getTime() - new Date(iso).getTime()) / 60000));
@@ -51,20 +63,26 @@ export interface WatchStatus { tone: "ok" | "warn" | "bad" | "off"; text: string
 /** The panel's status line (takes the "next run" slot). Shows the error from the FIRST failure,
  * with the next retry; turns red once the 3-in-a-row alarm has fired. */
 export function watchStatusLine(r: Routine, s: RoutineStateView | undefined, now: Date): WatchStatus {
-  const every = `Checks every ${intervalText(everyMinutes(r))}`;
+  const every = `Checks ${everyText(r)}`;
   if (!r.enabled) return { tone: "off", text: needsReview(r, s) ? "Not checking yet — Enable to start" : "Paused — won't check until you enable it" };
   const fails = failureCount(s);
   if (fails >= ALARM_AFTER) {
     return { tone: "bad", text: `Last ${fails} checks failed · ${agoText(s?.lastPoll, now)}`, ...(s?.pollError ? { detail: s.pollError } : {}) };
   }
   if (fails > 0) {
-    const retryAt = s?.lastPoll ? new Date(s.lastPoll).getTime() + everyMinutes(r) * 60_000 : now.getTime();
+    const dueAt = s?.lastPoll ? new Date(s.lastPoll).getTime() + everyMinutes(r) * 60_000 : now.getTime();
+    // Outside the window the retry waits for it to open.
+    const retryAt = nextWindowStart(r.watch?.window, new Date(Math.max(dueAt, now.getTime()))).getTime();
     const retryIn = Math.max(0, Math.round((retryAt - now.getTime()) / 60000));
     return {
       tone: "warn",
       text: `Last check failed · ${agoText(s?.lastPoll, now)} · retrying ${retryIn > 0 ? `in ${durationText(retryIn)}` : "soon"}`,
       ...(s?.pollError ? { detail: s.pollError } : {}),
     };
+  }
+  const w = r.watch?.window;
+  if (w && !inWatchWindow(w, now)) {
+    return { tone: "ok", text: `${every} · next check ${w.from} · ${s?.lastPoll ? `last checked ${agoText(s.lastPoll, now)}` : "not checked yet"}` };
   }
   if (!s?.lastPoll) return { tone: "ok", text: `${every} · not checked yet` };
   const checked = `last checked ${agoText(s.lastPoll, now)}`;
@@ -76,10 +94,10 @@ export function watchStatusLine(r: Routine, s: RoutineStateView | undefined, now
   return { tone: "ok", text: `${every} · ${checked} · ${queued > 0 ? `${queued} queued` : "nothing new"}` };
 }
 
-/** List-row caption: "Watch · 5m · ⚡ todo-driven", "Watch · 15m · notify only", "… · check failing". */
+/** List-row caption: "Watch · 5m · ⚡ todo-driven", "Watch · 15m · 20:00–06:00 · ⚡ todo-driven", "Watch · 15m · notify only", "… · check failing". */
 export function watchRowSub(r: Routine, s: RoutineStateView | undefined): { text: string; bad: boolean } {
   if (needsReview(r, s)) return { text: "needs review · Enable to start", bad: false };
-  const base = `Watch · ${intervalShort(everyMinutes(r))}`;
+  const base = `Watch · ${intervalShort(everyMinutes(r))}${r.watch?.window ? ` · ${watchWindowText(r.watch.window)}` : ""}`;
   if (!r.enabled) return { text: `${base} · paused`, bad: false };
   if (failureCount(s) > 0) return { text: `${base} · check failing`, bad: true };
   return { text: `${base} · ${r.steps.length === 0 ? "notify only" : "⚡ todo-driven"}`, bad: false };
@@ -95,5 +113,7 @@ export function watchDashboardText(r: Routine, s: RoutineStateView | undefined, 
   if (runningItems > 0) {
     return `running ${runningItems} item${runningItems === 1 ? "" : "s"} now · ${s?.queue?.pending ?? 0} queued`;
   }
+  const w = r.watch?.window;
+  if (w && !inWatchWindow(w, now)) return `next check ${w.from} · ${s?.lastPoll ? `checked ${agoText(s.lastPoll, now)}` : "not checked yet"}`;
   return s?.lastPoll ? `watching for new items · checked ${agoText(s.lastPoll, now)}` : "watching for new items · not checked yet";
 }
