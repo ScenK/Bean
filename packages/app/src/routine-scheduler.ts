@@ -1,5 +1,5 @@
 // packages/app/src/routine-scheduler.ts
-import { appendRunRecord, nextRun, watchDigest, watchEveryMinutes, watchSourceKey, watchTodoText } from "@bean/core";
+import { appendRunRecord, inWatchWindow, nextRun, watchDigest, watchEveryMinutes, watchSourceKey, watchTodoText } from "@bean/core";
 import type { Routine, RoutineRunResult, RoutineState, RoutineWatch, WatchItem } from "@bean/core";
 
 /** The seen-set for watch routines (bean.db in the app; a Map in tests). */
@@ -199,8 +199,10 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     async function consider(routine: Routine): Promise<void> {
       const state = states[routine.name];
       if (routine.watch) {
-        // No cron, no missed-marking: a watch is due when its queue has work.
-        if (pollDue({ ...routine, watch: routine.watch }, state, nowT)) await poll(routine);
+        // No cron, no missed-marking: a watch is due when its queue has work. The window gates
+        // scheduled polls only (read against now(), since earlier polls this pass may be slow);
+        // a skipped poll leaves lastPoll/failures alone, and draining is never gated.
+        if (pollDue({ ...routine, watch: routine.watch }, state, nowT) && inWatchWindow(routine.watch.window, now())) await poll(routine);
         const hasWork = routine.steps.length > 0 && routine.todoDriven && deps.hasPendingTodos
           ? await deps.hasPendingTodos(routine.name) : false;
         if (hasWork) due.push(routine);
@@ -282,7 +284,8 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       await execute(routine);
       return { started: true };
     },
-    /** Poll a watch right now (runNow doesn't poll). New todo-driven items drain via a tick. */
+    /** Poll a watch right now, ignoring its window (runNow doesn't poll). New todo-driven items
+     * drain via a tick. */
     async checkNow(name: string): Promise<WatchCheckResult> {
       const routine = (await deps.loadRoutines()).find((r) => r.name === name);
       if (!routine?.watch) return { newItems: 0, error: `no watch routine named "${name}"` };

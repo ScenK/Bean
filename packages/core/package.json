@@ -29,6 +29,10 @@
       "types": "./dist/cron.d.ts",
       "default": "./dist/cron.js"
     },
+    "./watch-window": {
+      "types": "./dist/watch-window.d.ts",
+      "default": "./dist/watch-window.js"
+    },
     "./project-select": {
       "types": "./dist/project-select.d.ts",
       "default": "./dist/project-select.js"

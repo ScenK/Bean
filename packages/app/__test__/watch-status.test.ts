@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Routine } from "@bean/core";
-import { intervalShort, intervalText, watchDashboardText, watchRowSub, watchStatusLine } from "../src/renderer/components/routines/watch-status.js";
+import { intervalShort, intervalText, watchDashboardText, watchRowSub, watchStatusLine, windowTooShortNote } from "../src/renderer/components/routines/watch-status.js";
 import type { RoutineStateView } from "../src/ipc.js";
 
 const now = new Date("2026-09-28T12:00:00Z");
@@ -57,3 +57,34 @@ describe("watch intervals", () => {
     expect(watchStatusLine(hourly, st({ lastPoll: ago(31), pollError: "x" }), now).text).toBe("Last check failed · 31m ago · retrying in 1h 29m");
   });
 });
+
+describe("watch window wording", () => {
+  const at14 = new Date(2026, 9, 2, 14, 0);
+  const before = (m: number) => new Date(at14.getTime() - m * 60_000).toISOString();
+  const win = (window: { from: string; to?: string }, everyMinutes = 15) =>
+    r({ watch: { kind: "command", command: "c", everyMinutes, window } });
+
+  it("status line, row caption, and dashboard outside the window", () => {
+    const w = win({ from: "20:00", to: "06:00" });
+    expect(watchStatusLine(w, st({ lastPoll: before(180) }), at14).text)
+      .toBe("Checks every 15 min, 20:00–06:00 · next check 20:00 · last checked 3h ago");
+    expect(watchRowSub(w, st()).text).toBe("Watch · 15m · 20:00–06:00 · ⚡ todo-driven");
+    expect(watchDashboardText(w, st({ lastPoll: before(180) }), at14)).toBe("next check 20:00 · checked 3h ago");
+    expect(watchStatusLine(win({ from: "09:00", to: "17:00" }), st({ lastPoll: before(2) }), at14).text)
+      .toBe("Checks every 15 min, 09:00–17:00 · last checked 2m ago · nothing new");
+  });
+
+  it("retry waits for the window to open", () => {
+    const line = watchStatusLine(win({ from: "20:00" }), st({ lastPoll: before(2), pollError: "x", pollFailures: 1 }), at14);
+    expect(line.text).toBe("Last check failed · 2m ago · retrying in 6h");
+  });
+
+  it("interval longer than the window", () => {
+    expect(windowTooShortNote(win({ from: "20:00", to: "21:00" }, 720)))
+      .toBe("Checks every 12 hours, longer than this 1h window. Some days won't get a check.");
+    expect(windowTooShortNote(win({ from: "20:00", to: "06:00" }, 360))).toBeUndefined(); // 10h across midnight
+    expect(windowTooShortNote(win({ from: "23:00" }, 120))).toBeDefined(); // open end = 1h to midnight
+    expect(windowTooShortNote(r())).toBeUndefined();
+  });
+});
+

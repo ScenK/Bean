@@ -2,6 +2,7 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isValidCron } from "./cron.js";
+import { describeWatchWindowError, type WatchWindow } from "./watch-window.js";
 
 // Absent/empty channel = DM the user directly (the default); a non-empty channel targets a
 // specific discord channel id or teams conversation id instead.
@@ -14,10 +15,11 @@ export type RoutineStep =
   | { kind: "delegate"; skill: string; project?: string; model?: string; timeoutMinutes?: number; instruction: string }
   | { kind: "chat"; skill?: string; model?: string; instruction: string };
 
-/** Deterministic polled trigger — no model per check. `everyMinutes` defaults to 15. */
+/** Deterministic polled trigger — no model per check. `everyMinutes` defaults to 15. `window`
+ * limits scheduled polls to a local time of day; it's not part of the source key (no re-seed). */
 export type RoutineWatch =
-  | { kind: "feed"; url: string; everyMinutes?: number }
-  | { kind: "command"; command: string; everyMinutes?: number };
+  | { kind: "feed"; url: string; everyMinutes?: number; window?: WatchWindow }
+  | { kind: "command"; command: string; everyMinutes?: number; window?: WatchWindow };
 
 export const DEFAULT_WATCH_MINUTES = 15;
 export const watchEveryMinutes = (w: RoutineWatch): number => w.everyMinutes ?? DEFAULT_WATCH_MINUTES;
@@ -89,6 +91,10 @@ function describeWatchError(v: unknown): string | null {
   const w = v as Record<string, unknown>;
   if (w.everyMinutes !== undefined && (!Number.isInteger(w.everyMinutes) || (w.everyMinutes as number) < 1)) {
     return "watch interval must be a whole number of minutes, at least 1";
+  }
+  if (w.window !== undefined) {
+    const windowError = describeWatchWindowError(w.window);
+    if (windowError) return windowError;
   }
   if (w.kind === "feed") {
     if (!str(w.url) || !/^https?:\/\//i.test(w.url.trim())) return "the watched feed needs an http(s) URL";

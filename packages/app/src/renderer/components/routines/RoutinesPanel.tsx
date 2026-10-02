@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { Routine, RoutineBrief, RoutineWatch, Skill, Project, TodoItem } from "@bean/core";
+import type { Routine, RoutineBrief, RoutineWatch, Skill, Project, TodoItem, WatchWindow } from "@bean/core";
 import { nextRun, parseCron } from "@bean/core/cron";
+import { watchWindowText } from "@bean/core/watch-window";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
@@ -8,7 +9,7 @@ import type { RoutineStateView } from "../../../ipc.js";
 import type { RoutineBuildView } from "../../../routine-builder.js";
 import { StepsEditor } from "./StepsEditor.js";
 import { BuildPane, DescribePane, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
-import { everyMinutes, failureCount, intervalText, needsReview, WATCH_MINUTES, watchRowSub, watchStatusLine } from "./watch-status.js";
+import { everyMinutes, failureCount, intervalText, needsReview, WATCH_MINUTES, watchRowSub, watchStatusLine, windowTooShortNote } from "./watch-status.js";
 
 const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const pad2 = (n: number): string => String(n).padStart(2, "0");
@@ -335,9 +336,14 @@ export function RoutinesPanel() {
   const setWatch = (watch: RoutineWatch): void => setDraft({ ...draft, watch });
   const setWatchKind = (kind: RoutineWatch["kind"]): void => {
     const every = draft.watch?.everyMinutes;
-    setWatch(kind === "feed"
-      ? { kind: "feed", url: "", ...(every ? { everyMinutes: every } : {}) }
-      : { kind: "command", command: "", ...(every ? { everyMinutes: every } : {}) });
+    const window = draft.watch?.window;
+    const keep = { ...(every ? { everyMinutes: every } : {}), ...(window ? { window } : {}) };
+    setWatch(kind === "feed" ? { kind: "feed", url: "", ...keep } : { kind: "command", command: "", ...keep });
+  };
+  // "Any time" drops the field entirely — never save an empty window.
+  const setWatchWindow = (window: WatchWindow | undefined): void => {
+    const { window: _old, ...rest } = draft.watch!;
+    setWatch(window ? { ...rest, window } : rest);
   };
   // Watch type: notify-only (no steps) or run the steps on each item (todo-driven). Local only —
   // switching to steps needs an instruction before it can validate, so it saves with the rest.
@@ -499,6 +505,15 @@ export function RoutinesPanel() {
   const isRunningSelected = triggering || Boolean(selectedState?.running);
   const pendingCount = todos.filter((t) => t.status === "pending").length;
   const emptyTodoQueue = Boolean(draft.todoDriven) && pendingCount === 0;
+  // A saved watch with steps and nothing queued: Run now checks the watch instead (ignoring
+  // its window), and anything new drains through the queue.
+  // Keyed on the saved definition: Check now runs against it, not the unsaved draft.
+  const checkInsteadOfRun = emptyTodoQueue && Boolean(savedRoutine?.watch && savedRoutine.todoDriven && savedRoutine.steps.length > 0);
+  const savedWindow = savedRoutine?.watch?.window;
+  const runNowNote = !emptyTodoQueue ? undefined
+    : !checkInsteadOfRun ? (draft.watch ? "nothing queued yet" : "queue a todo first")
+    : !savedRoutine?.enabled ? "enable to check now"
+    : notice || `checks the watch now${savedWindow ? `, even outside ${watchWindowText(savedWindow)}` : ""}`;
 
   return (
     <div class={listFolded ? "bean-skills bean-skills--folded" : "bean-skills"}>
@@ -648,6 +663,39 @@ export function RoutinesPanel() {
                 >
                   {[...new Set([...WATCH_MINUTES, everyMinutes(draft)])].sort((a, b) => a - b).map((m) => <option key={m} value={String(m)}>{intervalText(m)}</option>)}
                 </select>{" "}
+                <select
+                  class="bean-routines-chip-select"
+                  value={draft.watch.window ? "between" : "any"}
+                  onChange={(e) => setWatchWindow((e.target as HTMLSelectElement).value === "between" ? { from: "09:00", to: "17:00" } : undefined)}
+                >
+                  <option value="any">any time</option>
+                  <option value="between">between</option>
+                </select>{" "}
+                {draft.watch.window ? (
+                  <>
+                    <input
+                      class="bean-input bean-input--boxed"
+                      type="time"
+                      aria-label="Window start"
+                      required
+                      value={draft.watch.window.from}
+                      onChange={(e) => {
+                        const from = (e.target as HTMLInputElement).value;
+                        if (from) setWatchWindow({ ...draft.watch!.window!, from });
+                      }}
+                    />{" – "}
+                    <input
+                      class="bean-input bean-input--boxed"
+                      type="time"
+                      aria-label="Window end (blank = midnight)"
+                      value={draft.watch.window.to ?? ""}
+                      onChange={(e) => {
+                        const to = (e.target as HTMLInputElement).value;
+                        setWatchWindow({ from: draft.watch!.window!.from, ...(to ? { to } : {}) });
+                      }}
+                    />{" "}
+                  </>
+                ) : null}
                 and {notifyOnly ? "notify me" : "queue each new item"}.
               </div>
               {draft.watch.kind === "command" ? (
@@ -681,6 +729,10 @@ export function RoutinesPanel() {
                 </div>
               ) : null}
               {status?.detail ? <div class={`bean-routines-watch-error bean-routines-watch-error--${status.tone}`}>{status.detail}</div> : null}
+              {draft.watch.window ? (
+                <span class="bean-routines-section-note">Times are this Mac's local time. Changing the window doesn't re-seed.</span>
+              ) : null}
+              {windowTooShortNote(draft) ? <span class="bean-routines-section-note">{windowTooShortNote(draft)}</span> : null}
               <span class="bean-routines-section-note">
                 Editing the {draft.watch.kind === "command" ? "command" : "feed URL"} re-seeds — what's there now won't fire.
               </span>
@@ -1038,12 +1090,12 @@ export function RoutinesPanel() {
               <button
                 type="button"
                 class="bean-btn bean-btn--ghost"
-                disabled={isRunningSelected || emptyTodoQueue}
-                onClick={() => void runNow()}
+                disabled={isRunningSelected || checking || (emptyTodoQueue && !(checkInsteadOfRun && savedRoutine?.enabled))}
+                onClick={() => void (checkInsteadOfRun ? checkNow() : runNow())}
               >
-                {isRunningSelected ? "Running…" : "Run now"}
+                {checking ? "Checking…" : isRunningSelected ? "Running…" : "Run now"}
               </button>
-              {emptyTodoQueue ? <span class="bean-routines-section-note">{draft.watch ? "nothing queued yet" : "queue a todo first"}</span> : null}
+              {runNowNote ? <span class="bean-routines-section-note">{runNowNote}</span> : null}
             </>
           ) : null}
           <button type="button" class="bean-btn" onClick={() => void save()}>Save routine</button>
