@@ -289,9 +289,9 @@ export function ChatWindow() {
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "proposal" ? { ...it, state: "cancelled" } : it)));
   };
 
-  const startDelegate = async (id: string, projectPath: string, prompt: string, instruction: string, model?: string): Promise<void> => {
+  const startDelegate = async (id: string, projectPath: string, prompt: string, instruction: string, model?: string, skillName?: string): Promise<void> => {
     if (pendingDelegateStartsRef.current.has(id)) return;
-    const start = window.bean.delegateStart({ projectPath, prompt, instruction, model });
+    const start = window.bean.delegateStart({ projectPath, prompt, instruction, model, skillName });
     pendingDelegateStartsRef.current.set(id, start);
     setItems((prev) => markDelegateStarting(prev, id));
     try {
@@ -312,7 +312,7 @@ export function ChatWindow() {
       (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
     );
     if (!item || (item.state !== "pending" && item.state !== "starting")) return;
-    return startDelegate(id, item.proposal.projectPath, editedPrompt, item.proposal.instruction, model);
+    return startDelegate(id, item.proposal.projectPath, editedPrompt, item.proposal.instruction, model, item.proposal.skillName);
   };
 
   const dismissDelegate = (id: string): void => {

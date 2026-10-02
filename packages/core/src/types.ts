@@ -29,6 +29,10 @@ export interface Skill {
   /** `target: chat` frontmatter runs the skill in Bean's own chat instead of the terminal.
    * Absent = terminal. */
   target?: "chat" | "terminal";
+  /** `browser: true` frontmatter lets a delegate run of this skill use the user's logged-in
+   * browser (claude `--chrome`; opencode refuses). Only frontmatter can turn it on — see
+   * .memory/safety-browser-skills-and-failed-sentinel.md. Absent = off. */
+  browser?: boolean;
 }
 
 export interface Project {

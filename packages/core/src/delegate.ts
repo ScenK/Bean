@@ -10,6 +10,10 @@ export interface DelegateRequest {
   /** This CLI's own session id to continue (thread sessions); runDelegate falls back to a
    * fresh run if the CLI rejects it. */
   resume?: string;
+  /** From the resolved skill's `browser: true` frontmatter only — never from instruction text
+   * or a renderer/model-supplied flag. claude gets `--chrome` (else `--no-chrome`); codex
+   * already has browser tools; opencode is refused before spawn. */
+  browser?: boolean;
 }
 
 // Bean commits under its own identity, not the local user's — see .memory (git identity for delegate commits).
@@ -28,10 +32,27 @@ export const GIT_TRAILER_INSTRUCTION =
   "\n\nIf this task involves a git commit, append this trailer to the commit message: " +
   `Co-Authored-By: ${BEAN_GIT_IDENTITY.GIT_AUTHOR_NAME} <${BEAN_GIT_IDENTITY.GIT_AUTHOR_EMAIL}>`;
 
+// A headless run that can't do its job still exits 0, so the model must say so in-band:
+// runDelegate turns a final answer whose first line starts with `FAILED:` into onError.
+export const FAILED_SENTINEL_INSTRUCTION =
+  "\n\nIf you could not fully complete the task — including when browser tools are missing or the " +
+  "browser isn't reachable, or when you would need to ask the user anything (permission, login, " +
+  "which browser) — your final message's first line must be `FAILED: <one-line reason>`. " +
+  "A headless run ends when you answer; there are no background retries.";
+
+export const OPENCODE_BROWSER_REFUSAL = "This skill needs the browser; opencode can't — pick a claude or codex model.";
+
+/** The reason after a first-line `FAILED:` (CRLF-safe), or undefined when the run succeeded. */
+export function failedReason(result: string): string | undefined {
+  const first = (result.trimStart().split(/\r?\n/, 1)[0] ?? "").trim();
+  if (!first.startsWith("FAILED:")) return undefined;
+  return first.slice("FAILED:".length).trim() || "the delegate reported it could not complete the task";
+}
+
 // Headless one-shot delegation, unlike launcher.ts's interactive TUI launches.
 export function delegateCommand(req: DelegateRequest): { command: string; args: string[] } {
   const modelArgs = req.model ? ["--model", req.model] : [];
-  const prompt = req.prompt + GIT_TRAILER_INSTRUCTION;
+  const prompt = req.prompt + GIT_TRAILER_INSTRUCTION + FAILED_SENTINEL_INSTRUCTION;
   const resume = req.resume;
   if (req.cli === "claude") {
     return {
@@ -44,6 +65,9 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
         // and `--permission-mode auto`'s classifier doesn't run headless (verified 2026-07,
         // v2.1.214 — every would-ask action is denied), so an allowlist stalls night routines.
         "--dangerously-skip-permissions",
+        // Explicit both ways: headless claude only loads Claude in Chrome with --chrome (2.1.287),
+        // and --no-chrome guards against a future default turning it on for every delegate.
+        req.browser ? "--chrome" : "--no-chrome",
         ...(resume ? ["--resume", resume] : []),
         ...modelArgs,
       ],
@@ -186,6 +210,12 @@ export function runDelegate(
   spawnFn: DelegateSpawnFn = defaultDelegateSpawn,
   timeoutMs: number = DELEGATE_TIMEOUT_MS,
 ): DelegateHandle {
+  // Refused before anything is spawned or scheduled: no timer, no liveKills entry. Settles
+  // synchronously, same as a spawn failure — every caller already handles that.
+  if (req.browser && req.cli === "opencode") {
+    callbacks.onError(new Error(OPENCODE_BROWSER_REFUSAL));
+    return { pid: undefined, cancel: () => {} };
+  }
   let resume = req.resume;
   let command = "";
   let child!: ChildProcess;
@@ -304,7 +334,10 @@ export function runDelegate(
       if (stdoutBuf.trim()) handleLine(stdoutBuf);
       if (code === 0) {
         const out = result ?? rawLines.join("\n");
-        settle(() => callbacks.onDone(notice + out, sessionId));
+        // Checked before the resume notice is prepended; never retried (a post may have gone out).
+        const failed = failedReason(out);
+        if (failed !== undefined) settle(() => callbacks.onError(new Error(failed)));
+        else settle(() => callbacks.onDone(notice + out, sessionId));
         return;
       }
       // Died before the session started: the CLI rejected the resume id (store cleared, other

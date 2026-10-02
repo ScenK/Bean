@@ -7,13 +7,17 @@ export interface ProposalCardInput {
   /** Picked skill name (default in the skill picker); absent = no skill. */
   skillName?: string;
   instruction: string;
-  /** Selectable skills for the on-card skill picker; empty = no picker. */
-  skills: { name: string }[];
+  /** Selectable skills for the on-card skill picker; empty = no picker. `browser` marks a
+   * `browser: true` skill so the picker can disclose it. */
+  skills: { name: string; browser?: boolean }[];
   clis: CliName[];
   models: AvailableModel[];
   defaultCli: CliName;
   defaultModel?: string;
 }
+
+/** Picker disclosure for a `browser: true` skill; codex's browser tools also control the computer. */
+export const BROWSER_SKILL_NOTE = "🌐 uses your browser (and computer on codex)";
 
 export interface RunningCardInput {
   projectName: string;

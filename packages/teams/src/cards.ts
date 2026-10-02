@@ -4,6 +4,7 @@ import type {
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput,
 } from "@bean/core";
+import { BROWSER_SKILL_NOTE } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
 
@@ -27,7 +28,7 @@ export function proposalCard(input: ProposalCardInput): object {
         value: input.skillName ?? "__none__",
         choices: [
           { title: "— no skill —", value: "__none__" },
-          ...input.skills.map((s) => ({ title: s.name, value: s.name })),
+          ...input.skills.map((s) => ({ title: s.browser ? `${s.name} — ${BROWSER_SKILL_NOTE}` : s.name, value: s.name })),
         ],
       }] : []),
       {

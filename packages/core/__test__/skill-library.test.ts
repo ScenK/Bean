@@ -3,6 +3,7 @@ import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadSkills, loadLayeredSkills, saveSkill, deleteSkill, setFrontmatter } from "../src/skill-library.js";
+import { composePrompt } from "../src/prompt.js";
 
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "bean-skills-")); });
@@ -41,6 +42,15 @@ test("parses hidden frontmatter; defaults to hidden=false", async () => {
   const [a, b] = await loadSkills(dir);
   expect(a!.hidden).toBe(false);
   expect(b!.hidden).toBe(true);
+});
+
+test("parses browser frontmatter; defaults to false; never reaches the prompt", async () => {
+  await writeFile(join(dir, "a.md"), "---\ndescription: d\n---\nbody");
+  await writeFile(join(dir, "b.md"), "---\nbrowser: true\n---\nopen the page");
+  const [a, b] = await loadSkills(dir);
+  expect(a!.browser).toBe(false);
+  expect(b!.browser).toBe(true);
+  expect(composePrompt(b!, "go")).not.toContain("browser:");
 });
 
 test("setFrontmatter upserts, removes, and creates a block", async () => {

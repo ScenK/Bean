@@ -73,6 +73,7 @@ export function SkillsPanel({
             {chips.length > 0
               ? chips.map((n) => <span key={n} class="bean-skills-tag">{n}</span>)
               : <span class="bean-skills-tag bean-skills-tag--general">general — all projects</span>}
+            {s.browser ? <span class="bean-skills-tag">🌐 uses your browser</span> : null}
           </div>
         </div>
         <span class={`bean-skills-badge${s.source === "project" ? "" : " bean-skills-badge--yours"}`}>

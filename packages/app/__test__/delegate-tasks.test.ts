@@ -83,6 +83,22 @@ describe("createDelegateTasks", () => {
     }]);
   });
 
+  it("browser comes only from main's re-resolved skill, never a forged or absent name", async () => {
+    const reqs: DelegateRequest[] = [];
+    const tasks = createDelegateTasks({
+      resolveCli: () => ({ cli: "claude" }),
+      send: () => {},
+      newId: (() => { let n = 0; return () => `t-${++n}`; })(),
+      dir: tmp(),
+      skillBrowser: async (name) => name === "web-post",
+      run: (req) => { reqs.push(req); return { cancel: () => {} } satisfies DelegateHandle; },
+    });
+    await tasks.start({ projectPath: "/a", prompt: "go", instruction: "i", skillName: "web-post" });
+    await tasks.start({ projectPath: "/b", prompt: "go", instruction: "i", skillName: "../forged" });
+    await tasks.start({ projectPath: "/c", prompt: "go", instruction: "i" });
+    expect(reqs.map((r) => r.browser)).toEqual([true, undefined, undefined]);
+  });
+
   it("start resolves the CLI, spawns via run, and emits started", async () => {
     const h = harness({ cli: "opencode" });
     const id = await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });

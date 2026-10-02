@@ -27,6 +27,9 @@ export interface DelegateStartRequest {
   // delegated CLI itself.
   instruction: string;
   model?: string; // literal configured model id (models.ts)
+  // The proposal's skill. Main re-resolves it to decide browser access — the renderer never
+  // sends a trusted browser flag, so a forged or unknown name just grants nothing.
+  skillName?: string;
 }
 
 export interface DelegateTasksDeps {
@@ -40,6 +43,8 @@ export interface DelegateTasksDeps {
   // ~/.bean — for the cross-process project-path reservation (run-queue.ts) and the outbox
   // notice an interrupted run leaves for the chat window to pick up after a restart.
   dir: string;
+  /** Whether this skill's frontmatter says `browser: true` (re-read from disk at launch). */
+  skillBrowser?: (skillName: string) => Promise<boolean>;
   run?: (req: DelegateRequest, cbs: DelegateCallbacks, spawnFn?: DelegateSpawnFn, timeoutMs?: number) => DelegateHandle;
 }
 
@@ -111,6 +116,8 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
   return {
     async start(req: DelegateStartRequest): Promise<string> {
       const taskId = deps.newId();
+      // Awaited before every sync guard below, so the guard-then-reserve sequence stays atomic.
+      const browser = req.skillName && deps.skillBrowser ? await deps.skillBrowser(req.skillName) : false;
       // Same-project guard: this process's own instant check, same role as RunRegistry's
       // byProject map — reserveRun below extends the same invariant across processes.
       if ([...tasks.values()].some((t) => t.projectPath === req.projectPath)) {
@@ -139,6 +146,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
           projectPath: req.projectPath,
           prompt: req.prompt,
           ...(choice.model ? { model: choice.model } : {}),
+          ...(browser ? { browser: true } : {}),
         },
         {
           onOutput: (line) => emit({ taskId, type: "output", line }),

@@ -202,6 +202,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       prompt: skill ? composePrompt(skill, p.proposal.instruction) : p.proposal.instruction,
       ...(model !== undefined ? { model } : {}),
       ...(resume ? { resume } : {}),
+      ...(skill?.browser ? { browser: true } : {}),
     };
     const receipt = (sessionId: string | undefined): { resume?: string } =>
       sessionId ? { resume: resumeCommand(cli, sessionId) } : {};
@@ -698,7 +699,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const activityId = await fx.postCard(deps.cards.proposalCard({
           proposalId: pending.id, projectName, skillName: proposal.skillName,
           instruction: proposal.instruction, clis: detected,
-          skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name })),
+          skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name, ...(s.browser ? { browser: true } : {}) })),
           models: availableModels(deps.cliModels, detected), defaultCli: choice.cli, defaultModel: choice.model,
         }));
         deps.proposals.setCardActivityId(pending.id, activityId);

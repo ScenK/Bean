@@ -8,7 +8,7 @@ TUI opened, prompt silently empty.
 Three guards now exist; don't undo any of them:
 
 - `composePrompt()` strips frontmatter via `stripFrontmatter()` — frontmatter
-  (`description`/`target`/`enabled`) is Bean metadata, never prompt content.
+  (`description`/`target`/`enabled`/`browser`) is Bean metadata, never prompt content.
 - `launchCommand()` passes `--prompt=<text>` as a single token so a prompt that still
   starts with `-` can't be parsed as a flag.
 - The Skills editor blocks Save until the frontmatter has a valid `target: terminal|chat`.

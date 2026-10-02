@@ -39,6 +39,7 @@ export function DelegateCard({
   cliOptions,
   modelOptions,
   projectOptions,
+  browser,
 }: {
   item: DelegateItem;
   onConfirm: (editedPrompt: string, model?: string) => void;
@@ -52,6 +53,8 @@ export function DelegateCard({
    * ChatPanel already builds for the sibling ProposalCard — used to show the project's name
    * instead of its full filesystem path (matching ProposalCard's chip). */
   projectOptions?: Project[];
+  /** Display only — main re-resolves the skill's `browser:` frontmatter at launch. */
+  browser?: boolean;
 }) {
   const [prompt, setPrompt] = useState(item.proposal.composedPrompt);
   const [showDetail, setShowDetail] = useState(false);
@@ -84,6 +87,9 @@ export function DelegateCard({
         <span class="bean-chip">delegate · background agent</span>
         <span class="bean-chip">project · {projectName}</span>
         {item.proposal.skillName ? <span class="bean-chip">skill · {item.proposal.skillName}</span> : null}
+        {browser ? (
+          <span class="bean-chip">{modelChoice && selection?.cli === "codex" ? "🌐 uses your browser and computer" : "🌐 uses your browser"}</span>
+        ) : null}
         {pending && models.length > 0 ? (
           <ChipMenu chipLabel={selection
             ? <>{explicitLabel ?? "Bean picks model"}</>
