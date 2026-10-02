@@ -646,6 +646,7 @@ app.whenReady().then(async () => {
         if (!choice) { reject(new Error("No enabled delegate CLI found — enable one in Settings.")); return; }
         const prompt =
           (req.skill ? composePrompt(req.skill, req.instruction) : req.instruction) +
+          (req.memories ? `\n\n${req.memories}` : "") +
           (req.priorOutputs ? `\n\nOutput of this routine's earlier steps:\n${req.priorOutputs}` : "");
         const perTodo = req.todoId && !req.projectPath ? join(scratchDir(dir), req.todoId) : undefined;
         const projectPath = req.projectPath ?? perTodo ?? scratchDir(dir);
@@ -728,6 +729,7 @@ app.whenReady().then(async () => {
           },
           tools: [...actionTools, saveNoteTool],
           findSkill: (name) => skills.find((s) => s.name === name),
+          memories: () => loadMemories(dbFile(dir)),
           todos: {
             listPending: async (r) => (await listTodos(dbFile(dir), r)).filter((t) => t.status === "pending"),
             setStatus: (todoId, status: TodoStatus, resultSummary?: string) =>

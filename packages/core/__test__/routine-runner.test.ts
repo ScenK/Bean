@@ -399,3 +399,67 @@ it("withResumeFooter appends one line per session to both the stored and deliver
   expect(out.digest).toBe(expected);
   expect(out.record.digest).toBe(expected);
 });
+
+describe("routine memories", () => {
+  const mem = (id: string, text: string, projectPath?: string) =>
+    ({ id, text, createdAt: `2026-07-01T00:00:${id.padStart(2, "0")}Z`, ...(projectPath ? { projectPath } : {}) });
+
+  it("injects memories runtime-only: in the chat system prompt and delegate request, never in instruction/record", async () => {
+    const { fn, calls } = chatStub([{ content: "chat out" }, { content: "the digest" }]);
+    const reqs: Parameters<RoutineRunnerDeps["delegate"]>[0][] = [];
+    const res = await runRoutine(
+      routine([{ kind: "chat", instruction: "brief me" }, { kind: "delegate", skill: "s", project: "/p", instruction: "fix it" }]),
+      baseDeps(fn, {
+        memories: async () => [mem("1", "SENTINEL likes\nterse\n# heading")],
+        delegate: async (req) => { reqs.push(req); return "delegate out"; },
+      }),
+    );
+    const sys = calls[0]!.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n");
+    expect(sys).toContain("- (about the user) SENTINEL likes terse # heading"); // one line, no [id]
+    expect(sys).toContain("don't quote these");
+    expect(reqs[0]!.memories).toContain("SENTINEL");
+    expect(reqs[0]!.instruction).toBe("fix it");
+    expect(JSON.stringify(res.record)).not.toContain("SENTINEL");
+  });
+
+  it("selects by instruction + skill description, force-includes the delegate step's project, fresh per step", async () => {
+    const many = Array.from({ length: 25 }, (_, i) => mem(String(i + 1), `filler fact ${i + 1}`));
+    let loads = 0;
+    const reqs: string[] = [];
+    await runRoutine(
+      routine([
+        { kind: "delegate", skill: "s", project: "/proj", instruction: "check kubernetes" },
+        { kind: "delegate", skill: "s", instruction: "again" },
+      ]),
+      baseDeps(async () => ({ content: "digest", toolCalls: [] }), {
+        findSkill: () => ({ ...skill("s"), description: "zebra helper" }),
+        memories: async () => {
+          loads++;
+          return [...many, mem("90", "uses kubernetes daily"), mem("91", "loves zebra stripes"), mem("92", "proj convention", "/proj"),
+            ...(loads > 1 ? [mem("93", "saved mid-run")] : [])];
+        },
+        delegate: async (req) => { reqs.push(req.memories ?? ""); return "ok"; },
+      }),
+    );
+    expect(reqs[0]).toContain("kubernetes daily");
+    expect(reqs[0]).toContain("zebra stripes");
+    expect(reqs[0]).toContain("(project /proj) proj convention");
+    expect(reqs[1]).toContain("saved mid-run"); // backfilled most-recent, loaded fresh
+  });
+
+  it("a failing memory loader degrades to no memories and the step still runs", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const reqs: Parameters<RoutineRunnerDeps["delegate"]>[0][] = [];
+    const res = await runRoutine(
+      routine([{ kind: "delegate", skill: "s", instruction: "go" }]),
+      baseDeps(async () => ({ content: "digest", toolCalls: [] }), {
+        memories: async () => { throw new TypeError("SENTINEL db broke"); },
+        delegate: async (req) => { reqs.push(req); return "ok"; },
+      }),
+    );
+    expect(res.record.status).toBe("ok");
+    expect(reqs[0]!.memories).toBeUndefined();
+    expect(warn.mock.calls.flat().join(" ")).not.toContain("SENTINEL");
+    warn.mockRestore();
+  });
+});
