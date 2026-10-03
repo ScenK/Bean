@@ -21,6 +21,7 @@ import {
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
+import { startDevtunnel } from "./devtunnel.js";
 import { loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 
 const dir = beanDir();
@@ -334,6 +335,14 @@ app.post("/api/messages", (req, res) => {
 
 // Die with the desktop app that spawned us — see exitWhenOrphaned's doc comment.
 exitWhenOrphaned();
+
+// Opt-in public reachability: a startup failure (bad creds, no CLI) throws here, so Settings
+// shows it instead of a "running" bot nobody can reach.
+if (teamsConfig.devtunnel) {
+  await startDevtunnel(teamsConfig.devtunnel, teamsConfig.port, {
+    tenantId: teamsConfig.tenantId, clientId: teamsConfig.botAppId, secret: teamsConfig.botAppPassword,
+  });
+}
 
 let bindFailed = false;
 const server = app.listen(teamsConfig.port, () => {

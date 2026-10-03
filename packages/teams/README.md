@@ -33,7 +33,22 @@ Adaptive Card and execute on THIS machine. Design: `docs/superpowers/specs/2026-
    `{ "botAppId": "<app-id>", "botAppPassword": "<client-secret>", "tenantId": "<tenant-id>", "port": 3978 }`
    Note: generated images aren't displayed inline on Teams (activity size limits) — Bean
    posts the saved file's path instead.
-5. **Tunnel** (macOS): install via `curl -sL https://aka.ms/DevTunnelCliInstall | bash`
+5. **Tunnel** (macOS) — **let Bean host it (recommended)**: install `devtunnel` (below), then add
+   `"devtunnel": "<tunnel-name>"` to `~/.bean/teams.json`. On every start the Teams server logs
+   in to devtunnel **as the bot's own service principal** (`botAppId`/`botAppPassword`/`tenantId`
+   — no browser, no user session that expires), creates the tunnel + port if missing, and hosts
+   it until the server stops; a dropped host re-logs-in and re-hosts on its own. Set the Azure Bot
+   messaging endpoint to what **Settings → Chat bots → Messaging endpoint** shows (Copy button;
+   standalone, the server logs `devtunnel: Connect via browser: …` — add `/api/messages`). The
+   tunnel name is **not** part of that URL. It stays the same while the
+   tunnel exists (expiry is 30 days *unused*, so a hosted tunnel doesn't lapse); if Bean ever has
+   to recreate it, it logs `created tunnel … update the Azure Bot messaging endpoint`.
+   Caveats: this replaces your personal `devtunnel user login` with
+   the bot's identity (run `devtunnel user login` again if you need yours), and the bot's client
+   secret's expiry is now the only expiry — rotate it in `teams.json` when Azure says so.
+   The manual steps below still work if you'd rather run the tunnel yourself.
+
+   Manual: install via `curl -sL https://aka.ms/DevTunnelCliInstall | bash`
    (adds `devtunnel` to `~/bin` — put that on `PATH`, e.g. `export PATH="$HOME/bin:$PATH"`
    in `~/.zshrc`), then `devtunnel user login` once. Run `devtunnel host -p 3978
    --allow-anonymous` — it mints a **new random URL every restart**, so if you're going to
@@ -130,7 +145,8 @@ silently with the same generic Teams error and guessing wastes a round trip:
    common cause. Symptom: endpoint answers fine directly (curl gets 401) and Test in Web
    Chat works, but the add-to-chat call never even reaches your server.
 2. **Wrong/typo'd messaging endpoint path** — must end in `/api/messages` (plural).
-3. **Stale tunnel URL** — `devtunnel host` (non-persistent) mints a new URL every restart;
+3. **Stale tunnel URL** — with `"devtunnel"` set, check the Teams row in Settings for a
+   `devtunnel ... failed` error. Manually, `devtunnel host` (non-persistent) mints a new URL every restart;
    confirm the URL it's currently printing matches what's saved in Azure Bot → Configuration.
 4. **Tenant mismatch** — `teamsConfig.tenantId` must be your org's actual Microsoft 365
    tenant ID, not whatever Azure subscription/tenant the app registration happened to be

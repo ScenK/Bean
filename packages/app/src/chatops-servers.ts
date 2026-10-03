@@ -8,7 +8,12 @@ export type ChatopsBot = "discord" | "teams";
  * bot waits on a retry, and after it has given up entirely. The Start/Stop toggle must follow
  * `enabled`, not `running`: a bot that's enabled but dead still needs an off switch, or its
  * intent is stuck on and it autostarts every boot with no way to say no. */
-export interface ChatopsState { running: boolean; enabled: boolean; error?: string; }
+export interface ChatopsState {
+  running: boolean; enabled: boolean; error?: string;
+  /** Teams only, when the server hosts its own dev tunnel: the Azure Bot messaging endpoint to
+   * paste. The bot is the only place this URL exists, so the UI is how an end user learns it. */
+  endpoint?: string;
+}
 export type ChatopsEvent = { bot: ChatopsBot } & ChatopsState;
 
 export interface SpawnedProcess {
@@ -19,6 +24,20 @@ export interface SpawnedProcess {
   /** IPC messages from the bot (process.send) — its activity for the status bubbles. */
   on(event: "message", cb: (msg: unknown) => void): void;
   kill(): void;
+}
+
+/** A `{ type: "tunnel", url }` IPC message from the Teams server (devtunnel.ts) as the messaging
+ * endpoint to show — only an https devtunnels.ms origin gets through the process boundary. */
+export function parseTunnelEndpoint(msg: unknown): string | undefined {
+  if (typeof msg !== "object" || msg === null) return undefined;
+  const { type, url } = msg as Record<string, unknown>;
+  if (type !== "tunnel" || typeof url !== "string") return undefined;
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && u.hostname.endsWith(".devtunnels.ms") ? `${u.origin}/api/messages` : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const SERVER_ENTRY: Record<ChatopsBot, string> = {
@@ -69,7 +88,7 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
   const delay = deps.delayFn ?? ((cb, ms) => { setTimeout(cb, ms); });
   const procs = new Map<ChatopsBot, SpawnedProcess>();
   // Liveness only — `enabled` is the separate source of truth for intent, folded in by view().
-  const liveness: Record<ChatopsBot, { running: boolean; error?: string }> = { discord: { running: false }, teams: { running: false } };
+  const liveness: Record<ChatopsBot, Omit<ChatopsState, "enabled">> = { discord: { running: false }, teams: { running: false } };
   const enabled = new Set<ChatopsBot>();
   const attempts = new Map<ChatopsBot, number>();
   // Set once by stopAll() at quit. A retry timer can outlive the kill it was scheduled by, and
@@ -107,6 +126,12 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     child.stderr?.on("data", (chunk) => { lastErr = chunk.toString().trim() || lastErr; });
     // A child process is a trust boundary: only well-formed activity gets through.
     child.on("message", (msg) => {
+      const endpoint = parseTunnelEndpoint(msg);
+      if (endpoint) {
+        liveness[bot] = { ...liveness[bot], endpoint };
+        emit(bot);
+        return;
+      }
       const e = parseChatopsActivity(msg);
       if (e) deps.onActivity?.(bot, e);
     });

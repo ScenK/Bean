@@ -8,6 +8,9 @@ export interface TeamsConfig {
    * no longer offers the "Multi Tenant" app type in the portal for new registrations. */
   tenantId: string;
   port: number;
+  /** Optional dev-tunnel name. When set, the server logs in to devtunnel as the bot's own
+   * service principal and hosts this tunnel for as long as it runs (see devtunnel.ts). */
+  devtunnel?: string;
 }
 
 export function teamsConfigFile(dir: string): string {
@@ -39,5 +42,6 @@ export async function loadTeamsConfig(file: string): Promise<TeamsConfig> {
     botAppPassword: parsed.botAppPassword,
     tenantId: parsed.tenantId,
     port: parsed.port ?? 3978,
+    ...(parsed.devtunnel ? { devtunnel: parsed.devtunnel } : {}),
   };
 }
