@@ -30,6 +30,13 @@ Bean has two chat adapters over one shared brain:
   User-Assigned Managed Identity (the portal's other option) is not viable here — it only
   issues credentials to workloads running on Azure compute, and this bot runs on the
   owner's Mac behind a dev tunnel.
+- **Managed devtunnel** (`"devtunnel"` in teams.json, `packages/teams/src/devtunnel.ts`): the
+  server logs in with `devtunnel user login --sp-*` as the bot's own app registration — the
+  secret goes via `DEVTUNNELS_SP_SECRET` env, never argv. Don't switch it to `devtunnel user
+  login` (browser/user session): that session expiring silently taking the bot offline is the
+  whole reason this exists. Verified that the bot's SP can create tunnels in the emetric tenant.
+  The tunnel *name* is not in its URL (Microsoft FAQ) — the URL is stable only while the tunnel
+  exists (30-day sliding expiry); a recreated tunnel means re-pasting the Azure endpoint.
 - **Bot scopes**: `teamsAppManifest/manifest.json` `bots[0].scopes` is
   `["personal", "groupChat", "team"]`. `personal` is what makes 1:1 chats work — without it
   Teams never installs into / delivers a direct message, even though the *code* has always
