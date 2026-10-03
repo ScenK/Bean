@@ -63,6 +63,9 @@ function hostOnce(name: string, onExit: (lastErr: string) => void): Promise<void
     createInterface({ input: child.stdout }).on("line", (line) => {
       if (ready || !/connect via browser/i.test(line)) return;
       console.log(`devtunnel: ${line.trim()}`);
+      // Tell the desktop app (Settings shows it); a no-op when run standalone.
+      const url = /https:\/\/\S+/.exec(line)?.[0];
+      if (url && process.send && process.connected) process.send({ type: "tunnel", url }, undefined, {}, () => {});
       ready = true;
       clearTimeout(timer);
       resolve();

@@ -31,6 +31,21 @@ const SECTIONS = [
   { id: "data", label: "Data" },
 ];
 
+// The Azure Bot messaging endpoint for a self-hosted Teams tunnel — the bot is the only place
+// this URL exists, so it has to be readable (and copyable) here.
+function EndpointRow({ endpoint }: { endpoint: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = (): void => {
+    navigator.clipboard.writeText(endpoint).then(() => setCopied(true), () => {});
+  };
+  return (
+    <div class="bean-settings-row" title="Paste into Azure Bot → Configuration → Messaging endpoint">
+      <span class="bean-chatops-label">Messaging endpoint: {endpoint}</span>
+      <button type="button" class="bean-btn bean-btn--ghost" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+    </div>
+  );
+}
+
 export function SettingsWindow() {
   const [theme, setTheme] = useState<Theme>("hearth");
   const [apiKey, setApiKey] = useState("");
@@ -87,7 +102,7 @@ export function SettingsWindow() {
       (Object.keys(status) as ChatopsBot[]).forEach((bot) => { if (status[bot].error) scheduleErrorClear(bot, status[bot].error!); });
     });
     window.bean.onChatopsEvent((e) => {
-      setChatops((prev) => ({ ...prev, [e.bot]: { running: e.running, enabled: e.enabled, error: e.error } }));
+      setChatops((prev) => ({ ...prev, [e.bot]: { running: e.running, enabled: e.enabled, error: e.error, endpoint: e.endpoint } }));
       if (e.error) scheduleErrorClear(e.bot, e.error);
     });
   }, []);
@@ -302,7 +317,7 @@ export function SettingsWindow() {
           {CHATOPS_BOTS.map(({ key, label }) => {
             const s = chatops[key];
             const dotClass = s.running ? "bean-chatops-dot--running" : s.error ? "bean-chatops-dot--error" : "";
-            return (
+            return [
               <div key={key} class="bean-settings-row" title={s.error}>
                 <span class="bean-chatops-row">
                   <span class={`bean-chatops-dot ${dotClass}`} />
@@ -320,8 +335,9 @@ export function SettingsWindow() {
                 >
                   {s.enabled ? "Stop" : "Start"}
                 </button>
-              </div>
-            );
+              </div>,
+              s.running && s.endpoint ? <EndpointRow key={`${key}-endpoint`} endpoint={s.endpoint} /> : null,
+            ];
           })}
           <div class="bean-settings-row">
             <span class="bean-settings-row-label">Routine digests</span>

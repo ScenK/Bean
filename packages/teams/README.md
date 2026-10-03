@@ -38,8 +38,9 @@ Adaptive Card and execute on THIS machine. Design: `docs/superpowers/specs/2026-
    in to devtunnel **as the bot's own service principal** (`botAppId`/`botAppPassword`/`tenantId`
    — no browser, no user session that expires), creates the tunnel + port if missing, and hosts
    it until the server stops; a dropped host re-logs-in and re-hosts on its own. Set the Azure Bot
-   messaging endpoint to the URL the server logs as `devtunnel: Connect via browser: …` plus
-   `/api/messages` — the tunnel name is **not** part of that URL. It stays the same while the
+   messaging endpoint to what **Settings → Chat bots → Messaging endpoint** shows (Copy button;
+   standalone, the server logs `devtunnel: Connect via browser: …` — add `/api/messages`). The
+   tunnel name is **not** part of that URL. It stays the same while the
    tunnel exists (expiry is 30 days *unused*, so a hosted tunnel doesn't lapse); if Bean ever has
    to recreate it, it logs `created tunnel … update the Azure Bot messaging endpoint`.
    Caveats: this replaces your personal `devtunnel user login` with

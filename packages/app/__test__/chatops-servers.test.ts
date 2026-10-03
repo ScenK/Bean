@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createChatopsServers, type ChatopsBot, type ChatopsEvent, type SpawnedProcess } from "../src/chatops-servers.js";
+import { createChatopsServers, parseTunnelEndpoint, type ChatopsBot, type ChatopsEvent, type SpawnedProcess } from "../src/chatops-servers.js";
 
 function fakeProcess() {
   const listeners: Record<string, ((arg: unknown) => void)[]> = {};
@@ -305,4 +305,24 @@ it("forwards a bot's IPC activity to onActivity, dropping malformed messages", (
   p.emit("message", { type: "rm -rf", phase: "start", id: "x" });
   p.emit("message", "junk");
   expect(got).toEqual([["teams", { type: "run", phase: "start", id: "r1", name: "api" }]]);
+});
+
+describe("tunnel endpoint", () => {
+  it("parseTunnelEndpoint accepts only an https devtunnels.ms URL and appends /api/messages", () => {
+    expect(parseTunnelEndpoint({ type: "tunnel", url: "https://abc-3978.usw3.devtunnels.ms/" })).toBe("https://abc-3978.usw3.devtunnels.ms/api/messages");
+    expect(parseTunnelEndpoint({ type: "tunnel", url: "http://abc-3978.usw3.devtunnels.ms" })).toBeUndefined();
+    expect(parseTunnelEndpoint({ type: "tunnel", url: "https://evil.example.com/x.devtunnels.ms" })).toBeUndefined();
+    expect(parseTunnelEndpoint({ type: "tunnel", url: "not a url" })).toBeUndefined();
+    expect(parseTunnelEndpoint({ type: "turn", phase: "start", id: "1" })).toBeUndefined();
+  });
+
+  it("a tunnel message from the bot surfaces as the endpoint, and is cleared when the bot exits", () => {
+    const h = harness();
+    h.servers.start("teams");
+    h.procs[0]!.emit("message", { type: "tunnel", url: "https://abc-3978.usw3.devtunnels.ms" });
+    expect(h.servers.status().teams.endpoint).toBe("https://abc-3978.usw3.devtunnels.ms/api/messages");
+    expect(h.sent.at(-1)).toEqual({ bot: "teams", running: true, enabled: true, endpoint: "https://abc-3978.usw3.devtunnels.ms/api/messages" });
+    h.servers.stop("teams");
+    expect(h.servers.status().teams.endpoint).toBeUndefined();
+  });
 });
