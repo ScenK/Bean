@@ -44,6 +44,15 @@ export async function prepareDevtunnel(name: string, port: number, creds: Devtun
   }
 }
 
+/** A host whose relay connection dropped (sleep, Wi-Fi change) reconnects by itself — unless its
+ * tunnel access token expired meanwhile: then it logs this and sits there alive but dead,
+ * forwarding nothing, never exiting. Seen in the wild:
+ * `Error connecting host tunnel session: Not authorizedUnauthorized. Refreshing tunnel access
+ * token failed with error Refreshing tunnel access token is allowed only when connecting.` */
+export function isDeadHostLine(line: string): boolean {
+  return /error connecting host tunnel session|refreshing tunnel access token failed/i.test(line);
+}
+
 const MAX_HOST_FAILURES = 3;
 const HOST_READY_TIMEOUT_MS = 60_000;
 
@@ -59,8 +68,17 @@ function hostOnce(name: string, onExit: (lastErr: string) => void): Promise<void
       child.kill("SIGKILL"); // a silent host may also ignore SIGTERM
       reject(new Error(`devtunnel host failed: ${lastErr || "not ready in time"}`));
     }, HOST_READY_TIMEOUT_MS);
+    // Kill a dead-but-alive host so its "exit" takes the normal re-login + re-host path.
+    const watch = (line: string): void => {
+      if (!isDeadHostLine(line)) return;
+      lastErr = line.trim();
+      child.kill();
+      // Its own shutdown also hits Unauthorized (endpoint cleanup) and can stall on SIGTERM.
+      setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }, 5_000).unref();
+    };
     // readline, not raw "data": a chunk boundary can split the ready line.
     createInterface({ input: child.stdout }).on("line", (line) => {
+      watch(line);
       if (ready || !/connect via browser/i.test(line)) return;
       console.log(`devtunnel: ${line.trim()}`);
       // Tell the desktop app (Settings shows it); a no-op when run standalone.
@@ -70,7 +88,10 @@ function hostOnce(name: string, onExit: (lastErr: string) => void): Promise<void
       clearTimeout(timer);
       resolve();
     });
-    child.stderr.on("data", (chunk: Buffer) => { lastErr = chunk.toString().trim() || lastErr; });
+    createInterface({ input: child.stderr }).on("line", (line) => {
+      if (line.trim()) lastErr = line.trim();
+      watch(line);
+    });
     const killHost = (): void => { child.kill(); };
     process.on("exit", killHost);
     // Spawn failure (no CLI) may never emit "exit", so reject here too; a settled promise ignores the repeat.

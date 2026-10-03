@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { prepareDevtunnel, type DevtunnelRun } from "../src/devtunnel.js";
+import { isDeadHostLine, prepareDevtunnel, type DevtunnelRun } from "../src/devtunnel.js";
 
 const creds = { tenantId: "tid", clientId: "cid", secret: "s3cret" };
 
@@ -50,4 +50,10 @@ test("a missing (or expired) tunnel is recreated with its port", async () => {
     ["port", "show", "bean-teams", "-p", "3978"],
     ["port", "create", "bean-teams", "-p", "3978"],
   ]);
+});
+
+test("the expired-token reconnect failure is a dead host; transient drops are not", () => {
+  expect(isDeadHostLine("devtunnel: Error connecting host tunnel session: Not authorizedUnauthorized. Refreshing tunnel access token failed with error Refreshing tunnel access token is allowed only when connecting.")).toBe(true);
+  expect(isDeadHostLine("Connection to host tunnel relay closed. Connection lost.. Reconnecting.")).toBe(false);
+  expect(isDeadHostLine("Connection to host tunnel relay restored.")).toBe(false);
 });
