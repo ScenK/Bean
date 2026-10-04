@@ -18,8 +18,8 @@ export function useListFold(key: string): [boolean, () => void] {
   return [folded, toggle];
 }
 
-// Sits in the window's top drag strip just right of the traffic lights, in the same spot folded
-// or not, so there's always a way back.
+// Sits in the window's top drag strip by the list divider (right of the traffic lights when
+// folded), so there's always a way back.
 export function ListFoldToggle({ folded, onToggle, listId }: { folded: boolean; onToggle: () => void; listId: string }) {
   const label = folded ? "Show list" : "Hide list";
   return (
