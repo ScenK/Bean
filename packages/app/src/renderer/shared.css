@@ -358,15 +358,16 @@ button, input, textarea, select, a {
 }
 /* Fold the list column away so the detail pane (flex: 1) takes the full row. The list stays
    mounted — search, scroll, group folds, and drafts survive — and display:none drops it from the
-   tab order. The toggle sits in the window's 32px drag strip, right of the traffic lights
-   (hiddenInset), positioned against .bean-dashboard. */
+   tab order. The toggle sits in the window's 32px drag strip, positioned against .bean-dashboard:
+   unfolded it hugs the list/detail divider; folded (no divider) it parks right of the traffic
+   lights (hiddenInset). max() keeps it clear of the lights in a narrow window. */
 .bean-skills--folded > .bean-skills-list { display: none; }
 .bean-list-fold-toggle {
   position: absolute;
-  top: 4px;
+  top: 10px;
   left: 78px;
-  width: 26px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -378,6 +379,7 @@ button, input, textarea, select, a {
   cursor: pointer;
   z-index: 1;
 }
+.bean-skills:not(.bean-skills--folded) > .bean-list-fold-toggle { left: max(78px, calc(33.33% - 20px)); }
 .bean-list-fold-toggle:hover { color: var(--bean-text); border-color: var(--bean-control-border); }
 .bean-skills-list {
   width: 33.33%;
