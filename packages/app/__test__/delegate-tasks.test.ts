@@ -2,9 +2,11 @@ import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { describe, expect, it, vi } from "vitest";
 import { createDelegateTasks, resolveDelegateSelection, type DelegateEvent } from "../src/delegate-tasks.js";
-import type { CliModels, CliName, DelegateCallbacks, DelegateHandle, DelegateRequest } from "@bean/core";
+import { runDelegate, type CliModels, type CliName, type DelegateCallbacks, type DelegateHandle, type DelegateRequest } from "@bean/core";
 
 const CLI_MODELS: CliModels[] = [
   { provider: "claude", models: ["sonnet"] },
@@ -223,6 +225,34 @@ describe("createDelegateTasks", () => {
     h.cancelCallbacks[0]!();
     expect(h.sent.filter((e) => e.type === "cancelled")).toHaveLength(1);
     expect(readdirSync(join(dir, "runs"))).toEqual([]); // released only now
+  });
+});
+
+describe("timeout racing Stop (real runDelegate)", () => {
+  it("a Stop between the timeout SIGTERM and close still settles the task as failed and releases it", async () => {
+    vi.useFakeTimers();
+    try {
+      const dir = tmp();
+      const sent: DelegateEvent[] = [];
+      const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => true });
+      const tasks = createDelegateTasks({
+        resolveCli: () => ({ cli: "claude" }),
+        send: (e) => { sent.push(e); },
+        newId: () => "task-1",
+        dir,
+        run: (req, cbs) => runDelegate(req, cbs, () => child as unknown as ChildProcess, 60_000),
+      });
+      const id = await tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });
+      vi.advanceTimersByTime(60_000); // timeout fires: SIGTERM sent, child not yet closed
+      tasks.cancel(id);
+      child.emit("close", 143);
+      expect(sent.at(-1)).toMatchObject({ taskId: id, type: "failed", message: expect.stringContaining("timed out") });
+      expect(readdirSync(join(dir, "runs"))).toEqual([]);
+      tasks.cancel(id); // task is gone — no-op
+      expect(sent.filter((e) => e.type === "failed" || e.type === "cancelled")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
