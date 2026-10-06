@@ -132,6 +132,11 @@ describe("routine scheduler", () => {
     expect(await sched.startNow("morning", (o) => outcomes.push(o))).toEqual({ started: true });
     expect(sched.isRunning("morning")).toBe(true);
     expect(await sched.startNow("morning", () => {})).toEqual({ started: false, reason: "already running" });
+    // Two concurrent starts of an idle routine: exactly one wins.
+    const { deps: d2 } = makeDeps({ runRoutine: vi.fn(() => new Promise<RoutineRunResult>(() => {})) });
+    const s2 = createRoutineScheduler(d2);
+    const both = await Promise.all([s2.startNow("morning", () => {}), s2.startNow("morning", () => {})]);
+    expect(both.filter((r) => r.started)).toHaveLength(1);
     await vi.waitFor(() => expect(deps.runRoutine).toHaveBeenCalled());
     resolveRun(runResult());
     await vi.waitFor(() => expect(outcomes).toEqual([{ status: "done", digest: "d" }]));

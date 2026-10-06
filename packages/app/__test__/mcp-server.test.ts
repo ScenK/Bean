@@ -145,6 +145,7 @@ describe("MCP tool handlers", () => {
     expect((await h.call("save_note", { title: "t", body: "b", slug: "../x" }, ctx())).isError).toBe(true);
     expect((await h.call("save_note", { title: 5, body: "b" }, ctx())).isError).toBe(true);
     expect((await h.call("save_note", "nope", ctx())).isError).toBe(true);
+    expect(text(await h.call("save_note", { title: "t", slug: "keep-me" }, ctx()))).toMatch(/body is required/);
     expect((await h.call("drop_tables", {}, ctx())).isError).toBe(true);
     expect((await h.call("add_todo", { routine: "report", text: "x" }, ctx())).isError).toBe(true); // not todo-driven
     await h.call("add_todo", { routine: "inbox", text: "a" }, ctx());
@@ -165,6 +166,20 @@ describe("MCP tool handlers", () => {
     expect(spawned[0]!.prompt).toContain("Review it.");
     // Same project again: refused by the manager's guard, reported as an error.
     expect(text(await h.call("start_delegate", { instruction: "again", project: "api" }, ctx()))).toMatch(/already going/);
+  });
+
+  it("caps running delegates, counting starts still in flight", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    // The real manager, but every start parks (like an awaited skillBrowser) until released.
+    const slow: ReturnType<typeof harness> = harness({
+      delegates: { start: async (req) => { await gate; return slow.delegates.start(req); }, cancel: (id) => slow.delegates.cancel(id) },
+    });
+    const calls = Array.from({ length: 6 }, (_, i) => slow.h.call("start_delegate", { instruction: `job ${i}`, project: i % 2 ? "api" : "web" }, slow.ctx()));
+    await new Promise((r) => setImmediate(r));
+    release();
+    const results = await Promise.all(calls);
+    expect(results.filter((r) => /already running/.test(text(r)) && /Bean delegates/.test(text(r)))).toHaveLength(2);
   });
 
   it("client A starts, client B lists and cancels; a duplicate cancel stays cancelling", async () => {

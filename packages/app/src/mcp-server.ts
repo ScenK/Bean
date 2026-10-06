@@ -120,6 +120,7 @@ function ago(ms: number): string {
 export function createMcpHandlers(deps: McpHandlerDeps) {
   const now = deps.now ?? Date.now;
   const counts = new Map<string, { n: number; at: number }>();
+  let starting = 0; // start_delegate calls past the cap check, not yet in the registry
   /** "Saved 3 notes · via Claude Code" — one bubble per client+kind, counting within its linger. */
   const coalesced = (client: string, key: "note" | "todo" | "forget", line: (n: number) => string): void => {
     const id = `mcp:${client}:${key}`;
@@ -144,7 +145,8 @@ export function createMcpHandlers(deps: McpHandlerDeps) {
 
     async save_note(args, ctx) {
       const title = str(args, "title", 200, true);
-      const body = str(args, "body", 100_000) ?? "";
+      if (typeof args.body !== "string") throw new ToolError("body is required.");
+      const body = str(args, "body", 100_000) ?? ""; // an explicit "" is a deliberate empty note
       const slug = str(args, "slug", 120);
       if (slug !== undefined && !SLUG.test(slug)) throw new ToolError("slug must be lowercase letters, digits and dashes.");
       const projectRef = str(args, "project", 1000);
@@ -254,16 +256,22 @@ export function createMcpHandlers(deps: McpHandlerDeps) {
       if (model !== undefined && !deps.models().includes(model)) {
         throw new ToolError(`Unknown model "${model}". Configured models: ${deps.models().join(", ") || "none"}.`);
       }
-      if (deps.runs.list("delegate").filter(isActive).length >= MAX_RUNNING_DELEGATES) {
+      if (deps.runs.list("delegate").filter(isActive).length + starting >= MAX_RUNNING_DELEGATES) {
         throw new ToolError(`${MAX_RUNNING_DELEGATES} Bean delegates are already running — wait for one to finish or cancel one.`);
       }
-      const taskId = await deps.delegates.start({
-        projectPath: project?.path ?? deps.scratchPath,
-        prompt: skill ? composePrompt(skill, instruction) : instruction,
-        instruction,
-        ...(model ? { model } : {}),
-        ...(skill ? { skillName: skill.name } : {}),
-      });
+      starting++;
+      let taskId: string;
+      try {
+        taskId = await deps.delegates.start({
+          projectPath: project?.path ?? deps.scratchPath,
+          prompt: skill ? composePrompt(skill, instruction) : instruction,
+          instruction,
+          ...(model ? { model } : {}),
+          ...(skill ? { skillName: skill.name } : {}),
+        });
+      } finally {
+        starting--; // a started run is in the registry by now (its "started" event is synchronous)
+      }
       // "started" is emitted synchronously inside start(); a refused start (busy project, no
       // CLI) reports its failure on the next turn instead.
       if (!deps.runs.get(taskId)) {

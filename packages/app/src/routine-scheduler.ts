@@ -101,12 +101,15 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     }
   }
 
-  /** The runNow guards; a routine to run, or why not. */
+  /** The runNow guards; a routine to run — already reserved in `running`, so two concurrent
+   * starts can't both pass — or why not. */
   async function runnable(name: string): Promise<Routine | string> {
     if (running.has(name)) return "already running";
     const routine = (await deps.loadRoutines()).find((r) => r.name === name);
     if (!routine) return `no routine named "${name}"`;
     if (routine.watch && routine.steps.length === 0) return "a notify-only watch has no steps to run — use Check now";
+    if (running.has(name)) return "already running"; // someone started it during the load
+    running.add(name);
     return routine;
   }
 
