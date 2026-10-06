@@ -34,6 +34,8 @@ export interface AppInfo {
   author: string;
   description: string;
   isPackaged: boolean;
+  /** Settings → Connect AI apps: Bean's executable + the bundled MCP shim it runs as node. */
+  mcp?: { exe: string; shim: string; warning?: string };
 }
 
 export type UpdateStatus =

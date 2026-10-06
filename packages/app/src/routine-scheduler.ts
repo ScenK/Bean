@@ -32,6 +32,7 @@ export interface RoutineSchedulerDeps {
 }
 
 export interface WatchCheckResult { newItems: number; error?: string }
+export interface RoutineRunOutcome { status: "done" | "failed"; digest: string }
 
 const TICK_MS = 30_000;
 export const ALARM_AFTER = 3;
@@ -75,8 +76,9 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   const failures = new Map<string, number>();
   const polling = new Set<string>();
 
-  async function execute(routine: Routine): Promise<void> {
+  async function execute(routine: Routine, onFinish?: (o: RoutineRunOutcome) => void): Promise<void> {
     running.add(routine.name);
+    let outcome: RoutineRunOutcome = { status: "failed", digest: "Run failed" };
     try {
       // Stamp lastRun at start so a crash mid-run doesn't refire the same slot forever.
       await updateState(routine.name, (prior) => ({ ...(prior ?? { history: [] }), lastRun: now().toISOString(), missed: undefined }));
@@ -84,14 +86,28 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       // run (success or failure) counts as "handled," so a throw below can't leave tick() stuck
       // skipping this routine forever while disk already says not-missed.
       const result = await deps.runRoutine(routine);
-      if (result.deferred) return; // a todo's project was busy — nothing ran, retry next tick
+      if (result.deferred) { // a todo's project was busy — nothing ran, retry next tick
+        outcome = { status: "failed", digest: "Deferred: a queued todo's project was busy — it'll retry on the next tick." };
+        return;
+      }
+      outcome = { status: result.record.status === "failed" ? "failed" : "done", digest: result.digest };
       await updateState(routine.name, (s) => appendRunRecord(s, result.record));
       await deps.deliverDigest(routine, result);
     } catch (err) {
       console.error(`bean: routine "${routine.name}" run failed`, err);
     } finally {
       running.delete(routine.name);
+      try { onFinish?.(outcome); } catch (err) { console.error("bean: routine onFinish failed", err); }
     }
+  }
+
+  /** The runNow guards; a routine to run, or why not. */
+  async function runnable(name: string): Promise<Routine | string> {
+    if (running.has(name)) return "already running";
+    const routine = (await deps.loadRoutines()).find((r) => r.name === name);
+    if (!routine) return `no routine named "${name}"`;
+    if (routine.watch && routine.steps.length === 0) return "a notify-only watch has no steps to run — use Check now";
+    return routine;
   }
 
   const pollDue = (routine: Routine & { watch: RoutineWatch }, state: RoutineState | undefined, at: Date): boolean =>
@@ -277,11 +293,16 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     isRunning: (name: string): boolean => running.has(name),
     pollFailures: (name: string): number => failures.get(name) ?? 0,
     async runNow(name: string): Promise<{ started: boolean; reason?: string }> {
-      if (running.has(name)) return { started: false, reason: "already running" };
-      const routine = (await deps.loadRoutines()).find((r) => r.name === name);
-      if (!routine) return { started: false, reason: `no routine named "${name}"` };
-      if (routine.watch && routine.steps.length === 0) return { started: false, reason: "a notify-only watch has no steps to run — use Check now" };
+      const routine = await runnable(name);
+      if (typeof routine === "string") return { started: false, reason: routine };
       await execute(routine);
+      return { started: true };
+    },
+    /** runNow without waiting for the run (MCP run_routine, #225); `onFinish` gets the outcome. */
+    async startNow(name: string, onFinish: (o: RoutineRunOutcome) => void): Promise<{ started: boolean; reason?: string }> {
+      const routine = await runnable(name);
+      if (typeof routine === "string") return { started: false, reason: routine };
+      void execute(routine, onFinish); // execute() never rejects
       return { started: true };
     },
     /** Poll a watch right now, ignoring its window (runNow doesn't poll). New todo-driven items

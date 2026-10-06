@@ -516,6 +516,32 @@ test("rememberOnClose extracts and appends in the background, then Undo deletes 
   expect(await handlers.undoBatch()).toBe(0);
 });
 
+test("an MCP remember merges into the live chat-close batch, and Undo deletes both", async () => {
+  const { handlers, deleted } = memoryHandlersFor();
+  const batch = await handlers.rememberOnClose(typed, {});
+  const mcp: Memory = { id: "mcp-1", text: "uses vim", createdAt: "2026-10-05T00:00:00.000Z" };
+  expect(await handlers.addToBatch([mcp])).toBe(2);
+  expect(handlers.batch()?.ids).toEqual([...batch.map((m) => m.id), "mcp-1"]);
+  expect(await handlers.undoBatch()).toBe(2);
+  expect(deleted).toEqual([[...batch.map((m) => m.id), "mcp-1"]]);
+});
+
+test("a failed MCP remember rolls the batch back, and a concurrent chat-close batch survives it", async () => {
+  let failNext = false;
+  const { handlers } = memoryHandlersFor({
+    appendMemories: async () => { if (failNext) { failNext = false; throw new Error("disk full"); } },
+  });
+  const batch = await handlers.rememberOnClose(typed, {});
+  failNext = true;
+  const failing = handlers.addToBatch([{ id: "mcp-x", text: "x", createdAt: "2026-10-05T00:00:00.000Z" }]);
+  const closing = handlers.rememberOnClose(typed, {}); // queued behind the failing insert
+  await expect(failing).rejects.toThrow("disk full");
+  const second = await closing;
+  expect(handlers.batch()?.ids).toEqual(second.map((m) => m.id));
+  expect(handlers.batch()?.ids).not.toContain("mcp-x");
+  expect(batch).not.toEqual(second);
+});
+
 test("an incognito chat writes nothing and never calls extraction", async () => {
   let extracted = false;
   const { handlers, appended, batches } = memoryHandlersFor({ extractMemories: async () => { extracted = true; return []; } });

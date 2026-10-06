@@ -20,6 +20,14 @@ const preloadOpts = {
   plugins: [{ name: "check-preload-cjs", setup(b) { b.onEnd(() => checkPreloadIsCjs()); } }],
 };
 
+// The MCP stdio shim (#225) each AI app spawns as `<Bean exe> mcp-shim.cjs` with
+// ELECTRON_RUN_AS_NODE=1 — CommonJS so it runs anywhere, shipped beside the app via extraResources.
+const pkgVersion = JSON.parse(readFileSync("package.json", "utf8")).version;
+const shimOpts = {
+  ...common, format: "cjs", entryPoints: ["src/mcp-shim.ts"], outfile: "dist/mcp-shim.cjs",
+  define: { "process.env.BEAN_VERSION": JSON.stringify(pkgVersion) },
+};
+
 const rendererOpts = { ...common, platform: "browser", jsx: "automatic", jsxImportSource: "preact",
   entryPoints: [
     "src/renderer/avatar.ts",
@@ -76,13 +84,14 @@ function copyStaticAssets() {
 if (!watchMode) {
   await build(mainOpts);
   await build(preloadOpts);
+  await build(shimOpts);
   await build(rendererOpts);
   copyStaticAssets();
 } else {
-  const [mainCtx, preloadCtx, rendererCtx] = await Promise.all([
-    context(mainOpts), context(preloadOpts), context(rendererOpts),
+  const [mainCtx, preloadCtx, shimCtx, rendererCtx] = await Promise.all([
+    context(mainOpts), context(preloadOpts), context(shimOpts), context(rendererOpts),
   ]);
-  await Promise.all([mainCtx.watch(), preloadCtx.watch(), rendererCtx.watch()]);
+  await Promise.all([mainCtx.watch(), preloadCtx.watch(), shimCtx.watch(), rendererCtx.watch()]);
   copyStaticAssets();
   // esbuild doesn't watch files it merely copies, so re-copy by hand on change.
   watch("src/renderer", { recursive: true }, (_event, filename) => {

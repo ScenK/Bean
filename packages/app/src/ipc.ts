@@ -432,6 +432,14 @@ export interface MemoryBatch { ids: string[]; at: string }
 
 export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
   let lastBatch: MemoryBatch | undefined;
+  // Batch transitions (chat-close replace, MCP merge, Undo) run one at a time, so a failed
+  // insert's rollback can never clobber a batch another writer set while it was awaiting.
+  let batchChain: Promise<unknown> = Promise.resolve();
+  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
+    const p = batchChain.then(fn);
+    batchChain = p.catch(() => {});
+    return p;
+  };
   return {
     list: (): Promise<Memory[]> => deps.loadMemories(deps.dbFile),
     append: (additions: Memory[]): Promise<void> => deps.appendMemories(deps.dbFile, additions),
@@ -448,19 +456,34 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       if (candidates.length === 0) return [];
       const at = new Date().toISOString();
       const batch: Memory[] = candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at }));
-      // Pending before the insert lands, so a dream snapshot can never see these rows without
-      // also seeing them as the live Undo batch it must leave alone.
+      await serial(async () => {
+        // Pending before the insert lands, so a dream snapshot can never see these rows without
+        // also seeing them as the live Undo batch it must leave alone.
+        const prevBatch = lastBatch;
+        lastBatch = { ids: batch.map((m) => m.id), at };
+        try {
+          await deps.appendMemories(deps.dbFile, batch);
+        } catch (err) {
+          lastBatch = prevBatch;
+          throw err;
+        }
+      });
+      deps.onMemoryBatch?.(batch, () => lastBatch?.ids ?? []);
+      return batch;
+    },
+    /** An MCP remember (#225): appended and *merged* into the live Undo batch (a chat close
+     * still replaces it). Returns the merged batch size for the bubble. */
+    addToBatch: (additions: Memory[]): Promise<number> => serial(async () => {
       const prevBatch = lastBatch;
-      lastBatch = { ids: batch.map((m) => m.id), at };
+      lastBatch = { ids: [...(prevBatch?.ids ?? []), ...additions.map((m) => m.id)], at: new Date().toISOString() };
       try {
-        await deps.appendMemories(deps.dbFile, batch);
+        await deps.appendMemories(deps.dbFile, additions);
       } catch (err) {
         lastBatch = prevBatch;
         throw err;
       }
-      deps.onMemoryBatch?.(batch, () => lastBatch?.ids ?? []);
-      return batch;
-    },
+      return lastBatch.ids.length;
+    }),
     batch: (): MemoryBatch | undefined => lastBatch,
     lastDream: (): Promise<DreamDigest | undefined> => deps.getLastDream(deps.dbFile),
     /** Undo last dream: restores only groups untouched since; `skipped` = kept user edits. */
@@ -473,12 +496,12 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       return d ? deps.dreamDetails(deps.dbFile, d.runId) : [];
     },
     /** Deletes exactly the last batch's ids (rows edited since are still that batch's rows). */
-    undoBatch: async (): Promise<number> => {
+    undoBatch: (): Promise<number> => serial(async () => {
       if (!lastBatch) return 0;
       const n = await deps.deleteMemories(deps.dbFile, lastBatch.ids);
       lastBatch = undefined;
       return n;
-    },
+    }),
   };
 }
 
@@ -759,7 +782,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   todoHandlers: ReturnType<typeof buildTodoHandlers>;
 }
 
-export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
+export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { memoryHandlers: ReturnType<typeof buildMemoryHandlers> } {
   const routeHandler = buildRouteHandler(deps);
   ipcMain.handle(IPC.route, (_e, input: RouteInput) => routeHandler(input));
 
@@ -947,4 +970,5 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
     const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
     win.setContentSize(width ?? 0, Math.min(Math.round(height), workArea.height), true);
   });
+  return { memoryHandlers };
 }

@@ -123,6 +123,21 @@ describe("routine scheduler", () => {
     vi.useRealTimers();
   });
 
+  it("startNow returns before the run finishes and reports its outcome", async () => {
+    let resolveRun!: (r: RoutineRunResult) => void;
+    const { deps } = makeDeps({ runRoutine: vi.fn(() => new Promise<RoutineRunResult>((r) => { resolveRun = r; })) });
+    const sched = createRoutineScheduler(deps);
+    const outcomes: unknown[] = [];
+    expect(await sched.startNow("nope", (o) => outcomes.push(o))).toMatchObject({ started: false });
+    expect(await sched.startNow("morning", (o) => outcomes.push(o))).toEqual({ started: true });
+    expect(sched.isRunning("morning")).toBe(true);
+    expect(await sched.startNow("morning", () => {})).toEqual({ started: false, reason: "already running" });
+    await vi.waitFor(() => expect(deps.runRoutine).toHaveBeenCalled());
+    resolveRun(runResult());
+    await vi.waitFor(() => expect(outcomes).toEqual([{ status: "done", digest: "d" }]));
+    expect(sched.isRunning("morning")).toBe(false);
+  });
+
   it("runNow runs immediately, refuses while running, and reports unknown names", async () => {
     const { deps } = makeDeps();
     const sched = createRoutineScheduler(deps);
