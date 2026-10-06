@@ -105,7 +105,10 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
   const emit = (event: DelegateEvent): void => {
     const task = tasks.get(event.taskId);
     if (event.type !== "started" && !task) return;
-    if (task?.cancelling && event.type !== "cancelled") return;
+    // While stopping, drop output but let any terminal event settle the task: core lets a
+    // timeout that fired before Stop win (onError, never onCancelled), and that failure is
+    // the only terminal event this run will ever get.
+    if (task?.cancelling && !isTerminal(event)) return;
     if (isTerminal(event)) {
       if (task) releaseRun(deps.dir, task.projectPath);
       tasks.delete(event.taskId);
