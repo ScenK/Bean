@@ -235,6 +235,10 @@ export function SettingsWindow() {
               >
                 <option value="">Auto (first enabled{enabledClis[0] ? `: ${enabledClis[0]}` : ""})</option>
                 {enabledClis.map((c) => <option key={c} value={c}>{c}</option>)}
+                {/* A saved CLI that's undetected or unchecked still shows, so the select never claims "Auto" over it. */}
+                {delegateCli && !(enabledClis as string[]).includes(delegateCli) && (
+                  <option value={delegateCli} disabled>{delegateCli} (not available, using Auto)</option>
+                )}
               </select>
             </div>
           </div>
