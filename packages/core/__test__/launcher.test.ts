@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { detectClis, launchCommand, launchInTerminal, loginShellPath } from "../src/launcher.js";
+import { delimiter } from "node:path";
+import { detectClis, launchCommand, launchInTerminal, loginShellPath, resolveCliPath } from "../src/launcher.js";
 import type { LaunchRequest, LaunchSpawnFn, SpawnSyncFn } from "../src/launcher.js";
 
 test("launchCommand builds the opencode TUI command with a pre-sent prompt", () => {
@@ -71,6 +72,17 @@ test("detectClis includes codex when it is on PATH", () => {
   const path = "/usr/local/bin";
   expect(detectClis(path, () => true)).toEqual(["opencode", "claude", "codex"]);
   expect(detectClis(path, (p) => p.endsWith("/codex"))).toEqual(["codex"]);
+});
+
+test("resolveCliPath keeps process then shell PATH first and always ends with ~/.local/bin", () => {
+  expect(resolveCliPath("/usr/bin", "/shell/bin", "/Users/x")).toBe(
+    ["/usr/bin", "/shell/bin", "/opt/homebrew/bin", "/usr/local/bin", "/Users/x/.local/bin"].join(delimiter),
+  );
+  expect(resolveCliPath("", "", "/Users/My Name").split(delimiter)).toEqual(
+    ["/opt/homebrew/bin", "/usr/local/bin", "/Users/My Name/.local/bin"],
+  );
+  // A failed login-shell probe (empty) still finds the native claude install.
+  expect(detectClis(resolveCliPath("", "", "/Users/x"), (p) => p === "/Users/x/.local/bin/claude")).toEqual(["claude"]);
 });
 
 test("loginShellPath runs the shell as an interactive login shell and returns its PATH", () => {

@@ -20,7 +20,7 @@ const defaultIsExecutable = (p: string): boolean => {
 };
 
 /** Which of Bean's supported CLIs are on PATH — drives the Plan window's CLI picker.
- * Sync PATH scan, no child processes; call once at startup and cache. */
+ * Sync PATH scan, no child processes — cheap enough to re-run at every resolution. */
 export function detectClis(
   pathEnv: string = process.env.PATH ?? "",
   isExecutable: (p: string) => boolean = defaultIsExecutable,
@@ -46,6 +46,14 @@ export function loginShellPath(
   } catch {
     return "";
   }
+}
+
+/** PATH for finding and spawning delegate CLIs: the process PATH, the login shell's PATH,
+ * then fixed fallbacks that must survive a failed probe. `~/.local/bin` is where the native
+ * claude installer lives; it is the one user-profile dir hardcoded on purpose. */
+export function resolveCliPath(pathEnv: string, shellPath: string, homeDir: string): string {
+  return [pathEnv, shellPath, "/opt/homebrew/bin", "/usr/local/bin", join(homeDir, ".local", "bin")]
+    .filter(Boolean).join(delimiter);
 }
 
 export interface LaunchRequest {

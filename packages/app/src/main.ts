@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { basename, join, dirname } from "node:path";
 import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./chatops-enabled-store.js";
@@ -18,7 +19,7 @@ import {
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
   maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, type DreamDigest,
   loadReminders, saveReminders, dueReminders, extractPageText,
-  loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, deliver,
+  loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate, killAllDelegates,
   composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
@@ -509,11 +510,12 @@ app.whenReady().then(async () => {
     },
   });
 
-  // PATH doesn't change mid-session — detect once, serve from cache. Finder-launched
-  // Electron gets a minimal PATH missing whatever the user's shell profile adds (nvm,
-  // npm/pnpm global bins, ~/.local/bin, ...) — ask the login shell for its real PATH.
-  const resolvedPath = [process.env.PATH ?? "", loginShellPath(), "/opt/homebrew/bin", "/usr/local/bin"].join(":");
-  const availableClis = detectClis(resolvedPath);
+  // Finder-launched Electron gets a minimal PATH missing whatever the user's shell profile
+  // adds (nvm, npm/pnpm global bins, ~/.local/bin, ...) — ask the login shell for its real
+  // PATH once. CLI detection is re-scanned per resolution (cheap sync stat) so a CLI
+  // installed after boot is picked up without a relaunch.
+  const resolvedPath = resolveCliPath(process.env.PATH ?? "", loginShellPath(), homedir());
+  const detectedClis = (): CliName[] => detectClis(resolvedPath);
 
   // Same repo-default + ~/.bean override layering as skills/persona; loaded once at boot
   // (no live reload — restart Bean after editing clis.json).
@@ -555,7 +557,7 @@ app.whenReady().then(async () => {
         saveConfigFile: (update) => saveConfig(configFile(dir), update),
       },
     );
-    const enabledClis = (): CliName[] => availableClis.filter((cli) => !runtime.getDisabledClis().includes(cli));
+    const enabledClis = (): CliName[] => detectedClis().filter((cli) => !runtime.getDisabledClis().includes(cli));
     // Gated per call on the live Settings toggle, so flipping it needs no restart.
     actionTools.push(systemControlTool(() => runtime.getSystemControls()));
 
@@ -905,7 +907,7 @@ app.whenReady().then(async () => {
       getTerminalApp: () => runtime.getTerminalApp(),
       getEditorApp: () => runtime.getEditorApp(),
       getAvailableClis: () => enabledClis(),
-      getDetectedClis: () => availableClis,
+      getDetectedClis: detectedClis,
       getCliModels: () => cliModels,
       beanDirPath: dir,
       modelMemoryFile: modelMemoryFile(dir),

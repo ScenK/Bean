@@ -2,7 +2,7 @@ import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
-  detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
+  detectClis, type CliName, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
@@ -23,7 +23,8 @@ const discordConfig = await loadDiscordConfig(discordConfigFile(dir));
 const beanConfig = await loadConfig(configFile(dir), dir);
 if (!beanConfig.openaiApiKey) throw new Error("openaiApiKey missing in ~/.bean/config.json");
 
-const clis = detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
+// Re-scanned per call so a CLI installed after the bot started is picked up.
+const clis = (): CliName[] => detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
 const cliModels = await loadCliModels(clisFile(builtinDir), clisFile(dir));
 const runs = new RunRegistry(runDelegate, { dir, botKind: "discord", onActivity: parentActivitySink });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
@@ -56,7 +57,7 @@ const bot = buildTeamsBot({
   loadMemories: () => loadMemories(dbFile(dir)),
   loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
   saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),
-  detectClis: () => clis,
+  detectClis: clis,
   cliModels,
   runs,
   proposals,
@@ -79,7 +80,7 @@ const bot = buildTeamsBot({
   liveSessionProposals,
   // Always on for Discord (no `liveSessions` opt-in) when Claude is both detected and not in
   // config's disabledClis list; the live-session engine itself is Claude-specific.
-  liveSessionsEnabled: () => clis.includes("claude"),
+  liveSessionsEnabled: () => clis().includes("claude"),
   scratchPath,
   cards: discordCards,
   systemControlsEnabled: () => beanConfig.systemControls,
@@ -129,7 +130,7 @@ async function liveSessionCardFor(
     proposalId, projectName, instruction: proposal.instruction, model: proposal.model, skillName: proposal.skillName,
     steering: proposal.steering,
     projects: projects.map((p) => ({ name: p.name, path: p.path })), models,
-    skills: skills.filter((s) => !s.hidden && s.enabled !== false).map((s) => ({ name: s.name })), clis: clis.filter((c) => c === "claude"),
+    skills: skills.filter((s) => !s.hidden && s.enabled !== false).map((s) => ({ name: s.name })), clis: clis().filter((c) => c === "claude"),
   });
 }
 
@@ -143,13 +144,14 @@ async function delegateCardFor(pending: PendingProposal, sel: { cli?: string; mo
   const skillName = sel.skillName !== undefined
     ? (sel.skillName === "__none__" ? undefined : sel.skillName)
     : pending.proposal.skillName;
+  const detected = clis();
   return discordCards.proposalCard({
     proposalId: pending.id,
     projectName: projects.find((p) => p.path === pending.proposal.projectPath)?.name ?? pending.proposal.projectPath,
-    skillName, instruction: pending.proposal.instruction, clis,
+    skillName, instruction: pending.proposal.instruction, clis: detected,
     skills: skills.filter((s) => !s.hidden && s.enabled !== false).map((s) => ({ name: s.name, ...(s.browser ? { browser: true } : {}) })),
-    models: availableModels(cliModels, clis),
-    defaultCli: clis.find((c) => c === sel.cli) ?? pending.defaultCli,
+    models: availableModels(cliModels, detected),
+    defaultCli: detected.find((c) => c === sel.cli) ?? pending.defaultCli,
     defaultModel: sel.model ?? pending.defaultModel,
   });
 }
@@ -499,11 +501,11 @@ process.on("SIGTERM", () => {
 });
 
 client.once("clientReady", async () => {
-  console.log(`@bean/discord logged in as ${client.user?.tag} (clis: ${clis.join(", ") || "none"})`);
+  console.log(`@bean/discord logged in as ${client.user?.tag} (clis: ${clis().join(", ") || "none"})`);
   // Control commands map to Bean's existing text commands; /live-session is added only when
   // Claude is detected and config-enabled. Project/model/skill are picked on its card, so the
   // command itself carries just the opening prompt.
-  const liveEnabled = clis.includes("claude");
+  const liveEnabled = clis().includes("claude");
   const liveCmd: ApplicationCommandDataResolvable = {
     name: "live-session",
     description: "Start a chat-bridged live coding session",

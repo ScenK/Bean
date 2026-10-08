@@ -2,7 +2,7 @@ import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
-  detectClis, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
+  detectClis, type CliName, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
@@ -82,7 +82,8 @@ adapter.onTurnError = async (context, error) => {
   await context.sendActivity("Something went wrong handling that message.");
 };
 
-const clis = detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
+// Re-scanned per call so a CLI installed after the bot started is picked up.
+const clis = (): CliName[] => detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
 const cliModels = await loadCliModels(clisFile(builtinDir), clisFile(dir));
 const runs = new RunRegistry(runDelegate, { dir, botKind: "teams", onActivity: parentActivitySink });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
@@ -109,7 +110,7 @@ const bot = buildTeamsBot({
   loadMemories: () => loadMemories(dbFile(dir)),
   loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
   saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),
-  detectClis: () => clis,
+  detectClis: clis,
   cliModels,
   runs,
   proposals: new ProposalStore(),
@@ -133,7 +134,7 @@ const bot = buildTeamsBot({
   // Same rule as Discord: live sessions run claude specifically, so they're on whenever claude
   // is detected and not disabled. The Teams sink posts/edits via the proactive path (postCard
   // below) so streamed turns land after the triggering turn ends.
-  liveSessionsEnabled: () => clis.includes("claude"),
+  liveSessionsEnabled: () => clis().includes("claude"),
   scratchPath,
   cards: {
     proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, rememberedCard,
@@ -352,7 +353,7 @@ const server = app.listen(teamsConfig.port, () => {
   // setImmediate, so bindFailed is already true by then.
   setImmediate(() => {
     if (bindFailed) return;
-    console.log(`@bean/teams listening on :${teamsConfig.port} (clis: ${clis.join(", ") || "none"})`);
+    console.log(`@bean/teams listening on :${teamsConfig.port} (clis: ${clis().join(", ") || "none"})`);
   });
 });
 // Without this the bind failure is invisible: the tray still shows Teams "running" while an
