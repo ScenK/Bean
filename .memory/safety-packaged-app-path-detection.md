@@ -13,9 +13,14 @@ only reproduces in the packaged app, never in dev.
 Fix: `loginShellPath()` (same file) runs `$SHELL -ilc 'echo -n $PATH'` once via `spawnSync`
 (injectable `SpawnSyncFn` for tests, same pattern as `defaultIsExecutable`/`defaultSpawn`) to get
 the user's actual resolved PATH, and `main.ts` folds it into the string passed to `detectClis`
-alongside `process.env.PATH` and the Homebrew fallbacks. Don't replace this with more hardcoded
-directories — the login shell already knows about every tool version manager the user has,
-hardcoding can only ever cover the ones we thought of. Verify PATH-detection changes with a real
+alongside `process.env.PATH` and the fallbacks (`resolveCliPath()`, same file). Don't replace this
+with more hardcoded directories — the login shell already knows about every tool version manager
+the user has, hardcoding can only ever cover the ones we thought of. **One exception:**
+`~/.local/bin` (the native `claude` installer's dir) is a hardcoded fallback, because the probe can
+fail transiently and invisibly (3 s timeout → `""`) — one bad boot once ran every routine on
+`opencode` for ten hours (#229). Detection itself is no longer cached: `main.ts`'s `detectedClis()`
+and the Discord/Teams servers' `clis()` re-run the sync `detectClis` scan per resolution, so a CLI
+installed after boot shows up without a relaunch (the PATH string itself is still computed once). Verify PATH-detection changes with a real
 `pnpm dist:mac` launched from Finder (not `pnpm dev`), same caveat as
 [safety-builtin-skills-packaging.md](safety-builtin-skills-packaging.md) — unit tests inject the
 shell runner and can't catch a real launchd-environment regression.
