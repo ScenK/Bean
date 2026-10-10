@@ -26,6 +26,10 @@ Key contracts:
 - **Cancel waits for process close:** `DelegateHandle.cancel(onCancelled)` sends SIGTERM to the
   process group, escalates to SIGKILL if it does not close quickly, and only then lets the app
   registry emit `cancelled` and drop the task. Stray post-cancel callbacks are ignored.
+  **Codex is the exception: it gets SIGINT, not SIGTERM** (cancel, timeout, and the
+  `killAllDelegates()` quit sweep, which also leaves a detached `sleep 3; kill -KILL` watchdog).
+  Codex runs each tool command in its own process group, so a group SIGTERM/SIGKILL orphans
+  the command; only SIGINT makes codex reap it. Don't "unify" the signals back (#237).
 - The delegate CLI preference is user-picked in Settings (`delegateCli`, "" = first enabled).
   `resolveCliModelSelection()` resolves that preference together with any requested model, so
   the spawned harness is enabled and supports the model (or receives no `--model`). Only a
