@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
 import type { DelegateCallbacks, DelegateHandle, DelegateRequest } from "../delegate.js";
 import { dbFile, outboxDir } from "../config.js";
-import { isValidSessionId, recordDelegateSession } from "../delegate-runs.js";
+import { delegateRunProject, isValidSessionId, recordDelegateSession } from "../delegate-runs.js";
 import { enqueueOutbox } from "../outbox.js";
 import { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice } from "../run-queue.js";
 
@@ -72,6 +72,12 @@ export class RunRegistry {
   // before start() ever reaches its map insert — `run.released` guards that hole.
   async start(req: DelegateRequest, callerEvents: RunEvents, meta: RunMeta): Promise<boolean> {
     if (this.byProject.has(req.projectPath)) return false;
+    // opencode resuming a session from another folder emits nothing and never exits (claude
+    // rejects it, codex adopts the new cwd), so a thread follow-up on another project starts fresh.
+    if (req.cli === "opencode" && req.resume && delegateRunProject(dbFile(this.opts.dir), req.resume) !== req.projectPath) {
+      const { resume: _stale, ...fresh } = req;
+      req = fresh;
+    }
     const reservation = reserveRun(this.opts.dir, req.projectPath, process.pid, () => this.newId());
     if (!reservation) return false;
     // Lost an in-process race — release the now-redundant reservation and defer to whichever

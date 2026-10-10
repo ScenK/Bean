@@ -57,6 +57,19 @@ export function recordDelegateSession(file: string, row: DelegateRunRow, now: ()
   }
 }
 
+/** The project folder of the newest `delegate_runs` row for `sessionId`; undefined when there is
+ * none or the read fails. */
+export function delegateRunProject(file: string, sessionId: string): string | undefined {
+  try {
+    const row = openDb(file)
+      .prepare("SELECT project_path FROM delegate_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1")
+      .get(sessionId) as { project_path: string } | undefined;
+    return row?.project_path;
+  } catch {
+    return undefined;
+  }
+}
+
 /** A delegate run that can be continued as a live session, or the one-sentence reason it can't. */
 export type ResumableRun = { run: DelegateRunRow } | { refusal: string };
 

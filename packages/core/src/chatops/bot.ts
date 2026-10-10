@@ -221,7 +221,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     // Thread sessions: continue this thread's earlier agent for the same CLI; another CLI
-    // starts fresh (see .memory/project-thread-sessions.md).
+    // starts fresh, as does an opencode session from another project (RunRegistry.start; see
+    // .memory/project-thread-sessions.md).
     const resume = deps.conversations.threadSession(p.conversationId, cli);
     const resetsAtLaunch = resets.get(p.conversationId) ?? 0;
     const req: DelegateRequest = {

@@ -246,3 +246,22 @@ test("every started run (not just resumes) is recorded, and error/cancel carry t
   ]);
   closeDb(dbFile(dir));
 });
+
+test("an opencode resume recorded for another project starts fresh; the same project resumes (#247)", async () => {
+  const { fn, calls } = fakeRun();
+  const dir = tmp();
+  const reg = new RunRegistry(fn, { dir, botKind: "discord" });
+  const oc: DelegateRequest = { cli: "opencode", projectPath: "/x", prompt: "do" };
+  await reg.start(oc, events(), meta);
+  calls[0]?.cb.onSessionStart?.(1, "ses_x");
+  calls[0]?.cb.onDone("ok");
+  await reg.start({ ...oc, projectPath: "/y", resume: "ses_x" }, events(), meta);
+  expect(calls[1]?.req.resume).toBeUndefined();
+  calls[1]?.cb.onDone("ok");
+  await reg.start({ ...oc, resume: "ses_x" }, events(), meta);
+  expect(calls[2]?.req.resume).toBe("ses_x");
+  // Only opencode hangs on a cross-folder resume; claude's rejected resume falls back itself.
+  await reg.start({ ...req, projectPath: "/z", resume: "ses_x" }, events(), meta);
+  expect(calls[3]?.req.resume).toBe("ses_x");
+  closeDb(dbFile(dir));
+});

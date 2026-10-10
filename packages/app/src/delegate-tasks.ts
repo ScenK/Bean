@@ -62,7 +62,7 @@ export function resolvedPathSpawnFn(resolvedPath: string | undefined): DelegateS
           cwd,
           stdio: ["ignore", "pipe", "pipe"],
           detached: true,
-          env: { ...process.env, PATH: resolvedPath, ...BEAN_GIT_IDENTITY },
+          env: { ...process.env, PATH: resolvedPath, ...BEAN_GIT_IDENTITY, PWD: cwd }, // PWD: see core defaultDelegateSpawn
         })
     : undefined;
 }
