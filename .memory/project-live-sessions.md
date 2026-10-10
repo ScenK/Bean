@@ -133,3 +133,13 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   interactive loop (proposal card → start → streaming → steer with a non-allowlisted user →
   stop → crash-path → bot restart while a session is active) still needs a human to drive
   once against a real bot.
+- **Continue live (#234)**: a finished Claude delegate (Discord/Teams) can reopen as a live
+  session — the finished card's `Continue live` button (`bean:resume-live:<id>` / Teams
+  `beanAction: "resume-live"`, id in the `proposalId` slot) or `/live-session resume <id>`.
+  `findDelegateRun()` (`delegate-runs.ts`) is the only source of the project path — never a card
+  submit or picker (`LiveSessionProposalStore.update` and the Start handler drop `projectPath`
+  for a `resume` proposal), and Start re-checks the row. A resumed Start needs a real starter id
+  (no restricted→open fallback). claude rejects a bad `--resume` id with an error `result` event
+  and exit 1 **before** `system/init`: `startLiveSession` ignores pre-init `result`s on a resume
+  and reports `RESUME_REJECTED`, never a fresh session. The id doesn't change, so the ended card
+  re-offers the button and nothing new is recorded.

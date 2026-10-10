@@ -12,7 +12,13 @@ export interface LiveSessionRequest {
   prompt: string;
   /** Literal --model value (clis.json); flag omitted when unset. */
   model?: string;
+  /** Claude session id to continue (`--resume`). Only pass an id Bean recorded in delegate_runs. */
+  resume?: string;
 }
+
+/** A resumed session that exited before claude's `system/init` event: the host rejected the
+ * id (expired or removed), so no session ever ran. */
+export const RESUME_REJECTED = "Couldn't reopen that session (expired or removed on the host). Nothing was started.";
 
 export function liveSessionCommand(req: LiveSessionRequest): { command: string; args: string[] } {
   const modelArgs = req.model ? ["--model", req.model] : [];
@@ -25,6 +31,7 @@ export function liveSessionCommand(req: LiveSessionRequest): { command: string; 
       "--verbose",
       "--dangerously-skip-permissions",
       ...modelArgs,
+      ...(req.resume ? ["--resume", req.resume] : []),
     ],
   };
 }
@@ -83,6 +90,8 @@ export function startLiveSession(
 
   let exited = false;
   let stopping = false;
+  // A bad --resume id makes claude emit an error `result` and exit before `system/init`.
+  let initSeen = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -118,6 +127,10 @@ export function startLiveSession(
       cbs.onOutput(line);
       return;
     }
+    const e = event as { type?: unknown; subtype?: unknown } | null;
+    if (e?.type === "system" && e.subtype === "init") initSeen = true;
+    // Pre-init on a resume, a `result` is claude's rejection, not a turn — the exit reports it.
+    if (req.resume && !initSeen) return;
     const summary = claudeTurnSummary(event);
     if (summary) {
       cbs.onTurnComplete(summary);
@@ -162,6 +175,7 @@ export function startLiveSession(
     // stop()/idle-timeout path (SIGTERM, or SIGKILL escalation), but NOT of an external kill
     // (an operator's `kill -9`, an OOM reaper): only `stopping` tells them apart, so check it
     // rather than treating every null code as a clean end.
+    if (req.resume && !initSeen && !stopping) { settle(new Error(RESUME_REJECTED)); return; }
     if (stopping || code === 0) { settle(); return; }
     const tail = stderrBuf.trim().split("\n").slice(-5).join("\n");
     const reason = code === null ? `signal ${signal ?? "unknown"}` : `code ${code}`;

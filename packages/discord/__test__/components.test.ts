@@ -222,3 +222,22 @@ test("a re-rendered delegate proposal uses the supplied select defaults", () => 
   expect(pick("bean:cli:prop-1")).toBe("opencode");
   expect(pick("bean:model:prop-1")).toBe("gpt-5-5");
 });
+
+test("Continue live: a button on finished/ended cards only when the custom_id fits; resume card locks the project", () => {
+  const base = { projectName: "bean", instruction: "x", startedBy: "scen", outcome: "error" as const };
+  const withButton = JSON.stringify(discordCards.finishedCard({ ...base, resumeLiveId: "sess-1" }));
+  expect(withButton).toContain("bean:resume-live:sess-1");
+  expect(withButton).toContain("Continue live");
+  const tooLong = discordCards.finishedCard({ ...base, resumeLiveId: "a".repeat(90) }) as { components: unknown[] };
+  expect(tooLong.components).toEqual([]);
+  expect(JSON.stringify(discordCards.liveSessionResultCard({ projectName: "bean", startedBy: "scen", outcome: "ended", resumeLiveId: "sess-1" })))
+    .toContain("bean:resume-live:sess-1");
+
+  const card = JSON.stringify(discordCards.liveSessionProposalCard({
+    proposalId: "live-1", projectName: "other", instruction: "Continue where you left off",
+    projects: [{ name: "bean", path: "/p/bean" }], models: [], skills: [], clis: ["claude"], continues: "fix the flaky test",
+  }));
+  expect(card).toContain("Continues");
+  expect(card).toContain("fix the flaky test");
+  expect(card).not.toContain("bean:live-project:");
+});

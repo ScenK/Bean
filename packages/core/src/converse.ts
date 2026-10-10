@@ -81,6 +81,10 @@ export interface ProposedLiveSession {
   skillName?: string;
   /** Who may steer once running (on-card toggle). Defaults to "restricted" at launch. */
   steering?: "open" | "restricted";
+  /** Continue a recorded Claude delegate session (Continue live / `/live-session resume <id>`).
+   * Set only by the bot from a delegate_runs row — propose_live_session never exposes it. The
+   * project is locked to `projectPath`; `instruction` is the recorded run's, shown on the card. */
+  resume?: { sessionId: string; projectPath: string; instruction: string };
 }
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */

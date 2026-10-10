@@ -83,6 +83,9 @@ function proposalCard(input: ProposalCardInput): object {
 // Discord rejects an embed field value over 1024 chars. The tail is often a delegate's whole
 // final answer, and a rejected edit used to crash the bot mid-run — keep only the newest end.
 const FIELD_VALUE_LIMIT = 1024;
+function clampField(text: string): string {
+  return text.length <= FIELD_VALUE_LIMIT ? text : text.slice(0, FIELD_VALUE_LIMIT - 1) + "…";
+}
 function clampTail(tail: string): string {
   const max = FIELD_VALUE_LIMIT - "```\n\n```".length;
   return tail.length <= max ? tail : "…" + tail.slice(-(max - 1));
@@ -102,6 +105,15 @@ function runningCard(input: RunningCardInput): object {
   };
 }
 
+// "Continue live" carries the Claude session id in its custom_id — rendered only when it fits
+// Discord's 100-char cap (a truncated id would resume nothing).
+function continueLiveRows(sessionId: string | undefined): object[] {
+  const customId = `bean:resume-live:${sessionId}`;
+  return sessionId && customId.length <= 100
+    ? [row([{ type: BUTTON, style: 1, label: "Continue live", custom_id: customId }])]
+    : [];
+}
+
 function finishedCard(input: FinishedCardInput): object {
   return {
     embeds: [{
@@ -109,7 +121,7 @@ function finishedCard(input: FinishedCardInput): object {
       description: clampInstruction(input.instruction),
       ...(input.resume ? { fields: [{ name: `Resume (${input.projectName})`, value: `\`${input.resume}\`` }] } : {}),
     }],
-    components: [],
+    components: continueLiveRows(input.resumeLiveId),
   };
 }
 
@@ -235,15 +247,23 @@ function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
   const steeringHelp = restricted
     ? "Restricted: only the starter steers (add co-drivers in-session with `+driver @name`)."
     : "War-room: anyone in this channel steers.";
+  // A resumed session's project is locked: shown as a field, no picker.
+  const resuming = input.continues !== undefined;
   return {
     embeds: [{
-      title: "Bean proposes a live agent session",
+      title: resuming ? "Bean proposes continuing a session live" : "Bean proposes a live agent session",
       description: input.instruction.slice(0, LIVE_PROMPT_LIMIT),
-      fields: [{ name: "How it works", value: `Output streams here; each steering message becomes the agent's next turn. Say \`stop\` to end it.\n${steeringHelp}` }],
+      fields: [
+        ...(resuming ? [
+          { name: "Continues", value: clampField(input.continues ?? "") },
+          { name: "Project", value: input.projectName.slice(0, FIELD_VALUE_LIMIT), inline: true },
+        ] : []),
+        { name: "How it works", value: `Output streams here; each steering message becomes the agent's next turn. Say \`stop\` to end it.\n${steeringHelp}` },
+      ],
     }],
     // Discord caps a message at 5 action rows: project, skill, cli, model, buttons.
     components: [
-      row([projectSelect]),
+      ...(resuming ? [] : [row([projectSelect])]),
       ...skillRows,
       ...cliRows,
       ...modelRows,
@@ -264,7 +284,7 @@ function liveSessionResultCard(input: LiveSessionResultCardInput): object {
     : input.outcome === "cancelled"
       ? `Live session cancelled (by ${input.startedBy})`
       : `Live session in ${input.projectName} ended`;
-  return { embeds: [{ title }], components: [] };
+  return { embeds: [{ title }], components: input.outcome === "ended" ? continueLiveRows(input.resumeLiveId) : [] };
 }
 
 export const discordCards: CardBuilders = {

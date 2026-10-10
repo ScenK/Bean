@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import {
   finishedCard, rememberedCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+  liveSessionProposalCard, liveSessionResultCard,
 } from "../src/cards.js";
 
 const models = [
@@ -127,4 +128,21 @@ test("skill result card reports outcome and actor", () => {
   const s = flatten(skillResultCard({ name: "changelog", savedBy: "alice", outcome: "saved" }));
   expect(s).toContain("Skill saved");
   expect(s).toContain("alice");
+});
+
+test("Continue live: finished/ended cards submit resume-live with the session id; resume card has no project picker", () => {
+  const finished = JSON.stringify(finishedCard({ projectName: "bean", instruction: "x", startedBy: "bob", outcome: "error", resumeLiveId: "sess-1" }));
+  expect(finished).toContain('"beanAction":"resume-live","proposalId":"sess-1"');
+  expect(JSON.stringify(liveSessionResultCard({ projectName: "bean", startedBy: "bob", outcome: "ended", resumeLiveId: "sess-1" })))
+    .toContain("resume-live");
+  expect(JSON.stringify(liveSessionResultCard({ projectName: "bean", startedBy: "bob", outcome: "started", resumeLiveId: "sess-1" })))
+    .not.toContain("resume-live");
+
+  const card = JSON.stringify(liveSessionProposalCard({
+    proposalId: "live-1", projectName: "other", instruction: "Continue where you left off",
+    projects: [{ name: "bean", path: "/p/bean" }], models: [], skills: [], clis: ["claude"], continues: "fix the flaky test",
+  }));
+  expect(card).toContain("fix the flaky test");
+  expect(card).not.toContain('"id":"projectPath"');
+  expect(card).not.toContain("/p/bean");
 });

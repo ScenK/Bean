@@ -12,7 +12,7 @@ import type { Memory } from "../memory/memory.js";
 import type { CliName } from "../launcher.js";
 import type { CliModels } from "../cli-models.js";
 import type { DelegateRequest } from "../delegate.js";
-import { resumeCommand } from "../delegate-runs.js";
+import { isValidSessionId, resumeCommand, type ResumableRun } from "../delegate-runs.js";
 import type { CardBuilders } from "./cards-api.js";
 import { formatAmbientBlock, type AmbientMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
@@ -130,6 +130,8 @@ export interface TeamsBotDeps {
   liveSessionProposals: LiveSessionProposalStore;
   /** Gates the propose_live_session tool (config liveSessions flag + surface support). */
   liveSessionsEnabled: () => boolean;
+  /** delegate_runs lookup behind Continue live (server injects the db path). Omit = no record. */
+  findDelegateRun?: (sessionId: string) => ResumableRun;
   /** Working dir for delegates not tied to a project (must exist); omit to require a project. */
   scratchPath?: string;
   /** Enables the generate_image action tool; omit to disable image generation. */
@@ -141,6 +143,19 @@ export interface TeamsBotDeps {
 const DESKTOP_ONLY =
   "That needs the Bean desktop app — from here I can only chat and run background delegate tasks. Ask me again and I'll run it as one.";
 const NO_CLI = "I can't run delegate tasks: no supported CLI (`claude`, `opencode`, or `codex`) is available on this machine.";
+const BAD_SESSION_ID = "Copy the id from the `claude --resume …` line.";
+const RESUME_OPENING = "Continue where you left off — first, one line on where things stand.";
+
+/** The session id in `/live-session resume <rest>`. A pasted `claude --resume <id>` span wins;
+ * otherwise every valid-looking token counts, and exactly one is required. */
+export function parseResumeArg(rest: string): { id: string } | { error: string } {
+  const flagged = [...rest.matchAll(/--resume\s+`?([^\s`]+)/g)].map((m) => m[1] ?? "");
+  const candidates = flagged.length > 0 ? flagged : rest.replace(/`/g, " ").split(/\s+/);
+  const ids = [...new Set(candidates.filter(isValidSessionId))];
+  if (ids.length === 0) return { error: BAD_SESSION_ID };
+  if (ids.length > 1) return { error: "Send just one session id." };
+  return { id: ids[0]! };
+}
 
 export function buildTeamsBot(deps: TeamsBotDeps): {
   onMessage: (msg: IncomingMessage, fx: BotEffects) => Promise<void>;
@@ -204,8 +219,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       ...(resume ? { resume } : {}),
       ...(skill?.browser ? { browser: true } : {}),
     };
-    const receipt = (sessionId: string | undefined): { resume?: string } =>
-      sessionId ? { resume: resumeCommand(cli, sessionId) } : {};
+    const receipt = (sessionId: string | undefined): { resume?: string; resumeLiveId?: string } =>
+      sessionId
+        ? { resume: resumeCommand(cli, sessionId), ...(cli === "claude" && deps.liveSessionsEnabled() ? { resumeLiveId: sessionId } : {}) }
+        : {};
     const cardId = p.cardActivityId;
     const updateTo = async (card: object): Promise<void> => {
       if (cardId !== undefined) await fx.updateCard(cardId, card);
@@ -253,11 +270,27 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   }
 
   async function startLiveSessionAction(p: PendingLiveSession, startedBy: string, starterId: string, fx: BotEffects): Promise<void> {
-    const projects = await deps.loadProjects();
-    const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? p.proposal.projectPath;
     const updateTo = async (card: object): Promise<void> => {
       if (p.cardActivityId !== undefined) await fx.updateCard(p.cardActivityId, card);
     };
+    const resume = p.proposal.resume;
+    if (resume) {
+      // Re-check at the launch point (the row or folder may have gone while the card sat), and
+      // always launch in the recorded folder — never a path that arrived with the submit.
+      const found = deps.findDelegateRun?.(resume.sessionId) ?? { refusal: "I have no record of that run." };
+      const refusal = "refusal" in found ? found.refusal
+        : found.run.projectPath !== resume.projectPath ? "I have no record of that run."
+        // Restricted needs an owner to gate on; the registry would otherwise open it to everyone.
+        : !starterId ? "I couldn't tell who tapped Start, so I won't continue that session."
+        : undefined;
+      if (refusal) {
+        await updateTo(deps.cards.liveSessionResultCard({ projectName: await projectLabel(resume.projectPath, true), startedBy, outcome: "cancelled" }));
+        await fx.post(refusal);
+        return;
+      }
+      p.proposal.projectPath = resume.projectPath;
+    }
+    const projectName = await projectLabel(p.proposal.projectPath, !!resume);
     // Plain-text stream messages: prefer the surface's real text path (postStream/editStream);
     // fall back to the card channel where {content} already IS a plain message (Discord).
     const sink: LiveSessionSink = {
@@ -275,6 +308,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       projectPath: p.proposal.projectPath,
       instruction,
       model: p.proposal.model,
+      ...(resume ? { resume: resume.sessionId } : {}),
       starterId,
       // Default restricted: only the starter (+ any co-drivers they add) steers, unless they
       // flipped the card to war-room.
@@ -288,7 +322,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       },
     });
     async function updateToEnded(): Promise<void> {
-      await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "ended" }));
+      // The session id doesn't change across a resume, so the ended card can offer it again.
+      await updateTo(deps.cards.liveSessionResultCard({
+        projectName, startedBy, outcome: "ended", ...(resume ? { resumeLiveId: resume.sessionId } : {}),
+      }));
     }
     if (started === "channel") {
       await fx.post("A live session is already running in this channel — say `stop` to end it first.");
@@ -311,7 +348,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     live: ProposedLiveSession, conversationId: string, proposedBy: string, fx: BotEffects,
   ): Promise<void> {
     const [projects, skills] = await Promise.all([deps.loadProjects(), loadActiveSkills()]);
-    const projectName = projects.find((p) => p.path === live.projectPath)?.name ?? live.projectPath;
+    const projectName = await projectLabel(live.projectPath, !!live.resume);
     // Live sessions always run claude, so only claude's models/CLI are offered.
     const models = (deps.cliModels.find((e) => e.provider === "claude")?.models ?? [])
       .map((id) => ({ id, label: id.split("/").pop() || id }));
@@ -321,8 +358,30 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       proposalId: pending.id, projectName, instruction: live.instruction, model: live.model, skillName: live.skillName,
       projects: projects.map((p) => ({ name: p.name, path: p.path })), models,
       skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name })), clis,
+      ...(live.resume ? { continues: live.resume.instruction } : {}),
     }));
     deps.liveSessionProposals.setCardActivityId(pending.id, activityId);
+  }
+
+  // Display name for a project path. A resumed session's folder may be unregistered and the card
+  // goes to a shared channel, so it falls back to the folder name, never the path.
+  async function projectLabel(path: string, hidePath = false): Promise<string> {
+    const name = (await deps.loadProjects()).find((p) => p.path === path)?.name;
+    return name ?? (hidePath ? basename(path) || "project" : path);
+  }
+
+  // Continue live (finished-card button, or `/live-session resume <id>`): post the live confirm
+  // card locked to the recorded run. Returns the refusal, or undefined once the card is posted.
+  async function proposeResumeLive(conversationId: string, sessionId: string, proposedBy: string, fx: BotEffects): Promise<string | undefined> {
+    if (!deps.liveSessionsEnabled()) return "Live sessions are disabled here.";
+    const found = deps.findDelegateRun?.(sessionId) ?? { refusal: "I have no record of that run." };
+    if ("refusal" in found) return found.refusal;
+    const { run } = found;
+    await postLiveSessionProposal({
+      projectPath: run.projectPath, instruction: RESUME_OPENING, steering: "restricted",
+      resume: { sessionId: run.sessionId, projectPath: run.projectPath, instruction: run.instruction },
+    }, conversationId, proposedBy, fx);
+    return undefined;
   }
 
   async function handleNoteAction(
@@ -438,6 +497,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     if (!deps.liveSessionsEnabled()) return "Live sessions are disabled here.";
     const text = instruction.trim();
     if (!text) return "Add a prompt after `/live-session` — e.g. `/live-session investigate the auth bug`.";
+    // `resume <id>` never falls through to a fresh session, even when the id is malformed.
+    const resumeCmd = /^resume\b([\s\S]*)$/i.exec(text);
+    if (resumeCmd) {
+      const parsed = parseResumeArg(resumeCmd[1] ?? "");
+      if ("error" in parsed) return parsed.error;
+      return await proposeResumeLive(conversationId, parsed.id, proposedBy, fx)
+        ?? "Proposed continuing that session — edit the opening prompt if you want, then Start.";
+    }
     const projects = await deps.loadProjects();
     const first = projects[0];
     if (!first) return "No projects are configured — add one first.";
@@ -738,6 +805,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         await handleForget(proposalId, action.fromName, fx);
         return;
       }
+      if (beanAction === "resume-live") {
+        // proposalId carries the Claude session id here (the surfaces' generic id slot).
+        const refusal = await proposeResumeLive(action.conversationId, proposalId ?? "", action.fromName, fx);
+        if (refusal) await fx.post(refusal);
+        return;
+      }
       if (beanAction === "start-live" || beanAction === "cancel-live") {
         if (!proposalId) return;
         // Same conversation binding as delegate cards below: live ids are sequential too.
@@ -752,8 +825,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           return;
         }
         if (beanAction === "cancel-live") {
-          const projects = await deps.loadProjects();
-          const projectName = projects.find((p) => p.path === pending.proposal.projectPath)?.name ?? pending.proposal.projectPath;
+          const projectName = await projectLabel(pending.proposal.projectPath, !!pending.proposal.resume);
           if (pending.cardActivityId !== undefined) {
             await fx.updateCard(pending.cardActivityId, deps.cards.liveSessionResultCard({ projectName, startedBy: action.fromName, outcome: "cancelled" }));
           }
@@ -763,8 +835,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // unclaimed for up to 10 minutes — re-check the gate here, the one place that
         // actually launches the permissions-bypassed process.
         if (!deps.liveSessionsEnabled()) {
-          const projects = await deps.loadProjects();
-          const projectName = projects.find((p) => p.path === pending.proposal.projectPath)?.name ?? pending.proposal.projectPath;
+          const projectName = await projectLabel(pending.proposal.projectPath, !!pending.proposal.resume);
           if (pending.cardActivityId !== undefined) {
             await fx.updateCard(pending.cardActivityId, deps.cards.liveSessionResultCard({ projectName, startedBy: action.fromName, outcome: "cancelled" }));
           }
@@ -775,7 +846,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // Discord already applied them live via per-select updates, so its value omits these
         // (each guard is a no-op when the field is absent).
         const v = action.value;
-        if (v.projectPath) pending.proposal.projectPath = v.projectPath;
+        // A resumed session's project is locked to its recorded row (startLiveSessionAction).
+        if (v.projectPath && !pending.proposal.resume) pending.proposal.projectPath = v.projectPath;
         const liveText = typeof v.instruction === "string" ? v.instruction.trim() : "";
         if (liveText) pending.proposal.instruction = liveText;
         if (v.model !== undefined) pending.proposal.model = v.model || undefined;

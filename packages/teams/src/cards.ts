@@ -87,8 +87,14 @@ export function finishedCard(input: FinishedCardInput): object {
         ? [{ type: "TextBlock", text: `Resume (${input.projectName}):` }, { type: "TextBlock", text: input.resume, fontType: "monospace", wrap: true }]
         : []),
     ],
-    actions: [],
+    actions: continueLiveActions(input.resumeLiveId),
   };
+}
+
+// "Continue live" on a finished delegate / ended live-session card; the session id rides the
+// generic proposalId slot.
+function continueLiveActions(sessionId: string | undefined): object[] {
+  return sessionId ? [{ type: "Action.Submit", title: "Continue live", data: { beanAction: "resume-live", proposalId: sessionId } }] : [];
 }
 
 /** Confirm-first note draft: title, body, project/general, Save/Cancel.
@@ -229,17 +235,20 @@ export function rememberedCard(input: RememberedCardInput): object {
 // Start Action.Submit data — the Teams-native counterpart to Discord's per-select interactions.
 export function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
   const steering = input.steering ?? "restricted";
+  const projectPicker = {
+    type: "Input.ChoiceSet", id: "projectPath", label: "Project",
+    // value must be the path (what start-live applies); default to the named project's path.
+    value: input.projects.find((p) => p.name === input.projectName)?.path ?? input.projectName,
+    choices: input.projects.map((p) => ({ title: p.name, value: p.path })),
+  };
+  // A resumed session's project is locked (core ignores a submitted projectPath): no picker.
+  const resuming = input.continues !== undefined;
   const body: object[] = [
-    { type: "TextBlock", text: "Bean proposes a live agent session", weight: "Bolder" },
-    { type: "Input.Text", id: "instruction", label: "Prompt", isMultiline: true, value: input.instruction },
-    {
-      type: "Input.ChoiceSet", id: "projectPath", label: "Project", value: input.projectName,
-      // value must be the path (what start-live applies); default to the named project's path.
-      choices: input.projects.map((p) => ({ title: p.name, value: p.path })),
-    },
+    { type: "TextBlock", text: resuming ? "Bean proposes continuing a session live" : "Bean proposes a live agent session", weight: "Bolder" },
+    ...(resuming ? [{ type: "FactSet", facts: [{ title: "Continues", value: input.continues }, { title: "Project", value: input.projectName }] }] : []),
+    { type: "Input.Text", id: "instruction", label: resuming ? "Opening prompt" : "Prompt", isMultiline: true, value: input.instruction },
+    ...(resuming ? [] : [projectPicker]),
   ];
-  const named = input.projects.find((p) => p.name === input.projectName);
-  if (named) (body[2] as { value: string }).value = named.path;
   if (input.skills.length > 0) {
     body.push({
       type: "Input.ChoiceSet", id: "skillName", label: "Skill (optional)", value: input.skillName ?? "__none__",
@@ -282,5 +291,8 @@ export function liveSessionResultCard(input: LiveSessionResultCardInput): object
     : input.outcome === "cancelled"
       ? `Live session cancelled (by ${input.startedBy})`
       : `Live session in ${input.projectName} ended`;
-  return { type: "AdaptiveCard", version: "1.4", body: [{ type: "TextBlock", text, weight: "Bolder" }] };
+  return {
+    type: "AdaptiveCard", version: "1.4", body: [{ type: "TextBlock", text, weight: "Bolder" }],
+    ...(input.outcome === "ended" && input.resumeLiveId ? { actions: continueLiveActions(input.resumeLiveId) } : {}),
+  };
 }
