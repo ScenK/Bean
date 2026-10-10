@@ -5,7 +5,7 @@ import {
   detectClis, type CliName, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  LiveSessionProposalStore, type PendingLiveSession, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -332,6 +332,13 @@ client.on("messageCreate", async (message) => {
   }
 });
 
+// A pending live proposal, only if it belongs to this channel. Live ids are sequential
+// (`live-<n>`), so a forged customId from another channel could otherwise edit it.
+function liveProposalIn(id: string, channelId: string | null): PendingLiveSession | undefined {
+  const p = liveSessionProposals.get(id);
+  return p?.conversationId === channelId ? p : undefined;
+}
+
 client.on("interactionCreate", async (interaction: Interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
@@ -391,10 +398,10 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       const m = /^bean:live-editsubmit:(.*)$/.exec(interaction.customId);
       if (!m?.[1] || !interaction.isFromMessage()) return;
       const proposalId = m[1];
+      const pending = liveProposalIn(proposalId, interaction.channelId);
+      if (!pending) { await interaction.deferUpdate(); return; }
       const text = interaction.fields.getTextInputValue("prompt").trim();
       if (text) liveSessionProposals.update(proposalId, { instruction: text });
-      const pending = liveSessionProposals.get(proposalId);
-      if (!pending) { await interaction.deferUpdate(); return; }
       await interaction.update(await liveSessionCardFor(proposalId, pending.proposal));
       return;
     }
@@ -420,7 +427,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith("bean:live-edit:")) {
       if (!allowed(interaction.user.id)) return;
       const proposalId = interaction.customId.slice("bean:live-edit:".length);
-      const pending = liveSessionProposals.get(proposalId);
+      const pending = liveProposalIn(proposalId, interaction.channelId);
       if (!pending) { await interaction.reply({ content: "That live-session proposal expired.", ephemeral: true }); return; }
       await interaction.showModal({
         custom_id: `bean:live-editsubmit:${proposalId}`,
@@ -443,6 +450,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       // Live-session project/model dropdowns write straight to the pending proposal (Start reads
       // it), unlike the delegate card's cli/model which stay in the per-message selections map.
       const liveValue = interaction.values[0];
+      if (action.startsWith("live-") && !liveProposalIn(payload, interaction.channelId)) return;
       if (action === "live-project" && liveValue) { liveSessionProposals.update(payload, { projectPath: liveValue }); return; }
       if (action === "live-model" && liveValue) { liveSessionProposals.update(payload, { model: liveValue }); return; }
       if (action === "live-skill" && liveValue) { liveSessionProposals.update(payload, { skillName: liveValue === "__none__" ? undefined : liveValue }); return; }
@@ -458,7 +466,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     // War-room ⇄ restricted toggle on the live-session card: flip the pending proposal and
     // re-render in place. Pre-launch config, so no session-owner check — just the allow-list.
     if (action === "live-mode") {
-      const pending = liveSessionProposals.get(payload);
+      const pending = liveProposalIn(payload, interaction.channelId);
       if (pending) {
         const next = pending.proposal.steering === "open" ? "restricted" : "open";
         liveSessionProposals.update(payload, { steering: next });

@@ -1044,6 +1044,35 @@ test("start-live card action starts the session and binds the channel", async ()
   expect(deps.liveSessions.has("c1")).toBe(true);
 });
 
+test("start-live/cancel-live from another conversation is refused without consuming the proposal", async () => {
+  const { bot, fx: effects, deps } = makeBotWithLiveSessionProposal();
+  await bot.onMessage({ conversationId: "c1", text: "start live session", fromId: "u", fromName: "sam" }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  for (const beanAction of ["start-live", "cancel-live"]) {
+    await bot.onCardAction({ conversationId: "other", fromName: "eve", value: { beanAction, proposalId } }, effects);
+  }
+  expect(effects.posted.filter((p) => p.includes("belongs to another conversation"))).toHaveLength(2);
+  expect(deps.liveSessions.has("other")).toBe(false);
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId } }, effects);
+  expect(deps.liveSessions.has("c1")).toBe(true);
+});
+
+test("start-live refused because the channel is bound keeps the channel wording", async () => {
+  const { bot, fx: effects, deps } = makeBotWithLiveSessionProposal();
+  await bot.onMessage({ conversationId: "c1", text: "start live session", fromId: "u", fromName: "sam" }, effects);
+  vi.spyOn(deps.liveSessions, "start").mockReturnValue("channel");
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) } }, effects);
+  expect(effects.posted.at(-1)).toBe("A live session is already running in this channel — say `stop` to end it first.");
+});
+
+test("start-live refused because another run holds the project names the project", async () => {
+  const { bot, fx: effects, deps } = makeBotWithLiveSessionProposal();
+  await bot.onMessage({ conversationId: "c1", text: "start live session", fromId: "u", fromName: "sam" }, effects);
+  vi.spyOn(deps.liveSessions, "start").mockReturnValue("project");
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) } }, effects);
+  expect(effects.posted.at(-1)).toBe("Another run is using bean — wait for it to finish.");
+});
+
 test("start-live ignores a whitespace-only edited instruction", async () => {
   const { bot, fx: effects, deps } = makeBotWithLiveSessionProposal();
   await bot.onMessage({ conversationId: "c1", text: "start live session", fromId: "u", fromName: "sam" }, effects);

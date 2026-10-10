@@ -61,16 +61,16 @@ describe("LiveSessionRegistry", () => {
     expect(reqs[0]?.resume).toBe("s1");
     cbs.onExit(new Error(RESUME_REJECTED));
     await vi.waitFor(() => expect(onEnded).toHaveBeenCalledWith(RESUME_REJECTED));
-    expect(reg.start({ channelId: "c2", projectPath: "/p", instruction: "go", sink: fakeSink().sink })).toBe(true);
+    expect(reg.start({ channelId: "c2", projectPath: "/p", instruction: "go", sink: fakeSink().sink })).toBe("started");
   });
 
   it("start binds the channel; a second start on the same channel is refused", () => {
     const f = fakeStart();
     const reg = new LiveSessionRegistry(f.startFn as never, { dir: tmp() });
     const { sink } = fakeSink();
-    expect(reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink })).toBe(true);
+    expect(reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink })).toBe("started");
     expect(reg.has("c")).toBe(true);
-    expect(reg.start({ channelId: "c", projectPath: "/p", instruction: "again", sink })).toBe(false);
+    expect(reg.start({ channelId: "c", projectPath: "/p", instruction: "again", sink })).toBe("channel");
   });
 
   it("onActivity reports start and a death as failed (without its stderr) keyed by channel", () => {
@@ -140,12 +140,12 @@ describe("LiveSessionRegistry", () => {
     const regA = new LiveSessionRegistry(aliveStart as never, { dir });
     const regB = new LiveSessionRegistry(aliveStart as never, { dir });
     const { sink } = fakeSink();
-    expect(regA.start({ channelId: "a", projectPath: "/p", instruction: "go", sink })).toBe(true);
+    expect(regA.start({ channelId: "a", projectPath: "/p", instruction: "go", sink })).toBe("started");
     // Different channel, different registry instance, same project — refused.
-    expect(regB.start({ channelId: "b", projectPath: "/p", instruction: "go", sink })).toBe(false);
+    expect(regB.start({ channelId: "b", projectPath: "/p", instruction: "go", sink })).toBe("project");
     expect(regB.has("b")).toBe(false);
     // A different project on the same registry sharing the same dir is unaffected.
-    expect(regB.start({ channelId: "b", projectPath: "/other", instruction: "go", sink })).toBe(true);
+    expect(regB.start({ channelId: "b", projectPath: "/other", instruction: "go", sink })).toBe("started");
   });
 
   it("releases the project reservation once the session ends, allowing a new one on it", async () => {
@@ -159,7 +159,7 @@ describe("LiveSessionRegistry", () => {
 
     const f2 = fakeStart();
     const reg2 = new LiveSessionRegistry(f2.startFn as never, { dir });
-    expect(reg2.start({ channelId: "b", projectPath: "/p", instruction: "go", sink })).toBe(true);
+    expect(reg2.start({ channelId: "b", projectPath: "/p", instruction: "go", sink })).toBe("started");
   });
 
   it("posts buffered output on the throttle tick, then edits the same message", async () => {

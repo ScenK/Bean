@@ -327,8 +327,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         projectName, startedBy, outcome: "ended", ...(resume ? { resumeLiveId: resume.sessionId } : {}),
       }));
     }
-    if (!started) {
+    if (started === "channel") {
       await fx.post("A live session is already running in this channel — say `stop` to end it first.");
+      return;
+    }
+    if (started === "project") {
+      await fx.post(`Another run is using ${projectName} — wait for it to finish.`);
       return;
     }
     await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started" }));
@@ -809,14 +813,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (beanAction === "start-live" || beanAction === "cancel-live") {
         if (!proposalId) return;
+        // Same conversation binding as delegate cards below: live ids are sequential too.
+        const peek = deps.liveSessionProposals.get(proposalId);
+        if (peek && peek.conversationId !== action.conversationId) {
+          await fx.post("That proposal belongs to another conversation.");
+          return;
+        }
         const pending = deps.liveSessionProposals.claim(proposalId);
         if (!pending) {
           await fx.post("That live-session proposal expired — ask me to start one again.");
           return;
         }
         if (beanAction === "cancel-live") {
-          const projects = await deps.loadProjects();
-          const projectName = projects.find((p) => p.path === pending.proposal.projectPath)?.name ?? pending.proposal.projectPath;
+          const projectName = await projectLabel(pending.proposal.projectPath, !!pending.proposal.resume);
           if (pending.cardActivityId !== undefined) {
             await fx.updateCard(pending.cardActivityId, deps.cards.liveSessionResultCard({ projectName, startedBy: action.fromName, outcome: "cancelled" }));
           }
@@ -826,8 +835,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // unclaimed for up to 10 minutes — re-check the gate here, the one place that
         // actually launches the permissions-bypassed process.
         if (!deps.liveSessionsEnabled()) {
-          const projects = await deps.loadProjects();
-          const projectName = projects.find((p) => p.path === pending.proposal.projectPath)?.name ?? pending.proposal.projectPath;
+          const projectName = await projectLabel(pending.proposal.projectPath, !!pending.proposal.resume);
           if (pending.cardActivityId !== undefined) {
             await fx.updateCard(pending.cardActivityId, deps.cards.liveSessionResultCard({ projectName, startedBy: action.fromName, outcome: "cancelled" }));
           }
