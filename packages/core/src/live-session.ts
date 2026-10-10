@@ -6,13 +6,24 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { BEAN_GIT_IDENTITY, GIT_TRAILER_INSTRUCTION, claudeTailLine } from "./delegate.js";
 
+/** CLIs that can host a live session: claude (one long-lived stream-json process) and codex
+ * (one `codex exec [resume]` spawn per turn, codex-live-session.ts). */
+export type LiveCli = "claude" | "codex";
+export const LIVE_CLIS: readonly LiveCli[] = ["claude", "codex"];
+
+export function isLiveCli(cli: unknown): cli is LiveCli {
+  return cli === "claude" || cli === "codex";
+}
+
 export interface LiveSessionRequest {
+  /** Engine; absent = claude. */
+  cli?: LiveCli;
   projectPath: string;
   /** The opening instruction — written to stdin as the first user turn. */
   prompt: string;
   /** Literal --model value (clis.json); flag omitted when unset. */
   model?: string;
-  /** Claude session id to continue (`--resume`). Only pass an id Bean recorded in delegate_runs. */
+  /** Session id to continue (claude `--resume`, codex `exec resume`). Only pass an id Bean recorded in delegate_runs. */
   resume?: string;
 }
 
@@ -46,6 +57,8 @@ export interface TurnSummary {
   result: string;
   durationMs?: number;
   costUsd?: number;
+  /** Set when the turn failed (codex): the session stays bound, nothing goes to history. */
+  failed?: string;
 }
 
 export function claudeTurnSummary(event: unknown): TurnSummary | undefined {
@@ -60,13 +73,16 @@ export function claudeTurnSummary(event: unknown): TurnSummary | undefined {
 
 export interface LiveSessionCallbacks {
   onOutput: (line: string) => void;
+  /** A turn began without a fresh send() (codex: a queued, merged turn) — relight typing. */
+  onTurnStart?: () => void;
   onTurnComplete: (summary: TurnSummary) => void;
   /** Fires exactly once. undefined = clean end (stop/idle/exit 0); Error = crash. */
   onExit: (err?: Error) => void;
 }
 
 export interface LiveSessionHandle {
-  send: (text: string) => void;
+  /** False when the text was refused (codex: the merged next turn would overflow its cap). */
+  send: (text: string) => boolean;
   stop: () => void;
   pid: number | undefined;
 }
@@ -188,9 +204,10 @@ export function startLiveSession(
   return {
     pid: child.pid,
     send: (text) => {
-      if (exited || stopping) return;
+      if (exited || stopping) return true;
       child.stdin?.write(userTurnLine(text));
       resetIdle();
+      return true;
     },
     stop: beginStop,
   };

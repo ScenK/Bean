@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
 import {
-  startLiveSession as defaultStartLiveSession,
-  RESUME_REJECTED, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type TurnSummary,
+  startLiveSession,
+  RESUME_REJECTED, type LiveCli, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type TurnSummary,
 } from "../live-session.js";
+import { CODEX_SIGNED_OUT, CODEX_THREAD_MISMATCH, startCodexLiveSession } from "../codex-live-session.js";
 import { reserveRun, releaseRun, updateReservationPid } from "../run-queue.js";
 
 /** Surface-agnostic "post or edit a plain text message". Chatops builds this on top of
@@ -28,7 +29,9 @@ export interface LiveSessionStart {
   projectPath: string;
   instruction: string;
   model?: string;
-  /** Claude session id to continue (see LiveSessionRequest.resume). */
+  /** Engine; absent = claude. */
+  cli?: LiveCli;
+  /** Session id to continue (see LiveSessionRequest.resume). */
   resume?: string;
   /** Surface user-id of whoever tapped Start — the session's owner. Defaults to "" (no owner)
    * for callers that don't care, which only matters under "restricted". */
@@ -36,7 +39,7 @@ export interface LiveSessionStart {
   /** Defaults to "open" so callers that don't opt in keep the original war-room behavior. */
   steering?: SteeringMode;
   sink: LiveSessionSink;
-  /** Each completed turn's final result — callers append it to conversation history. */
+  /** Each completed (not failed) turn's final result — callers append it to conversation history. */
   onTurnResult?: (result: string) => void;
   /** Fires exactly once, after cleanup, with a human-readable end notice. */
   onEnded?: (notice: string) => void;
@@ -49,6 +52,13 @@ type StartFn = (
   idleTimeoutMs?: number,
 ) => LiveSessionHandle;
 
+// Picks the engine by cli. Tests inject a single fake StartFn and read req.cli instead.
+const defaultStart: StartFn = (req, cbs, _spawn, idleTimeoutMs) =>
+  req.cli === "codex" ? startCodexLiveSession(req, cbs, undefined, idleTimeoutMs) : startLiveSession(req, cbs, undefined, idleTimeoutMs);
+
+// Ended notices shown as-is, not as "Live session died: …".
+const VERBATIM_END = new Set([RESUME_REJECTED, CODEX_SIGNED_OUT, CODEX_THREAD_MISMATCH]);
+
 // Headroom under Discord's 2000-char message cap (embeds/formatting stay clear of the edge).
 const MSG_LIMIT = 1900;
 const DEFAULT_THROTTLE_MS = 1500;
@@ -57,6 +67,7 @@ const DEFAULT_THROTTLE_MS = 1500;
 const TYPING_PING_MS = 4000;
 
 function turnFooter(s: TurnSummary): string {
+  if (s.failed !== undefined) return `— turn failed: ${s.failed}`;
   const parts: string[] = [];
   if (s.durationMs !== undefined) parts.push(`${(s.durationMs / 1000).toFixed(1)}s`);
   if (s.costUsd !== undefined) parts.push(`$${s.costUsd.toFixed(4)}`);
@@ -107,7 +118,7 @@ export class LiveSessionRegistry {
   private byChannel = new Map<string, ActiveSession>();
 
   constructor(
-    private startFn: StartFn = defaultStartLiveSession as StartFn,
+    private startFn: StartFn = defaultStart,
     private opts: LiveSessionRegistryOptions,
   ) {}
 
@@ -178,15 +189,16 @@ export class LiveSessionRegistry {
     // One session per channel, so the channel id doubles as the session's activity id.
     this.opts.onActivity?.({ type: "live", phase: "start", id: input.channelId, name: basename(input.projectPath) || "live session" });
     s.handle = this.startFn(
-      { projectPath: input.projectPath, prompt: input.instruction, model: input.model, resume: input.resume },
+      { cli: input.cli, projectPath: input.projectPath, prompt: input.instruction, model: input.model, resume: input.resume },
       {
         onOutput: (line) => {
           s.buf += (s.buf ? "\n" : "") + line;
           s.dirty = true;
         },
+        onTurnStart: () => this.startTyping(s),
         onTurnComplete: (summary) => {
           this.stopTyping(s);
-          input.onTurnResult?.(summary.result);
+          if (summary.failed === undefined) input.onTurnResult?.(summary.result);
           s.buf += (s.buf ? "\n" : "") + turnFooter(summary);
           s.dirty = true;
           s.closeAfterFlush = true;
@@ -199,7 +211,11 @@ export class LiveSessionRegistry {
     // The reservation was created against this process's own pid (nothing else to track before
     // the child exists); switch it to the child's real pid so pid-liveness crash recovery
     // tracks *that child*, not this process — same reasoning as RunRegistry.start().
-    if (typeof s.handle.pid === "number") {
+    // Codex spawns one child per turn, so its reservation stays on this (bot) process for the
+    // whole session: swapping per turn races the single-pid liveness check between turns.
+    // ponytail: if the bot hard-crashes mid-turn, the project is reclaimable while that one
+    // detached codex turn finishes; per-turn pid tracking would need a multi-pid reservation.
+    if (input.cli !== "codex" && typeof s.handle.pid === "number") {
       updateReservationPid(this.opts.dir, input.projectPath, s.handle.pid);
     }
     this.startTyping(s); // the opening instruction is already in flight
@@ -220,11 +236,13 @@ export class LiveSessionRegistry {
     }
   }
 
-  send(channelId: string, text: string): void {
+  /** False when the session refused the text (codex's next-turn queue is full). */
+  send(channelId: string, text: string): boolean {
     const s = this.byChannel.get(channelId);
-    if (!s) return;
-    s.handle.send(text);
+    if (!s) return true;
+    if (!s.handle.send(text)) return false;
     this.startTyping(s);
+    return true;
   }
 
   stop(channelId: string): boolean {
@@ -277,7 +295,7 @@ export class LiveSessionRegistry {
     void wait.then(async () => {
       if (s.buf) s.dirty = true; // force a final flush of anything still unsent
       const delivered = await this.finalFlush(s);
-      const base = err?.message === RESUME_REJECTED ? RESUME_REJECTED
+      const base = err && VERBATIM_END.has(err.message) ? err.message
         : err ? `Live session died: ${err.message}` : "Live session ended.";
       s.onEnded?.(delivered ? base : `${base} (last output may be incomplete — Discord kept rejecting it)`);
     });

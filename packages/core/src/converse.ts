@@ -5,6 +5,7 @@ import { memoriesBlock, type Memory } from "./memory/memory.js";
 import { selectRelevantMemories } from "./memory/store.js";
 import type { CliName } from "./launcher.js";
 import type { AvailableModel } from "./models.js";
+import { isLiveCli, type LiveCli } from "./live-session.js";
 
 /** The raster formats OpenAI vision input accepts — every ingest surface must filter to
  * these (a bare image/* check lets HEIC/SVG/TIFF through and fails the whole turn at the
@@ -70,21 +71,23 @@ export interface ProposedDelegate {
   model?: string;
 }
 /** A confirm-first live interactive agent session bound to this chat channel:
- * a long-lived claude process whose output streams into the channel and whose next
+ * a claude or codex agent whose output streams into the channel and whose next
  * turns come from channel messages. Spec: live-sessions design. */
 export interface ProposedLiveSession {
   projectPath: string;
   instruction: string;
+  /** Engine for a fresh session (on-card picker); absent = the bot's default. Ignored on a resume. */
+  cli?: LiveCli;
   /** Literal --model value (clis.json) the user explicitly asked for. */
   model?: string;
   /** Picked skill (on-card dropdown); its body is composed into the opening prompt at launch. */
   skillName?: string;
   /** Who may steer once running (on-card toggle). Defaults to "restricted" at launch. */
   steering?: "open" | "restricted";
-  /** Continue a recorded Claude delegate session (Continue live / `/live-session resume <id>`).
+  /** Continue a recorded Claude/Codex delegate session (Continue live / `/live-session resume <id>`).
    * Set only by the bot from a delegate_runs row — propose_live_session never exposes it. The
-   * project is locked to `projectPath`; `instruction` is the recorded run's, shown on the card. */
-  resume?: { sessionId: string; projectPath: string; instruction: string };
+   * project and CLI are locked to the row; `instruction` is the recorded run's, shown on the card. */
+  resume?: { sessionId: string; projectPath: string; instruction: string; cli: LiveCli };
 }
 /** The note this chat was continued from: its body goes into the system prompt and a
  * propose_note from this chat targets it (update in place) by default. */
@@ -335,9 +338,9 @@ function proposeDelegateTool(skills: Skill[], projects: Project[], availableClis
   };
 }
 
-// Only offered where the caller can actually host a live session (Discord chatops with
-// the feature flag on and claude detected). Model values pass through verbatim to --model.
-function proposeLiveSessionTool(projects: Project[], models: AvailableModel[]): ToolSpec {
+// Only offered where the caller can actually host a live session (chatops with claude or
+// codex detected). Model values pass through verbatim to --model.
+function proposeLiveSessionTool(projects: Project[], models: AvailableModel[], liveClis: LiveCli[]): ToolSpec {
   const properties: Record<string, unknown> = {
     project: { type: "string", enum: projects.map((p) => p.path), description: "the project path to work in" },
     instruction: {
@@ -345,7 +348,14 @@ function proposeLiveSessionTool(projects: Project[], models: AvailableModel[]): 
       description: "the opening instruction for the live agent — include all context it needs to start",
     },
   };
-  const modelIds = models.filter((m) => m.availableOn.includes("claude")).map((m) => m.id);
+  if (liveClis.includes("codex")) {
+    properties.cli = {
+      type: "string",
+      enum: liveClis,
+      description: "only when the user explicitly asked for a specific agent; omit otherwise",
+    };
+  }
+  const modelIds = models.filter((m) => m.availableOn.some((c) => liveClis.includes(c as LiveCli))).map((m) => m.id);
   if (modelIds.length > 0) {
     properties.model = {
       type: "string",
@@ -471,12 +481,15 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   // Without a terminal (chatops), only `target: chat` skills are runnable via propose_run —
   // they execute on Bean's own model; terminal skills there go through propose_delegate.
   const runnableSkills = runAvailable ? skills : skills.filter((s) => s.target === "chat");
+  // Live-capable detected CLIs; a caller that didn't pass availableClis means claude (as before).
+  const detectedLive = availableClis.filter(isLiveCli);
+  const liveClis: LiveCli[] = detectedLive.length > 0 ? detectedLive : ["claude"];
   const tools = [
     ...(runnableSkills.length > 0 ? [proposeRunTool(runnableSkills, projects, !runAvailable)] : []),
     ...(delegateOffered
       ? [proposeDelegateTool(skills, projects, availableClis, models, scratchPath !== undefined)]
       : []),
-    ...(liveSessionAvailable && projects.length > 0 ? [proposeLiveSessionTool(projects, models)] : []),
+    ...(liveSessionAvailable && projects.length > 0 ? [proposeLiveSessionTool(projects, models, liveClis)] : []),
     proposeNoteTool(projects, linkedNote),
     proposeSkillTool(),
     ...(todoRoutines.length > 0 ? [proposeTodoTool(todoRoutines)] : []),
@@ -568,19 +581,23 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
 
     const liveCall = toolCalls.find((c) => c.name === "propose_live_session");
     if (liveCall) {
-      const args = (liveCall.args ?? {}) as { project?: unknown; instruction?: unknown; model?: unknown };
+      const args = (liveCall.args ?? {}) as { project?: unknown; instruction?: unknown; model?: unknown; cli?: unknown };
       const project = projects.find((p) => p.path === args.project);
       if (!project || typeof args.instruction !== "string" || !args.instruction.trim()) {
         reject(liveCall, "unknown project or empty instruction.");
         continue;
       }
+      const cli = isLiveCli(args.cli) && liveClis.includes(args.cli) ? args.cli : undefined;
+      // A model is kept only if the CLI that will run it (picked, else the bot's default) offers it.
+      const runsOn = cli ?? (liveClis.includes("claude") ? "claude" : liveClis[0]);
       return {
         reply: content,
         model: deps.model,
         proposedLiveSession: {
           projectPath: project.path,
           instruction: args.instruction,
-          model: models.some((m) => m.id === args.model && m.availableOn.includes("claude"))
+          ...(cli ? { cli } : {}),
+          model: runsOn && models.some((m) => m.id === args.model && m.availableOn.includes(runsOn))
             ? (args.model as string)
             : undefined,
         },

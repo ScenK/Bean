@@ -39,12 +39,17 @@ export class LiveSessionProposalStore {
   }
 
   /** Apply an on-card edit (project/model pick, or a modal prompt edit) to a pending proposal. */
-  update(id: string, patch: Partial<Pick<ProposedLiveSession, "projectPath" | "instruction" | "model" | "skillName" | "steering">>): void {
+  update(id: string, patch: Partial<Pick<ProposedLiveSession, "projectPath" | "instruction" | "model" | "skillName" | "steering" | "cli">>): void {
     const p = this.byId.get(id);
     if (!p) return;
-    // A resumed session's project is locked to its recorded row — a picker edit can't move it.
-    const { projectPath, ...rest } = patch;
-    p.proposal = { ...p.proposal, ...rest, ...(projectPath !== undefined && !p.proposal.resume ? { projectPath } : {}) };
+    // A resumed session's project and CLI are locked to its recorded row — a picker edit can't move them.
+    const { projectPath, cli, ...rest } = patch;
+    const locked = !!p.proposal.resume;
+    p.proposal = {
+      ...p.proposal, ...rest,
+      ...(projectPath !== undefined && !locked ? { projectPath } : {}),
+      ...(cli !== undefined && !locked ? { cli } : {}),
+    };
   }
 
   claim(id: string): PendingLiveSession | undefined {

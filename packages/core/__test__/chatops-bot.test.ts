@@ -17,6 +17,8 @@ import { SkillProposalStore } from "../src/chatops/skill-proposals.js";
 import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-sessions.js";
 import { LiveSessionProposalStore } from "../src/chatops/live-session-proposals.js";
 import type { LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest } from "../src/live-session.js";
+import { CODEX_QUEUE_FULL } from "../src/codex-live-session.js";
+import type { CliName } from "../src/launcher.js";
 
 const fakeCards = {
   proposalCard: (i: object) => ({ kind: "proposal", ...i }),
@@ -1115,10 +1117,20 @@ test("proposeLiveSession refuses when disabled, with no card", async () => {
   expect(fxOff.cards).toHaveLength(0);
 });
 
-test("a disabled Claude CLI keeps the Claude-only live-session tool unavailable", async () => {
+test("codex alone offers the live-session tool with a cli enum; no live-capable CLI hides it", async () => {
+  let tools: { name: string; parameters?: unknown }[] = [];
+  const codexOnly = makeDeps({
+    detectClis: () => ["codex"],
+    liveSessionsEnabled: () => true,
+    chat: async (req) => { tools = req.tools as typeof tools; return { content: "ok", toolCalls: [] }; },
+  });
+  await buildTeamsBot(codexOnly.deps).onMessage(msg, fx());
+  const live = tools.find((t) => t.name === "propose_live_session");
+  expect(JSON.stringify(live?.parameters)).toContain('"enum":["codex"]');
+
   let toolNames: string[] = [];
   const { deps } = makeDeps({
-    detectClis: () => ["codex"],
+    detectClis: () => ["opencode"],
     liveSessionsEnabled: () => true,
     chat: async ({ tools }) => {
       toolNames = tools.map((tool) => tool.name);
@@ -1362,6 +1374,7 @@ test("a rejected card edit neither crashes the bot nor blocks posting the run's 
 
 // ── Continue live (#234) ────────────────────────────────────────────────────────────────────
 
+const CODEX_ID = "019a6b1e-7c3d-7f00-9a1b-2c3d4e5f6a7b";
 const RECORDED: ResumableRun = { run: { surface: "discord", cli: "claude", sessionId: "sess-1", projectPath: "/p/other", instruction: "fix the flaky test" } };
 
 function resumeDeps(found: (id: string) => ResumableRun = (id) => (id === "sess-1" ? RECORDED : { refusal: "I have no record of that run." })) {
@@ -1384,8 +1397,11 @@ test("parseResumeArg takes one valid id, prefers a pasted --resume span, and rej
   expect(parseResumeArg(" sess-1")).toEqual({ id: "sess-1" });
   expect(parseResumeArg(" `claude --resume sess-1`")).toEqual({ id: "sess-1" });
   expect(parseResumeArg(" step 1 (bean) — claude --resume sess-1")).toEqual({ id: "sess-1" });
-  expect(parseResumeArg(" --nope")).toEqual({ error: "Copy the id from the `claude --resume …` line." });
-  expect(parseResumeArg("")).toEqual({ error: "Copy the id from the `claude --resume …` line." });
+  expect(parseResumeArg(" --nope")).toEqual({ error: "Copy the session id from the resume line on the finished card." });
+  expect(parseResumeArg("")).toEqual({ error: "Copy the session id from the resume line on the finished card." });
+  // A pasted codex receipt and the routine digest's footer line.
+  expect(parseResumeArg(` codex resume ${CODEX_ID}`)).toEqual({ id: CODEX_ID });
+  expect(parseResumeArg(` step 2 (workspace) — codex resume ${CODEX_ID}`)).toEqual({ id: CODEX_ID });
   expect(parseResumeArg(" a1 b2")).toEqual({ error: "Send just one session id." });
 });
 
@@ -1410,7 +1426,7 @@ test("a malformed or unknown `resume` refuses and never starts fresh", async () 
   const effects = fx();
   await bot.onMessage({ conversationId: "c1", text: "/live-session resume --help", fromId: "u", fromName: "sam" }, effects);
   await bot.onMessage({ conversationId: "c1", text: "/live-session resume nope", fromId: "u", fromName: "sam" }, effects);
-  expect(effects.posted).toEqual(["Copy the id from the `claude --resume …` line.", "I have no record of that run."]);
+  expect(effects.posted).toEqual(["Copy the session id from the resume line on the finished card.", "I have no record of that run."]);
   expect(effects.cards).toHaveLength(0);
 });
 
@@ -1464,4 +1480,91 @@ test("a finished Claude run offers Continue live; the ended resumed session re-o
   await bot.onCardAction({ conversationId: "c2", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId: latestLiveProposalId(fx2.cards) } }, fx2);
   r.deps.liveSessions.stop("c2");
   await vi.waitFor(() => expect(fx2.updates.at(-1)?.card).toMatchObject({ outcome: "ended", resumeLiveId: "sess-1" }));
+});
+
+// ── Codex live sessions (#233) ──────────────────────────────────────────────────────────────
+
+const CODEX_RECORDED: ResumableRun = { run: { surface: "teams", cli: "codex", sessionId: CODEX_ID, projectPath: "/p/other", instruction: "triage the queue" } };
+
+test("a finished codex run offers Continue live only while codex is detected and the id is a UUID", async () => {
+  const finish = async (detected: CliName[], sessionId: string): Promise<object | undefined> => {
+    const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult, liveSessionsEnabled: () => true, detectClis: () => detected });
+    const effects = fx();
+    const id = await proposeThenGetId(deps, effects);
+    await buildTeamsBot(deps).onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "codex" } }, effects);
+    delegateCalls[0]?.cb.onSessionStart?.(1, sessionId);
+    delegateCalls[0]?.cb.onError(new Error("boom"));
+    await vi.waitFor(() => expect(effects.updates.at(-1)?.card).toMatchObject({ outcome: "error" }));
+    return effects.updates.at(-1)?.card;
+  };
+  expect(await finish(["codex"], CODEX_ID)).toMatchObject({ resume: `codex resume ${CODEX_ID}`, resumeLiveId: CODEX_ID });
+  expect(await finish(["codex"], "not-a-uuid")).not.toHaveProperty("resumeLiveId");
+});
+
+test("Continue live on a codex run freezes the engine and path; forged cli/path/model can't change them", async () => {
+  const { deps, reqs } = resumeDeps(() => CODEX_RECORDED);
+  deps.detectClis = () => ["claude", "codex"];
+  deps.cliModels = [{ provider: "claude", models: ["opus"] }, { provider: "codex", models: ["gpt-5.5"] }];
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "resume-live", proposalId: CODEX_ID } }, effects);
+  expect(effects.cards.at(-1)).toMatchObject({ cli: "codex", clis: [], agent: "codex" });
+  const proposalId = latestLiveProposalId(effects.cards);
+  deps.liveSessionProposals.update(proposalId, { cli: "claude" }); // Discord picker edit
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: {
+    beanAction: "start-live", proposalId, cli: "claude", projectPath: "/p/bean", model: "opus",
+  } }, effects);
+  expect(reqs).toEqual([expect.objectContaining({ cli: "codex", projectPath: "/p/other", resume: CODEX_ID, model: undefined })]);
+});
+
+test("a resumed codex Start refuses when codex is no longer detected — claude never substitutes", async () => {
+  const { deps, reqs } = resumeDeps(() => CODEX_RECORDED);
+  let detected: CliName[] = ["claude", "codex"];
+  deps.detectClis = () => detected;
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "resume-live", proposalId: CODEX_ID } }, effects);
+  detected = ["claude"];
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) } }, effects);
+  expect(reqs).toHaveLength(0);
+  expect(effects.posted.at(-1)).toBe("codex isn't installed on this Mac any more.");
+});
+
+test("a fresh live card picks codex on Teams and resolves the model within that CLI", async () => {
+  const { deps, reqs } = resumeDeps();
+  deps.detectClis = () => ["claude", "codex"];
+  deps.cliModels = [{ provider: "claude", models: ["opus"] }, { provider: "codex", models: ["gpt-5.5"] }];
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.proposeLiveSession({ conversationId: "c1", instruction: "go", proposedBy: "sam" }, effects);
+  expect(effects.cards.at(-1)).toMatchObject({ cli: "claude", clis: ["claude", "codex"] });
+  const start = async (model: string): Promise<void> => {
+    await bot.proposeLiveSession({ conversationId: `c-${model}`, instruction: "go", proposedBy: "sam" }, effects);
+    await bot.onCardAction({ conversationId: `c-${model}`, fromId: "u", fromName: "sam", value: {
+      beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards), cli: "codex", model, projectPath: model === "opus" ? "/p/a" : "/p/b",
+    } }, effects);
+  };
+  await start("gpt-5.5");
+  await start("opus"); // a claude model on a codex session falls back to codex's own default
+  expect(reqs.map((r) => [r.cli, r.model])).toEqual([["codex", "gpt-5.5"], ["codex", undefined]]);
+});
+
+test("a refused send (codex queue full) replies and stays out of history", async () => {
+  const startFn = (_req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => ({
+    pid: process.pid, send: (t) => t.length < 10, stop: () => cbs.onExit(undefined),
+  });
+  const { deps } = makeDeps({
+    liveSessionsEnabled: () => true,
+    liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+  });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.proposeLiveSession({ conversationId: "c1", instruction: "go", proposedBy: "sam" }, effects);
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) } }, effects);
+  await bot.onMessage({ conversationId: "c1", text: "short", fromId: "u", fromName: "sam" }, effects);
+  await bot.onMessage({ conversationId: "c1", text: "a much longer message", fromId: "u", fromName: "sam" }, effects);
+  expect(effects.posted.at(-1)).toBe(CODEX_QUEUE_FULL);
+  const history = deps.conversations.history("c1").map((t) => t.content);
+  expect(history).toContain("short");
+  expect(history).not.toContain("a much longer message");
 });

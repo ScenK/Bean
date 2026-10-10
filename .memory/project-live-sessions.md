@@ -1,6 +1,6 @@
 # Live sessions (chat-bridged interactive agent)
 
-Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
+Chat-bridged multi-turn Claude Code or Codex sessions, Discord-first. Spec:
 `docs/superpowers/specs/2026-07-18-live-sessions-design.md`.
 
 - `core/live-session.ts` = multi-turn sibling of `delegate.ts`: a long-lived
@@ -143,3 +143,26 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   and exit 1 **before** `system/init`: `startLiveSession` ignores pre-init `result`s on a resume
   and reports `RESUME_REJECTED`, never a fresh session. The id doesn't change, so the ended card
   re-offers the button and nothing new is recorded.
+- **Codex engine (#233)**: `core/codex-live-session.ts`, a second `LiveSessionHandle` picked by
+  `cli` (registry's default StartFn dispatches; tests inject one fake and read `req.cli`). Codex
+  has no multi-turn stdin, so it is **one `codex exec [resume <thread>]` spawn per turn**
+  (`codexExecArgs`, shared with `delegateCommand`; no FAILED sentinel). Load-bearing rules:
+  - Next turn spawns only after the previous child's `close`; mid-turn messages merge into one
+    next turn, capped at 4000 chars — `send` returns false past that and the bot replies
+    `CODEX_QUEUE_FULL` without appending to history.
+  - Stop = **SIGINT** (then SIGKILL after 5s), not SIGTERM: codex runs tool commands in their own
+    process group and only SIGINT stops them (#237). `stopping` is checked first on close because
+    a SIGINT exit is code 1. `forceKillAll` still SIGKILLs (known orphan risk until #237).
+  - **Reservation stays on the bot pid** for the whole codex session (registry skips
+    `updateReservationPid`); per-turn pid swapping races the single-pid liveness check. Accepted
+    ceiling: a bot hard-crash mid-turn frees the project while that turn finishes. `pid` is a getter
+    for the current turn's child so `forceKillAll` reaches it.
+  - **Codex resume ids must be UUIDs**: codex treats a non-UUID as a thread *name* and silently
+    starts a new thread. Checked in `findDelegateRun`, the receipt button, and before spawn; the
+    emitted `thread.started.thread_id` is compared too (mismatch → stopped, `CODEX_THREAD_MISMATCH`).
+    "no rollout found" on resumed turn 1 → `RESUME_REJECTED`; never a fresh fallback (unlike runDelegate).
+  - A failed later turn (`turn.failed`/error/non-zero exit) shows `— turn failed: …`, skips history,
+    and the session stays bound; a turn 1 that never got `thread.started` ends the session.
+  - The CLI is frozen from the `delegate_runs` row on a resume (`resume.cli`), re-checked at Start;
+    an undetected CLI refuses ("codex isn't installed…") — another CLI never substitutes. A live
+    model is kept only if that CLI's `clis.json` list offers it, else the CLI's own default.

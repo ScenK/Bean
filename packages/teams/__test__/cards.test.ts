@@ -140,9 +140,23 @@ test("Continue live: finished/ended cards submit resume-live with the session id
 
   const card = JSON.stringify(liveSessionProposalCard({
     proposalId: "live-1", projectName: "other", instruction: "Continue where you left off",
-    projects: [{ name: "bean", path: "/p/bean" }], models: [], skills: [], clis: ["claude"], continues: "fix the flaky test",
+    projects: [{ name: "bean", path: "/p/bean" }], models: [], skills: [], cli: "codex", clis: [], agent: "codex", continues: "fix the flaky test",
   }));
+  // A resume's engine is frozen: an Agent fact, no CLI picker.
+  expect(card).toContain("Agent");
+  expect(card).not.toContain('"id":"cli"');
   expect(card).toContain("fix the flaky test");
   expect(card).not.toContain('"id":"projectPath"');
   expect(card).not.toContain("/p/bean");
+});
+
+test("fresh live card: CLI picker defaults to the selected CLI; combined models tagged by CLI", () => {
+  const card = JSON.stringify(liveSessionProposalCard({
+    proposalId: "live-2", projectName: "bean", instruction: "go", projects: [{ name: "bean", path: "/p/bean" }], skills: [],
+    models: [{ id: "opus", label: "opus", availableOn: ["claude"] }, { id: "gpt-5.5", label: "gpt-5.5", availableOn: ["codex"] }],
+    cli: "codex", clis: ["claude", "codex"],
+  }));
+  expect(card).toContain('"id":"cli","label":"CLI","value":"codex"');
+  expect(card).toContain("opus (claude)");
+  expect(card).toContain("gpt-5.5 (codex)");
 });

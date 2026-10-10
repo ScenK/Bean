@@ -691,6 +691,18 @@ test("propose_live_session drops a model not offered on claude", async () => {
   expect(res.proposedLiveSession?.projectPath).toBe("/work/api");
 });
 
+test("propose_live_session takes a codex cli and keeps only a model that cli offers", async () => {
+  const models = availableModels([{ provider: "claude", models: ["sonnet"] }, { provider: "codex", models: ["gpt-5.5"] }], ["claude", "codex"]);
+  const run = async (args: object) => (await conv({
+    latestUserText: "start a live session", deps: depsReturning("ok", [{ name: "propose_live_session", args: { project: "/work/api", instruction: "go", ...args } }]),
+    liveSessionAvailable: true, availableClis: ["claude", "codex"], models,
+  })).proposedLiveSession;
+  expect(await run({ cli: "codex", model: "gpt-5.5" })).toMatchObject({ cli: "codex", model: "gpt-5.5" });
+  expect((await run({ cli: "codex", model: "sonnet" }))?.model).toBeUndefined();
+  expect((await run({ model: "gpt-5.5" }))?.model).toBeUndefined(); // no cli = claude, which doesn't offer it
+  expect((await run({ cli: "opencode" }))?.cli).toBeUndefined();
+});
+
 test("propose_live_session tool schema only enums models available on claude", async () => {
   let seenTools: ToolSpec[] = [];
   const deps: ConverseDeps = {

@@ -245,7 +245,10 @@ export function liveSessionProposalCard(input: LiveSessionProposalCardInput): ob
   const resuming = input.continues !== undefined;
   const body: object[] = [
     { type: "TextBlock", text: resuming ? "Bean proposes continuing a session live" : "Bean proposes a live agent session", weight: "Bolder" },
-    ...(resuming ? [{ type: "FactSet", facts: [{ title: "Continues", value: input.continues }, { title: "Project", value: input.projectName }] }] : []),
+    ...(resuming ? [{ type: "FactSet", facts: [
+      { title: "Continues", value: input.continues }, { title: "Project", value: input.projectName },
+      ...(input.agent ? [{ title: "Agent", value: input.agent }] : []),
+    ] }] : []),
     { type: "Input.Text", id: "instruction", label: resuming ? "Opening prompt" : "Prompt", isMultiline: true, value: input.instruction },
     ...(resuming ? [] : [projectPicker]),
   ];
@@ -257,14 +260,19 @@ export function liveSessionProposalCard(input: LiveSessionProposalCardInput): ob
   }
   if (input.clis.length > 0) {
     body.push({
-      type: "Input.ChoiceSet", id: "cli", label: "CLI", value: input.clis[0],
+      type: "Input.ChoiceSet", id: "cli", label: "CLI", value: input.cli,
       choices: input.clis.map((c) => ({ title: c, value: c })),
     });
   }
+  // No re-render on a CLI pick here, so every live CLI's models are listed (tagged when only one
+  // offers it); Start resolves the pick within the chosen CLI, else that CLI's own default.
   if (input.models.length > 0) {
+    const tagged = new Set(input.models.flatMap((m) => m.availableOn)).size > 1;
     body.push({
       type: "Input.ChoiceSet", id: "model", label: "Model (optional)", ...(input.model ? { value: input.model } : {}),
-      choices: input.models.map((m) => ({ title: m.label, value: m.id })),
+      choices: input.models.map((m) => ({
+        title: tagged && m.availableOn.length === 1 ? `${m.label} (${m.availableOn[0]})` : m.label, value: m.id,
+      })),
     });
   }
   body.push({

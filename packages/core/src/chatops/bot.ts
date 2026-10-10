@@ -12,7 +12,9 @@ import type { Memory } from "../memory/memory.js";
 import type { CliName } from "../launcher.js";
 import type { CliModels } from "../cli-models.js";
 import type { DelegateRequest } from "../delegate.js";
-import { isValidSessionId, resumeCommand, type ResumableRun } from "../delegate-runs.js";
+import { BAD_SESSION_ID, isCodexSessionId, isValidSessionId, resumeCommand, type ResumableRun } from "../delegate-runs.js";
+import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
+import { CODEX_QUEUE_FULL } from "../codex-live-session.js";
 import type { CardBuilders } from "./cards-api.js";
 import { formatAmbientBlock, type AmbientMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
@@ -143,13 +145,13 @@ export interface TeamsBotDeps {
 const DESKTOP_ONLY =
   "That needs the Bean desktop app — from here I can only chat and run background delegate tasks. Ask me again and I'll run it as one.";
 const NO_CLI = "I can't run delegate tasks: no supported CLI (`claude`, `opencode`, or `codex`) is available on this machine.";
-const BAD_SESSION_ID = "Copy the id from the `claude --resume …` line.";
 const RESUME_OPENING = "Continue where you left off — first, one line on where things stand.";
 
-/** The session id in `/live-session resume <rest>`. A pasted `claude --resume <id>` span wins;
- * otherwise every valid-looking token counts, and exactly one is required. */
+/** The session id in `/live-session resume <rest>`. A pasted `claude --resume <id>` or
+ * `codex resume <id>` span wins (also inside a routine digest's footer line); otherwise every
+ * valid-looking token counts, and exactly one is required. */
 export function parseResumeArg(rest: string): { id: string } | { error: string } {
-  const flagged = [...rest.matchAll(/--resume\s+`?([^\s`]+)/g)].map((m) => m[1] ?? "");
+  const flagged = [...rest.matchAll(/\bresume\s+`?([^\s`]+)/g)].map((m) => m[1] ?? "");
   const candidates = flagged.length > 0 ? flagged : rest.replace(/`/g, " ").split(/\s+/);
   const ids = [...new Set(candidates.filter(isValidSessionId))];
   if (ids.length === 0) return { error: BAD_SESSION_ID };
@@ -181,6 +183,17 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   function logRunEffectError(err: unknown): void {
     console.error("chatops run effect failed:", err);
   }
+
+  // Live-capable CLIs available right now, claude first (the default engine).
+  const liveClis = (): LiveCli[] => {
+    if (!deps.liveSessionsEnabled()) return [];
+    const detected = deps.detectClis();
+    return LIVE_CLIS.filter((c) => detected.includes(c));
+  };
+  // The literal --model for a live session: kept only if that CLI's config offers it, else the
+  // CLI's own default — a model from another provider never switches the engine.
+  const liveModelFor = (cli: LiveCli, model: string | undefined): string | undefined =>
+    model && (deps.cliModels.find((e) => e.provider === cli)?.models ?? []).includes(model) ? model : undefined;
 
   // `/new` count per conversation (this process): a run launched before a reset must not
   // store its session afterwards and resurrect the pre-reset agent.
@@ -221,7 +234,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     };
     const receipt = (sessionId: string | undefined): { resume?: string; resumeLiveId?: string } =>
       sessionId
-        ? { resume: resumeCommand(cli, sessionId), ...(cli === "claude" && deps.liveSessionsEnabled() ? { resumeLiveId: sessionId } : {}) }
+        ? {
+            resume: resumeCommand(cli, sessionId),
+            // Continue live only on the CLI that ran it, if it's still here; codex needs a UUID id.
+            ...(isLiveCli(cli) && liveClis().includes(cli) && (cli !== "codex" || isCodexSessionId(sessionId)) ? { resumeLiveId: sessionId } : {}),
+          }
         : {};
     const cardId = p.cardActivityId;
     const updateTo = async (card: object): Promise<void> => {
@@ -274,22 +291,26 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (p.cardActivityId !== undefined) await fx.updateCard(p.cardActivityId, card);
     };
     const resume = p.proposal.resume;
+    // A resume runs on the CLI frozen from its row; another installed CLI never substitutes.
+    const cli = resume?.cli ?? p.proposal.cli ?? liveClis()[0] ?? "claude";
+    let refusal: string | undefined;
     if (resume) {
       // Re-check at the launch point (the row or folder may have gone while the card sat), and
       // always launch in the recorded folder — never a path that arrived with the submit.
       const found = deps.findDelegateRun?.(resume.sessionId) ?? { refusal: "I have no record of that run." };
-      const refusal = "refusal" in found ? found.refusal
-        : found.run.projectPath !== resume.projectPath ? "I have no record of that run."
+      refusal = "refusal" in found ? found.refusal
+        : found.run.projectPath !== resume.projectPath || found.run.cli !== resume.cli ? "I have no record of that run."
         // Restricted needs an owner to gate on; the registry would otherwise open it to everyone.
         : !starterId ? "I couldn't tell who tapped Start, so I won't continue that session."
         : undefined;
-      if (refusal) {
-        await updateTo(deps.cards.liveSessionResultCard({ projectName: await projectLabel(resume.projectPath, true), startedBy, outcome: "cancelled" }));
-        await fx.post(refusal);
-        return;
-      }
-      p.proposal.projectPath = resume.projectPath;
     }
+    refusal ??= liveClis().includes(cli) ? undefined : `${cli} isn't installed on this Mac any more.`;
+    if (refusal) {
+      await updateTo(deps.cards.liveSessionResultCard({ projectName: await projectLabel(resume?.projectPath ?? p.proposal.projectPath, !!resume), startedBy, outcome: "cancelled" }));
+      await fx.post(refusal);
+      return;
+    }
+    if (resume) p.proposal.projectPath = resume.projectPath;
     const projectName = await projectLabel(p.proposal.projectPath, !!resume);
     // Plain-text stream messages: prefer the surface's real text path (postStream/editStream);
     // fall back to the card channel where {content} already IS a plain message (Discord).
@@ -307,7 +328,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       channelId: p.conversationId,
       projectPath: p.proposal.projectPath,
       instruction,
-      model: p.proposal.model,
+      cli,
+      model: liveModelFor(cli, p.proposal.model),
       ...(resume ? { resume: resume.sessionId } : {}),
       starterId,
       // Default restricted: only the starter (+ any co-drivers they add) steers, unless they
@@ -349,16 +371,20 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   ): Promise<void> {
     const [projects, skills] = await Promise.all([deps.loadProjects(), loadActiveSkills()]);
     const projectName = await projectLabel(live.projectPath, !!live.resume);
-    // Live sessions always run claude, so only claude's models/CLI are offered.
-    const models = (deps.cliModels.find((e) => e.provider === "claude")?.models ?? [])
-      .map((id) => ({ id, label: id.split("/").pop() || id }));
-    const clis = deps.detectClis().filter((c) => c === "claude");
-    const pending = deps.liveSessionProposals.add({ proposal: live, conversationId, proposedBy });
+    const clis = liveClis();
+    // Frozen on a resume; a fresh card defaults to claude when it's here.
+    const cli = live.resume?.cli ?? (live.cli && clis.includes(live.cli) ? live.cli : clis[0] ?? "claude");
+    const proposal: ProposedLiveSession = { ...live, model: liveModelFor(cli, live.model), ...(live.resume ? {} : { cli }) };
+    const pending = deps.liveSessionProposals.add({ proposal, conversationId, proposedBy });
     const activityId = await fx.postCard(deps.cards.liveSessionProposalCard({
-      proposalId: pending.id, projectName, instruction: live.instruction, model: live.model, skillName: live.skillName,
-      projects: projects.map((p) => ({ name: p.name, path: p.path })), models,
-      skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name })), clis,
-      ...(live.resume ? { continues: live.resume.instruction } : {}),
+      proposalId: pending.id, projectName, instruction: proposal.instruction, model: proposal.model, skillName: proposal.skillName,
+      projects: projects.map((p) => ({ name: p.name, path: p.path })),
+      // Every live CLI's models, tagged; the card shows those of the selected CLI (Discord) or
+      // all of them (Teams, resolved within the CLI at Start).
+      models: availableModels(deps.cliModels, live.resume ? [cli] : clis),
+      skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name })),
+      cli,
+      ...(live.resume ? { clis: [], continues: live.resume.instruction, agent: cli } : { clis }),
     }));
     deps.liveSessionProposals.setCardActivityId(pending.id, activityId);
   }
@@ -377,9 +403,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const found = deps.findDelegateRun?.(sessionId) ?? { refusal: "I have no record of that run." };
     if ("refusal" in found) return found.refusal;
     const { run } = found;
+    if (!isLiveCli(run.cli)) return "Only Claude and Codex sessions continue live for now — resume it from a terminal.";
+    if (!liveClis().includes(run.cli)) return `${run.cli} isn't installed on this Mac any more.`;
     await postLiveSessionProposal({
       projectPath: run.projectPath, instruction: RESUME_OPENING, steering: "restricted",
-      resume: { sessionId: run.sessionId, projectPath: run.projectPath, instruction: run.instruction },
+      resume: { sessionId: run.sessionId, projectPath: run.projectPath, instruction: run.instruction, cli: run.cli },
     }, conversationId, proposedBy, fx);
     return undefined;
   }
@@ -569,8 +597,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             deps.liveSessions.stop(conv);
             return; // the registry's onEnded posts the end notice
           }
+          // Refused text (codex's next-turn queue is full) never reaches history.
+          if (!deps.liveSessions.send(conv, msg.text)) {
+            await fx.reply(CODEX_QUEUE_FULL);
+            return;
+          }
           deps.conversations.append(conv, { role: "user", content: msg.text });
-          deps.liveSessions.send(conv, msg.text);
           return;
         }
         if (cmd === "cancel") {
@@ -643,7 +675,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           actions: imageTool ? [...actions, imageTool.tool] : actions,
           delegateAvailable: true,
           scratchPath: deps.scratchPath,
-          liveSessionAvailable: deps.liveSessionsEnabled() && detected.includes("claude"),
+          liveSessionAvailable: liveClis().length > 0,
           availableClis: detected,
           models: availableModels(deps.cliModels, detected),
           runAvailable: false,
@@ -848,6 +880,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const v = action.value;
         // A resumed session's project is locked to its recorded row (startLiveSessionAction).
         if (v.projectPath && !pending.proposal.resume) pending.proposal.projectPath = v.projectPath;
+        // Same lock for the CLI; an unknown value is ignored (Start re-checks detection).
+        if (isLiveCli(v.cli) && !pending.proposal.resume) pending.proposal.cli = v.cli;
         const liveText = typeof v.instruction === "string" ? v.instruction.trim() : "";
         if (liveText) pending.proposal.instruction = liveText;
         if (v.model !== undefined) pending.proposal.model = v.model || undefined;

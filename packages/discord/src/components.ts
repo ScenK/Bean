@@ -2,7 +2,7 @@ import type {
   CardBuilders, FinishedCardInput, RememberedCardInput,
   NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
-  LiveSessionProposalCardInput, LiveSessionResultCardInput,
+  LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
 import { BROWSER_SKILL_NOTE } from "@bean/core";
 
@@ -231,16 +231,17 @@ function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
         type: STRING_SELECT,
         custom_id: `bean:live-cli:${input.proposalId}`,
         placeholder: "CLI",
-        options: input.clis.slice(0, 25).map((c, i) => ({ label: c, value: c, default: i === 0 })),
+        options: input.clis.slice(0, 25).map((c) => ({ label: c, value: c, default: c === input.cli })),
       }])]
     : [];
-  // Only shown when claude has configured models; empty = claude picks its own default.
-  const modelRows = input.models.length > 0
+  // The selected CLI's models (re-rendered on a CLI switch); none configured = its own default.
+  const models = input.models.filter((m) => m.availableOn.includes(input.cli as CliName));
+  const modelRows = models.length > 0
     ? [row([{
         type: STRING_SELECT,
         custom_id: `bean:live-model:${input.proposalId}`,
         placeholder: "Model (optional)",
-        options: input.models.slice(0, 25).map((m) => ({ label: m.label.slice(0, 100), value: m.id, default: m.id === input.model })),
+        options: models.slice(0, 25).map((m) => ({ label: m.label.slice(0, 100), value: m.id, default: m.id === input.model })),
       }])]
     : [];
   const restricted = (input.steering ?? "restricted") === "restricted";
@@ -257,6 +258,7 @@ function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
         ...(resuming ? [
           { name: "Continues", value: clampField(input.continues ?? "") },
           { name: "Project", value: input.projectName.slice(0, FIELD_VALUE_LIMIT), inline: true },
+          ...(input.agent ? [{ name: "Agent", value: input.agent, inline: true }] : []),
         ] : []),
         { name: "How it works", value: `Output streams here; each steering message becomes the agent's next turn. Say \`stop\` to end it.\n${steeringHelp}` },
       ],
