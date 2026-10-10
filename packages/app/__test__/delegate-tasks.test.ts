@@ -1,11 +1,11 @@
-import { mkdtempSync, readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { createDelegateTasks, resolveDelegateSelection, type DelegateEvent } from "../src/delegate-tasks.js";
+import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn, type DelegateEvent } from "../src/delegate-tasks.js";
 import { runDelegate, type CliModels, type CliName, type DelegateCallbacks, type DelegateHandle, type DelegateRequest } from "@bean/core";
 
 const CLI_MODELS: CliModels[] = [
@@ -298,3 +298,13 @@ describe("delegate session receipts", () => {
   });
 });
 
+
+// opencode takes its working dir from an inherited PWD over the spawn cwd (#247).
+it("the resolved-PATH spawn sets PWD to the spawn cwd", async () => {
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "bean-pwd-")));
+  const child = resolvedPathSpawnFn("/usr/bin:/bin")!(process.execPath, ["-e", "process.stdout.write(process.env.PWD ?? '')"], cwd);
+  let out = "";
+  child.stdout?.on("data", (d) => { out += String(d); });
+  await new Promise((resolve) => child.on("close", resolve));
+  expect(out).toBe(cwd);
+});
