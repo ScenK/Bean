@@ -187,8 +187,10 @@ export interface DelegateHandle {
 
 export type DelegateSpawnFn = (command: string, args: string[], cwd: string) => ChildProcess;
 
-const defaultDelegateSpawn: DelegateSpawnFn = (command, args, cwd) =>
-  spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], detached: true, env: { ...process.env, ...BEAN_GIT_IDENTITY } });
+// `PWD: cwd` because opencode takes its working dir from an inherited `PWD` over the spawn cwd, so a
+// shell-started Bean (`pnpm dev`, a bot from a terminal) ran every opencode delegate in that shell's dir.
+export const defaultDelegateSpawn: DelegateSpawnFn = (command, args, cwd) =>
+  spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], detached: true, env: { ...process.env, ...BEAN_GIT_IDENTITY, PWD: cwd } });
 
 export const DELEGATE_TIMEOUT_MS = 30 * 60_000;
 

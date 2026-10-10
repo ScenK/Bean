@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -11,6 +14,7 @@ import {
   opencodeResult,
   sessionIdOf,
   runDelegate,
+  defaultDelegateSpawn,
   killAllDelegates,
   DELEGATE_TIMEOUT_MS,
   GIT_TRAILER_INSTRUCTION as GIT_TRAILER,
@@ -642,4 +646,14 @@ describe("FAILED: sentinel", () => {
     expect(dones).toEqual([]);
     expect(spawnFn).toHaveBeenCalledTimes(2);
   });
+});
+
+// opencode takes its working dir from an inherited PWD over the spawn cwd (#247).
+it("default delegate spawn sets PWD to the spawn cwd", async () => {
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "bean-pwd-")));
+  const child = defaultDelegateSpawn(process.execPath, ["-e", "process.stdout.write(process.env.PWD ?? '')"], cwd);
+  let out = "";
+  child.stdout?.on("data", (d) => { out += String(d); });
+  await new Promise((resolve) => child.on("close", resolve));
+  expect(out).toBe(cwd);
 });
