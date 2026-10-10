@@ -338,8 +338,8 @@ function proposeDelegateTool(skills: Skill[], projects: Project[], availableClis
   };
 }
 
-// Only offered where the caller can actually host a live session (chatops with claude or
-// codex detected). Model values pass through verbatim to --model.
+// Only offered where the caller can actually host a live session (chatops with a live CLI
+// detected). Model values pass through verbatim to --model.
 function proposeLiveSessionTool(projects: Project[], models: AvailableModel[], liveClis: LiveCli[]): ToolSpec {
   const properties: Record<string, unknown> = {
     project: { type: "string", enum: projects.map((p) => p.path), description: "the project path to work in" },
@@ -348,7 +348,7 @@ function proposeLiveSessionTool(projects: Project[], models: AvailableModel[], l
       description: "the opening instruction for the live agent — include all context it needs to start",
     },
   };
-  if (liveClis.includes("codex")) {
+  if (liveClis.length > 1) {
     properties.cli = {
       type: "string",
       enum: liveClis,

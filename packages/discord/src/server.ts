@@ -79,7 +79,7 @@ const bot = buildTeamsBot({
   conversations,
   liveSessions,
   liveSessionProposals,
-  // Always on for Discord (no `liveSessions` opt-in) when a live-capable CLI (claude or codex)
+  // Always on for Discord (no `liveSessions` opt-in) when a live-capable CLI (claude, codex or opencode)
   // is both detected and not in config's disabledClis list.
   liveSessionsEnabled: () => clis().some(isLiveCli),
   findDelegateRun: (sessionId) => findDelegateRun(dbFile(dir), sessionId),

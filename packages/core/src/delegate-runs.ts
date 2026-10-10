@@ -29,6 +29,19 @@ export function isCodexSessionId(id: string): boolean {
   return UUID.test(id);
 }
 
+// opencode rejects an unknown id itself ("Session not found"); this shape check only spares a
+// pointless spawn and keeps the Continue live button off ids it could never resume.
+const OPENCODE_ID = /^ses_[A-Za-z0-9]+$/;
+
+export function isOpencodeSessionId(id: string): boolean {
+  return OPENCODE_ID.test(id);
+}
+
+/** Whether `id` is a session id `cli` can continue live: valid, plus each CLI's own shape. */
+export function isLiveSessionId(cli: CliName, id: string): boolean {
+  return isValidSessionId(id) && (cli === "codex" ? isCodexSessionId(id) : cli === "opencode" ? isOpencodeSessionId(id) : true);
+}
+
 /** The refusal for an id that isn't one Bean can continue — CLI-neutral. */
 export const BAD_SESSION_ID = "Copy the session id from the resume line on the finished card.";
 
@@ -74,7 +87,7 @@ export function delegateRunProject(file: string, sessionId: string): string | un
 export type ResumableRun = { run: DelegateRunRow } | { refusal: string };
 
 /** Looks up the newest `delegate_runs` row for `sessionId` and checks it can continue live: a
- * Claude or Codex (UUID id) session Bean recorded outside the desktop chat whose project folder
+ * session (with its CLI's id shape, isLiveSessionId) Bean recorded outside the desktop chat whose project folder
  * still exists. The project path and CLI always come from this row, never from the caller. */
 export function findDelegateRun(file: string, sessionId: string, exists: (path: string) => boolean = existsSync): ResumableRun {
   if (!isValidSessionId(sessionId)) return { refusal: BAD_SESSION_ID };
@@ -82,8 +95,7 @@ export function findDelegateRun(file: string, sessionId: string, exists: (path: 
     .prepare("SELECT surface, cli, session_id, project_path, instruction FROM delegate_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1")
     .get(sessionId) as { surface: DelegateRunRow["surface"]; cli: CliName; session_id: string; project_path: string; instruction: string } | undefined;
   if (!row) return { refusal: "I have no record of that run." };
-  if (row.cli !== "claude" && row.cli !== "codex") return { refusal: "Only Claude and Codex sessions continue live for now — resume it from a terminal." };
-  if (row.cli === "codex" && !isCodexSessionId(row.session_id)) return { refusal: BAD_SESSION_ID };
+  if (!isLiveSessionId(row.cli, row.session_id)) return { refusal: BAD_SESSION_ID };
   if (row.surface === "desktop") return { refusal: "That run started in Bean's desktop chat — continue it there." };
   if (!exists(row.project_path)) return { refusal: "That project folder no longer exists on this Mac." };
   return { run: { surface: row.surface, cli: row.cli, sessionId: row.session_id, projectPath: row.project_path, instruction: row.instruction } };

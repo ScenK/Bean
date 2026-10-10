@@ -35,7 +35,7 @@ export interface FinishedCardInput {
   /** Resume command for the run's CLI session (e.g. `claude --resume <id>`), once it started.
    * Never carries a path — this card is posted to a shared channel. */
   resume?: string;
-  /** Claude/Codex session id for a "Continue live" button (beanAction `resume-live`); absent = no button. */
+  /** CLI session id for a "Continue live" button (beanAction `resume-live`); absent = no button. */
   resumeLiveId?: string;
 }
 
@@ -108,7 +108,7 @@ export interface LiveSessionProposalCardInput {
   models: AvailableModel[];
   /** Selectable skills for the on-card skill picker; empty = no picker. */
   skills: { name: string }[];
-  /** The selected engine (claude or codex). */
+  /** The selected engine (a LIVE_CLIS entry). */
   cli: string;
   /** Live-capable detected CLIs for the on-card CLI picker; empty = no picker (a resume). */
   clis: string[];
