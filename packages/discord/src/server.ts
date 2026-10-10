@@ -5,7 +5,7 @@ import {
   detectClis, type CliName, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, type PendingLiveSession, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -79,9 +79,9 @@ const bot = buildTeamsBot({
   conversations,
   liveSessions,
   liveSessionProposals,
-  // Always on for Discord (no `liveSessions` opt-in) when Claude is both detected and not in
-  // config's disabledClis list; the live-session engine itself is Claude-specific.
-  liveSessionsEnabled: () => clis().includes("claude"),
+  // Always on for Discord (no `liveSessions` opt-in) when a live-capable CLI (claude or codex)
+  // is both detected and not in config's disabledClis list.
+  liveSessionsEnabled: () => clis().some(isLiveCli),
   findDelegateRun: (sessionId) => findDelegateRun(dbFile(dir), sessionId),
   scratchPath,
   cards: discordCards,
@@ -129,13 +129,16 @@ async function liveSessionCardFor(
   // A resumed session's folder may be unregistered: show its name, never the path (shared channel).
   const projectName = projects.find((p) => p.path === proposal.projectPath)?.name
     ?? (proposal.resume ? basename(proposal.projectPath) || "project" : proposal.projectPath);
-  const models = (cliModels.find((e) => e.provider === "claude")?.models ?? []).map((id) => ({ id, label: id.split("/").pop() || id }));
+  const liveClis = clis().filter(isLiveCli);
+  const cli = proposal.resume?.cli ?? proposal.cli ?? liveClis[0] ?? "claude";
   return discordCards.liveSessionProposalCard({
     proposalId, projectName, instruction: proposal.instruction, model: proposal.model, skillName: proposal.skillName,
     steering: proposal.steering,
-    projects: projects.map((p) => ({ name: p.name, path: p.path })), models,
-    skills: skills.filter((s) => !s.hidden && s.enabled !== false).map((s) => ({ name: s.name })), clis: clis().filter((c) => c === "claude"),
-    ...(proposal.resume ? { continues: proposal.resume.instruction } : {}),
+    projects: projects.map((p) => ({ name: p.name, path: p.path })),
+    models: availableModels(cliModels, proposal.resume ? [cli] : liveClis),
+    skills: skills.filter((s) => !s.hidden && s.enabled !== false).map((s) => ({ name: s.name })),
+    cli,
+    ...(proposal.resume ? { clis: [], continues: proposal.resume.instruction, agent: cli } : { clis: liveClis }),
   });
 }
 
@@ -454,7 +457,17 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       if (action === "live-project" && liveValue) { liveSessionProposals.update(payload, { projectPath: liveValue }); return; }
       if (action === "live-model" && liveValue) { liveSessionProposals.update(payload, { model: liveValue }); return; }
       if (action === "live-skill" && liveValue) { liveSessionProposals.update(payload, { skillName: liveValue === "__none__" ? undefined : liveValue }); return; }
-      if (action === "live-cli") return; // claude-only today; the dropdown is informational
+      if (action === "live-cli") {
+        // Switch engine: drop a model the new CLI doesn't offer, then re-render its model list.
+        const pending = liveProposalIn(payload, interaction.channelId);
+        if (!pending || pending.proposal.resume || !isLiveCli(liveValue)) return;
+        const offered = cliModels.find((e) => e.provider === liveValue)?.models ?? [];
+        liveSessionProposals.update(payload, {
+          cli: liveValue, ...(pending.proposal.model && !offered.includes(pending.proposal.model) ? { model: undefined } : {}),
+        });
+        await interaction.editReply(await liveSessionCardFor(payload, pending.proposal));
+        return;
+      }
       const sel = selections.get(interaction.message.id) ?? {};
       if (action === "cli") sel.cli = interaction.values[0];
       if (action === "model") sel.model = interaction.values[0];
@@ -518,7 +531,7 @@ client.once("clientReady", async () => {
   // Control commands map to Bean's existing text commands; /live-session is added only when
   // Claude is detected and config-enabled. Project/model/skill are picked on its card, so the
   // command itself carries just the opening prompt.
-  const liveEnabled = clis().includes("claude");
+  const liveEnabled = clis().some(isLiveCli);
   const liveCmd: ApplicationCommandDataResolvable = {
     name: "live-session",
     description: "Start a chat-bridged live coding session",

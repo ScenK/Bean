@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-sessions.js";
+import { CODEX_SIGNED_OUT } from "../src/codex-live-session.js";
 import { RESUME_REJECTED, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest } from "../src/live-session.js";
 
 // Fresh temp dir per call — reserveRun's file lock is per-`dir`, so this keeps each test's
@@ -424,5 +425,40 @@ describe("LiveSessionRegistry", () => {
 
     expect(notices).toHaveLength(1);
     expect(notices[0]).toContain("may be incomplete");
+  });
+
+  it("codex keeps the reservation on the bot pid; claude moves it to the child", () => {
+    // A dead child pid: if the registry tracked it, a second start would reclaim the project.
+    const deadChild = (): LiveSessionHandle => ({ pid: 2 ** 22 + 12345, send: () => true, stop: () => {} });
+    for (const [cli, second] of [["codex", "project"], ["claude", "started"]] as const) {
+      const dir = tmp();
+      const regA = new LiveSessionRegistry(deadChild as never, { dir });
+      const regB = new LiveSessionRegistry(deadChild as never, { dir });
+      expect(regA.start({ channelId: "a", projectPath: "/p", instruction: "go", cli, sink: fakeSink().sink })).toBe("started");
+      expect(regB.start({ channelId: "b", projectPath: "/p", instruction: "go", sink: fakeSink().sink })).toBe(second);
+    }
+  });
+
+  it("passes cli through; a failed turn renders its footer, skips history; send refusal propagates", async () => {
+    let req!: LiveSessionRequest;
+    let cbs!: LiveSessionCallbacks;
+    const startFn = (r: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
+      req = r; cbs = c;
+      return { pid: process.pid, send: (t) => t !== "too much", stop: () => {} };
+    };
+    const reg = new LiveSessionRegistry(startFn as never, { dir: tmp(), throttleMs: 100 });
+    const s = fakeSink();
+    const results: string[] = [];
+    const onEnded = vi.fn();
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", cli: "codex", sink: s.sink, onTurnResult: (r) => results.push(r), onEnded });
+    expect(req.cli).toBe("codex");
+    cbs.onTurnComplete({ result: "", failed: "model overloaded" });
+    await flushTicks(reg, 100);
+    expect(s.posts.at(-1)).toBe("— turn failed: model overloaded");
+    expect(results).toEqual([]);
+    expect(reg.send("c", "ok")).toBe(true);
+    expect(reg.send("c", "too much")).toBe(false);
+    cbs.onExit(new Error(CODEX_SIGNED_OUT));
+    await vi.waitFor(() => expect(onEnded).toHaveBeenCalledWith(CODEX_SIGNED_OUT));
   });
 });

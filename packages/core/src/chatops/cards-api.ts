@@ -35,7 +35,7 @@ export interface FinishedCardInput {
   /** Resume command for the run's CLI session (e.g. `claude --resume <id>`), once it started.
    * Never carries a path — this card is posted to a shared channel. */
   resume?: string;
-  /** Claude session id for a "Continue live" button (beanAction `resume-live`); absent = no button. */
+  /** Claude/Codex session id for a "Continue live" button (beanAction `resume-live`); absent = no button. */
   resumeLiveId?: string;
 }
 
@@ -103,13 +103,17 @@ export interface LiveSessionProposalCardInput {
   steering?: "open" | "restricted";
   /** Selectable projects for the on-card project picker; the one matching projectName is default. */
   projects: { name: string; path: string }[];
-  /** Selectable claude models for the on-card model picker; empty = no picker (claude's default). */
-  models: { id: string; label: string }[];
+  /** Every live CLI's configured models, tagged with the CLIs that offer them. Discord shows the
+   * selected CLI's; Teams shows all (Start resolves within the CLI). Empty = no picker. */
+  models: AvailableModel[];
   /** Selectable skills for the on-card skill picker; empty = no picker. */
   skills: { name: string }[];
-  /** Live-capable CLIs for the on-card CLI picker — only claude today (live-session.ts is
-   * claude-specific), but rendered so the surface matches the delegate card. */
+  /** The selected engine (claude or codex). */
+  cli: string;
+  /** Live-capable detected CLIs for the on-card CLI picker; empty = no picker (a resume). */
   clis: string[];
+  /** A resume's frozen engine, shown as an "Agent" fact instead of the CLI picker. */
+  agent?: string;
   /** Set when continuing a recorded delegate session: the original run's instruction, shown as
    * "Continues: …". The project is locked — no project picker. */
   continues?: string;
@@ -119,7 +123,7 @@ export interface LiveSessionResultCardInput {
   projectName: string;
   startedBy: string;
   outcome: "started" | "cancelled" | "ended";
-  /** On "ended": re-offer "Continue live" for this Claude session id (a resumed session). */
+  /** On "ended": re-offer "Continue live" for this session id (a resumed session). */
   resumeLiveId?: string;
 }
 

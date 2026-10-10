@@ -49,6 +49,28 @@ export function failedReason(result: string): string | undefined {
   return first.slice("FAILED:".length).trim() || "the delegate reported it could not complete the task";
 }
 
+/** `codex exec [resume <id>]` argv, shared by delegate runs and codex live sessions (one spawn
+ * per turn). `prompt` is passed as-is — callers append their own trailer/sentinel. */
+export function codexExecArgs(req: { prompt: string; model?: string; resume?: string }): string[] {
+  return [
+    // `codex exec resume <id> <prompt>` accepts these flags too (not --sandbox; codex-cli 0.160).
+    "exec",
+    ...(req.resume ? ["resume"] : []),
+    "--json",
+    // Full bypass, matching the claude branch below: headless runs can't answer
+    // approval prompts, and the workspace-write sandbox blocks network (git push).
+    "--dangerously-bypass-approvals-and-sandbox",
+    // codex exec refuses non-git dirs; Bean's scratch workspace isn't a repo.
+    "--skip-git-repo-check",
+    ...(req.model ? ["--model", req.model] : []),
+    // `--` terminates option parsing so a prompt starting with "-"/"--" (a markdown
+    // bullet, "---" frontmatter, "--help") is read as text, not parsed as a codex flag.
+    "--",
+    ...(req.resume ? [req.resume] : []),
+    req.prompt,
+  ];
+}
+
 // Headless one-shot delegation, unlike launcher.ts's interactive TUI launches.
 export function delegateCommand(req: DelegateRequest): { command: string; args: string[] } {
   const modelArgs = req.model ? ["--model", req.model] : [];
@@ -73,28 +95,7 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
       ],
     };
   }
-  if (req.cli === "codex") {
-    return {
-      command: "codex",
-      args: [
-        // `codex exec resume <id> <prompt>` takes the same flags as `codex exec` (codex-cli 0.157).
-        "exec",
-        ...(resume ? ["resume"] : []),
-        "--json",
-        // Full bypass, matching the claude branch above: headless runs can't answer
-        // approval prompts, and the workspace-write sandbox blocks network (git push).
-        "--dangerously-bypass-approvals-and-sandbox",
-        // codex exec refuses non-git dirs; Bean's scratch workspace isn't a repo.
-        "--skip-git-repo-check",
-        ...modelArgs,
-        // `--` terminates option parsing so a prompt starting with "-"/"--" (a markdown
-        // bullet, "---" frontmatter, "--help") is read as text, not parsed as a codex flag.
-        "--",
-        ...(resume ? [resume] : []),
-        prompt,
-      ],
-    };
-  }
+  if (req.cli === "codex") return { command: "codex", args: codexExecArgs({ prompt, model: req.model, resume }) };
   // --format json: the only opencode output that carries the session id (sessionID on every event).
   // `--` as in the codex branch: opencode's yargs otherwise parses a "-"-leading prompt as flags
   // and prints help instead of running (verified opencode 1.18.32).

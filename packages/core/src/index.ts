@@ -66,5 +66,6 @@ export type { OutboxMessage } from "./outbox.js";
 export { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice } from "./run-queue.js";
 export type { RunReservation } from "./run-queue.js";
 export * from "./live-session.js";
+export * from "./codex-live-session.js";
 export * from "./chatops/live-sessions.js";
 export * from "./chatops/live-session-proposals.js";
