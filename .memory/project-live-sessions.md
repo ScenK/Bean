@@ -1,6 +1,6 @@
 # Live sessions (chat-bridged interactive agent)
 
-Chat-bridged multi-turn Claude Code or Codex sessions, Discord-first. Spec:
+Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and Teams. Spec:
 `docs/superpowers/specs/2026-07-18-live-sessions-design.md`.
 
 - `core/live-session.ts` = multi-turn sibling of `delegate.ts`: a long-lived
@@ -166,3 +166,27 @@ Chat-bridged multi-turn Claude Code or Codex sessions, Discord-first. Spec:
   - The CLI is frozen from the `delegate_runs` row on a resume (`resume.cli`), re-checked at Start;
     an undetected CLI refuses ("codex isn't installed…") — another CLI never substitutes. A live
     model is kept only if that CLI's `clis.json` list offers it, else the CLI's own default.
+- **Shared per-turn engine (#238)**: codex and opencode both run `core/turn-live-session.ts`
+  `startTurnLiveSession(adapter, …)`; each CLI is a small `TurnAdapter` (`codexTurnAdapter`,
+  `opencodeTurnAdapter`) — argv, event parse → `{sessionId, completed, failure, result, tail}`,
+  pre-spawn id check, resume-rejected stderr, mismatch notice, stop, end messages. The codex rules
+  above (spawn after close, 4000-char merged queue `TURN_QUEUE_FULL`, bot-pid reservation, failed
+  later turn stays bound, no fresh fallback) now hold for both. The registry dispatches by `cli`,
+  moves the reservation to the child pid **only for claude**, and builds `VERBATIM_END` from the
+  adapters' `endMessages`.
+  - Spawn invariants for every per-turn CLI: stdin `ignore` (**opencode blocks forever on an open
+    stdin pipe**), `detached`, env `PWD=projectPath` (opencode prefers an inherited `PWD` over the
+    spawn cwd, #247).
+  - Stop: codex SIGINTs its own group; opencode SIGTERMs every group of its tree (it reaps tools
+    on neither signal). Both then `escalateKill` the snapshotted groups after 5s, deliberately not
+    cancelled on close (#246). Unit tests that stop a session must mock `execFileSync` (the `ps`
+    snapshot) and call `killPendingGroups()` while `process.kill` is still mocked.
+  - opencode: turn done = `step_finish` with `part.reason: "stop"` (`"tool-calls"` means another
+    step follows); `sessionID` on any non-`error` event proves the session; an `error` event's
+    `error.data.message` can echo an API-key prefix, so only `name` + `statusCode` reach chat
+    (401/403 → `OPENCODE_SIGNED_OUT`). Resume ids must be `ses_…` (`isLiveSessionId`, also gating
+    `findDelegateRun` and the receipt button); a bad id fails fast with `Session not found`.
+  - No first-event watchdog: provider stalls of 35–90s with no events are normal, and a tool is
+    silent until it finishes, so the 30-min idle timer is the only ceiling.
+  - Start refuses a `browser: true` skill on opencode (`OPENCODE_BROWSER_REFUSAL`) and a picked
+    skill that's gone/disabled **before claiming the card**, so the user can re-pick on it.

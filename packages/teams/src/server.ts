@@ -131,7 +131,7 @@ const bot = buildTeamsBot({
   conversations,
   liveSessions,
   liveSessionProposals,
-  // Same rule as Discord: on whenever a live-capable CLI (claude or codex) is detected and not
+  // Same rule as Discord: on whenever a live-capable CLI (claude, codex or opencode) is detected and not
   // disabled. The Teams sink posts/edits via the proactive path (postCard below) so streamed
   // turns land after the triggering turn ends.
   liveSessionsEnabled: () => clis().some(isLiveCli),

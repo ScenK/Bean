@@ -5,7 +5,9 @@ import {
   startLiveSession,
   RESUME_REJECTED, type LiveCli, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type TurnSummary,
 } from "../live-session.js";
-import { CODEX_SIGNED_OUT, CODEX_THREAD_MISMATCH, startCodexLiveSession } from "../codex-live-session.js";
+import { codexTurnAdapter } from "../codex-live-session.js";
+import { opencodeTurnAdapter } from "../opencode-live-session.js";
+import { startTurnLiveSession } from "../turn-live-session.js";
 import { reserveRun, releaseRun, updateReservationPid } from "../run-queue.js";
 import { killPendingGroups, killTree } from "../kill-tree.js";
 
@@ -53,12 +55,17 @@ type StartFn = (
   idleTimeoutMs?: number,
 ) => LiveSessionHandle;
 
-// Picks the engine by cli. Tests inject a single fake StartFn and read req.cli instead.
+const TURN_ADAPTERS = { codex: codexTurnAdapter, opencode: opencodeTurnAdapter };
+
+// Picks the engine by cli: claude's long-lived process, or the shared per-turn engine. Tests
+// inject a single fake StartFn and read req.cli instead.
 const defaultStart: StartFn = (req, cbs, _spawn, idleTimeoutMs) =>
-  req.cli === "codex" ? startCodexLiveSession(req, cbs, undefined, idleTimeoutMs) : startLiveSession(req, cbs, undefined, idleTimeoutMs);
+  req.cli === "codex" || req.cli === "opencode"
+    ? startTurnLiveSession(TURN_ADAPTERS[req.cli], req, cbs, undefined, idleTimeoutMs)
+    : startLiveSession(req, cbs, undefined, idleTimeoutMs);
 
 // Ended notices shown as-is, not as "Live session died: …".
-const VERBATIM_END = new Set([RESUME_REJECTED, CODEX_SIGNED_OUT, CODEX_THREAD_MISMATCH]);
+const VERBATIM_END = new Set([RESUME_REJECTED, ...Object.values(TURN_ADAPTERS).flatMap((a) => a.endMessages)]);
 
 // Headroom under Discord's 2000-char message cap (embeds/formatting stay clear of the edge).
 const MSG_LIMIT = 1900;
@@ -212,11 +219,12 @@ export class LiveSessionRegistry {
     // The reservation was created against this process's own pid (nothing else to track before
     // the child exists); switch it to the child's real pid so pid-liveness crash recovery
     // tracks *that child*, not this process — same reasoning as RunRegistry.start().
-    // Codex spawns one child per turn, so its reservation stays on this (bot) process for the
-    // whole session: swapping per turn races the single-pid liveness check between turns.
+    // Per-turn CLIs (codex, opencode) spawn one child per turn, so their reservation stays on
+    // this (bot) process for the whole session: swapping per turn races the single-pid liveness
+    // check between turns.
     // ponytail: if the bot hard-crashes mid-turn, the project is reclaimable while that one
-    // detached codex turn finishes; per-turn pid tracking would need a multi-pid reservation.
-    if (input.cli !== "codex" && typeof s.handle.pid === "number") {
+    // detached turn finishes; per-turn pid tracking would need a multi-pid reservation.
+    if ((input.cli ?? "claude") === "claude" && typeof s.handle.pid === "number") {
       updateReservationPid(this.opts.dir, input.projectPath, s.handle.pid);
     }
     this.startTyping(s); // the opening instruction is already in flight
@@ -237,7 +245,7 @@ export class LiveSessionRegistry {
     }
   }
 
-  /** False when the session refused the text (codex's next-turn queue is full). */
+  /** False when the session refused the text (a per-turn CLI's next-turn queue is full). */
   send(channelId: string, text: string): boolean {
     const s = this.byChannel.get(channelId);
     if (!s) return true;

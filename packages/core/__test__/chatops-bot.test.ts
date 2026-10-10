@@ -17,7 +17,8 @@ import { SkillProposalStore } from "../src/chatops/skill-proposals.js";
 import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-sessions.js";
 import { LiveSessionProposalStore } from "../src/chatops/live-session-proposals.js";
 import type { LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest } from "../src/live-session.js";
-import { CODEX_QUEUE_FULL } from "../src/codex-live-session.js";
+import { TURN_QUEUE_FULL } from "../src/turn-live-session.js";
+import { OPENCODE_BROWSER_REFUSAL } from "../src/delegate.js";
 import type { CliName } from "../src/launcher.js";
 
 const fakeCards = {
@@ -1117,30 +1118,24 @@ test("proposeLiveSession refuses when disabled, with no card", async () => {
   expect(fxOff.cards).toHaveLength(0);
 });
 
-test("codex alone offers the live-session tool with a cli enum; no live-capable CLI hides it", async () => {
-  let tools: { name: string; parameters?: unknown }[] = [];
-  const codexOnly = makeDeps({
-    detectClis: () => ["codex"],
-    liveSessionsEnabled: () => true,
-    chat: async (req) => { tools = req.tools as typeof tools; return { content: "ok", toolCalls: [] }; },
-  });
-  await buildTeamsBot(codexOnly.deps).onMessage(msg, fx());
-  const live = tools.find((t) => t.name === "propose_live_session");
-  expect(JSON.stringify(live?.parameters)).toContain('"enum":["codex"]');
-
-  let toolNames: string[] = [];
-  const { deps } = makeDeps({
-    detectClis: () => ["opencode"],
-    liveSessionsEnabled: () => true,
-    chat: async ({ tools }) => {
-      toolNames = tools.map((tool) => tool.name);
-      return { content: "no live session", toolCalls: [] };
-    },
-  });
-
-  await buildTeamsBot(deps).onMessage(msg, fx());
-
-  expect(toolNames).not.toContain("propose_live_session");
+test("a lone live CLI offers the live-session tool without a cli enum, two add it; no live CLI hides it", async () => {
+  const liveTool = async (detected: CliName[]): Promise<{ name: string; parameters?: unknown } | undefined> => {
+    let tools: { name: string; parameters?: unknown }[] = [];
+    const { deps } = makeDeps({
+      detectClis: () => detected,
+      liveSessionsEnabled: () => true,
+      chat: async (req) => { tools = req.tools as typeof tools; return { content: "ok", toolCalls: [] }; },
+    });
+    await buildTeamsBot(deps).onMessage(msg, fx());
+    return tools.find((t) => t.name === "propose_live_session");
+  };
+  for (const cli of ["codex", "opencode"] as const) {
+    const live = await liveTool([cli]);
+    expect(live).toBeDefined();
+    expect(JSON.stringify(live?.parameters)).not.toContain('"cli"');
+  }
+  expect(JSON.stringify((await liveTool(["codex", "opencode"]))?.parameters)).toContain('"enum":["codex","opencode"]');
+  expect(await liveTool([])).toBeUndefined();
 });
 
 test("start-live composes the picked skill's body into the opening prompt", async () => {
@@ -1188,6 +1183,55 @@ test("start-live applies on-card selections carried in the submit value (Teams p
   expect(reqs[0]?.model).toBe("opus");
   expect(reqs[0]?.prompt).toContain("REVIEW SKILL BODY");
   expect(reqs[0]?.prompt).toContain("edited prompt");
+});
+
+test("a browser skill on opencode is refused without consuming the card; switching to claude starts", async () => {
+  const reqs: LiveSessionRequest[] = [];
+  const startFn = (req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => {
+    reqs.push(req);
+    return { pid: 1, send: () => true, stop: () => cbs.onExit(undefined) };
+  };
+  const { deps } = makeDeps({
+    liveSessionsEnabled: () => true,
+    detectClis: () => ["claude", "opencode"],
+    loadSkills: async () => [{ name: "web", description: "d", body: "WEB BODY", enabled: true, browser: true }],
+    liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+  });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.proposeLiveSession({ conversationId: "c1", instruction: "check the site", proposedBy: "sam" }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  // Discord: the picks already sit on the pending proposal.
+  deps.liveSessionProposals.update(proposalId, { cli: "opencode", skillName: "web" });
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId } }, effects);
+  // Teams: the picks arrive merged into the Start submit.
+  deps.liveSessionProposals.update(proposalId, { cli: "claude", skillName: undefined });
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId, cli: "opencode", skillName: "web" } }, effects);
+  expect(effects.posted).toEqual([OPENCODE_BROWSER_REFUSAL, OPENCODE_BROWSER_REFUSAL]);
+  expect(reqs).toHaveLength(0);
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId, cli: "claude", skillName: "web" } }, effects);
+  expect(reqs).toEqual([expect.objectContaining({ cli: "claude" })]);
+});
+
+test("a picked skill that's gone at Start refuses instead of starting with the bare instruction", async () => {
+  const reqs: LiveSessionRequest[] = [];
+  const startFn = (req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => {
+    reqs.push(req);
+    return { pid: 1, send: () => true, stop: () => cbs.onExit(undefined) };
+  };
+  const { deps } = makeDeps({
+    liveSessionsEnabled: () => true,
+    loadSkills: async () => [{ name: "review", description: "d", body: "b", enabled: false }],
+    liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+  });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.proposeLiveSession({ conversationId: "c1", instruction: "x", proposedBy: "sam" }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId, skillName: "review" } }, effects);
+  expect(reqs).toHaveLength(0);
+  expect(effects.posted.at(-1)).toContain("can't find the `review` skill");
+  expect(deps.liveSessionProposals.get(proposalId)).toBeDefined();
 });
 
 test("literal /live-session message routes verbatim, never touching converse", async () => {
@@ -1403,6 +1447,11 @@ test("parseResumeArg takes one valid id, prefers a pasted --resume span, and rej
   expect(parseResumeArg(` codex resume ${CODEX_ID}`)).toEqual({ id: CODEX_ID });
   expect(parseResumeArg(` step 2 (workspace) — codex resume ${CODEX_ID}`)).toEqual({ id: CODEX_ID });
   expect(parseResumeArg(" a1 b2")).toEqual({ error: "Send just one session id." });
+  // opencode receipts (`-s` / `--session`) and its routine footer; spans of different ids refuse.
+  expect(parseResumeArg(" `opencode -s ses_Ab12`")).toEqual({ id: "ses_Ab12" });
+  expect(parseResumeArg(" opencode --session ses_Ab12")).toEqual({ id: "ses_Ab12" });
+  expect(parseResumeArg(" step 1 (bean) — opencode -s ses_Ab12")).toEqual({ id: "ses_Ab12" });
+  expect(parseResumeArg(" claude --resume sess-1 opencode -s ses_Ab12")).toEqual({ error: "Send just one session id." });
 });
 
 test("`/live-session resume <id>` (literal text and slash) posts a locked resume card", async () => {
@@ -1480,6 +1529,21 @@ test("a finished Claude run offers Continue live; the ended resumed session re-o
   await bot.onCardAction({ conversationId: "c2", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId: latestLiveProposalId(fx2.cards) } }, fx2);
   r.deps.liveSessions.stop("c2");
   await vi.waitFor(() => expect(fx2.updates.at(-1)?.card).toMatchObject({ outcome: "ended", resumeLiveId: "sess-1" }));
+});
+
+test("a finished opencode run offers Continue live only while opencode is detected and the id is ses_-shaped", async () => {
+  const finish = async (detected: CliName[], sessionId: string): Promise<object | undefined> => {
+    const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult, liveSessionsEnabled: () => true, detectClis: () => detected });
+    const effects = fx();
+    const id = await proposeThenGetId(deps, effects);
+    await buildTeamsBot(deps).onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "opencode" } }, effects);
+    delegateCalls[0]?.cb.onSessionStart?.(1, sessionId);
+    delegateCalls[0]?.cb.onError(new Error("boom"));
+    await vi.waitFor(() => expect(effects.updates.at(-1)?.card).toMatchObject({ outcome: "error" }));
+    return effects.updates.at(-1)?.card;
+  };
+  expect(await finish(["opencode"], "ses_Ab12")).toMatchObject({ resume: "opencode -s ses_Ab12", resumeLiveId: "ses_Ab12" });
+  expect(await finish(["opencode"], "not-ses")).not.toHaveProperty("resumeLiveId");
 });
 
 // ── Codex live sessions (#233) ──────────────────────────────────────────────────────────────
@@ -1563,7 +1627,7 @@ test("a refused send (codex queue full) replies and stays out of history", async
   await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) } }, effects);
   await bot.onMessage({ conversationId: "c1", text: "short", fromId: "u", fromName: "sam" }, effects);
   await bot.onMessage({ conversationId: "c1", text: "a much longer message", fromId: "u", fromName: "sam" }, effects);
-  expect(effects.posted.at(-1)).toBe(CODEX_QUEUE_FULL);
+  expect(effects.posted.at(-1)).toBe(TURN_QUEUE_FULL);
   const history = deps.conversations.history("c1").map((t) => t.content);
   expect(history).toContain("short");
   expect(history).not.toContain("a much longer message");

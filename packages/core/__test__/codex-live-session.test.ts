@@ -2,10 +2,13 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  CODEX_QUEUE_LIMIT, CODEX_SIGNED_OUT, CODEX_THREAD_MISMATCH, startCodexLiveSession,
-} from "../src/codex-live-session.js";
+import { CODEX_SIGNED_OUT, CODEX_THREAD_MISMATCH, startCodexLiveSession } from "../src/codex-live-session.js";
+import { killPendingGroups } from "../src/kill-tree.js";
+import { TURN_QUEUE_LIMIT } from "../src/turn-live-session.js";
 import { RESUME_REJECTED, type TurnSummary } from "../src/live-session.js";
+
+// killTree's `ps` snapshot (kill-tree.ts): no descendants.
+vi.mock("node:child_process", async (orig) => ({ ...(await orig<typeof import("node:child_process")>()), execFileSync: () => "" }));
 
 const TID = "019a6b1e-7c3d-7f00-9a1b-2c3d4e5f6a7b";
 
@@ -56,7 +59,8 @@ function harness(opts: { resume?: string; idleMs?: number } = {}) {
 
 let killSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => { killSpy = vi.spyOn(process, "kill").mockImplementation(() => true); });
-afterEach(() => { killSpy.mockRestore(); vi.useRealTimers(); });
+// The stop's SIGKILL escalation outlives the test: sweep it while process.kill is still mocked.
+afterEach(() => { killPendingGroups(); killSpy.mockRestore(); vi.useRealTimers(); });
 
 describe("startCodexLiveSession", () => {
   it("runs a fresh turn, then resumes the emitted thread — `--` before the prompt, no FAILED sentinel", async () => {
@@ -98,7 +102,7 @@ describe("startCodexLiveSession", () => {
     const h = harness();
     expect(h.handle.send("a")).toBe(true);
     expect(h.handle.send("b")).toBe(true);
-    expect(h.handle.send("x".repeat(CODEX_QUEUE_LIMIT))).toBe(false);
+    expect(h.handle.send("x".repeat(TURN_QUEUE_LIMIT))).toBe(false);
     expect(h.spawned).toHaveLength(1);
     expect(h.handle.pid).toBe(h.spawned[0]!.pid);
     await h.completeTurn("one");

@@ -3,12 +3,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-sessions.js";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { CODEX_SIGNED_OUT } from "../src/codex-live-session.js";
+import { OPENCODE_SIGNED_OUT } from "../src/opencode-live-session.js";
 import { RESUME_REJECTED, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest } from "../src/live-session.js";
 
 // killTree's `ps` snapshot (kill-tree.ts): no descendants unless a test sets one.
 const ps = vi.hoisted(() => ({ out: "" }));
-vi.mock("node:child_process", async (orig) => ({ ...(await orig<typeof import("node:child_process")>()), execFileSync: () => ps.out }));
+// The default StartFn's real spawn, recorded (only the dispatch test uses it).
+const spawned = vi.hoisted(() => [] as { command: string; args: string[]; opts: { stdio?: unknown; env?: Record<string, string | undefined> } }[]);
+vi.mock("node:child_process", async (orig) => ({
+  ...(await orig<typeof import("node:child_process")>()),
+  execFileSync: () => ps.out,
+  spawn: (command: string, args: string[], opts: never) => {
+    spawned.push({ command, args, opts });
+    return Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), pid: process.pid, kill: () => true });
+  },
+}));
 
 // Fresh temp dir per call — reserveRun's file lock is per-`dir`, so this keeps each test's
 // project-path reservation isolated from every other test (matches chatops-runs.test.ts).
@@ -445,10 +457,18 @@ describe("LiveSessionRegistry", () => {
     expect(notices[0]).toContain("may be incomplete");
   });
 
-  it("codex keeps the reservation on the bot pid; claude moves it to the child", () => {
+  it("the default engine runs opencode per turn (no stdin, PWD = project), not claude", () => {
+    spawned.length = 0;
+    const reg = new LiveSessionRegistry(undefined, { dir: tmp() });
+    expect(reg.start({ channelId: "o", projectPath: "/proj", instruction: "go", cli: "opencode", sink: fakeSink().sink })).toBe("started");
+    expect(spawned[0]).toMatchObject({ command: "opencode", opts: { stdio: ["ignore", "pipe", "pipe"], env: { PWD: "/proj" } } });
+    expect(spawned[0]!.args.slice(0, 4)).toEqual(["run", "--auto", "--format", "json"]);
+  });
+
+  it("per-turn CLIs keep the reservation on the bot pid; claude moves it to the child", () => {
     // A dead child pid: if the registry tracked it, a second start would reclaim the project.
     const deadChild = (): LiveSessionHandle => ({ pid: 2 ** 22 + 12345, send: () => true, stop: () => {} });
-    for (const [cli, second] of [["codex", "project"], ["claude", "started"]] as const) {
+    for (const [cli, second] of [["codex", "project"], ["opencode", "project"], ["claude", "started"]] as const) {
       const dir = tmp();
       const regA = new LiveSessionRegistry(deadChild as never, { dir });
       const regB = new LiveSessionRegistry(deadChild as never, { dir });
@@ -478,5 +498,18 @@ describe("LiveSessionRegistry", () => {
     expect(reg.send("c", "too much")).toBe(false);
     cbs.onExit(new Error(CODEX_SIGNED_OUT));
     await vi.waitFor(() => expect(onEnded).toHaveBeenCalledWith(CODEX_SIGNED_OUT));
+  });
+
+  it("shows opencode's end messages verbatim", async () => {
+    let cbs!: LiveSessionCallbacks;
+    const startFn = (_r: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
+      cbs = c;
+      return { pid: process.pid, send: () => true, stop: () => {} };
+    };
+    const reg = new LiveSessionRegistry(startFn as never, { dir: tmp() });
+    const onEnded = vi.fn();
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", cli: "opencode", sink: fakeSink().sink, onEnded });
+    cbs.onExit(new Error(OPENCODE_SIGNED_OUT));
+    await vi.waitFor(() => expect(onEnded).toHaveBeenCalledWith(OPENCODE_SIGNED_OUT));
   });
 });

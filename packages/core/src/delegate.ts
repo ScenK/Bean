@@ -97,13 +97,21 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
     };
   }
   if (req.cli === "codex") return { command: "codex", args: codexExecArgs({ prompt, model: req.model, resume }) };
+  return { command: "opencode", args: opencodeRunArgs({ prompt, model: req.model, resume }) };
+}
+
+/** `opencode run [--session <id>]` argv, shared by delegate runs and opencode live sessions (one
+ * spawn per turn). `prompt` is passed as-is — callers append their own trailer/sentinel. */
+export function opencodeRunArgs(req: { prompt: string; model?: string; resume?: string }): string[] {
   // --format json: the only opencode output that carries the session id (sessionID on every event).
-  // `--` as in the codex branch: opencode's yargs otherwise parses a "-"-leading prompt as flags
+  // `--` as in codexExecArgs: opencode's yargs otherwise parses a "-"-leading prompt as flags
   // and prints help instead of running (verified opencode 1.18.32).
-  return {
-    command: "opencode",
-    args: ["run", "--auto", "--format", "json", ...(resume ? ["--session", resume] : []), ...modelArgs, "--", prompt],
-  };
+  return [
+    "run", "--auto", "--format", "json",
+    ...(req.resume ? ["--session", req.resume] : []),
+    ...(req.model ? ["--model", req.model] : []),
+    "--", req.prompt,
+  ];
 }
 
 export function claudeTailLine(event: unknown): string | undefined {

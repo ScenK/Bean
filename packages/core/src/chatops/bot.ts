@@ -11,10 +11,10 @@ import type { Persona } from "../persona.js";
 import type { Memory } from "../memory/memory.js";
 import type { CliName } from "../launcher.js";
 import type { CliModels } from "../cli-models.js";
-import type { DelegateRequest } from "../delegate.js";
-import { BAD_SESSION_ID, isCodexSessionId, isValidSessionId, resumeCommand, type ResumableRun } from "../delegate-runs.js";
+import { OPENCODE_BROWSER_REFUSAL, type DelegateRequest } from "../delegate.js";
+import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type ResumableRun } from "../delegate-runs.js";
 import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
-import { CODEX_QUEUE_FULL } from "../codex-live-session.js";
+import { TURN_QUEUE_FULL } from "../turn-live-session.js";
 import type { CardBuilders } from "./cards-api.js";
 import { formatAmbientBlock, type AmbientMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
@@ -147,11 +147,12 @@ const DESKTOP_ONLY =
 const NO_CLI = "I can't run delegate tasks: no supported CLI (`claude`, `opencode`, or `codex`) is available on this machine.";
 const RESUME_OPENING = "Continue where you left off — first, one line on where things stand.";
 
-/** The session id in `/live-session resume <rest>`. A pasted `claude --resume <id>` or
- * `codex resume <id>` span wins (also inside a routine digest's footer line); otherwise every
- * valid-looking token counts, and exactly one is required. */
+/** The session id in `/live-session resume <rest>`. Pasted `claude --resume <id>`,
+ * `codex resume <id>` and `opencode -s <id>` / `--session <id>` spans win (also inside a routine
+ * digest's footer line), all merged before the one-id check; otherwise every valid-looking token
+ * counts, and exactly one is required. */
 export function parseResumeArg(rest: string): { id: string } | { error: string } {
-  const flagged = [...rest.matchAll(/\bresume\s+`?([^\s`]+)/g)].map((m) => m[1] ?? "");
+  const flagged = [...rest.matchAll(/(?:\bresume|(?<![^\s`])(?:-s|--session))\s+`?([^\s`]+)/g)].map((m) => m[1] ?? "");
   const candidates = flagged.length > 0 ? flagged : rest.replace(/`/g, " ").split(/\s+/);
   const ids = [...new Set(candidates.filter(isValidSessionId))];
   if (ids.length === 0) return { error: BAD_SESSION_ID };
@@ -237,8 +238,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       sessionId
         ? {
             resume: resumeCommand(cli, sessionId),
-            // Continue live only on the CLI that ran it, if it's still here; codex needs a UUID id.
-            ...(isLiveCli(cli) && liveClis().includes(cli) && (cli !== "codex" || isCodexSessionId(sessionId)) ? { resumeLiveId: sessionId } : {}),
+            // Continue live only on the CLI that ran it, if it's still here, with that CLI's id shape.
+            ...(liveClis().includes(cli) && isLiveSessionId(cli, sessionId) ? { resumeLiveId: sessionId } : {}),
           }
         : {};
     const cardId = p.cardActivityId;
@@ -287,6 +288,24 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     await deps.saveModelMemory({ ...memory, ...memoryUpdatesFor({ cli, model }) });
   }
 
+  // A picked skill must still exist and be enabled (never a silent bare-instruction start), and a
+  // browser skill can't run on opencode.
+  async function liveSkill(cli: LiveCli, skillName: string | undefined): Promise<{ skill?: Skill; refusal?: string }> {
+    if (!skillName) return {};
+    const skill = (await loadActiveSkills()).find((s) => s.name === skillName);
+    if (!skill) return { refusal: `I can't find the \`${skillName}\` skill any more — pick one that still exists.` };
+    if (skill.browser && cli === "opencode") return { refusal: OPENCODE_BROWSER_REFUSAL };
+    return { skill };
+  }
+
+  // The live card's effective CLI and skill once a submit's selections (Teams merges them into
+  // Start; Discord applied them already, so its value omits them) land on the proposal. A resume
+  // keeps the CLI frozen from its row.
+  const liveCliOf = (p: ProposedLiveSession, v: CardAction["value"]): LiveCli =>
+    p.resume?.cli ?? (isLiveCli(v.cli) ? v.cli : p.cli) ?? liveClis()[0] ?? "claude";
+  const liveSkillNameOf = (p: ProposedLiveSession, v: CardAction["value"]): string | undefined =>
+    v.skillName === undefined ? p.skillName : v.skillName === "__none__" ? undefined : v.skillName || undefined;
+
   async function startLiveSessionAction(p: PendingLiveSession, startedBy: string, starterId: string, fx: BotEffects): Promise<void> {
     const updateTo = async (card: object): Promise<void> => {
       if (p.cardActivityId !== undefined) await fx.updateCard(p.cardActivityId, card);
@@ -306,6 +325,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         : undefined;
     }
     refusal ??= liveClis().includes(cli) ? undefined : `${cli} isn't installed on this Mac any more.`;
+    const picked = refusal ? {} : await liveSkill(cli, p.proposal.skillName);
+    refusal ??= picked.refusal;
     if (refusal) {
       await updateTo(deps.cards.liveSessionResultCard({ projectName: await projectLabel(resume?.projectPath ?? p.proposal.projectPath, !!resume), startedBy, outcome: "cancelled" }));
       await fx.post(refusal);
@@ -321,10 +342,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       typing: fx.sendTyping,
     };
     // A picked skill's body frames the opening turn (composePrompt = body + "## Task" + text).
-    const skill = p.proposal.skillName
-      ? (await loadActiveSkills()).find((s) => s.name === p.proposal.skillName)
-      : undefined;
-    const instruction = skill ? composePrompt(skill, p.proposal.instruction) : p.proposal.instruction;
+    const instruction = picked.skill ? composePrompt(picked.skill, p.proposal.instruction) : p.proposal.instruction;
     const started = deps.liveSessions.start({
       channelId: p.conversationId,
       projectPath: p.proposal.projectPath,
@@ -404,7 +422,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const found = deps.findDelegateRun?.(sessionId) ?? { refusal: "I have no record of that run." };
     if ("refusal" in found) return found.refusal;
     const { run } = found;
-    if (!isLiveCli(run.cli)) return "Only Claude and Codex sessions continue live for now — resume it from a terminal.";
     if (!liveClis().includes(run.cli)) return `${run.cli} isn't installed on this Mac any more.`;
     await postLiveSessionProposal({
       projectPath: run.projectPath, instruction: RESUME_OPENING, steering: "restricted",
@@ -598,9 +615,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             deps.liveSessions.stop(conv);
             return; // the registry's onEnded posts the end notice
           }
-          // Refused text (codex's next-turn queue is full) never reaches history.
+          // Refused text (a per-turn CLI's next-turn queue is full) never reaches history.
           if (!deps.liveSessions.send(conv, msg.text)) {
-            await fx.reply(CODEX_QUEUE_FULL);
+            await fx.reply(TURN_QUEUE_FULL);
             return;
           }
           deps.conversations.append(conv, { role: "user", content: msg.text });
@@ -839,7 +856,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         return;
       }
       if (beanAction === "resume-live") {
-        // proposalId carries the Claude session id here (the surfaces' generic id slot).
+        // proposalId carries the CLI session id here (the surfaces' generic id slot).
         const refusal = await proposeResumeLive(action.conversationId, proposalId ?? "", action.fromName, fx);
         if (refusal) await fx.post(refusal);
         return;
@@ -851,6 +868,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (peek && peek.conversationId !== action.conversationId) {
           await fx.post("That proposal belongs to another conversation.");
           return;
+        }
+        const v = action.value;
+        // Refused before the claim, so the card stays live for picking another skill or CLI.
+        if (beanAction === "start-live" && peek) {
+          const { refusal } = await liveSkill(liveCliOf(peek.proposal, v), liveSkillNameOf(peek.proposal, v));
+          if (refusal) {
+            await fx.post(refusal);
+            return;
+          }
         }
         const pending = deps.liveSessionProposals.claim(proposalId);
         if (!pending) {
@@ -878,7 +904,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // On-card selections. Teams merges its ChoiceSet/Input values into the Start submit;
         // Discord already applied them live via per-select updates, so its value omits these
         // (each guard is a no-op when the field is absent).
-        const v = action.value;
         // A resumed session's project is locked to its recorded row (startLiveSessionAction).
         if (v.projectPath && !pending.proposal.resume) pending.proposal.projectPath = v.projectPath;
         // Same lock for the CLI; an unknown value is ignored (Start re-checks detection).
@@ -886,7 +911,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const liveText = typeof v.instruction === "string" ? v.instruction.trim() : "";
         if (liveText) pending.proposal.instruction = liveText;
         if (v.model !== undefined) pending.proposal.model = v.model || undefined;
-        if (v.skillName !== undefined) pending.proposal.skillName = v.skillName === "__none__" ? undefined : (v.skillName || undefined);
+        pending.proposal.skillName = liveSkillNameOf(pending.proposal, v);
         if (v.steering === "open" || v.steering === "restricted") pending.proposal.steering = v.steering;
         await startLiveSessionAction(pending, action.fromName, action.fromId ?? "", fx);
         return;
