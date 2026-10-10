@@ -108,12 +108,18 @@ export function validateCandidate(
   const verdict = backedBy(quote, text);
   if (verdict === "unsupported") return "the quote doesn't support that fact — use the user's own words.";
   if (verdict === "flipped") return "the fact flips the meaning of the quote.";
+  return checkFact(text, a.projectPath, projects);
+}
+
+/** The fact-shape rejects alone — no instructions, no secrets, only a registered project path.
+ * validateCandidate runs these after its provenance checks; a caller with no typed turn to quote
+ * (MCP remember, #225) runs only these and must never claim typed provenance. */
+export function checkFact(text: string, projectPath: unknown, projects: Project[]): MemoryCandidate | string {
+  if (!text.trim()) return "empty fact.";
   if (INSTRUCTION_SHAPED.test(text)) return "memories are facts about the user, not instructions.";
   if (SECRET_SHAPED.test(text)) return "that looks like a secret or ID number — not stored.";
-  const projectPath = typeof a.projectPath === "string" && projects.some((p) => p.path === a.projectPath)
-    ? a.projectPath
-    : undefined;
-  return { text, projectPath };
+  const path = typeof projectPath === "string" && projects.some((p) => p.path === projectPath) ? projectPath : undefined;
+  return { text: text.trim(), projectPath: path };
 }
 
 /** Only turns the user actually typed are fact sources: a delegate loopback, ambient channel

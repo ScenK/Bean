@@ -32,6 +32,10 @@
         "to": "builtin"
       },
       {
+        "from": "dist/mcp-shim.cjs",
+        "to": "mcp-shim.cjs"
+      },
+      {
         "from": "../discord/dist",
         "to": "chatops/discord",
         "filter": [
@@ -63,6 +67,7 @@
   },
   "devDependencies": {
     "@bean/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.32.0",
     "@playwright/test": "^1.63.0",
     "@types/node": "^26.6.4",
     "dompurify": "^3.4.16",

@@ -52,6 +52,9 @@ The desktop app is one of **three surfaces**, all sharing the same core brain:
   runs it and fans results to sinks (chatops channel / note / desktop notification).
 - **System control** — `system-control.ts` lets `converse()` drive the Mac (volume, mute,
   media playback, launch/quit apps) via a closed verb union, opt-in behind a Settings toggle.
+- **MCP server** — local AI apps (Claude Code, Codex, OpenCode, Claude Desktop) use Bean's
+  notes, memory, todos, routines and delegates through `~/.bean/mcp.sock` and a stdio shim
+  (`app/src/mcp-*.ts`); see [`.memory/project-mcp-server.md`](.memory/project-mcp-server.md).
 
 It's a **pnpm-workspace monorepo** with four packages:
 

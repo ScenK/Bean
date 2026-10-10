@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { CliName } from "@bean/core";
-import type { ConfigView } from "../../../channels.js";
+import type { AppInfo, ConfigView } from "../../../channels.js";
+import { mcpSnippets } from "../../../mcp-tools.js";
 import type { Theme } from "../../../channels.js";
 import type { ChatopsBot, ChatopsState } from "../../../chatops-servers.js";
 import { PanelHeader } from "../../shared/Panel.js";
@@ -27,6 +28,7 @@ const SECTIONS = [
   { id: "model", label: "Model" },
   { id: "apps", label: "Apps" },
   { id: "chatbots", label: "Chat bots" },
+  { id: "ai-apps", label: "AI apps" },
   { id: "appearance", label: "Appearance" },
   { id: "data", label: "Data" },
 ];
@@ -42,6 +44,24 @@ function EndpointRow({ endpoint }: { endpoint: string }) {
     <div class="bean-settings-row" title="Paste into Azure Bot → Configuration → Messaging endpoint">
       <span class="bean-chatops-label">Messaging endpoint: {endpoint}</span>
       <button type="button" class="bean-btn bean-btn--ghost" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+    </div>
+  );
+}
+
+// One copy-paste setup per AI app (#225). The snippet is just a command line or a JSON block.
+function SnippetRow({ client, where, text }: { client: string; where: string; text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = (): void => {
+    navigator.clipboard.writeText(text).then(() => setCopied(true), () => {});
+  };
+  return (
+    <div class="bean-settings-row bean-settings-row--stack">
+      <div class="bean-settings-row-control">
+        <span class="bean-settings-row-label">{client}</span>
+        <span class="bean-chatops-label">{where}</span>
+        <button type="button" class="bean-btn bean-btn--ghost" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+      </div>
+      <pre class="bean-card-prompt">{text}</pre>
     </div>
   );
 }
@@ -64,6 +84,7 @@ export function SettingsWindow() {
   const [save, setSave] = useState<SaveState>("idle");
   const [error, setError] = useState<string | undefined>(undefined);
   const [activeSection, setActiveSection] = useState("model");
+  const [mcp, setMcp] = useState<AppInfo["mcp"]>(undefined);
   const [chatops, setChatops] = useState<Record<ChatopsBot, ChatopsState>>({
     discord: { running: false, enabled: false },
     teams: { running: false, enabled: false },
@@ -83,6 +104,7 @@ export function SettingsWindow() {
     window.bean.getTheme().then(setTheme);
     window.bean.onThemeChanged(setTheme);
     window.bean.detectedClis().then(setDetectedClis);
+    window.bean.getAppInfo().then((info) => setMcp(info.mcp));
     window.bean.getConfig().then((c: ConfigView) => {
       setApiKey(c.openaiApiKey);
       setModel(c.model);
@@ -356,6 +378,19 @@ export function SettingsWindow() {
               </label>
             </div>
           </div>
+        </section>
+
+        <section id="ai-apps" class="bean-settings-card">
+          <div class="bean-settings-card-header">CONNECT AI APPS</div>
+          <div class="bean-settings-row">
+            <span class="bean-chatops-label">
+              Let Claude Code, Codex, OpenCode or Claude Desktop use Bean's notes, memory, todos, routines and
+              delegates over MCP. Bean must be running. Runs started this way have no Stop button in Bean —
+              ask any connected app to cancel them, or quit Bean.
+            </span>
+          </div>
+          {mcp?.warning ? <div class="bean-settings-row"><span class="bean-persona-error">{mcp.warning}</span></div> : null}
+          {mcp ? mcpSnippets(mcp.exe, mcp.shim).map((s) => <SnippetRow key={s.client} {...s} />) : null}
         </section>
 
         <section id="appearance" class="bean-settings-card">

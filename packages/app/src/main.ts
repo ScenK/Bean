@@ -26,7 +26,7 @@ import {
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  reserveRun, releaseRun, RunBusyError,
+  reserveRun, releaseRun, RunBusyError, availableModels,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult, TodoStatus, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
@@ -41,7 +41,9 @@ import {
 } from "./notification-permission-store.js";
 import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
-import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } from "./delegate-tasks.js";
+import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn, type DelegateEvent } from "./delegate-tasks.js";
+import { applyDelegateEvent, createMcpRuns } from "./mcp-runs.js";
+import { createMcpHandlers, startMcpListener } from "./mcp-server.js";
 import { createRoutineScheduler } from "./routine-scheduler.js";
 import { createRoutineBuilder } from "./routine-builder.js";
 import { detectTools, execWatchCommand, fetchText, sinkRecipients } from "./watch-io.js";
@@ -76,6 +78,19 @@ app.on("web-contents-created", (_e, contents) => {
   contents.setWindowOpenHandler(({ url }) => { openExternally(url); return { action: "deny" }; });
   contents.on("will-navigate", (e, url) => { if (openExternally(url)) e.preventDefault(); });
 });
+
+// Settings → Connect AI apps: the exact command every client spawns. The shim runs under Bean's
+// own binary as node (ELECTRON_RUN_AS_NODE), so no system node is needed.
+function mcpConnectInfo(): { exe: string; shim: string; warning?: string } {
+  const exe = app.getPath("exe");
+  const shim = app.isPackaged ? join(process.resourcesPath, "mcp-shim.cjs") : join(dirname(fileURLToPath(import.meta.url)), "mcp-shim.cjs");
+  const warning = exe.includes("/AppTranslocation/")
+    ? "Bean is running from a temporary macOS location — move Bean.app to Applications, reopen it, then copy these."
+    : exe.includes(".app.old/")
+      ? "Bean is running from an old copy left by an update — quit and reopen Bean, then copy these."
+      : undefined;
+  return { exe, shim, ...(warning ? { warning } : {}) };
+}
 
 app.whenReady().then(async () => {
   const dir = beanDir();
@@ -282,7 +297,10 @@ app.whenReady().then(async () => {
   // blocking the quit sequence on an async continuation is its own source of hangs. Every other
   // before-quit hook in this file is plain synchronous fire-and-forget; this matches that.
   let interruptAllDelegates: () => void = () => {};
+  // Replaced once the MCP listener is up; closes it and every connection (before-quit, update relaunch).
+  let stopMcp: () => void = () => {};
   app.on("before-quit", () => {
+    stopMcp();
     interruptAllDelegates();
     // Delegates run in their own process group (detached) and would outlive us — routine steps
     // and builder agents included. SIGKILL them now; cancel()'s 5s escalation can't fire after exit.
@@ -566,31 +584,54 @@ app.whenReady().then(async () => {
     const resolveDelegateCli = (model?: string) =>
       resolveDelegateSelection(cliModels, enabledClis(), runtime.getDelegateCli(), model);
 
+    const skillBrowser = async (name: string): Promise<boolean> =>
+      (await loadLayeredSkills(skillsDir(projectDir), skillsDir(dir))).find((s) => s.name === name)?.browser === true;
+    // A delegate's avatar bubble — shared by the chat window's and the MCP server's instances.
+    const delegateBubble = (event: DelegateEvent, stopped = "Stopped"): void => {
+      if (event.type === "started") {
+        taskStatus.upsert(event.taskId, {
+          kind: "delegate", name: event.projectPath ? basename(event.projectPath) : "delegate",
+          line: "Starting…", detail: event.instruction, startedAt: Date.now(), state: "running",
+        });
+      } else if (event.type === "output") {
+        const line = event.line.trim();
+        if (line) taskStatus.upsert(event.taskId, { line });
+      } else if (event.type === "done") taskStatus.finish(event.taskId, "done", "Done");
+      else if (event.type === "failed") taskStatus.finish(event.taskId, "failed", event.message);
+      else taskStatus.finish(event.taskId, "failed", stopped, false); // a deliberate stop isn't a failure to chase
+    };
     const delegateTasks = createDelegateTasks({
       resolvedPath,
       dir,
       resolveCli: resolveDelegateCli,
-      skillBrowser: async (name) =>
-        (await loadLayeredSkills(skillsDir(projectDir), skillsDir(dir))).find((s) => s.name === name)?.browser === true,
+      skillBrowser,
       send: (event) => {
-        if (event.type === "started") {
-          taskStatus.upsert(event.taskId, {
-            kind: "delegate", name: event.projectPath ? basename(event.projectPath) : "delegate",
-            line: "Starting…", detail: event.instruction, startedAt: Date.now(), state: "running",
-          });
-        } else if (event.type === "output") {
-          const line = event.line.trim();
-          if (line) taskStatus.upsert(event.taskId, { line });
-        } else if (event.type === "done") taskStatus.finish(event.taskId, "done", "Done");
-        else if (event.type === "failed") taskStatus.finish(event.taskId, "failed", event.message);
-        else taskStatus.finish(event.taskId, "failed", "Stopped", false); // the user's own Stop isn't a failure to chase
+        delegateBubble(event);
         const chat = componentWindows.get("chat");
         if (chat && !chat.isDestroyed()) sendToWindow(chat, IPC.delegateEvent, event);
       },
       newId: () => randomUUID(),
     });
+    // MCP-started delegates (#225) get their own instance, so closing the chat window (which
+    // cancels every delegate of the chat instance) never touches them. Their events feed the
+    // avatar bubbles and the MCP run registry — never the chat window.
+    const mcpRuns = createMcpRuns();
+    const mcpDelegates = createDelegateTasks({
+      resolvedPath,
+      dir,
+      resolveCli: resolveDelegateCli,
+      skillBrowser,
+      send: (event) => {
+        const fed = applyDelegateEvent(mcpRuns, event, (p) => (p === scratchDir(dir) ? "workspace" : basename(p)));
+        if (fed) delegateBubble(event, fed.stopped);
+      },
+      newId: () => randomUUID(),
+    });
     cancelAllDelegates = delegateTasks.cancelAll;
-    interruptAllDelegates = delegateTasks.interruptAll;
+    interruptAllDelegates = () => {
+      delegateTasks.interruptAll();
+      mcpDelegates.interruptAll();
+    };
 
     const chatopsRoot = app.isPackaged ? process.resourcesPath : dirname(projectBeanDir());
     const chatopsEnabledPath = chatopsEnabledFile(app.getPath("userData"));
@@ -830,7 +871,7 @@ app.whenReady().then(async () => {
     routineScheduler.start();
     app.on("before-quit", () => routineScheduler.stop());
 
-    registerIpc(ipcMain, {
+    const { memoryHandlers } = registerIpc(ipcMain, {
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
       loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories, restoreDreamRun, dreamDetails,
       getLastDream: async (file) => (await getMemoryMeta(file, "lastDream")) as DreamDigest | undefined,
@@ -934,6 +975,7 @@ app.whenReady().then(async () => {
         author: pkg.author,
         description: pkg.description,
         isPackaged: app.isPackaged,
+        mcp: mcpConnectInfo(),
       }),
       currentVersion: pkg.version,
       isPackaged: app.isPackaged,
@@ -951,6 +993,7 @@ app.whenReady().then(async () => {
       installUpdate: (extractedAppPath: string) => installAndRelaunch(extractedAppPath, {
         relaunch: () => {
           chatopsServers?.stopAll();
+          stopMcp();
           app.relaunch();
         },
       }),
@@ -1013,6 +1056,40 @@ app.whenReady().then(async () => {
         addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
       }),
     });
+
+    // --- MCP server (#225): Bean's data + actions for local AI apps, over ~/.bean/mcp.sock. ---
+    const mcpHandlers = createMcpHandlers({
+      searchNotes: (q, limit) => searchNotes(dbFile(dir), q, limit),
+      saveNote: (draft) => saveNote(dbFile(dir), draft),
+      loadNotes: () => loadNotes(dbFile(dir)),
+      loadMemories: () => loadMemories(dbFile(dir)),
+      deleteMemories: (ids) => deleteMemories(dbFile(dir), ids),
+      rememberIntoBatch: memoryHandlers.addToBatch,
+      loadProjects: () => loadProjects(projectsFile(dir)),
+      loadSkills: () => loadLayeredSkills(skillsDir(projectDir), skillsDir(dir)),
+      loadRoutines: () => loadRoutines(routinesPath),
+      loadRoutineStates: () => loadRoutineStates(routineStatePath),
+      isRoutineRunning: (name) => routineScheduler.isRunning(name),
+      startRoutine: (name, onFinish) => routineScheduler.startNow(name, onFinish),
+      addTodo: async (routine, text) => { await addTodo(dbFile(dir), routine, text); },
+      models: () => availableModels(cliModels, enabledClis()).map((m) => m.id),
+      scratchPath: scratchDir(dir),
+      delegates: mcpDelegates,
+      runs: mcpRuns,
+      bubble: (id, kind, name, line) => {
+        taskStatus.upsert(id, { kind, name, startedAt: Date.now(), state: "running" });
+        taskStatus.finish(id, "done", line);
+      },
+      // Same bubble as a chat-close batch, counting the merged batch; never the one-time notice.
+      memoryBubble: (count) => {
+        taskStatus.upsert("memory:batch", { kind: "memory", name: "Memory", startedAt: Date.now(), state: "running" });
+        taskStatus.finish("memory:batch", "done", `🧠 Remembered ${count} · click to review`);
+      },
+    });
+    startMcpListener({ dir, version: pkg.version, handlers: mcpHandlers }).then(
+      (listener) => { stopMcp = listener.stop; },
+      (err: unknown) => console.error("bean: MCP server not started:", err instanceof Error ? err.message : String(err)),
+    );
 
     await loadAvatarWindow(avatar);
     avatarReady = true;

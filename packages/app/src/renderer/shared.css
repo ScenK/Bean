@@ -1094,6 +1094,11 @@ button, input, textarea, select, a {
   justify-content: flex-end;
 }
 .bean-settings-row-control .bean-input { text-align: right; }
+/* Connect AI apps: label + Copy on top, the snippet below it. */
+.bean-settings-row--stack { flex-direction: column; align-items: stretch; }
+.bean-settings-row--stack .bean-settings-row-control { justify-content: flex-start; }
+.bean-settings-row--stack .bean-chatops-label { flex: 1; }
+.bean-settings-row--stack .bean-card-prompt { min-height: 0; margin: 0; white-space: pre-wrap; word-break: break-all; user-select: text; }
 .bean-input--compact {
   flex: none;
   width: 120px;

@@ -63,7 +63,14 @@ export function NotesPanel() {
     setSelectedSlug((prev) => (prev && nextNotes.some((n) => n.slug === prev) ? prev : undefined));
   };
 
-  useEffect(() => { void refresh(); }, []);
+  // Refetch the list on focus: an AI app may have saved a note over MCP meanwhile. An open
+  // editor's draft lives in its own state, so this never touches it.
+  useEffect(() => {
+    void refresh();
+    const onFocus = (): void => { void refresh(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   const selected = notes.find((n) => n.slug === selectedSlug);
   const projectName = (path?: string): string | undefined =>
