@@ -150,13 +150,15 @@ export class LiveSessionRegistry {
     return [...(this.byChannel.get(channelId)?.coDrivers ?? [])];
   }
 
-  start(input: LiveSessionStart): boolean {
-    if (this.byChannel.has(input.channelId)) return false;
+  /** Starts a session, or returns why it was refused: `"channel"` (this channel already has one)
+   * or `"project"` (another run — any surface/process — holds the project). */
+  start(input: LiveSessionStart): "started" | "channel" | "project" {
+    if (this.byChannel.has(input.channelId)) return "channel";
     // Cross-process/cross-surface guard: the same reservation delegate runs use, so a second
     // channel (or an existing delegate run) targeting the same project is refused rather than
     // spawning a second permissions-bypassed agent into the same working directory.
     const reservation = reserveRun(this.opts.dir, input.projectPath, process.pid, () => this.newId());
-    if (!reservation) return false;
+    if (!reservation) return "project";
     const s: ActiveSession = {
       handle: undefined as unknown as LiveSessionHandle,
       projectPath: input.projectPath,
@@ -199,7 +201,7 @@ export class LiveSessionRegistry {
       updateReservationPid(this.opts.dir, input.projectPath, s.handle.pid);
     }
     this.startTyping(s); // the opening instruction is already in flight
-    return true;
+    return "started";
   }
 
   // Lit while a turn runs (start / send) until onTurnComplete or teardown clears it.

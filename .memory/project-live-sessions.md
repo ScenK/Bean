@@ -100,6 +100,11 @@ Chat-bridged multi-turn Claude Code sessions, Discord-first. Spec:
   dead) — NOT in `forceKillAll()`, which deliberately leaves it in place, mirroring
   `RunRegistry.interruptAll()`'s exact reasoning (can't confirm the SIGKILL landed before the
   bot process exits; a future `reserveRun` pid-liveness-reclaims it once verifiably gone).
+  `start()` returns the refusal reason (`"channel"` vs `"project"`) so the bot words them
+  differently — saying "say `stop`" for a project another run holds is wrong advice.
+  Live proposal ids are sequential (`live-<n>`): every claim (bot Start/Cancel) and every
+  Discord picker/edit/mode mutation checks `conversationId` against the acting channel first,
+  same as delegate cards.
   Gotcha if you write a test for this: don't use pid `1` as a fake "alive" pid — `isLive()`'s
   `process.kill(pid, 0)` throws `EPERM` (not `ESRCH`) for a system pid you can't signal, and
   the liveness check currently treats both the same way (dead), which silently defeats the

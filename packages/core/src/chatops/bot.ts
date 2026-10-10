@@ -290,8 +290,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     async function updateToEnded(): Promise<void> {
       await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "ended" }));
     }
-    if (!started) {
+    if (started === "channel") {
       await fx.post("A live session is already running in this channel — say `stop` to end it first.");
+      return;
+    }
+    if (started === "project") {
+      await fx.post(`Another run is using ${projectName} — wait for it to finish.`);
       return;
     }
     await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started" }));
@@ -736,6 +740,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (beanAction === "start-live" || beanAction === "cancel-live") {
         if (!proposalId) return;
+        // Same conversation binding as delegate cards below: live ids are sequential too.
+        const peek = deps.liveSessionProposals.get(proposalId);
+        if (peek && peek.conversationId !== action.conversationId) {
+          await fx.post("That proposal belongs to another conversation.");
+          return;
+        }
         const pending = deps.liveSessionProposals.claim(proposalId);
         if (!pending) {
           await fx.post("That live-session proposal expired — ask me to start one again.");
