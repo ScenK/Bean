@@ -1,6 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import type { CliName } from "./launcher.js";
+import { escalateKill, killPendingGroups, killTree, signalGroups, treeGroups } from "./kill-tree.js";
 
 export interface DelegateRequest {
   cli: CliName;
@@ -205,12 +206,15 @@ const softSignal = (cli: CliName): NodeJS.Signals => (cli === "codex" ? "SIGINT"
 
 /** Stop every running delegate's process group, synchronously. For app quit only: no
  * callbacks fire (the host is exiting). Covers every caller of runDelegate — chat tasks,
- * routine steps, the routine builder. SIGKILL, except codex: SIGINT now (so it reaps its tool
- * process groups) plus a detached watchdog that SIGKILLs the group 3s later if codex hangs —
- * the host is gone by then, so an in-process timer would never fire. */
+ * routine steps, the routine builder. SIGKILL (opencode: its whole process tree, see
+ * kill-tree.ts), except codex: SIGINT now (so it reaps its tool process groups) plus a detached
+ * watchdog that SIGKILLs its saved groups 3s later if codex hangs — the host is gone by then, so
+ * an in-process timer would never fire. Also SIGKILLs groups still waiting on a stop's
+ * escalation (their parent may already have closed and left liveKills). */
 export function killAllDelegates(): void {
   for (const k of [...liveKills]) k();
   liveKills.clear();
+  killPendingGroups();
 }
 
 export function runDelegate(
@@ -259,13 +263,36 @@ export function runDelegate(
     }
   };
 
+  // Cancel and timeout. Claude (and a pid-less child) keeps the plain group kill. opencode and
+  // codex snapshot their tree first (kill-tree.ts): opencode gets SIGTERM on every group, codex
+  // keeps SIGINT on its own (it reaps its tools on that). The SIGKILL backstop to the saved groups
+  // outlives the parent's close — opencode exits at once while a tool may ignore SIGTERM.
+  const stop = (): void => {
+    const pid = child.pid;
+    if (req.cli === "claude" || typeof pid !== "number") {
+      kill(softSignal(req.cli));
+      killTimer = setTimeout(() => kill("SIGKILL"), 5_000);
+      return;
+    }
+    const groups = treeGroups(pid);
+    if (req.cli === "codex") kill("SIGINT");
+    else signalGroups(groups, "SIGTERM");
+    escalateKill(groups);
+  };
+
   // Guarded: a synchronous spawnFn throw leaves no child, and one throwing entry would abort the sweep.
   const killNow = (): void => {
     if (!child) return;
-    if (req.cli !== "codex" || typeof child.pid !== "number") return kill("SIGKILL");
+    const pid = child.pid;
+    if (req.cli === "claude" || typeof pid !== "number") return kill("SIGKILL");
+    if (req.cli === "opencode") {
+      killTree(pid, "SIGKILL");
+      return;
+    }
+    const groups = treeGroups(pid);
     kill("SIGINT");
     try {
-      const w = spawnFn("/bin/sh", ["-c", `sleep 3; kill -KILL -- -${child.pid} 2>/dev/null`], "/");
+      const w = spawnFn("/bin/sh", ["-c", `sleep 3; kill -KILL -- ${groups.map((g) => `-${g}`).join(" ")} 2>/dev/null`], "/");
       w.on("error", () => {});
       w.unref();
     } catch {
@@ -276,8 +303,7 @@ export function runDelegate(
 
   const timer = setTimeout(() => {
     timedOut = true;
-    kill(softSignal(req.cli));
-    killTimer = setTimeout(() => kill("SIGKILL"), 5_000);
+    stop();
   }, timeoutMs);
 
   const handleLine = (line: string): void => {
@@ -383,8 +409,7 @@ export function runDelegate(
       cancelling = true;
       onCancelled = done;
       clearTimeout(timer);
-      kill(softSignal(req.cli));
-      killTimer = setTimeout(() => kill("SIGKILL"), 5_000);
+      stop();
     },
   };
 }

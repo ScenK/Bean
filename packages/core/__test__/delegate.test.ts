@@ -20,6 +20,10 @@ import {
   type DelegateCallbacks,
 } from "../src/delegate.js";
 
+// killTree's `ps` snapshot (kill-tree.ts): no descendants unless a test sets one.
+const ps = vi.hoisted(() => ({ out: "" }));
+vi.mock("node:child_process", async (orig) => ({ ...(await orig<typeof import("node:child_process")>()), execFileSync: () => ps.out }));
+
 // Every delegate prompt carries both contract suffixes.
 const GIT_TRAILER_INSTRUCTION = GIT_TRAILER + FAILED_SENTINEL_INSTRUCTION;
 
@@ -474,6 +478,90 @@ describe("runDelegate", () => {
     expect(killSpy.mock.calls).toEqual([[-4242, "SIGINT"]]);
     expect(spawns[1]).toEqual(["/bin/sh", ["-c", "sleep 3; kill -KILL -- -4242 2>/dev/null"]]);
     expect(unref).toBe(true);
+    killSpy.mockRestore();
+  });
+
+  // opencode reaps its tool process group on neither SIGTERM nor SIGINT (#246): pid 4242 is the
+  // CLI, 5001 a tool command in its own group.
+  const TOOL_TREE = "4242 1 4242\n5001 4242 5001\n";
+
+  it("opencode cancel and timeout SIGTERM every group in its tree, then SIGKILL them even after opencode closed", () => {
+    vi.useFakeTimers();
+    ps.out = TOOL_TREE;
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    for (const how of ["cancel", "timeout"] as const) {
+      killSpy.mockClear();
+      const child = new FakeChild();
+      child.pid = 4242;
+      const { cbs, errors } = collect();
+      let cancelled = false;
+      const handle = runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, cbs, () => asChild(child), 60_000);
+      if (how === "cancel") handle.cancel(() => { cancelled = true; });
+      else vi.advanceTimersByTime(60_000);
+      expect(killSpy.mock.calls).toEqual([[-4242, "SIGTERM"], [-5001, "SIGTERM"]]);
+      child.emit("close", null); // opencode exits at once; the tool ignored SIGTERM
+      expect(how === "cancel" ? cancelled : errors.length === 1).toBe(true);
+      vi.advanceTimersByTime(5_000);
+      expect(killSpy.mock.calls.slice(2)).toEqual([[-4242, "SIGKILL"], [-5001, "SIGKILL"]]);
+    }
+    ps.out = "";
+    killSpy.mockRestore();
+  });
+
+  it("codex keeps SIGINT on its own group; the SIGKILL backstop widens to its saved tool groups", () => {
+    vi.useFakeTimers();
+    ps.out = TOOL_TREE;
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const child = new FakeChild();
+    child.pid = 4242;
+    runDelegate({ cli: "codex", projectPath: "/p", prompt: "go" }, collect().cbs, () => asChild(child)).cancel();
+    expect(killSpy.mock.calls).toEqual([[-4242, "SIGINT"]]);
+    child.emit("close", 1);
+    vi.advanceTimersByTime(5_000);
+    expect(killSpy.mock.calls.slice(1)).toEqual([[-4242, "SIGKILL"], [-5001, "SIGKILL"]]);
+    ps.out = "";
+    killSpy.mockRestore();
+  });
+
+  it("killAllDelegates during the grace period reaches groups whose opencode already closed", () => {
+    vi.useFakeTimers();
+    killAllDelegates();
+    ps.out = TOOL_TREE;
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const child = new FakeChild();
+    child.pid = 4242;
+    runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, collect().cbs, () => asChild(child)).cancel();
+    child.emit("close", null);
+    killSpy.mockClear();
+    killAllDelegates();
+    expect(killSpy.mock.calls).toEqual([[-4242, "SIGKILL"], [-5001, "SIGKILL"]]);
+    vi.advanceTimersByTime(5_000);
+    expect(killSpy).toHaveBeenCalledTimes(2); // swept, so the escalation timer stays quiet
+    ps.out = "";
+    killSpy.mockRestore();
+  });
+
+  it("killAllDelegates SIGKILLs a running opencode's whole tree, and a codex watchdog covers its tool groups", () => {
+    killAllDelegates();
+    ps.out = TOOL_TREE;
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const opencode = new FakeChild();
+    opencode.pid = 4242;
+    runDelegate({ cli: "opencode", projectPath: "/p", prompt: "go" }, collect().cbs, () => asChild(opencode));
+    const codex = new FakeChild();
+    codex.pid = 4242;
+    const watchdog = new FakeChild();
+    (watchdog as unknown as { unref: () => void }).unref = () => {};
+    const spawns: string[][] = [];
+    runDelegate({ cli: "codex", projectPath: "/p", prompt: "go" }, collect().cbs, (_c, args) => {
+      spawns.push(args);
+      return asChild(spawns.length === 1 ? codex : watchdog);
+    });
+
+    killAllDelegates();
+    expect(killSpy.mock.calls).toEqual([[-4242, "SIGKILL"], [-5001, "SIGKILL"], [-4242, "SIGINT"]]);
+    expect(spawns[1]).toEqual(["-c", "sleep 3; kill -KILL -- -4242 -5001 2>/dev/null"]);
+    ps.out = "";
     killSpy.mockRestore();
   });
 

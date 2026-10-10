@@ -30,6 +30,12 @@ Key contracts:
   `killAllDelegates()` quit sweep, which also leaves a detached `sleep 3; kill -KILL` watchdog).
   Codex runs each tool command in its own process group, so a group SIGTERM/SIGKILL orphans
   the command; only SIGINT makes codex reap it. Don't "unify" the signals back (#237).
+  **opencode reaps its tool groups on neither SIGTERM nor SIGINT** (#246), so its stops use
+  `kill-tree.ts`: snapshot the descendants' pgids (`ps`) *before* the first signal, signal every
+  group, and `escalateKill()` the saved set with SIGKILL after 5s — a timer that must NOT be
+  cleared on close (opencode exits at once; the tool doesn't). Codex's SIGKILL backstop uses the
+  same saved set. `killAllDelegates()` / `LiveSessionRegistry.forceKillAll()` sweep pending
+  escalations (`killPendingGroups()`). Claude keeps the plain group kill.
 - The delegate CLI preference is user-picked in Settings (`delegateCli`, "" = first enabled).
   `resolveCliModelSelection()` resolves that preference together with any requested model, so
   the spawned harness is enabled and supports the model (or receives no `--model`). Only a
