@@ -35,6 +35,8 @@ export interface FinishedCardInput {
   /** Resume command for the run's CLI session (e.g. `claude --resume <id>`), once it started.
    * Never carries a path — this card is posted to a shared channel. */
   resume?: string;
+  /** Claude session id for a "Continue live" button (beanAction `resume-live`); absent = no button. */
+  resumeLiveId?: string;
 }
 
 export interface NoteProposalCardInput {
@@ -108,12 +110,17 @@ export interface LiveSessionProposalCardInput {
   /** Live-capable CLIs for the on-card CLI picker — only claude today (live-session.ts is
    * claude-specific), but rendered so the surface matches the delegate card. */
   clis: string[];
+  /** Set when continuing a recorded delegate session: the original run's instruction, shown as
+   * "Continues: …". The project is locked — no project picker. */
+  continues?: string;
 }
 
 export interface LiveSessionResultCardInput {
   projectName: string;
   startedBy: string;
   outcome: "started" | "cancelled" | "ended";
+  /** On "ended": re-offer "Continue live" for this Claude session id (a resumed session). */
+  resumeLiveId?: string;
 }
 
 export interface CardBuilders {

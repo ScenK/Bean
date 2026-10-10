@@ -5,7 +5,7 @@ import {
   detectClis, type CliName, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  LiveSessionProposalStore, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -13,6 +13,7 @@ import {
   type Interaction, type Message, type MessageCreateOptions, type TextBasedChannel,
 } from "discord.js";
 import { mkdirSync } from "node:fs";
+import { basename } from "node:path";
 import { chunkText } from "./chunk.js";
 import { discordCards } from "./components.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
@@ -81,6 +82,7 @@ const bot = buildTeamsBot({
   // Always on for Discord (no `liveSessions` opt-in) when Claude is both detected and not in
   // config's disabledClis list; the live-session engine itself is Claude-specific.
   liveSessionsEnabled: () => clis().includes("claude"),
+  findDelegateRun: (sessionId) => findDelegateRun(dbFile(dir), sessionId),
   scratchPath,
   cards: discordCards,
   systemControlsEnabled: () => beanConfig.systemControls,
@@ -118,19 +120,22 @@ const isBeanThread = (channel: TextBasedChannel): boolean =>
 // re-render in place after the Edit-prompt modal changes the text.
 async function liveSessionCardFor(
   proposalId: string,
-  proposal: { projectPath: string; instruction: string; model?: string; skillName?: string; steering?: "open" | "restricted" },
+  proposal: ProposedLiveSession,
 ): Promise<object> {
   const [projects, skills] = await Promise.all([
     loadProjects(projectsFile(dir)),
     loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
   ]);
-  const projectName = projects.find((p) => p.path === proposal.projectPath)?.name ?? proposal.projectPath;
+  // A resumed session's folder may be unregistered: show its name, never the path (shared channel).
+  const projectName = projects.find((p) => p.path === proposal.projectPath)?.name
+    ?? (proposal.resume ? basename(proposal.projectPath) || "project" : proposal.projectPath);
   const models = (cliModels.find((e) => e.provider === "claude")?.models ?? []).map((id) => ({ id, label: id.split("/").pop() || id }));
   return discordCards.liveSessionProposalCard({
     proposalId, projectName, instruction: proposal.instruction, model: proposal.model, skillName: proposal.skillName,
     steering: proposal.steering,
     projects: projects.map((p) => ({ name: p.name, path: p.path })), models,
     skills: skills.filter((s) => !s.hidden && s.enabled !== false).map((s) => ({ name: s.name })), clis: clis().filter((c) => c === "claude"),
+    ...(proposal.resume ? { continues: proposal.resume.instruction } : {}),
   });
 }
 

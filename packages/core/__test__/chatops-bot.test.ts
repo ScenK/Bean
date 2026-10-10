@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import type { ConverseResult } from "../src/index.js";
-import { buildTeamsBot, type BotEffects, type TeamsBotDeps } from "../src/chatops/bot.js";
+import { buildTeamsBot, parseResumeArg, type BotEffects, type TeamsBotDeps } from "../src/chatops/bot.js";
+import type { ResumableRun } from "../src/delegate-runs.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { dbFile } from "../src/config.js";
 import { ProposalStore } from "../src/chatops/proposals.js";
@@ -1328,4 +1329,110 @@ test("a rejected card edit neither crashes the bot nor blocks posting the run's 
   await vi.waitFor(() => expect(effects.posted).toContain("the answer"));
   expect(errSpy).toHaveBeenCalled();
   errSpy.mockRestore();
+});
+
+// ── Continue live (#234) ────────────────────────────────────────────────────────────────────
+
+const RECORDED: ResumableRun = { run: { surface: "discord", cli: "claude", sessionId: "sess-1", projectPath: "/p/other", instruction: "fix the flaky test" } };
+
+function resumeDeps(found: (id: string) => ResumableRun = (id) => (id === "sess-1" ? RECORDED : { refusal: "I have no record of that run." })) {
+  const reqs: LiveSessionRequest[] = [];
+  const exits: LiveSessionCallbacks["onExit"][] = [];
+  const startFn = (req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => {
+    reqs.push(req);
+    exits.push(cbs.onExit);
+    return { pid: process.pid, send: () => {}, stop: () => cbs.onExit(undefined) };
+  };
+  const made = makeDeps({
+    liveSessionsEnabled: () => true,
+    findDelegateRun: found,
+    liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+  });
+  return { ...made, reqs, exits };
+}
+
+test("parseResumeArg takes one valid id, prefers a pasted --resume span, and rejects zero or several", () => {
+  expect(parseResumeArg(" sess-1")).toEqual({ id: "sess-1" });
+  expect(parseResumeArg(" `claude --resume sess-1`")).toEqual({ id: "sess-1" });
+  expect(parseResumeArg(" step 1 (bean) — claude --resume sess-1")).toEqual({ id: "sess-1" });
+  expect(parseResumeArg(" --nope")).toEqual({ error: "Copy the id from the `claude --resume …` line." });
+  expect(parseResumeArg("")).toEqual({ error: "Copy the id from the `claude --resume …` line." });
+  expect(parseResumeArg(" a1 b2")).toEqual({ error: "Send just one session id." });
+});
+
+test("`/live-session resume <id>` (literal text and slash) posts a locked resume card", async () => {
+  const { deps } = resumeDeps();
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onMessage({ conversationId: "c1", text: "/live-session resume claude --resume sess-1", fromId: "u", fromName: "sam" }, effects);
+  const reply = await bot.proposeLiveSession({ conversationId: "c1", instruction: "resume sess-1", proposedBy: "sam" }, effects);
+  expect(reply).toContain("Proposed continuing");
+  expect(effects.cards).toHaveLength(2);
+  for (const card of effects.cards) {
+    expect(card).toMatchObject({ kind: "live-session-proposal", continues: "fix the flaky test", projectName: "other" });
+  }
+  const pending = deps.liveSessionProposals.get(latestLiveProposalId(effects.cards));
+  expect(pending?.proposal).toMatchObject({ projectPath: "/p/other", steering: "restricted", resume: { sessionId: "sess-1", projectPath: "/p/other" } });
+});
+
+test("a malformed or unknown `resume` refuses and never starts fresh", async () => {
+  const { deps } = resumeDeps();
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onMessage({ conversationId: "c1", text: "/live-session resume --help", fromId: "u", fromName: "sam" }, effects);
+  await bot.onMessage({ conversationId: "c1", text: "/live-session resume nope", fromId: "u", fromName: "sam" }, effects);
+  expect(effects.posted).toEqual(["Copy the id from the `claude --resume …` line.", "I have no record of that run."]);
+  expect(effects.cards).toHaveLength(0);
+});
+
+test("the resume-live button posts the card; Start resumes in the recorded folder despite forged/picked paths", async () => {
+  const { deps, reqs } = resumeDeps();
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "resume-live", proposalId: "sess-1" } }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  deps.liveSessionProposals.update(proposalId, { projectPath: "/p/bean" }); // Discord picker edit
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId, projectPath: "/p/bean" } }, effects);
+  expect(reqs).toEqual([expect.objectContaining({ projectPath: "/p/other", resume: "sess-1" })]);
+  expect(reqs[0]?.prompt).toContain("Continue where you left off");
+});
+
+test("a resumed Start without an authenticated starter id refuses", async () => {
+  const { deps, reqs } = resumeDeps();
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "resume-live", proposalId: "sess-1" } }, effects);
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) } }, effects);
+  expect(reqs).toHaveLength(0);
+  expect(effects.posted.at(-1)).toContain("couldn't tell who tapped Start");
+});
+
+test("Start re-checks eligibility: a run that became ineligible while the card sat is refused", async () => {
+  let gone = false;
+  const { deps, reqs } = resumeDeps(() => (gone ? { refusal: "That project folder no longer exists on this Mac." } : RECORDED));
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "resume-live", proposalId: "sess-1" } }, effects);
+  gone = true;
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) } }, effects);
+  expect(reqs).toHaveLength(0);
+  expect(effects.posted.at(-1)).toBe("That project folder no longer exists on this Mac.");
+});
+
+test("a finished Claude run offers Continue live; the ended resumed session re-offers it", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult, liveSessionsEnabled: () => true });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  await buildTeamsBot(deps).onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+  delegateCalls[0]?.cb.onSessionStart?.(1, "sess-9");
+  delegateCalls[0]?.cb.onError(new Error("boom"));
+  await vi.waitFor(() => expect(effects.updates.at(-1)?.card).toMatchObject({ outcome: "error", resumeLiveId: "sess-9" }));
+
+  const r = resumeDeps();
+  const bot = buildTeamsBot(r.deps);
+  const fx2 = fx();
+  await bot.onCardAction({ conversationId: "c2", fromId: "u", fromName: "sam", value: { beanAction: "resume-live", proposalId: "sess-1" } }, fx2);
+  await bot.onCardAction({ conversationId: "c2", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId: latestLiveProposalId(fx2.cards) } }, fx2);
+  r.deps.liveSessions.stop("c2");
+  await vi.waitFor(() => expect(fx2.updates.at(-1)?.card).toMatchObject({ outcome: "ended", resumeLiveId: "sess-1" }));
 });

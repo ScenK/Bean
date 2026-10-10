@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
-import { claudeTurnSummary, liveSessionCommand, userTurnLine, startLiveSession, LIVE_SESSION_IDLE_MS } from "../src/live-session.js";
+import { claudeTurnSummary, liveSessionCommand, userTurnLine, startLiveSession, LIVE_SESSION_IDLE_MS, RESUME_REJECTED } from "../src/live-session.js";
 
 describe("liveSessionCommand", () => {
   it("builds the multi-turn stream-json claude invocation with permissions bypassed", () => {
@@ -15,6 +15,11 @@ describe("liveSessionCommand", () => {
       "--verbose",
       "--dangerously-skip-permissions",
     ]);
+  });
+
+  it("appends --resume <id> when continuing a session", () => {
+    const { args } = liveSessionCommand({ projectPath: "/p", prompt: "hi", resume: "3f2a-uuid" });
+    expect(args.slice(-2)).toEqual(["--resume", "3f2a-uuid"]);
   });
 
   it("appends --model verbatim when set", () => {
@@ -153,5 +158,36 @@ describe("startLiveSession", () => {
     expect(killSpy).toHaveBeenCalledWith(-4242, "SIGTERM");
     killSpy.mockRestore();
     vi.useRealTimers();
+  });
+});
+
+describe("startLiveSession resume", () => {
+  const rejection = JSON.stringify({ type: "result", is_error: true, result: "", errors: ["No conversation found"] }) + "\n";
+
+  for (const code of [0, 1]) {
+    it(`a resumed session that exits (code ${code}) before init reports the explicit failure, not a turn`, () => {
+      const f = fakeChild();
+      const spawn = vi.fn(() => f.child);
+      const onExit = vi.fn();
+      const onTurnComplete = vi.fn();
+      startLiveSession({ projectPath: "/p", prompt: "go", resume: "s1" }, { onOutput: () => {}, onTurnComplete, onExit }, spawn);
+      f.stdout.write(rejection);
+      f.emit("close", code, null);
+      expect(onTurnComplete).not.toHaveBeenCalled();
+      expect(onExit).toHaveBeenCalledWith(new Error(RESUME_REJECTED));
+      expect(spawn).toHaveBeenCalledTimes(1); // no fresh fallback
+    });
+  }
+
+  it("after init, a resumed session behaves like any other", () => {
+    const f = fakeChild();
+    const onExit = vi.fn();
+    const onTurnComplete = vi.fn();
+    startLiveSession({ projectPath: "/p", prompt: "go", resume: "s1" }, { onOutput: () => {}, onTurnComplete, onExit }, () => f.child);
+    f.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "s1" }) + "\n");
+    f.stdout.write(JSON.stringify({ type: "result", result: "where things stand" }) + "\n");
+    f.emit("close", 0, null);
+    expect(onTurnComplete).toHaveBeenCalledWith(expect.objectContaining({ result: "where things stand" }));
+    expect(onExit).toHaveBeenCalledWith(undefined);
   });
 });

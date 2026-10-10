@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test, vi } from "vitest";
 import { closeDb, openDb } from "../src/db.js";
-import { isValidSessionId, recordDelegateSession, resumeCommand, type DelegateRunRow } from "../src/delegate-runs.js";
+import { findDelegateRun, isValidSessionId, recordDelegateSession, resumeCommand, type DelegateRunRow } from "../src/delegate-runs.js";
 
 const row: DelegateRunRow = { surface: "desktop", cli: "claude", sessionId: "3f2a-uuid", projectPath: "/p", instruction: "fix it" };
 
@@ -48,5 +48,22 @@ test("an existing bean.db without the table gains it on open", () => {
   old.exec("CREATE TABLE notes (slug TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, project TEXT, updated TEXT NOT NULL, version INTEGER NOT NULL, source TEXT NOT NULL)");
   old.close();
   expect(recordDelegateSession(file, row)).toBe(true);
+  closeDb(file);
+});
+
+test("findDelegateRun returns the newest row and refuses ids that can't continue live", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "bean-dr-")), "bean.db");
+  const exists = (p: string): boolean => p !== "/gone";
+  recordDelegateSession(file, { ...row, surface: "discord", projectPath: "/old", instruction: "first" });
+  recordDelegateSession(file, { ...row, surface: "discord", instruction: "follow-up" });
+  recordDelegateSession(file, { ...row, sessionId: "cx", cli: "codex", surface: "teams" });
+  recordDelegateSession(file, { ...row, sessionId: "desk" });
+  recordDelegateSession(file, { ...row, sessionId: "gone", surface: "routine", projectPath: "/gone" });
+  expect(findDelegateRun(file, "3f2a-uuid", exists)).toEqual({ run: { ...row, surface: "discord", instruction: "follow-up" } });
+  expect(findDelegateRun(file, "--help", exists)).toEqual({ refusal: "Copy the id from the `claude --resume …` line." });
+  expect(findDelegateRun(file, "nope", exists)).toEqual({ refusal: "I have no record of that run." });
+  expect(findDelegateRun(file, "cx", exists)).toEqual({ refusal: "Only Claude sessions continue live for now — resume it from a terminal." });
+  expect(findDelegateRun(file, "desk", exists)).toEqual({ refusal: "That run started in Bean's desktop chat — continue it there." });
+  expect(findDelegateRun(file, "gone", exists)).toEqual({ refusal: "That project folder no longer exists on this Mac." });
   closeDb(file);
 });

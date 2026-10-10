@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-sessions.js";
-import type { LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest } from "../src/live-session.js";
+import { RESUME_REJECTED, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest } from "../src/live-session.js";
 
 // Fresh temp dir per call — reserveRun's file lock is per-`dir`, so this keeps each test's
 // project-path reservation isolated from every other test (matches chatops-runs.test.ts).
@@ -47,6 +47,23 @@ const flushTicks = async (reg: { /* just to satisfy lint */ } | unknown, ms: num
 };
 
 describe("LiveSessionRegistry", () => {
+  it("passes resume through, and a rejected resume ends with the explicit notice and frees the project", async () => {
+    const reqs: LiveSessionRequest[] = [];
+    let cbs!: LiveSessionCallbacks;
+    const startFn = (req: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
+      reqs.push(req);
+      cbs = c;
+      return { pid: process.pid, send: () => {}, stop: () => {} };
+    };
+    const reg = new LiveSessionRegistry(startFn as never, { dir: tmp() });
+    const onEnded = vi.fn();
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", resume: "s1", sink: fakeSink().sink, onEnded });
+    expect(reqs[0]?.resume).toBe("s1");
+    cbs.onExit(new Error(RESUME_REJECTED));
+    await vi.waitFor(() => expect(onEnded).toHaveBeenCalledWith(RESUME_REJECTED));
+    expect(reg.start({ channelId: "c2", projectPath: "/p", instruction: "go", sink: fakeSink().sink })).toBe(true);
+  });
+
   it("start binds the channel; a second start on the same channel is refused", () => {
     const f = fakeStart();
     const reg = new LiveSessionRegistry(f.startFn as never, { dir: tmp() });

@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
 import {
   startLiveSession as defaultStartLiveSession,
-  type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type TurnSummary,
+  RESUME_REJECTED, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type TurnSummary,
 } from "../live-session.js";
 import { reserveRun, releaseRun, updateReservationPid } from "../run-queue.js";
 
@@ -28,6 +28,8 @@ export interface LiveSessionStart {
   projectPath: string;
   instruction: string;
   model?: string;
+  /** Claude session id to continue (see LiveSessionRequest.resume). */
+  resume?: string;
   /** Surface user-id of whoever tapped Start — the session's owner. Defaults to "" (no owner)
    * for callers that don't care, which only matters under "restricted". */
   starterId?: string;
@@ -174,7 +176,7 @@ export class LiveSessionRegistry {
     // One session per channel, so the channel id doubles as the session's activity id.
     this.opts.onActivity?.({ type: "live", phase: "start", id: input.channelId, name: basename(input.projectPath) || "live session" });
     s.handle = this.startFn(
-      { projectPath: input.projectPath, prompt: input.instruction, model: input.model },
+      { projectPath: input.projectPath, prompt: input.instruction, model: input.model, resume: input.resume },
       {
         onOutput: (line) => {
           s.buf += (s.buf ? "\n" : "") + line;
@@ -273,7 +275,8 @@ export class LiveSessionRegistry {
     void wait.then(async () => {
       if (s.buf) s.dirty = true; // force a final flush of anything still unsent
       const delivered = await this.finalFlush(s);
-      const base = err ? `Live session died: ${err.message}` : "Live session ended.";
+      const base = err?.message === RESUME_REJECTED ? RESUME_REJECTED
+        : err ? `Live session died: ${err.message}` : "Live session ended.";
       s.onEnded?.(delivered ? base : `${base} (last output may be incomplete — Discord kept rejecting it)`);
     });
   }
