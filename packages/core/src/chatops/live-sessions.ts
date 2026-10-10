@@ -7,6 +7,7 @@ import {
 } from "../live-session.js";
 import { CODEX_SIGNED_OUT, CODEX_THREAD_MISMATCH, startCodexLiveSession } from "../codex-live-session.js";
 import { reserveRun, releaseRun, updateReservationPid } from "../run-queue.js";
+import { killPendingGroups, killTree } from "../kill-tree.js";
 
 /** Surface-agnostic "post or edit a plain text message". Chatops builds this on top of
  * BotEffects: post = postCard({content}), edit = updateCard(id, {content}). */
@@ -256,7 +257,8 @@ export class LiveSessionRegistry {
     for (const [, s] of this.byChannel) s.handle.stop();
   }
 
-  /** Immediately SIGKILLs every active session's process group — for a process-exit shutdown
+  /** Immediately SIGKILLs every active session's current child's process tree (its tool commands
+   * run in their own groups — kill-tree.ts), plus any stop escalation still pending — for a process-exit shutdown
    * path, where there's no time to wait for stop()'s graceful SIGTERM-then-escalate dance (the
    * setTimeout it schedules for the SIGKILL fallback would never get to fire before this
    * process itself exits, leaving the child permissions-bypassed and orphaned).
@@ -268,14 +270,9 @@ export class LiveSessionRegistry {
    * process is verifiably gone — same crash-recovery path RunRegistry.interruptAll() uses. */
   forceKillAll(): void {
     for (const [, s] of this.byChannel) {
-      if (typeof s.handle.pid === "number") {
-        try {
-          process.kill(-s.handle.pid, "SIGKILL");
-        } catch {
-          // Already dead — nothing to do.
-        }
-      }
+      if (typeof s.handle.pid === "number") killTree(s.handle.pid, "SIGKILL");
     }
+    killPendingGroups();
   }
 
   private teardown(channelId: string, err?: Error): void {

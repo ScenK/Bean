@@ -152,7 +152,7 @@ Chat-bridged multi-turn Claude Code or Codex sessions, Discord-first. Spec:
     `CODEX_QUEUE_FULL` without appending to history.
   - Stop = **SIGINT** (then SIGKILL after 5s), not SIGTERM: codex runs tool commands in their own
     process group and only SIGINT stops them (#237). `stopping` is checked first on close because
-    a SIGINT exit is code 1. `forceKillAll` still SIGKILLs (known orphan risk until #237).
+    a SIGINT exit is code 1. `forceKillAll` SIGKILLs each child's whole process tree (`killTree`, #246), not just its group.
   - **Reservation stays on the bot pid** for the whole codex session (registry skips
     `updateReservationPid`); per-turn pid swapping races the single-pid liveness check. Accepted
     ceiling: a bot hard-crash mid-turn frees the project while that turn finishes. `pid` is a getter

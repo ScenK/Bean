@@ -6,6 +6,10 @@ import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-s
 import { CODEX_SIGNED_OUT } from "../src/codex-live-session.js";
 import { RESUME_REJECTED, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest } from "../src/live-session.js";
 
+// killTree's `ps` snapshot (kill-tree.ts): no descendants unless a test sets one.
+const ps = vi.hoisted(() => ({ out: "" }));
+vi.mock("node:child_process", async (orig) => ({ ...(await orig<typeof import("node:child_process")>()), execFileSync: () => ps.out }));
+
 // Fresh temp dir per call — reserveRun's file lock is per-`dir`, so this keeps each test's
 // project-path reservation isolated from every other test (matches chatops-runs.test.ts).
 function tmp(): string {
@@ -364,6 +368,20 @@ describe("LiveSessionRegistry", () => {
     expect(killSpy).toHaveBeenCalledWith(-100, "SIGKILL");
     expect(killSpy).toHaveBeenCalledWith(-101, "SIGKILL");
     expect(killSpy).toHaveBeenCalledTimes(2);
+    killSpy.mockRestore();
+  });
+
+  it("forceKillAll SIGKILLs a session child's tool process groups too", () => {
+    ps.out = "100 1 100\n200 100 200\n";
+    const startFn = (): LiveSessionHandle => ({ pid: 100, send: () => {}, stop: () => {} });
+    const reg = new LiveSessionRegistry(startFn as never, { dir: tmp() });
+    reg.start({ channelId: "a", projectPath: "/p", instruction: "go", sink: fakeSink().sink });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    reg.forceKillAll();
+
+    expect(killSpy.mock.calls).toEqual([[-100, "SIGKILL"], [-200, "SIGKILL"]]);
+    ps.out = "";
     killSpy.mockRestore();
   });
 
