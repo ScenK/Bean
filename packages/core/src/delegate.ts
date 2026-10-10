@@ -196,9 +196,17 @@ export const DELEGATE_TIMEOUT_MS = 30 * 60_000;
 // reaches its SIGKILL when the host exits right after. killAllDelegates() is the quit-time backstop.
 const liveKills = new Set<() => void>();
 
-/** SIGKILL every running delegate's process group, synchronously. For app quit only: no
+// Codex runs each tool command in its OWN process group, so a group SIGTERM/SIGKILL reaches codex
+// but orphans the command (a build, a `git push` …) in the project folder. Only SIGINT makes codex
+// reap its tool children (it exits ~1s later, thread still resumable) — so codex gets SIGINT
+// where every other CLI gets SIGTERM, with the same SIGKILL escalation behind it.
+const softSignal = (cli: CliName): NodeJS.Signals => (cli === "codex" ? "SIGINT" : "SIGTERM");
+
+/** Stop every running delegate's process group, synchronously. For app quit only: no
  * callbacks fire (the host is exiting). Covers every caller of runDelegate — chat tasks,
- * routine steps, the routine builder. */
+ * routine steps, the routine builder. SIGKILL, except codex: SIGINT now (so it reaps its tool
+ * process groups) plus a detached watchdog that SIGKILLs the group 3s later if codex hangs —
+ * the host is gone by then, so an in-process timer would never fire. */
 export function killAllDelegates(): void {
   for (const k of [...liveKills]) k();
   liveKills.clear();
@@ -251,12 +259,23 @@ export function runDelegate(
   };
 
   // Guarded: a synchronous spawnFn throw leaves no child, and one throwing entry would abort the sweep.
-  const killNow = (): void => { if (child) kill("SIGKILL"); };
+  const killNow = (): void => {
+    if (!child) return;
+    if (req.cli !== "codex" || typeof child.pid !== "number") return kill("SIGKILL");
+    kill("SIGINT");
+    try {
+      const w = spawnFn("/bin/sh", ["-c", `sleep 3; kill -KILL -- -${child.pid} 2>/dev/null`], "/");
+      w.on("error", () => {});
+      w.unref();
+    } catch {
+      kill("SIGKILL"); // no watchdog: an orphaned tool command beats an unkillable codex
+    }
+  };
   liveKills.add(killNow);
 
   const timer = setTimeout(() => {
     timedOut = true;
-    kill("SIGTERM");
+    kill(softSignal(req.cli));
     killTimer = setTimeout(() => kill("SIGKILL"), 5_000);
   }, timeoutMs);
 
@@ -363,7 +382,7 @@ export function runDelegate(
       cancelling = true;
       onCancelled = done;
       clearTimeout(timer);
-      kill("SIGTERM");
+      kill(softSignal(req.cli));
       killTimer = setTimeout(() => kill("SIGKILL"), 5_000);
     },
   };

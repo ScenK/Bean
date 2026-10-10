@@ -439,6 +439,44 @@ describe("runDelegate", () => {
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
   });
 
+  it("codex cancel and timeout send SIGINT first (so codex reaps its tool process groups), then SIGKILL", () => {
+    vi.useFakeTimers();
+    for (const stop of ["cancel", "timeout"] as const) {
+      const child = new FakeChild();
+      const signals: NodeJS.Signals[] = [];
+      child.kill = (signal?: NodeJS.Signals | number) => { signals.push(signal as NodeJS.Signals); return true; };
+      const handle = runDelegate({ cli: "codex", projectPath: "/p", prompt: "go" }, collect().cbs, () => asChild(child), 60_000);
+      if (stop === "cancel") handle.cancel();
+      else vi.advanceTimersByTime(60_000);
+      expect(signals).toEqual(["SIGINT"]);
+      vi.advanceTimersByTime(5_000);
+      expect(signals).toEqual(["SIGINT", "SIGKILL"]);
+      child.emit("close", null);
+    }
+  });
+
+  it("killAllDelegates SIGINTs a codex group and leaves a detached SIGKILL watchdog behind", () => {
+    killAllDelegates();
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const codex = new FakeChild();
+    codex.pid = 4242;
+    const watchdog = new FakeChild();
+    let unref = false;
+    (watchdog as unknown as { unref: () => void }).unref = () => { unref = true; };
+    const spawns: [string, string[]][] = [];
+    const spawnFn = (command: string, args: string[]): ChildProcess => {
+      spawns.push([command, args]);
+      return asChild(spawns.length === 1 ? codex : watchdog);
+    };
+    runDelegate({ cli: "codex", projectPath: "/p", prompt: "go" }, collect().cbs, spawnFn);
+
+    killAllDelegates();
+    expect(killSpy.mock.calls).toEqual([[-4242, "SIGINT"]]);
+    expect(spawns[1]).toEqual(["/bin/sh", ["-c", "sleep 3; kill -KILL -- -4242 2>/dev/null"]]);
+    expect(unref).toBe(true);
+    killSpy.mockRestore();
+  });
+
   it("killAllDelegates SIGKILLs every running delegate at once, skipping settled ones", () => {
     killAllDelegates(); // drop anything earlier tests left running
     const signalsOf = (c: FakeChild): NodeJS.Signals[] => {
