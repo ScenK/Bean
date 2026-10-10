@@ -92,7 +92,8 @@ export function startCodexLiveSession(
   };
 
   const runTurn = (text: string): void => {
-    clearTimeout(idleTimer);
+    // Armed during a turn too (reset on output), so a hung silent child can't hold the channel.
+    armIdle();
     turns++;
     const first = turns === 1;
     const prompt = first ? text + GIT_TRAILER_INSTRUCTION : text;
@@ -107,6 +108,7 @@ export function startCodexLiveSession(
 
     const c = spawnFn("codex", codexExecArgs({ prompt, model: req.model, resume: threadId }), req.projectPath);
     child = c;
+    cbs.onTurnStart?.();
 
     const handleLine = (line: string): void => {
       if (!line.trim() || child !== c || mismatch) return;
@@ -134,7 +136,10 @@ export function startCodexLiveSession(
       if (r !== undefined) result = r;
       if (stopping) return;
       const tail = codexLiveTail(event);
-      if (tail) cbs.onOutput(tail);
+      if (tail) {
+        cbs.onOutput(tail);
+        armIdle();
+      }
     };
 
     c.stdout?.on("data", (chunk: Buffer) => {
@@ -162,9 +167,10 @@ export function startCodexLiveSession(
       // Checked first: our own SIGINT exits 1, and a stop reports no turn footer.
       if (stopping) { finish(); return; }
       if (mismatch) { finish(new Error(CODEX_THREAD_MISMATCH)); return; }
-      const stderrTail = stderrBuf.trim().split("\n").slice(-5).join("\n");
       const signedOut = AUTH_ERROR.test(`${failure ?? ""}\n${stderrBuf}`);
-      const died = `codex exited with code ${code ?? "null"}${stderrTail ? ` - ${stderrTail}` : ""}`;
+      // stderr stays in the host log: it carries paths and diagnostics, and chat is shared.
+      const died = `codex exited with code ${code ?? "null"}`;
+      if (code !== 0 && stderrBuf.trim()) console.warn(`bean: codex live turn failed: ${stderrBuf.trim().split("\n").slice(-5).join("\n")}`);
       if (first && !sawThread) {
         // Nothing to keep: the resume was rejected, or a fresh session never got a thread.
         finish(new Error(
@@ -180,14 +186,15 @@ export function startCodexLiveSession(
         result: "", durationMs,
         failed: signedOut ? CODEX_SIGNED_OUT : failure ?? (code === 0 ? "codex exited without finishing the turn" : died),
       };
-      // Next turn decided before the callback, so a send() from inside it queues instead of
-      // spawning a second concurrent turn.
+      cbs.onTurnComplete(summary);
+      // After the callback (its typing stop must precede the next turn's start); a send() from
+      // inside it may already have started that turn, or a stop() ended the session.
+      if (exited || stopping || child) return;
       if (pending) {
         const next = pending;
         pending = "";
         runTurn(next);
       } else armIdle();
-      cbs.onTurnComplete(summary);
     });
   };
 

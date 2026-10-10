@@ -73,6 +73,8 @@ export function claudeTurnSummary(event: unknown): TurnSummary | undefined {
 
 export interface LiveSessionCallbacks {
   onOutput: (line: string) => void;
+  /** A turn began without a fresh send() (codex: a queued, merged turn) — relight typing. */
+  onTurnStart?: () => void;
   onTurnComplete: (summary: TurnSummary) => void;
   /** Fires exactly once. undefined = clean end (stop/idle/exit 0); Error = crash. */
   onExit: (err?: Error) => void;

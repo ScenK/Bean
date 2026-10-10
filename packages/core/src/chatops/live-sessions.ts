@@ -195,6 +195,7 @@ export class LiveSessionRegistry {
           s.buf += (s.buf ? "\n" : "") + line;
           s.dirty = true;
         },
+        onTurnStart: () => this.startTyping(s),
         onTurnComplete: (summary) => {
           this.stopTyping(s);
           if (summary.failed === undefined) input.onTurnResult?.(summary.result);

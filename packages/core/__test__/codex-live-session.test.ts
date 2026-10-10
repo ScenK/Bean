@@ -26,10 +26,15 @@ function harness(opts: { resume?: string; idleMs?: number } = {}) {
   const outputs: string[] = [];
   const turns: TurnSummary[] = [];
   const exits: (Error | undefined)[] = [];
+  const hooks: { onTurn?: (s: TurnSummary) => void; turnStarts: number } = { turnStarts: 0 };
   let clock = 0;
   const handle = startCodexLiveSession(
     { cli: "codex", projectPath: "/p", prompt: "go", ...(opts.resume ? { resume: opts.resume } : {}) },
-    { onOutput: (l) => outputs.push(l), onTurnComplete: (s) => turns.push(s), onExit: (e) => exits.push(e) },
+    {
+      onOutput: (l) => outputs.push(l), onExit: (e) => exits.push(e),
+      onTurnStart: () => { hooks.turnStarts++; },
+      onTurnComplete: (s) => { turns.push(s); hooks.onTurn?.(s); },
+    },
     spawnFn, opts.idleMs ?? 60_000, () => clock,
   );
   const last = (): Fake => spawned.at(-1)!;
@@ -46,7 +51,7 @@ function harness(opts: { resume?: string; idleMs?: number } = {}) {
     clock += 6100;
     await close(0, f);
   };
-  return { handle, spawned, last, emit, close, completeTurn, outputs, turns, exits };
+  return { handle, spawned, last, emit, close, completeTurn, outputs, turns, exits, hooks };
 }
 
 let killSpy: ReturnType<typeof vi.spyOn>;
@@ -65,6 +70,19 @@ describe("startCodexLiveSession", () => {
     expect(h.handle.send("next")).toBe(true);
     expect(h.spawned[1]!.args.slice(0, 2)).toEqual(["exec", "resume"]);
     expect(h.spawned[1]!.args.slice(-3)).toEqual(["--", TID, "next"]);
+  });
+
+  it("a send() from inside onTurnComplete starts exactly one next turn; queued turns fire onTurnStart", async () => {
+    const h = harness();
+    h.hooks.onTurn = () => { h.handle.send("a"); h.handle.send("b"); };
+    await h.completeTurn("one");
+    expect(h.spawned).toHaveLength(2);
+    expect(h.spawned[1]!.args.at(-1)).toBe("a");
+    h.hooks.onTurn = undefined;
+    await h.completeTurn("two");
+    expect(h.spawned).toHaveLength(3);
+    expect(h.spawned[2]!.args.at(-1)).toBe("b");
+    expect(h.hooks.turnStarts).toBe(3);
   });
 
   it("renders a shell command as `▸ shell`, never the raw command", async () => {
@@ -111,6 +129,12 @@ describe("startCodexLiveSession", () => {
     expect(h.exits).toEqual([undefined]);
 
     vi.useFakeTimers();
+    const hung = harness({ idleMs: 1_000 });
+    vi.advanceTimersByTime(1_000); // a silent turn still idles out (SIGINT), ending on close
+    expect(killSpy).toHaveBeenCalledWith(-hung.spawned[0]!.pid, "SIGINT");
+    hung.last().child.emit("close", 1);
+    expect(hung.exits).toEqual([undefined]);
+
     const idle = harness({ idleMs: 1_000 });
     idle.emit({ type: "thread.started", thread_id: TID });
     idle.emit({ type: "turn.completed" });
@@ -122,9 +146,12 @@ describe("startCodexLiveSession", () => {
 
   it("a fresh turn 1 that dies before thread.started ends the session; a later failure stays bound", async () => {
     const dead = harness();
-    dead.last().stderr.write("boom\n");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    dead.last().stderr.write("boom at /Users/x/secret\n");
     await dead.close(1);
-    expect(dead.exits[0]?.message).toContain("codex exited with code 1");
+    expect(dead.exits[0]?.message).toBe("codex exited with code 1"); // stderr never reaches chat
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
 
     const h = harness();
     await h.completeTurn("one");
