@@ -149,9 +149,29 @@ test("plain message: replies with converse text and records history", async () =
   await bot.onMessage(msg, effects);
   expect(effects.posted).toContain("hello there");
   expect(deps.conversations.history("c1")).toEqual([
-    { role: "user", content: "hi bean" },
+    { role: "user", content: "[alice]: hi bean" },
     { role: "assistant", content: "hello there" },
   ]);
+});
+
+test("shared chat: each turn names its speaker and memories are framed as the owner's", async () => {
+  const seen: { role: string; content: string }[][] = [];
+  const { deps } = makeDeps({
+    loadMemories: async () => [{ id: "1", text: "prefers to be called Scen", createdAt: "" }],
+    chat: async ({ messages }) => {
+      seen.push(messages.map((m) => ({ role: m.role, content: String(m.content) })));
+      return { content: "hi", toolCalls: [] };
+    },
+  });
+  const bot = buildTeamsBot(deps);
+  await bot.onMessage(msg, fx());
+  await bot.onMessage({ ...msg, text: "me too", fromId: "u2", fromName: "b[o]b" }, fx());
+  const second = seen[1]!;
+  expect(second[0]!.content).toContain("never assume the speaker is your owner");
+  // history keeps alice's turn attributed; the latest turn names bob (brackets stripped)
+  expect(second.map((m) => m.content)).toContain("[alice]: hi bean");
+  expect(second.at(-1)).toEqual({ role: "user", content: "[bob]: me too" });
+  expect(second.map((m) => m.content).join("\n")).toContain("(about your owner) prefers to be called Scen");
 });
 
 test("onActivity brackets a converse turn with who/where, never the message text", async () => {
@@ -200,7 +220,7 @@ test("fetchRecent messages are injected after stored history and persisted into 
   const history = deps.conversations.history("c1").map((t) => t.content);
   expect(history.findIndex((c) => c.includes("alice: ship it"))).toBe(2);
   // block sits right before the mention that triggered it, then Bean's reply
-  expect(history.at(-2)).toBe("hi bean");
+  expect(history.at(-2)).toBe("[alice]: hi bean");
 });
 
 test("a second mention does not re-inject ambient messages already seen", async () => {
@@ -582,10 +602,12 @@ test("terminal-target skills never get propose_run offered from chatops — only
 test("chat-target propose_run runs on Bean's own model and replies in the same chat", async () => {
   let calls = 0;
   let secondUserContent = "";
+  const systems: string[] = [];
   const { deps } = makeDeps({
     loadSkills: async () => [{ name: "summarize", description: "d", body: "SUM BODY", target: "chat", enabled: true }],
     chat: async ({ messages }) => {
       calls++;
+      systems.push(String(messages[0]!.content));
       if (calls === 1) {
         return { content: "sure", toolCalls: [{ name: "propose_run", args: { skill: "summarize", instruction: "summarize the thread" } }] };
       }
@@ -597,6 +619,11 @@ test("chat-target propose_run runs on Bean's own model and replies in the same c
   await buildTeamsBot(deps).onMessage(msg, effects);
   expect(effects.posted).toContain("Here's the summary.");
   expect(secondUserContent).toContain("SUM BODY");
+  // the skill hop stays in shared-chat mode: same cached system prefix, turn attributed
+  expect(systems[1]).toBe(systems[0]);
+  expect(systems[1]).toContain("never assume the speaker is your owner");
+  expect(secondUserContent.startsWith("[alice]: ")).toBe(true);
+  expect(deps.conversations.history("c1").some((t) => t.content.startsWith("[alice]: ") && t.content.includes("SUM BODY"))).toBe(true);
   expect(effects.posted.some((t) => t.includes("Bean desktop app"))).toBe(false);
   expect(effects.cards).toHaveLength(0);
 });
@@ -1344,11 +1371,11 @@ test("incoming images reach converse as content parts and history stores a place
   expect(seen[0]).toEqual({
     role: "user",
     content: [
-      { type: "text", text: "what is this?" },
+      { type: "text", text: "[alice]: what is this?" },
       { type: "image", image: { data: "AAAA", mimeType: "image/png" } },
     ],
   });
-  expect(deps.conversations.history("c1")[0]).toEqual({ role: "user", content: "what is this?\n[image attached]" });
+  expect(deps.conversations.history("c1")[0]).toEqual({ role: "user", content: "[alice]: what is this?\n[image attached]" });
 });
 
 test("generate_image runs, posts a working notice, and delivers the file via sendFile", async () => {
@@ -1629,6 +1656,6 @@ test("a refused send (codex queue full) replies and stays out of history", async
   await bot.onMessage({ conversationId: "c1", text: "a much longer message", fromId: "u", fromName: "sam" }, effects);
   expect(effects.posted.at(-1)).toBe(TURN_QUEUE_FULL);
   const history = deps.conversations.history("c1").map((t) => t.content);
-  expect(history).toContain("short");
+  expect(history).toContain("[sam]: short");
   expect(history).not.toContain("a much longer message");
 });

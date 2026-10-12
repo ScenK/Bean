@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
-import { converse, type ConverseDeps, type ImageAttachment, type ProposedLiveSession } from "../converse.js";
+import { converse, speakerLine, type ConverseDeps, type ImageAttachment, type ProposedLiveSession } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
 import { makeMemoryTools } from "../memory/tools.js";
@@ -620,7 +620,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             await fx.reply(TURN_QUEUE_FULL);
             return;
           }
-          deps.conversations.append(conv, { role: "user", content: msg.text });
+          deps.conversations.append(conv, { role: "user", content: speakerLine(msg.fromName, msg.text) });
           return;
         }
         if (cmd === "cancel") {
@@ -699,6 +699,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           runAvailable: false,
           todoRoutines,
           webSearch: deps.webSearchEnabled?.() ?? false,
+          speaker: msg.fromName,
         };
         const result = await converse({
           ...converseBase, actions: [...converseBase.actions, ...memoryTools.tools],
@@ -711,7 +712,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (deps.saveNoteImage && msg.images?.length) deps.noteProposals.rememberImages(msg.conversationId, msg.images);
         deps.conversations.append(msg.conversationId, {
           role: "user",
-          content: msg.images?.length ? `${msg.text}\n[image attached]` : msg.text,
+          content: speakerLine(msg.fromName, msg.images?.length ? `${msg.text}\n[image attached]` : msg.text),
         });
         if (result.reply) {
           deps.conversations.append(msg.conversationId, { role: "assistant", content: result.reply });
@@ -746,7 +747,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               history: deps.conversations.history(msg.conversationId),
               latestUserText: run.composedPrompt,
             });
-            deps.conversations.append(msg.conversationId, { role: "user", content: run.composedPrompt });
+            deps.conversations.append(msg.conversationId, { role: "user", content: speakerLine(msg.fromName, run.composedPrompt) });
             // Nested proposals from the skill prompt are deliberately ignored — one hop only.
             // A pure tool-use second hop leaves reply empty; never answer with silence.
             const text = followup.reply.trim() ||
