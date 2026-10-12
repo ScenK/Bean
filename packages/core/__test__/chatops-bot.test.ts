@@ -602,10 +602,12 @@ test("terminal-target skills never get propose_run offered from chatops — only
 test("chat-target propose_run runs on Bean's own model and replies in the same chat", async () => {
   let calls = 0;
   let secondUserContent = "";
+  const systems: string[] = [];
   const { deps } = makeDeps({
     loadSkills: async () => [{ name: "summarize", description: "d", body: "SUM BODY", target: "chat", enabled: true }],
     chat: async ({ messages }) => {
       calls++;
+      systems.push(String(messages[0]!.content));
       if (calls === 1) {
         return { content: "sure", toolCalls: [{ name: "propose_run", args: { skill: "summarize", instruction: "summarize the thread" } }] };
       }
@@ -617,6 +619,11 @@ test("chat-target propose_run runs on Bean's own model and replies in the same c
   await buildTeamsBot(deps).onMessage(msg, effects);
   expect(effects.posted).toContain("Here's the summary.");
   expect(secondUserContent).toContain("SUM BODY");
+  // the skill hop stays in shared-chat mode: same cached system prefix, turn attributed
+  expect(systems[1]).toBe(systems[0]);
+  expect(systems[1]).toContain("never assume the speaker is your owner");
+  expect(secondUserContent.startsWith("[alice]: ")).toBe(true);
+  expect(deps.conversations.history("c1").some((t) => t.content.startsWith("[alice]: ") && t.content.includes("SUM BODY"))).toBe(true);
   expect(effects.posted.some((t) => t.includes("Bean desktop app"))).toBe(false);
   expect(effects.cards).toHaveLength(0);
 });

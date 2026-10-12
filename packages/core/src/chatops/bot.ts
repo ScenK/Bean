@@ -699,10 +699,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           runAvailable: false,
           todoRoutines,
           webSearch: deps.webSearchEnabled?.() ?? false,
+          speaker: msg.fromName,
         };
         const result = await converse({
           ...converseBase, actions: [...converseBase.actions, ...memoryTools.tools],
-          history, latestUserText: msg.text, latestUserImages: msg.images, speaker: msg.fromName,
+          history, latestUserText: msg.text, latestUserImages: msg.images,
         });
         turnFailed = result.error !== undefined;
         // History keeps only "[image attached]"; the bytes stay in bounded memory for a
@@ -746,7 +747,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               history: deps.conversations.history(msg.conversationId),
               latestUserText: run.composedPrompt,
             });
-            deps.conversations.append(msg.conversationId, { role: "user", content: run.composedPrompt });
+            deps.conversations.append(msg.conversationId, { role: "user", content: speakerLine(msg.fromName, run.composedPrompt) });
             // Nested proposals from the skill prompt are deliberately ignored — one hop only.
             // A pure tool-use second hop leaves reply empty; never answer with silence.
             const text = followup.reply.trim() ||
