@@ -51,8 +51,9 @@ export function makeRoles(opts: RolesOptions): Roles {
     allowGuestDms: opts.allowGuestDms ?? false,
     roleOf({ fromId, fromAltId, scopeId }) {
       const ids = [fromId, fromAltId].filter((x): x is string => !!x);
-      if (ids.length === 0) return "guest";
-      if (opts.ownerId && ids.includes(opts.ownerId)) return "owner";
+      // No owner configured (setup mode) = everyone is a guest, stored admin grants included.
+      if (ids.length === 0 || !opts.ownerId) return "guest";
+      if (ids.includes(opts.ownerId)) return "owner";
       return scopeId && isAdmin(scopeId, ids) ? "admin" : "guest";
     },
     admins(scopeId) {

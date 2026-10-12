@@ -338,7 +338,8 @@ app.post("/api/messages", (req, res) => {
     // while a live session captures the conversation — the bridged agent only takes text.
     const images = capturing || dmBlocked ? [] : await downloadImages(a);
     // An image-only message still gets a turn; pure empty messages stay ignored.
-    if (!text && images.length === 0) return;
+    // A blocked DM still reaches core (as "(image)") so its one refusal line is sent.
+    if (!text && images.length === 0 && !dmBlocked) return;
     const mentions = mentionedUsers(a);
     fx.fetchRecent = async (sinceMs) => ambient.since(a.conversation.id, sinceMs);
     await context.sendActivity({ type: ActivityTypes.Typing });

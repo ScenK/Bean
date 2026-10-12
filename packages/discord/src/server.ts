@@ -292,7 +292,8 @@ client.on("messageCreate", async (message) => {
         console.error("attachment fetch failed:", err);
       }
     }
-    if (!text && images.length === 0) {
+    // A blocked DM still reaches core (as "(image)") so its one refusal line is sent.
+    if (!text && images.length === 0 && !dmBlocked) {
       if (transcribeFailed) await message.reply("I couldn't transcribe that voice message — try again, or type it out.");
       return;
     }

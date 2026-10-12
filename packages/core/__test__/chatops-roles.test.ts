@@ -30,6 +30,8 @@ test("admins are per surface", () => {
 test("setup mode (no owner) and a missing actor id fail closed", () => {
   const roles = makeRoles({ dbPath: db(), surface: "teams" });
   expect(roles.roleOf({ fromId: "29:anyone" })).toBe("guest");
+  roles.addAdmins("chan", [{ id: "29:ana", name: "Ana" }]); // a grant left over from before
+  expect(roles.roleOf({ fromId: "29:ana", scopeId: "chan" })).toBe("guest");
   expect(makeRoles({ dbPath: db(), surface: "teams", ownerId: "o" }).roleOf({ fromId: "" })).toBe("guest");
   expect(roles.allowGuestDms).toBe(false);
 });
