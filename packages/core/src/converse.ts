@@ -382,6 +382,12 @@ function catalog(skills: Skill[], projects: Project[]): string {
   return `Skills:\n${skillList}\n\nProjects:\n${projectList}`;
 }
 
+/** A user turn as stored on a shared surface: prefixed with who said it. Brackets stripped from
+ * the name so a display name can't close the tag and fake a second speaker. */
+export function speakerLine(speaker: string, text: string): string {
+  return `[${speaker.replace(/[[\]\r\n]/g, "").trim() || "someone"}]: ${text}`;
+}
+
 export interface ConverseInput {
   history: ChatTurn[];
   latestUserText: string;
@@ -410,7 +416,17 @@ export interface ConverseInput {
   /** Offer the built-in public web search (config `webSearch`). Per chat, not per turn: it
    * changes the leading system message, which must stay byte-stable for prompt caching. */
   webSearch?: boolean;
+  /** Display name of whoever sent the latest turn — set on shared surfaces (chatops), where
+   * many people talk to one Bean. Unset = the desktop chat, where the speaker is the owner. */
+  speaker?: string;
 }
+
+// Constant per surface (not per speaker) so the leading system message stays cache-stable.
+const SHARED_CHAT_NOTE =
+  "This is a shared chat: several different people may talk to you. Each user turn starts with " +
+  "the sender's display name in brackets, e.g. \"[Alex]: hi\" — address people by that name. " +
+  "Your saved memories describe your owner (the person whose machine you run on), not " +
+  "necessarily whoever is speaking now; never assume the speaker is your owner.";
 
 export async function converse(input: ConverseInput): Promise<ConverseResult> {
   const {
@@ -434,6 +450,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     runAvailable = true,
     todoRoutines = [],
     webSearch = false,
+    speaker,
   } = input;
   // The leading system message must stay byte-stable for the life of a chat: OpenAI prompt
   // caching is exact-prefix, so anything per-turn here (a clock, per-message memory ranking)
@@ -445,6 +462,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     behaviorInstructions(runAvailable, delegateOffered, webSearch),
     catalog(skills, projects),
   ];
+  if (speaker !== undefined) systemParts.push(SHARED_CHAT_NOTE);
   if (linkedNote) {
     systemParts.push(
       `This chat continues from the note "${linkedNote.title}" (v${linkedNote.version}). Its current ` +
@@ -459,7 +477,8 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   // No per-chat "current project" signal exists here (LinkedNote doesn't carry one) — force-
   // include is left unused from this call site, but selectRelevantMemories still supports it.
   const relevant = selectRelevantMemories(memories, latestUserText);
-  const recall = memoriesBlock(relevant, projects);
+  const recall = memoriesBlock(relevant, projects, speaker !== undefined ? { subject: "your owner" } : {});
+  const spokenText = speaker !== undefined ? speakerLine(speaker, latestUserText) : latestUserText;
   if (recall) contextParts.push(recall);
 
   const messages: ConvoMsg[] = [
@@ -471,8 +490,8 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     {
       role: "user",
       content: latestUserImages.length > 0
-        ? [{ type: "text" as const, text: latestUserText }, ...latestUserImages.map((image) => ({ type: "image" as const, image }))]
-        : latestUserText,
+        ? [{ type: "text" as const, text: spokenText }, ...latestUserImages.map((image) => ({ type: "image" as const, image }))]
+        : spokenText,
     },
   ];
 
