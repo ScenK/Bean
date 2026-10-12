@@ -6,6 +6,7 @@ import {
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  makeRoles, atLeast, cardActionNeeds, cardRefusal, gatedRefusal, ownerOnlyRefusal, type Role,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -45,6 +46,10 @@ const proposals = new ProposalStore();
 // Hosts delegates not tied to a project (a Jira ticket, research); spawn needs the cwd to exist.
 const scratchPath = scratchDir(dir);
 mkdirSync(scratchPath, { recursive: true });
+const roles = makeRoles({
+  dbPath: dbFile(dir), surface: "discord",
+  ownerId: discordConfig.ownerId, ownerName: discordConfig.ownerName, allowGuestDms: discordConfig.allowGuestDms,
+});
 const transcribe = makeOpenAITranscribe(beanConfig.openaiApiKey);
 const speak = makeOpenAISpeak(beanConfig.openaiApiKey);
 
@@ -88,6 +93,7 @@ const bot = buildTeamsBot({
   systemControlsEnabled: () => beanConfig.systemControls,
   webSearchEnabled: () => beanConfig.webSearch,
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
+  roles,
 });
 
 // Partials.Channel is REQUIRED for DM message events in discord.js v14 (DM channels
@@ -105,11 +111,14 @@ const client = new Client({
 // Entries die with the proposal (deleted on confirm/cancel).
 const selections = new Map<string, { cli?: string; model?: string; skillName?: string }>();
 
-const allowed = (userId: string): boolean => discordConfig.allowedUserIds.includes(userId);
+// Admin scope is the channel, not the thread: a thread's parent channel (computed before
+// startThread reassigns the turn's channel). History, cards and runs keep the thread id.
+const scopeOf = (channel: TextBasedChannel): string =>
+  channel.isThread() ? channel.parentId ?? channel.id : channel.id;
 
 // bot.ts's keyword commands (same optional leading slash). They act on the channel and answer
 // in one line, so they never open a session thread.
-const KEYWORD_COMMAND = /^\/*(?:(?:cancel|new|stop|drivers)$|live-session\b)/i;
+const KEYWORD_COMMAND = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins)$|live-session\b|(?:add|remove)-admin\b)/i;
 
 // A thread Bean opened is a session: every message in it is addressed to Bean. The Discord
 // API's ownerId survives restarts, so no local record of owned threads is needed.
@@ -223,13 +232,15 @@ client.on("messageCreate", async (message) => {
   try {
     if (message.author.bot) return;
     // A live session already running in this channel is itself the authorization boundary
-    // for steering it — anyone who can post in a channel someone else bound a session in can
-    // send it a turn or say `stop`, allowlisted or not (this is the whole point of war-room,
-    // whole-channel steering). Outside an active session, allowedUserIds still gates all
-    // normal chat with Bean exactly as before.
+    // for steering it (core's onMessage applies the starter/co-driver check). Outside one,
+    // every addressed speaker gets a turn at their role (owner / admin / guest).
     const capturing = liveSessions.has(message.channelId);
-    if (!capturing && !allowed(message.author.id)) return;
     const isDm = message.channel.type === ChannelType.DM;
+    const scopeId = scopeOf(message.channel);
+    // Role before any paid pre-work: a non-owner DM with guest DMs off gets core's one fixed
+    // line (or a whoami answer) — no transcription, no downloads.
+    const role: Role = roles.roleOf({ fromId: message.author.id, scopeId: isDm ? undefined : scopeId });
+    const dmBlocked = isDm && role !== "owner" && !roles.allowGuestDms;
     // Only an explicit address (DM, @mention, reply-to-Bean) gets a turn. Naming the bot in
     // passing ("we should add x to bean") is about Bean, not to it — it stays ambient context.
     const addressed =
@@ -243,7 +254,7 @@ client.on("messageCreate", async (message) => {
     // content — transcribe them into the turn's text so they get a normal reply. In a captured
     // channel only someone who can steer the session pays for a transcription (onMessage would
     // drop anyone else's turn anyway).
-    const canTranscribe = !capturing || liveSessions.canSteer(message.channelId, message.author.id);
+    const canTranscribe = !dmBlocked && (!capturing || liveSessions.canSteer(message.channelId, message.author.id));
     let transcribeFailed = false;
     let heardAudio = false;
     // What the sender typed, before any transcript is appended: an attached clip may be someone
@@ -265,7 +276,7 @@ client.on("messageCreate", async (message) => {
     // image-only message still gets a turn. Skipped while a live session captures the
     // channel — the bridged agent only takes text, so downloading would silently drop them.
     const images: ImageAttachment[] = [];
-    for (const att of capturing ? [] : message.attachments.values()) {
+    for (const att of capturing || dmBlocked ? [] : message.attachments.values()) {
       if (images.length >= MAX_IMAGES_PER_MESSAGE) break;
       const mime = att.contentType?.split(";")[0]?.trim() ?? "";
       if (!(SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) || att.size > 10 * 1024 * 1024) continue;
@@ -320,9 +331,12 @@ client.on("messageCreate", async (message) => {
         {
           conversationId: channel.id, text: text || "(image)", typedText: heardAudio ? typed : undefined,
           images: images.length > 0 ? images : undefined,
-          fromId: message.author.id, fromName: message.author.displayName,
-          // Everyone @mentioned except Bean — feeds the live-session `+driver`/`-driver` commands.
+          fromId: message.author.id, fromName: message.author.displayName, scopeId, direct: isDm,
+          // Everyone @mentioned except Bean — feeds `+driver`/`-driver` and `add-admin`/`remove-admin`.
           mentionedIds: [...message.mentions.users.keys()].filter((id) => id !== client.user?.id),
+          mentions: [...message.mentions.users.values()]
+            .filter((u) => u.id !== client.user?.id && !u.bot)
+            .map((u) => ({ id: u.id, name: u.displayName })),
           channelName: isDm ? "DM" : "name" in message.channel && message.channel.name ? `#${message.channel.name}` : undefined,
         },
         effectsFor(channel, message.id, heardAudio),
@@ -344,13 +358,23 @@ function liveProposalIn(id: string, channelId: string | null): PendingLiveSessio
 
 client.on("interactionCreate", async (interaction: Interaction) => {
   try {
+    // Same role check as text messages, scoped to the parent channel (DMs never have admins).
+    const role: Role = roles.roleOf({
+      fromId: interaction.user.id,
+      scopeId: interaction.inGuild() && interaction.channel ? scopeOf(interaction.channel) : undefined,
+    });
     if (interaction.isChatInputCommand()) {
-      if (!allowed(interaction.user.id)) {
-        await interaction.reply({ content: "You're not on this bot's allow-list.", ephemeral: true });
-        return;
-      }
       const channelId = interaction.channelId;
+      const refuse = async (need: Role, what: string): Promise<boolean> => {
+        if (atLeast(role, need)) return false;
+        const scopeId = interaction.inGuild() && interaction.channel ? scopeOf(interaction.channel) : undefined;
+        await interaction.reply({
+          content: need === "owner" ? ownerOnlyRefusal(what, roles) : gatedRefusal(what, roles, scopeId), ephemeral: true,
+        });
+        return true;
+      };
       if (interaction.commandName === "new") {
+        if (await refuse("admin", "start a fresh conversation")) return;
         conversations.clear(channelId);
         noteProposals.forgetImages(channelId);
         conversations.setAmbientCutoff(channelId, Date.now()); // fence pre-reset chatter out of ambient
@@ -358,7 +382,9 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         return;
       }
       if (interaction.commandName === "cancel") {
-        const n = runs.cancelAll();
+        if (await refuse("admin", "cancel runs")) return;
+        // Admins stop only this conversation's runs; the owner stops everything.
+        const n = runs.cancelAll(role === "owner" ? undefined : channelId);
         await interaction.reply({ content: n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.", ephemeral: true });
         return;
       }
@@ -374,6 +400,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         return;
       }
       if (interaction.commandName === "live-session" && interaction.channel) {
+        if (await refuse("owner", "start a live session")) return;
         await interaction.deferReply({ ephemeral: true }); // proposeLiveSession posts to the channel; ack within 3s
         const reply = await bot.proposeLiveSession(
           { conversationId: channelId, instruction: interaction.options.getString("prompt", true), proposedBy: interaction.user.displayName },
@@ -383,9 +410,18 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       }
       return;
     }
+    // Every card control (buttons, selects, edit modals) is gated before it touches pending
+    // state — core's onCardAction re-checks the ones that reach it. Ephemeral, so the card
+    // stays usable for someone who may.
+    if (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) {
+      const need = cardActionNeeds(/^bean:([a-z-]+):/.exec(interaction.customId)?.[1]);
+      if (!atLeast(role, need)) {
+        await interaction.reply({ content: need === "owner" ? ownerOnlyRefusal("confirm this", roles) : cardRefusal(roles), ephemeral: true });
+        return;
+      }
+    }
     // Edit-prompt modal submit: apply the new text, then re-render the card in place.
     if (interaction.isModalSubmit()) {
-      if (!allowed(interaction.user.id)) return;
       const d = /^bean:delegate-editsubmit:(.*)$/.exec(interaction.customId);
       if (d?.[1] && interaction.isFromMessage()) {
         const pending = proposals.get(d[1]);
@@ -411,7 +447,6 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     // Edit-prompt button: open the modal prefilled with the current prompt. MUST run before any
     // deferUpdate below — showModal has to be the interaction's first response.
     if (interaction.isButton() && interaction.customId.startsWith("bean:delegate-edit:")) {
-      if (!allowed(interaction.user.id)) return;
       const pending = proposals.get(interaction.customId.slice("bean:delegate-edit:".length));
       if (!pending || pending.conversationId !== interaction.channelId) {
         await interaction.reply({ content: "Already started or expired — edit not applied.", ephemeral: true });
@@ -428,7 +463,6 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       return;
     }
     if (interaction.isButton() && interaction.customId.startsWith("bean:live-edit:")) {
-      if (!allowed(interaction.user.id)) return;
       const proposalId = interaction.customId.slice("bean:live-edit:".length);
       const pending = liveProposalIn(proposalId, interaction.channelId);
       if (!pending) { await interaction.reply({ content: "That live-session proposal expired.", ephemeral: true }); return; }
@@ -442,7 +476,6 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       });
       return;
     }
-    if (!allowed(interaction.user.id)) return;
     if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
     const match = /^bean:([a-z-]+):(.*)$/.exec(interaction.customId);
     if (!match?.[1] || match[2] === undefined) return;
@@ -477,7 +510,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     }
 
     // War-room ⇄ restricted toggle on the live-session card: flip the pending proposal and
-    // re-render in place. Pre-launch config, so no session-owner check — just the allow-list.
+    // re-render in place. Pre-launch config: owner-only like every live-session control (gated above).
     if (action === "live-mode") {
       const pending = liveProposalIn(payload, interaction.channelId);
       if (pending) {
@@ -490,7 +523,10 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     if (!interaction.channel) return;
     if (action === "cancel-run") {
       await bot.onCardAction(
-        { conversationId: interaction.channelId, fromId: interaction.user.id, fromName: interaction.user.displayName, value: { beanAction: "cancel-run", projectPath: payload } },
+        {
+          conversationId: interaction.channelId, fromId: interaction.user.id, scopeId: scopeOf(interaction.channel),
+          fromName: interaction.user.displayName, value: { beanAction: "cancel-run", projectPath: payload },
+        },
         effectsFor(interaction.channel),
       );
       return;
@@ -502,6 +538,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       {
         conversationId: interaction.channelId,
         fromId: interaction.user.id,
+        scopeId: scopeOf(interaction.channel),
         fromName: interaction.user.displayName,
         value: { beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, skillName: sel.skillName },
       },
@@ -580,13 +617,8 @@ setInterval(() => {
       // display text.
       const text = msg.displayBody ?? (msg.title ? `**${msg.title}**\n${msg.body}` : msg.body);
       if (!msg.channel) {
-        // No channel = DM the owner directly (the default delivery mode) — never the rest of
-        // the allow-list.
+        // No channel = DM the owner directly (the default delivery mode) — never anyone else.
         const userId = discordConfig.ownerId;
-        if (!userId) {
-          console.error("outbox: no ownerId in discord.json — DM message dropped (set it to your Discord user id)");
-          continue;
-        }
         try {
           const user = await client.users.fetch(userId);
           // The DM channel id is the conversation id here, and we only learn it from a

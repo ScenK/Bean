@@ -11,9 +11,13 @@ export interface TeamsConfig {
   /** Optional dev-tunnel name. When set, the server logs in to devtunnel as the bot's own
    * service principal and hosts this tunnel for as long as it runs (see devtunnel.ts). */
   devtunnel?: string;
-  /** The owner's Teams user id (`29:...`) or AAD object id. Outbox DMs (routine digests with no
-   * channel, interrupted-run notices) go only to this user's 1:1 chat; unset = dropped. */
+  /** The owner's Teams user id (`29:...`) or AAD object id: full powers (core chatops/roles.ts)
+   * and the only target of outbox DMs. Unset = setup mode: everyone is a guest, DMs dropped. */
   ownerId?: string;
+  /** How refusals name the owner ("Only Scen can …"). */
+  ownerName?: string;
+  /** Let non-owners DM Bean (as guests). Default false: they get one fixed line. */
+  allowGuestDms: boolean;
 }
 
 type DmRef = { conversation?: { conversationType?: string }; user?: { id?: string; aadObjectId?: string } };
@@ -57,5 +61,7 @@ export async function loadTeamsConfig(file: string): Promise<TeamsConfig> {
     port: parsed.port ?? 3978,
     ...(parsed.devtunnel ? { devtunnel: parsed.devtunnel } : {}),
     ...(typeof parsed.ownerId === "string" && parsed.ownerId ? { ownerId: parsed.ownerId } : {}),
+    ...(typeof parsed.ownerName === "string" && parsed.ownerName ? { ownerName: parsed.ownerName } : {}),
+    allowGuestDms: parsed.allowGuestDms === true,
   };
 }

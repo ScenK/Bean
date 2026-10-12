@@ -419,6 +419,11 @@ export interface ConverseInput {
   /** Display name of whoever sent the latest turn — set on shared surfaces (chatops), where
    * many people talk to one Bean. Unset = the desktop chat, where the speaker is the owner. */
   speaker?: string;
+  /** Offer propose_note / propose_skill (default true). Chatops turns them off by speaker role. */
+  noteAvailable?: boolean;
+  skillAuthoringAvailable?: boolean;
+  /** Per-turn guidance about the speaker's role (chatops); rides the trailing system message. */
+  roleNote?: string;
 }
 
 // Constant per surface (not per speaker) so the leading system message stays cache-stable.
@@ -451,6 +456,9 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     todoRoutines = [],
     webSearch = false,
     speaker,
+    noteAvailable = true,
+    skillAuthoringAvailable = true,
+    roleNote,
   } = input;
   // The leading system message must stay byte-stable for the life of a chat: OpenAI prompt
   // caching is exact-prefix, so anything per-turn here (a clock, per-message memory ranking)
@@ -480,6 +488,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   const recall = memoriesBlock(relevant, projects, speaker !== undefined ? { subject: "your owner" } : {});
   const spokenText = speaker !== undefined ? speakerLine(speaker, latestUserText) : latestUserText;
   if (recall) contextParts.push(recall);
+  if (roleNote) contextParts.push(roleNote);
 
   const messages: ConvoMsg[] = [
     { role: "system", content: systemParts.join("\n\n") },
@@ -509,8 +518,8 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       ? [proposeDelegateTool(skills, projects, availableClis, models, scratchPath !== undefined)]
       : []),
     ...(liveSessionAvailable && projects.length > 0 ? [proposeLiveSessionTool(projects, models, liveClis)] : []),
-    proposeNoteTool(projects, linkedNote),
-    proposeSkillTool(),
+    ...(noteAvailable ? [proposeNoteTool(projects, linkedNote)] : []),
+    ...(skillAuthoringAvailable ? [proposeSkillTool()] : []),
     ...(todoRoutines.length > 0 ? [proposeTodoTool(todoRoutines)] : []),
     ...actions.map((a) => a.spec),
   ];
@@ -540,6 +549,15 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       messages.push({ role: "assistant", content, toolCalls: [c] });
       messages.push({ role: "tool", content: `error: ${why} Reply to the user in plain text instead.`, toolCallId: c.id ?? c.name });
     };
+
+    // Leaving a tool out of the list isn't a gate on its own: a call to a tool this turn didn't
+    // offer is refused, never acted on (propose_run keeps its own, more specific refusal below).
+    const offered = new Set(tools.map((t) => t.name));
+    const stray = toolCalls.find((c) => c.name !== "propose_run" && !offered.has(c.name));
+    if (stray) {
+      reject(stray, `${stray.name} is not available here.`);
+      continue;
+    }
 
     const call = toolCalls.find((c) => c.name === "propose_run");
     if (call) {

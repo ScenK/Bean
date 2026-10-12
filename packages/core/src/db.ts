@@ -116,6 +116,17 @@ CREATE TABLE IF NOT EXISTS chatops_ambient (
 );
 CREATE INDEX IF NOT EXISTS chatops_ambient_conv ON chatops_ambient(conversation_id, at);
 
+-- Chatops admins (chatops/roles.ts), granted by the owner per channel / group chat. scope_id is
+-- the channel (Discord parent channel for threads, Teams bare channel id), never a thread.
+CREATE TABLE IF NOT EXISTS chatops_admins (
+  surface    TEXT NOT NULL,
+  scope_id   TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  granted_at TEXT NOT NULL,
+  PRIMARY KEY (surface, scope_id, user_id)
+);
+
 -- A thread's resumable delegate session, one per CLI (each CLI keeps its own session store),
 -- so a follow-up delegate in the thread continues the agent that produced the earlier result.
 CREATE TABLE IF NOT EXISTS thread_sessions (

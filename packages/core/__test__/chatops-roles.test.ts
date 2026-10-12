@@ -1,0 +1,53 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { expect, test } from "vitest";
+import { cardActionNeeds, makeRoles, parseRoleCommand } from "../src/chatops/roles.js";
+
+const db = (): string => join(mkdtempSync(join(tmpdir(), "bean-roles-")), "bean.db");
+
+test("owner matches on either Teams id; admins are per scope; everyone else is a guest", () => {
+  const roles = makeRoles({ dbPath: db(), surface: "teams", ownerId: "aad-owner" });
+  expect(roles.roleOf({ fromId: "29:owner", fromAltId: "aad-owner" })).toBe("owner");
+  expect(roles.roleOf({ fromId: "29:ana", scopeId: "chan" })).toBe("guest");
+  expect(roles.addAdmins("chan", [{ id: "29:ana", name: "A[n]a\n" }])).toEqual(["29:ana"]);
+  expect(roles.roleOf({ fromId: "29:ana", scopeId: "chan" })).toBe("admin");
+  expect(roles.roleOf({ fromId: "29:ana", scopeId: "other" })).toBe("guest");
+  expect(roles.roleOf({ fromId: "29:ana" })).toBe("guest"); // no scope (DM) = no admins
+  expect(roles.admins("chan")).toEqual([{ id: "29:ana", name: "Ana" }]);
+  roles.touch("chan", "29:ana", "Ana B");
+  expect(roles.admins("chan")[0]?.name).toBe("Ana B");
+  expect(roles.removeAdmins("chan", ["29:ana", "29:nobody"])).toEqual(["29:ana"]);
+  expect(roles.roleOf({ fromId: "29:ana", scopeId: "chan" })).toBe("guest");
+});
+
+test("admins are per surface", () => {
+  const dbPath = db();
+  makeRoles({ dbPath, surface: "discord", ownerId: "o" }).addAdmins("chan", [{ id: "u", name: "U" }]);
+  expect(makeRoles({ dbPath, surface: "teams", ownerId: "o" }).roleOf({ fromId: "u", scopeId: "chan" })).toBe("guest");
+});
+
+test("setup mode (no owner) and a missing actor id fail closed", () => {
+  const roles = makeRoles({ dbPath: db(), surface: "teams" });
+  expect(roles.roleOf({ fromId: "29:anyone" })).toBe("guest");
+  expect(makeRoles({ dbPath: db(), surface: "teams", ownerId: "o" }).roleOf({ fromId: "" })).toBe("guest");
+  expect(roles.allowGuestDms).toBe(false);
+});
+
+test("card actions: live-session and skill controls are owner-only, the rest admin", () => {
+  for (const a of ["start-live", "cancel-live", "resume-live", "live-mode", "live-editsubmit", "save-skill", "cancel-skill"]) {
+    expect(cardActionNeeds(a)).toBe("owner");
+  }
+  for (const a of ["confirm", "cancel-proposal", "cancel-run", "save-note", "forget-memory", "skill", "delegate-edit", undefined]) {
+    expect(cardActionNeeds(a)).toBe("admin");
+  }
+});
+
+test("role commands parse with an optional leading slash", () => {
+  expect(parseRoleCommand("/whoami")).toBe("whoami");
+  expect(parseRoleCommand(" Admins ")).toBe("admins");
+  expect(parseRoleCommand("add-admin <@1>")).toBe("add-admin");
+  expect(parseRoleCommand("remove-admin @Ana")).toBe("remove-admin");
+  expect(parseRoleCommand("admins are cool")).toBeUndefined();
+  expect(parseRoleCommand("add-administrator")).toBeUndefined();
+});
