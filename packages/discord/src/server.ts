@@ -580,18 +580,22 @@ setInterval(() => {
       // display text.
       const text = msg.displayBody ?? (msg.title ? `**${msg.title}**\n${msg.body}` : msg.body);
       if (!msg.channel) {
-        // No channel = DM every allowed user directly (the default delivery mode).
-        for (const userId of discordConfig.allowedUserIds) {
-          try {
-            const user = await client.users.fetch(userId);
-            // The DM channel id is the conversation id here, and we only learn it from a
-            // sent message — so capture it rather than trying to resolve it up front.
-            let dmChannelId: string | undefined;
-            for (const chunk of chunkText(text)) dmChannelId = (await user.send(chunk)).channelId;
-            if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body);
-          } catch (err) {
-            console.error(`outbox: discord DM to ${userId} failed`, err);
-          }
+        // No channel = DM the owner directly (the default delivery mode) — never the rest of
+        // the allow-list.
+        const userId = discordConfig.ownerId;
+        if (!userId) {
+          console.error("outbox: no ownerId in discord.json — DM message dropped (set it to your Discord user id)");
+          continue;
+        }
+        try {
+          const user = await client.users.fetch(userId);
+          // The DM channel id is the conversation id here, and we only learn it from a
+          // sent message — so capture it rather than trying to resolve it up front.
+          let dmChannelId: string | undefined;
+          for (const chunk of chunkText(text)) dmChannelId = (await user.send(chunk)).channelId;
+          if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body);
+        } catch (err) {
+          console.error(`outbox: discord DM to ${userId} failed`, err);
         }
         continue;
       }

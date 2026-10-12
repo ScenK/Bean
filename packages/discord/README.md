@@ -16,7 +16,8 @@ endpoint. Design: `docs/superpowers/specs/2026-07-10-discord-adapter-design.md`.
 3. **Your user id**: Discord settings → Advanced → enable Developer Mode, then right-click
    your name → "Copy User ID".
 4. **Config**: create `~/.bean/discord.json`:
-   `{ "botToken": "<token>", "allowedUserIds": ["<your user id>"] }`
+   `{ "botToken": "<token>", "allowedUserIds": ["<your user id>"], "ownerId": "<your user id>" }`
+   `ownerId` is who routine digests DM (no channel set); without it they're dropped (logged).
    Optional `"guildId": "<server id>"` registers slash commands to that one server instantly;
    without it they register globally (every server Bean is in, but ~1h first propagation).
 

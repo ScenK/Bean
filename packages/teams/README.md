@@ -31,6 +31,9 @@ Adaptive Card and execute on THIS machine. Design: `docs/superpowers/specs/2026-
    else (endpoint, auth, tenant) checks out, this is almost certainly why — check it first.
 4. **Config**: create `~/.bean/teams.json`:
    `{ "botAppId": "<app-id>", "botAppPassword": "<client-secret>", "tenantId": "<tenant-id>", "port": 3978 }`
+   Add `"ownerId": "<your Teams user id (29:...) or AAD object id>"` to receive routine digests
+   as DMs — without it, channel-less digests are dropped (logged). Only the owner's 1:1 chat
+   gets them, never another user's who once DMed the bot.
    Note: generated images aren't displayed inline on Teams (activity size limits) — Bean
    posts the saved file's path instead.
 5. **Tunnel** (macOS) — **let Bean host it (recommended)**: install `devtunnel` (below), then add

@@ -8,6 +8,9 @@ export interface DiscordConfig {
   /** Optional: register slash commands to this one guild (appears instantly) instead of globally
    * (every guild Bean is in, but ~1h first propagation). Handy for dev/single-server setups. */
   guildId?: string;
+  /** The owner's Discord user id. Outbox DMs (routine digests with no channel, interrupted-run
+   * notices) go only to this user; unset = dropped. */
+  ownerId?: string;
 }
 
 export function discordConfigFile(dir: string): string {
@@ -38,5 +41,6 @@ export async function loadDiscordConfig(file: string): Promise<DiscordConfig> {
     throw new Error(`Discord config incomplete: ${file} needs botToken and a non-empty allowedUserIds`);
   }
   const guildId = typeof parsed.guildId === "string" && parsed.guildId ? parsed.guildId : undefined;
-  return { botToken: parsed.botToken, allowedUserIds: ids, ...(guildId ? { guildId } : {}) };
+  const ownerId = typeof parsed.ownerId === "string" && parsed.ownerId ? parsed.ownerId : undefined;
+  return { botToken: parsed.botToken, allowedUserIds: ids, ...(guildId ? { guildId } : {}), ...(ownerId ? { ownerId } : {}) };
 }

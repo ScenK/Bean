@@ -474,7 +474,9 @@ function destinations(sinks: RoutineSinks, recipients: SinkRecipients | undefine
     // Counts, never names — the desktop app can't look up who those ids are.
     on.push(n === undefined
       ? `${label} DM — ${transport === "discord" ? "discord.json isn't set up" : "no Teams chats known yet"}`
-      : `${label} DM to every ${transport === "discord" ? "allowlisted user" : "personal chat Bean knows"} (${n}) — no channel set`);
+      : n === 0
+        ? `${label} DM — dropped: ${transport === "discord" ? "no ownerId in discord.json" : "no ownerId in teams.json, or you haven't DMed the bot yet"}`
+        : `${label} DM to you — no channel set`);
   }
   if (sinks.note) on.push("Saved as a note on your Daily Dashboard"); else off.push("no note");
   if (sinks.notify) on.push("Desktop notification"); else off.push("no desktop notification");
