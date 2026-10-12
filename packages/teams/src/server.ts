@@ -5,7 +5,7 @@ import {
   detectClis, type CliName, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -100,6 +100,13 @@ const liveSessionProposals = new LiveSessionProposalStore();
 const scratchPath = scratchDir(dir);
 mkdirSync(scratchPath, { recursive: true });
 
+const roles = makeRoles({
+  dbPath: dbFile(dir), surface: "teams",
+  ownerId: teamsConfig.ownerId, ownerName: teamsConfig.ownerName, allowGuestDms: teamsConfig.allowGuestDms,
+});
+// No owner = setup mode (fail closed): everyone is a guest; `whoami` shows the ids to configure.
+if (!teamsConfig.ownerId) console.warn("teams: no ownerId in teams.json — everyone is a guest. Send `whoami` to Bean, then set ownerId.");
+
 const bot = buildTeamsBot({
   onActivity: parentActivitySink,
   chat: converseChat,
@@ -145,6 +152,7 @@ const bot = buildTeamsBot({
   systemControlsEnabled: () => beanConfig.systemControls,
   webSearchEnabled: () => beanConfig.webSearch,
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
+  roles,
 });
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -209,13 +217,22 @@ function addressedToBot(a: Activity): boolean {
   );
 }
 
-/** Surface user-ids @mentioned in this activity, minus the bot itself — feeds core's
- * live-session `+driver`/`-driver` co-driver management (restricted steering). */
-function mentionIds(a: Activity): string[] {
+/** Users @mentioned in this activity, minus the bot — feeds core's `+driver`/`-driver` and
+ * `add-admin`/`remove-admin`. Only `29:` user ids: tag and channel mentions are not people. */
+function mentionedUsers(a: Activity): { id: string; name: string }[] {
   return (a.entities ?? [])
     .filter((e) => e.type === "mention")
-    .map((e) => (e as { mentioned?: { id?: string } }).mentioned?.id)
-    .filter((id): id is string => !!id && id !== a.recipient.id);
+    .map((e) => (e as { mentioned?: { id?: string; name?: string } }).mentioned)
+    .filter((m): m is { id: string; name?: string } => !!m?.id && m.id.startsWith("29:") && m.id !== a.recipient.id)
+    .map((m) => ({ id: m.id, name: m.name ?? "someone" }));
+}
+
+/** Admin scope: the bare channel id for channel posts (not the thread), the group chat's id for
+ * group chats. Personal chats have none. */
+function scopeOf(a: Activity): string | undefined {
+  const c = a.conversation;
+  if (c.conversationType === "personal") return undefined;
+  return c.conversationType === "channel" ? bareChannelId(c.id) : c.id;
 }
 
 /** Effects bound to the incoming turn's conversation; posts after the turn ends go
@@ -288,6 +305,8 @@ app.post("/api/messages", (req, res) => {
         {
           conversationId: a.conversation.id,
           fromId: a.from.id, // session owner for live-session steering (restricted by default)
+          fromAltId: a.from.aadObjectId,
+          scopeId: scopeOf(a),
           fromName: a.from.name ?? "someone",
           value: {
             beanAction: value.beanAction, proposalId: value.proposalId, projectPath: value.projectPath,
@@ -309,12 +328,19 @@ app.post("/api/messages", (req, res) => {
       if (text) ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
       return;
     }
+    const direct = a.conversation.conversationType === "personal";
+    // Role before any paid pre-work: a non-owner DM with guest DMs off gets core's one fixed
+    // line (or a whoami answer), so its images are never downloaded.
+    const dmBlocked = direct && !roles.allowGuestDms &&
+      roles.roleOf({ fromId: a.from.id, fromAltId: a.from.aadObjectId }) !== "owner";
     // Downloaded only after the addressing gate: ambient channel images must not cost
     // token-authenticated fetches for messages Bean immediately discards. Also skipped
     // while a live session captures the conversation — the bridged agent only takes text.
-    const images = capturing ? [] : await downloadImages(a);
+    const images = capturing || dmBlocked ? [] : await downloadImages(a);
     // An image-only message still gets a turn; pure empty messages stay ignored.
-    if (!text && images.length === 0) return;
+    // A blocked DM still reaches core (as "(image)") so its one refusal line is sent.
+    if (!text && images.length === 0 && !dmBlocked) return;
+    const mentions = mentionedUsers(a);
     fx.fetchRecent = async (sinceMs) => ambient.since(a.conversation.id, sinceMs);
     await context.sendActivity({ type: ActivityTypes.Typing });
     // Teams clears the typing indicator quickly; resend while onMessage is still working.
@@ -324,7 +350,9 @@ app.post("/api/messages", (req, res) => {
         {
           conversationId: a.conversation.id, text: text || "(image)",
           images: images.length > 0 ? images : undefined,
-          fromId: a.from.id, fromName: a.from.name ?? "someone", mentionedIds: mentionIds(a),
+          fromId: a.from.id, fromAltId: a.from.aadObjectId, fromName: a.from.name ?? "someone",
+          scopeId: scopeOf(a), direct,
+          mentions, mentionedIds: mentions.map((m) => m.id),
           channelName: a.conversation.conversationType === "personal" ? "DM" : a.conversation.name,
         },
         fx,

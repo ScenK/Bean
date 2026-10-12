@@ -16,15 +16,15 @@ test("discordConfigFile joins dir with discord.json", () => {
 });
 
 test("loads a valid config", async () => {
-  const file = await write({ botToken: "t", allowedUserIds: ["123"] });
-  expect(await loadDiscordConfig(file)).toEqual({ botToken: "t", allowedUserIds: ["123"] });
+  const file = await write({ botToken: "t", ownerId: "123", ownerName: "Scen", allowGuestDms: true });
+  expect(await loadDiscordConfig(file)).toEqual({ botToken: "t", ownerId: "123", ownerName: "Scen", allowGuestDms: true });
 });
 
 test("optional guildId is parsed when present and omitted otherwise", async () => {
-  expect(await loadDiscordConfig(await write({ botToken: "t", allowedUserIds: ["1"], guildId: "999" })))
-    .toEqual({ botToken: "t", allowedUserIds: ["1"], guildId: "999" });
-  expect(await loadDiscordConfig(await write({ botToken: "t", allowedUserIds: ["1"], guildId: "" })))
-    .toEqual({ botToken: "t", allowedUserIds: ["1"] });
+  expect(await loadDiscordConfig(await write({ botToken: "t", ownerId: "1", guildId: "999" })))
+    .toEqual({ botToken: "t", ownerId: "1", allowGuestDms: false, guildId: "999" });
+  expect(await loadDiscordConfig(await write({ botToken: "t", ownerId: "1", guildId: "" })))
+    .toEqual({ botToken: "t", ownerId: "1", allowGuestDms: false });
 });
 
 test("missing file throws with a setup hint", async () => {
@@ -45,16 +45,18 @@ test("valid JSON that is not an object throws invalid", async () => {
   await expect(loadDiscordConfig(file)).rejects.toThrow(/Discord config invalid/);
 });
 
-test("empty botToken or empty allowlist throws (would ignore everyone)", async () => {
-  await expect(loadDiscordConfig(await write({ botToken: "", allowedUserIds: ["1"] })))
-    .rejects.toThrow(/needs botToken and a non-empty allowedUserIds/);
-  await expect(loadDiscordConfig(await write({ botToken: "t", allowedUserIds: [] })))
-    .rejects.toThrow(/needs botToken and a non-empty allowedUserIds/);
+test("empty botToken throws", async () => {
+  await expect(loadDiscordConfig(await write({ botToken: "", ownerId: "1" }))).rejects.toThrow(/needs botToken/);
 });
 
-test("optional ownerId is parsed when present and omitted otherwise", async () => {
-  expect(await loadDiscordConfig(await write({ botToken: "t", allowedUserIds: ["1"], ownerId: "1" })))
-    .toEqual({ botToken: "t", allowedUserIds: ["1"], ownerId: "1" });
-  expect(await loadDiscordConfig(await write({ botToken: "t", allowedUserIds: ["1"], ownerId: "" })))
-    .toEqual({ botToken: "t", allowedUserIds: ["1"] });
+test("legacy allowedUserIds: one entry becomes the owner; several or none fail startup", async () => {
+  expect(await loadDiscordConfig(await write({ botToken: "t", allowedUserIds: ["42"] })))
+    .toEqual({ botToken: "t", ownerId: "42", allowGuestDms: false });
+  await expect(loadDiscordConfig(await write({ botToken: "t", allowedUserIds: ["1", "2"] }))).rejects.toThrow(/needs ownerId/);
+  await expect(loadDiscordConfig(await write({ botToken: "t", allowedUserIds: [] }))).rejects.toThrow(/needs ownerId/);
+  await expect(loadDiscordConfig(await write({ botToken: "t" }))).rejects.toThrow(/needs ownerId/);
+});
+
+test("an explicit ownerId wins over a legacy allow-list", async () => {
+  expect((await loadDiscordConfig(await write({ botToken: "t", allowedUserIds: ["1", "2"], ownerId: "2" }))).ownerId).toBe("2");
 });

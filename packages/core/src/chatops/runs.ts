@@ -161,9 +161,10 @@ export class RunRegistry {
     return true;
   }
 
-  cancel(projectPath: string): boolean {
+  /** `conversationId` set = cancel only if the run was started from that conversation. */
+  cancel(projectPath: string, conversationId?: string): boolean {
     const run = this.byProject.get(projectPath);
-    if (!run) return false;
+    if (!run || (conversationId !== undefined && run.meta.conversationId !== conversationId)) return false;
     run.released = true;
     clearInterval(run.timer);
     this.byProject.delete(projectPath);
@@ -178,8 +179,11 @@ export class RunRegistry {
     return true;
   }
 
-  cancelAll(): number {
-    const paths = [...this.byProject.keys()];
+  /** `conversationId` set = only that conversation's runs. */
+  cancelAll(conversationId?: string): number {
+    const paths = [...this.byProject.entries()]
+      .filter(([, r]) => conversationId === undefined || r.meta.conversationId === conversationId)
+      .map(([p]) => p);
     for (const p of paths) this.cancel(p);
     return paths.length;
   }

@@ -64,13 +64,12 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   present, since the allowlist + the confirm-first card are the authorization boundary there.
   Launch is always confirm-first via a card even though the session itself runs with
   permissions bypassed once started.
-- On Discord, `allowedUserIds` gates all normal chat with Bean — but **an active live session
-  in a channel is itself the authorization boundary for steering it**: any non-bot message in
-  a capturing channel reaches the session regardless of the allowlist (explicit decision —
-  matches the spec's "anyone in the bound channel" pitch literally, not just allowlisted
-  operators). This bypass is scoped to `messageCreate` only; `interactionCreate` (the
-  start-live/cancel-live card buttons — i.e. who can *launch* a session) still requires the
-  allowlist unconditionally. Don't accidentally widen the interaction-handler gate to match.
+- On both surfaces, owner/admin/guest roles (`chatops/roles.ts`) gate normal chat — but **an
+  active live session in a channel is itself the authorization boundary for steering it**: any
+  non-bot message in a capturing channel reaches the session's starter/co-driver/war-room check
+  regardless of role (explicit decision). Every *launch* entry point (propose_live_session,
+  `/live-session`, resume-live, Start, the Discord live-* card controls) is owner-only. Don't
+  widen the launch gate to match the steering bypass.
 - Discord's SIGTERM shutdown handler calls `liveSessions.forceKillAll()`, not `stopAll()` —
   `stop()`'s graceful SIGTERM-then-SIGKILL-after-5s escalation relies on a `setTimeout` that
   would never fire before `process.exit()` runs immediately after, orphaning a

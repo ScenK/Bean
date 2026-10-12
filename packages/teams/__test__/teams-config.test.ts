@@ -12,7 +12,7 @@ test("loads a valid config and defaults port to 3978", async () => {
   const dir = await mkdtemp(join(tmpdir(), "bean-teams-"));
   const file = join(dir, "teams.json");
   await writeFile(file, JSON.stringify({ botAppId: "id", botAppPassword: "pw", tenantId: "tid" }), "utf8");
-  expect(await loadTeamsConfig(file)).toEqual({ botAppId: "id", botAppPassword: "pw", tenantId: "tid", port: 3978 });
+  expect(await loadTeamsConfig(file)).toEqual({ botAppId: "id", botAppPassword: "pw", tenantId: "tid", port: 3978, allowGuestDms: false });
 });
 
 test("missing file throws with a setup hint", async () => {

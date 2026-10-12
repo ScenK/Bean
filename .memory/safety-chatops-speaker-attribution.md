@@ -14,4 +14,4 @@ owner (and treated their instructions as the owner's).
 - `latestUserText` stays the raw text: memory ranking, `remember` citation and the
   `propose_delegate` instruction fallback must not see the `[Name]:` prefix.
 
-Open (not fixed here): any chatops speaker can still call `remember`/`forget` on the owner's store.
+`remember`/`forget` are admin+ since #254 ([safety-chatops-roles](safety-chatops-roles.md)); guests get no memory tools or recall.

@@ -30,6 +30,10 @@ import { systemControlTool } from "../system-control.js";
 import type { RunRegistry } from "./runs.js";
 import { LiveSessionProposalStore, type PendingLiveSession } from "./live-session-proposals.js";
 import { LiveSessionRegistry, type LiveSessionSink } from "./live-sessions.js";
+import {
+  atLeast, cardActionNeeds, cardRefusal, dmRefusal, gatedRefusal, ownerOnlyRefusal, parseRoleCommand, roleLine,
+  type Role, type Roles,
+} from "./roles.js";
 
 /** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
  * onMessage — surfaces keep untagged channel chatter as ambient context instead. */
@@ -41,7 +45,16 @@ export interface IncomingMessage {
    * Absent = all of `text` was typed. */
   typedText?: string;
   fromId: string;
+  /** Teams' AAD object id — the owner may be configured by either id. */
+  fromAltId?: string;
   fromName: string;
+  /** Admin scope: the channel or group chat (a thread's parent channel), not the thread.
+   * Absent = no admins apply. Ignored for DMs, which never have admins. */
+  scopeId?: string;
+  /** A 1:1 DM with the bot (the guest-DM gate applies). */
+  direct: boolean;
+  /** @mentions (excluding the bot) with display names — `add-admin` / `remove-admin` targets. */
+  mentions?: { id: string; name: string }[];
   /** User-ids @mentioned in this message (excluding the bot), if the surface supplies them —
    * used by the live-session `+driver`/`-driver` commands. Surfaces that omit it can't use
    * mention-based co-driver management. */
@@ -55,9 +68,12 @@ export interface IncomingMessage {
 
 export interface CardAction {
   conversationId: string;
-  /** Surface user-id of whoever tapped the card. Optional so existing tests/callers compile;
-   * the live-session start path uses it as the session owner. */
-  fromId?: string;
+  /** Surface user-id of whoever tapped the card — the role check's identity (empty = guest), and
+   * the live-session start path's session owner. */
+  fromId: string;
+  fromAltId?: string;
+  /** Admin scope of the tapped card's channel (see IncomingMessage.scopeId). */
+  scopeId?: string;
   fromName: string;
   value: { beanAction?: string; proposalId?: string; projectPath?: string; cli?: string; model?: string; skillName?: string; steering?: string; instruction?: string };
 }
@@ -140,6 +156,8 @@ export interface TeamsBotDeps {
   imageGen?: Pick<ImageGenDeps, "generate" | "model" | "imagesDir">;
   /** Bean's turns (converse path only) for the desktop app's status bubbles (see activity.ts). */
   onActivity?: ChatopsActivitySink;
+  /** Owner / admin / guest — required, no permissive default (see .memory/safety-chatops-roles.md). */
+  roles: Roles;
 }
 
 const DESKTOP_ONLY =
@@ -170,7 +188,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     fx: BotEffects,
   ) => Promise<string>;
 } {
-  const actions = [retrieveNoteTool(deps.searchNotes), systemControlTool(deps.systemControlsEnabled)];
+  const noteTool = retrieveNoteTool(deps.searchNotes);
+  const systemTool = systemControlTool(deps.systemControlsEnabled);
+
+  // Refusals sent once per key per process (DM gate per user, card taps per user per card), then
+  // silent. ponytail: unbounded until restart, cleared wholesale at 1000 entries.
+  const refusedOnce = new Set<string>();
+  const firstRefusal = (key: string): boolean => {
+    if (refusedOnce.has(key)) return false;
+    if (refusedOnce.size >= 1000) refusedOnce.clear();
+    refusedOnce.add(key);
+    return true;
+  };
 
   // `enabled: false` is the skill's off switch and it applies here too. `quick-launch: false`
   // deliberately does not — that one only trims the desktop avatar's drag bloom.
@@ -623,12 +652,64 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps.conversations.append(conv, { role: "user", content: speakerLine(msg.fromName, msg.text) });
           return;
         }
+        // DMs never have admins; the scope is what admin grants hang off.
+        const scopeId = msg.direct ? undefined : msg.scopeId;
+        const role: Role = deps.roles.roleOf({ fromId: msg.fromId, fromAltId: msg.fromAltId, scopeId });
+        if (role === "admin") deps.roles.touch(scopeId, msg.fromId, msg.fromName);
+        const isAdmin = atLeast(role, "admin");
+        const isOwner = role === "owner";
+        const roleCmd = parseRoleCommand(msg.text);
+        if (roleCmd === "whoami") {
+          await fx.reply(`You're ${role === "owner" ? "the owner" : role === "admin" ? "an admin" : "a guest"} here. ` +
+            `Your id: ${msg.fromId}${msg.fromAltId ? ` (AAD object id: ${msg.fromAltId})` : ""}.`);
+          return;
+        }
+        if (roleCmd === "admins") {
+          const names = deps.roles.admins(scopeId).map((a) => a.name);
+          await fx.reply(`Owner: ${deps.roles.ownerName}. Admins here: ${names.length > 0 ? names.join(", ") : "none"}.`);
+          return;
+        }
+        if (msg.direct && !isOwner && !deps.roles.allowGuestDms) {
+          if (firstRefusal(`dm:${msg.fromId}`)) await fx.reply(dmRefusal(deps.roles));
+          return;
+        }
+        // Small helper for the runtime checks below: refuses (and says so) when the role is short.
+        const permitted = async (need: Role, what: string): Promise<boolean> => {
+          if (atLeast(role, need)) return true;
+          await fx.reply(need === "owner" ? ownerOnlyRefusal(what, deps.roles) : gatedRefusal(what, deps.roles, scopeId));
+          return false;
+        };
+        if (roleCmd === "add-admin" || roleCmd === "remove-admin") {
+          if (!(await permitted("owner", "change admins"))) return;
+          if (!scopeId) {
+            await fx.reply("Admins are per channel or group chat — run this there, not in a DM.");
+            return;
+          }
+          const targets = msg.mentions ?? [];
+          if (targets.length === 0) {
+            await fx.reply(`@mention who to ${roleCmd === "add-admin" ? "add" : "remove"}, e.g. \`${roleCmd} @name\`.`);
+            return;
+          }
+          const changed = roleCmd === "add-admin"
+            ? deps.roles.addAdmins(scopeId, targets)
+            : deps.roles.removeAdmins(scopeId, targets.map((t) => t.id));
+          const names = targets.filter((t) => changed.includes(t.id)).map((t) => t.name).join(", ");
+          await fx.reply(changed.length === 0
+            ? "No change — already set that way."
+            : roleCmd === "add-admin"
+              ? `Added ${names} as admin${changed.length > 1 ? "s" : ""}${msg.channelName ? ` in ${msg.channelName}` : ""}.`
+              : `Removed ${names}.`);
+          return;
+        }
         if (cmd === "cancel") {
-          const n = deps.runs.cancelAll();
+          if (!(await permitted("admin", "cancel runs"))) return;
+          // Admins stop only this conversation's runs; the owner stops everything.
+          const n = deps.runs.cancelAll(isOwner ? undefined : msg.conversationId);
           await fx.reply(n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.");
           return;
         }
         if (cmd === "new") {
+          if (!(await permitted("admin", "start a fresh conversation"))) return;
           deps.conversations.clear(msg.conversationId);
           deps.noteProposals.forgetImages(msg.conversationId);
           resets.set(msg.conversationId, (resets.get(msg.conversationId) ?? 0) + 1);
@@ -642,14 +723,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // the way it does for free-form "start a live session…" phrasing.
         const liveCmd = /^\/?live-session\b\s*([\s\S]*)$/i.exec(msg.text.trim());
         if (liveCmd) {
+          if (!(await permitted("owner", "start a live session"))) return;
           await fx.reply(await proposeLiveSessionFrom(msg.conversationId, liveCmd[1] ?? "", msg.fromName, fx));
           return;
         }
         turnId = randomUUID();
         deps.onActivity?.({ type: "turn", phase: "start", id: turnId, who: msg.fromName, where: msg.channelName });
+        // Guests get Bean's own model and nothing else: no catalog, recall, or todo/delegate tools.
         const [skills, projects, persona, memories, modelMemory, todoRoutines] = await Promise.all([
-          loadActiveSkills(), deps.loadProjects(), deps.loadPersona(), deps.loadMemories(), deps.loadModelMemory(),
-          deps.listTodoRoutines(),
+          isAdmin ? loadActiveSkills() : [], isAdmin ? deps.loadProjects() : [], deps.loadPersona(),
+          isAdmin ? deps.loadMemories() : [], deps.loadModelMemory(), isAdmin ? deps.listTodoRoutines() : [],
         ]);
         const detected = deps.detectClis();
         let history = deps.conversations.history(msg.conversationId);
@@ -671,7 +754,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           }
         }
         // Per-turn (not shared) so `paths` collects only this request's generated files.
-        const imageTool = deps.imageGen
+        const imageTool = deps.imageGen && isAdmin
           ? makeGenerateImageTool({
               ...deps.imageGen,
               saveNoteImage: deps.saveNoteImage,
@@ -687,13 +770,21 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         });
         // runAvailable=false: propose_run is never offered here — confirming one couldn't
         // execute anything from Teams/Discord; propose_delegate is the only run path.
+        // The tool list is built from the role (action tools run inside converse(), so leaving
+        // them out is their gate); proposals are re-checked against the role below.
+        const actions = [
+          ...(isAdmin ? [noteTool] : []), ...(isOwner ? [systemTool] : []), ...(imageTool ? [imageTool.tool] : []),
+        ];
         const converseBase = {
           skills, projects, persona, memories,
           deps: { chat: deps.chat, model: deps.model },
-          actions: imageTool ? [...actions, imageTool.tool] : actions,
-          delegateAvailable: true,
-          scratchPath: deps.scratchPath,
-          liveSessionAvailable: liveClis().length > 0,
+          actions,
+          delegateAvailable: isAdmin,
+          scratchPath: isAdmin ? deps.scratchPath : undefined,
+          liveSessionAvailable: isOwner && liveClis().length > 0,
+          noteAvailable: isAdmin,
+          skillAuthoringAvailable: isOwner,
+          roleNote: roleLine(role, deps.roles, scopeId),
           availableClis: detected,
           models: availableModels(deps.cliModels, detected),
           runAvailable: false,
@@ -702,7 +793,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           speaker: msg.fromName,
         };
         const result = await converse({
-          ...converseBase, actions: [...converseBase.actions, ...memoryTools.tools],
+          ...converseBase, actions: [...converseBase.actions, ...(isAdmin ? memoryTools.tools : [])],
           history, latestUserText: msg.text, latestUserImages: msg.images,
         });
         turnFailed = result.error !== undefined;
@@ -741,6 +832,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           // through this same conversation (mirrors ChatWindow's confirmProposal). No
           // confirm card — it's just another chat reply, no agent harness or side effects.
           if (result.proposedRun.target === "chat") {
+            if (!(await permitted("admin", "run skills"))) return;
             const run = result.proposedRun;
             const followup = await converse({
               ...converseBase,
@@ -765,10 +857,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           return;
         }
         if (result.proposedLiveSession) {
+          if (!(await permitted("owner", "start a live session"))) return;
           await postLiveSessionProposal(result.proposedLiveSession, msg.conversationId, msg.fromName, fx);
           return;
         }
         if (result.proposedNote) {
+          if (!(await permitted("admin", "save notes"))) return;
           const note = result.proposedNote;
           const projectName = note.project
             ? (projects.find((p) => p.path === note.project)?.name ?? note.project)
@@ -789,6 +883,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           return;
         }
         if (result.proposedSkill) {
+          if (!(await permitted("owner", "save skills"))) return;
           const skill = result.proposedSkill;
           const pending = deps.skillProposals.add({ skill, conversationId: msg.conversationId, proposedBy: msg.fromName });
           const activityId = await fx.postCard(deps.cards.skillProposalCard({
@@ -798,6 +893,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           return;
         }
         if (result.proposedTodo) {
+          if (!(await permitted("admin", "queue tasks"))) return;
           const todo = result.proposedTodo;
           const pending = deps.todoProposals.add({ todo, conversationId: msg.conversationId, proposedBy: msg.fromName });
           const activityId = await fx.postCard(deps.cards.todoProposalCard({
@@ -808,6 +904,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }
         const proposal = result.proposedDelegate;
         if (!proposal) return;
+        if (!(await permitted("admin", "run tasks"))) return;
         const choice = resolveCliModel(detected, { cli: proposal.cli, model: proposal.model }, modelMemory, deps.cliModels);
         if (!choice) {
           await fx.post(NO_CLI);
@@ -835,8 +932,21 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
 
     async onCardAction(action: CardAction, fx: BotEffects): Promise<void> {
       const { beanAction, proposalId, projectPath } = action.value;
+      // Checked before any claim(), so a refused tap leaves the card usable for someone who may.
+      const role = deps.roles.roleOf({ fromId: action.fromId, fromAltId: action.fromAltId, scopeId: action.scopeId });
+      const need = cardActionNeeds(beanAction);
+      if (!atLeast(role, need)) {
+        if (firstRefusal(`card:${action.fromId}:${proposalId ?? projectPath ?? beanAction}`)) {
+          await fx.post(need === "owner" ? ownerOnlyRefusal("confirm this", deps.roles) : cardRefusal(deps.roles));
+        }
+        return;
+      }
       if (beanAction === "cancel-run") {
-        if (!deps.runs.cancel(projectPath ?? "")) await fx.post("Nothing is running in that project.");
+        // An admin cancels only runs started from this conversation; the owner, any run.
+        const scope = role === "owner" ? undefined : action.conversationId;
+        if (!deps.runs.cancel(projectPath ?? "", scope)) {
+          await fx.post(scope ? "Nothing started from this conversation is running in that project." : "Nothing is running in that project.");
+        }
         return;
       }
       if (beanAction === "save-note" || beanAction === "cancel-note") {
@@ -914,7 +1024,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (v.model !== undefined) pending.proposal.model = v.model || undefined;
         pending.proposal.skillName = liveSkillNameOf(pending.proposal, v);
         if (v.steering === "open" || v.steering === "restricted") pending.proposal.steering = v.steering;
-        await startLiveSessionAction(pending, action.fromName, action.fromId ?? "", fx);
+        await startLiveSessionAction(pending, action.fromName, action.fromId, fx);
         return;
       }
       if (!proposalId) return;

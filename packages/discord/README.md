@@ -16,8 +16,11 @@ endpoint. Design: `docs/superpowers/specs/2026-07-10-discord-adapter-design.md`.
 3. **Your user id**: Discord settings → Advanced → enable Developer Mode, then right-click
    your name → "Copy User ID".
 4. **Config**: create `~/.bean/discord.json`:
-   `{ "botToken": "<token>", "allowedUserIds": ["<your user id>"], "ownerId": "<your user id>" }`
-   `ownerId` is who routine digests DM (no channel set); without it they're dropped (logged).
+   `{ "botToken": "<token>", "ownerId": "<your user id>", "ownerName": "<your name>" }`
+   `ownerId` is the owner (full powers; routine digests with no channel DM them). Everyone else
+   is a guest (chat only) unless the owner runs `add-admin @name` in a channel; `admins` and
+   `whoami` list roles. `"allowGuestDms": true` lets guests DM Bean (default off). A legacy
+   single-entry `allowedUserIds` is read as `ownerId`; several entries fail startup.
    Optional `"guildId": "<server id>"` registers slash commands to that one server instantly;
    without it they register globally (every server Bean is in, but ~1h first propagation).
 
