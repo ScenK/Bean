@@ -70,14 +70,21 @@ const readJson = async (file: string): Promise<unknown> => {
   try { return JSON.parse(await readFile(file, "utf8")); } catch { return undefined; }
 };
 
-/** Counts only: discord DMs every `allowedUserIds` entry; teams every known personal chat. */
+/** Counts only: DMs go to the configured `ownerId` alone (0 = none set / owner's chat unknown). */
 export async function sinkRecipients(dir: string): Promise<{ discord?: number; teams?: number }> {
-  const discord = (await readJson(join(dir, "discord.json"))) as { allowedUserIds?: unknown } | undefined;
-  const teams = (await readJson(join(dir, "teams-conversations.json"))) as Record<string, { conversation?: { conversationType?: string } }> | undefined;
+  const owner = (cfg: unknown): string | undefined => {
+    const id = (cfg as { ownerId?: unknown } | undefined)?.ownerId;
+    return typeof id === "string" && id ? id : undefined;
+  };
+  const discord = await readJson(join(dir, "discord.json"));
+  const teamsOwner = owner(await readJson(join(dir, "teams.json")));
+  type Ref = { conversation?: { conversationType?: string }; user?: { id?: string; aadObjectId?: string } };
+  const teams = (await readJson(join(dir, "teams-conversations.json"))) as Record<string, Ref> | undefined;
   return {
-    ...(Array.isArray(discord?.allowedUserIds) ? { discord: discord.allowedUserIds.filter((x) => typeof x === "string" && x).length } : {}),
+    ...(discord && typeof discord === "object" ? { discord: owner(discord) ? 1 : 0 } : {}),
     ...(teams && typeof teams === "object"
-      ? { teams: Object.values(teams).filter((r) => r?.conversation?.conversationType === "personal").length }
+      ? { teams: teamsOwner ? Object.values(teams).filter((r) => r?.conversation?.conversationType === "personal" &&
+        (r.user?.id === teamsOwner || r.user?.aadObjectId === teamsOwner)).length : 0 }
       : {}),
   };
 }

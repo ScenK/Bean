@@ -11,6 +11,19 @@ export interface TeamsConfig {
   /** Optional dev-tunnel name. When set, the server logs in to devtunnel as the bot's own
    * service principal and hosts this tunnel for as long as it runs (see devtunnel.ts). */
   devtunnel?: string;
+  /** The owner's Teams user id (`29:...`) or AAD object id. Outbox DMs (routine digests with no
+   * channel, interrupted-run notices) go only to this user's 1:1 chat; unset = dropped. */
+  ownerId?: string;
+}
+
+type DmRef = { conversation?: { conversationType?: string }; user?: { id?: string; aadObjectId?: string } };
+
+/** Outbox DM targets: the owner's personal conversations only — never a coworker's who once
+ * DMed the bot. No owner configured = no targets. */
+export function ownerDmRefs<R extends DmRef>(refs: Record<string, R>, ownerId: string | undefined): R[] {
+  if (!ownerId) return [];
+  return Object.values(refs).filter((r) =>
+    r.conversation?.conversationType === "personal" && (r.user?.id === ownerId || r.user?.aadObjectId === ownerId));
 }
 
 export function teamsConfigFile(dir: string): string {
@@ -43,5 +56,6 @@ export async function loadTeamsConfig(file: string): Promise<TeamsConfig> {
     tenantId: parsed.tenantId,
     port: parsed.port ?? 3978,
     ...(parsed.devtunnel ? { devtunnel: parsed.devtunnel } : {}),
+    ...(typeof parsed.ownerId === "string" && parsed.ownerId ? { ownerId: parsed.ownerId } : {}),
   };
 }

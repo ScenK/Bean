@@ -22,7 +22,7 @@ import {
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
 import { startDevtunnel } from "./devtunnel.js";
-import { loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
+import { loadTeamsConfig, ownerDmRefs, teamsConfigFile } from "./teams-config.js";
 
 const dir = beanDir();
 const builtinDir = process.env.BEAN_BUILTIN_DIR || projectBeanDir();
@@ -388,18 +388,21 @@ setInterval(() => {
       // version instead. Absent for plain messages (routine digests), which already are the
       // display text.
       const text = msg.displayBody ?? (msg.title ? `**${msg.title}**\n\n${msg.body}` : msg.body);
-      // No channel = DM the user directly: every personal (1:1) conversation we've seen so
-      // far (the default delivery mode). A specific channel targets one known conversation.
+      // No channel = DM the owner directly: their personal (1:1) conversation(s) only, never
+      // another user's who once DMed the bot (the default delivery mode). A specific channel
+      // targets one known conversation.
       // A channel target resolves via its bare id but is sent to exactly the id given: bare =
       // new post in the channel, `;messageid=` = reply in that thread (e.g. an interrupted run).
       const known = msg.channel ? conversationRefs[msg.channel] ?? conversationRefs[bareChannelId(msg.channel)] : undefined;
       const targets = msg.channel
         ? (known?.conversation ? [{ ...known, conversation: { ...known.conversation, id: msg.channel } }] : [])
-        : Object.values(conversationRefs).filter((r) => r.conversation?.conversationType === "personal");
+        : ownerDmRefs(conversationRefs, teamsConfig.ownerId);
       if (targets.length === 0) {
         console.error(msg.channel
           ? `outbox: unknown teams conversation ${msg.channel} — message dropped (mention the bot there once first)`
-          : "outbox: no known personal Teams conversation yet — message dropped (DM the bot once first)");
+          : teamsConfig.ownerId
+            ? "outbox: no known personal Teams conversation with the owner yet — message dropped (DM the bot once first)"
+            : "outbox: no ownerId in teams.json — DM message dropped (set it to your Teams user id or AAD object id)");
         continue;
       }
       let delivered = false;

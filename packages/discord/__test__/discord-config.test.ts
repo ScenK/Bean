@@ -51,3 +51,10 @@ test("empty botToken or empty allowlist throws (would ignore everyone)", async (
   await expect(loadDiscordConfig(await write({ botToken: "t", allowedUserIds: [] })))
     .rejects.toThrow(/needs botToken and a non-empty allowedUserIds/);
 });
+
+test("optional ownerId is parsed when present and omitted otherwise", async () => {
+  expect(await loadDiscordConfig(await write({ botToken: "t", allowedUserIds: ["1"], ownerId: "1" })))
+    .toEqual({ botToken: "t", allowedUserIds: ["1"], ownerId: "1" });
+  expect(await loadDiscordConfig(await write({ botToken: "t", allowedUserIds: ["1"], ownerId: "" })))
+    .toEqual({ botToken: "t", allowedUserIds: ["1"] });
+});

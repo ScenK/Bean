@@ -8,8 +8,9 @@ pre-authorized by saving the routine), `outbox.ts`. App: `routine-scheduler.ts` 
 skip-if-running, missed-marking, **no catch-up** — deliberate). Chatops digests go through
 `~/.bean/outbox/*.json`, polled by the Teams/Discord bot servers (Teams needs a conversation
 seen once — refs persisted in `~/.bean/teams-conversations.json`). A chatops sink's `channel`
-is **optional** — absent/empty = DM the user directly (the default: discord DMs every
-`allowedUserIds` entry, teams proactively messages every known `conversationType === "personal"`
-conversation); present = a specific discord channel id or teams conversation id instead. The
+is **optional** — absent/empty = DM the **owner** only (`ownerId` in `discord.json` /
+`teams.json`; teams matches the personal ref's `user.id`/`aadObjectId`; no `ownerId` = dropped
+and logged — never fan out to every allow-listed user / personal chat, coworkers would get the
+owner's digests, #253); present = a specific discord channel id or teams conversation id instead. The
 `save_note` act-now tool is routine-only; the chat window keeps confirm-first `propose_note`.
 Spec: `docs/superpowers/specs/2026-07-12-routines-design.md`.
