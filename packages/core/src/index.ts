@@ -62,6 +62,7 @@ export type {
   Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord, RunStatus, StepGate, StepKind,
 } from "./routine-store.js";
 export * from "./command-step.js";
+export * from "./routine-graph.js";
 export { runRoutine, unfence, withResumeFooter, ROUTINE_STEP_TIMEOUT_MS, RunBusyError } from "./routine-runner.js";
 export type { CommandStepRequest, DelegateStepRequest, DelegateStepResult, RoutineRunnerDeps, RoutineRunResult, StepInfo, StepResult } from "./routine-runner.js";
 export { claimOutbox, enqueueOutbox } from "./outbox.js";

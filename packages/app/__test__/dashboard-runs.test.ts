@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { flattenRuns, groupRuns, reviewRuns, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
+import { attentionOf, executedPath, flattenRuns, groupRuns, reviewRuns, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
 import type { RoutineStateView } from "../src/ipc.js";
 
 const record = (startedAt: string, finishedAt: string, ok: boolean[]) => ({
@@ -134,4 +134,27 @@ describe("dashboard runs", () => {
     expect(reviewRuns(stale, [runs[0]!.id], runs)).toEqual([runs[0]!.id]);
   });
 
+});
+
+describe("gated runs", () => {
+  const steps = [
+    { kind: "command" as const, id: "test", round: 1, verdict: "FAIL", ok: true, summary: "1 failing" },
+    { kind: "delegate" as const, id: "implement", round: 2, cli: "codex" as const, ok: true, summary: "fixed" },
+    { kind: "command" as const, id: "test", round: 2, verdict: "FAIL", ok: true, summary: "still failing" },
+  ];
+
+  test("executedPath marks an ok-but-FAIL gate as ✗ and tags repeated rounds", () => {
+    expect(executedPath({ steps })).toBe("test ✗ → implement r2 ✓ → test r2 ✗");
+  });
+
+  test("attentionOf names the gate that stopped the run and its verdict; ok runs have none", () => {
+    expect(attentionOf({ status: "needs-attention", steps })).toEqual({ at: "test r2", verdict: "FAIL", summary: "still failing" });
+    expect(attentionOf({ status: "ok", steps })).toBeUndefined();
+  });
+
+  test("groupRuns counts a needs-attention run even when no step failed", () => {
+    const [day] = groupRuns([{ routine: "dev", id: "dev@1", startedAt: "2026-10-01T10:00:00Z", finishedAt: "2026-10-01T10:05:00Z", status: "needs-attention", digest: "", steps }]);
+    expect(day!.buckets[0]!.attention).toBe(1);
+    expect(day!.buckets[0]!.needs).toBe(0);
+  });
 });

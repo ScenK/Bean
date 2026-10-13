@@ -8,7 +8,7 @@ import type {
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
 import type { TaskJob } from "./task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
-import type { RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch } from "./ipc.js";
+import type { StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch } from "./ipc.js";
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { WatchCheckResult } from "./routine-scheduler.js";
 
@@ -100,6 +100,7 @@ contextBridge.exposeInMainWorld("bean", {
   routinesSave: (routine: Routine): Promise<void> => ipcRenderer.invoke(IPC.routinesSave, routine),
   routinesDelete: (name: string): Promise<void> => ipcRenderer.invoke(IPC.routinesDelete, name),
   routinesState: (): Promise<Record<string, RoutineStateView>> => ipcRenderer.invoke(IPC.routinesState),
+  routinesAttempts: (runId: string): Promise<StepAttemptView[]> => ipcRenderer.invoke(IPC.routinesAttempts, runId),
   routinesRunNow: (name: string): Promise<{ started: boolean; reason?: string }> => ipcRenderer.invoke(IPC.routinesRunNow, name),
   routinesCheckNow: (name: string): Promise<WatchCheckResult> => ipcRenderer.invoke(IPC.routinesCheckNow, name),
   routinesPreviewWatch: (watch: RoutineWatch): Promise<WatchItem[]> => ipcRenderer.invoke(IPC.routinesPreviewWatch, watch),

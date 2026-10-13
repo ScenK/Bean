@@ -13,7 +13,7 @@ import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, M
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
-  isValidSessionId, recordDelegateSession, resumeCommand, withResumeFooter, recordStepAttempt, pruneStepAttempts,
+  isValidSessionId, recordDelegateSession, resumeCommand, withResumeFooter, recordStepAttempt, pruneStepAttempts, listStepAttempts, DEFAULT_GATE_ROUNDS, CLI_NAMES,
   modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
@@ -777,7 +777,11 @@ app.whenReady().then(async () => {
         result = await runRoutine(routine, {
           onStep: (info) => {
             at = info;
-            const tags = [steps[info.index] ?? "", ...(info.round && info.round > 1 ? [`round ${info.round}`] : []), ...(info.cli ? [info.cli] : [])];
+            // A looping gate shows its cap: `review · round 2/3 · codex`.
+            const onFail = routine.steps[info.index]?.gate?.onFail;
+            const loopTarget = typeof onFail === "object" ? routine.steps.findIndex((s) => s.id === onFail.goto) : -1;
+            const cap = typeof onFail === "object" && loopTarget >= 0 && loopTarget < info.index ? `/${onFail.maxRounds ?? DEFAULT_GATE_ROUNDS}` : "";
+            const tags = [steps[info.index] ?? "", ...(info.round && info.round > 1 ? [`round ${info.round}${cap}`] : []), ...(info.cli ? [info.cli] : [])];
             taskStatus.upsert(id, { step: info.index, line: tags.filter(Boolean).join(" · ") });
           },
           chat: runtime.converse,
@@ -1048,6 +1052,12 @@ app.whenReady().then(async () => {
           clearWatch(dbFile(dir), name);
           pruneStepAttempts(dbFile(dir), name, []);
         },
+        attempts: (runId) => listStepAttempts(dbFile(dir), runId).map((a) => ({
+          stepIndex: a.stepIndex, round: a.round, kind: a.kind, ok: a.ok, output: a.output,
+          ...(a.stepId ? { stepId: a.stepId } : {}), ...(a.cli ? { cli: a.cli } : {}), ...(a.verdict ? { verdict: a.verdict } : {}),
+          ...(a.cli && a.sessionId && isValidSessionId(a.sessionId) && CLI_NAMES.includes(a.cli as CliName)
+            ? { resume: resumeCommand(a.cli as CliName, a.sessionId) } : {}),
+        })),
         watch: {
           isSeeded: (r) => (r.watch ? isWatchSeeded(dbFile(dir), r.name, watchSourceKey(r.watch)) : true),
           queueCounts: async (name) => {

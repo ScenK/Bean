@@ -6,10 +6,10 @@ import { Markdown } from "../../shared/Markdown.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import {
-  flattenRuns, groupRuns, reviewRuns, splitSteps, stepLabel, unreadRuns,
+  attentionOf, executedPath, flattenRuns, groupRuns, pathName, reviewRuns, splitSteps, stepLabel, stepPassed, unreadRuns,
   type DashRun, type DashStep, type RunBucket,
 } from "./runs.js";
-import type { RoutineStateView } from "../../../ipc.js";
+import type { RoutineStateView, StepAttemptView } from "../../../ipc.js";
 import { watchDashboardText } from "../routines/watch-status.js";
 
 // Renderer-only view prefs (see .memory/convention-renderer-view-prefs-in-localstorage.md):
@@ -94,6 +94,9 @@ export function DashboardPanel() {
   const [flipped, setFlipped] = useState<string[]>(() => readList(FLIPPED_KEY));
   const [rerunning, setRerunning] = useState(false);
   const [notice, setNotice] = useState("");
+  // Full step outputs live in bean.db, not the run record — fetched when a run's steps are opened.
+  const [attempts, setAttempts] = useState<Record<string, StepAttemptView[]>>({});
+  const [copied, setCopied] = useState("");
 
   const refresh = async (): Promise<void> => {
     const [list, st] = await Promise.all([window.bean.routinesList(), window.bean.routinesState()]);
@@ -124,7 +127,7 @@ export function DashboardPanel() {
   useEffect(() => {
     if (buckets[0] && !buckets.some((b) => b.key === selectedKey)) setSelectedKey(buckets[0].key);
   }, [buckets, selectedKey]);
-  useEffect(() => { setOpenResolved([]); setFlippedDigests([]); setNotice(""); }, [selectedKey]);
+  useEffect(() => { setOpenResolved([]); setFlippedDigests([]); setNotice(""); setAttempts({}); }, [selectedKey]);
 
   const bucket: RunBucket | undefined = buckets.find((b) => b.key === selectedKey);
   const routine = routines.find((r) => r.name === bucket?.routine);
@@ -138,6 +141,7 @@ export function DashboardPanel() {
   );
   const unreadHere = (bucket?.runs ?? []).filter((r) => unreadIds.has(r.id)).length;
   const needsTotal = runViews.reduce((n, v) => n + v.needs.length, 0);
+  const attentionTotal = runViews.filter((v) => v.run.status === "needs-attention").length;
   const resolvedTotal = runViews.reduce((n, v) => n + v.resolved.length, 0);
   const isNewest = bucket !== undefined && buckets[0]?.key === bucket.key;
 
@@ -167,6 +171,19 @@ export function DashboardPanel() {
         `${step.summary}\n\nWhat happened, and what should I do about it?`,
       `Routine: ${run.routine}`,
     );
+  };
+
+  const toggleAttempts = async (runId: string): Promise<void> => {
+    if (attempts[runId]) {
+      setAttempts(({ [runId]: _drop, ...rest }) => rest);
+      return;
+    }
+    const list = await window.bean.routinesAttempts(runId).catch(() => []);
+    setAttempts((prev) => ({ ...prev, [runId]: list }));
+  };
+
+  const copyResume = (command: string): void => {
+    navigator.clipboard.writeText(command).then(() => setCopied(command), () => {});
   };
 
   const rerun = async (): Promise<void> => {
@@ -199,7 +216,7 @@ export function DashboardPanel() {
           setSelectedKey(b.key);
         }}
       >
-        <span class={`bean-dash-dot bean-dash-dot--${b.needs > 0 ? "failed" : "ok"}`} />
+        <span class={`bean-dash-dot bean-dash-dot--${b.needs > 0 ? "failed" : b.attention > 0 ? "needs-attention" : "ok"}`} />
         <div class="bean-skills-row-main">
           <div class="bean-skills-row-name">{b.routine}</div>
           <div class="bean-dash-row-sub">
@@ -207,7 +224,7 @@ export function DashboardPanel() {
             {b.runs.length > 1 ? ` → ${clock(b.runs[0]!.startedAt)}` : ""}
           </div>
         </div>
-        {b.needs > 0 ? <span class="bean-dash-row-badge">{b.needs}</span> : null}
+        {b.needs + b.attention > 0 ? <span class="bean-dash-row-badge">{b.needs + b.attention}</span> : null}
         {unreadHere ? <span class="bean-dash-row-unread" title="Not reviewed yet" /> : null}
       </div>
     );
@@ -233,6 +250,8 @@ export function DashboardPanel() {
   // to be the day's first. `firstNeed` is where this run's cards continue the day's count.
   const runSection = (view: (typeof runViews)[number], index: number, firstNeed: number) => {
     const { run, needs, resolved } = view;
+    const attention = attentionOf(run);
+    const runAttempts = run.id ? attempts[run.id] : undefined;
     const ordinal = runViews.length - index;
     const resolvedOpen = openResolved.includes(run.id);
     const digestOpen = (index === 0) !== flippedDigests.includes(run.id);
@@ -243,8 +262,28 @@ export function DashboardPanel() {
           <span class="bean-dash-meta">
             {plural(run.steps.length, "step")} · {run.status === "ok" ? "healthy" : run.status === "needs-attention" ? "needs attention" : "failed"}
           </span>
+          {run.steps.length > 0 ? <span class="bean-dash-path">{executedPath(run)}</span> : null}
         </div>
       )),
+
+      ...(attention
+        ? [spineRow(`${run.id}-attention`, "gate", "call", (
+            <div class="bean-dash-card bean-dash-card--attention">
+              <div class="bean-dash-card-tags">
+                <span class="bean-dash-tag">NEEDS ATTENTION</span>
+                <span class="bean-dash-meta">{run.routine} · run {ordinal}</span>
+              </div>
+              <div class="bean-dash-card-title">Stopped at {attention.at}{attention.verdict ? ` · VERDICT: ${attention.verdict}` : ""}</div>
+              {attention.summary ? <div class="bean-dash-card-text">{attention.summary}</div> : null}
+              <div class="bean-dash-card-actions">
+                <button type="button" class="bean-btn" disabled={rerunning} onClick={() => void rerun()}>
+                  {rerunning ? "Starting…" : "Retry"}
+                </button>
+                {notice ? <span class="bean-dash-notice">{notice}</span> : null}
+              </div>
+            </div>
+          ))]
+        : []),
 
       ...(resolved.length > 0
         ? [spineRow(`${run.id}-resolved`, "", "plain", (
@@ -265,7 +304,10 @@ export function DashboardPanel() {
                 <div class="bean-dash-resolved-list">
                   {resolved.map((s) => (
                     <div key={s.index} class="bean-dash-resolved-item">
-                      <span class="bean-dash-meta">{stepLabel(s)} · {s.kind}</span>
+                      <span class="bean-dash-meta">
+                        {s.id ? pathName(s) : stepLabel(s)} · {s.kind}{s.cli ? ` · ${s.cli}` : ""}
+                        {s.verdict ? ` · ${stepPassed(s) ? "✓" : "✗"} ${s.verdict}` : ""}
+                      </span>
                       <span>{s.summary}</span>
                     </div>
                   ))}
@@ -299,6 +341,42 @@ export function DashboardPanel() {
           </div>
         )),
       ),
+
+      ...(run.id
+        ? [spineRow(`${run.id}-steps`, "", "plain", (
+            <div class="bean-dash-digest">
+              <button
+                type="button"
+                class="bean-dash-digest-head"
+                aria-expanded={Boolean(runAttempts)}
+                onClick={() => void toggleAttempts(run.id!)}
+              >
+                <span class="bean-field-label">FULL OUTPUT · RUN {ordinal}</span>
+                <span class="bean-dash-resolved-toggle">{runAttempts ? "Hide ▴" : "Open ▾"}</span>
+              </button>
+              {runAttempts ? (
+                runAttempts.length === 0 ? <div class="bean-dash-meta">No step output was kept for this run.</div>
+                : runAttempts.map((a, k) => (
+                  <div key={k} class="bean-dash-attempt">
+                    <span class="bean-dash-meta">
+                      {pathName({ kind: a.kind, id: a.stepId ?? `step-${a.stepIndex + 1}`, round: a.round })} · {a.kind}
+                      {a.cli ? ` · ${a.cli}` : ""} · {stepPassed(a) ? "✓" : "✗"}{a.verdict ? ` ${a.verdict}` : ""}
+                    </span>
+                    <pre class="bean-dash-attempt-out">{a.output}</pre>
+                    {a.resume ? (
+                      <div class="bean-dash-resume">
+                        <code>{a.resume}</code>
+                        <button type="button" class="bean-btn bean-btn--ghost" onClick={() => copyResume(a.resume!)}>
+                          {copied === a.resume ? "Copied" : "Copy"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ))
+              ) : null}
+            </div>
+          ))]
+        : []),
 
       ...(run.digest
         ? [spineRow(`${run.id}-digest`, "", "plain", (
@@ -380,8 +458,8 @@ export function DashboardPanel() {
                 <h2 class="bean-dash-title">{dayLabel(bucket.date, now)} · {bucket.routine}</h2>
                 <div class="bean-dash-header-sub">
                   {plural(bucket.runs.length, "run")}{" · "}
-                  {needsTotal > 0
-                    ? <b class="bean-dash-accent">{needsTotal} need{needsTotal === 1 ? "s" : ""} your call</b>
+                  {needsTotal + attentionTotal > 0
+                    ? <b class="bean-dash-accent">{needsTotal + attentionTotal} need{needsTotal + attentionTotal === 1 ? "s" : ""} your call</b>
                     : "nothing needs you"}
                   {" · "}{resolvedTotal} resolved without you
                 </div>

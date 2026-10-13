@@ -43,3 +43,14 @@ the output text; ungated non-zero = failed step, gated = FAIL routed by the gate
 tail (capped 16k) as feedback; timeout = hard step error. Todo runs get `BEAN_TODO_ID`/`BEAN_TODO_TEXT`
 env. No run reservation (a check reads the tree). Not creatable from chatops — same trust as a
 watch command.
+
+**Authoring + inspecting flows (#260).** The step editor writes gates/next without JSON: a gate
+chip (Keep going / Stop / Go to → step N, + a max-rounds chip only for a backward target), an
+"end run here" toggle, and rail markers (■ stop, ↩N loop, ↪N branch, →N/end next). Edge rules
+live once in node-free `@bean/core/routine-graph` (`describeEdgeError`, `stepEdgeProblems`) —
+the save validator and the editor's inline per-step warnings share them, so a reorder/delete
+that breaks an edge is flagged before save with the save-time wording. Picking a goto runs
+`withStepIds` first (edges need ids). The builder brief may emit `gate`/`next`/`command`/`cli`;
+`parseBrief` drops a bad edge, never the step. The avatar bubble shows `round N/cap` for a
+looping gate. Dashboard side: see [project-dashboard-panel](project-dashboard-panel.md).
+

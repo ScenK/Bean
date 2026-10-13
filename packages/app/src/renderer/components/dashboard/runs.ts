@@ -19,7 +19,14 @@ export interface DashStep {
   summary: string;
   /** The todo this pass ran for, when the runner labelled the output `[todo: ...] `. */
   todo?: string;
+  /** Gated routines: the step's stable id, its round (executions so far this pass), harness and verdict. */
+  id?: string;
+  round?: number;
+  cli?: string;
+  verdict?: string;
 }
+
+type RecordedStep = RunRecord["steps"][number];
 
 const TODO_LABEL = /^\[todo: ([^\]]*)\] ?/;
 const TODO_OPEN = "[todo: ";
@@ -32,13 +39,38 @@ const TODO_OPEN = "[todo: ";
  * "step N", which would be a wrong claim. A `]` inside the todo text itself only truncates the
  * displayed name (cosmetic): matching to the LAST `]` would misread the far more common case
  * of a `]` in the step's own output. */
-export function parseStep(step: { kind: StepKind; ok: boolean; summary: string }, index: number): DashStep {
+export function parseStep(step: { kind: StepKind; ok: boolean; summary: string } & Partial<RecordedStep>, index: number): DashStep {
+  const extra = {
+    ...(step.id ? { id: step.id } : {}), ...(step.round ? { round: step.round } : {}),
+    ...(step.cli ? { cli: step.cli } : {}), ...(step.verdict ? { verdict: step.verdict } : {}),
+  };
   const m = TODO_LABEL.exec(step.summary);
-  if (m) return { index, kind: step.kind, ok: step.ok, summary: step.summary.slice(m[0].length), todo: m[1] };
+  if (m) return { index, kind: step.kind, ok: step.ok, summary: step.summary.slice(m[0].length), todo: m[1], ...extra };
   if (step.summary.startsWith(TODO_OPEN)) {
-    return { index, kind: step.kind, ok: step.ok, summary: step.summary.slice(TODO_OPEN.length), todo: "" };
+    return { index, kind: step.kind, ok: step.ok, summary: step.summary.slice(TODO_OPEN.length), todo: "", ...extra };
   }
-  return { index, kind: step.kind, ok: step.ok, summary: step.summary };
+  return { index, kind: step.kind, ok: step.ok, summary: step.summary, ...extra };
+}
+
+/** A gated step can finish `ok` with a FAIL verdict (the gate routed it) — that's not a pass. */
+export const stepPassed = (step: { ok: boolean; verdict?: string }): boolean => step.ok && step.verdict !== "FAIL";
+
+/** Name of an executed step: its id, plus the round when it ran more than once. */
+export const pathName = (step: { kind: StepKind; id?: string; round?: number }): string =>
+  `${step.id ?? step.kind}${step.round && step.round > 1 ? ` r${step.round}` : ""}`;
+
+/** The route a run actually took, e.g. `lint ✓ → test ✗ → implement r2 ✓ → test r2 ✓`. */
+export const executedPath = (run: Pick<RunRecord, "steps">): string =>
+  run.steps.map((s) => `${pathName(s)} ${stepPassed(s) ? "✓" : "✗"}`).join(" → ");
+
+/** A gate stopped (or exhausted) this run: where it stopped and the verdict it stopped on. The
+ * last executed step is the gate that decided; the runner records nothing after it. */
+export function attentionOf(run: Pick<RunRecord, "status" | "steps">): { at: string; verdict?: string; summary: string } | undefined {
+  if (run.status !== "needs-attention") return undefined;
+  const last = run.steps.at(-1);
+  if (!last) return { at: "an unknown step", summary: "" };
+  const step = parseStep(last, run.steps.length - 1);
+  return { at: pathName(step), summary: step.summary, ...(step.verdict ? { verdict: step.verdict } : {}) };
 }
 
 /** What to call a step in the UI. A todo-labelled pass can't honestly claim "step N". */
@@ -93,6 +125,8 @@ export interface RunBucket {
   runs: DashRun[];
   /** Failed steps across the whole bucket — what the day still needs from you. */
   needs: number;
+  /** Runs a gate stopped (status needs-attention). */
+  attention: number;
 }
 
 export interface DayGroup {
@@ -128,13 +162,14 @@ export function groupRuns(runs: DashRun[]): DayGroup[] {
     const key = bucketKey(date, run.routine);
     let bucket = byBucket.get(key);
     if (!bucket) {
-      bucket = { key, routine: run.routine, date, runs: [], needs: 0 };
+      bucket = { key, routine: run.routine, date, runs: [], needs: 0, attention: 0 };
       byBucket.set(key, bucket);
       day.buckets.push(bucket);
     }
     bucket.runs.push(run);
     const failed = run.steps.filter((step) => !step.ok).length;
     bucket.needs += failed;
+    if (run.status === "needs-attention") bucket.attention++;
     day.runCount++;
     day.needs += failed;
   }

@@ -1975,8 +1975,7 @@ button, input, textarea, select, a {
   border-radius: 2px;
 }
 .bean-dash-health-bar--ok { background: var(--bean-orb-check-ink); }
-.bean-dash-health-bar--failed,
-.bean-dash-health-bar--needs-attention { background: var(--bean-error); }
+.bean-dash-health-bar--failed { background: var(--bean-error); }
 .bean-dash-health-text { font-size: 12px; line-height: 1.5; color: var(--bean-text-dim); }
 .bean-dash-link {
   align-self: flex-start;
@@ -2494,3 +2493,24 @@ button, input, textarea, select, a {
 .bean-rb-dest-on::before { background: var(--bean-accent-text); }
 .bean-rb-dest-off { color: var(--bean-text-dim); }
 .bean-rb-dest-off::before { border: 1px solid var(--bean-text-dim); box-sizing: border-box; }
+
+/* Step graph edges (#260): rail markers under the step number and the gate chip. */
+.bean-routines-step-edge { font: 700 11px ui-monospace, monospace; line-height: 1; color: var(--bean-accent-text); }
+.bean-routines-gate-chip { color: var(--bean-accent-text); border-color: var(--bean-accent-text); }
+
+/* Dashboard: executed path, needs-attention tone, per-attempt output. */
+.bean-dash-dot--needs-attention,
+.bean-dash-health-bar--needs-attention { background: var(--bean-accent-text); }
+.bean-dash-path { flex-basis: 100%; font: 500 11.5px ui-monospace, monospace; color: var(--bean-text-dim); overflow-wrap: anywhere; }
+.bean-dash-card--attention { border-color: var(--bean-accent-text); }
+.bean-dash-attempt { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid var(--bean-border); }
+.bean-dash-attempt-out {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  font: 11.5px/1.45 ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--bean-text);
+}
+.bean-dash-resume { display: flex; align-items: center; gap: 8px; font: 11.5px ui-monospace, monospace; color: var(--bean-text-dim); }

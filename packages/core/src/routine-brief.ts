@@ -2,6 +2,7 @@ import type { ConvoMsg } from "./converse.js";
 import { CLI_NAMES, type CliName } from "./launcher.js";
 import { describeRoutineError, STEP_ID_RE, type Routine, type RoutineChatopsSink, type RoutineSinks, type RoutineStep, type RoutineWatch } from "./routine-store.js";
 import { unfence } from "./routine-runner.js";
+import { MAX_GATE_ROUNDS, stepEdgeProblems } from "./routine-graph.js";
 
 /** The editable brief Bean drafts from one sentence (screen 2a). It covers the whole saved
  * routine, so nothing gets filled in later; `missing` is the only thing that changes shape. */
@@ -49,7 +50,8 @@ export function briefMessages(sentence: string, ctx: BriefContext, previous?: Ro
  "via": "the CLI a command watch would use, e.g. gh",
  "everyMinutes": 15,
  "notifyOnly": true | false,
- "steps": [{"kind": "delegate", "skill": "<skill name>", "project": "<project path>", "instruction": "..."} | {"kind": "chat", "skill": "<optional>", "instruction": "..."}],
+ "steps": [{"kind": "delegate", "skill": "<skill name>", "project": "<project path>", "cli"?: "claude" | "codex" | "opencode", "instruction": "..."} | {"kind": "chat", "skill": "<optional>", "instruction": "..."} | {"kind": "command", "command": "shell check, e.g. pnpm test", "project"?: "<project path>"}],
+   every step may also carry "id": "kebab-case", "gate": {"onFail": "stop" | {"goto": "<step id>", "maxRounds"?: 1-5}}, "next": "<later step id>" | "end",
  "sinks": {"chatops": [{"transport": "discord" | "teams", "channel"?: "id"}], "note": true, "notify": true},
  "missing": [{"field": "steps.0.project" | "sinks" | "source" | "cron" | ..., "question": "plain question"}]}`,
     "Rules:",
@@ -57,7 +59,9 @@ export function briefMessages(sentence: string, ctx: BriefContext, previous?: Ro
     "- For a YouTube handle like @name use source \"https://www.youtube.com/@name\" and sourceKind \"feed\".",
     "- notifyOnly = true when the user only wants to be told (\"ping me\", \"let me know\"); then steps is []. Otherwise one step per thing Bean should do to each new item; delegate for code/repo/review work, chat for summarising/writing.",
     "- everyMinutes: 5 for work queues (PRs, tickets), 15 for feeds, unless the user says otherwise.",
-    "- Keep each existing step's \"id\", \"cli\" and \"model\" exactly as in the current brief; never invent them for new steps.",
+    "- Keep each existing step's \"id\", \"cli\" and \"model\" exactly as in the current brief; never invent a model, and set cli only when the user names that coding agent.",
+    "- command steps: a deterministic shell check (tests, lint, build) — exit 0 passes. Use one only when the user describes a check a command can run.",
+    "- Gates: when the user says to stop, loop back, or branch on a step's result, give that step a gate. \"stop if it fails\" = {\"onFail\": \"stop\"}; \"loop back to X up to N times\" = {\"onFail\": {\"goto\": \"<X's id>\", \"maxRounds\": N}} (an earlier step); a goto to a later step is a branch. \"next\": \"end\" ends the run after that step on success. Give a step an id only when an edge points at it, and point edges only at ids in this brief. No gates unless the user asked for that control flow.",
     "- Pick a step skill only from the skill list; for a delegate step set project only when the user named one from the project list.",
     "- Destinations: DM on Discord/Teams = a chatops sink with no channel; set channel only when the user gives a specific channel/conversation id. Only include sinks the user asked for; if none, ask in missing.",
     "- missing: only what the sentence truly leaves open. Leave a field out rather than invent it.",
@@ -92,16 +96,28 @@ function cleanStep(v: unknown, ctx: BriefContext): RoutineStep | undefined {
   // step, and the editor already warns about it.
   const id = str(s.id) && STEP_ID_RE.test(s.id) ? { id: s.id } : {};
   const project = str(s.project) && ctx.projects.some((p) => p.path === s.project) ? s.project : undefined;
-  // Refining keeps an existing command step a command (the user saw it in the brief).
+  const edges = cleanEdges(s);
   if (s.kind === "command" && str(s.command) && s.command.trim()) {
-    return { kind: "command", ...id, command: s.command.trim(), ...(project ? { project } : {}) };
+    return { kind: "command", ...id, command: s.command.trim(), ...(project ? { project } : {}), ...edges };
   }
   if (s.kind === "delegate") {
     const cli = CLI_NAMES.find((c) => c === s.cli);
     const pinned = cli ? { cli, ...(str(s.model) && s.model ? { model: s.model } : {}) } : {};
-    return { kind: "delegate", ...id, skill: skill ?? "", ...(project ? { project } : {}), ...pinned, instruction };
+    return { kind: "delegate", ...id, skill: skill ?? "", ...(project ? { project } : {}), ...pinned, instruction, ...edges };
   }
-  return { kind: "chat", ...id, ...(skill ? { skill } : {}), instruction };
+  return { kind: "chat", ...id, ...(skill ? { skill } : {}), instruction, ...edges };
+}
+
+/** Shape-only: whether the targets exist and point the right way is checked once every step's
+ * id is known (parseBrief drops a bad edge rather than the step). */
+function cleanEdges(s: Record<string, unknown>): Pick<RoutineStep, "gate" | "next"> {
+  const next = str(s.next) && (s.next === "end" || STEP_ID_RE.test(s.next)) ? { next: s.next } : {};
+  const onFail = (s.gate as { onFail?: unknown } | null | undefined)?.onFail;
+  if (onFail === "stop") return { ...next, gate: { onFail: "stop" } };
+  const { goto, maxRounds } = (typeof onFail === "object" && onFail !== null ? onFail : {}) as { goto?: unknown; maxRounds?: unknown };
+  if (!str(goto) || !STEP_ID_RE.test(goto)) return next;
+  const rounds = typeof maxRounds === "number" && Number.isInteger(maxRounds) ? { maxRounds: Math.min(Math.max(maxRounds, 1), MAX_GATE_ROUNDS) } : {};
+  return { ...next, gate: { onFail: { goto, ...rounds } } };
 }
 
 function cleanSinks(v: unknown): RoutineSinks {
@@ -144,6 +160,12 @@ export function parseBrief(raw: string, ctx: BriefContext): RoutineBrief {
       const { id: _dup, ...rest } = s; // a repeated id would fail validation — the editor re-assigns one
       return rest as RoutineStep;
     });
+  // A bad edge (missing target, backward next, rounds on a branch) is dropped, never the step.
+  stepEdgeProblems(steps).forEach((problem, i) => {
+    if (!problem) return;
+    const { gate: _g, next: _n, ...rest } = steps[i]!;
+    steps[i] = rest as RoutineStep;
+  });
   const minutes = typeof b.everyMinutes === "number" && Number.isInteger(b.everyMinutes) && b.everyMinutes >= 1 ? b.everyMinutes : undefined;
   const source = str(b.source) && b.source.trim() ? b.source.trim() : undefined;
   const sourceKind = b.sourceKind === "feed" || b.sourceKind === "command" ? b.sourceKind
