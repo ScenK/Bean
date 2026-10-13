@@ -73,6 +73,21 @@ export const ROUTINE_EXAMPLES: RoutineExample[] = [
       sinks: { notify: true },
     },
   },
+  {
+    key: "sdlc-retro",
+    label: "SDLC retro",
+    blurb: "weekly: read dev-loop's recent runs → draft skill fixes for you to review",
+    routine: {
+      name: "sdlc-retro",
+      description: "Read the dev loop's recent runs and draft skill improvements (never applies them)",
+      enabled: false,
+      cron: "0 9 * * 1",
+      steps: [
+        { kind: "chat", id: "retro", skill: "retro", instruction: 'Review the recent runs of the routine "dev-loop" and draft skill improvements.' },
+      ],
+      sinks: { notify: true },
+    },
+  },
 ];
 
 /** A fresh copy of an example, renamed `<name>-2`, `-3`, … when the name is taken — saving

@@ -13,7 +13,7 @@ import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, M
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
-  isValidSessionId, recordDelegateSession, resumeCommand, withResumeFooter, recordStepAttempt, pruneStepAttempts, listStepAttempts, DEFAULT_GATE_ROUNDS, CLI_NAMES,
+  isValidSessionId, recordDelegateSession, resumeCommand, withResumeFooter, withProposalFooter, saveSkillProposals, listSkillProposals, RETRO_SKILL, recordStepAttempt, pruneStepAttempts, listStepAttempts, DEFAULT_GATE_ROUNDS, CLI_NAMES,
   modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
@@ -797,6 +797,15 @@ app.whenReady().then(async () => {
           findSkill: (name) => skills.find((s) => s.name === name),
           memories: () => loadMemories(dbFile(dir)),
           recordAttempt: (a) => recordStepAttempt(dbFile(dir), a),
+          retro: {
+            history: async (name) => {
+              const analyzed = (await loadRoutines(routinesPath)).find((r) => r.name === name);
+              if (!analyzed) return undefined;
+              const history = (await loadRoutineStates(routineStatePath))[name]?.history ?? [];
+              return { routine: analyzed, runs: history.map((record) => ({ record, attempts: record.id ? listStepAttempts(dbFile(dir), record.id) : [] })) };
+            },
+            save: (proposals) => saveSkillProposals(dbFile(dir), proposals),
+          },
           todos: {
             listPending: async (r) => (await listTodos(dbFile(dir), r)).filter((t) => t.status === "pending"),
             setStatus: (todoId, status: TodoStatus, resultSummary?: string) =>
@@ -805,6 +814,9 @@ app.whenReady().then(async () => {
         });
         // Before the scheduler saves the record and delivers it to sinks.
         result = withResumeFooter(result, receipts);
+        if (routine.steps.some((st) => st.kind === "chat" && st.skill === RETRO_SKILL)) {
+          result = withProposalFooter(result, listSkillProposals(dbFile(dir)).length);
+        }
         return result;
       } finally {
         for (const p of hold?.reserved ?? []) releaseRun(dir, p);

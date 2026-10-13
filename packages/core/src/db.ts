@@ -174,6 +174,20 @@ CREATE TABLE IF NOT EXISTS routine_step_attempts (
 CREATE INDEX IF NOT EXISTS routine_step_attempts_run ON routine_step_attempts(run_id);
 CREATE INDEX IF NOT EXISTS routine_step_attempts_routine ON routine_step_attempts(routine);
 
+-- Skill-edit proposals drafted by a routine's retro step (retro.ts). Never applied here: the
+-- Skills panel reviews them. Evidence runs' attempts are pinned while a proposal points at them.
+CREATE TABLE IF NOT EXISTS skill_proposals (
+  id         TEXT PRIMARY KEY,
+  routine    TEXT NOT NULL,
+  skill      TEXT NOT NULL,
+  base_hash  TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  rationale  TEXT NOT NULL,
+  evidence   TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS todos (
   id             TEXT PRIMARY KEY,
   routine        TEXT NOT NULL,

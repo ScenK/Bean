@@ -1,0 +1,19 @@
+# Retro routine: drafted skill proposals (#262)
+
+A chat step whose skill is `retro` (`RETRO_SKILL`, `core/src/retro.ts`) is special-cased in
+`runSteps`, not by its skill prose: its tool list is exactly `[run_history]` on every round, it
+gets no recalled memories and no web search. Keep that enforcement in core — a skill edit or an
+injected run output must not be able to widen it.
+
+- `run_history(routine, n)` is the only way the step sees runs; it records which routines' skills
+  and which run ids it showed. A proposal is persisted only if its target is a skill one of those
+  routines uses (never `retro` itself), every evidence id was shown, and it has exactly
+  `skill/body/rationale/evidence`. Bean parses the trailing ```` ```proposals ```` block; the model
+  never writes to the DB.
+- `finish()` runs only after the step resolved within its timeout — a failed or timed-out retro
+  publishes nothing. Proposals live in `bean.db`'s `skill_proposals` (survive restart) and pin
+  their evidence runs' `routine_step_attempts`; unpinning/applying is the Skills-panel inbox (#263).
+- `baseHash` = sha256 of the effective skill body (same hash as `StepAttempt.skillHash`) — the
+  apply-time stale check.
+- The digest footer ("N skill proposal(s) waiting in Bean → Skills") is appended by the app via
+  `withProposalFooter`, like `withResumeFooter` — never model text.
