@@ -2,8 +2,12 @@
 // through one read-only tool and drafts skill-edit proposals. Bean — not the model — validates
 // and persists them; nothing is ever applied here (the Skills panel reviews them).
 import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { ActionTool } from "./converse.js";
 import { openDb } from "./db.js";
+import { formatSkillBody } from "./frontmatter.js";
+import { isValidSkillName, loadLayeredSkills, serializeSkillWrite } from "./skill-library.js";
 import type { Routine, RunRecord } from "./routine-store.js";
 import type { RoutineRunResult } from "./routine-runner.js";
 import type { StepAttempt } from "./step-attempts.js";
@@ -41,7 +45,9 @@ const BODY_CAP = 20_000;
 const RATIONALE_CAP = 2000;
 const RANK: Record<RunRecord["status"], number> = { failed: 0, "needs-attention": 1, ok: 2 };
 
-const hash = (body: string): string => createHash("sha256").update(body).digest("hex");
+/** sha256 of a skill's effective body — `SkillProposal.baseHash` and `StepAttempt.skillHash`. */
+export const skillHash = (body: string): string => createHash("sha256").update(body).digest("hex");
+const hash = skillHash;
 // Recorded output can't close the quote it's shown in.
 const quote = (s: string): string => s.replaceAll("<<<", "< < <").replaceAll(">>>", "> > >");
 
@@ -180,8 +186,13 @@ export function withProposalFooter(result: RoutineRunResult, pending: number): R
 
 interface Row {
   id: string; routine: string; skill: string; base_hash: string; body: string; rationale: string;
-  evidence: string; created_at: string;
+  evidence: string; created_at: string; status: string; prev_body: string | null; applied_hash: string | null;
 }
+
+const fromRow = (r: Row): SkillProposal => ({
+  id: r.id, routine: r.routine, skill: r.skill, baseHash: r.base_hash, body: r.body, rationale: r.rationale,
+  evidence: JSON.parse(r.evidence) as string[], createdAt: r.created_at,
+});
 
 /** Inserts proposals and pins their evidence runs' attempts past history eviction, atomically. */
 export function saveSkillProposals(file: string, proposals: SkillProposal[]): void {
@@ -204,13 +215,98 @@ export function saveSkillProposals(file: string, proposals: SkillProposal[]): vo
   }
 }
 
-/** Pending proposals, oldest first. */
-export function listSkillProposals(file: string): SkillProposal[] {
-  const rows = openDb(file)
-    .prepare("SELECT * FROM skill_proposals WHERE status = 'pending' ORDER BY created_at, rowid")
-    .all() as unknown as Row[];
-  return rows.map((r) => ({
-    id: r.id, routine: r.routine, skill: r.skill, baseHash: r.base_hash, body: r.body, rationale: r.rationale,
-    evidence: JSON.parse(r.evidence) as string[], createdAt: r.created_at,
-  }));
+/** Pending proposals oldest first, or the most recently approved ones (still undoable) newest first. */
+export function listSkillProposals(file: string, status: "pending" | "applied" = "pending"): SkillProposal[] {
+  const sql = status === "pending"
+    ? "SELECT * FROM skill_proposals WHERE status = 'pending' ORDER BY created_at, rowid"
+    : "SELECT * FROM skill_proposals WHERE status = 'applied' ORDER BY decided_at DESC, rowid DESC LIMIT 20";
+  return (openDb(file).prepare(sql).all() as unknown as Row[]).map(fromRow);
+}
+
+export type ProposalOutcome =
+  | { ok: true }
+  /** gone: already decided (double click, second window); stale: the skill changed since the
+   * proposal was drafted; changed: the skill changed since it was approved (undo). */
+  | { ok: false; reason: "gone" | "stale" | "changed" };
+
+export interface SkillDirs {
+  /** Built-in skills (read-only in the packaged app — never written). */
+  projectDir: string;
+  /** ~/.bean/skills — the layer approve writes and undo restores. */
+  userDir: string;
+}
+
+function readRow(file: string, id: string): Row | undefined {
+  return openDb(file).prepare("SELECT * FROM skill_proposals WHERE id = ?").get(id) as unknown as Row | undefined;
+}
+
+/** Moves a proposal out of `from` and unpins evidence runs no pending proposal still cites. */
+function decide(file: string, id: string, from: string, to: string, set: { prev?: string | null; applied?: string } = {}): boolean {
+  const db = openDb(file);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const row = readRow(file, id);
+    const changed = db.prepare(
+      "UPDATE skill_proposals SET status = ?, decided_at = ?, prev_body = coalesce(?, prev_body), applied_hash = coalesce(?, applied_hash) WHERE id = ? AND status = ?",
+    ).run(to, new Date().toISOString(), set.prev ?? null, set.applied ?? null, id, from).changes > 0;
+    if (changed && row && from === "pending") {
+      const unpin = db.prepare(
+        `UPDATE routine_step_attempts SET pinned = 0 WHERE run_id = ? AND NOT EXISTS
+           (SELECT 1 FROM skill_proposals p, json_each(p.evidence) e WHERE p.status = 'pending' AND e.value = ?)`,
+      );
+      for (const runId of JSON.parse(row.evidence) as string[]) unpin.run(runId, runId);
+    }
+    db.exec("COMMIT");
+    return changed;
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
+const readOptional = (path: string): Promise<string | null> =>
+  readFile(path, "utf8").catch((err: NodeJS.ErrnoException) => {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  });
+
+/** Applies a pending proposal as a user-layer write (a built-in target becomes an override; the
+ * repo file is never touched) — only if the skill's effective body still hashes to the one the
+ * proposal was drafted against. Serialized with every other skill write; writes at most once. */
+export function approveSkillProposal(file: string, dirs: SkillDirs, id: string): Promise<ProposalOutcome> {
+  return serializeSkillWrite(async (): Promise<ProposalOutcome> => {
+    const row = readRow(file, id);
+    if (!row || row.status !== "pending" || !isValidSkillName(row.skill)) return { ok: false, reason: "gone" };
+    const current = (await loadLayeredSkills(dirs.projectDir, dirs.userDir)).find((s) => s.name === row.skill);
+    if (!current || hash(current.body) !== row.base_hash) return { ok: false, reason: "stale" };
+    const path = join(dirs.userDir, `${row.skill}.md`);
+    const prev = await readOptional(path);
+    const next = formatSkillBody(row.body);
+    await mkdir(dirs.userDir, { recursive: true });
+    await writeFile(path, next, "utf8");
+    decide(file, id, "pending", "applied", { prev, applied: hash(next) });
+    return { ok: true };
+  });
+}
+
+/** Archives a pending proposal unapplied — queued behind an in-flight approve of the same one. */
+export function rejectSkillProposal(file: string, id: string): Promise<ProposalOutcome> {
+  return serializeSkillWrite(async (): Promise<ProposalOutcome> =>
+    decide(file, id, "pending", "rejected") ? { ok: true } : { ok: false, reason: "gone" });
+}
+
+/** Restores the user-layer file an approve replaced (or removes the override it created) — only
+ * while that file is still exactly what the approve wrote. */
+export function undoSkillProposal(file: string, userDir: string, id: string): Promise<ProposalOutcome> {
+  return serializeSkillWrite(async (): Promise<ProposalOutcome> => {
+    const row = readRow(file, id);
+    if (!row || row.status !== "applied" || !isValidSkillName(row.skill)) return { ok: false, reason: "gone" };
+    const path = join(userDir, `${row.skill}.md`);
+    const now = await readOptional(path);
+    if (now === null || hash(now) !== row.applied_hash) return { ok: false, reason: "changed" };
+    if (row.prev_body === null) await rm(path, { force: true });
+    else await writeFile(path, row.prev_body, "utf8");
+    decide(file, id, "applied", "undone");
+    return { ok: true };
+  });
 }

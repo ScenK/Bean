@@ -5,8 +5,9 @@ import { bestProjectForSkill } from "@bean/core/project-select";
 import { composePrompt } from "@bean/core/prompt";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
+import { ProposalsInbox, type ProposalLists } from "./ProposalsInbox.js";
 
-type Mode = "view" | "edit" | "add";
+type Mode = "view" | "edit" | "add" | "proposals";
 
 export function SkillsPanel({
   onRunSkill = () => {},
@@ -23,18 +24,27 @@ export function SkillsPanel({
   const [draftName, setDraftName] = useState("");
   const [saveError, setSaveError] = useState<string | undefined>(undefined);
   const [showDisabled, setShowDisabled] = useState(false);
+  const [proposals, setProposals] = useState<ProposalLists>({ pending: [], applied: [] });
 
   const refresh = async (): Promise<void> => {
-    const [nextSkills, nextProjects] = await Promise.all([
+    const [nextSkills, nextProjects, nextProposals] = await Promise.all([
       window.bean.listSkills(),
       window.bean.listProjects(),
+      window.bean.skillProposalsList(),
     ]);
     setSkills(nextSkills);
     setProjects(nextProjects);
+    setProposals(nextProposals);
     setSelectedName((prev) => (prev && nextSkills.some((s) => s.name === prev) ? prev : undefined));
   };
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    void refresh();
+    // A retro routine can draft proposals while the window sits open; catch up on focus.
+    const onFocus = (): void => { void refresh(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   const selectedSkill = skills.find((s) => s.name === selectedName);
   const filteredSkills = useMemo(() => {
@@ -229,6 +239,16 @@ export function SkillsPanel({
             onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
           />
         </div>
+        {proposals.pending.length > 0 || proposals.applied.length > 0 ? (
+          <button
+            type="button"
+            class={`bean-skills-row bean-skills-proposals-tab${mode === "proposals" ? " bean-skills-row--selected" : ""}`}
+            onClick={() => { setSelectedName(undefined); setMode("proposals"); }}
+          >
+            <span class="bean-skills-row-name">Proposals</span>
+            {proposals.pending.length > 0 ? <span class="bean-skills-badge bean-skills-badge--yours">{proposals.pending.length}</span> : null}
+          </button>
+        ) : null}
         <div class="bean-skills-list-label">All skills · {skills.length}</div>
         {skills.length === 0 ? (
           <div class="bean-panel-empty">No skills yet — add one below.</div>
@@ -414,7 +434,8 @@ export function SkillsPanel({
             </div>
           </>
         ) : null}
-        {!selectedSkill && mode !== "add" ? (
+        {mode === "proposals" ? <ProposalsInbox proposals={proposals} onChanged={refresh} /> : null}
+        {!selectedSkill && mode !== "add" && mode !== "proposals" ? (
           <PanelEmptyState message="Select a skill to view it, or add a new one." />
         ) : null}
       </div>
