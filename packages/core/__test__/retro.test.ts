@@ -82,6 +82,19 @@ test("the retro step gets exactly [run_history] every round — no action tools,
   expect(saved).toHaveLength(1);
 });
 
+test("a report full of unclosed proposals openers is parsed in linear time and saves nothing", async () => {
+  const t = performance.now();
+  const { saved } = await retro([history, { content: "```proposals\na".repeat(40_000), toolCalls: [] }]);
+  expect(performance.now() - t).toBeLessThan(1000);
+  expect(saved).toEqual([]);
+});
+
+test("only the last proposals fence counts", async () => {
+  const { result, saved } = await retro([history, { content: "```proposals\nnot json\n```\nmore text\n" + block([]), toolCalls: [] }]);
+  expect(saved).toEqual([]);
+  expect(result.digest).not.toContain("couldn't read the proposals block");
+});
+
 test("run_history lists failing runs first and quotes their output as data", async () => {
   const { chatArgs } = await retro([history, { content: "nothing to change\n\n```proposals\n[]\n```", toolCalls: [] }]);
   const toolMsg = chatArgs[1]!.messages.find((m) => m.role === "tool")!.content;

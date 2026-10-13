@@ -13,6 +13,13 @@ const tmpDb = () => join(mkdtempSync(join(tmpdir(), "bean-sa-")), "bean.db");
 test("parseVerdict takes the last VERDICT line", () => {
   expect(parseVerdict("VERDICT: P0=1\n...\n  VERDICT: P0=0 P1=0  \ntrailer")).toBe("P0=0 P1=0");
   expect(parseVerdict("no verdict here")).toBeUndefined();
+  expect(parseVerdict("VERDICT: PASS\r\nVERDICT:   \n")).toBe("PASS");
+});
+
+test("parseVerdict stays linear on long whitespace runs", () => {
+  const t = performance.now();
+  expect(parseVerdict("VERDICT:a" + "\t".repeat(200_000) + "a")).toBe("a" + "\t".repeat(200_000) + "a");
+  expect(performance.now() - t).toBeLessThan(500);
 });
 
 test("round-trips an attempt by run id, keeping the output's tail up to the cap", () => {

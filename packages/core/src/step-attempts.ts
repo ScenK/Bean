@@ -28,8 +28,15 @@ export const STEP_OUTPUT_CAP = 20_000;
 
 /** The last `VERDICT: …` line of a step's output. Parse the full output — before any cap. */
 export function parseVerdict(output: string): string | undefined {
-  const all = [...output.matchAll(/^[ \t]*VERDICT:[ \t]*(.+?)[ \t]*$/gm)];
-  return all.at(-1)?.[1];
+  // Line scan, not a `(.+?)[ \t]*$` regex: that backtracks quadratically on long tab/space runs.
+  const lines = output.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!.trim();
+    if (!line.startsWith("VERDICT:")) continue;
+    const value = line.slice("VERDICT:".length).trim();
+    if (value) return value;
+  }
+  return undefined;
 }
 
 /** A gate's verdict: PASS only when the last non-empty line is exactly `VERDICT: PASS`.

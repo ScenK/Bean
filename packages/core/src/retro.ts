@@ -51,8 +51,10 @@ const hash = skillHash;
 // Recorded output can't close the quote it's shown in.
 const quote = (s: string): string => s.replaceAll("<<<", "< < <").replaceAll(">>>", "> > >");
 
-/** The trailing ```proposals fence the retro skill ends its report with. */
-const BLOCK_RE = /```proposals[ \t]*\r?\n([\s\S]*?)\r?\n```\s*$/;
+/** The trailing ```proposals fence the retro skill ends its report with. Matched anchored at the
+ * LAST opener only — unanchored, the lazy body scan restarts at every opener (quadratic). */
+const BLOCK_OPENER = "```proposals";
+const BLOCK_RE = /^```proposals[ \t]*\r?\n([\s\S]*?)\r?\n```\s*$/;
 
 export interface RetroSession {
   tool: ActionTool;
@@ -137,9 +139,10 @@ export function retroSession(
   };
 
   const finish = (output: string): string => {
-    const m = BLOCK_RE.exec(output);
+    const at = output.lastIndexOf(BLOCK_OPENER);
+    const m = at < 0 ? null : BLOCK_RE.exec(output.slice(at));
     if (!m) return output;
-    const report = output.slice(0, m.index).trimEnd();
+    const report = output.slice(0, at).trimEnd();
     let items: unknown;
     try {
       items = JSON.parse(m[1]!);
