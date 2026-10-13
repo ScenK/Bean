@@ -975,7 +975,9 @@ app.whenReady().then(async () => {
       loadRoutines: () => loadRoutines(routinesPath),
       routineHandlers: buildRoutineHandlers({
         loadRoutines: () => loadRoutines(routinesPath),
-        saveRoutine: (r) => saveRoutine(routinesPath, r, cliModels),
+        // Model check only when enabling/enabled: pausing must never be blocked by a model that
+        // has since left clis.json (the run itself refuses either way).
+        saveRoutine: (r) => saveRoutine(routinesPath, r, r.enabled ? cliModels : undefined),
         deleteRoutine: (name) => deleteRoutine(routinesPath, name),
         loadStates: () => loadRoutineStates(routineStatePath),
         isRunning: (name) => routineScheduler.isRunning(name),

@@ -1,5 +1,5 @@
 import type { ConvoMsg } from "./converse.js";
-import type { CliName } from "./launcher.js";
+import { CLI_NAMES, type CliName } from "./launcher.js";
 import { describeRoutineError, STEP_ID_RE, type Routine, type RoutineChatopsSink, type RoutineSinks, type RoutineStep, type RoutineWatch } from "./routine-store.js";
 import { unfence } from "./routine-runner.js";
 
@@ -88,11 +88,12 @@ function cleanStep(v: unknown, ctx: BriefContext): RoutineStep | undefined {
   const instruction = str(s.instruction) ? s.instruction.trim() : "";
   const skill = str(s.skill) && ctx.skills.some((k) => k.name === s.skill) ? s.skill : undefined;
   // Refining an existing routine: its step ids and pinned harness (with that harness's model)
-  // carry over. A harness this Mac doesn't have is dropped like an unknown skill.
+  // carry over — even one that's disabled right now; dropping it would silently re-route the
+  // step, and the editor already warns about it.
   const id = str(s.id) && STEP_ID_RE.test(s.id) ? { id: s.id } : {};
   if (s.kind === "delegate") {
     const project = str(s.project) && ctx.projects.some((p) => p.path === s.project) ? s.project : undefined;
-    const cli = ctx.clis.find((c) => c === s.cli);
+    const cli = CLI_NAMES.find((c) => c === s.cli);
     const pinned = cli ? { cli, ...(str(s.model) && s.model ? { model: s.model } : {}) } : {};
     return { kind: "delegate", ...id, skill: skill ?? "", ...(project ? { project } : {}), ...pinned, instruction };
   }
