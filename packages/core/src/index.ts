@@ -33,6 +33,7 @@ export * from "./image-gen.js";
 export * from "./delegate.js";
 export * from "./delegate-runs.js";
 export * from "./step-attempts.js";
+export * from "./retro.js";
 export * from "./drop-plan.js";
 export * from "./updater.js";
 export * from "./update-public-key.js";
