@@ -289,9 +289,10 @@ export function approveSkillProposal(file: string, dirs: SkillDirs, id: string):
   });
 }
 
-/** Archives a pending proposal unapplied. */
-export function rejectSkillProposal(file: string, id: string): ProposalOutcome {
-  return decide(file, id, "pending", "rejected") ? { ok: true } : { ok: false, reason: "gone" };
+/** Archives a pending proposal unapplied — queued behind an in-flight approve of the same one. */
+export function rejectSkillProposal(file: string, id: string): Promise<ProposalOutcome> {
+  return serializeSkillWrite(async (): Promise<ProposalOutcome> =>
+    decide(file, id, "pending", "rejected") ? { ok: true } : { ok: false, reason: "gone" });
 }
 
 /** Restores the user-layer file an approve replaced (or removes the override it created) — only

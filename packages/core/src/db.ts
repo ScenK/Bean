@@ -232,18 +232,24 @@ export function openDb(file: string): DatabaseSync {
   const isNew = !existsSync(file);
   const db = new DatabaseSync(file);
   db.exec(SCHEMA);
-  // Column added after the table shipped, so CREATE TABLE IF NOT EXISTS won't add it to an
+  // Columns added after their table shipped, so CREATE TABLE IF NOT EXISTS won't add them to an
   // existing bean.db. Checked against the schema rather than try/catch around ADD COLUMN: that
   // would also swallow a lock timeout or I/O error and cache a handle whose notes are unusable.
   // Re-checked under BEGIN IMMEDIATE: the app and the bot servers can open the same bean.db at
   // once, and two openers that both saw the column missing would have the loser's ALTER throw.
-  const hasStarred = (): boolean =>
-    (db.prepare("PRAGMA table_info(notes)").all() as unknown as { name: string }[])
-      .some((c) => c.name === "starred");
-  if (!hasStarred()) {
+  const missing = (table: string, column: string): boolean =>
+    !(db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]).some((c) => c.name === column);
+  const columns: [table: string, column: string, type: string][] = [
+    ["notes", "starred", "INTEGER NOT NULL DEFAULT 0"],
+    // skill_proposals' approve/undo bookkeeping (#263), added after the table first shipped.
+    ["skill_proposals", "prev_body", "TEXT"],
+    ["skill_proposals", "applied_hash", "TEXT"],
+    ["skill_proposals", "decided_at", "TEXT"],
+  ];
+  if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");
     try {
-      if (!hasStarred()) db.exec("ALTER TABLE notes ADD COLUMN starred INTEGER NOT NULL DEFAULT 0");
+      for (const [t, c, type] of columns) if (missing(t, c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${type}`);
       db.exec("COMMIT");
     } catch (err) {
       db.exec("ROLLBACK");

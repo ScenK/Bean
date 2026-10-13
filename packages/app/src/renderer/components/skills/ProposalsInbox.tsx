@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import type { ProposalOutcome } from "@bean/core";
-import type { SkillProposalView } from "../../../ipc.js";
+import type { SkillProposalView, StepAttemptView } from "../../../ipc.js";
 import { lineDiff } from "./line-diff.js";
 
 export interface ProposalLists {
@@ -19,6 +19,15 @@ const REFUSED: Record<Exclude<ProposalOutcome, { ok: true }>["reason"], string> 
 export function ProposalsInbox({ proposals, onChanged }: { proposals: ProposalLists; onChanged: () => Promise<void> }) {
   const [notice, setNotice] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | undefined>(undefined);
+  // The evidence run opened inline (proposal id + run id) and its recorded step attempts.
+  const [evidence, setEvidence] = useState<{ key: string; attempts?: StepAttemptView[] } | undefined>(undefined);
+
+  const toggleEvidence = async (key: string, runId: string): Promise<void> => {
+    if (evidence?.key === key) { setEvidence(undefined); return; }
+    setEvidence({ key });
+    const attempts = await window.bean.routinesAttempts(runId);
+    setEvidence((e) => (e?.key === key ? { key, attempts } : e));
+  };
 
   const act = async (id: string, run: () => Promise<ProposalOutcome>, done?: string): Promise<void> => {
     setBusy(id);
@@ -63,13 +72,23 @@ export function ProposalsInbox({ proposals, onChanged }: { proposals: ProposalLi
                 key={runId}
                 type="button"
                 class="bean-skills-tag bean-proposal-evidence"
-                title="Open the Dashboard to inspect this run"
-                onClick={() => void window.bean.openComponent("dashboard")}
+                aria-expanded={evidence?.key === `${p.id}:${runId}`}
+                title="Show this run's steps"
+                onClick={() => void toggleEvidence(`${p.id}:${runId}`, runId)}
               >
                 run {runId.slice(0, 8)}
               </button>
             ))}
           </div>
+          {evidence?.key.startsWith(`${p.id}:`) ? (
+            <pre class="bean-proposal-diff">
+              {!evidence.attempts ? "Loading…"
+                : evidence.attempts.length === 0 ? "No step records left for this run."
+                : evidence.attempts.map((a) =>
+                  `step ${a.stepId ?? a.stepIndex + 1} round ${a.round} · ${a.kind}${a.cli ? ` · ${a.cli}` : ""} · ${a.ok ? "ok" : "ERROR"}` +
+                  `${a.verdict ? ` · VERDICT ${a.verdict}` : ""}\n${a.output.slice(-600)}\n`).join("\n")}
+            </pre>
+          ) : null}
           <pre class="bean-proposal-diff" aria-label={`Changes to ${p.skill}.md`}>
             {lineDiff(p.current ?? "", p.body.trim() + "\n").map((l, i) => (
               <div key={i} class={l.op === "+" ? "bean-diff-add" : l.op === "-" ? "bean-diff-del" : "bean-diff-same"}>

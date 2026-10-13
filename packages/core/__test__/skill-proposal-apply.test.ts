@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, test } from "vitest";
-import { closeDb } from "../src/db.js";
+import { closeDb, openDb } from "../src/db.js";
 import {
   approveSkillProposal, listSkillProposals, rejectSkillProposal, saveSkillProposals, skillHash, undoSkillProposal,
   type SkillProposal,
@@ -83,9 +84,30 @@ test("a double approve writes once; reject archives and releases the evidence pi
 
   recordStepAttempt(file, { runId: "run-1", routine: "dev-loop", stepIndex: 0, round: 1, kind: "delegate", ok: true, output: "o", startedAt: "s", finishedAt: "f" });
   propose("review", "# review\nv1\n", "# review\nproposed", "p3");
-  expect(rejectSkillProposal(file, "p3")).toEqual({ ok: true });
-  expect(rejectSkillProposal(file, "p3")).toEqual({ ok: false, reason: "gone" });
+  expect(await rejectSkillProposal(file, "p3")).toEqual({ ok: true });
+  expect(await rejectSkillProposal(file, "p3")).toEqual({ ok: false, reason: "gone" });
   expect(await approveSkillProposal(file, dirs, "p3")).toEqual({ ok: false, reason: "gone" });
   pruneStepAttempts(file, "dev-loop", []);
   expect(listStepAttempts(file, "run-1")).toEqual([]);
+});
+
+test("an approve and a reject racing on one proposal: the first wins, the other is refused", async () => {
+  const { dirs, file, propose } = setup({}, { review: "# review\nv1\n" });
+  propose("review", "# review\nv1\n", "# review\nproposed");
+  const [approved, rejected] = await Promise.all([approveSkillProposal(file, dirs, "p1"), rejectSkillProposal(file, "p1")]);
+  expect(approved).toEqual({ ok: true });
+  expect(rejected).toEqual({ ok: false, reason: "gone" });
+  expect(listSkillProposals(file, "applied").map((p) => p.id)).toEqual(["p1"]);
+});
+
+test("a bean.db from before the approve columns gets them on open", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "bean-apply-")), "bean.db");
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE skill_proposals (id TEXT PRIMARY KEY, routine TEXT NOT NULL, skill TEXT NOT NULL,
+    base_hash TEXT NOT NULL, body TEXT NOT NULL, rationale TEXT NOT NULL, evidence TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL)`);
+  old.close();
+  files.push(file);
+  openDb(file);
+  expect(listSkillProposals(file, "applied")).toEqual([]);
 });

@@ -330,7 +330,7 @@ export function buildSkillProposalHandlers(deps: SkillProposalHandlerDeps) {
       return { pending: listSkillProposals(deps.dbFile).map(view), applied: listSkillProposals(deps.dbFile, "applied").map(view) };
     },
     approve: (id: string): Promise<ProposalOutcome> => approveSkillProposal(deps.dbFile, dirs, id),
-    reject: async (id: string): Promise<ProposalOutcome> => rejectSkillProposal(deps.dbFile, id),
+    reject: (id: string): Promise<ProposalOutcome> => rejectSkillProposal(deps.dbFile, id),
     undo: (id: string): Promise<ProposalOutcome> => undoSkillProposal(deps.dbFile, deps.skillsDir, id),
   };
 }
