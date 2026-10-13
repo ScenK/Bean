@@ -5,7 +5,7 @@ import { availableModels, pinnedStepSelection } from "../src/models.js";
 import type { Routine } from "../src/routine-store.js";
 import type { ActionTool, ConvoMsg, ToolSpec } from "../src/converse.js";
 import type { Skill } from "../src/types.js";
-import type { TodoItem, TodoStatus } from "../src/index.js";
+import type { StepAttempt, TodoItem, TodoStatus } from "../src/index.js";
 
 const skill = (name: string, target: "chat" | "terminal" = "terminal"): Skill =>
   ({ name, description: `${name} desc`, body: `# ${name} instructions`, target });
@@ -47,7 +47,7 @@ describe("runRoutine", () => {
     const seen: number[] = [];
     await runRoutine(
       routine([{ kind: "chat", instruction: "one" }, { kind: "chat", instruction: "two" }]),
-      baseDeps(fn, { onStep: (i) => seen.push(i) }),
+      baseDeps(fn, { onStep: ({ index }) => seen.push(index) }),
     );
     expect(seen).toEqual([0, 1]);
   });
@@ -483,5 +483,51 @@ describe("pinned coding agent", () => {
     expect(res.record.status).toBe("failed");
     expect(res.record.steps[1]).toMatchObject({ ok: false });
     expect(res.record.steps[1]!.summary).toContain("codex is not enabled");
+  });
+});
+
+describe("step attempts", () => {
+  it("records one attempt per step per todo, sharing the run id; full output, harness, session, verdict; no memories", async () => {
+    const attempts: StepAttempt[] = [];
+    const pending: TodoItem[] = ["A", "B"].map((t, i) => ({ id: `t${i}`, routine: "r", text: `task ${t}`, status: "pending", createdAt: "", order: i }));
+    const long = "x".repeat(25_000) + "\nVERDICT: P0=0 P1=0 P2=1";
+    const res = await runRoutine(
+      { ...routine([
+        { kind: "delegate", id: "plan", skill: "s", cli: "claude", instruction: "plan" },
+        { kind: "delegate", id: "impl", skill: "s", instruction: "impl" },
+        { kind: "chat", id: "sum", instruction: "sum" },
+      ]), todoDriven: true },
+      baseDeps(async () => ({ content: "chat out", toolCalls: [] }), {
+        newId: () => "run-1",
+        findSkill: (n) => skill(n),
+        memories: async () => [{ id: "1", text: "SENTINEL fact", createdAt: "2026-07-01T00:00:00Z" }],
+        delegate: async (req) => req.instruction.startsWith("plan")
+          ? { output: long, cli: "claude", model: "sonnet", sessionId: "sess-1" }
+          : "impl out",
+        recordAttempt: (a) => attempts.push(a),
+        todos: { listPending: async () => pending, setStatus: async () => {} },
+      }),
+    );
+    expect(res.record.id).toBe("run-1");
+    expect(attempts).toHaveLength(6);
+    expect(new Set(attempts.map((a) => a.runId))).toEqual(new Set(["run-1"]));
+    expect(attempts.map((a) => `${a.todoId}/${a.stepId}`)).toEqual(["t0/plan", "t0/impl", "t0/sum", "t1/plan", "t1/impl", "t1/sum"]);
+    expect(attempts[0]).toMatchObject({ cli: "claude", model: "sonnet", sessionId: "sess-1", ok: true, verdict: "P0=0 P1=0 P2=1", round: 1 });
+    expect(attempts[0]!.output).toBe(long); // capped only at write time
+    expect(attempts[0]!.skillHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(attempts[2]).toMatchObject({ kind: "chat", model: "gpt-test", output: "chat out" });
+    expect(JSON.stringify(attempts)).not.toContain("SENTINEL");
+    expect(res.record.steps[0]).toMatchObject({ id: "plan", cli: "claude", verdict: "P0=0 P1=0 P2=1" });
+    expect(res.record.steps[0]!.summary).toBe(`[todo: task A] ${long}`.slice(0, 200)); // summary unchanged
+  });
+
+  it("records a failed step with its error and pinned cli", async () => {
+    const attempts: StepAttempt[] = [];
+    await runRoutine(routine([{ kind: "delegate", skill: "s", cli: "codex", instruction: "go" }]),
+      baseDeps(async () => ({ content: "digest", toolCalls: [] }), {
+        delegate: async () => { throw new Error("codex is not enabled"); },
+        recordAttempt: (a) => attempts.push(a),
+      }));
+    expect(attempts).toEqual([expect.objectContaining({ ok: false, cli: "codex", output: "codex is not enabled" })]);
   });
 });

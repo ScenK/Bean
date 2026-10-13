@@ -5,21 +5,41 @@ import { isValidCron } from "./cron.js";
 import { describeWatchWindowError, type WatchWindow } from "./watch-window.js";
 import { CLI_NAMES, type CliName } from "./launcher.js";
 import type { CliModels } from "./cli-models.js";
+import { describeEdgeError } from "./routine-graph.js";
 
 // Absent/empty channel = DM the user directly (the default); a non-empty channel targets a
 // specific discord channel id or teams conversation id instead.
 export interface RoutineChatopsSink { transport: "teams" | "discord"; channel?: string }
 export interface RoutineSinks { chatops?: RoutineChatopsSink[]; note?: boolean; notify?: boolean }
 
+/** A gated step ends its output with `VERDICT: PASS|FAIL`; FAIL either stops the run or jumps
+ * to another step: forward = a branch, backward = a loop of at most `maxRounds` executions of
+ * the gated step (default 3, cap 5). PASS follows `next`. */
+export interface StepGate { onFail: "stop" | { goto: string; maxRounds?: number } }
+export { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS } from "./routine-graph.js";
+
+/** Graph fields shared by every step kind. `next`: a later step's id or "end"; absent = the
+ * following step. Routines with neither field anywhere run exactly as before (legacy). */
+interface StepEdges { gate?: StepGate; next?: string }
+
 /** `id` is a stable handle other steps (gates, graph edges) can point at — unique within the
  * routine, `[a-z0-9-]`, assigned by the editor, never typed. Absent on legacy routines. */
-export type RoutineStep =
+export type RoutineStep = StepEdges & (
   /** `timeoutMinutes` overrides the default delegate step timeout (ROUTINE_STEP_TIMEOUT_MS)
    * for long unattended runs, e.g. implement + review loops. No panel field; set it in the JSON.
    * `cli` pins the coding-agent harness: unavailable = the step refuses before spawning (no
    * fallback); absent = today's inference from `model` + the Settings preference. */
   | { kind: "delegate"; id?: string; skill: string; project?: string; cli?: CliName; model?: string; timeoutMinutes?: number; instruction: string }
-  | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string };
+  | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string }
+  /** A deterministic check: runs `command` in a shell (in `project`, else the run's scratch dir)
+   * — no model, memories, or skill (the `never`s keep `step.skill`/`.model` readable on the
+   * union; the validator rejects them). Exit 0 = PASS, non-zero = FAIL, timeout = step error. */
+  | { kind: "command"; id?: string; command: string; project?: string; timeoutMinutes?: number; skill?: never; model?: never; cli?: never });
+
+export type StepKind = RoutineStep["kind"];
+
+/** True when any step has a gate or a `next` edge — the runner then walks the step graph. */
+export const usesGates = (steps: RoutineStep[]): boolean => steps.some((s) => s.gate !== undefined || s.next !== undefined);
 
 export const STEP_ID_RE = /^[a-z0-9-]+$/;
 
@@ -53,12 +73,18 @@ export interface Routine {
   sinks: RoutineSinks;
 }
 
+export type RunStatus = "ok" | "failed" | "needs-attention";
+
 export interface RunRecord {
+  /** uuid; keys the run's `routine_step_attempts` rows. Absent on records written before #258. */
+  id?: string;
   startedAt: string;  // ISO
   finishedAt: string; // ISO
-  status: "ok" | "failed"; // failed = at least one step failed
+  /** failed = a step errored; needs-attention = a gate stopped the run, a loop ran out of
+   * rounds, or the run's last gate decision was FAIL. */
+  status: RunStatus;
   digest: string;
-  steps: { kind: "delegate" | "chat"; ok: boolean; summary: string }[];
+  steps: { kind: StepKind; id?: string; cli?: CliName; round?: number; verdict?: string; ok: boolean; summary: string }[];
 }
 
 export interface RoutineState {
@@ -77,8 +103,19 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
   const at = `step ${index + 1}`;
   if (typeof v !== "object" || v === null) return `${at} is malformed`;
   const s = v as Record<string, unknown>;
-  if (!str(s.instruction) || !s.instruction.trim()) return `${at} needs an instruction`;
   if (s.id !== undefined && (!str(s.id) || !STEP_ID_RE.test(s.id))) return `${at} has an invalid id (use a-z, 0-9, "-")`;
+  if (s.timeoutMinutes !== undefined && (!Number.isInteger(s.timeoutMinutes) || (s.timeoutMinutes as number) < 1)) {
+    return `${at} timeout must be a whole number of minutes, at least 1`;
+  }
+  if (s.kind === "command") {
+    if (!str(s.command) || !s.command.trim()) return `${at} (command) needs a command to run`;
+    for (const k of ["skill", "model", "cli", "instruction"]) {
+      if (s[k] !== undefined) return `${at}: a command step runs no model — remove its ${k}`;
+    }
+    if (s.project !== undefined && !str(s.project)) return `${at} has an invalid project`;
+    return null;
+  }
+  if (!str(s.instruction) || !s.instruction.trim()) return `${at} needs an instruction`;
   if (s.model !== undefined && !str(s.model)) return `${at} has an invalid model`;
   if (s.kind === "delegate") {
     if (s.cli !== undefined && !CLI_NAMES.includes(s.cli as CliName)) {
@@ -90,9 +127,6 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
     if (offered && str(s.model) && !offered.includes(s.model)) return `${at}: ${String(s.cli)} doesn't offer model "${s.model}"`;
     if (!str(s.skill) || !s.skill) return `${at} (delegate) needs a skill`;
     if (s.project !== undefined && !str(s.project)) return `${at} has an invalid project`;
-    if (s.timeoutMinutes !== undefined && (!Number.isInteger(s.timeoutMinutes) || (s.timeoutMinutes as number) < 1)) {
-      return `${at} timeout must be a whole number of minutes, at least 1`;
-    }
     return null;
   }
   if (s.kind === "chat") {
@@ -149,15 +183,19 @@ export function describeRoutineError(v: unknown, cliModels?: CliModels[]): strin
   if (r.watch !== undefined && r.steps.length > 0 && r.todoDriven !== true) {
     return "a watch routine with steps must be todo-driven — each new item is queued as a todo";
   }
-  const ids = new Set<string>();
+  const ids = new Map<string, number>();
   for (let i = 0; i < r.steps.length; i++) {
     const stepError = describeStepError(r.steps[i], i, cliModels);
     if (stepError) return stepError;
     const id = (r.steps[i] as { id?: string }).id;
     if (id !== undefined) {
       if (ids.has(id)) return `step ${i + 1} reuses id "${id}" — step ids must be unique`;
-      ids.add(id);
+      ids.set(id, i);
     }
+  }
+  for (let i = 0; i < r.steps.length; i++) {
+    const edgeError = describeEdgeError(r.steps[i] as Record<string, unknown>, i, ids);
+    if (edgeError) return edgeError;
   }
   if (typeof r.sinks !== "object" || r.sinks === null) return "sinks must be an object";
   const sinks = r.sinks as Record<string, unknown>;

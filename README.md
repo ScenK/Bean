@@ -41,7 +41,9 @@ Point Bean at your project folders and it learns where your work lives.
 ⏰ **Runs on a schedule.**
 Turn any task into a *routine* — a recurring pipeline on a cron schedule. The morning
 digest, the weekly cleanup, the "check this and tell me" job. Routines can chain
-steps and drain a to-do queue, then drop the result wherever you want it.
+steps and drain a to-do queue, then drop the result wherever you want it. Steps can
+gate on a PASS/FAIL verdict to stop, branch, or loop — start from an example flow (dev
+loop, ticket lint first, review only) in the Routines panel and reshape it.
 
 💬 **Reach it from anywhere.**
 Wire Bean up to Discord or Teams and message it from your phone or your work chat.
