@@ -9,6 +9,7 @@ import type { TodoItem, TodoStatus } from "./todo-store.js";
 import { memoriesBlock, type Memory } from "./memory/memory.js";
 import { selectRelevantMemories } from "./memory/store.js";
 import { gateVerdict, parseVerdict, type StepAttempt } from "./step-attempts.js";
+import { RETRO_SKILL, retroSession, type RetroDeps } from "./retro.js";
 
 export interface DelegateStepRequest {
   skill?: Skill;
@@ -68,6 +69,8 @@ export interface RoutineRunnerDeps {
    * not throw. Carries only the step's own output, never the memories block or composed prompt. */
   recordAttempt?: (attempt: StepAttempt) => void;
   stepTimeoutMs?: number;
+  /** Backs `retro` chat steps (run_history + proposal persistence); absent = they fail. */
+  retro?: RetroDeps;
   /** Called as each step starts — drives the avatar's status bubble. */
   onStep?: (info: StepInfo) => void;
   /** Injected by the app for todo-driven routines: core never touches the DB itself. */
@@ -171,6 +174,9 @@ async function runChatStep(
   deps: RoutineRunnerDeps,
   skill: Skill | undefined,
   memories: string,
+  /** The step's whole tool list, every round. A retro step passes exactly [run_history]. */
+  pool: ActionTool[],
+  webSearch: boolean,
 ): Promise<string> {
   const systemParts = [
     `You are Bean executing step ${index + 1} of the scheduled routine "${routine.name}" unattended. ` +
@@ -186,11 +192,11 @@ async function runChatStep(
     { role: "system", content: systemParts.join("\n\n") },
     { role: "user", content: step.instruction },
   ];
-  const tools = deps.tools.map((t) => t.spec);
-  const byName = new Map(deps.tools.map((t) => [t.spec.name, t]));
+  const tools = pool.map((t) => t.spec);
+  const byName = new Map(pool.map((t) => [t.spec.name, t]));
   let content = "";
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const res = await deps.chat({ model: step.model ?? deps.model, messages, tools, webSearch: routine.webSearch === true });
+    const res = await deps.chat({ model: step.model ?? deps.model, messages, tools, webSearch });
     content = res.content;
     const actionCalls = res.toolCalls.filter((c: ToolCall) => byName.has(c.name));
     if (actionCalls.length === 0) return content;
@@ -313,7 +319,11 @@ async function runSteps(
       } else {
         const skill = resolveSkill(deps, effective.skill);
         if (skill) skillHash = createHash("sha256").update(skill.body).digest("hex");
-        const memories = await stepMemories(deps, effective, skill);
+        // A retro step reads run history through one read-only tool — no action tools, no
+        // memories, no web — enforced here, not by its skill's prose.
+        const retro = effective.kind === "chat" && effective.skill === RETRO_SKILL;
+        if (retro && !deps.retro) throw new Error("retro steps can't run here");
+        const memories = retro ? "" : await stepMemories(deps, effective, skill);
         if (effective.kind === "delegate") {
           const res = await deps.delegate({
             skill,
@@ -329,7 +339,13 @@ async function runSteps(
           });
           ({ output, ...ran } = typeof res === "string" ? { output: res } : res);
         } else {
-          output = await withTimeout(runChatStep(routine, effective, index, prior, deps, skill, memories), timeoutMs, `step ${index + 1}`);
+          const session = retro ? retroSession(deps.retro!, routine.name, deps.findSkill, now) : undefined;
+          output = await withTimeout(
+            runChatStep(routine, effective, index, prior, deps, skill, memories, session ? [session.tool] : deps.tools, !session && routine.webSearch === true),
+            timeoutMs, `step ${index + 1}`,
+          );
+          // Only after the step finished in time: a failed or timed-out retro publishes nothing.
+          if (session) output = session.finish(output);
         }
       }
     } catch (err) {

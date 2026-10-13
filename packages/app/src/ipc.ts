@@ -2,6 +2,8 @@ import {
   route, converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, type ImageGenDeps,
   attachNoteImages, MAX_NOTE_IMAGE_BYTES, type ImageAttachment,
   availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine,
+  listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash,
+  type SkillProposal, type ProposalOutcome,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
@@ -300,6 +302,37 @@ export interface DeleteSkillHandlerDeps {
 
 export function buildDeleteSkillHandler(deps: DeleteSkillHandlerDeps) {
   return (name: string): Promise<void> => deps.deleteSkill(deps.skillsDir, name);
+}
+
+/** A retro proposal as the Skills inbox shows it: the skill's current effective body to diff
+ * against, and whether that body already moved past the one the proposal was drafted on. */
+export interface SkillProposalView extends SkillProposal {
+  current?: string;
+  stale: boolean;
+}
+
+export interface SkillProposalHandlerDeps {
+  loadSkills: (projectDir: string, userDir: string) => Promise<Skill[]>;
+  projectSkillsDir: string;
+  skillsDir: string;
+  dbFile: string;
+}
+
+export function buildSkillProposalHandlers(deps: SkillProposalHandlerDeps) {
+  const dirs = { projectDir: deps.projectSkillsDir, userDir: deps.skillsDir };
+  return {
+    list: async (): Promise<{ pending: SkillProposalView[]; applied: SkillProposalView[] }> => {
+      const skills = await deps.loadSkills(deps.projectSkillsDir, deps.skillsDir);
+      const view = (p: SkillProposal): SkillProposalView => {
+        const current = skills.find((s) => s.name === p.skill)?.body;
+        return { ...p, ...(current !== undefined ? { current } : {}), stale: current === undefined || skillHash(current) !== p.baseHash };
+      };
+      return { pending: listSkillProposals(deps.dbFile).map(view), applied: listSkillProposals(deps.dbFile, "applied").map(view) };
+    },
+    approve: (id: string): Promise<ProposalOutcome> => approveSkillProposal(deps.dbFile, dirs, id),
+    reject: (id: string): Promise<ProposalOutcome> => rejectSkillProposal(deps.dbFile, id),
+    undo: (id: string): Promise<ProposalOutcome> => undoSkillProposal(deps.dbFile, deps.skillsDir, id),
+  };
 }
 
 export interface LaunchHandlerDeps {
@@ -766,6 +799,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   onChatTurn?: () => (error?: string) => void;
   loadRoutines?: () => Promise<Routine[]>;
   routineHandlers: ReturnType<typeof buildRoutineHandlers>;
+  skillProposalHandlers: ReturnType<typeof buildSkillProposalHandlers>;
   todoHandlers: ReturnType<typeof buildTodoHandlers>;
 }
 
@@ -914,6 +948,10 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.installUpdate, () => updateHandlers.install());
   ipcMain.on(IPC.openUpdateReleasePage, () => updateHandlers.openReleasesPage());
 
+  ipcMain.handle(IPC.skillProposalsList, () => deps.skillProposalHandlers.list());
+  ipcMain.handle(IPC.skillProposalsApprove, (_e, id: string) => deps.skillProposalHandlers.approve(id));
+  ipcMain.handle(IPC.skillProposalsReject, (_e, id: string) => deps.skillProposalHandlers.reject(id));
+  ipcMain.handle(IPC.skillProposalsUndo, (_e, id: string) => deps.skillProposalHandlers.undo(id));
   ipcMain.handle(IPC.routinesList, () => deps.routineHandlers.list());
   ipcMain.handle(IPC.routinesSave, (_e, routine: Routine) => deps.routineHandlers.save(routine));
   ipcMain.handle(IPC.routinesDelete, (_e, name: string) => deps.routineHandlers.remove(name));

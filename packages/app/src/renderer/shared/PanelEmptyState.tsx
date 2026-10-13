@@ -2,7 +2,9 @@
 // nothing auto-selected, so this is what greets you until you pick something. The mark below
 // is the same coffee-bean path as the avatar orb (see orb.ts BEAN_SVG), rendered in a flat
 // grey so it reads as a quiet watermark rather than the lit-up mascot.
-export function PanelEmptyState({ message }: { message: string }) {
+import type { ComponentChildren } from "preact";
+
+export function PanelEmptyState({ message, children }: { message: string; children?: ComponentChildren }) {
   return (
     <div class="bean-panel-empty">
       <svg class="bean-panel-empty-art" viewBox="0 0 36 36" fill="none" aria-hidden="true">
@@ -19,6 +21,7 @@ export function PanelEmptyState({ message }: { message: string }) {
         <path class="bean-panel-empty-crease" d="M18 7C18 7 15 14 18 22C21 14 18 7 18 7Z" />
       </svg>
       <div class="bean-panel-empty-text">{message}</div>
+      {children}
     </div>
   );
 }
