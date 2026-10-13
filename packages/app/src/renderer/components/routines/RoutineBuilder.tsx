@@ -4,7 +4,9 @@ import type {
 } from "@bean/core";
 import type { RoutineStateView, SinkRecipients } from "../../../ipc.js";
 import type { RoutineBuildView } from "../../../routine-builder.js";
+import { ROUTINE_EXAMPLES, exampleRoutine } from "@bean/core/routine-examples";
 import { StepsEditor } from "./StepsEditor.js";
+import { stepProblemsText } from "./step-ids.js";
 import { intervalText, WATCH_MINUTES } from "./watch-status.js";
 
 // The describe-it builder: 2a (sentence → editable brief), 2b (building, cancellable), 2c
@@ -33,10 +35,25 @@ interface CatalogProps {
 
 const isUrl = (s: string): boolean => /^https?:\/\//i.test(s.trim());
 
+/** "Start from an example": pre-filled, disabled flows to reshape, plus a blank form. Picking one
+ * only opens the editor — nothing is saved until Save. */
+export function ExampleChips(props: { taken: string[]; onPick: (routine: Routine) => void; onBlank: () => void }) {
+  return (
+    <div class="bean-rb-try">
+      Start from an example:
+      {ROUTINE_EXAMPLES.map((ex) => (
+        <button key={ex.key} type="button" class="bean-rb-try-chip" title={ex.blurb} onClick={() => props.onPick(exampleRoutine(ex, props.taken))}>{ex.label}</button>
+      ))}
+      <button type="button" class="bean-rb-try-chip" onClick={props.onBlank}>Blank</button>
+    </div>
+  );
+}
+
 // --- 2a --------------------------------------------------------------------------------------
 
 export function DescribePane(props: CatalogProps & {
   initial?: RoutineBrief;
+  taken: string[];
   onCancel: () => void;
   onBlank: () => void;
   onBuild: (brief: RoutineBrief) => Promise<void>;
@@ -159,6 +176,8 @@ export function DescribePane(props: CatalogProps & {
           <button key={t} type="button" class="bean-rb-try-chip" onClick={() => { setSentence(t); void draft(t); }}>{t}</button>
         ))}
       </div>
+
+      <ExampleChips taken={props.taken} onPick={props.onOpenEditor} onBlank={props.onBlank} />
 
       {error ? <div class="bean-status bean-status--error">{error}</div> : null}
 
@@ -486,6 +505,7 @@ function destinations(sinks: RoutineSinks, recipients: SinkRecipients | undefine
 export function ReviewPane(props: {
   routine: Routine;
   state: RoutineStateView | undefined;
+  clis: CliName[];
   models: AvailableModel[];
   projects: Project[];
   onDiscard: () => void;
@@ -528,6 +548,7 @@ export function ReviewPane(props: {
   const every = watch.everyMinutes ?? 15;
   const items = preview.items ?? [];
   const dest = destinations(routine.sinks, recipients);
+  const stepProblems = stepProblemsText(routine.steps, props.clis, props.models);
 
   return (
     <div class="bean-rb">
@@ -613,6 +634,7 @@ export function ReviewPane(props: {
         </ul>
       </div>
 
+      {stepProblems ? <div class="bean-routines-step-missing" role="alert">⚠ {stepProblems}</div> : null}
       {error ? <div class="bean-status bean-status--error">{error}</div> : null}
       <div class="bean-routines-divider" />
       <div class="bean-routines-footer">

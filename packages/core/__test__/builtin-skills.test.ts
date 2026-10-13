@@ -5,13 +5,13 @@ import { loadSkills } from "../src/skill-library.js";
 test("ships the built-in skills at <repo-root>/.bean/skills", async () => {
   const skills = await loadSkills(skillsDir(projectBeanDir()));
   expect(skills.map((s) => s.name).sort()).toEqual([
-    "bean", "build-routine", "generate-skill"
+    "ask-on-ticket", "bean", "build-routine", "generate-skill", "implement", "pr", "review", "ticket-lint"
   ]);
 });
 
 test("built-in content skills are chat-target", async () => {
   const skills = await loadSkills(skillsDir(projectBeanDir()));
-  for (const name of ["bean", "generate-skill"]) {
+  for (const name of ["bean", "generate-skill", "ticket-lint"]) {
     expect(skills.find((s) => s.name === name)?.target, name).toBe("chat");
   }
 });

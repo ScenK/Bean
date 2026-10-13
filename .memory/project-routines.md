@@ -54,3 +54,14 @@ that breaks an edge is flagged before save with the save-time wording. Picking a
 `parseBrief` drops a bad edge, never the step. The avatar bubble shows `round N/cap` for a
 looping gate. Dashboard side: see [project-dashboard-panel](project-dashboard-panel.md).
 
+
+**Example flows (#261).** No fixed template: `@bean/core/routine-examples` (node-free) holds a
+few disabled starting points (dev loop, ticket lint first, review only) built from generic
+repo-shipped skills (`ticket-lint`, `implement`, `review`, `pr`, `ask-on-ticket` in
+`.bean/skills/`). "Start from an example" chips (Routines empty state + the New pane) only open
+the editor pre-filled — nothing saves until Save, and `exampleRoutine` renames on a name clash
+so a save can't overwrite. Existing routines are never rewritten. To turn a single-step
+routine (e.g. one autonomous-dev delegate) into a gated flow: split it into
+implement / test (command) / review steps, gate test and review with "Go to → implement", and
+end with a pr step — or open the Dev loop example and copy its watch command over. The
+ReviewPane shows `stepProblemsText` before Enable, so a pinned harness that's missing warns.
