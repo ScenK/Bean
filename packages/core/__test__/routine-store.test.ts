@@ -120,3 +120,36 @@ describe("resolveTodoRoutine", () => {
     expect(() => resolveTodoRoutine(routines, "morning-triage")).toThrow('routine "morning-triage" is not todo-driven');
   });
 });
+
+describe("step ids and pinned coding agent", () => {
+  const d = (over: Record<string, unknown> = {}) => ({ kind: "delegate", skill: "s", instruction: "go", ...over });
+  const clis = [{ provider: "claude" as const, models: ["sonnet"] }, { provider: "codex" as const, models: ["gpt-5.5"] }];
+
+  it("accepts ids and a cli; rejects duplicate ids, bad ids, unknown cli, cli on a chat step", () => {
+    expect(describeRoutineError(routine({ steps: [d({ id: "plan-1", cli: "codex" }), d({ id: "impl-1", cli: "claude" })] as Routine["steps"] }))).toBeNull();
+    expect(describeRoutineError(routine({ steps: [d({ id: "a" }), d({ id: "a" })] as Routine["steps"] }))).toMatch(/step 2 reuses id "a"/);
+    expect(describeRoutineError(routine({ steps: [d({ id: "Bad Id" })] as Routine["steps"] }))).toMatch(/invalid id/);
+    expect(describeRoutineError(routine({ steps: [d({ cli: "gemini" })] as Routine["steps"] }))).toMatch(/unknown coding agent "gemini"/);
+    expect(describeRoutineError(routine({ steps: [{ kind: "chat", cli: "claude", instruction: "x" }] as unknown as Routine["steps"] }))).toMatch(/only applies to delegate/);
+  });
+
+  it("with clis.json, rejects a model the pinned cli doesn't offer; without it, loading never drops the routine", () => {
+    const r = routine({ steps: [d({ cli: "codex", model: "sonnet" })] as Routine["steps"] });
+    expect(describeRoutineError(r, clis)).toMatch(/codex doesn't offer model "sonnet"/);
+    expect(describeRoutineError(r)).toBeNull();
+    expect(describeRoutineError(routine({ steps: [d({ cli: "codex", model: "gpt-5.5" })] as Routine["steps"] }), clis)).toBeNull();
+  });
+
+  it("a legacy routine round-trips byte-for-byte through load → save", async () => {
+    const dir = await tmp();
+    const legacy = JSON.stringify({
+      name: "legacy", enabled: true, cron: "0 8 * * *",
+      steps: [{ kind: "delegate", skill: "s", model: "sonnet", instruction: "go" }, { kind: "chat", instruction: "sum" }],
+      sinks: { note: true },
+    }, null, 2) + "\n";
+    await writeFile(join(dir, "legacy.json"), legacy, "utf8");
+    const [loaded] = await loadRoutines(dir);
+    await saveRoutine(dir, loaded!, clis);
+    expect(await readFile(join(dir, "legacy.json"), "utf8")).toBe(legacy);
+  });
+});

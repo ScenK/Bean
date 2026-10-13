@@ -13,7 +13,7 @@ import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, M
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
-  isValidSessionId, recordDelegateSession, resumeCommand, withResumeFooter,
+  isValidSessionId, recordDelegateSession, resumeCommand, withResumeFooter, withProposalFooter, saveSkillProposals, listSkillProposals, RETRO_SKILL, recordStepAttempt, pruneStepAttempts, listStepAttempts, DEFAULT_GATE_ROUNDS, CLI_NAMES,
   modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
@@ -21,18 +21,18 @@ import {
   loadReminders, saveReminders, dueReminders, extractPageText,
   loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
-  routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate, killAllDelegates,
-  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
+  routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate, killAllDelegates, killAllCommands,
+  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, runShellCommand, systemControlTool, imagesDir, makeOpenAIImageGen,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  reserveRun, releaseRun, RunBusyError,
+  reserveRun, releaseRun, RunBusyError, availableModels, pinnedStepSelection, usesGates,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult, TodoStatus, CliName } from "@bean/core";
+import type { RouteSuggestion, ActionTool, Transport, CommandStepRequest, CommandStepOutcome, DelegateStepRequest, DelegateStepResult, Routine, RoutineRunResult, StepInfo, TodoStatus, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
-  buildRoutineHandlers, buildTodoHandlers, buildPendingUpdateStore, type ChatPromptPayload,
+  buildRoutineHandlers, buildSkillProposalHandlers, buildTodoHandlers, buildPendingUpdateStore, type ChatPromptPayload,
 } from "./ipc.js";
 import { IPC, type Theme, type ComponentKind } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
@@ -228,8 +228,15 @@ app.whenReady().then(async () => {
       dialog.showErrorBox(field === "alwaysOn" ? "Keep Mac Awake" : "Keep Display On", `Couldn't save the setting: ${e instanceof Error ? e.message : String(e)}`);
     });
   };
+  // Retro drafts waiting for review (#263) — shown only when there are some.
+  const proposalRows = (): MenuItemConstructorOptions[] => {
+    let n = 0;
+    try { n = listSkillProposals(dbFile(dir)).length; } catch (err) { console.error("skill proposals count failed:", err); }
+    return n ? [{ label: `${n} Skill Proposal${n === 1 ? "" : "s"} Waiting`, icon: symbol("sparkles"), click: () => openComponent("skills") }] : [];
+  };
   const buildTrayMenu = (): Menu => Menu.buildFromTemplate([
     { label: "Bring Bean Back", icon: symbol("location"), click: () => avatarControls.bringBack() },
+    ...proposalRows(),
     { label: "Settings", icon: symbol("gearshape"), accelerator: "Cmd+,", click: () => openComponent("settings") },
     { label: "Chat Bots", icon: symbol("message"), submenu: buildChatopsSubmenu() },
     { label: "Keep Mac Awake", icon: symbol("cup.and.saucer"), type: "checkbox", checked: keepAwake.alwaysOn(), click: (item) => toggleKeepAwake("alwaysOn", item.checked) },
@@ -285,8 +292,10 @@ app.whenReady().then(async () => {
   app.on("before-quit", () => {
     interruptAllDelegates();
     // Delegates run in their own process group (detached) and would outlive us — routine steps
-    // and builder agents included. SIGKILL them now; cancel()'s 5s escalation can't fire after exit.
+    // and builder agents included, and so do routine command steps. SIGKILL them now; cancel()'s
+    // 5s escalation can't fire after exit.
     killAllDelegates();
+    killAllCommands();
     // Spawned chatops servers do NOT die with us — without this they survive as launchd-owned
     // orphans, holding port 3978 and answering webhooks with whatever build they booted with.
     // The servers' own exitWhenOrphaned() watchdog covers the paths that never reach here
@@ -644,9 +653,22 @@ app.whenReady().then(async () => {
     // todo goes back to pending (RunBusyError) and the next tick retries it.
     // onSession: the step's started CLI session (already recorded in bean.db) for the run's
     // resume footer — see runOneRoutine.
-    const delegateStep = (req: DelegateStepRequest, onSession?: (cli: CliName, sessionId: string, projectPath: string) => void): Promise<string> =>
+    // `hold` (gated routines): a todo's reservation and scratch subdir outlive the step, so a gate
+    // loop re-entering a step never hits RunBusyError against itself and its resumed session
+    // keeps its workspace; runOneRoutine releases them when the run ends.
+    const delegateStep = (
+      req: DelegateStepRequest,
+      onSession?: (cli: CliName, sessionId: string, projectPath: string) => void,
+      hold?: { reserved: Set<string>; scratch: Set<string> },
+    ): Promise<DelegateStepResult> =>
       new Promise((resolve, reject) => {
-        const choice = resolveDelegateCli(req.model);
+        let choice;
+        try {
+          // A pinned harness refuses here, before any reservation or spawn — never a silent swap.
+          choice = req.cli
+            ? pinnedStepSelection({ cli: req.cli, model: req.model }, enabledClis(), availableModels(cliModels, enabledClis()))
+            : resolveDelegateCli(req.model);
+        } catch (err) { reject(err); return; }
         if (!choice) { reject(new Error("No enabled delegate CLI found — enable one in Settings.")); return; }
         const prompt =
           (req.skill ? composePrompt(req.skill, req.instruction) : req.instruction) +
@@ -654,13 +676,15 @@ app.whenReady().then(async () => {
           (req.priorOutputs ? `\n\nOutput of this routine's earlier steps:\n${req.priorOutputs}` : "");
         const perTodo = req.todoId && !req.projectPath ? join(scratchDir(dir), req.todoId) : undefined;
         const projectPath = req.projectPath ?? perTodo ?? scratchDir(dir);
-        const reserved = Boolean(req.todoId && req.projectPath);
+        const reserved = Boolean(req.todoId && req.projectPath) && !hold?.reserved.has(projectPath);
         if (reserved && !reserveRun(dir, projectPath, process.pid, randomUUID)) {
           reject(new RunBusyError(`${basename(projectPath)} is busy with another run`));
           return;
         }
-        if (perTodo) mkdirSync(perTodo, { recursive: true });
+        if (reserved) hold?.reserved.add(projectPath);
+        if (perTodo) { mkdirSync(perTodo, { recursive: true }); hold?.scratch.add(perTodo); }
         const cleanup = (): void => {
+          if (hold) return;
           if (reserved) releaseRun(dir, projectPath);
           if (perTodo) rmSync(perTodo, { recursive: true, force: true });
         };
@@ -671,10 +695,19 @@ app.whenReady().then(async () => {
             prompt,
             ...(choice.model ? { model: choice.model } : {}),
             ...(req.skill?.browser ? { browser: true } : {}),
+            // Only the same harness can resume; a rejected id starts fresh (runDelegate's notice).
+            ...(req.resume?.cli === choice.cli ? { resume: req.resume.sessionId } : {}),
           },
           {
             onOutput: () => {},
-            onDone: (out) => { cleanup(); resolve(out); },
+            onDone: (out, sessionId) => {
+              cleanup();
+              resolve({
+                output: out, cli: choice.cli,
+                ...(choice.model ? { model: choice.model } : {}),
+                ...(sessionId && isValidSessionId(sessionId) ? { sessionId } : {}),
+              });
+            },
             onError: (err) => { cleanup(); reject(err); },
             onSessionStart: (_pid, sessionId) => {
               recordDelegateSession(dbFile(dir), { surface: "routine", cli: choice.cli, sessionId, projectPath, instruction: req.instruction });
@@ -685,6 +718,28 @@ app.whenReady().then(async () => {
           req.timeoutMinutes ? req.timeoutMinutes * 60_000 : ROUTINE_STEP_TIMEOUT_MS,
         );
       });
+
+    // Command step adapter: same cwd rules as a delegate step (project, else the per-todo or shared
+    // scratch dir) and the same resolved login-shell PATH as watch commands, so a Finder-launched
+    // Bean still finds pnpm/gh. No run reservation: a check reads the tree, it doesn't edit it.
+    const commandStep = async (
+      req: CommandStepRequest,
+      hold?: { reserved: Set<string>; scratch: Set<string> },
+    ): Promise<CommandStepOutcome> => {
+      const perTodo = req.todoId && !req.projectPath ? join(scratchDir(dir), req.todoId) : undefined;
+      const cwd = req.projectPath ?? perTodo ?? scratchDir(dir);
+      if (!req.projectPath) mkdirSync(cwd, { recursive: true });
+      if (perTodo) hold?.scratch.add(perTodo);
+      try {
+        return await runShellCommand(req.command, {
+          cwd,
+          env: { ...process.env, PATH: resolvedPath, ...req.env },
+          timeoutMs: req.timeoutMinutes ? req.timeoutMinutes * 60_000 : ROUTINE_STEP_TIMEOUT_MS,
+        });
+      } finally {
+        if (perTodo && !hold) rmSync(perTodo, { recursive: true, force: true });
+      }
+    };
 
     // Act-now note saving for routine chat steps (chat's propose_note stays confirm-first;
     // this is the pre-authorized routine counterpart — the user consented by writing the step).
@@ -714,27 +769,50 @@ app.whenReady().then(async () => {
     const runOneRoutine = async (routine: Routine): Promise<RoutineRunResult> => {
       const skills = await loadLayeredSkills(skillsDir(projectDir), skillsDir(dir));
       const id = `routine:${routine.name}`;
-      const steps = routine.steps.map((st) => st.skill || (st.instruction.length > 60 ? `${st.instruction.slice(0, 59)}…` : st.instruction));
+      const steps = routine.steps.map((st) => {
+        const text = st.kind === "command" ? st.command : st.instruction;
+        return st.skill || (text.length > 60 ? `${text.slice(0, 59)}…` : text);
+      });
       taskStatus.upsert(id, { kind: "routine", name: routine.name, line: steps[0] ?? "", detail: routine.description ?? "", steps, step: 0, startedAt: Date.now(), state: "running" });
       let result: RoutineRunResult | undefined;
       // Run-scoped, so concurrent routines never mix receipts. Bean writes the footer itself —
       // the model never sees or retypes an id.
       const receipts: string[] = [];
-      let stepIndex = 0;
+      let at: StepInfo = { index: 0 };
+      const hold = usesGates(routine.steps) ? { reserved: new Set<string>(), scratch: new Set<string>() } : undefined;
       try {
         result = await runRoutine(routine, {
-          onStep: (i) => { stepIndex = i; taskStatus.upsert(id, { step: i, line: steps[i] ?? "" }); },
+          onStep: (info) => {
+            at = info;
+            // A looping gate shows its cap: `review · round 2/3 · codex`.
+            const onFail = routine.steps[info.index]?.gate?.onFail;
+            const loopTarget = typeof onFail === "object" ? routine.steps.findIndex((s) => s.id === onFail.goto) : -1;
+            const cap = typeof onFail === "object" && loopTarget >= 0 && loopTarget < info.index ? `/${onFail.maxRounds ?? DEFAULT_GATE_ROUNDS}` : "";
+            const tags = [steps[info.index] ?? "", ...(info.round && info.round > 1 ? [`round ${info.round}${cap}`] : []), ...(info.cli ? [info.cli] : [])];
+            taskStatus.upsert(id, { step: info.index, line: tags.filter(Boolean).join(" · ") });
+          },
           chat: runtime.converse,
           model: runtime.getModel(),
           delegate: (req) => {
-            const step = stepIndex + 1;
+            const step = `step ${at.index + 1}${at.round && at.round > 1 ? ` round ${at.round}` : ""}`;
             return delegateStep(req, (cli, sessionId, projectPath) => {
-              receipts.push(`step ${step} (${req.projectPath ? basename(projectPath) : "workspace"}) — ${resumeCommand(cli, sessionId)}`);
-            });
+              receipts.push(`${step} (${req.projectPath ? basename(projectPath) : "workspace"}) — ${resumeCommand(cli, sessionId)}`);
+            }, hold);
           },
+          command: (req) => commandStep(req, hold),
           tools: [...actionTools, saveNoteTool],
           findSkill: (name) => skills.find((s) => s.name === name),
           memories: () => loadMemories(dbFile(dir)),
+          recordAttempt: (a) => recordStepAttempt(dbFile(dir), a),
+          retro: {
+            history: async (name) => {
+              const analyzed = (await loadRoutines(routinesPath)).find((r) => r.name === name);
+              if (!analyzed) return undefined;
+              const history = (await loadRoutineStates(routineStatePath))[name]?.history ?? [];
+              return { routine: analyzed, runs: history.map((record) => ({ record, attempts: record.id ? listStepAttempts(dbFile(dir), record.id) : [] })) };
+            },
+            save: (proposals) => saveSkillProposals(dbFile(dir), proposals),
+          },
           todos: {
             listPending: async (r) => (await listTodos(dbFile(dir), r)).filter((t) => t.status === "pending"),
             setStatus: (todoId, status: TodoStatus, resultSummary?: string) =>
@@ -743,10 +821,21 @@ app.whenReady().then(async () => {
         });
         // Before the scheduler saves the record and delivers it to sinks.
         result = withResumeFooter(result, receipts);
+        if (routine.steps.some((st) => st.kind === "chat" && st.skill === RETRO_SKILL)) {
+          result = withProposalFooter(result, listSkillProposals(dbFile(dir)).length);
+        }
         return result;
       } finally {
-        const failed = !result || result.record.status === "failed";
-        taskStatus.finish(id, failed ? "failed" : "done", failed ? (result ? "Finished with a failed step" : "Run failed") : `Done · ${steps.length} step${steps.length === 1 ? "" : "s"}`);
+        for (const p of hold?.reserved ?? []) releaseRun(dir, p);
+        for (const p of hold?.scratch ?? []) rmSync(p, { recursive: true, force: true });
+        const status = result?.record.status;
+        taskStatus.finish(
+          id, status === "ok" ? "done" : "failed",
+          !status ? "Run failed"
+            : status === "failed" ? "Finished with a failed step"
+            : status === "needs-attention" ? "Needs attention — a gate stopped it"
+            : `Done · ${steps.length} step${steps.length === 1 ? "" : "s"}`,
+        );
       }
     };
 
@@ -779,6 +868,7 @@ app.whenReady().then(async () => {
       loadStates: () => loadRoutineStates(routineStatePath),
       saveStates: (s) => saveRoutineStates(routineStatePath, s),
       runRoutine: runOneRoutine,
+      pruneAttempts: (r, keep) => pruneStepAttempts(dbFile(dir), r, keep),
       deliverDigest,
       hasPendingTodos: async (r) => (await listTodos(dbFile(dir), r)).some((t) => t.status === "pending"),
       pollWatch: (w) => pollWatch(w, watchPoll),
@@ -967,9 +1057,14 @@ app.whenReady().then(async () => {
       getPendingChatPrompt: chatPromptStore.get,
       getPendingInterruptedRunNotices: interruptedRunStore.get,
       loadRoutines: () => loadRoutines(routinesPath),
+      skillProposalHandlers: buildSkillProposalHandlers({
+        loadSkills: loadLayeredSkills, projectSkillsDir: skillsDir(projectDir), skillsDir: skillsDir(dir), dbFile: dbFile(dir),
+      }),
       routineHandlers: buildRoutineHandlers({
         loadRoutines: () => loadRoutines(routinesPath),
-        saveRoutine: (r) => saveRoutine(routinesPath, r),
+        // Model check only when enabling/enabled: pausing must never be blocked by a model that
+        // has since left clis.json (the run itself refuses either way).
+        saveRoutine: (r) => saveRoutine(routinesPath, r, r.enabled ? cliModels : undefined),
         deleteRoutine: (name) => deleteRoutine(routinesPath, name),
         loadStates: () => loadRoutineStates(routineStatePath),
         isRunning: (name) => routineScheduler.isRunning(name),
@@ -977,7 +1072,14 @@ app.whenReady().then(async () => {
         onRoutineDeleted: async (name) => {
           await deleteTodosForRoutine(dbFile(dir), name);
           clearWatch(dbFile(dir), name);
+          pruneStepAttempts(dbFile(dir), name, []);
         },
+        attempts: (runId) => listStepAttempts(dbFile(dir), runId).map((a) => ({
+          stepIndex: a.stepIndex, round: a.round, kind: a.kind, ok: a.ok, output: a.output,
+          ...(a.stepId ? { stepId: a.stepId } : {}), ...(a.cli ? { cli: a.cli } : {}), ...(a.verdict ? { verdict: a.verdict } : {}),
+          ...(a.cli && a.sessionId && isValidSessionId(a.sessionId) && CLI_NAMES.includes(a.cli as CliName)
+            ? { resume: resumeCommand(a.cli as CliName, a.sessionId) } : {}),
+        })),
         watch: {
           isSeeded: (r) => (r.watch ? isWatchSeeded(dbFile(dir), r.name, watchSourceKey(r.watch)) : true),
           queueCounts: async (name) => {

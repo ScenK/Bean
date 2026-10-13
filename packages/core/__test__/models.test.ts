@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { availableModels, pickModel, resolveCliModelSelection } from "../src/models.js";
+import { availableModels, pickModel, pinnedStepSelection, resolveCliModelSelection, stepAvailabilityProblem } from "../src/models.js";
 import type { CliModels } from "../src/cli-models.js";
 
 const CLI_MODELS: CliModels[] = [
@@ -87,4 +87,17 @@ test("an explicit model selects a compatible enabled CLI instead of an unrelated
 test("a CLI with no configured models remains selectable without passing another provider's model", () => {
   const models = availableModels(CLI_MODELS, ["codex"]);
   expect(resolveCliModelSelection(models, ["codex"], { cli: "codex" })).toEqual({ cli: "codex" });
+});
+
+test("stepAvailabilityProblem / pinnedStepSelection refuse instead of falling back", () => {
+  const models = availableModels([...CLI_MODELS, { provider: "codex", models: ["gpt-5.5"] }], ["claude", "opencode"]);
+  const enabled = ["claude", "opencode"] as const;
+  expect(stepAvailabilityProblem({ cli: "codex" }, [...enabled], models)).toBe("codex is not enabled");
+  expect(stepAvailabilityProblem({ cli: "claude", model: "github-copilot/gpt-5.5" }, [...enabled], models)).toMatch(/claude doesn't offer/);
+  expect(stepAvailabilityProblem({ model: "gpt-5.5" }, [...enabled], models)).toMatch(/isn't offered by any enabled/);
+  expect(stepAvailabilityProblem({ cli: "claude", model: "opus" }, [...enabled], models)).toBeUndefined();
+  expect(() => pinnedStepSelection({ cli: "codex" }, [...enabled], models)).toThrow("codex is not enabled");
+  expect(pinnedStepSelection({ cli: "claude" }, [...enabled], models)).toEqual({ cli: "claude", model: "sonnet" });
+  expect(pinnedStepSelection({ cli: "opencode", model: "github-copilot/claude-sonnet-5" }, [...enabled], models))
+    .toEqual({ cli: "opencode", model: "github-copilot/claude-sonnet-5" });
 });

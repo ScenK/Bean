@@ -2493,3 +2493,61 @@ button, input, textarea, select, a {
 .bean-rb-dest-on::before { background: var(--bean-accent-text); }
 .bean-rb-dest-off { color: var(--bean-text-dim); }
 .bean-rb-dest-off::before { border: 1px solid var(--bean-text-dim); box-sizing: border-box; }
+
+/* Step graph edges (#260): rail markers under the step number and the gate chip. */
+.bean-routines-step-edge { font: 700 11px ui-monospace, monospace; line-height: 1; color: var(--bean-accent-text); }
+.bean-routines-gate-chip { color: var(--bean-accent-text); border-color: var(--bean-accent-text); }
+
+/* Dashboard: executed path, needs-attention tone, per-attempt output. */
+.bean-dash-dot--needs-attention,
+.bean-dash-health-bar--needs-attention { background: var(--bean-accent-text); }
+.bean-dash-path { flex-basis: 100%; font: 500 11.5px ui-monospace, monospace; color: var(--bean-text-dim); overflow-wrap: anywhere; }
+.bean-dash-card--attention { border-color: var(--bean-accent-text); }
+.bean-dash-attempt { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid var(--bean-border); }
+.bean-dash-attempt-out {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  font: 11.5px/1.45 ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--bean-text);
+}
+.bean-dash-resume { display: flex; align-items: center; gap: 8px; font: 11.5px ui-monospace, monospace; color: var(--bean-text-dim); }
+
+/* Skills panel → Proposals inbox (retro-drafted skill edits, #263). */
+.bean-skills-proposals-tab {
+  width: 100%;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.bean-skills-proposals-tab .bean-skills-row-name { flex: 1; }
+.bean-proposals { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+.bean-proposal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--bean-border);
+  border-radius: 12px;
+}
+.bean-proposal-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.bean-proposal-rationale { font-size: 13px; color: var(--bean-text); white-space: pre-wrap; }
+.bean-proposal-evidence { cursor: pointer; font: inherit; }
+.bean-proposal-diff {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  font: 12px/1.5 ui-monospace, monospace;
+  color: var(--bean-text);
+  border: 1px solid var(--bean-border);
+  border-radius: 8px;
+}
+.bean-proposal-diff > div { white-space: pre-wrap; word-break: break-word; padding: 0 8px; }
+/* The +/- prefix carries the meaning; the tint only helps scanning. */
+.bean-diff-add { background: rgba(34, 197, 94, 0.16); }
+.bean-diff-del { background: rgba(239, 68, 68, 0.16); }
+.bean-diff-same { color: var(--bean-text-dim); }

@@ -11,4 +11,5 @@ is visible to all its members. That is accepted, not a leak to re-flag.
 Routine steps inherit relevance-selected memories at run time (#211, `stepMemories()` in
 `routine-runner.ts`). The rendered block is **runtime-only**: it rides its own field
 (`DelegateStepRequest.memories`, its own chat system part) and must never be concatenated
-into `instruction`, `StepResult`/`RunRecord`, `.state.json`, `delegate_runs`, cards, or logs.
+into `instruction`, `StepResult`/`RunRecord`, `.state.json`, `delegate_runs`,
+`routine_step_attempts` (step-attempts.ts — stores only the step's own output), cards, or logs.

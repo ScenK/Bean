@@ -59,15 +59,32 @@ export async function loadLayeredSkills(projectDir: string, userDir: string): Pr
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// ponytail: in-process queue — the Discord/Teams servers write ~/.bean/skills from their own
+// processes (propose_skill) and aren't serialized with it; a file lock if that ever races.
+let skillWrites: Promise<unknown> = Promise.resolve();
+/** Runs `fn` after every earlier skill write in this process, so a guarded write (approving or
+ * undoing a retro proposal) can't interleave with an editor save between its check and write. */
+export function serializeSkillWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const next = skillWrites.then(fn, fn);
+  skillWrites = next.catch(() => {});
+  return next;
+}
+
+export function isValidSkillName(name: string): boolean {
+  return !/[/\\]|\.\./.test(name);
+}
+
 export async function saveSkill(dir: string, name: string, body: string): Promise<void> {
   // ponytail: guard against path traversal across the IPC trust boundary
-  if (/[/\\]|\.\./.test(name)) throw new Error(`invalid skill name: ${name}`);
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `${name}.md`), formatSkillBody(body), "utf8");
+  if (!isValidSkillName(name)) throw new Error(`invalid skill name: ${name}`);
+  await serializeSkillWrite(async () => {
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, `${name}.md`), formatSkillBody(body), "utf8");
+  });
 }
 
 export async function deleteSkill(dir: string, name: string): Promise<void> {
   // ponytail: same traversal guard as saveSkill — the callee, not just the caller, must reject it
-  if (/[/\\]|\.\./.test(name)) throw new Error(`invalid skill name: ${name}`);
-  await rm(join(dir, `${name}.md`), { force: true });
+  if (!isValidSkillName(name)) throw new Error(`invalid skill name: ${name}`);
+  await serializeSkillWrite(() => rm(join(dir, `${name}.md`), { force: true }));
 }

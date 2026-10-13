@@ -48,7 +48,7 @@ The desktop app is one of **three surfaces**, all sharing the same core brain:
   They render the same confirm-first cards (run / note / skill; memory saves directly with a Forget receipt) through core's shared
   `chatops/` layer; the per-surface `*-config.ts` holds tokens/IDs.
 - **Routines** — scheduled work. A routine (`~/.bean/routines/<name>.json`) is a cron- or
-  watch-fired (polled feed/command, no model per check) pipeline of `delegate`/`chat` steps with optional todo-queue draining; `routine-runner.ts`
+  watch-fired (polled feed/command, no model per check) pipeline of `delegate`/`chat`/`command` steps with optional todo-queue draining; `routine-runner.ts`
   runs it and fans results to sinks (chatops channel / note / desktop notification).
 - **System control** — `system-control.ts` lets `converse()` drive the Mac (volume, mute,
   media playback, launch/quit apps) via a closed verb union, opt-in behind a Settings toggle.

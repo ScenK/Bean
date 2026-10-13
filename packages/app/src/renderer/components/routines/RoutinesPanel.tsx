@@ -8,7 +8,8 @@ import { useCliAvailability } from "../../shared/cli-availability.js";
 import type { RoutineStateView } from "../../../ipc.js";
 import type { RoutineBuildView } from "../../../routine-builder.js";
 import { StepsEditor } from "./StepsEditor.js";
-import { BuildPane, DescribePane, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
+import { stepProblemsText } from "./step-ids.js";
+import { BuildPane, DescribePane, ExampleChips, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
 import { everyMinutes, failureCount, intervalText, needsReview, WATCH_MINUTES, watchRowSub, watchStatusLine, windowTooShortNote } from "./watch-status.js";
 
 const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -128,7 +129,8 @@ function dotKind(r: Routine, state: RoutineStateView | undefined): DotKind {
   if (!r.enabled) return "off";
   if (r.watch && failureCount(state) > 0) return "failed"; // matches the row's "check failing"
   if (state?.running) return "running";
-  if (state?.missed || state?.history[0]?.status === "failed") return "failed";
+  const last = state?.history[0]?.status;
+  if (state?.missed || (last && last !== "ok")) return "failed"; // needs-attention reds too
   return "enabled";
 }
 
@@ -501,6 +503,8 @@ export function RoutinesPanel() {
   const reviewing = Boolean(savedRoutine && needsReview(savedRoutine, selectedState) && editorFor !== selected);
   const buildView = selectedBuild ? builds.find((b) => b.name === selectedBuild) : undefined;
   const notifyOnly = Boolean(draft.watch) && draft.steps.length === 0;
+  // Enable warns: a pinned harness/model this Mac can't run fails the unattended run.
+  const stepProblems = stepProblemsText(draft.steps, clis, models);
   const status = draft.watch ? watchStatusLine(savedRoutine?.watch ? savedRoutine : draft, selectedState, new Date()) : undefined;
   const isRunningSelected = triggering || Boolean(selectedState?.running);
   const pendingCount = todos.filter((t) => t.status === "pending").length;
@@ -555,6 +559,7 @@ export function RoutinesPanel() {
         {describing ? (
           <DescribePane
             initial={briefSeed}
+            taken={routines.map((r) => r.name)}
             skills={enabledSkills}
             projects={projects}
             clis={clis}
@@ -580,6 +585,7 @@ export function RoutinesPanel() {
           <ReviewPane
             routine={savedRoutine}
             state={selectedState}
+            clis={clis}
             models={models}
             projects={projects}
             onDiscard={() => void remove()}
@@ -587,7 +593,9 @@ export function RoutinesPanel() {
             onEnabled={(note) => { void refresh().then(() => { setEditorFor(savedRoutine.name); setNotice(note); }); }}
           />
         ) : !selected && !creating ? (
-          <PanelEmptyState message="Select a routine to view it, or set up a new one." />
+          <PanelEmptyState message="Select a routine to view it, or set up a new one.">
+            <ExampleChips taken={routines.map((r) => r.name)} onPick={openDraftInEditor} onBlank={startBlank} />
+          </PanelEmptyState>
         ) : (
         <>
         <div class="bean-skills-header">
@@ -636,6 +644,9 @@ export function RoutinesPanel() {
               <span class="bean-skills-toggle-knob" />
             </button>
             <span class="bean-skills-toggle-label">{draft.enabled ? "Runs automatically" : "Paused"}</span>
+            {draft.enabled && stepProblems ? (
+              <span class="bean-routines-step-missing" role="alert">⚠ {stepProblems}</span>
+            ) : null}
           </div>
         </div>
 
