@@ -1,6 +1,7 @@
 // packages/core/__test__/routine-runner.test.ts
 import { describe, expect, it, vi } from "vitest";
 import { runRoutine, RunBusyError, withResumeFooter, type RoutineRunnerDeps } from "../src/routine-runner.js";
+import { availableModels, pinnedStepSelection } from "../src/models.js";
 import type { Routine } from "../src/routine-store.js";
 import type { ActionTool, ConvoMsg, ToolSpec } from "../src/converse.js";
 import type { Skill } from "../src/types.js";
@@ -461,5 +462,26 @@ describe("routine memories", () => {
     expect(reqs[0]!.memories).toBeUndefined();
     expect(warn.mock.calls.flat().join(" ")).not.toContain("SENTINEL");
     warn.mockRestore();
+  });
+});
+
+describe("pinned coding agent", () => {
+  it("passes the step's cli to the adapter; a pinned-but-disabled cli fails the step and spawns nothing", async () => {
+    const spawned: string[] = [];
+    const models = availableModels([{ provider: "claude", models: ["sonnet"] }, { provider: "codex", models: ["gpt-5.5"] }], ["claude"]);
+    // The same refuse-before-spawn the app's delegate adapter does (main.ts delegateStep).
+    const delegate: RoutineRunnerDeps["delegate"] = async (req) => {
+      const choice = req.cli ? pinnedStepSelection({ cli: req.cli, model: req.model }, ["claude"], models) : { cli: "claude" };
+      spawned.push(choice.cli);
+      return "ok";
+    };
+    const res = await runRoutine(routine([
+      { kind: "delegate", id: "plan-1", skill: "s", cli: "claude", instruction: "plan" },
+      { kind: "delegate", id: "impl-1", skill: "s", cli: "codex", instruction: "implement" },
+    ]), baseDeps(async () => ({ content: "digest", toolCalls: [] }), { delegate }));
+    expect(spawned).toEqual(["claude"]);
+    expect(res.record.status).toBe("failed");
+    expect(res.record.steps[1]).toMatchObject({ ok: false });
+    expect(res.record.steps[1]!.summary).toContain("codex is not enabled");
   });
 });

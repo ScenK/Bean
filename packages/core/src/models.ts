@@ -88,3 +88,31 @@ export function resolveCliModelSelection(
   if (!cli) return undefined;
   return { cli, ...(model ? { model: model.id } : {}) };
 }
+
+/** Why a step's explicit harness/model can't run on this Mac, or undefined if it can.
+ * `clis`/`models` are the enabled CLIs and their models (availableModels). Shared by the
+ * Routines panel's inline warning and the routine runner's refuse-before-spawn check. */
+export function stepAvailabilityProblem(
+  step: { cli?: CliName; model?: string },
+  clis: CliName[],
+  models: AvailableModel[],
+): string | undefined {
+  if (step.cli && !clis.includes(step.cli)) return `${step.cli} is not enabled`;
+  if (!step.model) return undefined;
+  const offeredOn = models.find((m) => m.id === step.model)?.availableOn ?? [];
+  if (step.cli) return offeredOn.includes(step.cli) ? undefined : `${step.cli} doesn't offer model "${step.model}" here`;
+  return offeredOn.length > 0 ? undefined : `model "${step.model}" isn't offered by any enabled coding agent`;
+}
+
+/** The pinned selection for a step with an explicit `cli`: refuses (throws) rather than
+ * falling back, so an unattended run never silently swaps harness. */
+export function pinnedStepSelection(
+  step: { cli: CliName; model?: string },
+  clis: CliName[],
+  models: AvailableModel[],
+): CliModelSelection {
+  const problem = stepAvailabilityProblem(step, clis, models);
+  if (problem) throw new Error(problem);
+  const model = step.model ?? pickModel(models, step.cli);
+  return { cli: step.cli, ...(model ? { model } : {}) };
+}

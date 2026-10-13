@@ -26,7 +26,7 @@ import {
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  reserveRun, releaseRun, RunBusyError,
+  reserveRun, releaseRun, RunBusyError, availableModels, pinnedStepSelection,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult, TodoStatus, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
@@ -646,7 +646,13 @@ app.whenReady().then(async () => {
     // resume footer — see runOneRoutine.
     const delegateStep = (req: DelegateStepRequest, onSession?: (cli: CliName, sessionId: string, projectPath: string) => void): Promise<string> =>
       new Promise((resolve, reject) => {
-        const choice = resolveDelegateCli(req.model);
+        let choice;
+        try {
+          // A pinned harness refuses here, before any reservation or spawn — never a silent swap.
+          choice = req.cli
+            ? pinnedStepSelection({ cli: req.cli, model: req.model }, enabledClis(), availableModels(cliModels, enabledClis()))
+            : resolveDelegateCli(req.model);
+        } catch (err) { reject(err); return; }
         if (!choice) { reject(new Error("No enabled delegate CLI found — enable one in Settings.")); return; }
         const prompt =
           (req.skill ? composePrompt(req.skill, req.instruction) : req.instruction) +
@@ -969,7 +975,7 @@ app.whenReady().then(async () => {
       loadRoutines: () => loadRoutines(routinesPath),
       routineHandlers: buildRoutineHandlers({
         loadRoutines: () => loadRoutines(routinesPath),
-        saveRoutine: (r) => saveRoutine(routinesPath, r),
+        saveRoutine: (r) => saveRoutine(routinesPath, r, cliModels),
         deleteRoutine: (name) => deleteRoutine(routinesPath, name),
         loadStates: () => loadRoutineStates(routineStatePath),
         isRunning: (name) => routineScheduler.isRunning(name),

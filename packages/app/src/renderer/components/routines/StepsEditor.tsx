@@ -1,6 +1,10 @@
 import { useState } from "preact/hooks";
 import type { AvailableModel, CliName, Project, RoutineStep, Skill } from "@bean/core";
+import { stepAvailabilityProblem } from "@bean/core/models";
 import { ChipMenu } from "../../shared/ChipMenu.js";
+import { withStepIds } from "./step-ids.js";
+
+const HARNESSES: CliName[] = ["claude", "codex", "opencode"];
 
 // The numbered step cards — shared by the manual editor and the builder's brief (2a), so what
 // Bean guessed is edited with exactly the same chips as a routine you wrote by hand.
@@ -15,7 +19,9 @@ export function StepsEditor(props: {
   note?: (index: number) => string | undefined;
   addHint?: string;
 }) {
-  const { steps, onSteps, skills, projects, clis, models } = props;
+  const { steps, skills, projects, clis, models } = props;
+  // Every edit assigns ids to id-less steps; an untouched routine never passes through here.
+  const onSteps = (next: RoutineStep[]): void => props.onSteps(withStepIds(next));
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
 
@@ -36,10 +42,16 @@ export function StepsEditor(props: {
     setStep(i, step.kind === "delegate" ? { ...step, skill: name ?? "" } : { ...step, skill: name });
   const setModel = (i: number, step: RoutineStep, id?: string): void =>
     setStep(i, { ...step, model: id } as RoutineStep);
+  // A pinned harness keeps only a model it offers; "auto" keeps any model.
+  const setCli = (i: number, step: RoutineStep & { kind: "delegate" }, cli?: CliName): void => {
+    const keepModel = !cli || !step.model || models.some((m) => m.id === step.model && m.availableOn.includes(cli));
+    setStep(i, { ...step, cli, model: keepModel ? step.model : undefined });
+  };
+  // `id` rides along so a kind change never re-keys the step; `cli` is delegate-only.
   const switchKind = (i: number, step: RoutineStep, kind: RoutineStep["kind"]): void =>
     setStep(i, kind === "delegate"
-      ? { kind: "delegate", skill: step.skill ?? "", model: step.model, instruction: step.instruction }
-      : { kind: "chat", skill: step.skill || undefined, model: step.model, instruction: step.instruction });
+      ? { kind: "delegate", id: step.id, skill: step.skill ?? "", model: step.model, instruction: step.instruction }
+      : { kind: "chat", id: step.id, skill: step.skill || undefined, model: step.model, instruction: step.instruction });
 
   return (
     <div class="bean-routines-steps">
@@ -47,6 +59,8 @@ export function StepsEditor(props: {
         const skillLabel = step.skill ? `skill · ${step.skill}` : (step.kind === "delegate" ? "skill · choose…" : "skill · none");
         const projName = projects.find((p) => p.path === (step.kind === "delegate" ? step.project : undefined))?.name;
         const modelLabel = step.model ? (models.find((m) => m.id === step.model)?.label ?? step.model) : "Bean picks model";
+        const cli = step.kind === "delegate" ? step.cli : undefined;
+        const problem = step.kind === "delegate" ? stepAvailabilityProblem(step, clis, models) : undefined;
         return (
           <div
             key={i}
@@ -132,6 +146,38 @@ export function StepsEditor(props: {
                   </ChipMenu>
                 ) : null}
 
+                {step.kind === "delegate" ? (
+                  <ChipMenu
+                    chipClass={cli ? undefined : "bean-chip-menu-trigger--dashed"}
+                    chipLabel={<span class="bean-routines-chip-label">{cli ? `agent · ${cli}` : "agent · auto"}</span>}
+                  >
+                    {(close) => (
+                      <div class="bean-chip-menu-list">
+                        <button
+                          type="button"
+                          class={`bean-chip-menu-row${cli ? "" : " bean-chip-menu-row--on"}`}
+                          onClick={() => { setCli(i, step, undefined); close(); }}
+                        >
+                          <span class="bean-chip-menu-row-title">{cli ? "" : "✓ "}auto</span>
+                          <span class="bean-chip-menu-caption">picked from the model and your Settings default</span>
+                        </button>
+                        <div class="bean-chip-menu-divider" />
+                        {HARNESSES.map((h) => (
+                          <button
+                            key={h}
+                            type="button"
+                            class={`bean-chip-menu-row${cli === h ? " bean-chip-menu-row--on" : ""}${clis.includes(h) ? "" : " bean-chip-menu-row--dimmed"}`}
+                            onClick={() => { setCli(i, step, h); close(); }}
+                          >
+                            <span class="bean-chip-menu-row-title">{cli === h ? "✓ " : ""}{h}</span>
+                            {clis.includes(h) ? null : <span class="bean-chip-menu-caption">not enabled on this Mac</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </ChipMenu>
+                ) : null}
+
                 <ChipMenu
                   chipClass={step.model ? undefined : "bean-chip-menu-trigger--dashed"}
                   chipLabel={<span class="bean-routines-chip-label">{modelLabel}</span>}
@@ -145,7 +191,7 @@ export function StepsEditor(props: {
                         onClick={() => { setModel(i, step, undefined); close(); }}
                       >{step.model ? "" : "✓ "}Bean picks the model</button>
                       <div class="bean-chip-menu-divider" />
-                      {models.map((m) => {
+                      {models.filter((m) => !cli || m.availableOn.includes(cli)).map((m) => {
                         const available = m.availableOn.some((candidate) => clis.includes(candidate));
                         return (
                           <button
@@ -181,6 +227,7 @@ export function StepsEditor(props: {
                 value={step.instruction}
                 onInput={(e) => setStep(i, { ...step, instruction: (e.target as HTMLTextAreaElement).value })}
               />
+              {problem ? <div class="bean-routines-step-missing" role="alert">{problem}{cli ? " — this step will refuse to run" : " — Bean will pick another"}</div> : null}
               {props.note?.(i) ? <div class="bean-routines-step-missing">{props.note(i)}</div> : null}
               <div class="bean-routines-step-actions">
                 <span class="bean-skills-spacer" />

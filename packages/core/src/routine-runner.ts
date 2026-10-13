@@ -2,6 +2,7 @@
 import type { ActionTool, ConverseDeps, ConvoMsg, ToolCall } from "./converse.js";
 import type { Routine, RoutineStep, RunRecord } from "./routine-store.js";
 import type { Skill } from "./types.js";
+import type { CliName } from "./launcher.js";
 import type { TodoItem, TodoStatus } from "./todo-store.js";
 import { memoriesBlock, type Memory } from "./memory/memory.js";
 import { selectRelevantMemories } from "./memory/store.js";
@@ -10,6 +11,8 @@ export interface DelegateStepRequest {
   skill?: Skill;
   projectPath?: string; // undefined = no-project scratch run (caller supplies the scratch dir)
   instruction: string;
+  /** The step's pinned harness — the adapter must refuse (not fall back) when it can't run. */
+  cli?: CliName;
   model?: string;
   /** The step's own timeout override; undefined = the impl's default. */
   timeoutMinutes?: number;
@@ -213,6 +216,7 @@ async function runSteps(
             skill,
             projectPath: effective.project,
             instruction: effective.instruction,
+            ...(effective.cli ? { cli: effective.cli } : {}),
             model: effective.model,
             ...(effective.timeoutMinutes ? { timeoutMinutes: effective.timeoutMinutes } : {}),
             priorOutputs: prior,

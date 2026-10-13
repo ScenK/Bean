@@ -14,3 +14,11 @@ and logged — never fan out to every allow-listed user / personal chat, coworke
 owner's digests, #253); present = a specific discord channel id or teams conversation id instead. The
 `save_note` act-now tool is routine-only; the chat window keeps confirm-first `propose_note`.
 Spec: `docs/superpowers/specs/2026-07-12-routines-design.md`.
+
+Steps carry an optional stable `id` (`[a-z0-9-]`, unique per routine, assigned by
+`withStepIds` in the editor only on an edit — untouched legacy JSON saves back byte-for-byte)
+and an optional delegate-only `cli` pin. A pinned `cli`/`model` that this Mac can't run
+**refuses before spawn** (`pinnedStepSelection`, shared message source `stepAvailabilityProblem`
+for the panel warning) — never a silent fallback; unpinned steps keep inferring the CLI from
+the model. The clis.json model check runs only on user saves (`saveRoutine(dir, r, cliModels)`),
+never on load, so a model-list change can't make a routine vanish.

@@ -103,3 +103,21 @@ it("reads BEAN-STEP progress markers", () => {
   expect(buildStageFromLine("BEAN-STEP: command")).toEqual({ stage: "command" });
   expect(buildStageFromLine("nothing")).toBeUndefined();
 });
+
+describe("parseBrief keeps step ids and pinned harness when refining", () => {
+  it("keeps a valid id and an enabled cli+model, drops an unavailable cli and duplicate ids", () => {
+    const brief = parseBrief(JSON.stringify({
+      name: "x", trigger: "schedule", cron: "0 8 * * *",
+      steps: [
+        { kind: "delegate", id: "plan-1", skill: "code-review", cli: "claude", model: "opus", instruction: "a" },
+        { kind: "delegate", id: "plan-1", skill: "code-review", cli: "codex", model: "gpt-5.5", instruction: "b" },
+        { kind: "chat", id: "BAD ID", instruction: "c" },
+      ],
+    }), ctx);
+    expect(brief.steps).toEqual([
+      { kind: "delegate", id: "plan-1", skill: "code-review", cli: "claude", model: "opus", instruction: "a" },
+      { kind: "delegate", skill: "code-review", instruction: "b" },
+      { kind: "chat", instruction: "c" },
+    ]);
+  });
+});

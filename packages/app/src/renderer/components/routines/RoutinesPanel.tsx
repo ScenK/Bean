@@ -8,6 +8,7 @@ import { useCliAvailability } from "../../shared/cli-availability.js";
 import type { RoutineStateView } from "../../../ipc.js";
 import type { RoutineBuildView } from "../../../routine-builder.js";
 import { StepsEditor } from "./StepsEditor.js";
+import { stepProblemsText } from "./step-ids.js";
 import { BuildPane, DescribePane, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
 import { everyMinutes, failureCount, intervalText, needsReview, WATCH_MINUTES, watchRowSub, watchStatusLine, windowTooShortNote } from "./watch-status.js";
 
@@ -501,6 +502,8 @@ export function RoutinesPanel() {
   const reviewing = Boolean(savedRoutine && needsReview(savedRoutine, selectedState) && editorFor !== selected);
   const buildView = selectedBuild ? builds.find((b) => b.name === selectedBuild) : undefined;
   const notifyOnly = Boolean(draft.watch) && draft.steps.length === 0;
+  // Enable warns: a pinned harness/model this Mac can't run fails the unattended run.
+  const stepProblems = stepProblemsText(draft.steps, clis, models);
   const status = draft.watch ? watchStatusLine(savedRoutine?.watch ? savedRoutine : draft, selectedState, new Date()) : undefined;
   const isRunningSelected = triggering || Boolean(selectedState?.running);
   const pendingCount = todos.filter((t) => t.status === "pending").length;
@@ -636,6 +639,9 @@ export function RoutinesPanel() {
               <span class="bean-skills-toggle-knob" />
             </button>
             <span class="bean-skills-toggle-label">{draft.enabled ? "Runs automatically" : "Paused"}</span>
+            {draft.enabled && stepProblems ? (
+              <span class="bean-routines-step-missing" role="alert">⚠ {stepProblems}</span>
+            ) : null}
           </div>
         </div>
 

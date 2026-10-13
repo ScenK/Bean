@@ -1,6 +1,6 @@
 import type { ConvoMsg } from "./converse.js";
 import type { CliName } from "./launcher.js";
-import { describeRoutineError, type Routine, type RoutineChatopsSink, type RoutineSinks, type RoutineStep, type RoutineWatch } from "./routine-store.js";
+import { describeRoutineError, STEP_ID_RE, type Routine, type RoutineChatopsSink, type RoutineSinks, type RoutineStep, type RoutineWatch } from "./routine-store.js";
 import { unfence } from "./routine-runner.js";
 
 /** The editable brief Bean drafts from one sentence (screen 2a). It covers the whole saved
@@ -57,6 +57,7 @@ export function briefMessages(sentence: string, ctx: BriefContext, previous?: Ro
     "- For a YouTube handle like @name use source \"https://www.youtube.com/@name\" and sourceKind \"feed\".",
     "- notifyOnly = true when the user only wants to be told (\"ping me\", \"let me know\"); then steps is []. Otherwise one step per thing Bean should do to each new item; delegate for code/repo/review work, chat for summarising/writing.",
     "- everyMinutes: 5 for work queues (PRs, tickets), 15 for feeds, unless the user says otherwise.",
+    "- Keep each existing step's \"id\", \"cli\" and \"model\" exactly as in the current brief; never invent them for new steps.",
     "- Pick a step skill only from the skill list; for a delegate step set project only when the user named one from the project list.",
     "- Destinations: DM on Discord/Teams = a chatops sink with no channel; set channel only when the user gives a specific channel/conversation id. Only include sinks the user asked for; if none, ask in missing.",
     "- missing: only what the sentence truly leaves open. Leave a field out rather than invent it.",
@@ -86,11 +87,16 @@ function cleanStep(v: unknown, ctx: BriefContext): RoutineStep | undefined {
   const s = v as Record<string, unknown>;
   const instruction = str(s.instruction) ? s.instruction.trim() : "";
   const skill = str(s.skill) && ctx.skills.some((k) => k.name === s.skill) ? s.skill : undefined;
+  // Refining an existing routine: its step ids and pinned harness (with that harness's model)
+  // carry over. A harness this Mac doesn't have is dropped like an unknown skill.
+  const id = str(s.id) && STEP_ID_RE.test(s.id) ? { id: s.id } : {};
   if (s.kind === "delegate") {
     const project = str(s.project) && ctx.projects.some((p) => p.path === s.project) ? s.project : undefined;
-    return { kind: "delegate", skill: skill ?? "", ...(project ? { project } : {}), instruction };
+    const cli = ctx.clis.find((c) => c === s.cli);
+    const pinned = cli ? { cli, ...(str(s.model) && s.model ? { model: s.model } : {}) } : {};
+    return { kind: "delegate", ...id, skill: skill ?? "", ...(project ? { project } : {}), ...pinned, instruction };
   }
-  return { kind: "chat", ...(skill ? { skill } : {}), instruction };
+  return { kind: "chat", ...id, ...(skill ? { skill } : {}), instruction };
 }
 
 function cleanSinks(v: unknown): RoutineSinks {
@@ -125,7 +131,14 @@ export function parseBrief(raw: string, ctx: BriefContext): RoutineBrief {
       return r && str(r.field) && str(r.question) && r.question.trim() ? [{ field: r.field, question: r.question.trim() }] : [];
     })
     : [];
-  const steps = Array.isArray(b.steps) ? b.steps.map((s) => cleanStep(s, ctx)).filter((s): s is RoutineStep => s !== undefined) : [];
+  const seenIds = new Set<string>();
+  const steps = (Array.isArray(b.steps) ? b.steps.map((s) => cleanStep(s, ctx)).filter((s): s is RoutineStep => s !== undefined) : [])
+    .map((s) => {
+      if (!s.id) return s;
+      if (!seenIds.has(s.id)) { seenIds.add(s.id); return s; }
+      const { id: _dup, ...rest } = s; // a repeated id would fail validation — the editor re-assigns one
+      return rest as RoutineStep;
+    });
   const minutes = typeof b.everyMinutes === "number" && Number.isInteger(b.everyMinutes) && b.everyMinutes >= 1 ? b.everyMinutes : undefined;
   const source = str(b.source) && b.source.trim() ? b.source.trim() : undefined;
   const sourceKind = b.sourceKind === "feed" || b.sourceKind === "command" ? b.sourceKind
