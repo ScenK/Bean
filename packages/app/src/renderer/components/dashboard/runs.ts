@@ -7,6 +7,8 @@ export interface DashRun extends RunRecord {
   routine: string;
   /** `${routine}@${startedAt}` — stable across polls, so the selection survives a refresh. */
   id: string;
+  /** The record's own uuid (RunRecord.id, which `id` shadows) — keys its step attempts in bean.db. */
+  recordId?: string;
 }
 
 export interface DashStep {
@@ -63,13 +65,13 @@ export const pathName = (step: { kind: StepKind; id?: string; round?: number }):
 export const executedPath = (run: Pick<RunRecord, "steps">): string =>
   run.steps.map((s) => `${pathName(s)} ${stepPassed(s) ? "✓" : "✗"}`).join(" → ");
 
-/** A gate stopped (or exhausted) this run: where it stopped and the verdict it stopped on. The
- * last executed step is the gate that decided; the runner records nothing after it. */
+/** A gate stopped (or exhausted) this run: where it stopped and the verdict it stopped on — the
+ * last step that didn't pass (a later todo pass may have succeeded after it). */
 export function attentionOf(run: Pick<RunRecord, "status" | "steps">): { at: string; verdict?: string; summary: string } | undefined {
   if (run.status !== "needs-attention") return undefined;
-  const last = run.steps.at(-1);
-  if (!last) return { at: "an unknown step", summary: "" };
-  const step = parseStep(last, run.steps.length - 1);
+  const index = run.steps.findLastIndex((s) => !stepPassed(s));
+  if (index < 0) return { at: "an unknown step", summary: "" };
+  const step = parseStep(run.steps[index]!, index);
   return { at: pathName(step), summary: step.summary, ...(step.verdict ? { verdict: step.verdict } : {}) };
 }
 
@@ -84,7 +86,7 @@ export function flattenRuns(states: Record<string, RoutineStateView>): DashRun[]
   const runs: DashRun[] = [];
   for (const [routine, state] of Object.entries(states)) {
     for (const record of state.history) {
-      runs.push({ ...record, routine, id: runId(routine, record.startedAt) });
+      runs.push({ ...record, routine, id: runId(routine, record.startedAt), ...(record.id ? { recordId: record.id } : {}) });
     }
   }
   return runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt));

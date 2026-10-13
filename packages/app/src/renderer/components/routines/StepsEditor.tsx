@@ -259,7 +259,7 @@ export function StepsEditor(props: {
                 </ChipMenu>
                 ) : null}
 
-                {steps.length > 1 ? (
+                {steps.length > 1 || onFail ? (
                   <ChipMenu
                     chipClass={onFail ? "bean-routines-gate-chip" : "bean-chip-menu-trigger--dashed"}
                     chipLabel={<span class="bean-routines-chip-label">{gateLabel}</span>}

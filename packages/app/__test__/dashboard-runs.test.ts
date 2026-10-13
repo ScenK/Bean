@@ -150,6 +150,14 @@ describe("gated runs", () => {
   test("attentionOf names the gate that stopped the run and its verdict; ok runs have none", () => {
     expect(attentionOf({ status: "needs-attention", steps })).toEqual({ at: "test r2", verdict: "FAIL", summary: "still failing" });
     expect(attentionOf({ status: "ok", steps })).toBeUndefined();
+    // A later todo pass that succeeded doesn't hide where the gate stopped.
+    const passed = { kind: "chat" as const, id: "pr", round: 1, ok: true, summary: "opened" };
+    expect(attentionOf({ status: "needs-attention", steps: [...steps, passed] })?.at).toBe("test r2");
+  });
+
+  test("flattenRuns keeps the record's uuid for the attempts lookup", () => {
+    const [run] = flattenRuns({ dev: { running: false, history: [{ id: "abc", startedAt: "2026-10-01T10:00:00Z", finishedAt: "2026-10-01T10:05:00Z", status: "ok", digest: "", steps: [] }] } });
+    expect(run).toMatchObject({ id: "dev@2026-10-01T10:00:00Z", recordId: "abc" });
   });
 
   test("groupRuns counts a needs-attention run even when no step failed", () => {

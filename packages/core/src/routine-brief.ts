@@ -160,11 +160,14 @@ export function parseBrief(raw: string, ctx: BriefContext): RoutineBrief {
       const { id: _dup, ...rest } = s; // a repeated id would fail validation — the editor re-assigns one
       return rest as RoutineStep;
     });
-  // A bad edge (missing target, backward next, rounds on a branch) is dropped, never the step.
-  stepEdgeProblems(steps).forEach((problem, i) => {
-    if (!problem) return;
-    const { gate: _g, next: _n, ...rest } = steps[i]!;
-    steps[i] = rest as RoutineStep;
+  // A bad edge (missing target, backward next, rounds on a branch) is dropped, never the step —
+  // each edge on its own, so a bad `next` can't take a valid stop gate with it.
+  const without = (key: "gate" | "next") => steps.map((s) => { const { [key]: _drop, ...rest } = s; return rest as RoutineStep; });
+  const badNext = stepEdgeProblems(without("gate"));
+  const badGate = stepEdgeProblems(without("next"));
+  steps.forEach((s, i) => {
+    const { gate, next, ...rest } = s;
+    steps[i] = { ...rest, ...(gate && !badGate[i] ? { gate } : {}), ...(next && !badNext[i] ? { next } : {}) } as RoutineStep;
   });
   const minutes = typeof b.everyMinutes === "number" && Number.isInteger(b.everyMinutes) && b.everyMinutes >= 1 ? b.everyMinutes : undefined;
   const source = str(b.source) && b.source.trim() ? b.source.trim() : undefined;

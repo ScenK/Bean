@@ -251,7 +251,7 @@ export function DashboardPanel() {
   const runSection = (view: (typeof runViews)[number], index: number, firstNeed: number) => {
     const { run, needs, resolved } = view;
     const attention = attentionOf(run);
-    const runAttempts = run.id ? attempts[run.id] : undefined;
+    const runAttempts = run.recordId ? attempts[run.recordId] : undefined;
     const ordinal = runViews.length - index;
     const resolvedOpen = openResolved.includes(run.id);
     const digestOpen = (index === 0) !== flippedDigests.includes(run.id);
@@ -342,14 +342,14 @@ export function DashboardPanel() {
         )),
       ),
 
-      ...(run.id
+      ...(run.recordId
         ? [spineRow(`${run.id}-steps`, "", "plain", (
             <div class="bean-dash-digest">
               <button
                 type="button"
                 class="bean-dash-digest-head"
                 aria-expanded={Boolean(runAttempts)}
-                onClick={() => void toggleAttempts(run.id!)}
+                onClick={() => void toggleAttempts(run.recordId!)}
               >
                 <span class="bean-field-label">FULL OUTPUT · RUN {ordinal}</span>
                 <span class="bean-dash-resolved-toggle">{runAttempts ? "Hide ▴" : "Open ▾"}</span>

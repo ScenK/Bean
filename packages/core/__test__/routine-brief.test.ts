@@ -143,13 +143,15 @@ describe("parseBrief keeps gates and next edges", () => {
         { kind: "delegate", id: "implement", skill: "code-review", instruction: "do it", next: "lint" },
         { kind: "command", id: "test", command: "pnpm test", gate: { onFail: { goto: "implement", maxRounds: 9 } } },
         { kind: "chat", instruction: "pr", gate: { onFail: { goto: "nowhere" } }, next: "end" },
+        { kind: "chat", instruction: "stop-but-bad-next", gate: { onFail: "stop" }, next: "lint" },
       ],
     }), ctx);
     expect(brief.steps).toEqual([
       { kind: "chat", id: "lint", instruction: "lint the ticket", gate: { onFail: "stop" } },
       { kind: "delegate", id: "implement", skill: "code-review", instruction: "do it" },
       { kind: "command", id: "test", command: "pnpm test", gate: { onFail: { goto: "implement", maxRounds: 5 } } },
-      { kind: "chat", instruction: "pr" },
+      { kind: "chat", instruction: "pr", next: "end" },
+      { kind: "chat", instruction: "stop-but-bad-next", gate: { onFail: "stop" } },
     ]);
   });
 });
