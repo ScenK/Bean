@@ -47,7 +47,7 @@ describe("runRoutine", () => {
     const seen: number[] = [];
     await runRoutine(
       routine([{ kind: "chat", instruction: "one" }, { kind: "chat", instruction: "two" }]),
-      baseDeps(fn, { onStep: (i) => seen.push(i) }),
+      baseDeps(fn, { onStep: ({ index }) => seen.push(index) }),
     );
     expect(seen).toEqual([0, 1]);
   });

@@ -1975,7 +1975,8 @@ button, input, textarea, select, a {
   border-radius: 2px;
 }
 .bean-dash-health-bar--ok { background: var(--bean-orb-check-ink); }
-.bean-dash-health-bar--failed { background: var(--bean-error); }
+.bean-dash-health-bar--failed,
+.bean-dash-health-bar--needs-attention { background: var(--bean-error); }
 .bean-dash-health-text { font-size: 12px; line-height: 1.5; color: var(--bean-text-dim); }
 .bean-dash-link {
   align-self: flex-start;

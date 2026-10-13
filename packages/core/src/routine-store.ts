@@ -11,15 +11,29 @@ import type { CliModels } from "./cli-models.js";
 export interface RoutineChatopsSink { transport: "teams" | "discord"; channel?: string }
 export interface RoutineSinks { chatops?: RoutineChatopsSink[]; note?: boolean; notify?: boolean }
 
+/** A gated step ends its output with `VERDICT: PASS|FAIL`; FAIL either stops the run or jumps
+ * to another step: forward = a branch, backward = a loop of at most `maxRounds` executions of
+ * the gated step (default 3, cap 5). PASS follows `next`. */
+export interface StepGate { onFail: "stop" | { goto: string; maxRounds?: number } }
+export const DEFAULT_GATE_ROUNDS = 3;
+export const MAX_GATE_ROUNDS = 5;
+
+/** Graph fields shared by every step kind. `next`: a later step's id or "end"; absent = the
+ * following step. Routines with neither field anywhere run exactly as before (legacy). */
+interface StepEdges { gate?: StepGate; next?: string }
+
 /** `id` is a stable handle other steps (gates, graph edges) can point at — unique within the
  * routine, `[a-z0-9-]`, assigned by the editor, never typed. Absent on legacy routines. */
-export type RoutineStep =
+export type RoutineStep = StepEdges & (
   /** `timeoutMinutes` overrides the default delegate step timeout (ROUTINE_STEP_TIMEOUT_MS)
    * for long unattended runs, e.g. implement + review loops. No panel field; set it in the JSON.
    * `cli` pins the coding-agent harness: unavailable = the step refuses before spawning (no
    * fallback); absent = today's inference from `model` + the Settings preference. */
   | { kind: "delegate"; id?: string; skill: string; project?: string; cli?: CliName; model?: string; timeoutMinutes?: number; instruction: string }
-  | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string };
+  | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string });
+
+/** True when any step has a gate or a `next` edge — the runner then walks the step graph. */
+export const usesGates = (steps: RoutineStep[]): boolean => steps.some((s) => s.gate !== undefined || s.next !== undefined);
 
 export const STEP_ID_RE = /^[a-z0-9-]+$/;
 
@@ -53,12 +67,16 @@ export interface Routine {
   sinks: RoutineSinks;
 }
 
+export type RunStatus = "ok" | "failed" | "needs-attention";
+
 export interface RunRecord {
   /** uuid; keys the run's `routine_step_attempts` rows. Absent on records written before #258. */
   id?: string;
   startedAt: string;  // ISO
   finishedAt: string; // ISO
-  status: "ok" | "failed"; // failed = at least one step failed
+  /** failed = a step errored; needs-attention = a gate stopped the run, a loop ran out of
+   * rounds, or the run's last gate decision was FAIL. */
+  status: RunStatus;
   digest: string;
   steps: { kind: "delegate" | "chat"; id?: string; cli?: CliName; round?: number; verdict?: string; ok: boolean; summary: string }[];
 }
@@ -103,6 +121,31 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
     return null;
   }
   return `${at} has an unknown kind`;
+}
+
+/** Gate/next checks. Only a gated backward goto can make a cycle: `next` is forward-only. */
+function describeEdgeError(s: Record<string, unknown>, i: number, ids: Map<string, number>): string | null {
+  const at = `step ${i + 1}`;
+  if (s.next !== undefined && s.next !== "end") {
+    if (!str(s.next)) return `${at} has an invalid next step`;
+    const target = ids.get(s.next);
+    if (target === undefined) return `${at}: next step "${s.next}" doesn't exist`;
+    if (target <= i) return `${at}: next must point to a later step (or "end") — loop back with a gate instead`;
+  }
+  if (s.gate === undefined) return null;
+  const onFail = (s.gate as { onFail?: unknown } | null)?.onFail;
+  if (onFail === "stop") return null;
+  if (typeof onFail !== "object" || onFail === null) return `${at}: gate.onFail must be "stop" or { "goto": "<step id>" }`;
+  const { goto, maxRounds } = onFail as { goto?: unknown; maxRounds?: unknown };
+  if (!str(goto)) return `${at}: gate.onFail needs a goto step id`;
+  const target = ids.get(goto);
+  if (target === undefined) return `${at}: gate goto step "${goto}" doesn't exist`;
+  if (target === i) return `${at}: a gate can't goto its own step`;
+  if (target > i) return maxRounds === undefined ? null : `${at}: maxRounds only applies to a loop (a goto to an earlier step)`;
+  if (maxRounds !== undefined && (!Number.isInteger(maxRounds) || (maxRounds as number) < 1 || (maxRounds as number) > MAX_GATE_ROUNDS)) {
+    return `${at}: maxRounds must be a whole number from 1 to ${MAX_GATE_ROUNDS}`;
+  }
+  return null;
 }
 
 function describeWatchError(v: unknown): string | null {
@@ -151,15 +194,19 @@ export function describeRoutineError(v: unknown, cliModels?: CliModels[]): strin
   if (r.watch !== undefined && r.steps.length > 0 && r.todoDriven !== true) {
     return "a watch routine with steps must be todo-driven — each new item is queued as a todo";
   }
-  const ids = new Set<string>();
+  const ids = new Map<string, number>();
   for (let i = 0; i < r.steps.length; i++) {
     const stepError = describeStepError(r.steps[i], i, cliModels);
     if (stepError) return stepError;
     const id = (r.steps[i] as { id?: string }).id;
     if (id !== undefined) {
       if (ids.has(id)) return `step ${i + 1} reuses id "${id}" — step ids must be unique`;
-      ids.add(id);
+      ids.set(id, i);
     }
+  }
+  for (let i = 0; i < r.steps.length; i++) {
+    const edgeError = describeEdgeError(r.steps[i] as Record<string, unknown>, i, ids);
+    if (edgeError) return edgeError;
   }
   if (typeof r.sinks !== "object" || r.sinks === null) return "sinks must be an object";
   const sinks = r.sinks as Record<string, unknown>;

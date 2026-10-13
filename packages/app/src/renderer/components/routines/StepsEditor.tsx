@@ -47,11 +47,14 @@ export function StepsEditor(props: {
     const keepModel = !cli || !step.model || models.some((m) => m.id === step.model && m.availableOn.includes(cli));
     setStep(i, { ...step, cli, model: keepModel ? step.model : undefined });
   };
-  // `id` rides along so a kind change never re-keys the step; `cli` is delegate-only.
-  const switchKind = (i: number, step: RoutineStep, kind: RoutineStep["kind"]): void =>
+  // `id` and the gate/next edges ride along so a kind change never re-keys or re-wires the
+  // step; `cli` is delegate-only.
+  const switchKind = (i: number, step: RoutineStep, kind: RoutineStep["kind"]): void => {
+    const edges = { ...(step.gate ? { gate: step.gate } : {}), ...(step.next ? { next: step.next } : {}) };
     setStep(i, kind === "delegate"
-      ? { kind: "delegate", id: step.id, skill: step.skill ?? "", model: step.model, instruction: step.instruction }
-      : { kind: "chat", id: step.id, skill: step.skill || undefined, model: step.model, instruction: step.instruction });
+      ? { kind: "delegate", id: step.id, skill: step.skill ?? "", model: step.model, instruction: step.instruction, ...edges }
+      : { kind: "chat", id: step.id, skill: step.skill || undefined, model: step.model, instruction: step.instruction, ...edges });
+  };
 
   return (
     <div class="bean-routines-steps">

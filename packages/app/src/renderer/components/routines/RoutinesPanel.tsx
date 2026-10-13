@@ -129,7 +129,8 @@ function dotKind(r: Routine, state: RoutineStateView | undefined): DotKind {
   if (!r.enabled) return "off";
   if (r.watch && failureCount(state) > 0) return "failed"; // matches the row's "check failing"
   if (state?.running) return "running";
-  if (state?.missed || state?.history[0]?.status === "failed") return "failed";
+  const last = state?.history[0]?.status;
+  if (state?.missed || (last && last !== "ok")) return "failed"; // needs-attention reds too
   return "enabled";
 }
 

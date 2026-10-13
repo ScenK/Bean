@@ -241,7 +241,7 @@ export function DashboardPanel() {
         <div class="bean-dash-run-head">
           <span class="bean-dash-run-time">{clock(run.startedAt)} → {clock(run.finishedAt)}</span>
           <span class="bean-dash-meta">
-            {plural(run.steps.length, "step")} · {run.status === "ok" ? "healthy" : "failed"}
+            {plural(run.steps.length, "step")} · {run.status === "ok" ? "healthy" : run.status === "needs-attention" ? "needs attention" : "failed"}
           </span>
         </div>
       )),
@@ -359,6 +359,7 @@ export function DashboardPanel() {
             </div>
             <div class="bean-dash-health-text">
               {plural(health.length, "run")}, {health.filter((h) => h.status === "failed").length} failed
+              {health.some((h) => h.status === "needs-attention") ? `, ${health.filter((h) => h.status === "needs-attention").length} need attention` : ""}
               {" · "}{nextRunText(routine, routine ? states[routine.name] : undefined)}
             </div>
             <button type="button" class="bean-dash-link" onClick={() => void window.bean.openComponent("routines")}>

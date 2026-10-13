@@ -56,13 +56,13 @@ export type { CronSpec } from "./cron.js";
 export * from "./watch-window.js";
 export {
   appendRunRecord, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines, watchEveryMinutes, DEFAULT_WATCH_MINUTES,
-  loadRoutineStates, resolveTodoRoutine, saveRoutine, saveRoutineStates,
+  loadRoutineStates, resolveTodoRoutine, saveRoutine, saveRoutineStates, usesGates,
 } from "./routine-store.js";
 export type {
-  Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord,
+  Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord, RunStatus, StepGate,
 } from "./routine-store.js";
 export { runRoutine, unfence, withResumeFooter, ROUTINE_STEP_TIMEOUT_MS, RunBusyError } from "./routine-runner.js";
-export type { DelegateStepRequest, DelegateStepResult, RoutineRunnerDeps, RoutineRunResult, StepResult } from "./routine-runner.js";
+export type { DelegateStepRequest, DelegateStepResult, RoutineRunnerDeps, RoutineRunResult, StepInfo, StepResult } from "./routine-runner.js";
 export { claimOutbox, enqueueOutbox } from "./outbox.js";
 export type { OutboxMessage } from "./outbox.js";
 export { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice } from "./run-queue.js";

@@ -31,6 +31,13 @@ export function parseVerdict(output: string): string | undefined {
   return all.at(-1)?.[1];
 }
 
+/** A gate's verdict: PASS only when the last non-empty line is exactly `VERDICT: PASS`.
+ * Missing, malformed, or a VERDICT line anywhere else (quoted, mid-output) is FAIL. */
+export function gateVerdict(output: string): "PASS" | "FAIL" {
+  const last = output.trimEnd().split(/\r?\n/).at(-1)?.trim();
+  return last !== undefined && /^VERDICT:[ \t]*PASS$/.test(last) ? "PASS" : "FAIL";
+}
+
 /** Never throws — bookkeeping must not fail or alter the run. Logs the error class only. */
 export function recordStepAttempt(file: string, a: StepAttempt): void {
   try {

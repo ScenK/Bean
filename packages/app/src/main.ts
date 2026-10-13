@@ -26,9 +26,9 @@ import {
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  reserveRun, releaseRun, RunBusyError, availableModels, pinnedStepSelection,
+  reserveRun, releaseRun, RunBusyError, availableModels, pinnedStepSelection, usesGates,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, DelegateStepResult, Routine, RoutineRunResult, TodoStatus, CliName } from "@bean/core";
+import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, DelegateStepResult, Routine, RoutineRunResult, StepInfo, TodoStatus, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
@@ -644,7 +644,14 @@ app.whenReady().then(async () => {
     // todo goes back to pending (RunBusyError) and the next tick retries it.
     // onSession: the step's started CLI session (already recorded in bean.db) for the run's
     // resume footer — see runOneRoutine.
-    const delegateStep = (req: DelegateStepRequest, onSession?: (cli: CliName, sessionId: string, projectPath: string) => void): Promise<DelegateStepResult> =>
+    // `hold` (gated routines): a todo's reservation and scratch subdir outlive the step, so a gate
+    // loop re-entering a step never hits RunBusyError against itself and its resumed session
+    // keeps its workspace; runOneRoutine releases them when the run ends.
+    const delegateStep = (
+      req: DelegateStepRequest,
+      onSession?: (cli: CliName, sessionId: string, projectPath: string) => void,
+      hold?: { reserved: Set<string>; scratch: Set<string> },
+    ): Promise<DelegateStepResult> =>
       new Promise((resolve, reject) => {
         let choice;
         try {
@@ -660,13 +667,15 @@ app.whenReady().then(async () => {
           (req.priorOutputs ? `\n\nOutput of this routine's earlier steps:\n${req.priorOutputs}` : "");
         const perTodo = req.todoId && !req.projectPath ? join(scratchDir(dir), req.todoId) : undefined;
         const projectPath = req.projectPath ?? perTodo ?? scratchDir(dir);
-        const reserved = Boolean(req.todoId && req.projectPath);
+        const reserved = Boolean(req.todoId && req.projectPath) && !hold?.reserved.has(projectPath);
         if (reserved && !reserveRun(dir, projectPath, process.pid, randomUUID)) {
           reject(new RunBusyError(`${basename(projectPath)} is busy with another run`));
           return;
         }
-        if (perTodo) mkdirSync(perTodo, { recursive: true });
+        if (reserved) hold?.reserved.add(projectPath);
+        if (perTodo) { mkdirSync(perTodo, { recursive: true }); hold?.scratch.add(perTodo); }
         const cleanup = (): void => {
+          if (hold) return;
           if (reserved) releaseRun(dir, projectPath);
           if (perTodo) rmSync(perTodo, { recursive: true, force: true });
         };
@@ -677,6 +686,8 @@ app.whenReady().then(async () => {
             prompt,
             ...(choice.model ? { model: choice.model } : {}),
             ...(req.skill?.browser ? { browser: true } : {}),
+            // Only the same harness can resume; a rejected id starts fresh (runDelegate's notice).
+            ...(req.resume?.cli === choice.cli ? { resume: req.resume.sessionId } : {}),
           },
           {
             onOutput: () => {},
@@ -733,17 +744,22 @@ app.whenReady().then(async () => {
       // Run-scoped, so concurrent routines never mix receipts. Bean writes the footer itself —
       // the model never sees or retypes an id.
       const receipts: string[] = [];
-      let stepIndex = 0;
+      let at: StepInfo = { index: 0 };
+      const hold = usesGates(routine.steps) ? { reserved: new Set<string>(), scratch: new Set<string>() } : undefined;
       try {
         result = await runRoutine(routine, {
-          onStep: (i) => { stepIndex = i; taskStatus.upsert(id, { step: i, line: steps[i] ?? "" }); },
+          onStep: (info) => {
+            at = info;
+            const tags = [steps[info.index] ?? "", ...(info.round && info.round > 1 ? [`round ${info.round}`] : []), ...(info.cli ? [info.cli] : [])];
+            taskStatus.upsert(id, { step: info.index, line: tags.filter(Boolean).join(" · ") });
+          },
           chat: runtime.converse,
           model: runtime.getModel(),
           delegate: (req) => {
-            const step = stepIndex + 1;
+            const step = `step ${at.index + 1}${at.round && at.round > 1 ? ` round ${at.round}` : ""}`;
             return delegateStep(req, (cli, sessionId, projectPath) => {
-              receipts.push(`step ${step} (${req.projectPath ? basename(projectPath) : "workspace"}) — ${resumeCommand(cli, sessionId)}`);
-            });
+              receipts.push(`${step} (${req.projectPath ? basename(projectPath) : "workspace"}) — ${resumeCommand(cli, sessionId)}`);
+            }, hold);
           },
           tools: [...actionTools, saveNoteTool],
           findSkill: (name) => skills.find((s) => s.name === name),
@@ -759,8 +775,16 @@ app.whenReady().then(async () => {
         result = withResumeFooter(result, receipts);
         return result;
       } finally {
-        const failed = !result || result.record.status === "failed";
-        taskStatus.finish(id, failed ? "failed" : "done", failed ? (result ? "Finished with a failed step" : "Run failed") : `Done · ${steps.length} step${steps.length === 1 ? "" : "s"}`);
+        for (const p of hold?.reserved ?? []) releaseRun(dir, p);
+        for (const p of hold?.scratch ?? []) rmSync(p, { recursive: true, force: true });
+        const status = result?.record.status;
+        taskStatus.finish(
+          id, status === "ok" ? "done" : "failed",
+          !status ? "Run failed"
+            : status === "failed" ? "Finished with a failed step"
+            : status === "needs-attention" ? "Needs attention — a gate stopped it"
+            : `Done · ${steps.length} step${steps.length === 1 ? "" : "s"}`,
+        );
       }
     };
 

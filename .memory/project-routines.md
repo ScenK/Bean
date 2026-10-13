@@ -22,3 +22,15 @@ and an optional delegate-only `cli` pin. A pinned `cli`/`model` that this Mac ca
 for the panel warning) — never a silent fallback; unpinned steps keep inferring the CLI from
 the model. The clis.json model check runs only on user saves (`saveRoutine(dir, r, cliModels)`),
 never on load, so a model-list change can't make a routine vanish.
+
+**Gates (#259).** A step's optional `gate: { onFail: "stop" | { goto, maxRounds? } }` and
+`next: "<later id>" | "end"` turn the step list into a graph (`usesGates`); with neither field
+anywhere the runner is the old linear loop, byte-for-byte. A gate's verdict is
+`gateVerdict()` — PASS **only** when the last non-empty line is exactly `VERDICT: PASS`;
+anything else is FAIL (never loosen this to "any VERDICT line": a quoted contract would pass).
+Backward goto = loop, capped by executions of the gated step (default 3, max 5) per todo; whole
+pass bounded at 50 executions. The goto target gets only the firing gate's newest FAIL output
+as quoted data; the gated prior block keeps the latest attempt per step. Re-entered delegate
+steps resume their own session (same CLI only). Outcome `needs-attention` (stop / exhausted /
+last gate FAIL) is a third `RunRecord.status` — treat any `!== "ok"` as needing the user. In
+gated routines the app holds a todo's run reservation + scratch dir until the run ends.
