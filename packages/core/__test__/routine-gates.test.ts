@@ -198,6 +198,13 @@ describe("gated runs", () => {
 });
 
 describe("legacy routines (no gate/next)", () => {
+  it("have no execution limit", async () => {
+    const steps = Array.from({ length: 51 }, (_, i): RoutineStep => ({ kind: "delegate", skill: "s", instruction: `s${i}` }));
+    const res = await runRoutine(routine(steps), deps(async () => "ok"));
+    expect(res.record.steps).toHaveLength(51);
+    expect(res.record.status).toBe("ok");
+  });
+
   it("still continue past a failed step and ignore VERDICT lines", async () => {
     const seen: StepInfo[] = [];
     const delegate: RoutineRunnerDeps["delegate"] = async (req) => {

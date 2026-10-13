@@ -260,7 +260,7 @@ async function runSteps(
   while (pc < steps.length) {
     const index = pc;
     const step = steps[index]!;
-    if (++executed > MAX_RUN_EXECUTIONS) {
+    if (graph && ++executed > MAX_RUN_EXECUTIONS) {
       return { status: "needs-attention", attention: `stopped at ${name(index)} — the run hit its ${MAX_RUN_EXECUTIONS}-step limit` };
     }
     const round = (rounds.get(index) ?? 0) + 1;
