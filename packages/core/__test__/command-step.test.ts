@@ -1,7 +1,7 @@
 // packages/core/__test__/command-step.test.ts
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { runShellCommand } from "../src/command-step.js";
+import { killAllCommands, runShellCommand } from "../src/command-step.js";
 import { runRoutine, type CommandStepRequest, type RoutineRunnerDeps } from "../src/routine-runner.js";
 import { describeRoutineError, type Routine, type RoutineStep } from "../src/routine-store.js";
 import type { CommandStepOutcome, StepAttempt, TodoItem } from "../src/index.js";
@@ -47,6 +47,15 @@ describe("runShellCommand", () => {
   it("times out by killing the whole process group (a background child can't hold it open)", async () => {
     const started = Date.now();
     await expect(runShellCommand("sleep 30 & wait", { ...opts, timeoutMs: 200 })).rejects.toThrow(/timed out/);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it("killAllCommands stops a running command's whole group (app quit)", async () => {
+    const started = Date.now();
+    const run = runShellCommand("sleep 30 & wait", opts);
+    await new Promise((r) => setTimeout(r, 100));
+    killAllCommands();
+    await run; // the backgrounded `sleep 30` died too, or this would take 30s
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 });
