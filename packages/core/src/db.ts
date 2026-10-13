@@ -185,7 +185,12 @@ CREATE TABLE IF NOT EXISTS skill_proposals (
   rationale  TEXT NOT NULL,
   evidence   TEXT NOT NULL,
   status     TEXT NOT NULL DEFAULT 'pending',
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- Set on approve: the user-layer file it replaced (NULL = there was none) and the hash of what
+  -- it wrote, so undo restores exactly that file and refuses once the skill changed again.
+  prev_body    TEXT,
+  applied_hash TEXT,
+  decided_at   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS todos (

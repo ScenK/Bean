@@ -1,13 +1,13 @@
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
-  RoutineBrief, RoutineWatch, WatchItem,
+  RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
 import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
 import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
-import type { StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch } from "../ipc.js";
+import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch } from "../ipc.js";
 import type { RoutineBuildView } from "../routine-builder.js";
 import type { WatchCheckResult } from "../routine-scheduler.js";
 
@@ -78,6 +78,10 @@ declare global {
       deleteNote(slug: string): Promise<void>;
       starNote(slug: string, starred: boolean): Promise<void>;
       noteHistory(slug: string): Promise<Note[]>;
+      skillProposalsList(): Promise<{ pending: SkillProposalView[]; applied: SkillProposalView[] }>;
+      skillProposalsApprove(id: string): Promise<ProposalOutcome>;
+      skillProposalsReject(id: string): Promise<ProposalOutcome>;
+      skillProposalsUndo(id: string): Promise<ProposalOutcome>;
       routinesList(): Promise<Routine[]>;
       routinesSave(routine: Routine): Promise<void>;
       routinesDelete(name: string): Promise<void>;

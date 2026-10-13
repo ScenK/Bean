@@ -32,7 +32,7 @@ import type { RouteSuggestion, ActionTool, Transport, CommandStepRequest, Comman
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
-  buildRoutineHandlers, buildTodoHandlers, buildPendingUpdateStore, type ChatPromptPayload,
+  buildRoutineHandlers, buildSkillProposalHandlers, buildTodoHandlers, buildPendingUpdateStore, type ChatPromptPayload,
 } from "./ipc.js";
 import { IPC, type Theme, type ComponentKind } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
@@ -228,8 +228,15 @@ app.whenReady().then(async () => {
       dialog.showErrorBox(field === "alwaysOn" ? "Keep Mac Awake" : "Keep Display On", `Couldn't save the setting: ${e instanceof Error ? e.message : String(e)}`);
     });
   };
+  // Retro drafts waiting for review (#263) — shown only when there are some.
+  const proposalRows = (): MenuItemConstructorOptions[] => {
+    let n = 0;
+    try { n = listSkillProposals(dbFile(dir)).length; } catch (err) { console.error("skill proposals count failed:", err); }
+    return n ? [{ label: `${n} Skill Proposal${n === 1 ? "" : "s"} Waiting`, icon: symbol("sparkles"), click: () => openComponent("skills") }] : [];
+  };
   const buildTrayMenu = (): Menu => Menu.buildFromTemplate([
     { label: "Bring Bean Back", icon: symbol("location"), click: () => avatarControls.bringBack() },
+    ...proposalRows(),
     { label: "Settings", icon: symbol("gearshape"), accelerator: "Cmd+,", click: () => openComponent("settings") },
     { label: "Chat Bots", icon: symbol("message"), submenu: buildChatopsSubmenu() },
     { label: "Keep Mac Awake", icon: symbol("cup.and.saucer"), type: "checkbox", checked: keepAwake.alwaysOn(), click: (item) => toggleKeepAwake("alwaysOn", item.checked) },
@@ -1050,6 +1057,9 @@ app.whenReady().then(async () => {
       getPendingChatPrompt: chatPromptStore.get,
       getPendingInterruptedRunNotices: interruptedRunStore.get,
       loadRoutines: () => loadRoutines(routinesPath),
+      skillProposalHandlers: buildSkillProposalHandlers({
+        loadSkills: loadLayeredSkills, projectSkillsDir: skillsDir(projectDir), skillsDir: skillsDir(dir), dbFile: dbFile(dir),
+      }),
       routineHandlers: buildRoutineHandlers({
         loadRoutines: () => loadRoutines(routinesPath),
         // Model check only when enabling/enabled: pausing must never be blocked by a model that

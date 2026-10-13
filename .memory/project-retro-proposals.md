@@ -17,3 +17,11 @@ injected run output must not be able to widen it.
   apply-time stale check.
 - The digest footer ("N skill proposal(s) waiting in Bean → Skills") is appended by the app via
   `withProposalFooter`, like `withResumeFooter` — never model text.
+- **Inbox (#263)** — Skills panel → Proposals; tray row when any wait. `approveSkillProposal`
+  re-hashes the *effective* layered body against `baseHash` (stale → refuse; UI offers Regenerate =
+  reject + run the retro routine now), writes the **user layer only** (built-in target → override;
+  `.bean/skills` is read-only when packaged), and stores `prev_body` (NULL = no prior user file) +
+  `applied_hash`. `undoSkillProposal` restores those exact bytes (or deletes the override) only
+  while the user file still hashes to `applied_hash`. Both run inside `serializeSkillWrite`, the
+  same in-process queue `saveSkill`/`deleteSkill` use — don't bypass it with a raw write. The bot
+  processes' `propose_skill` writes aren't in that queue (ponytail note in `skill-library.ts`).
