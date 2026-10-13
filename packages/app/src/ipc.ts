@@ -2,11 +2,13 @@ import {
   route, converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, type ImageGenDeps,
   attachNoteImages, MAX_NOTE_IMAGE_BYTES, type ImageAttachment,
   availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine,
+  listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash,
+  type SkillProposal, type ProposalOutcome,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
   type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
-  type TodoItem, type CliModels, type DreamDigest, type RoutineBrief, type RoutineWatch, type WatchItem,
+  type TodoItem, type StepKind, type CliModels, type DreamDigest, type RoutineBrief, type RoutineWatch, type WatchItem,
 } from "@bean/core";
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { WatchCheckResult } from "./routine-scheduler.js";
@@ -302,6 +304,37 @@ export function buildDeleteSkillHandler(deps: DeleteSkillHandlerDeps) {
   return (name: string): Promise<void> => deps.deleteSkill(deps.skillsDir, name);
 }
 
+/** A retro proposal as the Skills inbox shows it: the skill's current effective body to diff
+ * against, and whether that body already moved past the one the proposal was drafted on. */
+export interface SkillProposalView extends SkillProposal {
+  current?: string;
+  stale: boolean;
+}
+
+export interface SkillProposalHandlerDeps {
+  loadSkills: (projectDir: string, userDir: string) => Promise<Skill[]>;
+  projectSkillsDir: string;
+  skillsDir: string;
+  dbFile: string;
+}
+
+export function buildSkillProposalHandlers(deps: SkillProposalHandlerDeps) {
+  const dirs = { projectDir: deps.projectSkillsDir, userDir: deps.skillsDir };
+  return {
+    list: async (): Promise<{ pending: SkillProposalView[]; applied: SkillProposalView[] }> => {
+      const skills = await deps.loadSkills(deps.projectSkillsDir, deps.skillsDir);
+      const view = (p: SkillProposal): SkillProposalView => {
+        const current = skills.find((s) => s.name === p.skill)?.body;
+        return { ...p, ...(current !== undefined ? { current } : {}), stale: current === undefined || skillHash(current) !== p.baseHash };
+      };
+      return { pending: listSkillProposals(deps.dbFile).map(view), applied: listSkillProposals(deps.dbFile, "applied").map(view) };
+    },
+    approve: (id: string): Promise<ProposalOutcome> => approveSkillProposal(deps.dbFile, dirs, id),
+    reject: (id: string): Promise<ProposalOutcome> => rejectSkillProposal(deps.dbFile, id),
+    undo: (id: string): Promise<ProposalOutcome> => undoSkillProposal(deps.dbFile, deps.skillsDir, id),
+  };
+}
+
 export interface LaunchHandlerDeps {
   spawnLaunch?: LaunchSpawnFn;
   getTerminalApp?: () => string;
@@ -587,6 +620,13 @@ export interface RoutineStateView {
   queue?: { pending: number; running: number };
 }
 
+/** One executed step of a run, for the Dashboard's full-output view. `resume` is Bean's own
+ * resume command for a delegate session (never model-written). */
+export interface StepAttemptView {
+  stepIndex: number; stepId?: string; round: number; kind: StepKind; cli?: string;
+  ok: boolean; verdict?: string; output: string; resume?: string;
+}
+
 /** Who a chatops sink with no channel reaches (counts only — the app can't look up names). */
 export interface SinkRecipients { discord?: number; teams?: number }
 export interface BriefDraft { brief: RoutineBrief; tools: string[] }
@@ -617,6 +657,8 @@ export interface RoutineHandlerDeps {
   isRunning: (name: string) => boolean;
   runNow: (name: string) => Promise<{ started: boolean; reason?: string }>;
   onRoutineDeleted?: (name: string) => Promise<void>;
+  /** A run's step attempts (bean.db), oldest first. */
+  attempts?: (runId: string) => StepAttemptView[];
   watch?: RoutineWatchDeps;
 }
 
@@ -651,6 +693,7 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
       return out;
     },
     runNow: (name: string): Promise<{ started: boolean; reason?: string }> => deps.runNow(name),
+    attempts: (runId: string): StepAttemptView[] => (typeof runId === "string" && runId ? deps.attempts?.(runId) ?? [] : []),
     checkNow: (name: string): Promise<WatchCheckResult> => watch().checkNow(name),
     previewWatch: (w: RoutineWatch): Promise<WatchItem[]> => watch().previewWatch(w),
     enableWatch: (name: string, queueExisting: boolean): Promise<{ count: number }> => watch().enableWatch(name, queueExisting === true),
@@ -756,6 +799,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   onChatTurn?: () => (error?: string) => void;
   loadRoutines?: () => Promise<Routine[]>;
   routineHandlers: ReturnType<typeof buildRoutineHandlers>;
+  skillProposalHandlers: ReturnType<typeof buildSkillProposalHandlers>;
   todoHandlers: ReturnType<typeof buildTodoHandlers>;
 }
 
@@ -904,11 +948,16 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.installUpdate, () => updateHandlers.install());
   ipcMain.on(IPC.openUpdateReleasePage, () => updateHandlers.openReleasesPage());
 
+  ipcMain.handle(IPC.skillProposalsList, () => deps.skillProposalHandlers.list());
+  ipcMain.handle(IPC.skillProposalsApprove, (_e, id: string) => deps.skillProposalHandlers.approve(id));
+  ipcMain.handle(IPC.skillProposalsReject, (_e, id: string) => deps.skillProposalHandlers.reject(id));
+  ipcMain.handle(IPC.skillProposalsUndo, (_e, id: string) => deps.skillProposalHandlers.undo(id));
   ipcMain.handle(IPC.routinesList, () => deps.routineHandlers.list());
   ipcMain.handle(IPC.routinesSave, (_e, routine: Routine) => deps.routineHandlers.save(routine));
   ipcMain.handle(IPC.routinesDelete, (_e, name: string) => deps.routineHandlers.remove(name));
   ipcMain.handle(IPC.routinesState, () => deps.routineHandlers.state());
   ipcMain.handle(IPC.routinesRunNow, (_e, name: string) => deps.routineHandlers.runNow(name));
+  ipcMain.handle(IPC.routinesAttempts, (_e, runId: string) => deps.routineHandlers.attempts(runId));
   ipcMain.handle(IPC.routinesCheckNow, (_e, name: string) => deps.routineHandlers.checkNow(name));
   ipcMain.handle(IPC.routinesPreviewWatch, (_e, w: RoutineWatch) => deps.routineHandlers.previewWatch(w));
   ipcMain.handle(IPC.routinesEnableWatch, (_e, name: string, queueExisting: boolean) => deps.routineHandlers.enableWatch(name, queueExisting));

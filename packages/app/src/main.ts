@@ -13,7 +13,7 @@ import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, M
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
-  isValidSessionId, recordDelegateSession, resumeCommand, withResumeFooter, recordStepAttempt, pruneStepAttempts,
+  isValidSessionId, recordDelegateSession, resumeCommand, withResumeFooter, withProposalFooter, saveSkillProposals, listSkillProposals, RETRO_SKILL, recordStepAttempt, pruneStepAttempts, listStepAttempts, DEFAULT_GATE_ROUNDS, CLI_NAMES,
   modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
@@ -32,7 +32,7 @@ import type { RouteSuggestion, ActionTool, Transport, CommandStepRequest, Comman
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
-  buildRoutineHandlers, buildTodoHandlers, buildPendingUpdateStore, type ChatPromptPayload,
+  buildRoutineHandlers, buildSkillProposalHandlers, buildTodoHandlers, buildPendingUpdateStore, type ChatPromptPayload,
 } from "./ipc.js";
 import { IPC, type Theme, type ComponentKind } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
@@ -228,8 +228,15 @@ app.whenReady().then(async () => {
       dialog.showErrorBox(field === "alwaysOn" ? "Keep Mac Awake" : "Keep Display On", `Couldn't save the setting: ${e instanceof Error ? e.message : String(e)}`);
     });
   };
+  // Retro drafts waiting for review (#263) — shown only when there are some.
+  const proposalRows = (): MenuItemConstructorOptions[] => {
+    let n = 0;
+    try { n = listSkillProposals(dbFile(dir)).length; } catch (err) { console.error("skill proposals count failed:", err); }
+    return n ? [{ label: `${n} Skill Proposal${n === 1 ? "" : "s"} Waiting`, icon: symbol("sparkles"), click: () => openComponent("skills") }] : [];
+  };
   const buildTrayMenu = (): Menu => Menu.buildFromTemplate([
     { label: "Bring Bean Back", icon: symbol("location"), click: () => avatarControls.bringBack() },
+    ...proposalRows(),
     { label: "Settings", icon: symbol("gearshape"), accelerator: "Cmd+,", click: () => openComponent("settings") },
     { label: "Chat Bots", icon: symbol("message"), submenu: buildChatopsSubmenu() },
     { label: "Keep Mac Awake", icon: symbol("cup.and.saucer"), type: "checkbox", checked: keepAwake.alwaysOn(), click: (item) => toggleKeepAwake("alwaysOn", item.checked) },
@@ -777,7 +784,11 @@ app.whenReady().then(async () => {
         result = await runRoutine(routine, {
           onStep: (info) => {
             at = info;
-            const tags = [steps[info.index] ?? "", ...(info.round && info.round > 1 ? [`round ${info.round}`] : []), ...(info.cli ? [info.cli] : [])];
+            // A looping gate shows its cap: `review · round 2/3 · codex`.
+            const onFail = routine.steps[info.index]?.gate?.onFail;
+            const loopTarget = typeof onFail === "object" ? routine.steps.findIndex((s) => s.id === onFail.goto) : -1;
+            const cap = typeof onFail === "object" && loopTarget >= 0 && loopTarget < info.index ? `/${onFail.maxRounds ?? DEFAULT_GATE_ROUNDS}` : "";
+            const tags = [steps[info.index] ?? "", ...(info.round && info.round > 1 ? [`round ${info.round}${cap}`] : []), ...(info.cli ? [info.cli] : [])];
             taskStatus.upsert(id, { step: info.index, line: tags.filter(Boolean).join(" · ") });
           },
           chat: runtime.converse,
@@ -793,6 +804,15 @@ app.whenReady().then(async () => {
           findSkill: (name) => skills.find((s) => s.name === name),
           memories: () => loadMemories(dbFile(dir)),
           recordAttempt: (a) => recordStepAttempt(dbFile(dir), a),
+          retro: {
+            history: async (name) => {
+              const analyzed = (await loadRoutines(routinesPath)).find((r) => r.name === name);
+              if (!analyzed) return undefined;
+              const history = (await loadRoutineStates(routineStatePath))[name]?.history ?? [];
+              return { routine: analyzed, runs: history.map((record) => ({ record, attempts: record.id ? listStepAttempts(dbFile(dir), record.id) : [] })) };
+            },
+            save: (proposals) => saveSkillProposals(dbFile(dir), proposals),
+          },
           todos: {
             listPending: async (r) => (await listTodos(dbFile(dir), r)).filter((t) => t.status === "pending"),
             setStatus: (todoId, status: TodoStatus, resultSummary?: string) =>
@@ -801,6 +821,9 @@ app.whenReady().then(async () => {
         });
         // Before the scheduler saves the record and delivers it to sinks.
         result = withResumeFooter(result, receipts);
+        if (routine.steps.some((st) => st.kind === "chat" && st.skill === RETRO_SKILL)) {
+          result = withProposalFooter(result, listSkillProposals(dbFile(dir)).length);
+        }
         return result;
       } finally {
         for (const p of hold?.reserved ?? []) releaseRun(dir, p);
@@ -1034,6 +1057,9 @@ app.whenReady().then(async () => {
       getPendingChatPrompt: chatPromptStore.get,
       getPendingInterruptedRunNotices: interruptedRunStore.get,
       loadRoutines: () => loadRoutines(routinesPath),
+      skillProposalHandlers: buildSkillProposalHandlers({
+        loadSkills: loadLayeredSkills, projectSkillsDir: skillsDir(projectDir), skillsDir: skillsDir(dir), dbFile: dbFile(dir),
+      }),
       routineHandlers: buildRoutineHandlers({
         loadRoutines: () => loadRoutines(routinesPath),
         // Model check only when enabling/enabled: pausing must never be blocked by a model that
@@ -1048,6 +1074,12 @@ app.whenReady().then(async () => {
           clearWatch(dbFile(dir), name);
           pruneStepAttempts(dbFile(dir), name, []);
         },
+        attempts: (runId) => listStepAttempts(dbFile(dir), runId).map((a) => ({
+          stepIndex: a.stepIndex, round: a.round, kind: a.kind, ok: a.ok, output: a.output,
+          ...(a.stepId ? { stepId: a.stepId } : {}), ...(a.cli ? { cli: a.cli } : {}), ...(a.verdict ? { verdict: a.verdict } : {}),
+          ...(a.cli && a.sessionId && isValidSessionId(a.sessionId) && CLI_NAMES.includes(a.cli as CliName)
+            ? { resume: resumeCommand(a.cli as CliName, a.sessionId) } : {}),
+        })),
         watch: {
           isSeeded: (r) => (r.watch ? isWatchSeeded(dbFile(dir), r.name, watchSourceKey(r.watch)) : true),
           queueCounts: async (name) => {

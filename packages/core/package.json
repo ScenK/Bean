@@ -17,6 +17,14 @@
       "types": "./dist/prompt.d.ts",
       "default": "./dist/prompt.js"
     },
+    "./routine-graph": {
+      "types": "./dist/routine-graph.d.ts",
+      "default": "./dist/routine-graph.js"
+    },
+    "./routine-examples": {
+      "types": "./dist/routine-examples.d.ts",
+      "default": "./dist/routine-examples.js"
+    },
     "./models": {
       "types": "./dist/models.d.ts",
       "default": "./dist/models.js"
