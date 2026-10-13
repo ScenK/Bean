@@ -1,6 +1,6 @@
 // packages/app/src/routine-scheduler.ts
 import { appendRunRecord, inWatchWindow, nextRun, watchDigest, watchEveryMinutes, watchSourceKey, watchTodoText } from "@bean/core";
-import type { Routine, RoutineRunResult, RoutineState, RoutineWatch, WatchItem } from "@bean/core";
+import type { Routine, RoutineRunResult, RoutineState, RoutineWatch, RunRecord, WatchItem } from "@bean/core";
 
 /** The seen-set for watch routines (bean.db in the app; a Map in tests). */
 export interface WatchSeenDeps {
@@ -73,6 +73,19 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   const updateState = (name: string, fn: (s: RoutineState | undefined) => RoutineState): Promise<void> =>
     withStates((all) => ({ ...all, [name]: fn(all[name]) }));
 
+  /** Saves the record, then drops step attempts of runs the history just evicted (and of
+   * interrupted runs) — skipped while a run of this routine is live, its rows aren't saved yet. */
+  const appendAndPrune = async (name: string, record: RunRecord, live = false): Promise<void> => {
+    let keep: string[] = [];
+    await updateState(name, (s) => {
+      const next = appendRunRecord(s, record);
+      keep = next.history.flatMap((r) => (r.id ? [r.id] : []));
+      return next;
+    });
+    if (live) return;
+    try { deps.pruneAttempts?.(name, keep); } catch (err) { console.warn("bean: step attempt prune failed", err instanceof Error ? err.name : err); }
+  };
+
   // Consecutive poll failures, in memory (resets on restart — the alarm is a nudge, not a log).
   const failures = new Map<string, number>();
   const polling = new Set<string>();
@@ -87,14 +100,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       // skipping this routine forever while disk already says not-missed.
       const result = await deps.runRoutine(routine);
       if (result.deferred) return; // a todo's project was busy — nothing ran, retry next tick
-      let keep: string[] = [];
-      await updateState(routine.name, (s) => {
-        const next = appendRunRecord(s, result.record);
-        keep = next.history.flatMap((r) => (r.id ? [r.id] : []));
-        return next;
-      });
-      // After the record is saved, while this routine can't be running again (running set).
-      try { deps.pruneAttempts?.(routine.name, keep); } catch (err) { console.warn("bean: step attempt prune failed", err instanceof Error ? err.name : err); }
+      await appendAndPrune(routine.name, result.record);
       await deps.deliverDigest(routine, result);
     } catch (err) {
       console.error(`bean: routine "${routine.name}" run failed`, err);
@@ -111,7 +117,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   async function fireNotify(routine: Routine, items: WatchItem[], at: string): Promise<void> {
     const digest = watchDigest(items);
     const record = { startedAt: at, finishedAt: now().toISOString(), status: "ok" as const, digest, steps: [] };
-    await updateState(routine.name, (s) => appendRunRecord(s, record));
+    await appendAndPrune(routine.name, record, running.has(routine.name));
     await deps.deliverDigest(routine, { record, digest, results: [] });
   }
 
