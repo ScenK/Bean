@@ -36,10 +36,10 @@ export function StepsEditor(props: {
     onSteps(next);
   };
 
-  // skill/model live on both step kinds; project only on delegate. Cast keeps the union spread
-  // legible without widening the kind.
+  // skill/model live on delegate and chat steps; project on delegate and command. Cast keeps the
+  // union spread legible without widening the kind.
   const setSkill = (i: number, step: RoutineStep, name?: string): void =>
-    setStep(i, step.kind === "delegate" ? { ...step, skill: name ?? "" } : { ...step, skill: name });
+    setStep(i, step.kind === "delegate" ? { ...step, skill: name ?? "" } : { ...step, skill: name } as RoutineStep);
   const setModel = (i: number, step: RoutineStep, id?: string): void =>
     setStep(i, { ...step, model: id } as RoutineStep);
   // A pinned harness keeps only a model it offers; "auto" keeps any model.
@@ -48,19 +48,22 @@ export function StepsEditor(props: {
     setStep(i, { ...step, cli, model: keepModel ? step.model : undefined });
   };
   // `id` and the gate/next edges ride along so a kind change never re-keys or re-wires the
-  // step; `cli` is delegate-only.
+  // step; `cli` is delegate-only; the text carries over as instruction ⇄ command.
   const switchKind = (i: number, step: RoutineStep, kind: RoutineStep["kind"]): void => {
     const edges = { ...(step.gate ? { gate: step.gate } : {}), ...(step.next ? { next: step.next } : {}) };
+    const text = step.kind === "command" ? step.command : step.instruction;
     setStep(i, kind === "delegate"
-      ? { kind: "delegate", id: step.id, skill: step.skill ?? "", model: step.model, instruction: step.instruction, ...edges }
-      : { kind: "chat", id: step.id, skill: step.skill || undefined, model: step.model, instruction: step.instruction, ...edges });
+      ? { kind: "delegate", id: step.id, skill: step.skill ?? "", model: step.model, instruction: text, ...edges }
+      : kind === "chat"
+        ? { kind: "chat", id: step.id, skill: step.skill || undefined, model: step.model, instruction: text, ...edges }
+        : { kind: "command", id: step.id, command: text, ...(step.kind !== "chat" && step.project ? { project: step.project } : {}), ...edges });
   };
 
   return (
     <div class="bean-routines-steps">
       {steps.map((step, i) => {
         const skillLabel = step.skill ? `skill · ${step.skill}` : (step.kind === "delegate" ? "skill · choose…" : "skill · none");
-        const projName = projects.find((p) => p.path === (step.kind === "delegate" ? step.project : undefined))?.name;
+        const projName = projects.find((p) => p.path === (step.kind !== "chat" ? step.project : undefined))?.name;
         const modelLabel = step.model ? (models.find((m) => m.id === step.model)?.label ?? step.model) : "Bean picks model";
         const cli = step.kind === "delegate" ? step.cli : undefined;
         const problem = step.kind === "delegate" ? stepAvailabilityProblem(step, clis, models) : undefined;
@@ -81,7 +84,7 @@ export function StepsEditor(props: {
                 <ChipMenu chipLabel={<span class="bean-routines-chip-label">{step.kind}</span>}>
                   {(close) => (
                     <div class="bean-chip-menu-list">
-                      {(["delegate", "chat"] as const).map((k) => (
+                      {(["delegate", "chat", "command"] as const).map((k) => (
                         <button
                           key={k}
                           type="button"
@@ -90,7 +93,9 @@ export function StepsEditor(props: {
                         >
                           <span class="bean-chip-menu-row-title">{step.kind === k ? "✓ " : ""}{k}</span>
                           <span class="bean-chip-menu-caption">
-                            {k === "delegate" ? "coding agent (opencode / claude / codex)" : "Bean's own model + tools, in chat"}
+                            {k === "delegate" ? "coding agent (opencode / claude / codex)"
+                              : k === "chat" ? "Bean's own model + tools, in chat"
+                              : "shell check, no model — exit 0 passes"}
                           </span>
                         </button>
                       ))}
@@ -98,6 +103,7 @@ export function StepsEditor(props: {
                   )}
                 </ChipMenu>
 
+                {step.kind !== "command" ? (
                 <ChipMenu chipClass="bean-chip-menu-trigger--accent" chipLabel={<span class="bean-routines-chip-label">{skillLabel}</span>} menuWidth={340}>
                   {(close) => (
                     <div class="bean-chip-menu-list">
@@ -122,8 +128,9 @@ export function StepsEditor(props: {
                     </div>
                   )}
                 </ChipMenu>
+                ) : null}
 
-                {step.kind === "delegate" ? (
+                {step.kind !== "chat" ? (
                   <ChipMenu
                     chipClass={step.project ? undefined : "bean-chip-menu-trigger--dashed"}
                     chipLabel={<span class="bean-routines-chip-label">{step.project ? `📁 ${projName ?? step.project}` : "no project"}</span>}
@@ -181,6 +188,7 @@ export function StepsEditor(props: {
                   </ChipMenu>
                 ) : null}
 
+                {step.kind !== "command" ? (
                 <ChipMenu
                   chipClass={step.model ? undefined : "bean-chip-menu-trigger--dashed"}
                   chipLabel={<span class="bean-routines-chip-label">{modelLabel}</span>}
@@ -214,6 +222,7 @@ export function StepsEditor(props: {
                     </div>
                   )}
                 </ChipMenu>
+                ) : null}
 
                 <span class="bean-skills-spacer" />
                 <span
@@ -224,12 +233,21 @@ export function StepsEditor(props: {
                   onDragEnd={() => { setDragIndex(null); setOverIndex(null); }}
                 >⠿</span>
               </div>
-              <textarea
-                class="bean-routines-step-instruction"
-                placeholder="What should this step do?"
-                value={step.instruction}
-                onInput={(e) => setStep(i, { ...step, instruction: (e.target as HTMLTextAreaElement).value })}
-              />
+              {step.kind === "command" ? (
+                <textarea
+                  class="bean-routines-step-instruction"
+                  placeholder="Shell command, e.g. pnpm test && pnpm typecheck"
+                  value={step.command}
+                  onInput={(e) => setStep(i, { ...step, command: (e.target as HTMLTextAreaElement).value })}
+                />
+              ) : (
+                <textarea
+                  class="bean-routines-step-instruction"
+                  placeholder="What should this step do?"
+                  value={step.instruction}
+                  onInput={(e) => setStep(i, { ...step, instruction: (e.target as HTMLTextAreaElement).value })}
+                />
+              )}
               {problem ? <div class="bean-routines-step-missing" role="alert">{problem}{cli ? " — this step will refuse to run" : " — Bean will pick another"}</div> : null}
               {props.note?.(i) ? <div class="bean-routines-step-missing">{props.note(i)}</div> : null}
               <div class="bean-routines-step-actions">

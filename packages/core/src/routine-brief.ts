@@ -91,8 +91,12 @@ function cleanStep(v: unknown, ctx: BriefContext): RoutineStep | undefined {
   // carry over — even one that's disabled right now; dropping it would silently re-route the
   // step, and the editor already warns about it.
   const id = str(s.id) && STEP_ID_RE.test(s.id) ? { id: s.id } : {};
+  const project = str(s.project) && ctx.projects.some((p) => p.path === s.project) ? s.project : undefined;
+  // Refining keeps an existing command step a command (the user saw it in the brief).
+  if (s.kind === "command" && str(s.command) && s.command.trim()) {
+    return { kind: "command", ...id, command: s.command.trim(), ...(project ? { project } : {}) };
+  }
   if (s.kind === "delegate") {
-    const project = str(s.project) && ctx.projects.some((p) => p.path === s.project) ? s.project : undefined;
     const cli = CLI_NAMES.find((c) => c === s.cli);
     const pinned = cli ? { cli, ...(str(s.model) && s.model ? { model: s.model } : {}) } : {};
     return { kind: "delegate", ...id, skill: skill ?? "", ...(project ? { project } : {}), ...pinned, instruction };

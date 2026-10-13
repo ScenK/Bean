@@ -22,13 +22,13 @@ import {
   loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate, killAllDelegates,
-  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
+  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, runShellCommand, systemControlTool, imagesDir, makeOpenAIImageGen,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
   reserveRun, releaseRun, RunBusyError, availableModels, pinnedStepSelection, usesGates,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, DelegateStepResult, Routine, RoutineRunResult, StepInfo, TodoStatus, CliName } from "@bean/core";
+import type { RouteSuggestion, ActionTool, Transport, CommandStepRequest, CommandStepOutcome, DelegateStepRequest, DelegateStepResult, Routine, RoutineRunResult, StepInfo, TodoStatus, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
@@ -710,6 +710,28 @@ app.whenReady().then(async () => {
         );
       });
 
+    // Command step adapter: same cwd rules as a delegate step (project, else the per-todo or shared
+    // scratch dir) and the same resolved login-shell PATH as watch commands, so a Finder-launched
+    // Bean still finds pnpm/gh. No run reservation: a check reads the tree, it doesn't edit it.
+    const commandStep = async (
+      req: CommandStepRequest,
+      hold?: { reserved: Set<string>; scratch: Set<string> },
+    ): Promise<CommandStepOutcome> => {
+      const perTodo = req.todoId && !req.projectPath ? join(scratchDir(dir), req.todoId) : undefined;
+      const cwd = req.projectPath ?? perTodo ?? scratchDir(dir);
+      if (!req.projectPath) mkdirSync(cwd, { recursive: true });
+      if (perTodo) hold?.scratch.add(perTodo);
+      try {
+        return await runShellCommand(req.command, {
+          cwd,
+          env: { ...process.env, PATH: resolvedPath, ...req.env },
+          timeoutMs: req.timeoutMinutes ? req.timeoutMinutes * 60_000 : ROUTINE_STEP_TIMEOUT_MS,
+        });
+      } finally {
+        if (perTodo && !hold) rmSync(perTodo, { recursive: true, force: true });
+      }
+    };
+
     // Act-now note saving for routine chat steps (chat's propose_note stays confirm-first;
     // this is the pre-authorized routine counterpart — the user consented by writing the step).
     // Deliberately NOT added to actionTools: that array also backs the interactive chat window,
@@ -738,7 +760,10 @@ app.whenReady().then(async () => {
     const runOneRoutine = async (routine: Routine): Promise<RoutineRunResult> => {
       const skills = await loadLayeredSkills(skillsDir(projectDir), skillsDir(dir));
       const id = `routine:${routine.name}`;
-      const steps = routine.steps.map((st) => st.skill || (st.instruction.length > 60 ? `${st.instruction.slice(0, 59)}…` : st.instruction));
+      const steps = routine.steps.map((st) => {
+        const text = st.kind === "command" ? st.command : st.instruction;
+        return st.skill || (text.length > 60 ? `${text.slice(0, 59)}…` : text);
+      });
       taskStatus.upsert(id, { kind: "routine", name: routine.name, line: steps[0] ?? "", detail: routine.description ?? "", steps, step: 0, startedAt: Date.now(), state: "running" });
       let result: RoutineRunResult | undefined;
       // Run-scoped, so concurrent routines never mix receipts. Bean writes the footer itself —
@@ -761,6 +786,7 @@ app.whenReady().then(async () => {
               receipts.push(`${step} (${req.projectPath ? basename(projectPath) : "workspace"}) — ${resumeCommand(cli, sessionId)}`);
             }, hold);
           },
+          command: (req) => commandStep(req, hold),
           tools: [...actionTools, saveNoteTool],
           findSkill: (name) => skills.find((s) => s.name === name),
           memories: () => loadMemories(dbFile(dir)),

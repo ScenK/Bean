@@ -81,7 +81,7 @@ export function DescribePane(props: CatalogProps & {
     const problem = !brief.name.trim() ? "give the routine a name"
       : brief.trigger === "watch" && !brief.source?.trim() ? "say what to watch"
       : brief.trigger === "schedule" && !brief.cron?.trim() ? "set a schedule"
-      : !(brief.trigger === "watch" && brief.notifyOnly) && brief.steps.some((s) => !s.instruction.trim()) ? "every step needs an instruction"
+      : !(brief.trigger === "watch" && brief.notifyOnly) && brief.steps.some((s) => !(s.kind === "command" ? s.command : s.instruction).trim()) ? "every step needs an instruction"
       : !(brief.trigger === "watch" && brief.notifyOnly) && brief.steps.length === 0 ? "add a step, or choose Just notify me"
       : brief.trigger === "watch" && brief.notifyOnly && !brief.sinks.chatops?.length && !brief.sinks.note && !brief.sinks.notify
         ? "pick where to send new items — a notify-only watch with no destination tells no one"
@@ -589,14 +589,16 @@ export function ReviewPane(props: {
               <div class="bean-routines-pill-row">
                 <span class="bean-rb-pill">{s.kind}</span>
                 {s.skill ? <span class="bean-rb-pill bean-rb-pill--accent">skill · {s.skill}</span> : null}
-                {s.kind === "delegate" ? (
+                {s.kind !== "chat" ? (
                   <span class="bean-rb-pill bean-rb-pill--dashed">
                     {s.project ? `📁 ${props.projects.find((p) => p.path === s.project)?.name ?? s.project}` : "scratch checkout per item"}
                   </span>
                 ) : null}
-                <span class="bean-rb-pill bean-rb-pill--dashed">{s.model ? props.models.find((m) => m.id === s.model)?.label ?? s.model : "Bean picks model"}</span>
+                {s.kind !== "command" ? (
+                  <span class="bean-rb-pill bean-rb-pill--dashed">{s.model ? props.models.find((m) => m.id === s.model)?.label ?? s.model : "Bean picks model"}</span>
+                ) : null}
               </div>
-              <div class="bean-rb-step-text">{s.instruction}</div>
+              <div class="bean-rb-step-text">{s.kind === "command" ? s.command : s.instruction}</div>
             </div>
           </div>
         ))}

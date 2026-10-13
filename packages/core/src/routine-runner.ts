@@ -1,7 +1,8 @@
 // packages/core/src/routine-runner.ts
 import { createHash, randomUUID } from "node:crypto";
 import type { ActionTool, ConverseDeps, ConvoMsg, ToolCall } from "./converse.js";
-import { DEFAULT_GATE_ROUNDS, usesGates, type Routine, type RoutineStep, type RunRecord, type RunStatus } from "./routine-store.js";
+import { DEFAULT_GATE_ROUNDS, usesGates, type Routine, type RoutineStep, type RunRecord, type RunStatus, type StepKind } from "./routine-store.js";
+import type { CommandStepOutcome } from "./command-step.js";
 import type { Skill } from "./types.js";
 import type { CliName } from "./launcher.js";
 import type { TodoItem, TodoStatus } from "./todo-store.js";
@@ -33,6 +34,16 @@ export interface DelegateStepRequest {
 /** What a delegate step ran on. A bare string (output only) is still accepted. */
 export interface DelegateStepResult { output: string; cli?: CliName; model?: string; sessionId?: string }
 
+/** A command step to run. `env` carries BEAN_TODO_ID / BEAN_TODO_TEXT in todo-driven runs
+ * (the adapter adds PATH); `todoId` has the same scratch-dir meaning as on a delegate step. */
+export interface CommandStepRequest {
+  command: string;
+  projectPath?: string;
+  timeoutMinutes?: number;
+  env: Record<string, string>;
+  todoId?: string;
+}
+
 /** Thrown by a delegate adapter when the step's project is already claimed by another run.
  * The todo goes back to pending and the drain stops — the next tick retries it. */
 export class RunBusyError extends Error {}
@@ -42,6 +53,9 @@ export interface RoutineRunnerDeps {
   model: string;
   /** Runs a delegate step to completion; rejects on failure/cancel/timeout (timeout owned by the impl). */
   delegate: (req: DelegateStepRequest) => Promise<string | DelegateStepResult>;
+  /** Runs a command step; resolves with its exit code + output tail, rejects on timeout (the
+   * impl kills the process group). Absent = command steps fail with a clear error. */
+  command?: (req: CommandStepRequest) => Promise<CommandStepOutcome>;
   /** Act-now tool pool for chat steps. Routine runs are pre-authorized: no propose_* tools here. */
   tools: ActionTool[];
   findSkill: (name: string) => Skill | undefined;
@@ -76,7 +90,7 @@ function resolveSkill(deps: RoutineRunnerDeps, name: string | undefined): Skill 
 export interface StepInfo { index: number; id?: string; round?: number; cli?: CliName }
 
 export interface StepResult {
-  index: number; kind: "delegate" | "chat"; ok: boolean; output: string;
+  index: number; kind: StepKind; ok: boolean; output: string;
   stepId?: string; cli?: CliName; verdict?: string; round?: number;
 }
 /** `deferred`: nothing ran (a todo's project was busy) — record and deliver nothing. */
@@ -114,7 +128,7 @@ const ROUTINE_MEMORY_HEADER =
 /** Relevance-selected memories for one step, rendered. Fresh per step so a memory saved
  * mid-run (any surface) reaches the next step. A load failure degrades to none and logs only
  * the error class — never memory text. */
-async function stepMemories(deps: RoutineRunnerDeps, step: RoutineStep, skill: Skill | undefined): Promise<string> {
+async function stepMemories(deps: RoutineRunnerDeps, step: Exclude<RoutineStep, { kind: "command" }>, skill: Skill | undefined): Promise<string> {
   if (!deps.memories) return "";
   let all: Memory[];
   try {
@@ -242,7 +256,7 @@ async function runSteps(
   instructionSuffix: string,
   labelPrefix: string,
   runId: string,
-  todo?: { id: string; reserve: boolean },
+  todo?: { id: string; text: string; reserve: boolean },
 ): Promise<PassOutcome> {
   const now = deps.now ?? (() => new Date());
   const steps = routine.steps;
@@ -266,7 +280,8 @@ async function runSteps(
     const round = (rounds.get(index) ?? 0) + 1;
     rounds.set(index, round);
     const prior = priorOutputsBlock(graph ? [...latest.values()] : results);
-    const effective = {
+    // A command step takes no prompt: the todo reaches it as env vars, gate feedback is dropped.
+    const effective = step.kind === "command" ? step : {
       ...step, instruction: step.instruction + instructionSuffix + feedback + (step.gate ? VERDICT_CONTRACT : ""),
     } as RoutineStep;
     feedback = "";
@@ -280,12 +295,27 @@ async function runSteps(
     let ran: Omit<DelegateStepResult, "output"> = {};
     let ok = true;
     let output: string;
+    let exitCode: number | undefined;
     try {
-      const skill = resolveSkill(deps, effective.skill);
-      if (skill) skillHash = createHash("sha256").update(skill.body).digest("hex");
-      const memories = await stepMemories(deps, effective, skill);
-      if (effective.kind === "delegate") {
-        const res = await deps.delegate({
+      if (effective.kind === "command") {
+        if (!deps.command) throw new Error("command steps can't run here");
+        const res = await deps.command({
+          command: effective.command,
+          ...(effective.project ? { projectPath: effective.project } : {}),
+          ...(effective.timeoutMinutes ? { timeoutMinutes: effective.timeoutMinutes } : {}),
+          env: todo ? { BEAN_TODO_ID: todo.id, BEAN_TODO_TEXT: todo.text } : {},
+          ...(todo?.reserve ? { todoId: todo.id } : {}),
+        });
+        exitCode = res.exitCode;
+        output = `${res.output.trimEnd()}\n(exit ${exitCode})`.trimStart();
+        // Ungated, a non-zero exit is a failed step; gated, it's a FAIL verdict the gate routes.
+        if (exitCode !== 0 && !step.gate) ok = false;
+      } else {
+        const skill = resolveSkill(deps, effective.skill);
+        if (skill) skillHash = createHash("sha256").update(skill.body).digest("hex");
+        const memories = await stepMemories(deps, effective, skill);
+        if (effective.kind === "delegate") {
+          const res = await deps.delegate({
             skill,
             projectPath: effective.project,
             instruction: effective.instruction,
@@ -297,9 +327,10 @@ async function runSteps(
             ...(todo?.reserve ? { todoId: todo.id } : {}),
             ...(resume ? { resume } : {}),
           });
-        ({ output, ...ran } = typeof res === "string" ? { output: res } : res);
-      } else {
-        output = await withTimeout(runChatStep(routine, effective, index, prior, deps, skill, memories), timeoutMs, `step ${index + 1}`);
+          ({ output, ...ran } = typeof res === "string" ? { output: res } : res);
+        } else {
+          output = await withTimeout(runChatStep(routine, effective, index, prior, deps, skill, memories), timeoutMs, `step ${index + 1}`);
+        }
       }
     } catch (err) {
       if (err instanceof RunBusyError) throw err;
@@ -308,9 +339,12 @@ async function runSteps(
     }
     // Parsed from the full output, before any cap; a failed adapter still reports a pinned cli.
     // A gate's verdict is the strict last-line PASS/FAIL that drives the walk.
-    const verdict = step.gate ? (ok ? gateVerdict(output) : undefined) : parseVerdict(output);
+    // A command's verdict is its exit code, never its output text.
+    const verdict = exitCode !== undefined ? (exitCode === 0 ? "PASS" : "FAIL")
+      : step.gate ? (ok ? gateVerdict(output) : undefined) : parseVerdict(output);
     const cli = ran.cli ?? (effective.kind === "delegate" ? effective.cli : undefined);
-    const model = ran.model ?? (effective.kind === "delegate" ? effective.model : effective.model ?? deps.model);
+    const model = ran.model ?? (effective.kind === "delegate" ? effective.model
+      : effective.kind === "chat" ? effective.model ?? deps.model : undefined);
     if (cli && ran.sessionId) sessions.set(index, { cli, sessionId: ran.sessionId });
     const result: StepResult = {
       index, kind: step.kind, ok, output: labelPrefix + output,
@@ -394,7 +428,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
           `\n\nQueued task:\n${item.text}`,
           labelPrefix,
           id,
-          { id: item.id, reserve: Boolean(routine.watch) },
+          { id: item.id, text: item.text, reserve: Boolean(routine.watch) },
         );
       } catch (err) {
         if (!(err instanceof RunBusyError)) throw err;

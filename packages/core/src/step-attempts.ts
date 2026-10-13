@@ -1,4 +1,5 @@
 import { openDb } from "./db.js";
+import type { StepKind } from "./routine-store.js";
 
 /** One routine step attempt as kept in bean.db's `routine_step_attempts` — the full(er) record
  * behind `RunRecord.steps[].summary`. Never holds the rendered memories block or the composed
@@ -10,7 +11,7 @@ export interface StepAttempt {
   stepId?: string;
   stepIndex: number;
   round: number;
-  kind: "delegate" | "chat";
+  kind: StepKind;
   cli?: string;
   model?: string;
   sessionId?: string;
@@ -57,7 +58,7 @@ export function recordStepAttempt(file: string, a: StepAttempt): void {
 
 interface Row {
   run_id: string; routine: string; todo_id: string | null; step_id: string | null; step_index: number; round: number;
-  kind: "delegate" | "chat"; cli: string | null; model: string | null; session_id: string | null; ok: number;
+  kind: StepKind; cli: string | null; model: string | null; session_id: string | null; ok: number;
   verdict: string | null; output: string; skill_hash: string | null; started_at: string; finished_at: string;
 }
 

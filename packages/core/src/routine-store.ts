@@ -30,7 +30,13 @@ export type RoutineStep = StepEdges & (
    * `cli` pins the coding-agent harness: unavailable = the step refuses before spawning (no
    * fallback); absent = today's inference from `model` + the Settings preference. */
   | { kind: "delegate"; id?: string; skill: string; project?: string; cli?: CliName; model?: string; timeoutMinutes?: number; instruction: string }
-  | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string });
+  | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string }
+  /** A deterministic check: runs `command` in a shell (in `project`, else the run's scratch dir)
+   * — no model, memories, or skill (the `never`s keep `step.skill`/`.model` readable on the
+   * union; the validator rejects them). Exit 0 = PASS, non-zero = FAIL, timeout = step error. */
+  | { kind: "command"; id?: string; command: string; project?: string; timeoutMinutes?: number; skill?: never; model?: never; cli?: never });
+
+export type StepKind = RoutineStep["kind"];
 
 /** True when any step has a gate or a `next` edge — the runner then walks the step graph. */
 export const usesGates = (steps: RoutineStep[]): boolean => steps.some((s) => s.gate !== undefined || s.next !== undefined);
@@ -78,7 +84,7 @@ export interface RunRecord {
    * rounds, or the run's last gate decision was FAIL. */
   status: RunStatus;
   digest: string;
-  steps: { kind: "delegate" | "chat"; id?: string; cli?: CliName; round?: number; verdict?: string; ok: boolean; summary: string }[];
+  steps: { kind: StepKind; id?: string; cli?: CliName; round?: number; verdict?: string; ok: boolean; summary: string }[];
 }
 
 export interface RoutineState {
@@ -97,8 +103,19 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
   const at = `step ${index + 1}`;
   if (typeof v !== "object" || v === null) return `${at} is malformed`;
   const s = v as Record<string, unknown>;
-  if (!str(s.instruction) || !s.instruction.trim()) return `${at} needs an instruction`;
   if (s.id !== undefined && (!str(s.id) || !STEP_ID_RE.test(s.id))) return `${at} has an invalid id (use a-z, 0-9, "-")`;
+  if (s.timeoutMinutes !== undefined && (!Number.isInteger(s.timeoutMinutes) || (s.timeoutMinutes as number) < 1)) {
+    return `${at} timeout must be a whole number of minutes, at least 1`;
+  }
+  if (s.kind === "command") {
+    if (!str(s.command) || !s.command.trim()) return `${at} (command) needs a command to run`;
+    for (const k of ["skill", "model", "cli", "instruction"]) {
+      if (s[k] !== undefined) return `${at}: a command step runs no model — remove its ${k}`;
+    }
+    if (s.project !== undefined && !str(s.project)) return `${at} has an invalid project`;
+    return null;
+  }
+  if (!str(s.instruction) || !s.instruction.trim()) return `${at} needs an instruction`;
   if (s.model !== undefined && !str(s.model)) return `${at} has an invalid model`;
   if (s.kind === "delegate") {
     if (s.cli !== undefined && !CLI_NAMES.includes(s.cli as CliName)) {
@@ -110,9 +127,6 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
     if (offered && str(s.model) && !offered.includes(s.model)) return `${at}: ${String(s.cli)} doesn't offer model "${s.model}"`;
     if (!str(s.skill) || !s.skill) return `${at} (delegate) needs a skill`;
     if (s.project !== undefined && !str(s.project)) return `${at} has an invalid project`;
-    if (s.timeoutMinutes !== undefined && (!Number.isInteger(s.timeoutMinutes) || (s.timeoutMinutes as number) < 1)) {
-      return `${at} timeout must be a whole number of minutes, at least 1`;
-    }
     return null;
   }
   if (s.kind === "chat") {

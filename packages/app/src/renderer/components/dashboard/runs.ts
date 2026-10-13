@@ -1,4 +1,4 @@
-import type { RunRecord } from "@bean/core";
+import type { RunRecord, StepKind } from "@bean/core";
 import type { RoutineStateView } from "../../../ipc.js";
 
 /** One routine run, tagged with the routine it came from — the dashboard reads every
@@ -14,7 +14,7 @@ export interface DashStep {
    * routine is todo-driven (the runner appends one pass of every step per todo). `todo`
    * disambiguates those; see stepLabel(). */
   index: number;
-  kind: "delegate" | "chat";
+  kind: StepKind;
   ok: boolean;
   summary: string;
   /** The todo this pass ran for, when the runner labelled the output `[todo: ...] `. */
@@ -32,7 +32,7 @@ const TODO_OPEN = "[todo: ";
  * "step N", which would be a wrong claim. A `]` inside the todo text itself only truncates the
  * displayed name (cosmetic): matching to the LAST `]` would misread the far more common case
  * of a `]` in the step's own output. */
-export function parseStep(step: { kind: "delegate" | "chat"; ok: boolean; summary: string }, index: number): DashStep {
+export function parseStep(step: { kind: StepKind; ok: boolean; summary: string }, index: number): DashStep {
   const m = TODO_LABEL.exec(step.summary);
   if (m) return { index, kind: step.kind, ok: step.ok, summary: step.summary.slice(m[0].length), todo: m[1] };
   if (step.summary.startsWith(TODO_OPEN)) {

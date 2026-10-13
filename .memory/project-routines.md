@@ -34,3 +34,12 @@ as quoted data; the gated prior block keeps the latest attempt per step. Re-ente
 steps resume their own session (same CLI only). Outcome `needs-attention` (stop / exhausted /
 last gate FAIL) is a third `RunRecord.status` — treat any `!== "ok"` as needing the user. In
 gated routines the app holds a todo's run reservation + scratch dir until the run ends.
+
+**Command steps (#265).** `kind: "command"` runs `command` via `/bin/sh -c` (core `runShellCommand`,
+own process group, timeout SIGKILLs the group) in `project`, else the same scratch dir a delegate
+step would use, with the app's resolved login-shell PATH. No model/memories/skill — the validator
+rejects `skill`/`model`/`cli`/`instruction` on it. Verdict = exit code (0 PASS, else FAIL), never
+the output text; ungated non-zero = failed step, gated = FAIL routed by the gate with the output
+tail (capped 16k) as feedback; timeout = hard step error. Todo runs get `BEAN_TODO_ID`/`BEAN_TODO_TEXT`
+env. No run reservation (a check reads the tree). Not creatable from chatops — same trust as a
+watch command.

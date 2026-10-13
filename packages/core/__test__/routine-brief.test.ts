@@ -123,3 +123,13 @@ describe("parseBrief keeps step ids and pinned harness when refining", () => {
     ]);
   });
 });
+
+describe("parseBrief keeps command steps when refining", () => {
+  it("keeps the command (trimmed), id and a known project; drops skill/model/instruction", () => {
+    const brief = parseBrief(JSON.stringify({
+      name: "ci", trigger: "schedule", cron: "0 6 * * *",
+      steps: [{ kind: "command", id: "test", command: " pnpm test ", project: "/code/bean", skill: "code-review", model: "opus", instruction: "x" }],
+    }), ctx);
+    expect(brief.steps).toEqual([{ kind: "command", id: "test", command: "pnpm test", project: "/code/bean" }]);
+  });
+});
