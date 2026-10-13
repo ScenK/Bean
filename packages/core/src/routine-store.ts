@@ -5,6 +5,7 @@ import { isValidCron } from "./cron.js";
 import { describeWatchWindowError, type WatchWindow } from "./watch-window.js";
 import { CLI_NAMES, type CliName } from "./launcher.js";
 import type { CliModels } from "./cli-models.js";
+import { describeEdgeError } from "./routine-graph.js";
 
 // Absent/empty channel = DM the user directly (the default); a non-empty channel targets a
 // specific discord channel id or teams conversation id instead.
@@ -15,8 +16,7 @@ export interface RoutineSinks { chatops?: RoutineChatopsSink[]; note?: boolean; 
  * to another step: forward = a branch, backward = a loop of at most `maxRounds` executions of
  * the gated step (default 3, cap 5). PASS follows `next`. */
 export interface StepGate { onFail: "stop" | { goto: string; maxRounds?: number } }
-export const DEFAULT_GATE_ROUNDS = 3;
-export const MAX_GATE_ROUNDS = 5;
+export { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS } from "./routine-graph.js";
 
 /** Graph fields shared by every step kind. `next`: a later step's id or "end"; absent = the
  * following step. Routines with neither field anywhere run exactly as before (legacy). */
@@ -30,7 +30,13 @@ export type RoutineStep = StepEdges & (
    * `cli` pins the coding-agent harness: unavailable = the step refuses before spawning (no
    * fallback); absent = today's inference from `model` + the Settings preference. */
   | { kind: "delegate"; id?: string; skill: string; project?: string; cli?: CliName; model?: string; timeoutMinutes?: number; instruction: string }
-  | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string });
+  | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string }
+  /** A deterministic check: runs `command` in a shell (in `project`, else the run's scratch dir)
+   * — no model, memories, or skill (the `never`s keep `step.skill`/`.model` readable on the
+   * union; the validator rejects them). Exit 0 = PASS, non-zero = FAIL, timeout = step error. */
+  | { kind: "command"; id?: string; command: string; project?: string; timeoutMinutes?: number; skill?: never; model?: never; cli?: never });
+
+export type StepKind = RoutineStep["kind"];
 
 /** True when any step has a gate or a `next` edge — the runner then walks the step graph. */
 export const usesGates = (steps: RoutineStep[]): boolean => steps.some((s) => s.gate !== undefined || s.next !== undefined);
@@ -78,7 +84,7 @@ export interface RunRecord {
    * rounds, or the run's last gate decision was FAIL. */
   status: RunStatus;
   digest: string;
-  steps: { kind: "delegate" | "chat"; id?: string; cli?: CliName; round?: number; verdict?: string; ok: boolean; summary: string }[];
+  steps: { kind: StepKind; id?: string; cli?: CliName; round?: number; verdict?: string; ok: boolean; summary: string }[];
 }
 
 export interface RoutineState {
@@ -97,8 +103,19 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
   const at = `step ${index + 1}`;
   if (typeof v !== "object" || v === null) return `${at} is malformed`;
   const s = v as Record<string, unknown>;
-  if (!str(s.instruction) || !s.instruction.trim()) return `${at} needs an instruction`;
   if (s.id !== undefined && (!str(s.id) || !STEP_ID_RE.test(s.id))) return `${at} has an invalid id (use a-z, 0-9, "-")`;
+  if (s.timeoutMinutes !== undefined && (!Number.isInteger(s.timeoutMinutes) || (s.timeoutMinutes as number) < 1)) {
+    return `${at} timeout must be a whole number of minutes, at least 1`;
+  }
+  if (s.kind === "command") {
+    if (!str(s.command) || !s.command.trim()) return `${at} (command) needs a command to run`;
+    for (const k of ["skill", "model", "cli", "instruction"]) {
+      if (s[k] !== undefined) return `${at}: a command step runs no model — remove its ${k}`;
+    }
+    if (s.project !== undefined && !str(s.project)) return `${at} has an invalid project`;
+    return null;
+  }
+  if (!str(s.instruction) || !s.instruction.trim()) return `${at} needs an instruction`;
   if (s.model !== undefined && !str(s.model)) return `${at} has an invalid model`;
   if (s.kind === "delegate") {
     if (s.cli !== undefined && !CLI_NAMES.includes(s.cli as CliName)) {
@@ -110,9 +127,6 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
     if (offered && str(s.model) && !offered.includes(s.model)) return `${at}: ${String(s.cli)} doesn't offer model "${s.model}"`;
     if (!str(s.skill) || !s.skill) return `${at} (delegate) needs a skill`;
     if (s.project !== undefined && !str(s.project)) return `${at} has an invalid project`;
-    if (s.timeoutMinutes !== undefined && (!Number.isInteger(s.timeoutMinutes) || (s.timeoutMinutes as number) < 1)) {
-      return `${at} timeout must be a whole number of minutes, at least 1`;
-    }
     return null;
   }
   if (s.kind === "chat") {
@@ -121,31 +135,6 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
     return null;
   }
   return `${at} has an unknown kind`;
-}
-
-/** Gate/next checks. Only a gated backward goto can make a cycle: `next` is forward-only. */
-function describeEdgeError(s: Record<string, unknown>, i: number, ids: Map<string, number>): string | null {
-  const at = `step ${i + 1}`;
-  if (s.next !== undefined && s.next !== "end") {
-    if (!str(s.next)) return `${at} has an invalid next step`;
-    const target = ids.get(s.next);
-    if (target === undefined) return `${at}: next step "${s.next}" doesn't exist`;
-    if (target <= i) return `${at}: next must point to a later step (or "end") — loop back with a gate instead`;
-  }
-  if (s.gate === undefined) return null;
-  const onFail = (s.gate as { onFail?: unknown } | null)?.onFail;
-  if (onFail === "stop") return null;
-  if (typeof onFail !== "object" || onFail === null) return `${at}: gate.onFail must be "stop" or { "goto": "<step id>" }`;
-  const { goto, maxRounds } = onFail as { goto?: unknown; maxRounds?: unknown };
-  if (!str(goto)) return `${at}: gate.onFail needs a goto step id`;
-  const target = ids.get(goto);
-  if (target === undefined) return `${at}: gate goto step "${goto}" doesn't exist`;
-  if (target === i) return `${at}: a gate can't goto its own step`;
-  if (target > i) return maxRounds === undefined ? null : `${at}: maxRounds only applies to a loop (a goto to an earlier step)`;
-  if (maxRounds !== undefined && (!Number.isInteger(maxRounds) || (maxRounds as number) < 1 || (maxRounds as number) > MAX_GATE_ROUNDS)) {
-    return `${at}: maxRounds must be a whole number from 1 to ${MAX_GATE_ROUNDS}`;
-  }
-  return null;
 }
 
 function describeWatchError(v: unknown): string | null {

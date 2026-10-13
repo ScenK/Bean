@@ -3,12 +3,12 @@ import { IPC, type Theme, type ComponentKind, type AvatarMode, type ConfigView, 
 import type {
   RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
-  RoutineBrief, RoutineWatch, WatchItem,
+  RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
 import type { TaskJob } from "./task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
-import type { RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch } from "./ipc.js";
+import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch } from "./ipc.js";
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { WatchCheckResult } from "./routine-scheduler.js";
 
@@ -96,10 +96,15 @@ contextBridge.exposeInMainWorld("bean", {
   deleteNote: (slug: string): Promise<void> => ipcRenderer.invoke(IPC.deleteNote, slug),
   starNote: (slug: string, starred: boolean): Promise<void> => ipcRenderer.invoke(IPC.starNote, slug, starred),
   noteHistory: (slug: string): Promise<Note[]> => ipcRenderer.invoke(IPC.noteHistory, slug),
+  skillProposalsList: (): Promise<{ pending: SkillProposalView[]; applied: SkillProposalView[] }> => ipcRenderer.invoke(IPC.skillProposalsList),
+  skillProposalsApprove: (id: string): Promise<ProposalOutcome> => ipcRenderer.invoke(IPC.skillProposalsApprove, id),
+  skillProposalsReject: (id: string): Promise<ProposalOutcome> => ipcRenderer.invoke(IPC.skillProposalsReject, id),
+  skillProposalsUndo: (id: string): Promise<ProposalOutcome> => ipcRenderer.invoke(IPC.skillProposalsUndo, id),
   routinesList: (): Promise<Routine[]> => ipcRenderer.invoke(IPC.routinesList),
   routinesSave: (routine: Routine): Promise<void> => ipcRenderer.invoke(IPC.routinesSave, routine),
   routinesDelete: (name: string): Promise<void> => ipcRenderer.invoke(IPC.routinesDelete, name),
   routinesState: (): Promise<Record<string, RoutineStateView>> => ipcRenderer.invoke(IPC.routinesState),
+  routinesAttempts: (runId: string): Promise<StepAttemptView[]> => ipcRenderer.invoke(IPC.routinesAttempts, runId),
   routinesRunNow: (name: string): Promise<{ started: boolean; reason?: string }> => ipcRenderer.invoke(IPC.routinesRunNow, name),
   routinesCheckNow: (name: string): Promise<WatchCheckResult> => ipcRenderer.invoke(IPC.routinesCheckNow, name),
   routinesPreviewWatch: (watch: RoutineWatch): Promise<WatchItem[]> => ipcRenderer.invoke(IPC.routinesPreviewWatch, watch),

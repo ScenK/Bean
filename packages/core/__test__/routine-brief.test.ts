@@ -123,3 +123,35 @@ describe("parseBrief keeps step ids and pinned harness when refining", () => {
     ]);
   });
 });
+
+describe("parseBrief keeps command steps when refining", () => {
+  it("keeps the command (trimmed), id and a known project; drops skill/model/instruction", () => {
+    const brief = parseBrief(JSON.stringify({
+      name: "ci", trigger: "schedule", cron: "0 6 * * *",
+      steps: [{ kind: "command", id: "test", command: " pnpm test ", project: "/code/bean", skill: "code-review", model: "opus", instruction: "x" }],
+    }), ctx);
+    expect(brief.steps).toEqual([{ kind: "command", id: "test", command: "pnpm test", project: "/code/bean" }]);
+  });
+});
+
+describe("parseBrief keeps gates and next edges", () => {
+  it("keeps a stop gate, a backward loop (rounds clamped) and next: end; drops edges that point nowhere or backward", () => {
+    const brief = parseBrief(JSON.stringify({
+      name: "dev", trigger: "schedule", cron: "0 6 * * *",
+      steps: [
+        { kind: "chat", id: "lint", instruction: "lint the ticket", gate: { onFail: "stop" } },
+        { kind: "delegate", id: "implement", skill: "code-review", instruction: "do it", next: "lint" },
+        { kind: "command", id: "test", command: "pnpm test", gate: { onFail: { goto: "implement", maxRounds: 9 } } },
+        { kind: "chat", instruction: "pr", gate: { onFail: { goto: "nowhere" } }, next: "end" },
+        { kind: "chat", instruction: "stop-but-bad-next", gate: { onFail: "stop" }, next: "lint" },
+      ],
+    }), ctx);
+    expect(brief.steps).toEqual([
+      { kind: "chat", id: "lint", instruction: "lint the ticket", gate: { onFail: "stop" } },
+      { kind: "delegate", id: "implement", skill: "code-review", instruction: "do it" },
+      { kind: "command", id: "test", command: "pnpm test", gate: { onFail: { goto: "implement", maxRounds: 5 } } },
+      { kind: "chat", instruction: "pr", next: "end" },
+      { kind: "chat", instruction: "stop-but-bad-next", gate: { onFail: "stop" } },
+    ]);
+  });
+});

@@ -100,7 +100,22 @@ export async function makeBeanHome(options: BeanHomeOptions = {}): Promise<BeanH
       },
       weekly: {
         lastRun: "2026-01-01T15:00:00.000Z",
-        history: [run("2026-01-01T15:00:00.000Z", "2026-01-01T15:30:00.000Z", true)],
+        history: [
+          // Newest of all, so the Dashboard opens on it: a gated run a loop exhausted — the
+          // needs-attention card, executed path and amber tone render under the contrast guard.
+          {
+            id: "11111111-2222-4333-8444-555555555555",
+            startedAt: "2026-01-03T14:00:00.000Z", finishedAt: "2026-01-03T14:20:00.000Z", status: "needs-attention",
+            digest: "Needs attention: stopped at test — 1 failing",
+            steps: [
+              { kind: "chat", id: "implement", round: 1, ok: true, summary: "implemented" },
+              { kind: "command", id: "test", round: 1, verdict: "FAIL", ok: true, summary: "1 failing" },
+              { kind: "chat", id: "implement", round: 2, ok: true, summary: "fixed" },
+              { kind: "command", id: "test", round: 2, verdict: "FAIL", ok: true, summary: "1 failing" },
+            ],
+          },
+          run("2026-01-01T15:00:00.000Z", "2026-01-01T15:30:00.000Z", true),
+        ],
       },
     }, null, 2),
     "utf8",

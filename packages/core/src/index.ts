@@ -33,6 +33,7 @@ export * from "./image-gen.js";
 export * from "./delegate.js";
 export * from "./delegate-runs.js";
 export * from "./step-attempts.js";
+export * from "./retro.js";
 export * from "./drop-plan.js";
 export * from "./updater.js";
 export * from "./update-public-key.js";
@@ -59,10 +60,12 @@ export {
   loadRoutineStates, resolveTodoRoutine, saveRoutine, saveRoutineStates, usesGates,
 } from "./routine-store.js";
 export type {
-  Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord, RunStatus, StepGate,
+  Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord, RunStatus, StepGate, StepKind,
 } from "./routine-store.js";
+export * from "./command-step.js";
+export * from "./routine-graph.js";
 export { runRoutine, unfence, withResumeFooter, ROUTINE_STEP_TIMEOUT_MS, RunBusyError } from "./routine-runner.js";
-export type { DelegateStepRequest, DelegateStepResult, RoutineRunnerDeps, RoutineRunResult, StepInfo, StepResult } from "./routine-runner.js";
+export type { CommandStepRequest, DelegateStepRequest, DelegateStepResult, RoutineRunnerDeps, RoutineRunResult, StepInfo, StepResult } from "./routine-runner.js";
 export { claimOutbox, enqueueOutbox } from "./outbox.js";
 export type { OutboxMessage } from "./outbox.js";
 export { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice } from "./run-queue.js";

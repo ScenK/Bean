@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { runRoutine, type DelegateStepRequest, type RoutineRunnerDeps, type StepInfo } from "../src/routine-runner.js";
 import { describeRoutineError, type Routine, type RoutineStep } from "../src/routine-store.js";
 import { gateVerdict } from "../src/step-attempts.js";
+import { stepEdgeProblems } from "../src/routine-graph.js";
 import type { StepAttempt, TodoItem, TodoStatus } from "../src/index.js";
 
 const routine = (steps: RoutineStep[], over: Partial<Routine> = {}): Routine =>
@@ -221,5 +222,20 @@ describe("legacy routines (no gate/next)", () => {
     expect(res.record.steps.map((s) => s.ok)).toEqual([true, false, true]);
     expect(res.record.steps.every((s) => s.round === undefined)).toBe(true);
     expect(res.digest).not.toMatch(/Needs attention/);
+  });
+});
+
+describe("stepEdgeProblems (the editor's inline check)", () => {
+  it("flags edges a reorder broke, per step, with the save-time wording", () => {
+    const steps: RoutineStep[] = [
+      { kind: "command", id: "test", command: "pnpm test", gate: { onFail: { goto: "implement", maxRounds: 3 } } },
+      { kind: "chat", id: "implement", instruction: "fix", next: "test" },
+      { kind: "chat", id: "pr", instruction: "open a pr", gate: { onFail: { goto: "gone" } } },
+    ];
+    expect(stepEdgeProblems(steps)).toEqual([
+      'step 1: maxRounds only applies to a loop (a goto to an earlier step)',
+      'step 2: next must point to a later step (or "end") — loop back with a gate instead',
+      'step 3: gate goto step "gone" doesn\'t exist',
+    ]);
   });
 });

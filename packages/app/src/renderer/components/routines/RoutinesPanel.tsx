@@ -9,7 +9,7 @@ import type { RoutineStateView } from "../../../ipc.js";
 import type { RoutineBuildView } from "../../../routine-builder.js";
 import { StepsEditor } from "./StepsEditor.js";
 import { stepProblemsText } from "./step-ids.js";
-import { BuildPane, DescribePane, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
+import { BuildPane, DescribePane, ExampleChips, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
 import { everyMinutes, failureCount, intervalText, needsReview, WATCH_MINUTES, watchRowSub, watchStatusLine, windowTooShortNote } from "./watch-status.js";
 
 const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -559,6 +559,7 @@ export function RoutinesPanel() {
         {describing ? (
           <DescribePane
             initial={briefSeed}
+            taken={routines.map((r) => r.name)}
             skills={enabledSkills}
             projects={projects}
             clis={clis}
@@ -584,6 +585,7 @@ export function RoutinesPanel() {
           <ReviewPane
             routine={savedRoutine}
             state={selectedState}
+            clis={clis}
             models={models}
             projects={projects}
             onDiscard={() => void remove()}
@@ -591,7 +593,9 @@ export function RoutinesPanel() {
             onEnabled={(note) => { void refresh().then(() => { setEditorFor(savedRoutine.name); setNotice(note); }); }}
           />
         ) : !selected && !creating ? (
-          <PanelEmptyState message="Select a routine to view it, or set up a new one." />
+          <PanelEmptyState message="Select a routine to view it, or set up a new one.">
+            <ExampleChips taken={routines.map((r) => r.name)} onPick={openDraftInEditor} onBlank={startBlank} />
+          </PanelEmptyState>
         ) : (
         <>
         <div class="bean-skills-header">
