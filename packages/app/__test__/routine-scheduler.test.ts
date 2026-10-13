@@ -192,3 +192,21 @@ describe("routine scheduler", () => {
     expect(runRoutine).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("step attempt pruning", () => {
+  it("after saving a run, prunes the routine's attempts to the run ids still in history", async () => {
+    const history: RunRecord[] = Array.from({ length: 20 }, (_, i) => ({ ...runResult().record, id: `old-${i}` }));
+    const pruneAttempts = vi.fn();
+    const { deps } = makeDeps({
+      loadStates: async () => ({ morning: { lastRun: d(6, 30, 11).toISOString(), history } }),
+      runRoutine: vi.fn(async () => ({ ...runResult(), record: { ...runResult().record, id: "new" } })),
+      pruneAttempts,
+    });
+    await createRoutineScheduler(deps).tick();
+    const [name, keep] = pruneAttempts.mock.calls[0] as [string, string[]];
+    expect(name).toBe("morning");
+    expect(keep).toHaveLength(20);
+    expect(keep[0]).toBe("new");
+    expect(keep).not.toContain("old-19"); // the 21st run was evicted with its attempts
+  });
+});

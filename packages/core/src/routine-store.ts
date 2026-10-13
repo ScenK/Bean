@@ -54,11 +54,13 @@ export interface Routine {
 }
 
 export interface RunRecord {
+  /** uuid; keys the run's `routine_step_attempts` rows. Absent on records written before #258. */
+  id?: string;
   startedAt: string;  // ISO
   finishedAt: string; // ISO
   status: "ok" | "failed"; // failed = at least one step failed
   digest: string;
-  steps: { kind: "delegate" | "chat"; ok: boolean; summary: string }[];
+  steps: { kind: "delegate" | "chat"; id?: string; cli?: CliName; round?: number; verdict?: string; ok: boolean; summary: string }[];
 }
 
 export interface RoutineState {

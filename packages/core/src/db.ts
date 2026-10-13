@@ -149,6 +149,31 @@ CREATE TABLE IF NOT EXISTS delegate_runs (
   instruction  TEXT NOT NULL
 );
 
+-- Routine step attempts (step-attempts.ts): the full(er) output, harness and session behind each
+-- RunRecord step. Pruned with the routine's run history; pinned rows outlive eviction.
+CREATE TABLE IF NOT EXISTS routine_step_attempts (
+  id          INTEGER PRIMARY KEY,
+  run_id      TEXT NOT NULL,
+  routine     TEXT NOT NULL,
+  todo_id     TEXT,
+  step_id     TEXT,
+  step_index  INTEGER NOT NULL,
+  round       INTEGER NOT NULL,
+  kind        TEXT NOT NULL,
+  cli         TEXT,
+  model       TEXT,
+  session_id  TEXT,
+  ok          INTEGER NOT NULL,
+  verdict     TEXT,
+  output      TEXT NOT NULL,
+  skill_hash  TEXT,
+  started_at  TEXT NOT NULL,
+  finished_at TEXT NOT NULL,
+  pinned      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS routine_step_attempts_run ON routine_step_attempts(run_id);
+CREATE INDEX IF NOT EXISTS routine_step_attempts_routine ON routine_step_attempts(routine);
+
 CREATE TABLE IF NOT EXISTS todos (
   id             TEXT PRIMARY KEY,
   routine        TEXT NOT NULL,

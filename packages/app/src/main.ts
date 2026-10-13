@@ -13,7 +13,7 @@ import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, M
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
-  isValidSessionId, recordDelegateSession, resumeCommand, withResumeFooter,
+  isValidSessionId, recordDelegateSession, resumeCommand, withResumeFooter, recordStepAttempt, pruneStepAttempts,
   modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
@@ -28,7 +28,7 @@ import {
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
   reserveRun, releaseRun, RunBusyError, availableModels, pinnedStepSelection,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, Routine, RoutineRunResult, TodoStatus, CliName } from "@bean/core";
+import type { RouteSuggestion, ActionTool, Transport, DelegateStepRequest, DelegateStepResult, Routine, RoutineRunResult, TodoStatus, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
@@ -644,7 +644,7 @@ app.whenReady().then(async () => {
     // todo goes back to pending (RunBusyError) and the next tick retries it.
     // onSession: the step's started CLI session (already recorded in bean.db) for the run's
     // resume footer — see runOneRoutine.
-    const delegateStep = (req: DelegateStepRequest, onSession?: (cli: CliName, sessionId: string, projectPath: string) => void): Promise<string> =>
+    const delegateStep = (req: DelegateStepRequest, onSession?: (cli: CliName, sessionId: string, projectPath: string) => void): Promise<DelegateStepResult> =>
       new Promise((resolve, reject) => {
         let choice;
         try {
@@ -680,7 +680,14 @@ app.whenReady().then(async () => {
           },
           {
             onOutput: () => {},
-            onDone: (out) => { cleanup(); resolve(out); },
+            onDone: (out, sessionId) => {
+              cleanup();
+              resolve({
+                output: out, cli: choice.cli,
+                ...(choice.model ? { model: choice.model } : {}),
+                ...(sessionId && isValidSessionId(sessionId) ? { sessionId } : {}),
+              });
+            },
             onError: (err) => { cleanup(); reject(err); },
             onSessionStart: (_pid, sessionId) => {
               recordDelegateSession(dbFile(dir), { surface: "routine", cli: choice.cli, sessionId, projectPath, instruction: req.instruction });
@@ -741,6 +748,7 @@ app.whenReady().then(async () => {
           tools: [...actionTools, saveNoteTool],
           findSkill: (name) => skills.find((s) => s.name === name),
           memories: () => loadMemories(dbFile(dir)),
+          recordAttempt: (a) => recordStepAttempt(dbFile(dir), a),
           todos: {
             listPending: async (r) => (await listTodos(dbFile(dir), r)).filter((t) => t.status === "pending"),
             setStatus: (todoId, status: TodoStatus, resultSummary?: string) =>
@@ -785,6 +793,7 @@ app.whenReady().then(async () => {
       loadStates: () => loadRoutineStates(routineStatePath),
       saveStates: (s) => saveRoutineStates(routineStatePath, s),
       runRoutine: runOneRoutine,
+      pruneAttempts: (r, keep) => pruneStepAttempts(dbFile(dir), r, keep),
       deliverDigest,
       hasPendingTodos: async (r) => (await listTodos(dbFile(dir), r)).some((t) => t.status === "pending"),
       pollWatch: (w) => pollWatch(w, watchPoll),
@@ -985,6 +994,7 @@ app.whenReady().then(async () => {
         onRoutineDeleted: async (name) => {
           await deleteTodosForRoutine(dbFile(dir), name);
           clearWatch(dbFile(dir), name);
+          pruneStepAttempts(dbFile(dir), name, []);
         },
         watch: {
           isSeeded: (r) => (r.watch ? isWatchSeeded(dbFile(dir), r.name, watchSourceKey(r.watch)) : true),

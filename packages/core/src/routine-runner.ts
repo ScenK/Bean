@@ -1,4 +1,5 @@
 // packages/core/src/routine-runner.ts
+import { createHash, randomUUID } from "node:crypto";
 import type { ActionTool, ConverseDeps, ConvoMsg, ToolCall } from "./converse.js";
 import type { Routine, RoutineStep, RunRecord } from "./routine-store.js";
 import type { Skill } from "./types.js";
@@ -6,6 +7,7 @@ import type { CliName } from "./launcher.js";
 import type { TodoItem, TodoStatus } from "./todo-store.js";
 import { memoriesBlock, type Memory } from "./memory/memory.js";
 import { selectRelevantMemories } from "./memory/store.js";
+import { parseVerdict, type StepAttempt } from "./step-attempts.js";
 
 export interface DelegateStepRequest {
   skill?: Skill;
@@ -25,6 +27,9 @@ export interface DelegateStepRequest {
   todoId?: string;
 }
 
+/** What a delegate step ran on. A bare string (output only) is still accepted. */
+export interface DelegateStepResult { output: string; cli?: CliName; model?: string; sessionId?: string }
+
 /** Thrown by a delegate adapter when the step's project is already claimed by another run.
  * The todo goes back to pending and the drain stops — the next tick retries it. */
 export class RunBusyError extends Error {}
@@ -33,13 +38,18 @@ export interface RoutineRunnerDeps {
   chat: ConverseDeps["chat"];
   model: string;
   /** Runs a delegate step to completion; rejects on failure/cancel/timeout (timeout owned by the impl). */
-  delegate: (req: DelegateStepRequest) => Promise<string>;
+  delegate: (req: DelegateStepRequest) => Promise<string | DelegateStepResult>;
   /** Act-now tool pool for chat steps. Routine runs are pre-authorized: no propose_* tools here. */
   tools: ActionTool[];
   findSkill: (name: string) => Skill | undefined;
   /** The user's saved memories, loaded fresh per step; absent = steps get no memories. */
   memories?: () => Promise<Memory[]>;
   now?: () => Date;
+  /** Run id generator (RunRecord.id); defaults to randomUUID. */
+  newId?: () => string;
+  /** Called once per finished step attempt (ok or failed) — the app writes it to bean.db. Must
+   * not throw. Carries only the step's own output, never the memories block or composed prompt. */
+  recordAttempt?: (attempt: StepAttempt) => void;
   stepTimeoutMs?: number;
   /** Called as each step starts (index into routine.steps) — drives the avatar's status bubble. */
   onStep?: (index: number) => void;
@@ -59,7 +69,10 @@ function resolveSkill(deps: RoutineRunnerDeps, name: string | undefined): Skill 
   return skill;
 }
 
-export interface StepResult { index: number; kind: "delegate" | "chat"; ok: boolean; output: string }
+export interface StepResult {
+  index: number; kind: "delegate" | "chat"; ok: boolean; output: string;
+  stepId?: string; cli?: CliName; verdict?: string;
+}
 /** `deferred`: nothing ran (a todo's project was busy) — record and deliver nothing. */
 export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[]; deferred?: boolean }
 
@@ -201,18 +214,26 @@ async function runSteps(
   results: StepResult[],
   instructionSuffix: string,
   labelPrefix: string,
-  todoId?: string,
+  runId: string,
+  todo?: { id: string; reserve: boolean },
 ): Promise<boolean> {
+  const now = deps.now ?? (() => new Date());
   let allOk = true;
   for (const [index, step] of routine.steps.entries()) {
     const prior = priorOutputsBlock(results);
     const effective = { ...step, instruction: step.instruction + instructionSuffix } as RoutineStep;
     deps.onStep?.(index);
+    const startedAt = now().toISOString();
+    let skillHash: string | undefined;
+    let ran: Omit<DelegateStepResult, "output"> = {};
+    let ok = true;
+    let output: string;
     try {
       const skill = resolveSkill(deps, effective.skill);
+      if (skill) skillHash = createHash("sha256").update(skill.body).digest("hex");
       const memories = await stepMemories(deps, effective, skill);
-      const output = effective.kind === "delegate"
-        ? await deps.delegate({
+      if (effective.kind === "delegate") {
+        const res = await deps.delegate({
             skill,
             projectPath: effective.project,
             instruction: effective.instruction,
@@ -221,14 +242,33 @@ async function runSteps(
             ...(effective.timeoutMinutes ? { timeoutMinutes: effective.timeoutMinutes } : {}),
             priorOutputs: prior,
             ...(memories ? { memories } : {}),
-            ...(todoId ? { todoId } : {}),
-          })
-        : await withTimeout(runChatStep(routine, effective, index, prior, deps, skill, memories), timeoutMs, `step ${index + 1}`);
-      results.push({ index, kind: step.kind, ok: true, output: labelPrefix + output });
+            ...(todo?.reserve ? { todoId: todo.id } : {}),
+          });
+        ({ output, ...ran } = typeof res === "string" ? { output: res } : res);
+      } else {
+        output = await withTimeout(runChatStep(routine, effective, index, prior, deps, skill, memories), timeoutMs, `step ${index + 1}`);
+      }
     } catch (err) {
       if (err instanceof RunBusyError) throw err;
-      const message = err instanceof Error ? err.message : String(err);
-      results.push({ index, kind: step.kind, ok: false, output: labelPrefix + message });
+      ok = false;
+      output = err instanceof Error ? err.message : String(err);
+    }
+    // Parsed from the full output, before any cap; a failed adapter still reports a pinned cli.
+    const verdict = parseVerdict(output);
+    const cli = ran.cli ?? (effective.kind === "delegate" ? effective.cli : undefined);
+    const model = ran.model ?? (effective.kind === "delegate" ? effective.model : effective.model ?? deps.model);
+    results.push({
+      index, kind: step.kind, ok, output: labelPrefix + output,
+      ...(step.id ? { stepId: step.id } : {}), ...(cli ? { cli } : {}), ...(verdict ? { verdict } : {}),
+    });
+    deps.recordAttempt?.({
+      runId, routine: routine.name, stepIndex: index, round: 1, kind: step.kind, ok, output, startedAt,
+      finishedAt: now().toISOString(),
+      ...(todo ? { todoId: todo.id } : {}), ...(step.id ? { stepId: step.id } : {}), ...(cli ? { cli } : {}),
+      ...(model ? { model } : {}), ...(ran.sessionId ? { sessionId: ran.sessionId } : {}),
+      ...(verdict ? { verdict } : {}), ...(skillHash ? { skillHash } : {}),
+    });
+    if (!ok) {
       allOk = false;
       if (instructionSuffix) return false; // todo pipeline: a failed step abandons this todo
     }
@@ -245,6 +285,7 @@ async function runSteps(
 export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Promise<RoutineRunResult> {
   const now = deps.now ?? (() => new Date());
   const timeoutMs = deps.stepTimeoutMs ?? ROUTINE_STEP_TIMEOUT_MS;
+  const id = (deps.newId ?? randomUUID)();
   const startedAt = now().toISOString();
   const results: StepResult[] = [];
   let allOk = true;
@@ -256,7 +297,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
       // Scheduler already skips empty queues; this is the race backstop (and covers runNow).
       const digest = `Routine "${routine.name}" finished.\n\nNo pending todos.`;
       return {
-        record: { startedAt, finishedAt: now().toISOString(), status: "ok", digest, steps: [] },
+        record: { id, startedAt, finishedAt: now().toISOString(), status: "ok", digest, steps: [] },
         digest,
         results: [],
       };
@@ -271,7 +312,8 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
           routine, deps, timeoutMs, scoped,
           `\n\nQueued task:\n${item.text}`,
           labelPrefix,
-          routine.watch ? item.id : undefined,
+          id,
+          { id: item.id, reserve: Boolean(routine.watch) },
         );
       } catch (err) {
         if (!(err instanceof RunBusyError)) throw err;
@@ -301,10 +343,10 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
     }
     if (results.length === 0) {
       const digest = `Routine "${routine.name}" deferred — its project is busy.`;
-      return { record: { startedAt, finishedAt: now().toISOString(), status: "ok", digest, steps: [] }, digest, results: [], deferred: true };
+      return { record: { id, startedAt, finishedAt: now().toISOString(), status: "ok", digest, steps: [] }, digest, results: [], deferred: true };
     }
   } else {
-    allOk = await runSteps(routine, deps, timeoutMs, results, "", "");
+    allOk = await runSteps(routine, deps, timeoutMs, results, "", "", id);
   }
 
   // One successful step: its output IS the deliverable. Re-summarizing it only loses detail and
@@ -315,11 +357,15 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
     ? (soleLabelPrefix && only.output.startsWith(soleLabelPrefix) ? only.output.slice(soleLabelPrefix.length) : only.output)
     : await composeDigest(routine, results, deps, timeoutMs));
   const record: RunRecord = {
+    id,
     startedAt,
     finishedAt: now().toISOString(),
     status: allOk ? "ok" : "failed",
     digest,
-    steps: results.map((r) => ({ kind: r.kind, ok: r.ok, summary: r.output.slice(0, SUMMARY_CAP) })),
+    steps: results.map((r) => ({
+      kind: r.kind, ...(r.stepId ? { id: r.stepId } : {}), ...(r.cli ? { cli: r.cli } : {}),
+      ...(r.verdict ? { verdict: r.verdict } : {}), ok: r.ok, summary: r.output.slice(0, SUMMARY_CAP),
+    })),
   };
   return { record, digest, results };
 }

@@ -18,6 +18,8 @@ export interface RoutineSchedulerDeps {
   saveStates: (states: Record<string, RoutineState>) => Promise<void>;
   runRoutine: (routine: Routine) => Promise<RoutineRunResult>;
   deliverDigest: (routine: Routine, result: RoutineRunResult) => Promise<void>;
+  /** Drops the routine's step attempts whose run isn't in `keepRunIds` (evicted or interrupted). */
+  pruneAttempts?: (routine: string, keepRunIds: string[]) => void;
   now?: () => Date;
   /** Todo-driven gate: false = skip this fire (advance lastRun, record nothing). Absent = never skip. */
   hasPendingTodos?: (routine: string) => Promise<boolean>;
@@ -85,7 +87,14 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       // skipping this routine forever while disk already says not-missed.
       const result = await deps.runRoutine(routine);
       if (result.deferred) return; // a todo's project was busy — nothing ran, retry next tick
-      await updateState(routine.name, (s) => appendRunRecord(s, result.record));
+      let keep: string[] = [];
+      await updateState(routine.name, (s) => {
+        const next = appendRunRecord(s, result.record);
+        keep = next.history.flatMap((r) => (r.id ? [r.id] : []));
+        return next;
+      });
+      // After the record is saved, while this routine can't be running again (running set).
+      try { deps.pruneAttempts?.(routine.name, keep); } catch (err) { console.warn("bean: step attempt prune failed", err instanceof Error ? err.name : err); }
       await deps.deliverDigest(routine, result);
     } catch (err) {
       console.error(`bean: routine "${routine.name}" run failed`, err);
