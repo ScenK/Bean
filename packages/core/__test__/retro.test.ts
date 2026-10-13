@@ -127,6 +127,11 @@ test("rejects targets the routine doesn't use, unseen evidence, extra keys, and 
   expect(saved.map((p) => p.skill)).toEqual(["implement"]);
   expect(result.digest).toContain("Bean rejected 6 invalid proposals");
 
+  const big = await retro([history, { content: block([proposal()]), toolCalls: [] }], {
+    findSkill: (name) => ({ name, description: "", body: name === "implement" ? "x".repeat(25_000) : skillBody(name) }),
+  });
+  expect(big.saved).toEqual([]); // its body wasn't shown in full
+
   const blind = await retro([{ content: block([proposal()]), toolCalls: [] }]);
   expect(blind.saved).toEqual([]);
 });

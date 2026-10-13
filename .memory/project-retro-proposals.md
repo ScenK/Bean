@@ -7,7 +7,7 @@ injected run output must not be able to widen it.
 
 - `run_history(routine, n)` is the only way the step sees runs; it records which routines' skills
   and which run ids it showed. A proposal is persisted only if its target is a skill one of those
-  routines uses (never `retro` itself), every evidence id was shown, and it has exactly
+  routines uses whose current body run_history showed in full (never `retro` itself), every evidence id was shown, and it has exactly
   `skill/body/rationale/evidence`. Bean parses the trailing ```` ```proposals ```` block; the model
   never writes to the DB.
 - `finish()` runs only after the step resolved within its timeout — a failed or timed-out retro
