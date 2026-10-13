@@ -22,3 +22,46 @@ and an optional delegate-only `cli` pin. A pinned `cli`/`model` that this Mac ca
 for the panel warning) — never a silent fallback; unpinned steps keep inferring the CLI from
 the model. The clis.json model check runs only on user saves (`saveRoutine(dir, r, cliModels)`),
 never on load, so a model-list change can't make a routine vanish.
+
+**Gates (#259).** A step's optional `gate: { onFail: "stop" | { goto, maxRounds? } }` and
+`next: "<later id>" | "end"` turn the step list into a graph (`usesGates`); with neither field
+anywhere the runner is the old linear loop, byte-for-byte. A gate's verdict is
+`gateVerdict()` — PASS **only** when the last non-empty line is exactly `VERDICT: PASS`;
+anything else is FAIL (never loosen this to "any VERDICT line": a quoted contract would pass).
+Backward goto = loop, capped by executions of the gated step (default 3, max 5) per todo; whole
+pass bounded at 50 executions. The goto target gets only the firing gate's newest FAIL output
+as quoted data; the gated prior block keeps the latest attempt per step. Re-entered delegate
+steps resume their own session (same CLI only). Outcome `needs-attention` (stop / exhausted /
+last gate FAIL) is a third `RunRecord.status` — treat any `!== "ok"` as needing the user. In
+gated routines the app holds a todo's run reservation + scratch dir until the run ends.
+
+**Command steps (#265).** `kind: "command"` runs `command` via `/bin/sh -c` (core `runShellCommand`,
+own process group, timeout SIGKILLs the group) in `project`, else the same scratch dir a delegate
+step would use, with the app's resolved login-shell PATH. No model/memories/skill — the validator
+rejects `skill`/`model`/`cli`/`instruction` on it. Verdict = exit code (0 PASS, else FAIL), never
+the output text; ungated non-zero = failed step, gated = FAIL routed by the gate with the output
+tail (capped 16k) as feedback; timeout = hard step error. Todo runs get `BEAN_TODO_ID`/`BEAN_TODO_TEXT`
+env. No run reservation (a check reads the tree). Not creatable from chatops — same trust as a
+watch command.
+
+**Authoring + inspecting flows (#260).** The step editor writes gates/next without JSON: a gate
+chip (Keep going / Stop / Go to → step N, + a max-rounds chip only for a backward target), an
+"end run here" toggle, and rail markers (■ stop, ↩N loop, ↪N branch, →N/end next). Edge rules
+live once in node-free `@bean/core/routine-graph` (`describeEdgeError`, `stepEdgeProblems`) —
+the save validator and the editor's inline per-step warnings share them, so a reorder/delete
+that breaks an edge is flagged before save with the save-time wording. Picking a goto runs
+`withStepIds` first (edges need ids). The builder brief may emit `gate`/`next`/`command`/`cli`;
+`parseBrief` drops a bad edge, never the step. The avatar bubble shows `round N/cap` for a
+looping gate. Dashboard side: see [project-dashboard-panel](project-dashboard-panel.md).
+
+
+**Example flows (#261).** No fixed template: `@bean/core/routine-examples` (node-free) holds a
+few disabled starting points (dev loop, ticket lint first, review only) built from generic
+repo-shipped skills (`ticket-lint`, `implement`, `review`, `pr`, `ask-on-ticket` in
+`.bean/skills/`). "Start from an example" chips (Routines empty state + the New pane) only open
+the editor pre-filled — nothing saves until Save, and `exampleRoutine` renames on a name clash
+so a save can't overwrite. Existing routines are never rewritten. To turn a single-step
+routine (e.g. one autonomous-dev delegate) into a gated flow: split it into
+implement / test (command) / review steps, gate test and review with "Go to → implement", and
+end with a pr step — or open the Dev loop example and copy its watch command over. The
+ReviewPane shows `stepProblemsText` before Enable, so a pinned harness that's missing warns.

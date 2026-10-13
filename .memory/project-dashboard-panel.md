@@ -4,9 +4,18 @@ The Dashboard (`renderer/components/dashboard/`) is the read side of routines: t
 every routine's runs as one newest-first stream, the main column renders the selected run as a
 time spine (design 4a, "night-shift ledger").
 
-**It adds no backend.** Everything comes from the existing `routinesList()` + `routinesState()`
-IPC — `RunRecord` already carries `startedAt`/`finishedAt`/`status`/`digest`/`steps[]`. Don't
-add a dashboard-specific channel or store without a reason the existing two can't cover.
+**It adds almost no backend.** Runs come from `routinesList()` + `routinesState()` — `RunRecord`
+carries `startedAt`/`finishedAt`/`status`/`digest`/`steps[]` (with `id`/`round`/`cli`/`verdict`
+on gated runs). The one extra channel is `routinesAttempts(runId)` (#260): full step output from
+bean.db's `routine_step_attempts` plus Bean's own resume command, fetched only when a run's
+FULL OUTPUT row is opened. Don't add more without a reason those can't cover.
+
+**Gated runs (#260).** A gated step can be `ok: true` with verdict FAIL (the gate routed it) —
+`stepPassed()` is the only "did it pass" test; never read bare `ok` for a ✓. The run head shows
+`executedPath()` (`test ✗ → implement r2 ✓ …`). A `needs-attention` run gets one amber NEEDS
+ATTENTION card (`attentionOf()`: the last executed step is the gate that stopped it) with Retry,
+and its tone is `--bean-accent-text` in the rail dot and health bar — distinct from failed
+(`--bean-error`) and ok.
 
 Mapping decisions worth keeping:
 
