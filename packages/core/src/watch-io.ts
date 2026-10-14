@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
-import type { WatchPollDeps } from "@bean/core";
+import type { WatchPollDeps } from "./watch.js";
 
 const FETCH_TIMEOUT_MS = 15_000;
 const FETCH_MAX_BYTES = 5 * 1024 * 1024;

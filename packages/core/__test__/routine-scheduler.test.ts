@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRoutineScheduler, type RoutineSchedulerDeps } from "../src/routine-scheduler.js";
-import type { Routine, RoutineRunResult, RoutineState, RunRecord } from "@bean/core";
+import type { Routine, RoutineRunResult, RoutineState, RunRecord } from "../src/index.js";
 
 const routine = (over: Partial<Routine> = {}): Routine => ({
   name: "morning", enabled: true, cron: "30 6 * * *",

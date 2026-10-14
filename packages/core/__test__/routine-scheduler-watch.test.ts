@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRoutineScheduler, ALARM_AFTER, type RoutineSchedulerDeps, type WatchSeenDeps } from "../src/routine-scheduler.js";
-import type { Routine, RoutineRunResult, RoutineState, WatchItem } from "@bean/core";
+import type { Routine, RoutineRunResult, RoutineState, WatchItem } from "../src/index.js";
 
 const notify = (over: Partial<Routine> = {}): Routine => ({
   name: "yt", enabled: true, watch: { kind: "feed", url: "https://f", everyMinutes: 15 }, steps: [], sinks: {}, ...over,

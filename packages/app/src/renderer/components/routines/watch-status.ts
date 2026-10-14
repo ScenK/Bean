@@ -5,7 +5,7 @@ import type { RoutineStateView } from "../../../ipc.js";
 // Wording for watch routines, shared by the Routines panel (2d) and the Dashboard (2e). Pure so
 // it's unit-tested; the panels only render it.
 
-export const ALARM_AFTER = 3; // mirrors routine-scheduler.ts — the panel escalates when the alarm fires
+export const ALARM_AFTER = 3; // mirrors core routine-scheduler.ts — the panel escalates when the alarm fires
 const DEFAULT_WATCH_MINUTES = 15; // mirrors routine-store.ts (renderer can't import its values)
 
 export const everyMinutes = (r: Routine): number => r.watch?.everyMinutes ?? DEFAULT_WATCH_MINUTES;

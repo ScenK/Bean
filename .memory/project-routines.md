@@ -4,7 +4,7 @@ Routines: cron-scheduled (or watch-triggered — see project-watch-triggers.md) 
 (panel-edited, hand-editable), runtime state + capped history in `~/.bean/routines/.state.json`.
 Core: `cron.ts` (own 5-field parser — no dep), `routine-store.ts`, `routine-runner.ts` (pure,
 DI'd; chat steps get act-now tools incl. `save_note`, NO propose_* — routine runs are
-pre-authorized by saving the routine), `outbox.ts`. App: `routine-scheduler.ts` (30s tick,
+pre-authorized by saving the routine), `outbox.ts`. Core: `routine-scheduler.ts` (30s tick,
 skip-if-running, missed-marking, **no catch-up** — deliberate). Chatops digests go through
 `~/.bean/outbox/*.json`, polled by the Teams/Discord bot servers (Teams needs a conversation
 seen once — refs persisted in `~/.bean/teams-conversations.json`). A chatops sink's `channel`

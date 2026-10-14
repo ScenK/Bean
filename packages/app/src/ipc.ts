@@ -11,7 +11,7 @@ import {
   type TodoItem, type StepKind, type CliModels, type DreamDigest, type RoutineBrief, type RoutineWatch, type WatchItem,
 } from "@bean/core";
 import type { RoutineBuildView } from "./routine-builder.js";
-import type { WatchCheckResult } from "./routine-scheduler.js";
+import type { WatchCheckResult } from "@bean/core";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";

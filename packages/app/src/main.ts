@@ -27,6 +27,7 @@ import {
   updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
   reserveRun, releaseRun, RunBusyError, availableModels, pinnedStepSelection, usesGates,
+  createRoutineScheduler, detectTools, execWatchCommand, fetchText, sinkRecipients,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, CommandStepRequest, CommandStepOutcome, DelegateStepRequest, DelegateStepResult, Routine, RoutineRunResult, StepInfo, TodoStatus, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
@@ -42,9 +43,7 @@ import {
 import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
 import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } from "./delegate-tasks.js";
-import { createRoutineScheduler } from "./routine-scheduler.js";
 import { createRoutineBuilder } from "./routine-builder.js";
-import { detectTools, execWatchCommand, fetchText, sinkRecipients } from "./watch-io.js";
 import { createTaskStatus } from "./task-status.js";
 import { createKeepAwake, keepAwakeFile, keepAwakeTooltip, loadKeepAwake, saveKeepAwake, type KeepAwakeState } from "./keep-awake.js";
 import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
