@@ -1,5 +1,5 @@
 import type {
-  CardBuilders, FinishedCardInput, RememberedCardInput,
+  CardBuilders, FinishedCardInput, RememberedCardInput, ReminderCardInput,
   NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
@@ -211,6 +211,20 @@ function rememberedCard(input: RememberedCardInput): object {
   };
 }
 
+// Discord renders <t:unix:F> in each viewer's own timezone.
+function reminderCard(input: ReminderCardInput): object {
+  return {
+    embeds: [{
+      title: "⏰ Reminder set",
+      description: input.text.slice(0, 4096),
+      fields: [{ name: "When", value: `<t:${Math.floor(Date.parse(input.at) / 1000)}:F>` }],
+    }],
+    components: [row([
+      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-reminder:${input.reminderId}` },
+    ])],
+  };
+}
+
 // Discord embed description cap; also the modal text-input cap, so a stored prompt never
 // overflows what the Edit modal can hold.
 const LIVE_PROMPT_LIMIT = 4000;
@@ -291,7 +305,7 @@ function liveSessionResultCard(input: LiveSessionResultCardInput): object {
 }
 
 export const discordCards: CardBuilders = {
-  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, rememberedCard,
+  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, rememberedCard, reminderCard,
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 };

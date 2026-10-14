@@ -25,8 +25,17 @@ that lets chat-target skills actually read dropped URLs. Built-in content skills
 Tool results use the OpenAI `tool_call_id` protocol: `converse()` preserves the assistant
 tool-call turn, appends one `role: "tool"` result per executed action, and
 `openai-chat.ts` translates Bean's camelCase internal shape to OpenAI's snake_case API
-shape. Reminders fire from a 30s poll in `main.ts` via Electron `Notification`; the store
-mirrors `memory-store.ts`. New helper capabilities (notes, routines) should follow this
+shape. Reminders fire from a 30s poll (`fireDueReminders`) in `main.ts` — or in the headless
+Discord host — via Electron `Notification`.
+
+**Chatops reminders (#282).** Discord members+ get `set_reminder`/`list_reminders`/
+`cancel_reminder` (`chatops/reminder-tools.ts`); the receipt's Cancel button carries the id.
+`Reminder.target` (DM → `userId`, channel → `channelId`) and `setBy` are stamped from the
+ingress, never model args; non-owners list/cancel only their own. Targeted reminders go out
+via the outbox; a malformed target fails loudly (never the owner's DM). Discord-only: Teams'
+outbox ignores `userId`. **Every write goes through `updateReminders`** (in-process chain +
+`reminders.json.lock` O_EXCL lock, since the desktop loop and its spawned bot share the file);
+`claimDueReminders` marks fired *before* delivery — never go back to bare load/save. New helper capabilities (notes, routines) should follow this
 ActionTool shape, keeping IO pure/DI in core.
 
 **Web search is not an ActionTool.** It's the provider's built-in tool, passed as

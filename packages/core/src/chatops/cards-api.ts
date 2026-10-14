@@ -84,6 +84,13 @@ export function rememberedScopeLine(scope: RememberedCardInput["scope"]): string
   return scope === "private" ? "Saved for you — used in our DMs." : "Saved for the household.";
 }
 
+/** Receipt for a reminder set_reminder saved directly; Cancel carries the reminder id. */
+export interface ReminderCardInput {
+  reminderId: string;
+  text: string;
+  at: string; // ISO 8601
+}
+
 export interface SkillProposalCardInput {
   proposalId: string;
   name: string;
@@ -142,6 +149,8 @@ export interface CardBuilders {
   todoProposalCard: (input: TodoProposalCardInput) => object;
   todoResultCard: (input: TodoResultCardInput) => object;
   rememberedCard: (input: RememberedCardInput) => object;
+  /** Optional: only surfaces that wire `reminders` (Discord) need it. */
+  reminderCard?: (input: ReminderCardInput) => object;
   skillProposalCard: (input: SkillProposalCardInput) => object;
   skillResultCard: (input: SkillResultCardInput) => object;
   liveSessionProposalCard: (input: LiveSessionProposalCardInput) => object;
