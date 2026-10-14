@@ -1,4 +1,5 @@
 // packages/core/src/routine-store.ts
+import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isValidCron } from "./cron.js";
@@ -257,7 +258,7 @@ export async function loadRoutines(dir: string): Promise<Routine[]> {
 /** Temp file + rename, so a crash (or a container kill) mid-write never leaves a torn file. The
  * temp name ends in `.tmp`, not `.json`: loadRoutines and the outbox sweep must not pick it up. */
 async function writeAtomic(file: string, body: string): Promise<void> {
-  const tmp = `${file}.tmp`;
+  const tmp = `${file}.${randomUUID()}.tmp`; // unique: overlapping saves of one file never share a temp
   await writeFile(tmp, body, "utf8");
   await rename(tmp, file);
 }

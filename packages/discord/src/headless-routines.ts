@@ -1,5 +1,5 @@
 import {
-  addTodo, clearReservations, createRoutineHost, createRoutineScheduler, dbFile, enqueueOutbox, execWatchCommand, fetchText,
+  addTodo, clearReservations, killAllCommands, killAllDelegates, createRoutineHost, createRoutineScheduler, dbFile, enqueueOutbox, execWatchCommand, fetchText,
   isWatchSeeded, listTodos, loadLayeredSkills, loadMemories, loadRoutines, loadRoutineStates, makeRoutineSteps, markNewItems,
   outboxDir, pinnedStepSelection, pollWatch, pruneStepAttempts, recoverInterruptedTodos, resolveDelegateSelection,
   retrieveNoteTool, routinesDir, routineStateFile, availableModels, saveRoutine, saveRoutineStates, searchNotes, seedWatch,
@@ -30,7 +30,7 @@ export function cliAuthPresent(cli: CliName, env: NodeJS.ProcessEnv, home: strin
 }
 
 export const missedNotice = (names: string[]): string =>
-  `Missed while Bean was down (not run — no catch-up): ${names.map((n) => `"${n}"`).join(", ")}. Run them from chat or wait for the next slot.`;
+  `Missed while Bean was down (not run — no catch-up): ${names.map((n) => `"${n}"`).join(", ")}. They resume at their next slot.`;
 
 export const clearedNotice = (paths: string[]): string =>
   `Cleared ${paths.length} stale run reservation(s) left by the last shutdown: ${paths.join(", ")}. Those runs were stopped.`;
@@ -101,7 +101,12 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
     addTodo: async (r, text) => { await addTodo(dbFile(dir), r, text); },
     saveRoutine: (r) => saveRoutine(routinesDir(dir), r),
     alarm: (routine, error) => void ownerDm(`Can't check for new items — ${error}`, `Routine: ${routine.name}`),
-    onMissed: (names) => void ownerDm(missedNotice(names)),
+    // No Run-now button here: rebase each to its next slot (still no catch-up), or the scheduler's
+    // missed guard would skip it forever.
+    onMissed: (names) => {
+      void ownerDm(missedNotice(names));
+      void scheduler.clearMissed(names).catch((err: unknown) => console.error("bean: clearing missed routines failed", err));
+    },
   });
 
   const clis = deps.clis();
@@ -118,6 +123,9 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
     scheduler.stop();
     // A state write stuck on a dead disk must not hang shutdown past the container's grace period.
     await Promise.race([scheduler.settle(), new Promise((r) => setTimeout(r, 5_000))]);
-    steps.killAll();
+    // Every delegate (routine and chat) and command step: the process exits next, and boot
+    // cleanup would kill whatever survived anyway.
+    killAllDelegates();
+    killAllCommands();
   };
 }
