@@ -2,11 +2,11 @@ import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
-  detectClis, type CliName, runDelegate, claimOutbox, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine,
+  detectClis, type CliName, runDelegate, claimOutbox, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
-  makeRoles, makeTurnCap, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, parseRoleCommand, refusal, type Capability, type Role,
+  makeRoles, makeTurnCap, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, parseRoleCommand, parseRoutineCommand, RoutineProposalStore, refusal, type Capability, type Role,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -116,6 +116,15 @@ const bot = buildTeamsBot({
   webSearchEnabled: () => beanConfig.webSearch,
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
   roles,
+  routines: {
+    load: () => loadRoutines(routinesDir(dir)),
+    save: (r) => saveRoutine(routinesDir(dir), r),
+    // The owner and household members — the only people a routine may DM — by display name.
+    recipients: () => Promise.all([discordConfig.ownerId, ...discordConfig.memberIds].map(async (id) => ({
+      id, name: await client.users.fetch(id).then((u) => u.displayName, () => id),
+    }))),
+    proposals: new RoutineProposalStore(),
+  },
 });
 
 // Partials.Channel is REQUIRED for DM message events in discord.js v14 (DM channels
@@ -140,7 +149,7 @@ const scopeOf = (channel: TextBasedChannel): string =>
 
 // bot.ts's keyword commands (same optional leading slash). They act on the channel and answer
 // in one line, so they never open a session thread.
-const KEYWORD_COMMAND = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins|usage)$|live-session\b|(?:add|remove)-admin\b)/i;
+const KEYWORD_COMMAND = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins|usage|routines)$|live-session\b|(?:add|remove)-admin\b|(?:enable|disable)\s)/i;
 
 // A thread Bean opened is a session: every message in it is addressed to Bean. The Discord
 // API's ownerId survives restarts, so no local record of owned threads is needed.
@@ -290,7 +299,8 @@ client.on("messageCreate", async (message) => {
     const cmd = text.toLowerCase().replace(/^\/+/, "");
     const hasAudio = message.attachments.some((a) => a.contentType?.startsWith("audio/") === true && a.size <= 25 * 1024 * 1024);
     const coreCommand = !hasAudio &&
-      (cmd === "cancel" || cmd === "new" || parseRoleCommand(text) !== undefined || /^\/?live-session\b/i.test(text));
+      (cmd === "cancel" || cmd === "new" || parseRoleCommand(text) !== undefined || parseRoutineCommand(text) !== undefined ||
+        /^\/?live-session\b/i.test(text));
     const usable = text !== "" || hasAudio || message.attachments.some((a) => {
       const mime = a.contentType?.split(";")[0]?.trim() ?? "";
       return (SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) && a.size <= 10 * 1024 * 1024;

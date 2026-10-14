@@ -826,3 +826,47 @@ test("a failing chat call surfaces the real reason, not a blanket API-key blame"
   expect(res.reply).toContain("Function tools with reasoning_effort are not supported");
   expect(res.reply).toContain("gpt-5.6-luna");
 });
+
+describe("propose_routine", () => {
+  const authoring = { existing: ["morning"], recipients: [{ id: "u1", name: "Scen" }, { id: "mia", name: "Mia" }] };
+  const routine = {
+    name: "mia-summary", enabled: true, cron: "0 7 * * 1-5",
+    steps: [{ kind: "chat", instruction: "Summarize the day ahead" }],
+    sinks: { chatops: [{ transport: "discord", user: "mia" }] },
+  };
+  const call = (json: unknown) => depsReturning("Drafted.", [{ name: "propose_routine", args: { json } }]);
+
+  it("is offered only with routineAuthoring", async () => {
+    const offered: string[][] = [];
+    const deps: ConverseDeps = { model: "m", chat: async ({ tools }) => { offered.push((tools ?? []).map((t) => t.name)); return { content: "", toolCalls: [] }; } };
+    await conv({ latestUserText: "x", deps });
+    await conv({ latestUserText: "x", deps, routineAuthoring: authoring });
+    expect(offered[0]).not.toContain("propose_routine");
+    expect(offered[1]).toContain("propose_routine");
+  });
+
+  it("returns a valid draft without a problem", async () => {
+    const res = await conv({ latestUserText: "x", deps: call(JSON.stringify(routine)), routineAuthoring: authoring });
+    expect(res.proposedRoutine).toEqual({ routine, updating: false });
+  });
+
+  it("keeps an invalid draft with the reason, so the card can show it", async () => {
+    const res = await conv({ latestUserText: "x", deps: call(JSON.stringify({ ...routine, name: "morning", cron: "7am" })), routineAuthoring: authoring });
+    expect(res.proposedRoutine?.updating).toBe(true);
+    expect(res.proposedRoutine?.problem).toMatch(/not a valid 5-field cron/);
+  });
+
+  it("never DMs someone outside the household, and never takes command steps", async () => {
+    const stranger = { ...routine, sinks: { chatops: [{ transport: "discord", user: "999" }] } };
+    expect((await conv({ latestUserText: "x", deps: call(JSON.stringify(stranger)), routineAuthoring: authoring })).proposedRoutine?.problem)
+      .toMatch(/isn't the owner or a household member/);
+    const shell = { ...routine, steps: [{ kind: "command", command: "rm -rf ~" }] };
+    expect((await conv({ latestUserText: "x", deps: call(JSON.stringify(shell)), routineAuthoring: authoring })).proposedRoutine?.problem)
+      .toMatch(/command steps/);
+  });
+
+  it("rejects unparseable JSON back to the model", async () => {
+    const res = await conv({ latestUserText: "x", deps: call("{not json"), routineAuthoring: authoring });
+    expect(res.proposedRoutine).toBeUndefined();
+  });
+});

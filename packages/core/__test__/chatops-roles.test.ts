@@ -37,7 +37,7 @@ test("setup mode (no owner) and a missing actor id fail closed", () => {
 });
 
 test("card actions: live-session and skill controls are owner-only, notes/todos/forget member, the rest admin", () => {
-  for (const a of ["start-live", "cancel-live", "resume-live", "live-mode", "live-editsubmit", "save-skill", "cancel-skill"]) {
+  for (const a of ["start-live", "cancel-live", "resume-live", "live-mode", "live-editsubmit", "save-skill", "cancel-skill", "save-routine", "cancel-routine", "toggle-routine"]) {
     expect(cardActionNeeds(a)).toBe("owner");
   }
   for (const a of ["save-note", "cancel-note", "queue-todo", "cancel-todo", "forget-memory", "cancel-reminder"]) {
