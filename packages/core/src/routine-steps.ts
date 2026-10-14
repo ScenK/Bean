@@ -2,10 +2,9 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { dbFile, scratchDir } from "./config.js";
-import { runDelegate, type DelegateHandle, type DelegateSpawnFn } from "./delegate.js";
+import { runDelegate, type DelegateSpawnFn } from "./delegate.js";
 import { isValidSessionId, recordDelegateSession } from "./delegate-runs.js";
-import { killAllCommands, runShellCommand } from "./command-step.js";
-import { killPendingGroups } from "./kill-tree.js";
+import { runShellCommand } from "./command-step.js";
 import type { CliName } from "./launcher.js";
 import type { CliModelSelection } from "./models.js";
 import { composePrompt } from "./prompt.js";
@@ -14,7 +13,7 @@ import {
   ROUTINE_STEP_TIMEOUT_MS, RunBusyError,
   type CommandStepRequest, type DelegateStepRequest, type DelegateStepResult,
 } from "./routine-runner.js";
-import { releaseRun, reserveRun } from "./run-queue.js";
+import { releaseRun, reserveRun, updateReservationPid } from "./run-queue.js";
 import { spawnEnv } from "./spawn-env.js";
 
 export interface RoutineStepDeps {
@@ -39,9 +38,8 @@ export interface RoutineStepDeps {
  * reservation and scratch subdir outlive the step; the host releases them when the run ends.
  *
  * Command: same cwd rules, no reservation (a check reads the tree, it doesn't edit it). */
-export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "delegateStep" | "commandStep"> & { killAll: () => void } {
+export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "delegateStep" | "commandStep"> {
   const { dir } = deps;
-  const live = new Set<DelegateHandle>();
   const delegateStep: RoutineHostDeps["delegateStep"] = (req: DelegateStepRequest, onSession, hold) =>
     new Promise<DelegateStepResult>((resolve, reject) => {
       let choice: CliModelSelection | undefined;
@@ -71,10 +69,7 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
         if (reserved) releaseRun(dir, projectPath);
         if (perTodo) rmSync(perTodo, { recursive: true, force: true });
       };
-      // runDelegate can settle synchronously (a refused spawn), before `handle` is assigned.
-      let handle: DelegateHandle | undefined;
-      let settled = false;
-      handle = runDelegate(
+      const handle = runDelegate(
         {
           cli,
           projectPath,
@@ -87,8 +82,6 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
         {
           onOutput: () => {},
           onDone: (out, sessionId) => {
-            settled = true;
-            if (handle) live.delete(handle);
             cleanup();
             resolve({
               output: out, cli,
@@ -96,7 +89,7 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
               ...(sessionId && isValidSessionId(sessionId) ? { sessionId } : {}),
             });
           },
-          onError: (err) => { settled = true; if (handle) live.delete(handle); cleanup(); reject(err); },
+          onError: (err) => { cleanup(); reject(err); },
           onSessionStart: (_pid, sessionId) => {
             recordDelegateSession(dbFile(dir), { surface: "routine", cli, sessionId, projectPath, instruction: req.instruction });
             if (isValidSessionId(sessionId)) onSession?.(cli, sessionId, projectPath);
@@ -105,7 +98,9 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
         deps.spawnFn,
         req.timeoutMinutes ? req.timeoutMinutes * 60_000 : ROUTINE_STEP_TIMEOUT_MS,
       );
-      if (!settled) live.add(handle);
+      // Track the detached child, not this host: a crashed host's boot cleanup must kill the
+      // delegate, and a live delegate must keep its project reserved (run-queue.ts).
+      if (reserved && handle.pid) updateReservationPid(dir, projectPath, handle.pid);
     });
 
   const commandStep: RoutineHostDeps["commandStep"] = async (req: CommandStepRequest, hold) => {
@@ -124,14 +119,5 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
     }
   };
 
-  /** Shutdown: stop this host's routine delegates (SIGKILL any escalation still pending — the
-   * process exits right after) and every command step. Chat-run delegates are left alone. */
-  const killAll = (): void => {
-    for (const h of live) h.cancel();
-    live.clear();
-    killPendingGroups();
-    killAllCommands();
-  };
-
-  return { delegateStep, commandStep, killAll };
+  return { delegateStep, commandStep };
 }
