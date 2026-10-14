@@ -13,8 +13,11 @@ per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_ad
   sets those up (`memberRefusal`), never "ask to be made admin".
 - **DM gate** is `dmAllowed(role, roles)` (member+, or `allowGuestDms`) in both `bot.ts` and the
   surfaces' pre-work gates. The non-member DM line points at `whoami`.
-- **Live capture runs before role checks** and grants nothing by role: steering is only
-  starter/co-driver/war-room. Don't add member steering there.
+- **Member is checked before admin grants** in `roleOf`: a household member never gains admin
+  powers from a stale channel grant.
+- **Live capture runs before the role checks**, so it excludes members itself (bot.ts capture
+  branch, Discord's transcription gate and `/stop`): no steering even in war-room mode or as a
+  co-driver — live sessions bypass permissions.
 
 - **Enforcement is two layers — keep both.** (1) `onMessage` builds the tool list, catalog and
   memories from the role (guests get `[]` for all of them). (2) Runtime checks: `converse()` refuses

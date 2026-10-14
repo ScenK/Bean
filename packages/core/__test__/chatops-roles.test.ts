@@ -48,12 +48,12 @@ test("card actions: live-session and skill controls are owner-only, notes/todos/
   }
 });
 
-test("members are household-wide (DMs too), rank below admins, and need an owner configured", () => {
+test("members are household-wide (DMs too), win over admin grants, and need an owner configured", () => {
   const roles = makeRoles({ dbPath: db(), surface: "discord", ownerId: "o", memberIds: ["m"] });
   expect(roles.roleOf({ fromId: "m" })).toBe("member");
   expect(roles.roleOf({ fromId: "m", scopeId: "chan" })).toBe("member");
-  roles.addAdmins("chan", [{ id: "m", name: "M" }]);
-  expect(roles.roleOf({ fromId: "m", scopeId: "chan" })).toBe("admin");
+  roles.addAdmins("chan", [{ id: "m", name: "M" }]); // membership is checked first
+  expect(roles.roleOf({ fromId: "m", scopeId: "chan" })).toBe("member");
   expect(makeRoles({ dbPath: db(), surface: "discord", memberIds: ["m"] }).roleOf({ fromId: "m" })).toBe("guest");
   expect(can("member", "memory") && can("member", "notes") && can("member", "todos")).toBe(true);
   expect(["delegate", "systemControl", "liveSession", "skillWrites", "cancelRuns"].some((c) => can("member", c as Capability))).toBe(false);
