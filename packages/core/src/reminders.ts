@@ -20,15 +20,14 @@ export interface Reminder {
   setBy?: string;
 }
 
-// `target` is only checked for being an object here: a malformed one must survive load/save and
-// fail loudly at delivery (reminderOutbox), not vanish silently on the next write.
+// `target` isn't checked here at all: a malformed one (even null or a string) must survive
+// load/save and fail loudly at delivery (reminderOutbox), not vanish silently on the next write.
 export function isValidReminder(value: unknown): value is Reminder {
   if (typeof value !== "object" || value === null) return false;
   const r = value as Record<string, unknown>;
   return typeof r.id === "string" && typeof r.text === "string" &&
     typeof r.at === "string" && !Number.isNaN(Date.parse(r.at)) &&
     (r.firedAt === undefined || typeof r.firedAt === "string") &&
-    (r.target === undefined || (typeof r.target === "object" && r.target !== null)) &&
     (r.setBy === undefined || typeof r.setBy === "string");
 }
 
