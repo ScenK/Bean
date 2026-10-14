@@ -284,16 +284,16 @@ client.on("messageCreate", async (message) => {
     }
     // Daily turn cap, before transcription, downloads and the thread title. Only turns headed for
     // converse() count: not the owner, blocked DMs, live-session steering, or a keyword command
-    // bot.ts answers itself — mirrored from its checks, and only attachment-free (a transcript
+    // bot.ts answers itself — mirrored from its checks, and only without audio (a transcript
     // appended to `whoami` turns it into a model turn). Counted on admission, so a turn that
     // later fails still counts.
     const cmd = text.toLowerCase().replace(/^\/+/, "");
-    const coreCommand = message.attachments.size === 0 &&
+    const hasAudio = message.attachments.some((a) => a.contentType?.startsWith("audio/") === true && a.size <= 25 * 1024 * 1024);
+    const coreCommand = !hasAudio &&
       (cmd === "cancel" || cmd === "new" || parseRoleCommand(text) !== undefined || /^\/?live-session\b/i.test(text));
-    const usable = text !== "" || message.attachments.some((a) => {
+    const usable = text !== "" || hasAudio || message.attachments.some((a) => {
       const mime = a.contentType?.split(";")[0]?.trim() ?? "";
-      return (mime.startsWith("audio/") && a.size <= 25 * 1024 * 1024) ||
-        ((SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) && a.size <= 10 * 1024 * 1024);
+      return (SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) && a.size <= 10 * 1024 * 1024;
     });
     if (
       role !== "owner" && !capturing && !dmBlocked && !coreCommand && usable &&
