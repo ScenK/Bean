@@ -28,11 +28,15 @@ const REMEMBER_INTENT =
 const PRIVATE_SCOPE = /\b(?:just|only)\s+(?:for|between)\s+(?:me|us)\b|\bkeep\s+(?:it|this|that)\s+private\b|\bprivately\b/i;
 const SHARED_SCOPE = /\bfor\s+(?:everyone|everybody|all\s+of\s+us|the\s+(?:whole\s+)?(?:household|family|house))\b/i;
 
+// Any negation in the message ("this is not for everyone") voids a sharing override: widening a
+// private fact must be unambiguous, so a doubtful DM stays private.
+const NEGATED = /\b(?:not|never|no)\b|n'?t\b/i;
+
 /** Where a chatops remember lands: a DM saves private to the speaker, a channel saves to the
  * household; explicit wording ("just for me" / "for everyone") overrides. */
 export function saveScope(typedText: string, direct: boolean): "private" | "shared" {
   if (PRIVATE_SCOPE.test(typedText)) return "private";
-  if (SHARED_SCOPE.test(typedText)) return "shared";
+  if (SHARED_SCOPE.test(typedText) && !NEGATED.test(typedText)) return "shared";
   return direct ? "private" : "shared";
 }
 
@@ -47,7 +51,8 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
   const remembered: Memory[] = [];
   const forgotten: string[] = [];
   const known = new Set(deps.memories.map((m) => m.id));
-  const texts = new Set(deps.memories.map((m) => m.text.trim().toLowerCase()));
+  // Dedupe within the destination scope only: a private fact re-saved "for everyone" is new.
+  const texts = new Set(deps.memories.filter((m) => m.subjectId === deps.subjectId).map((m) => m.text.trim().toLowerCase()));
 
   const remember: ActionTool = {
     spec: rememberToolSpec(
