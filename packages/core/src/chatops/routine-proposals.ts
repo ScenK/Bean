@@ -140,7 +140,17 @@ export function parseRoutineCommand(text: string): RoutineCommand | undefined {
   if (/^routines$/i.test(t)) return { kind: "list" };
   const m = /^(enable|disable)\s+(\S.*)$/is.exec(t);
   if (!m) return undefined;
-  return { kind: m[1]!.toLowerCase() as "enable" | "disable", name: m[2]!.trim().replace(/^["'`]+|["'`]+$/g, "") };
+  return { kind: m[1]!.toLowerCase() as "enable" | "disable", name: stripQuotes(m[2]!.trim()) };
+}
+
+/** Index scan, not `/^["'`]+|["'`]+$/g`: the unanchored tail alternative is quadratic on long quote runs. */
+function stripQuotes(s: string): string {
+  const quote = (c: string | undefined): boolean => c === '"' || c === "'" || c === "`";
+  let start = 0;
+  let end = s.length;
+  while (start < end && quote(s[start])) start++;
+  while (end > start && quote(s[end - 1])) end--;
+  return s.slice(start, end);
 }
 
 export function routineListText(routines: Routine[], tz: string = localTimeZone()): string {

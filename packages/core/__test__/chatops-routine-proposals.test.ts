@@ -23,6 +23,13 @@ test("parseRoutineCommand", () => {
   expect(parseRoutineCommand("what routines do I have")).toBeUndefined();
 });
 
+test("parseRoutineCommand strips quotes in linear time", () => {
+  const t = performance.now();
+  expect(parseRoutineCommand("enable " + '"'.repeat(200_000) + "x")).toEqual({ kind: "enable", name: "x" });
+  expect(parseRoutineCommand("enable " + "x" + '"'.repeat(200_000) + "y")).toEqual({ kind: "enable", name: "x" + '"'.repeat(200_000) + "y" });
+  expect(performance.now() - t).toBeLessThan(500);
+});
+
 test("card input names DM recipients and notes a shared todo digest", () => {
   const store = new RoutineProposalStore();
   const routine: Routine = {
