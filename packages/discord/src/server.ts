@@ -2,7 +2,7 @@ import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
-  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, OUTBOX_MAX_ATTEMPTS, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine,
+  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
@@ -678,7 +678,19 @@ const appendDelivered = (conversationId: string, body: string): void => {
 };
 
 const OUTBOX_POLL_MS = 5_000;
-await recoverOutbox(outboxDir(beanDir()), "discord");
+// One owner notice for a given-up message. A failed owner DM gets none — that's the channel the
+// notice would use, and the notice is itself an owner DM, so its own failure can't loop.
+const onOutboxGiveUp = async (msg: OutboxMessage, err: unknown): Promise<void> => {
+  console.error(`outbox: discord send gave up after ${OUTBOX_MAX_ATTEMPTS} attempts`, err);
+  if (!msg.channel && !msg.userId) return;
+  const target = msg.channel ? `<#${msg.channel}>` : `<@${msg.userId}>`;
+  const reason = err instanceof Error ? err.message : String(err);
+  await enqueueOutbox(outboxDir(beanDir()), {
+    transport: "discord",
+    body: `Couldn't deliver${msg.title ? ` "${msg.title}"` : " a message"} to ${target}: ${reason}`,
+  }, () => randomUUID());
+};
+await recoverOutbox(outboxDir(beanDir()), "discord", onOutboxGiveUp);
 setInterval(() => {
   void drainOutbox(outboxDir(beanDir()), "discord", async (msg) => {
     // displayBody present = an interrupted-run notice: msg.body carries the full instruction
@@ -699,18 +711,7 @@ setInterval(() => {
     if (!channel?.isTextBased() || !("send" in channel)) throw new Error(`channel ${msg.channel} not sendable`);
     for (const chunk of chunkText(text)) await channel.send(chunk);
     if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body);
-  }, async (msg, err) => {
-    console.error(`outbox: discord send gave up after ${OUTBOX_MAX_ATTEMPTS} attempts`, err);
-    // One owner notice. An owner DM that failed gets none — that's the channel the notice would
-    // use, and the notice is itself an owner DM, so its own failure can't loop.
-    if (!msg.channel && !msg.userId) return;
-    const target = msg.channel ? `<#${msg.channel}>` : `<@${msg.userId}>`;
-    const reason = err instanceof Error ? err.message : String(err);
-    await enqueueOutbox(outboxDir(beanDir()), {
-      transport: "discord",
-      body: `Couldn't deliver${msg.title ? ` "${msg.title}"` : " a message"} to ${target}: ${reason}`,
-    }, () => randomUUID());
-  }).catch((err: unknown) => console.error("outbox: discord drain failed", err));
+  }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: discord drain failed", err));
 }, OUTBOX_POLL_MS);
 
 // Before login: boot cleanup of stale run reservations must finish before a chat run can reserve.

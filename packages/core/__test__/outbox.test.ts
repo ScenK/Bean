@@ -124,7 +124,7 @@ describe("outbox", () => {
     await enqueueOutbox(dir, { transport: "teams", body: "teams in flight" }, newId);
     await claimOutbox(dir, "discord"); // ...and the bot dies before acking
     await claimOutbox(dir, "teams");
-    await recoverOutbox(dir, "discord");
+    await recoverOutbox(dir, "discord", async () => { throw new Error("not exhausted yet"); });
     const files = (await readdir(dir)).sort();
     expect(files).toEqual([expect.stringMatching(/^discord-.*\.json$/), expect.stringMatching(/^teams-.*\.json\.sending$/)]);
     expect(JSON.parse(await readFile(join(dir, files[0]!), "utf8"))).toMatchObject({ body: "crashed mid-send", attempts: 1 });

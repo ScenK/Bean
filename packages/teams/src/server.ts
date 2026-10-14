@@ -2,7 +2,7 @@ import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
-  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, OUTBOX_MAX_ATTEMPTS, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine,
+  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, dmAllowed,
@@ -13,6 +13,7 @@ import {
   type ConversationReference, type Activity,
 } from "botbuilder";
 import express from "express";
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -411,7 +412,18 @@ const appendDelivered = (conversationId: string, body: string): void => {
 };
 
 const OUTBOX_POLL_MS = 5_000;
-await recoverOutbox(outboxDir(beanDir()), "teams");
+// One owner-DM notice for a given-up channel message. A failed owner DM gets none — the notice
+// would ride that same path, and being an owner DM itself, its own failure can't loop.
+const onOutboxGiveUp = async (msg: OutboxMessage, err: unknown): Promise<void> => {
+  console.error(`outbox: teams send gave up after ${OUTBOX_MAX_ATTEMPTS} attempts`, err);
+  if (!msg.channel) return;
+  const reason = err instanceof Error ? err.message : String(err);
+  await enqueueOutbox(outboxDir(beanDir()), {
+    transport: "teams",
+    body: `Couldn't deliver${msg.title ? ` "${msg.title}"` : " a message"} to conversation ${msg.channel}: ${reason}`,
+  }, () => randomUUID());
+};
+await recoverOutbox(outboxDir(beanDir()), "teams", onOutboxGiveUp);
 setInterval(() => {
   void drainOutbox(outboxDir(beanDir()), "teams", async (msg) => {
     // displayBody present = an interrupted-run notice: msg.body carries the full instruction
@@ -455,8 +467,5 @@ setInterval(() => {
     }
     if (!delivered) throw lastErr;
     if (msg.displayBody && !msg.context && msg.channel) appendDelivered(msg.channel, msg.body);
-  }, async (_msg, err) => {
-    // No owner notice: Teams' only notice path is this same outbox, which just failed.
-    console.error(`outbox: teams message dropped after ${OUTBOX_MAX_ATTEMPTS} attempts`, err);
-  }).catch((err: unknown) => console.error("outbox: teams drain failed", err));
+  }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: teams drain failed", err));
 }, OUTBOX_POLL_MS);

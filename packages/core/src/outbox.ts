@@ -124,7 +124,11 @@ export async function nackOutbox(dir: string, msg: OutboxMessage, now: () => Dat
 /** Boot-time: a `.sending` file left by a crash mid-send counts as one failed attempt and is
  * queued again (so a message that crashes the bot every time eventually stops). Call once
  * before the first drain — a running drain's in-flight files are also `.sending`. */
-export async function recoverOutbox(dir: string, transport: "teams" | "discord" | "chat"): Promise<void> {
+export async function recoverOutbox(
+  dir: string,
+  transport: "teams" | "discord" | "chat",
+  onGiveUp: (msg: OutboxMessage, err: unknown) => Promise<void>,
+): Promise<void> {
   let entries: string[];
   try {
     entries = readdirSync(dir);
@@ -133,7 +137,7 @@ export async function recoverOutbox(dir: string, transport: "teams" | "discord" 
   }
   for (const file of entries.filter((f) => f.startsWith(`${transport}-`) && f.endsWith(".json.sending"))) {
     const msg = parseOwn(join(dir, file), file.slice(0, -".sending".length), transport);
-    if (msg && (await nackOutbox(dir, msg))) console.error(`outbox: gave up on ${file} after ${OUTBOX_MAX_ATTEMPTS} attempts`);
+    if (msg && (await nackOutbox(dir, msg))) await onGiveUp(msg, new Error("interrupted mid-send"));
   }
 }
 
