@@ -2,7 +2,7 @@ import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
-  detectClis, type CliName, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine,
+  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, dmAllowed,
@@ -13,6 +13,7 @@ import {
   type ConversationReference, type Activity,
 } from "botbuilder";
 import express from "express";
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -411,47 +412,60 @@ const appendDelivered = (conversationId: string, body: string): void => {
 };
 
 const OUTBOX_POLL_MS = 5_000;
+// One owner-DM notice for a given-up channel message. A failed owner DM gets none — the notice
+// would ride that same path, and being an owner DM itself, its own failure can't loop.
+const onOutboxGiveUp = async (msg: OutboxMessage, err: unknown): Promise<void> => {
+  console.error(`outbox: teams send gave up after ${OUTBOX_MAX_ATTEMPTS} attempts`, err);
+  if (!msg.channel) return;
+  const reason = err instanceof Error ? err.message : String(err);
+  await enqueueOutbox(outboxDir(beanDir()), {
+    transport: "teams",
+    body: `Couldn't deliver${msg.title ? ` "${msg.title}"` : " a message"} to conversation ${msg.channel}: ${reason}`,
+  }, () => randomUUID());
+};
+await recoverOutbox(outboxDir(beanDir()), "teams", onOutboxGiveUp);
 setInterval(() => {
-  void (async () => {
-    for (const msg of await claimOutbox(outboxDir(beanDir()), "teams")) {
-      // displayBody present = an interrupted-run notice: msg.body carries the full instruction
-      // (needed below so a later "retry" has context), too long to post as-is — show the short
-      // version instead. Absent for plain messages (routine digests), which already are the
-      // display text.
-      const text = msg.displayBody ?? (msg.title ? `**${msg.title}**\n\n${msg.body}` : msg.body);
-      // No channel = DM the owner directly: their personal (1:1) conversation(s) only, never
-      // another user's who once DMed the bot (the default delivery mode). A specific channel
-      // targets one known conversation.
-      // A channel target resolves via its bare id but is sent to exactly the id given: bare =
-      // new post in the channel, `;messageid=` = reply in that thread (e.g. an interrupted run).
-      const known = msg.channel ? conversationRefs[msg.channel] ?? conversationRefs[bareChannelId(msg.channel)] : undefined;
-      const targets = msg.channel
-        ? (known?.conversation ? [{ ...known, conversation: { ...known.conversation, id: msg.channel } }] : [])
-        : ownerDmRefs(conversationRefs, teamsConfig.ownerId);
-      if (targets.length === 0) {
-        console.error(msg.channel
-          ? `outbox: unknown teams conversation ${msg.channel} — message dropped (mention the bot there once first)`
-          : teamsConfig.ownerId
-            ? "outbox: no known personal Teams conversation with the owner yet — message dropped (DM the bot once first)"
-            : "outbox: no ownerId in teams.json — DM message dropped (set it to your Teams user id or AAD object id)");
-        continue;
-      }
-      let delivered = false;
-      for (const ref of targets) {
-        try {
-          await adapter.continueConversationAsync(teamsConfig.botAppId, ref, async (context) => {
-            await context.sendActivity(text);
-          });
-          delivered = true;
-          // Per-target, because a DM fanout has no msg.channel to append to.
-          if (msg.context && ref.conversation?.id) {
-            appendDelivered(ref.conversation.id, msg.body);
-          }
-        } catch (err) {
-          console.error("outbox: teams send failed", err);
-        }
-      }
-      if (delivered && msg.displayBody && !msg.context && msg.channel) appendDelivered(msg.channel, msg.body);
+  void drainOutbox(outboxDir(beanDir()), "teams", async (msg) => {
+    // displayBody present = an interrupted-run notice: msg.body carries the full instruction
+    // (needed below so a later "retry" has context), too long to post as-is — show the short
+    // version instead. Absent for plain messages (routine digests), which already are the
+    // display text.
+    const text = msg.displayBody ?? (msg.title ? `**${msg.title}**\n\n${msg.body}` : msg.body);
+    // No channel = DM the owner directly: their personal (1:1) conversation(s) only, never
+    // another user's who once DMed the bot (the default delivery mode). A specific channel
+    // targets one known conversation.
+    // A channel target resolves via its bare id but is sent to exactly the id given: bare =
+    // new post in the channel, `;messageid=` = reply in that thread (e.g. an interrupted run).
+    const known = msg.channel ? conversationRefs[msg.channel] ?? conversationRefs[bareChannelId(msg.channel)] : undefined;
+    const targets = msg.channel
+      ? (known?.conversation ? [{ ...known, conversation: { ...known.conversation, id: msg.channel } }] : [])
+      : ownerDmRefs(conversationRefs, teamsConfig.ownerId);
+    // Thrown = retried later: the conversation may become known once someone messages the bot.
+    if (targets.length === 0) {
+      throw new Error(msg.channel
+        ? `unknown teams conversation ${msg.channel} (mention the bot there once first)`
+        : teamsConfig.ownerId
+          ? "no known personal Teams conversation with the owner yet (DM the bot once first)"
+          : "no ownerId in teams.json (set it to your Teams user id or AAD object id)");
     }
-  })();
+    let lastErr: unknown;
+    let delivered = false;
+    for (const ref of targets) {
+      try {
+        await adapter.continueConversationAsync(teamsConfig.botAppId, ref, async (context) => {
+          await context.sendActivity(text);
+        });
+        delivered = true;
+        // Per-target, because a DM fanout has no msg.channel to append to.
+        if (msg.context && ref.conversation?.id) {
+          appendDelivered(ref.conversation.id, msg.body);
+        }
+      } catch (err) {
+        console.error("outbox: teams send failed", err);
+        lastErr = err;
+      }
+    }
+    if (!delivered) throw lastErr;
+    if (msg.displayBody && !msg.context && msg.channel) appendDelivered(msg.channel, msg.body);
+  }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: teams drain failed", err));
 }, OUTBOX_POLL_MS);

@@ -8,7 +8,10 @@ pre-authorized by saving the routine), `outbox.ts`. Core: `routine-scheduler.ts`
 skip-if-running, missed-marking, **no catch-up** — deliberate) and `routine-host.ts`
 (`createRoutineHost` — the runner-deps/footer/digest-sink glue every host shares; the host
 injects only spawn adapters, recall set, status/notify callbacks). Chatops digests go through
-`~/.bean/outbox/*.json`, polled by the Teams/Discord bot servers (Teams needs a conversation
+`~/.bean/outbox/*.json`, drained by the Teams/Discord bot servers at-least-once (claim renames
+to `.json.sending`, ack deletes, a failed send backs off and retries up to
+`OUTBOX_MAX_ATTEMPTS`, then Discord DMs the owner one notice; a crash mid-send re-delivers on
+boot — duplicates accepted, no ack protocol) (Teams needs a conversation
 seen once — refs persisted in `~/.bean/teams-conversations.json`). A chatops sink's `channel`
 is **optional** — absent/empty = DM the **owner** only (`ownerId` in `discord.json` /
 `teams.json`; teams matches the personal ref's `user.id`/`aadObjectId`; no `ownerId` = dropped

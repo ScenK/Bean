@@ -1,9 +1,14 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** One queued chatops message (~/.bean/outbox/<transport>-<id>.json). The main app
- * enqueues routine digests; each bot server claims (reads + deletes) its own transport's
- * files on a short poll. Files survive bot restarts — messages queue until a bot runs.
+ * enqueues routine digests; each bot server drains its own transport's files on a short poll.
+ * Files survive bot restarts — messages queue until a bot runs.
+ *
+ * Delivery is at-least-once: a claim renames the file to `<id>.json.sending`, a successful send
+ * deletes it (`ackOutbox`), a failed one puts it back with a backoff (`nackOutbox`) until
+ * OUTBOX_MAX_ATTEMPTS, then gives up. A crash between send and delete re-delivers on the next
+ * boot (`recoverOutbox`) — a possible duplicate, accepted rather than adding an ack protocol.
  *
  * Uses sync fs (tiny local JSON files, not a hot path) rather than fs/promises, like
  * run-queue.ts: `enqueueOutbox` is called from `interruptAll()` (RunRegistry/delegate-tasks),
@@ -38,7 +43,15 @@ export interface OutboxMessage {
   // unconditionally via `displayBody` instead.
   context?: boolean;
   createdAt: string; // ISO
+  // Retry bookkeeping, written by nackOutbox: failed send attempts so far, and the ISO time
+  // before which claimOutbox skips the file.
+  attempts?: number;
+  retryAt?: string;
 }
+
+export const OUTBOX_MAX_ATTEMPTS = 5;
+
+const fileName = (msg: Pick<OutboxMessage, "transport" | "id">): string => `${msg.transport}-${msg.id}.json`;
 
 export async function enqueueOutbox(
   dir: string,
@@ -52,7 +65,13 @@ export async function enqueueOutbox(
   return full.id;
 }
 
-export async function claimOutbox(dir: string, transport: "teams" | "discord" | "chat"): Promise<OutboxMessage[]> {
+/** Claims this transport's due messages, oldest first: each is renamed to `.json.sending` and
+ * must then be acked (sent) or nacked (failed). Other transports' files are left untouched. */
+export async function claimOutbox(
+  dir: string,
+  transport: "teams" | "discord" | "chat",
+  now: () => Date = () => new Date(),
+): Promise<OutboxMessage[]> {
   let entries: string[];
   try {
     entries = readdirSync(dir);
@@ -73,29 +92,90 @@ export async function claimOutbox(dir: string, transport: "teams" | "discord" | 
       rmSync(path, { force: true });
       continue;
     }
-    let parsed: OutboxMessage;
+    const parsed = parseOwn(path, file, transport);
+    if (!parsed) continue;
+    if (parsed.retryAt && parsed.retryAt > now().toISOString()) continue; // backing off
+    renameSync(path, `${path}.sending`);
+    out.push(parsed);
+  }
+  return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/** Sent: drop the claimed file. */
+export async function ackOutbox(dir: string, msg: OutboxMessage): Promise<void> {
+  rmSync(join(dir, `${fileName(msg)}.sending`), { force: true });
+}
+
+/** Failed: put the claimed file back for a later retry (1, 2, 4, 8 min backoff). Returns true when
+ * that was the last allowed attempt — the file is deleted and the caller should notify. */
+export async function nackOutbox(dir: string, msg: OutboxMessage, now: () => Date = () => new Date()): Promise<boolean> {
+  const sending = join(dir, `${fileName(msg)}.sending`);
+  const attempts = (msg.attempts ?? 0) + 1;
+  if (attempts >= OUTBOX_MAX_ATTEMPTS) {
+    rmSync(sending, { force: true });
+    return true;
+  }
+  const retryAt = new Date(now().getTime() + 60_000 * 2 ** (attempts - 1)).toISOString();
+  writeFileSync(sending, JSON.stringify({ ...msg, attempts, retryAt }, null, 2) + "\n", "utf8");
+  renameSync(sending, join(dir, fileName(msg)));
+  return false;
+}
+
+/** Boot-time: a `.sending` file left by a crash mid-send counts as one failed attempt and is
+ * queued again (so a message that crashes the bot every time eventually stops). Call once
+ * before the first drain — a running drain's in-flight files are also `.sending`. */
+export async function recoverOutbox(
+  dir: string,
+  transport: "teams" | "discord" | "chat",
+  onGiveUp: (msg: OutboxMessage, err: unknown) => Promise<void>,
+): Promise<void> {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const file of entries.filter((f) => f.startsWith(`${transport}-`) && f.endsWith(".json.sending"))) {
+    const msg = parseOwn(join(dir, file), file.slice(0, -".sending".length), transport);
+    if (msg && (await nackOutbox(dir, msg))) await onGiveUp(msg, new Error("interrupted mid-send"));
+  }
+}
+
+/** Claim → send → ack, or nack on a throw; `onGiveUp` runs once for a message that used its last attempt. */
+export async function drainOutbox(
+  dir: string,
+  transport: "teams" | "discord" | "chat",
+  send: (msg: OutboxMessage) => Promise<void>,
+  onGiveUp: (msg: OutboxMessage, err: unknown) => Promise<void>,
+  now: () => Date = () => new Date(),
+): Promise<void> {
+  for (const msg of await claimOutbox(dir, transport, now)) {
     try {
-      parsed = JSON.parse(readFileSync(path, "utf8")) as OutboxMessage;
-    } catch {
-      // malformed — delete unconditionally so junk can't wedge *this transport's* own poll loop
-      rmSync(path, { force: true });
-      continue;
+      await send(msg);
+      await ackOutbox(dir, msg);
+    } catch (err) {
+      if (await nackOutbox(dir, msg, now)) await onGiveUp(msg, err);
     }
-    // ponytail: only claim (and delete) files for this transport — leave other transports' files
-    // untouched so a discord claim can't eat teams' queue, or vice versa.
+  }
+}
+
+// Reads one of `transport`'s files (named `file`, at `path`). Anything malformed — bad JSON, a
+// body that disagrees with the filename (only via hand-editing) — is deleted rather than left to
+// wedge this transport's poll loop forever.
+function parseOwn(path: string, file: string, transport: string): OutboxMessage | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as OutboxMessage;
     if (
       parsed.transport === transport &&
+      typeof parsed.id === "string" &&
+      file === fileName(parsed) &&
       (parsed.channel === undefined || typeof parsed.channel === "string") &&
       (parsed.userId === undefined || typeof parsed.userId === "string") &&
       typeof parsed.body === "string"
-    ) {
-      out.push(parsed);
-      rmSync(path, { force: true });
-    } else {
-      // filename says this transport, but body disagrees (only via hand-editing) — same
-      // treatment as a parse failure: delete rather than leave it stranded forever.
-      rmSync(path, { force: true });
-    }
+    ) return parsed;
+  } catch {
+    // fall through to delete
   }
-  return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  rmSync(path, { force: true });
+  return undefined;
 }

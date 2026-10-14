@@ -21,7 +21,7 @@ import {
   loadReminders, updateReminders, fireDueReminders, enqueueOutbox, type Reminder, extractPageText,
   loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
-  routinesDir, routineStateFile, outboxDir, claimOutbox, runDelegate, killAllDelegates, killAllCommands,
+  routinesDir, routineStateFile, outboxDir, claimOutbox, ackOutbox, runDelegate, killAllDelegates, killAllCommands,
   scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   recoverInterruptedTodos, deleteTodosForRoutine,
@@ -931,6 +931,7 @@ app.whenReady().then(async () => {
     // one-shot claim, not a poll loop: main.ts is the only possible producer for the "chat"
     // transport, and only while it's dying — see .memory/project-durable-run-queue.md.
     const chatNotices = await claimOutbox(outboxDir(dir), "chat");
+    for (const m of chatNotices) await ackOutbox(outboxDir(dir), m);
     if (chatNotices.length > 0) {
       const notices = chatNotices.map((m) => ({ text: m.body, display: m.displayBody ?? m.body }));
       interruptedRunStore.set(notices);
