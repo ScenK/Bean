@@ -8,9 +8,9 @@ per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_ad
 
 - **Capabilities, not role names**: `NEEDS` in roles.ts maps each capability to its least role
   and `can(role, cap)` reads it — the tool list, `permitted()` runtime checks and `cardActionNeeds`
-  all go through it. Members get memory, notes and todos only: no delegates, chat skills, images,
-  `system_control`, live sessions, skill writes or run cancels. A member refusal says the owner
-  sets those up (`memberRefusal`), never "ask to be made admin".
+  all go through it. Members get memory, notes, reminders and todos only: no delegates, chat skills, images,
+  `system_control`, live sessions, skill or routine writes or run cancels. A member refusal says the owner
+  sets those up (`memberRefusal`, also for owner-only capabilities), never "ask to be made admin".
 - **DM gate** is `dmAllowed(role, roles)` (member+, or `allowGuestDms`) in both `bot.ts` and the
   surfaces' pre-work gates. The non-member DM line points at `whoami`.
 - **Member is checked before admin grants** in `roleOf`: a household member never gains admin
@@ -39,3 +39,8 @@ per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_ad
   The role line in the trailing system message is guidance only; never treat it as the gate.
 - Live sessions: every *launch* entry point is owner-only; steering a running one keeps the
   starter/co-driver/war-room model ([project-live-sessions](project-live-sessions.md)).
+- **Daily turn cap (#284, Discord)**: every non-owner gets 200 addressed turns a day (`turn-cap.ts`,
+  `chatops_turn_counts` keyed by message id, day = local date in `TZ`). Checked in `server.ts`
+  right after the role check, before transcription/downloads/thread title; keyword commands,
+  blocked DMs and live steering don't count. One atomic `INSERT … SELECT WHERE count < cap` —
+  don't split it into read-then-write. Owner `usage` lists today's counts.

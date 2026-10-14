@@ -1,7 +1,7 @@
 import type {
-  CardBuilders, FinishedCardInput, RememberedCardInput,
+  CardBuilders, FinishedCardInput, RememberedCardInput, ReminderCardInput,
   NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
-  SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
+  SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
 import { BROWSER_SKILL_NOTE, rememberedScopeLine } from "@bean/core";
@@ -197,6 +197,45 @@ function skillResultCard(input: SkillResultCardInput): object {
   };
 }
 
+// Mobile-first: schedule, steps and destinations as short fields; the toggle label shows the
+// CURRENT state. An invalid draft shows the reason and only Cancel.
+function routineProposalCard(input: RoutineProposalCardInput): object {
+  const id = input.proposalId;
+  const fields = input.problem
+    ? [{ name: "Can't save", value: clampField(input.problem) }]
+    : [
+        { name: "When", value: clampField(input.schedule) },
+        { name: "Steps", value: clampField(input.steps.join("\n") || "None — it only notifies") },
+        { name: "Sends to", value: clampField(input.sinks.join("\n")) },
+        ...(input.todoNote ? [{ name: "Todos", value: clampField(input.todoNote) }] : []),
+      ];
+  return {
+    embeds: [{
+      title: (input.updating ? `Bean proposes replacing routine ${input.name}` : `Bean proposes routine ${input.name}`).slice(0, 256),
+      // 1000, not 4096: Discord also caps a whole embed at 6000 chars, and the fields take up to ~3.2k.
+      ...(input.description ? { description: input.description.slice(0, 1000) } : {}),
+      fields,
+    }],
+    components: [row(input.problem
+      ? [{ type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-routine:${id}` }]
+      : [
+          { type: BUTTON, style: 2, label: input.enabled ? "Enabled: on" : "Enabled: off", custom_id: `bean:toggle-routine:${id}` },
+          { type: BUTTON, style: 3, label: input.updating ? "Replace routine" : "Save routine", custom_id: `bean:save-routine:${id}` },
+          { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-routine:${id}` },
+        ])],
+  };
+}
+
+function routineResultCard(input: RoutineResultCardInput): object {
+  const title = input.outcome === "saved"
+    ? `Routine saved (by ${input.by}) — ${input.enabled ? "on" : "off"}`
+    : input.outcome === "failed" ? "Routine not saved" : `Routine cancelled (by ${input.by})`;
+  return {
+    embeds: [{ title: title.slice(0, 256), description: input.problem ? `${input.name}: ${input.problem}`.slice(0, 4096) : input.name }],
+    components: [],
+  };
+}
+
 // custom_id caps at 100 chars; a UUID memory id plus the prefix is ~55.
 function rememberedCard(input: RememberedCardInput): object {
   return {
@@ -207,6 +246,20 @@ function rememberedCard(input: RememberedCardInput): object {
     }],
     components: [row([
       { type: BUTTON, style: 2, label: "Forget", custom_id: `bean:forget-memory:${input.memoryId}` },
+    ])],
+  };
+}
+
+// Discord renders <t:unix:F> in each viewer's own timezone.
+function reminderCard(input: ReminderCardInput): object {
+  return {
+    embeds: [{
+      title: "⏰ Reminder set",
+      description: input.text.slice(0, 4096),
+      fields: [{ name: "When", value: `<t:${Math.floor(Date.parse(input.at) / 1000)}:F>` }],
+    }],
+    components: [row([
+      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-reminder:${input.reminderId}` },
     ])],
   };
 }
@@ -291,7 +344,7 @@ function liveSessionResultCard(input: LiveSessionResultCardInput): object {
 }
 
 export const discordCards: CardBuilders = {
-  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, rememberedCard,
-  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, rememberedCard, reminderCard,
+  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 };

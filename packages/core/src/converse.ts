@@ -6,6 +6,8 @@ import { selectRelevantMemories } from "./memory/store.js";
 import type { CliName } from "./launcher.js";
 import type { AvailableModel } from "./models.js";
 import { isLiveCli, type LiveCli } from "./live-session.js";
+import { chatRoutineProblem, type Routine } from "./routine-store.js";
+import type { CliModels } from "./cli-models.js";
 
 /** The raster formats OpenAI vision input accepts — every ingest surface must filter to
  * these (a bare image/* check lets HEIC/SVG/TIFF through and fails the whole turn at the
@@ -57,6 +59,17 @@ export interface ProposedNote { title: string; body: string; project?: string; s
  * `updating` = a skill with this name already exists (user or built-in; confirming
  * writes/overrides the user copy in ~/.bean/skills). */
 export interface ProposedSkill { name: string; body: string; updating: boolean; }
+/** A routine draft awaiting the owner's confirmation (#285). `problem` set = it failed
+ * validation: the card shows why and offers no Save. */
+export interface ProposedRoutine { routine: Routine; updating: boolean; problem?: string; }
+/** What propose_routine needs: who a routine may DM, the names it would replace, and the chat's
+ * own channel id (absent in a DM). Offered only when set — chatops sets it for the owner. */
+export interface RoutineAuthoring {
+  existing: string[];
+  recipients: { id: string; name: string }[];
+  channelId?: string;
+  cliModels?: CliModels[];
+}
 /** A queue item draft awaiting user confirmation — todos are never queued silently. */
 export interface ProposedTodo { routine: string; text: string; }
 // A confirm-first background coding task that reports its final result back to this chat.
@@ -93,7 +106,7 @@ export interface ProposedLiveSession {
  * propose_note from this chat targets it (update in place) by default. */
 export interface LinkedNote { slug: string; title: string; version: number; body: string; }
 export interface ConverseResult {
-  reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo;
+  reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo; proposedRoutine?: ProposedRoutine;
   /** Files produced by generate_image this turn — set by surface handlers (buildChatHandler
    * fills dataUrl for inline rendering), never by converse() itself; bots use sendFile instead. */
   generatedImages?: Array<{ path: string; dataUrl?: string }>;
@@ -249,6 +262,32 @@ function proposeTodoTool(todoRoutines: string[]): ToolSpec {
         text: { type: "string", description: "the task as one self-contained sentence or short paragraph" },
       },
       required: ["routine", "text"],
+    },
+  };
+}
+
+// One JSON-string argument: the routine shape is too deep for a reliable nested tool schema, and
+// converse() validates it with the store's own validator anyway. Stable per chat (prefix caching).
+function proposeRoutineTool(a: RoutineAuthoring): ToolSpec {
+  const people = a.recipients.map((p) => `${p.name} (${p.id})`).join(", ");
+  return {
+    name: "propose_routine",
+    description:
+      "Draft a scheduled routine for the owner to confirm — a new one, or a replacement for an " +
+      "existing one (reuse its name). Write the complete routine as one JSON object: " +
+      '{"name": kebab-case, "description"?: text, "enabled": true, "cron": 5-field cron in local time ' +
+      '(e.g. "0 7 * * 1-5" = weekdays 7:00), "todoDriven"?: true to run once per queued todo, ' +
+      '"steps": [{"kind": "chat", "instruction": ..., "skill"?: ...} or {"kind": "delegate", "skill": ..., ' +
+      '"project"?: path, "instruction": ...}], "sinks": {"chatops"?: [{"transport": "discord", "user"?: id, ' +
+      '"channel"?: id}], "note"?: true}}. A chatops sink with neither user nor channel DMs the owner; ' +
+      `"user" DMs one of: ${people || "nobody else"}; "channel" posts in a channel` +
+      (a.channelId ? ` (this chat's channel id is ${a.channelId})` : "") + ". " +
+      (a.existing.length > 0 ? `Existing routines: ${a.existing.join(", ")}. ` : "") +
+      "Nothing is saved until the owner confirms the card.",
+    parameters: {
+      type: "object",
+      properties: { json: { type: "string", description: "the complete routine as a JSON object" } },
+      required: ["json"],
     },
   };
 }
@@ -424,6 +463,8 @@ export interface ConverseInput {
   skillAuthoringAvailable?: boolean;
   /** Per-turn guidance about the speaker's role (chatops); rides the trailing system message. */
   roleNote?: string;
+  /** Offer propose_routine (chatops, owner only). */
+  routineAuthoring?: RoutineAuthoring;
 }
 
 // Constant per surface (not per speaker) so the leading system message stays cache-stable.
@@ -459,6 +500,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     noteAvailable = true,
     skillAuthoringAvailable = true,
     roleNote,
+    routineAuthoring,
   } = input;
   // The leading system message must stay byte-stable for the life of a chat: OpenAI prompt
   // caching is exact-prefix, so anything per-turn here (a clock, per-message memory ranking)
@@ -521,6 +563,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     ...(noteAvailable ? [proposeNoteTool(projects, linkedNote)] : []),
     ...(skillAuthoringAvailable ? [proposeSkillTool()] : []),
     ...(todoRoutines.length > 0 ? [proposeTodoTool(todoRoutines)] : []),
+    ...(routineAuthoring ? [proposeRoutineTool(routineAuthoring)] : []),
     ...actions.map((a) => a.spec),
   ];
   const actionByName = new Map(actions.map((a) => [a.spec.name, a]));
@@ -680,6 +723,30 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       return { reply: content, model: deps.model, proposedTodo: { routine: args.routine, text } };
+    }
+
+    const routineCall = toolCalls.find((c) => c.name === "propose_routine");
+    if (routineCall && routineAuthoring) {
+      const raw = (routineCall.args as { json?: unknown } | undefined)?.json;
+      let parsed: unknown = raw;
+      if (typeof raw === "string") {
+        try { parsed = JSON.parse(raw); } catch { parsed = undefined; }
+      }
+      const name = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as { name?: unknown }).name : undefined;
+      if (typeof name !== "string" || !name.trim()) {
+        reject(routineCall, "the routine must be one JSON object with a name.");
+        continue;
+      }
+      // An invalid draft still reaches the card, which shows the reason instead of a Save button.
+      const problem = chatRoutineProblem(parsed, routineAuthoring.recipients, routineAuthoring.cliModels, routineAuthoring.channelId);
+      return {
+        reply: content,
+        model: deps.model,
+        proposedRoutine: {
+          routine: parsed as Routine, updating: routineAuthoring.existing.includes(name), ...(problem ? { problem } : {}),
+        },
+      };
     }
 
     const actionCalls = toolCalls.filter((c) => actionByName.has(c.name));

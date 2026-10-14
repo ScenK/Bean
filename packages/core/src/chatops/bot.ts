@@ -5,6 +5,11 @@ import { converse, speakerLine, type ConverseDeps, type ImageAttachment, type Pr
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
+import { makeReminderTools } from "./reminder-tools.js";
+import { makeTodoTools } from "./todo-tools.js";
+import { chatRoutineProblem, todoRunHint, type Routine } from "../routine-store.js";
+import type { TodoItem } from "../todo-store.js";
+import { cancelReminder } from "../reminders.js";
 import { availableModels } from "../models.js";
 import type { Skill, Project } from "../types.js";
 import type { Persona } from "../persona.js";
@@ -24,6 +29,9 @@ import { MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposalStore } from 
 import type { NoteProposalStore } from "./note-proposals.js";
 import type { TodoProposalStore } from "./todo-proposals.js";
 import type { SkillProposalStore } from "./skill-proposals.js";
+import {
+  parseRoutineCommand, routineCardInput, routineListText, type RoutineCommand, type RoutineProposalStore,
+} from "./routine-proposals.js";
 import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
 import { attachNoteImages } from "../note-images.js";
 import { systemControlTool } from "../system-control.js";
@@ -127,10 +135,16 @@ export interface TeamsBotDeps {
   /** FTS5 search over saved notes (server injects the db path); backs retrieve_note. */
   searchNotes: (query: string) => Promise<Note[]>;
   todoProposals: TodoProposalStore;
-  /** Queues a confirmed todo (server injects the db path + routine validation). */
-  queueTodo: (routine: string, text: string) => Promise<void>;
-  /** Names of routines with todoDriven=true — gates the propose_todo tool. */
-  listTodoRoutines: () => Promise<string[]>;
+  /** Queues a confirmed todo (server injects the db path + routine validation). `createdBy` set =
+   * a non-owner's todo: the routine must be `memberTodoEligible` and the row is stamped with it.
+   * Returns the routine queued on (for the receipt's "when"). */
+  queueTodo: (routine: string, text: string, createdBy?: string) => Promise<Routine | void>;
+  /** Names of routines with todoDriven=true — gates the propose_todo tool. `member` = only
+   * `memberTodoEligible` ones (no delegate or command steps). */
+  listTodoRoutines: (member: boolean) => Promise<string[]>;
+  /** Backs list_todos / cancel_todo: `createdBy` set = only that speaker's rows (SQL-filtered). */
+  listOpenTodos: (createdBy?: string) => Promise<TodoItem[]>;
+  cancelTodo: (id: string, createdBy?: string) => Promise<boolean>;
   skillProposals: SkillProposalStore;
   /** Persists a confirmed skill draft to the user's ~/.bean/skills (server injects the dir). */
   saveSkill: (name: string, body: string) => Promise<void>;
@@ -159,8 +173,20 @@ export interface TeamsBotDeps {
   imageGen?: Pick<ImageGenDeps, "generate" | "model" | "imagesDir">;
   /** Bean's turns (converse path only) for the desktop app's status bubbles (see activity.ts). */
   onActivity?: ChatopsActivitySink;
+  /** Enables the chatops reminder tools (member+): reminders.json path plus this surface's
+   * outbox transport. Omit on surfaces whose outbox can't DM a specific user (Teams). */
+  reminders?: { file: string; transport: "discord" };
   /** Owner / admin / guest — required, no permissive default (see .memory/safety-chatops-roles.md). */
   roles: Roles;
+  /** Owner routine management (#285): propose_routine plus the `routines` / `enable <name>` /
+   * `disable <name>` commands. Omit on surfaces that don't support it (Teams). `save` writes as
+   * given (callers validate); `recipients` = the owner and household members a routine may DM. */
+  routines?: {
+    load: () => Promise<Routine[]>;
+    save: (routine: Routine) => Promise<void>;
+    recipients: () => Promise<{ id: string; name: string }[]>;
+    proposals: RoutineProposalStore;
+  };
 }
 
 const DESKTOP_ONLY =
@@ -502,10 +528,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   async function handleTodoAction(
     kind: "queue-todo" | "cancel-todo",
     proposalId: string | undefined,
-    actor: string,
+    action: CardAction,
+    isOwner: boolean,
     fx: BotEffects,
   ): Promise<void> {
     if (!proposalId) return;
+    const actor = action.fromName;
+    // Before the claim, so a refused tap leaves the card usable for its requester. Proposal ids
+    // are sequential, so the conversation binding stops a forged id from another chat.
+    const peeked = deps.todoProposals.peek(proposalId);
+    if (peeked && (peeked.conversationId !== action.conversationId || (!isOwner && peeked.requesterId !== action.fromId))) {
+      await fx.post("Only whoever asked for that todo (or the owner) can queue or cancel it.");
+      return;
+    }
     const pending = deps.todoProposals.claim(proposalId);
     if (!pending) {
       await fx.post("That todo draft expired — ask me to queue it again.");
@@ -521,9 +556,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     try {
-      await deps.queueTodo(pending.todo.routine, pending.todo.text);
+      const routine = await deps.queueTodo(pending.todo.routine, pending.todo.text, pending.member ? pending.requesterId : undefined);
       await updateTo(resultCard("queued"));
-      await fx.post(`Queued on "${pending.todo.routine}".`);
+      const when = routine ? todoRunHint(routine, new Date()) : "";
+      await fx.post(`Queued on "${pending.todo.routine}".${when ? ` ${when}` : ""}`);
     } catch (err) {
       await fx.post(`Couldn't queue the todo: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -559,6 +595,80 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
   }
 
+  async function runRoutineCommand(c: RoutineCommand): Promise<string> {
+    const r = deps.routines!;
+    const all = await r.load();
+    if (c.kind === "list") return routineListText(all);
+    // Exact name, else a unique case-insensitive match (phones capitalize the first letter).
+    const loose = all.filter((x) => x.name.toLowerCase() === c.name.toLowerCase());
+    const target = all.find((x) => x.name === c.name) ?? (loose.length === 1 ? loose[0] : undefined);
+    if (!target) return `No routine named "${c.name}". Say \`routines\` to list them.`;
+    const on = c.kind === "enable";
+    if (target.enabled === on) return `"${target.name}" is already ${on ? "on" : "off"}.`;
+    const next = { ...target, enabled: on };
+    await r.save(next);
+    return on ? `Turned "${target.name}" on. ${todoRunHint(next, new Date())}`.trim() : `Turned "${target.name}" off.`;
+  }
+
+  async function handleRoutineAction(
+    kind: "save-routine" | "cancel-routine" | "toggle-routine",
+    proposalId: string | undefined,
+    action: CardAction,
+    fx: BotEffects,
+  ): Promise<void> {
+    const r = deps.routines;
+    if (!proposalId || !r) return;
+    const expired = "That routine draft expired — ask me to draft it again.";
+    const peek = r.proposals.get(proposalId);
+    if (!peek) {
+      await fx.post(expired);
+      return;
+    }
+    if (peek.conversationId !== action.conversationId) {
+      await fx.post("That draft belongs to another conversation.");
+      return;
+    }
+    const recipients = await r.recipients();
+    const updateTo = async (card: object | undefined): Promise<void> => {
+      if (card && peek.cardActivityId !== undefined) await fx.updateCard(peek.cardActivityId, card);
+    };
+    if (kind === "toggle-routine") {
+      if (peek.proposal.problem || !deps.cards.routineProposalCard) return;
+      peek.proposal = { ...peek.proposal, routine: { ...peek.proposal.routine, enabled: !peek.proposal.routine.enabled } };
+      await updateTo(deps.cards.routineProposalCard(routineCardInput(peek, recipients, deps.roles.ownerName)));
+      return;
+    }
+    const pending = r.proposals.claim(proposalId);
+    if (!pending) {
+      await fx.post(expired);
+      return;
+    }
+    const routine = pending.proposal.routine;
+    const name = String(routine.name);
+    const resultCard = (outcome: "saved" | "cancelled" | "failed", problem?: string): object | undefined =>
+      deps.cards.routineResultCard?.({ name, by: action.fromName, outcome, enabled: routine.enabled, ...(problem ? { problem } : {}) });
+    if (kind === "cancel-routine") {
+      await updateTo(resultCard("cancelled"));
+      return;
+    }
+    // Re-validated at save: the household or clis.json may have changed while the card sat.
+    const problem = pending.proposal.problem ?? chatRoutineProblem(routine, recipients, deps.cliModels, pending.channelId);
+    if (problem) {
+      await updateTo(resultCard("failed", problem));
+      await fx.post(`Couldn't save the routine: ${problem}`);
+      return;
+    }
+    try {
+      await r.save(routine);
+      await updateTo(resultCard("saved"));
+      await fx.post(routine.enabled
+        ? `Saved routine "${name}" — it's on. ${todoRunHint(routine, new Date())}`.trim()
+        : `Saved routine "${name}" — it's off. Say \`enable ${name}\` to turn it on.`);
+    } catch (err) {
+      await fx.post(`Couldn't save the routine: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Forget button on a remembered card. The id rides the button itself and delete is
   // idempotent, so no proposal store: a second tap (or a stale card) just says so.
   // A member forgets only their own private facts; the owner (`subject` undefined) forgets any.
@@ -568,6 +678,17 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const n = await deps.deleteMemories([memoryId], subject);
     if (n > 0) await fx.post(`Forgot (by ${actor}): ${text ?? "that fact"}`);
     else await fx.post(text === undefined ? "Already forgotten." : "Only the owner can forget household facts or another member's.");
+  }
+
+  // Cancel button on a reminder receipt: same idempotent, no-proposal-store shape as Forget.
+  // `setBy` set = only that person's reminder (non-owners); checked inside the locked update.
+  async function handleCancelReminder(reminderId: string | undefined, actor: string, setBy: string | undefined, fx: BotEffects): Promise<void> {
+    if (!reminderId || !deps.reminders) return;
+    const res = await cancelReminder(deps.reminders.file, reminderId, setBy);
+    if (res.outcome === "cancelled") await fx.post(`Reminder cancelled (by ${actor}): ${res.text ?? ""}`);
+    else await fx.post(res.outcome === "forbidden"
+      ? "Only whoever set that reminder (or the owner) can cancel it."
+      : "That reminder already fired or was cancelled.");
   }
 
   // Post a live-session proposal from a verbatim instruction — no converse()/LLM in the path, so
@@ -726,6 +847,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           await fx.reply("Fresh start — I've cleared this conversation's context.");
           return;
         }
+        const routineCmd = deps.routines ? parseRoutineCommand(msg.text) : undefined;
+        if (routineCmd) {
+          if (!(await permitted("routineWrites", "manage routines"))) return;
+          await fx.reply(await runRoutineCommand(routineCmd));
+          return;
+        }
         // Literal `/live-session <prompt>` typed as a message (not Discord's slash-command
         // picker): route it verbatim, bypassing converse(), so the LLM never rewrites the prompt
         // the way it does for free-form "start a live session…" phrasing.
@@ -746,8 +873,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           canDelegate || canMemory || can(role, "notes") ? deps.loadProjects() : [], deps.loadPersona(),
           // Recall is scoped before ranking: a DM sees the speaker's private facts plus shared
           // ones; a channel sees shared only.
-          canMemory ? deps.loadMemories(msg.direct ? msg.fromId : null) : [], deps.loadModelMemory(), can(role, "todos") ? deps.listTodoRoutines() : [],
+          canMemory ? deps.loadMemories(msg.direct ? msg.fromId : null) : [], deps.loadModelMemory(), can(role, "todos") ? deps.listTodoRoutines(!isOwner) : [],
         ]);
+        // Owner only: who a routine may DM, and the existing names a draft would replace. A channel
+        // sink targets the channel, never the session thread (threads archive).
+        const routineAuthoring = deps.routines && can(role, "routineWrites")
+          ? {
+              existing: (await deps.routines.load()).map((r) => r.name),
+              recipients: await deps.routines.recipients(),
+              ...(msg.direct || !msg.scopeId ? {} : { channelId: msg.scopeId }),
+              cliModels: deps.cliModels,
+            }
+          : undefined;
         const detected = deps.detectClis();
         let history = deps.conversations.history(msg.conversationId);
         if (fx.fetchRecent) {
@@ -785,6 +922,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           append: deps.appendMemories, forget: (ids) => deps.deleteMemories(ids, isOwner ? undefined : msg.fromId),
           memories, projects, latestUserText: typed, ...(scope === "private" ? { subjectId: msg.fromId } : {}),
         });
+        // Delivery goes where it was asked: a DM → this speaker's DM, a channel → this channel.
+        const reminderTools = deps.reminders && can(role, "reminders")
+          ? makeReminderTools({
+              file: deps.reminders.file,
+              target: msg.direct
+                ? { transport: deps.reminders.transport, userId: msg.fromId }
+                : { transport: deps.reminders.transport, channelId: msg.conversationId },
+              setBy: msg.fromId, isOwner,
+            })
+          : undefined;
+        const todoTools = can(role, "todos")
+          ? makeTodoTools({ list: deps.listOpenTodos, cancel: deps.cancelTodo, speakerId: msg.fromId, isOwner })
+          : [];
         // runAvailable=false: propose_run is never offered here — confirming one couldn't
         // execute anything from Teams/Discord; propose_delegate is the only run path.
         // The tool list is built from the role (action tools run inside converse(), so leaving
@@ -809,9 +959,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           todoRoutines,
           webSearch: deps.webSearchEnabled?.() ?? false,
           speaker: msg.fromName,
+          routineAuthoring,
         };
         const result = await converse({
-          ...converseBase, actions: [...converseBase.actions, ...(canMemory ? memoryTools.tools : [])],
+          ...converseBase,
+          actions: [...converseBase.actions, ...(canMemory ? memoryTools.tools : []), ...(reminderTools?.tools ?? []), ...todoTools],
           history, latestUserText: msg.text, latestUserImages: msg.images,
         });
         turnFailed = result.error !== undefined;
@@ -843,6 +995,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               memoryId: m.id, text: m.text, projectName: m.projectPath ? nameFor(m.projectPath) : undefined, scope,
             }));
           }
+        }
+        for (const r of reminderTools?.set ?? []) {
+          if (deps.cards.reminderCard) await fx.postCard(deps.cards.reminderCard({ reminderId: r.id, text: r.text, at: r.at }));
         }
         void maybeCompact(msg.conversationId, deps.conversations, { chat: deps.chat, model: deps.model });
         if (result.proposedRun) {
@@ -913,11 +1068,26 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (result.proposedTodo) {
           if (!(await permitted("todos", "queue tasks"))) return;
           const todo = result.proposedTodo;
-          const pending = deps.todoProposals.add({ todo, conversationId: msg.conversationId, proposedBy: msg.fromName });
+          const pending = deps.todoProposals.add({
+            todo, conversationId: msg.conversationId, proposedBy: msg.fromName, requesterId: msg.fromId, member: !isOwner,
+          });
           const activityId = await fx.postCard(deps.cards.todoProposalCard({
             proposalId: pending.id, routine: todo.routine, text: todo.text,
           }));
           deps.todoProposals.setCardActivityId(pending.id, activityId);
+          return;
+        }
+        if (result.proposedRoutine) {
+          if (!(await permitted("routineWrites", "set up routines"))) return;
+          if (!deps.routines || !deps.cards.routineProposalCard) return;
+          const pending = deps.routines.proposals.add({
+            proposal: result.proposedRoutine, conversationId: msg.conversationId, proposedBy: msg.fromName,
+            ...(routineAuthoring?.channelId ? { channelId: routineAuthoring.channelId } : {}),
+          });
+          const activityId = await fx.postCard(deps.cards.routineProposalCard(
+            routineCardInput(pending, routineAuthoring?.recipients ?? [], deps.roles.ownerName),
+          ));
+          deps.routines.proposals.setCardActivityId(pending.id, activityId);
           return;
         }
         const proposal = result.proposedDelegate;
@@ -975,13 +1145,22 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         await handleSkillAction(beanAction, proposalId, action.fromName, fx);
         return;
       }
+      if (beanAction === "save-routine" || beanAction === "cancel-routine" || beanAction === "toggle-routine") {
+        await handleRoutineAction(beanAction, proposalId, action, fx);
+        return;
+      }
       if (beanAction === "queue-todo" || beanAction === "cancel-todo") {
-        await handleTodoAction(beanAction, proposalId, action.fromName, fx);
+        await handleTodoAction(beanAction, proposalId, action, role === "owner", fx);
         return;
       }
       if (beanAction === "forget-memory") {
         // proposalId carries the memory id here (the surfaces' generic id slot).
         await handleForget(proposalId, action.fromName, role === "owner" ? undefined : action.fromId, fx);
+        return;
+      }
+      if (beanAction === "cancel-reminder") {
+        // proposalId carries the reminder id here (the surfaces' generic id slot).
+        await handleCancelReminder(proposalId, action.fromName, role === "owner" ? undefined : action.fromId, fx);
         return;
       }
       if (beanAction === "resume-live") {

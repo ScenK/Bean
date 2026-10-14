@@ -1,7 +1,7 @@
 // packages/core/src/routine-runner.ts
 import { createHash, randomUUID } from "node:crypto";
 import type { ActionTool, ConverseDeps, ConvoMsg, ToolCall } from "./converse.js";
-import { DEFAULT_GATE_ROUNDS, usesGates, type Routine, type RoutineStep, type RunRecord, type RunStatus, type StepKind } from "./routine-store.js";
+import { DEFAULT_GATE_ROUNDS, MEMBER_TODO_REFUSAL, memberTodoEligible, usesGates, type Routine, type RoutineStep, type RunRecord, type RunStatus, type StepKind } from "./routine-store.js";
 import type { CommandStepOutcome } from "./command-step.js";
 import type { Skill } from "./types.js";
 import type { CliName } from "./launcher.js";
@@ -434,9 +434,19 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
       };
     }
     for (const item of pending) {
+      const labelPrefix = `[todo: ${item.text}] `;
+      // Drain-time gate (#283), against this run's definition: the owner may have added a delegate
+      // or command step since a member queued this. Their todo text must never reach one.
+      if (item.createdBy && !memberTodoEligible(routine)) {
+        const why = `refused: this routine ${MEMBER_TODO_REFUSAL}`;
+        results.push({ index: 0, kind: routine.steps[0]?.kind ?? "chat", ok: false, output: labelPrefix + why });
+        await deps.todos.setStatus(item.id, "failed", why);
+        worst("failed");
+        soleLabelPrefix = labelPrefix;
+        continue;
+      }
       await deps.todos.setStatus(item.id, "running");
       const scoped: StepResult[] = []; // prior-outputs chain is per-todo, never cross-todo
-      const labelPrefix = `[todo: ${item.text}] `;
       let outcome: PassOutcome;
       try {
         outcome = await runSteps(

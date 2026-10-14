@@ -1,12 +1,12 @@
 import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
-  skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
+  skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
-  detectClis, type CliName, runDelegate, claimOutbox, enqueueOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
+  detectClis, type CliName, runDelegate, claimOutbox, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
-  makeRoles, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, refusal, type Capability, type Role,
+  makeRoles, makeTurnCap, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, parseRoleCommand, parseRoutineCommand, RoutineProposalStore, refusal, type Capability, type Role,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -62,6 +62,11 @@ const roles = makeRoles({
   ownerId: discordConfig.ownerId, ownerName: discordConfig.ownerName, allowGuestDms: discordConfig.allowGuestDms,
   memberIds: discordConfig.memberIds,
 });
+// Per-member daily turn cap, checked in messageCreate before any paid pre-work.
+const turnCap = makeTurnCap({ dbPath: dbFile(dir), surface: "discord" });
+// The at-cap line goes out once per member per day per conversation (this process).
+const capNotices = new Set<string>();
+let capNoticeDay = "";
 const transcribe = makeOpenAITranscribe(beanConfig.openaiApiKey);
 const speak = makeOpenAISpeak(beanConfig.openaiApiKey);
 
@@ -84,11 +89,15 @@ const bot = buildTeamsBot({
   saveNoteImage: (bytes) => saveNoteImage(dbFile(dir), bytes),
   searchNotes: (query) => searchNotes(dbFile(dir), query),
   todoProposals: new TodoProposalStore(),
-  queueTodo: async (routine, text) => {
-    resolveTodoRoutine(await loadRoutines(routinesDir(dir)), routine);
-    await addTodo(dbFile(dir), routine, text);
+  queueTodo: async (routine, text, createdBy) => {
+    const target = resolveTodoRoutine(await loadRoutines(routinesDir(dir)), routine, createdBy !== undefined);
+    await addTodo(dbFile(dir), routine, text, undefined, undefined, createdBy);
+    return target;
   },
-  listTodoRoutines: async () => (await loadRoutines(routinesDir(dir))).filter((r) => r.todoDriven).map((r) => r.name),
+  listTodoRoutines: async (member) => (await loadRoutines(routinesDir(dir)))
+    .filter((r) => (member ? memberTodoEligible(r) : r.todoDriven)).map((r) => r.name),
+  listOpenTodos: (createdBy) => listOpenTodos(dbFile(dir), createdBy),
+  cancelTodo: (id, createdBy) => cancelPendingTodo(dbFile(dir), id, createdBy),
   skillProposals: new SkillProposalStore(),
   saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
   appendMemories: (m) => appendMemories(dbFile(dir), m),
@@ -102,10 +111,20 @@ const bot = buildTeamsBot({
   findDelegateRun: (sessionId) => findDelegateRun(dbFile(dir), sessionId),
   scratchPath,
   cards: discordCards,
+  reminders: { file: remindersFile(dir), transport: "discord" },
   systemControlsEnabled: () => beanConfig.systemControls,
   webSearchEnabled: () => beanConfig.webSearch,
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
   roles,
+  routines: {
+    load: () => loadRoutines(routinesDir(dir)),
+    save: (r) => saveRoutine(routinesDir(dir), r),
+    // The owner and household members — the only people a routine may DM — by display name.
+    recipients: () => Promise.all([discordConfig.ownerId, ...discordConfig.memberIds].map(async (id) => ({
+      id, name: await client.users.fetch(id).then((u) => u.displayName, () => id),
+    }))),
+    proposals: new RoutineProposalStore(),
+  },
 });
 
 // Partials.Channel is REQUIRED for DM message events in discord.js v14 (DM channels
@@ -130,7 +149,7 @@ const scopeOf = (channel: TextBasedChannel): string =>
 
 // bot.ts's keyword commands (same optional leading slash). They act on the channel and answer
 // in one line, so they never open a session thread.
-const KEYWORD_COMMAND = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins)$|live-session\b|(?:add|remove)-admin\b)/i;
+const KEYWORD_COMMAND = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins|usage|routines)$|live-session\b|(?:add|remove)-admin\b|(?:enable|disable)\s)/i;
 
 // A thread Bean opened is a session: every message in it is addressed to Bean. The Discord
 // API's ownerId survives restarts, so no local record of owned threads is needed.
@@ -262,6 +281,43 @@ client.on("messageCreate", async (message) => {
       message.mentions.repliedUser?.id === client.user?.id;
     if (!addressed && !capturing) return;
     let text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
+    // Owner-only `usage`: today's turn counts. Anyone else gets one line (a blocked DM falls
+    // through to core's DM refusal) — never a free, uncounted model turn.
+    if (!capturing && !dmBlocked && /^\/*usage$/i.test(text)) {
+      if (role !== "owner") { await message.reply("Only the owner can see usage."); return; }
+      const rows = turnCap.usage();
+      await message.reply(rows.length === 0
+        ? `No member turns yet today (${localTimeZone()}).`
+        : `Today's turns (${localTimeZone()}, cap ${DAILY_TURN_CAP}): ${rows.map((r) => `${r.name} ${r.count}`).join(", ")}.`);
+      return;
+    }
+    // Daily turn cap, before transcription, downloads and the thread title. Only turns headed for
+    // converse() count: not the owner, blocked DMs, live-session steering, or a keyword command
+    // bot.ts answers itself — mirrored from its checks, and only without audio (a transcript
+    // appended to `whoami` turns it into a model turn). Counted on admission, so a turn that
+    // later fails still counts.
+    const cmd = text.toLowerCase().replace(/^\/+/, "");
+    const hasAudio = message.attachments.some((a) => a.contentType?.startsWith("audio/") === true && a.size <= 25 * 1024 * 1024);
+    const coreCommand = !hasAudio &&
+      (cmd === "cancel" || cmd === "new" || parseRoleCommand(text) !== undefined || parseRoutineCommand(text) !== undefined ||
+        /^\/?live-session\b/i.test(text));
+    const usable = text !== "" || hasAudio || message.attachments.some((a) => {
+      const mime = a.contentType?.split(";")[0]?.trim() ?? "";
+      return (SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) && a.size <= 10 * 1024 * 1024;
+    });
+    if (
+      role !== "owner" && !capturing && !dmBlocked && !coreCommand && usable &&
+      !turnCap.admit({ turnId: message.id, userId: message.author.id, userName: message.author.displayName })
+    ) {
+      const day = localDay();
+      if (day !== capNoticeDay) { capNotices.clear(); capNoticeDay = day; }
+      const key = `${message.author.id}:${message.channelId}`;
+      if (!capNotices.has(key)) {
+        capNotices.add(key);
+        await message.reply(`You've used today's ${DAILY_TURN_CAP} messages — resets at midnight (${localTimeZone()}).`);
+      }
+      return;
+    }
     // Voice messages (and other audio clips ≤25MB, the transcription API cap) arrive with empty
     // content — transcribe them into the turn's text so they get a normal reply. In a captured
     // channel only someone who can steer the session pays for a transcription (onMessage would

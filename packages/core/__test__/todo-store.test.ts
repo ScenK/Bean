@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   addTodo, listTodos, listAllTodos, updateTodoStatus, editTodoText, reorderTodo,
   deleteTodo, clearFinishedTodos, retryTodo, recoverInterruptedTodos,
-  renameTodosRoutine, deleteTodosForRoutine,
+  renameTodosRoutine, deleteTodosForRoutine, listOpenTodos, cancelPendingTodo,
 } from "../src/index.js";
 import { closeDb } from "../src/db.js";
 
@@ -21,6 +21,23 @@ afterEach(async () => {
 });
 
 describe("todo-store", () => {
+  it("member todos: stamped creator, own-only list and cancel in SQL; unstamped rows are the owner's", async () => {
+    const a = await addTodo(file, "inbox", "A's", undefined, undefined, "user-a");
+    const b = await addTodo(file, "inbox", "B's", undefined, undefined, "user-b");
+    const watch = await addTodo(file, "inbox", "from a watch");
+    expect(a.createdBy).toBe("user-a");
+    expect(watch.createdBy).toBeUndefined();
+    expect((await listOpenTodos(file, "user-b")).map((t) => t.text)).toEqual(["B's"]);
+    expect((await listOpenTodos(file)).map((t) => t.text)).toEqual(["A's", "B's", "from a watch"]);
+    expect(await cancelPendingTodo(file, a.id, "user-b")).toBe(false); // B can't cancel A's
+    expect(await cancelPendingTodo(file, watch.id, "user-b")).toBe(false); // nor the owner's
+    expect(await cancelPendingTodo(file, b.id, "user-b")).toBe(true);
+    await updateTodoStatus(file, a.id, "running");
+    expect(await cancelPendingTodo(file, a.id)).toBe(false); // running todos can't be cancelled
+    expect(await cancelPendingTodo(file, watch.id)).toBe(true); // the owner cancels anyone's
+    expect((await listTodos(file, "inbox")).map((t) => t.text)).toEqual(["A's"]);
+  });
+
   it("adds pending todos with increasing order and lists them in order", async () => {
     const a = await addTodo(file, "nightly", "task A");
     const b = await addTodo(file, "nightly", "task B");

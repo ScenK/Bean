@@ -127,6 +127,19 @@ CREATE TABLE IF NOT EXISTS chatops_admins (
   PRIMARY KEY (surface, scope_id, user_id)
 );
 
+-- One row per admitted chatops turn (chatops/turn-cap.ts), for the per-member daily cap. The
+-- platform message/interaction id is the key, so a redelivered message never counts twice.
+-- day is the calendar date in the process's TZ; older days are pruned on insert.
+CREATE TABLE IF NOT EXISTS chatops_turn_counts (
+  surface   TEXT NOT NULL,
+  turn_id   TEXT NOT NULL,
+  user_id   TEXT NOT NULL,
+  user_name TEXT NOT NULL,
+  day       TEXT NOT NULL,
+  PRIMARY KEY (surface, turn_id)
+);
+CREATE INDEX IF NOT EXISTS chatops_turn_counts_day ON chatops_turn_counts(surface, day, user_id);
+
 -- A thread's resumable delegate session, one per CLI (each CLI keeps its own session store),
 -- so a follow-up delegate in the thread continues the agent that produced the earlier result.
 CREATE TABLE IF NOT EXISTS thread_sessions (
@@ -248,6 +261,9 @@ export function openDb(file: string): DatabaseSync {
     // Per-speaker memory (#281): the chatops speaker a fact is private to; NULL = household-shared,
     // so every pre-existing row reads as shared.
     ["memories", "subject_id", "TEXT"],
+    // Member todos (#283): the non-owner chatops speaker who queued it; NULL = the owner's (desktop,
+    // watch-created, legacy rows, or the owner on chat) — only NULL rows may reach delegate/command steps.
+    ["todos", "created_by", "TEXT"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");
