@@ -2,7 +2,7 @@ import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
-  detectClis, type CliName, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
+  detectClis, type CliName, runDelegate, claimOutbox, enqueueOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
@@ -13,10 +13,12 @@ import {
   type ApplicationCommandDataResolvable,
   type Interaction, type Message, type MessageCreateOptions, type TextBasedChannel,
 } from "discord.js";
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { basename } from "node:path";
 import { chunkText } from "./chunk.js";
 import { discordCards } from "./components.js";
+import { deliverOutboxDm } from "./outbox-dm.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
 
 const dir = beanDir();
@@ -618,18 +620,13 @@ setInterval(() => {
       // display text.
       const text = msg.displayBody ?? (msg.title ? `**${msg.title}**\n${msg.body}` : msg.body);
       if (!msg.channel) {
-        // No channel = DM the owner directly (the default delivery mode) — never anyone else.
-        const userId = discordConfig.ownerId;
-        try {
-          const user = await client.users.fetch(userId);
-          // The DM channel id is the conversation id here, and we only learn it from a
-          // sent message — so capture it rather than trying to resolve it up front.
-          let dmChannelId: string | undefined;
-          for (const chunk of chunkText(text)) dmChannelId = (await user.send(chunk)).channelId;
-          if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body);
-        } catch (err) {
-          console.error(`outbox: discord DM to ${userId} failed`, err);
-        }
+        // No channel = DM `msg.userId` (a routine sink's `user`), else the owner (the default).
+        const dmChannelId = await deliverOutboxDm(msg, text, {
+          ownerId: discordConfig.ownerId,
+          fetchUser: (id) => client.users.fetch(id),
+          notifyOwner: (body) => enqueueOutbox(outboxDir(beanDir()), { transport: "discord", body }, () => randomUUID()),
+        });
+        if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body);
         continue;
       }
       try {
