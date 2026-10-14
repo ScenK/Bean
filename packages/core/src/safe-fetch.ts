@@ -43,7 +43,7 @@ export async function safeFetch(url: string, opts: SafeFetchOptions): Promise<Sa
     const res = await get(current, isBlocked, signal);
     const location = res.headers.location;
     if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && location) {
-      res.resume();
+      res.destroy(); // never read an untrusted redirect body
       if (hop >= (opts.maxRedirects ?? 5)) throw new Error("too many redirects");
       current = new URL(location, current);
       continue;
