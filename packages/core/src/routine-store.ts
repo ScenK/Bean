@@ -1,5 +1,6 @@
 // packages/core/src/routine-store.ts
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isValidCron } from "./cron.js";
 import { describeWatchWindowError, type WatchWindow } from "./watch-window.js";
@@ -254,11 +255,19 @@ export async function loadRoutines(dir: string): Promise<Routine[]> {
 
 /** `cliModels` (clis.json) additionally checks each pinned `cli` offers its `model` — pass it
  * from user-facing saves; internal state flips (enable/seed) skip it. */
+/** Temp file + rename, so a crash (or a container kill) mid-write never leaves a torn file. The
+ * temp name ends in `.tmp`, not `.json`: loadRoutines and the outbox sweep must not pick it up. */
+async function writeAtomic(file: string, body: string): Promise<void> {
+  const tmp = `${file}.${randomUUID()}.tmp`; // unique: overlapping saves of one file never share a temp
+  await writeFile(tmp, body, "utf8");
+  await rename(tmp, file);
+}
+
 export async function saveRoutine(dir: string, routine: Routine, cliModels?: CliModels[]): Promise<void> {
   const error = describeRoutineError(routine as unknown, cliModels);
   if (error) throw new Error(error);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `${routine.name}.json`), JSON.stringify(routine, null, 2) + "\n", "utf8");
+  await writeAtomic(join(dir, `${routine.name}.json`), JSON.stringify(routine, null, 2) + "\n");
 }
 
 export async function deleteRoutine(dir: string, name: string): Promise<void> {
@@ -290,7 +299,7 @@ export async function loadRoutineStates(file: string): Promise<Record<string, Ro
 
 export async function saveRoutineStates(file: string, states: Record<string, RoutineState>): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify(states, null, 2) + "\n", "utf8");
+  await writeAtomic(file, JSON.stringify(states, null, 2) + "\n");
 }
 
 /** Newest-first history, capped; a completed run clears any missed flag. */

@@ -80,10 +80,22 @@ describe("routine scheduler", () => {
       loadStates: async () => ({ morning: { lastRun: d(6, 30, 10).toISOString(), history: [] } }),
       now: () => d(9, 0), // started at 9:00; 6:30 on the 11th and 12th passed while closed
     });
-    const sched = createRoutineScheduler(deps);
+    const onMissed = vi.fn();
+    let first = true; // seed once, then read back what the scheduler saved
+    const sched = createRoutineScheduler({
+      ...deps, onMissed,
+      loadStates: async () => (first ? ((first = false), { morning: { lastRun: d(6, 30, 10).toISOString(), history: [] } }) : getStates()),
+    });
     sched.start();
     await vi.runOnlyPendingTimersAsync(); // flush the async missed-marking
     expect(getStates().morning?.missed).toBe(true);
+    expect(onMissed).toHaveBeenCalledExactlyOnceWith(["morning"]);
+    await sched.settle();
+    // Headless rebase: flag cleared, schedule base = start, so the next 6:30 fires (no catch-up now).
+    await sched.clearMissed(["morning"]);
+    expect(getStates().morning).toMatchObject({ missed: undefined, lastRun: d(9, 0).toISOString() });
+    await sched.tick();
+    expect(deps.runRoutine).not.toHaveBeenCalled();
     expect(deps.runRoutine).not.toHaveBeenCalled();
     sched.stop();
     vi.useRealTimers();

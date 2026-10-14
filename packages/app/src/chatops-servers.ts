@@ -122,7 +122,11 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     let lastErr = "";
     // Run under Electron's bundled Node (not a system "node") so the packaged app
     // needs no local Node install — ELECTRON_RUN_AS_NODE makes execPath behave as `node <entry>`.
-    const child = doSpawn(process.execPath, [entry], deps.repoRoot, { ...process.env, ...deps.extraEnv, PATH: deps.resolvedPath, ELECTRON_RUN_AS_NODE: "1" });
+    const child = doSpawn(process.execPath, [entry], deps.repoRoot, {
+      ...process.env, ...deps.extraEnv, PATH: deps.resolvedPath, ELECTRON_RUN_AS_NODE: "1",
+      // The app owns the scheduler: a spawned bot must never start a second one (#279).
+      BEAN_HEADLESS_ROUTINES: undefined,
+    });
     child.stderr?.on("data", (chunk) => { lastErr = chunk.toString().trim() || lastErr; });
     // A child process is a trust boundary: only well-formed activity gets through.
     child.on("message", (msg) => {

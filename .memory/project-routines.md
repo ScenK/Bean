@@ -17,6 +17,16 @@ owner's digests, #253); present = a specific discord channel id or teams convers
 `save_note` act-now tool is routine-only; the chat window keeps confirm-first `propose_note`.
 Spec: `docs/superpowers/specs/2026-07-12-routines-design.md`.
 
+**Headless host (#279).** `BEAN_HEADLESS_ROUTINES=1` makes the Discord server a routine host
+(`discord/src/headless-routines.ts`): scheduler + `createRoutineHost` + core `makeRoutineSteps`
+(the same delegate/command adapters main.ts uses). **One scheduler per `~/.bean`** —
+`.state.json` writes are serialized in-process only; `chatops-servers.ts` strips the variable
+from the bot the app spawns, keep that. Headless needs `TZ` (refuses to boot without it),
+turns alarm/`notify`/missed-run notices into owner DMs via the outbox, and on boot SIGKILLs +
+clears every `~/.bean/runs/` reservation (`clearReservations` — only safe because this process
+owns the dir). `saveRoutine`/`saveRoutineStates` write `<file>.tmp` then rename; the temp name
+must not end in `.json` (loadRoutines would load it).
+
 Steps carry an optional stable `id` (`[a-z0-9-]`, unique per routine, assigned by
 `withStepIds` in the editor only on an edit — untouched legacy JSON saves back byte-for-byte)
 and an optional delegate-only `cli` pin. A pinned `cli`/`model` that this Mac can't run
