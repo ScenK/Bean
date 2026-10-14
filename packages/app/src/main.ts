@@ -27,7 +27,7 @@ import {
   recoverInterruptedTodos, deleteTodosForRoutine,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
   reserveRun, releaseRun, RunBusyError, availableModels, pinnedStepSelection,
-  createRoutineScheduler, createRoutineHost, detectTools, execWatchCommand, fetchText, sinkRecipients,
+  createRoutineScheduler, createRoutineHost, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch, spawnEnv,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, CommandStepRequest, CommandStepOutcome, RoutineHold, DelegateStepRequest, DelegateStepResult, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
@@ -508,9 +508,10 @@ app.whenReady().then(async () => {
         return `error: only http(s) URLs can be fetched, got ${parsed.protocol}`;
       }
       try {
-        const res = await fetch(parsed, { signal: AbortSignal.timeout(15_000) });
+        // safeFetch refuses loopback/LAN/metadata addresses (also after redirects) and caps the body.
+        const res = await safeFetch(parsed.toString(), { timeoutMs: 15_000, maxBytes: 5 * 1024 * 1024 });
         if (!res.ok) return `error: fetch failed with HTTP ${res.status}`;
-        const text = extractPageText(await res.text());
+        const text = extractPageText(res.body);
         return text || "error: page had no readable text";
       } catch (err) {
         return `error: fetch failed — ${err instanceof Error ? err.message : String(err)}`;
@@ -732,7 +733,7 @@ app.whenReady().then(async () => {
       try {
         return await runShellCommand(req.command, {
           cwd,
-          env: { ...process.env, PATH: resolvedPath, ...req.env },
+          env: spawnEnv({ PATH: resolvedPath, ...req.env }),
           timeoutMs: req.timeoutMinutes ? req.timeoutMinutes * 60_000 : ROUTINE_STEP_TIMEOUT_MS,
         });
       } finally {

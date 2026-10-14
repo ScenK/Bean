@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
+import { safeFetch } from "./safe-fetch.js";
+import { spawnEnv } from "./spawn-env.js";
 import type { WatchPollDeps } from "./watch.js";
 
 const FETCH_TIMEOUT_MS = 15_000;
@@ -10,33 +12,13 @@ const COMMAND_TIMEOUT_MS = 60_000;
 const COMMAND_MAX_BUFFER = 1024 * 1024;
 
 export async function fetchText(url: string): Promise<string> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), redirect: "follow" });
+  const res = await safeFetch(url, { timeoutMs: FETCH_TIMEOUT_MS, maxBytes: FETCH_MAX_BYTES });
   // A consent/login wall answers 200 after a redirect — name where we ended up so the status
   // line says "→ consent.youtube.com" instead of a bare parse failure.
-  const landed = res.url && new URL(res.url).host !== new URL(url).host ? ` → ${new URL(res.url).host}` : "";
+  const landed = new URL(res.url).host !== new URL(url).host ? ` → ${new URL(res.url).host}` : "";
   if (!res.ok) throw new Error(`feed returned HTTP ${res.status}${landed}`);
-  const body = await readCapped(res, FETCH_MAX_BYTES);
-  if (landed && !/<(rss|feed)[\s>]/i.test(body.slice(0, 2000))) throw new Error(`feed redirected${landed}`);
-  return body;
-}
-
-/** Reads a response body, aborting as soon as it passes `max` bytes (never buffers past it). */
-async function readCapped(res: Response, max: number): Promise<string> {
-  if (!res.body) return "";
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > max) {
-      await reader.cancel();
-      throw new Error(`feed is larger than ${Math.round(max / 1024 / 1024)} MB`);
-    }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks).toString("utf8");
+  if (landed && !/<(rss|feed)[\s>]/i.test(res.body.slice(0, 2000))) throw new Error(`feed redirected${landed}`);
+  return res.body;
 }
 
 /** `/bin/sh -c` with the resolved login-shell PATH (same shape as resolvedPathSpawnFn), so a
@@ -45,7 +27,7 @@ async function readCapped(res: Response, max: number): Promise<string> {
 export function execWatchCommand(resolvedPath: string): WatchPollDeps["exec"] {
   return (command) => new Promise((resolve, reject) => {
     execFile("/bin/sh", ["-c", command], {
-      timeout: COMMAND_TIMEOUT_MS, maxBuffer: COMMAND_MAX_BUFFER, env: { ...process.env, PATH: resolvedPath },
+      timeout: COMMAND_TIMEOUT_MS, maxBuffer: COMMAND_MAX_BUFFER, env: spawnEnv({ PATH: resolvedPath }),
     }, (err, stdout, stderr) => {
       if (!err) { resolve(stdout); return; }
       const e = err as NodeJS.ErrnoException & { code?: number | string; killed?: boolean };

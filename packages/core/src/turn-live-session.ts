@@ -7,6 +7,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { BEAN_GIT_IDENTITY, GIT_TRAILER_INSTRUCTION } from "./delegate.js";
 import { escalateKill } from "./kill-tree.js";
+import { spawnEnv } from "./spawn-env.js";
 import {
   LIVE_SESSION_IDLE_MS, RESUME_REJECTED,
   type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type LiveSessionSpawnFn,
@@ -51,7 +52,7 @@ export interface TurnAdapter {
 // stdin "ignore": opencode blocks forever on an open stdin pipe. `PWD`: opencode takes its working
 // dir from an inherited PWD over the spawn cwd (#247).
 const defaultTurnSpawn: LiveSessionSpawnFn = (command, args, cwd) =>
-  spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], detached: true, env: { ...process.env, ...BEAN_GIT_IDENTITY, PWD: cwd } });
+  spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], detached: true, env: spawnEnv({ ...BEAN_GIT_IDENTITY, PWD: cwd }) });
 
 export function startTurnLiveSession(
   adapter: TurnAdapter,

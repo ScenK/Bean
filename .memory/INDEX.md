@@ -30,6 +30,7 @@
 - [safety-release-attach-must-retry.md](safety-release-attach-must-retry.md) — `mac-installer.yml`'s "Attach to release" step must stay retrying + idempotent; v0.20.0/v0.20.1 both failed there on a transient GitHub API 503 after a fully successful build. Don't collapse it back to a single bare `gh release create`.
 - [safety-markdown-no-remote-images.md](safety-markdown-no-remote-images.md) — shared `Markdown` keeps an `<img>` only for inline raster `data:` URLs; remote/local images become alt text + link, because a rendered remote image is an exfiltration beacon (no CSP). Resolve images to data: URLs; don't widen the allowlist.
 - [safety-chatops-roles.md](safety-chatops-roles.md) — owner/admin/guest on Teams+Discord: role-built tool list **and** runtime checks (converse refuses un-offered tools, bot re-checks proposals, card taps checked before claim), channel-not-thread admin scope, fail closed, role before paid pre-work.
+- [safety-spawn-env-allowlist.md](safety-spawn-env-allowlist.md) — spawned delegates/commands get `spawnEnv()` (allowlist), never `...process.env` (a test enforces it); URL fetches steered by untrusted text use `safeFetch()` (private-address block after DNS + on each redirect, pinned lookup, time/byte caps).
 
 ## convention — how we do things here
 

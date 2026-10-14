@@ -5,6 +5,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { BEAN_GIT_IDENTITY, GIT_TRAILER_INSTRUCTION, claudeTailLine } from "./delegate.js";
+import { spawnEnv } from "./spawn-env.js";
 
 /** CLIs that can host a live session, claude first (the default engine): claude (one long-lived
  * stream-json process), codex and opencode (one spawn per turn, turn-live-session.ts). */
@@ -91,7 +92,7 @@ export type LiveSessionSpawnFn = (command: string, args: string[], cwd: string) 
 
 // stdin is "pipe" (delegate uses "ignore") — the whole point is writing further turns.
 const defaultLiveSpawn: LiveSessionSpawnFn = (command, args, cwd) =>
-  spawn(command, args, { cwd, stdio: ["pipe", "pipe", "pipe"], detached: true, env: { ...process.env, ...BEAN_GIT_IDENTITY } });
+  spawn(command, args, { cwd, stdio: ["pipe", "pipe", "pipe"], detached: true, env: spawnEnv(BEAN_GIT_IDENTITY) });
 
 export const LIVE_SESSION_IDLE_MS = 30 * 60_000;
 
