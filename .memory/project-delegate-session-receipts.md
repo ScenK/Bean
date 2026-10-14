@@ -14,7 +14,7 @@ Receipts (terminal states only — copying mid-run would put two writers on one 
 - **Discord/Teams** finished card: `Resume (<project name>)` + the command. **Never a path**
   (shared channel) — an unregistered project falls back to the folder basename.
 - **Routines**: `withResumeFooter` appends `step N (<project>|workspace) — <cmd>` lines to both
-  `result.digest` and `result.record.digest`; the collector is per `runOneRoutine` call so
+  `result.digest` and `result.record.digest`; the collector is per `runOneRoutine` call (core `routine-host.ts`) so
   concurrent routines can't mix ids. Bean writes it, never the model.
 
 Session ids are untrusted subprocess output: only `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`
