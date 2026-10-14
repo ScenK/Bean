@@ -251,7 +251,9 @@ export function resolveTodoRoutine(routines: Routine[], name: string, member = f
 export function todoRunHint(r: Routine, now: Date): string {
   if (!r.enabled) return "The routine is off — it runs once the owner turns it on.";
   if (r.cron) {
-    const at = nextRun(r.cron, now).toLocaleString("en-US", {
+    let next: Date;
+    try { next = nextRun(r.cron, now); } catch { return ""; } // e.g. Feb 29: no fire within a year
+    const at = next.toLocaleString("en-US", {
       month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short",
     });
     return `It runs next at ${at}.`;
