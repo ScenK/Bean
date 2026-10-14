@@ -334,6 +334,30 @@ describe("todo-driven routines", () => {
     expect(result.digest).toContain("No pending todos");
   });
 
+  it("drain refuses a member's todo once the routine gained a delegate step, and still runs the owner's", async () => {
+    const chatOnly: Routine = { ...routine, steps: [{ kind: "chat", instruction: "summarize" }] };
+    const queued = [{ ...todo("1", "member task"), createdBy: "mia" }, todo("2", "owner task")];
+    const run = async (r: Routine) => {
+      const todos = fakeTodos(queued.map((t) => ({ ...t })));
+      const instructions: string[] = [];
+      const exec = async (req: { instruction: string }) => { instructions.push(req.instruction); return "ok"; };
+      await runRoutine(r, {
+        chat: async (a) => { instructions.push(JSON.stringify(a.messages)); return { content: "done", toolCalls: [] }; },
+        model: "m", delegate: exec, tools: [], findSkill: () => undefined, todos: todos.dep,
+      });
+      return { todos, instructions };
+    };
+    // Eligible at queue time: both todos run.
+    const before = await run(chatOnly);
+    expect(before.todos.statusLog.filter((s) => s.status === "done").map((s) => s.id)).toEqual(["1", "2"]);
+    // The owner then adds a delegate step: the member's todo fails without running anything.
+    const after = await run({ ...chatOnly, steps: [...chatOnly.steps, { kind: "delegate", skill: "plan", instruction: "plan it" }] });
+    expect(after.todos.statusLog.find((s) => s.id === "1")).toMatchObject({ status: "failed", resultSummary: expect.stringContaining("refused") });
+    expect(after.todos.statusLog.some((s) => s.id === "1" && s.status === "running")).toBe(false);
+    expect(after.todos.statusLog.find((s) => s.id === "2" && s.status !== "running")?.status).toBe("done");
+    expect(after.instructions.filter((i) => i.includes("plan it")).every((i) => !i.includes("member task"))).toBe(true);
+  });
+
   it("non-todo-driven routines are byte-for-byte unaffected by a todos dep", async () => {
     const plain: Routine = { ...routine, todoDriven: undefined };
     const todos = fakeTodos([todo("1", "task A")]);

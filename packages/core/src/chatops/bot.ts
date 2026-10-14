@@ -6,6 +6,9 @@ import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
 import { makeReminderTools } from "./reminder-tools.js";
+import { makeTodoTools } from "./todo-tools.js";
+import { todoRunHint, type Routine } from "../routine-store.js";
+import type { TodoItem } from "../todo-store.js";
 import { cancelReminder } from "../reminders.js";
 import { availableModels } from "../models.js";
 import type { Skill, Project } from "../types.js";
@@ -129,10 +132,16 @@ export interface TeamsBotDeps {
   /** FTS5 search over saved notes (server injects the db path); backs retrieve_note. */
   searchNotes: (query: string) => Promise<Note[]>;
   todoProposals: TodoProposalStore;
-  /** Queues a confirmed todo (server injects the db path + routine validation). */
-  queueTodo: (routine: string, text: string) => Promise<void>;
-  /** Names of routines with todoDriven=true — gates the propose_todo tool. */
-  listTodoRoutines: () => Promise<string[]>;
+  /** Queues a confirmed todo (server injects the db path + routine validation). `createdBy` set =
+   * a non-owner's todo: the routine must be `memberTodoEligible` and the row is stamped with it.
+   * Returns the routine queued on (for the receipt's "when"). */
+  queueTodo: (routine: string, text: string, createdBy?: string) => Promise<Routine | void>;
+  /** Names of routines with todoDriven=true — gates the propose_todo tool. `member` = only
+   * `memberTodoEligible` ones (no delegate or command steps). */
+  listTodoRoutines: (member: boolean) => Promise<string[]>;
+  /** Backs list_todos / cancel_todo: `createdBy` set = only that speaker's rows (SQL-filtered). */
+  listOpenTodos: (createdBy?: string) => Promise<TodoItem[]>;
+  cancelTodo: (id: string, createdBy?: string) => Promise<boolean>;
   skillProposals: SkillProposalStore;
   /** Persists a confirmed skill draft to the user's ~/.bean/skills (server injects the dir). */
   saveSkill: (name: string, body: string) => Promise<void>;
@@ -507,10 +516,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   async function handleTodoAction(
     kind: "queue-todo" | "cancel-todo",
     proposalId: string | undefined,
-    actor: string,
+    action: CardAction,
+    isOwner: boolean,
     fx: BotEffects,
   ): Promise<void> {
     if (!proposalId) return;
+    const actor = action.fromName;
+    // Before the claim, so a refused tap leaves the card usable for its requester. Proposal ids
+    // are sequential, so the conversation binding stops a forged id from another chat.
+    const peeked = deps.todoProposals.peek(proposalId);
+    if (peeked && (peeked.conversationId !== action.conversationId || (!isOwner && peeked.requesterId !== action.fromId))) {
+      await fx.post("Only whoever asked for that todo (or the owner) can queue or cancel it.");
+      return;
+    }
     const pending = deps.todoProposals.claim(proposalId);
     if (!pending) {
       await fx.post("That todo draft expired — ask me to queue it again.");
@@ -526,9 +544,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     try {
-      await deps.queueTodo(pending.todo.routine, pending.todo.text);
+      const routine = await deps.queueTodo(pending.todo.routine, pending.todo.text, pending.member ? pending.requesterId : undefined);
       await updateTo(resultCard("queued"));
-      await fx.post(`Queued on "${pending.todo.routine}".`);
+      const when = routine ? todoRunHint(routine, new Date()) : "";
+      await fx.post(`Queued on "${pending.todo.routine}".${when ? ` ${when}` : ""}`);
     } catch (err) {
       await fx.post(`Couldn't queue the todo: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -762,7 +781,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           canDelegate || canMemory || can(role, "notes") ? deps.loadProjects() : [], deps.loadPersona(),
           // Recall is scoped before ranking: a DM sees the speaker's private facts plus shared
           // ones; a channel sees shared only.
-          canMemory ? deps.loadMemories(msg.direct ? msg.fromId : null) : [], deps.loadModelMemory(), can(role, "todos") ? deps.listTodoRoutines() : [],
+          canMemory ? deps.loadMemories(msg.direct ? msg.fromId : null) : [], deps.loadModelMemory(), can(role, "todos") ? deps.listTodoRoutines(!isOwner) : [],
         ]);
         const detected = deps.detectClis();
         let history = deps.conversations.history(msg.conversationId);
@@ -811,6 +830,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               setBy: msg.fromId, isOwner,
             })
           : undefined;
+        const todoTools = can(role, "todos")
+          ? makeTodoTools({ list: deps.listOpenTodos, cancel: deps.cancelTodo, speakerId: msg.fromId, isOwner })
+          : [];
         // runAvailable=false: propose_run is never offered here — confirming one couldn't
         // execute anything from Teams/Discord; propose_delegate is the only run path.
         // The tool list is built from the role (action tools run inside converse(), so leaving
@@ -838,7 +860,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         };
         const result = await converse({
           ...converseBase,
-          actions: [...converseBase.actions, ...(canMemory ? memoryTools.tools : []), ...(reminderTools?.tools ?? [])],
+          actions: [...converseBase.actions, ...(canMemory ? memoryTools.tools : []), ...(reminderTools?.tools ?? []), ...todoTools],
           history, latestUserText: msg.text, latestUserImages: msg.images,
         });
         turnFailed = result.error !== undefined;
@@ -943,7 +965,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (result.proposedTodo) {
           if (!(await permitted("todos", "queue tasks"))) return;
           const todo = result.proposedTodo;
-          const pending = deps.todoProposals.add({ todo, conversationId: msg.conversationId, proposedBy: msg.fromName });
+          const pending = deps.todoProposals.add({
+            todo, conversationId: msg.conversationId, proposedBy: msg.fromName, requesterId: msg.fromId, member: !isOwner,
+          });
           const activityId = await fx.postCard(deps.cards.todoProposalCard({
             proposalId: pending.id, routine: todo.routine, text: todo.text,
           }));
@@ -1006,7 +1030,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         return;
       }
       if (beanAction === "queue-todo" || beanAction === "cancel-todo") {
-        await handleTodoAction(beanAction, proposalId, action.fromName, fx);
+        await handleTodoAction(beanAction, proposalId, action, role === "owner", fx);
         return;
       }
       if (beanAction === "forget-memory") {

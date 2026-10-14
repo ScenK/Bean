@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { isValidCron } from "./cron.js";
+import { isValidCron, nextRun } from "./cron.js";
 import { describeWatchWindowError, type WatchWindow } from "./watch-window.js";
 import { CLI_NAMES, type CliName } from "./launcher.js";
 import type { CliModels } from "./cli-models.js";
@@ -225,13 +225,38 @@ export function isValidRoutine(v: unknown): v is Routine {
   return describeRoutineError(v) === null;
 }
 
-/** Resolves `name` to a todo-driven routine in `routines`, or throws with the same two
- * error messages every todo-queueing caller (app IPC, Teams, Discord) needs. */
-export function resolveTodoRoutine(routines: Routine[], name: string): Routine {
+/** A step that runs a CLI or shell with the todo text as its input — owner-only (#283). */
+const privilegedStep = (r: Routine): RoutineStep | undefined =>
+  r.steps.find((s) => s.kind === "delegate" || s.kind === "command");
+
+/** Whether a non-owner's todo may run on `r`: todo-driven with no delegate or command steps.
+ * Checked at catalog, confirm, and again at drain against the routine's current definition. */
+export const memberTodoEligible = (r: Routine): boolean => r.todoDriven === true && !privilegedStep(r);
+
+export const MEMBER_TODO_REFUSAL = "runs delegate or command steps — only the owner can queue on it";
+
+/** Resolves `name` to a todo-driven routine in `routines`, or throws with the same
+ * error messages every todo-queueing caller (app IPC, Teams, Discord) needs. `member` = a
+ * non-owner is queueing, so the routine must also be `memberTodoEligible`. */
+export function resolveTodoRoutine(routines: Routine[], name: string, member = false): Routine {
   const target = routines.find((r) => r.name === name);
   if (!target) throw new Error(`no routine named "${name}"`);
   if (!target.todoDriven) throw new Error(`routine "${name}" is not todo-driven`);
+  if (member && !memberTodoEligible(target)) throw new Error(`routine "${name}" ${MEMBER_TODO_REFUSAL}`);
   return target;
+}
+
+/** The queued receipt's "when": the next cron fire (process-local time, i.e. `TZ`), the next
+ * scheduler tick (a watch routine drains its queue whenever it has work), or a note that it's off. */
+export function todoRunHint(r: Routine, now: Date): string {
+  if (!r.enabled) return "The routine is off — it runs once the owner turns it on.";
+  if (r.cron) {
+    const at = nextRun(r.cron, now).toLocaleString("en-US", {
+      month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short",
+    });
+    return `It runs next at ${at}.`;
+  }
+  return r.watch ? "It runs within a minute or so." : "";
 }
 
 export async function loadRoutines(dir: string): Promise<Routine[]> {
