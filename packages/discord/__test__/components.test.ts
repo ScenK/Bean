@@ -248,3 +248,18 @@ test("Continue live: a button on finished/ended cards only when the custom_id fi
   expect(card).toContain("fix the flaky test");
   expect(card).not.toContain("bean:live-project:");
 });
+
+test("routine card: toggle shows the current state, an invalid draft offers only Cancel", () => {
+  const input = {
+    proposalId: "routine-1", name: "mia-summary", updating: false, enabled: true,
+    schedule: "Weekdays at 7:00 AM (America/Toronto)", steps: [], sinks: ["DM Mia"],
+  };
+  const ok = discordCards.routineProposalCard!(input) as { embeds: { fields: { value: string }[] }[]; components: { components: { label: string; custom_id: string }[] }[] };
+  expect(ok.embeds[0]!.fields.every((f) => f.value.length > 0)).toBe(true); // Discord rejects empty field values
+  expect(ok.components[0]!.components.map((b) => b.custom_id)).toEqual([
+    "bean:toggle-routine:routine-1", "bean:save-routine:routine-1", "bean:cancel-routine:routine-1",
+  ]);
+  expect(ok.components[0]!.components[0]!.label).toBe("Enabled: on");
+  const bad = discordCards.routineProposalCard!({ ...input, problem: "bad cron" }) as typeof ok;
+  expect(bad.components[0]!.components.map((b) => b.custom_id)).toEqual(["bean:cancel-routine:routine-1"]);
+});

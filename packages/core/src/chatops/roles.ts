@@ -14,7 +14,7 @@ export const atLeast = (role: Role, need: Role): boolean => RANK[role] >= RANK[n
 const NEEDS = {
   memory: "member", notes: "member", todos: "member", reminders: "member", fresh: "member",
   delegate: "admin", runSkills: "admin", images: "admin", cancelRuns: "admin",
-  systemControl: "owner", liveSession: "owner", skillWrites: "owner", manageAdmins: "owner",
+  systemControl: "owner", liveSession: "owner", skillWrites: "owner", routineWrites: "owner", manageAdmins: "owner",
 } as const satisfies Record<string, Role>;
 export type Capability = keyof typeof NEEDS;
 export const needs = (cap: Capability): Role => NEEDS[cap];
@@ -126,8 +126,9 @@ export const memberRefusal = (what: string, roles: Roles): string =>
 
 /** What `role` hears when refused something that needs `need`. */
 export function refusal(need: Role, role: Role, what: string, roles: Roles, scopeId: string | undefined): string {
-  if (need === "owner") return ownerOnlyRefusal(what, roles);
-  return role === "member" ? memberRefusal(what, roles) : gatedRefusal(what, roles, scopeId);
+  // A member hears the member line even for owner-only things: the owner sets those up for them.
+  if (role === "member") return memberRefusal(what, roles);
+  return need === "owner" ? ownerOnlyRefusal(what, roles) : gatedRefusal(what, roles, scopeId);
 }
 
 /** Card-tap counterpart of `refusal`. */
@@ -141,7 +142,7 @@ export const cardRefusal = (roles: Roles): string => `Only ${roles.ownerName} or
  * cli/model/skill selects) map here too so the surface can gate them before touching state. */
 export function cardActionNeeds(beanAction: string | undefined): Role {
   const a = beanAction ?? "";
-  if (a.startsWith("live-") || a.endsWith("-live") || a === "save-skill" || a === "cancel-skill") return "owner";
+  if (a.startsWith("live-") || a.endsWith("-live") || a === "save-skill" || a === "cancel-skill" || a.endsWith("-routine")) return "owner";
   if (a === "save-note" || a === "cancel-note") return needs("notes");
   if (a === "queue-todo" || a === "cancel-todo") return needs("todos");
   if (a === "forget-memory") return needs("memory");
@@ -162,14 +163,14 @@ export function parseRoleCommand(text: string): "add-admin" | "remove-admin" | "
  * the tool list plus bot.ts's runtime checks. */
 export function roleLine(role: Role, roles: Roles, scopeId: string | undefined): string {
   if (role === "owner") return "The current speaker is your owner.";
-  const ownerOnly = ownerOnlyRefusal("start a live session, save skills or control the Mac", roles);
+  const ownerOnly = ownerOnlyRefusal("start a live session, save skills or routines, or control the Mac", roles);
   if (role === "admin") {
     return "The current speaker is an admin of this chat (not your owner). If they ask for a live " +
-      `session, a new or changed skill, or Mac control, reply exactly: "${ownerOnly}"`;
+      `session, a new or changed skill or routine, or Mac control, reply exactly: "${ownerOnly}"`;
   }
   if (role === "member") {
     return "The current speaker is a household member (not your owner): memories, notes, reminders and task " +
-      "queues are open to them, but delegation, live sessions, skills, images and Mac control are not. " +
+      "queues are open to them, but delegation, live sessions, skills, routines, images and Mac control are not. " +
       `If they ask for one of those, reply exactly: "${memberRefusal("do that", roles)}" Never claim you did it.`;
   }
   return "The current speaker is a guest: you have no memories, notes, tasks or delegation for them. " +

@@ -105,6 +105,34 @@ export interface SkillResultCardInput {
   outcome: "saved" | "cancelled";
 }
 
+/** A drafted routine (#285), pre-rendered to plain lines so every surface shows the same text. */
+export interface RoutineProposalCardInput {
+  proposalId: string;
+  name: string;
+  description?: string;
+  /** A routine with this name exists: saving replaces it. */
+  updating: boolean;
+  enabled: boolean;
+  /** Plain-English schedule with the time zone, e.g. "Weekdays at 7:00 AM (America/Toronto)". */
+  schedule: string;
+  /** One line per step. */
+  steps: string[];
+  /** Where results go, by name. */
+  sinks: string[];
+  /** Set when members can queue todos and one digest covers several members' todos. */
+  todoNote?: string;
+  /** Validation failure: shown instead of a Save button. */
+  problem?: string;
+}
+
+export interface RoutineResultCardInput {
+  name: string;
+  by: string;
+  outcome: "saved" | "cancelled" | "failed";
+  enabled?: boolean;
+  problem?: string;
+}
+
 export interface LiveSessionProposalCardInput {
   proposalId: string;
   projectName: string;
@@ -153,6 +181,9 @@ export interface CardBuilders {
   reminderCard?: (input: ReminderCardInput) => object;
   skillProposalCard: (input: SkillProposalCardInput) => object;
   skillResultCard: (input: SkillResultCardInput) => object;
+  /** Optional: only surfaces that wire `routines` (Discord) need them. */
+  routineProposalCard?: (input: RoutineProposalCardInput) => object;
+  routineResultCard?: (input: RoutineResultCardInput) => object;
   liveSessionProposalCard: (input: LiveSessionProposalCardInput) => object;
   liveSessionResultCard: (input: LiveSessionResultCardInput) => object;
 }
