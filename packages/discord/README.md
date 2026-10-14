@@ -19,7 +19,9 @@ endpoint. Design: `docs/superpowers/specs/2026-07-10-discord-adapter-design.md`.
    `{ "botToken": "<token>", "ownerId": "<your user id>", "ownerName": "<your name>" }`
    `ownerId` is the owner (full powers; routine digests with no channel DM them). Everyone else
    is a guest (chat only) unless the owner runs `add-admin @name` in a channel; `admins` and
-   `whoami` list roles. `"allowGuestDms": true` lets guests DM Bean (default off). A legacy
+   `whoami` list roles. `"memberIds": ["<user id>", ...]` makes household members (memory, notes,
+   todos — everywhere, DMs included; no delegates, live sessions, skills or Mac control); restart
+   to apply. `"allowGuestDms": true` lets guests DM Bean (default off). A legacy
    single-entry `allowedUserIds` is read as `ownerId`; several entries fail startup.
    Optional `"guildId": "<server id>"` registers slash commands to that one server instantly;
    without it they register globally (every server Bean is in, but ~1h first propagation).
