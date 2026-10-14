@@ -266,7 +266,8 @@ client.on("messageCreate", async (message) => {
     // content — transcribe them into the turn's text so they get a normal reply. In a captured
     // channel only someone who can steer the session pays for a transcription (onMessage would
     // drop anyone else's turn anyway).
-    const canTranscribe = !dmBlocked && (!capturing || liveSessions.canSteer(message.channelId, message.author.id));
+    const canTranscribe = !dmBlocked &&
+      (!capturing || (role !== "member" && liveSessions.canSteer(message.channelId, message.author.id)));
     let transcribeFailed = false;
     let heardAudio = false;
     // What the sender typed, before any transcript is appended: an attached clip may be someone
@@ -402,7 +403,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       if (interaction.commandName === "stop") {
         // Same steering gate as a plain `stop` message: in a restricted session only the
         // starter/co-drivers may end it, not any allow-listed bystander.
-        if (liveSessions.has(channelId) && !liveSessions.canSteer(channelId, interaction.user.id)) {
+        if (liveSessions.has(channelId) && (role === "member" || !liveSessions.canSteer(channelId, interaction.user.id))) {
           await interaction.reply({ content: "Only the session starter or a co-driver can stop this live session.", ephemeral: true });
           return;
         }

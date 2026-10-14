@@ -1885,3 +1885,24 @@ test("live-session entry points refuse non-owners", async () => {
   expect(deps.liveSessions.has("c1")).toBe(false);
   expect(deps.liveSessionProposals.get(id)).toBeDefined();
 });
+
+test("live capture excludes members: no steering in war-room mode or as a co-driver, no stop", async () => {
+  for (const steering of ["open", "restricted"] as const) {
+    const { startFn, sent } = fakeLiveStartFn();
+    const { deps } = withRoles({
+      liveSessionsEnabled: () => true,
+      liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+    });
+    deps.liveSessions.start({ channelId: "c1", projectPath: "/p/bean", instruction: "go", starterId: "u1", steering, sink: { post: async () => "m1", edit: async () => {} } });
+    if (steering === "restricted") deps.liveSessions.addCoDriver("c1", "mia");
+    const bot = buildTeamsBot(deps);
+    await bot.onMessage({ ...member, text: "rm -rf it" }, fx());
+    await bot.onMessage({ ...member, text: "stop" }, fx());
+    expect(sent).not.toContain("rm -rf it");
+    expect(deps.liveSessions.has("c1")).toBe(true);
+    if (steering === "open") {
+      await bot.onMessage({ ...guest, text: "look at auth" }, fx());
+      expect(sent).toContain("look at auth"); // war-room still open to everyone else
+    }
+  }
+});

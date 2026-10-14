@@ -72,8 +72,9 @@ export function makeRoles(opts: RolesOptions): Roles {
       // No owner configured (setup mode) = everyone is a guest, stored admin grants included.
       if (ids.length === 0 || !opts.ownerId) return "guest";
       if (ids.includes(opts.ownerId)) return "owner";
-      if (scopeId && isAdmin(scopeId, ids)) return "admin";
-      return ids.some((id) => members.has(id)) ? "member" : "guest";
+      // Members are checked before channel admin grants: a household member stays a member.
+      if (ids.some((id) => members.has(id))) return "member";
+      return scopeId && isAdmin(scopeId, ids) ? "admin" : "guest";
     },
     admins(scopeId) {
       if (!scopeId) return [];
