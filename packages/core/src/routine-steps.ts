@@ -67,7 +67,9 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
       // The shared scratch workspace must exist for the spawn's cwd.
       if (!req.projectPath && !perTodo) mkdirSync(projectPath, { recursive: true });
       const cleanup = (): void => {
-        if (hold) return;
+        // Held across a gated run: the child is gone, so the (live) host holds the project until
+        // the run ends — a dead child's pid would let another run reclaim it between steps.
+        if (hold) { if (owns) updateReservationPid(dir, projectPath, process.pid); return; }
         if (reserved) releaseRun(dir, projectPath);
         if (perTodo) rmSync(perTodo, { recursive: true, force: true });
       };
