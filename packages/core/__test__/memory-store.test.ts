@@ -181,3 +181,12 @@ test("scoped recall and delete: private rows reach only their speaker", async ()
   expect(await deleteMemories(file, ["p", "s"], "mia")).toBe(1);
   expect((await loadMemories(file)).map((x) => x.id)).toEqual(["s"]);
 });
+
+test("saveScope: DM private, channel shared; overrides only when unambiguous", async () => {
+  const { saveScope } = await import("../src/memory/tools.js");
+  expect(saveScope("remember that I prefer espresso", true)).toBe("private");
+  expect(saveScope("remember that I prefer espresso", false)).toBe("shared");
+  expect(saveScope("remember that I prefer espresso for everyone", true)).toBe("shared");
+  expect(saveScope("remember that I prefer espresso; this is not for everyone", true)).toBe("private");
+  expect(saveScope("remember that I prefer espresso, just for me", false)).toBe("private");
+});
