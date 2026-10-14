@@ -1998,3 +1998,82 @@ test("forget: a member removes only their own private facts; the owner removes a
   await tap("u1", "shared");
   expect(await h.loadMemories(h.file)).toEqual([]);
 });
+
+// Reminders: a model that sets / lists / cancels on cue, against a real reminders.json.
+async function reminderHousehold() {
+  const { loadReminders } = await import("../src/reminders.js");
+  const dir = mkdtempSync(join(tmpdir(), "bean-remind-"));
+  const file = join(dir, "reminders.json");
+  const toolResults: string[] = [];
+  let pending = true;
+  const made = makeDeps({
+    chat: async ({ messages, tools }) => {
+      const last = messages.at(-1);
+      if (last?.role === "tool") toolResults.push(String(last.content));
+      const latest = String(messages.filter((m) => m.role === "user").at(-1)?.content ?? "");
+      const names = new Set(tools?.map((t) => t.name));
+      if (pending) {
+        pending = false;
+        if (/remind me/.test(latest) && names.has("set_reminder")) {
+          return { content: "", toolCalls: [{ name: "set_reminder", args: { text: "take out the bins", at: "2026-07-03T10:00:00.000Z" } }] };
+        }
+        if (/\blist$/.test(latest) && names.has("list_reminders")) return { content: "", toolCalls: [{ name: "list_reminders", args: {} }] };
+        const cancel = /\bcancel (\S+)/.exec(latest);
+        if (cancel && names.has("cancel_reminder")) return { content: "", toolCalls: [{ name: "cancel_reminder", args: { id: cancel[1] } }] };
+      }
+      pending = true;
+      return { content: "ok", toolCalls: [] };
+    },
+  });
+  made.deps.roles = makeRoles({ dbPath: dbFile(dir), surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia", "max"] });
+  made.deps.reminders = { file, transport: "discord" };
+  made.deps.cards = { ...fakeCards, reminderCard: (i: object) => ({ kind: "reminder", ...i }) } as CardBuilders;
+  const say = (who: string, direct: boolean, text: string) =>
+    ({ ...msg, conversationId: direct ? `dm-${who}` : "c1", fromId: who, fromName: who, direct, scopeId: direct ? undefined : "s1", text });
+  return { ...made, file, say, toolResults, load: () => loadReminders(file) };
+}
+
+test("reminders: a DM one targets the setter, a channel one the channel; the receipt carries the id", async () => {
+  const h = await reminderHousehold();
+  const bot = buildTeamsBot(h.deps);
+  const dm = fx();
+  await bot.onMessage(h.say("mia", true, "remind me to take out the bins"), dm);
+  await bot.onMessage(h.say("max", false, "remind me to take out the bins"), fx());
+  const [a, b] = await h.load();
+  expect(a).toMatchObject({ setBy: "mia", target: { transport: "discord", userId: "mia" } });
+  expect(b).toMatchObject({ setBy: "max", target: { transport: "discord", channelId: "c1" } });
+  expect(dm.cards[0]).toMatchObject({ kind: "reminder", reminderId: a!.id, text: "take out the bins" });
+});
+
+test("reminders: guests get no reminder tools", async () => {
+  const h = await reminderHousehold();
+  await buildTeamsBot(h.deps).onMessage(h.say("stranger", false, "remind me to take out the bins"), fx());
+  expect(await h.load()).toEqual([]);
+});
+
+test("reminders: members list and cancel only their own, by text and by tap; the owner any", async () => {
+  const h = await reminderHousehold();
+  const bot = buildTeamsBot(h.deps);
+  await bot.onMessage(h.say("mia", true, "remind me to take out the bins"), fx());
+  const id = (await h.load())[0]!.id;
+
+  await bot.onMessage(h.say("max", true, "list"), fx());
+  expect(h.toolResults.at(-1)).toBe("no pending reminders");
+  await bot.onMessage(h.say("max", true, `cancel ${id}`), fx());
+  expect(h.toolResults.at(-1)).toBe("error: that reminder was set by someone else");
+  const tap = async (who: string): Promise<string[]> => {
+    const effects = fx();
+    await bot.onCardAction({ conversationId: "dm-mia", fromId: who, fromName: who, value: { beanAction: "cancel-reminder", proposalId: id } }, effects);
+    return effects.posted;
+  };
+  expect(await tap("max")).toEqual(["Only whoever set that reminder (or the owner) can cancel it."]);
+  expect(await h.load()).toHaveLength(1);
+
+  await bot.onMessage(h.say("mia", true, "list"), fx());
+  expect(h.toolResults.at(-1)).toContain(id);
+  await bot.onMessage(h.say("u1", true, "list"), fx());
+  expect(h.toolResults.at(-1)).toContain(id);
+  expect(await tap("u1")).toEqual(["Reminder cancelled (by u1): take out the bins"]);
+  expect(await tap("mia")).toEqual(["That reminder already fired or was cancelled."]); // idempotent
+  expect(await h.load()).toEqual([]);
+});

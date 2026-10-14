@@ -18,7 +18,7 @@ import {
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
   maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, type DreamDigest,
-  loadReminders, saveReminders, dueReminders, extractPageText,
+  loadReminders, updateReminders, fireDueReminders, enqueueOutbox, type Reminder, extractPageText,
   loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, claimOutbox, runDelegate, killAllDelegates, killAllCommands,
@@ -465,9 +465,7 @@ app.whenReady().then(async () => {
         if (typeof text !== "string" || typeof at !== "string" || Number.isNaN(Date.parse(at))) {
           return "error: set_reminder needs { text, at } with `at` a valid ISO 8601 timestamp";
         }
-        const reminders = await loadReminders(remindersPath);
-        reminders.push({ id: randomUUID(), text, at });
-        await saveReminders(remindersPath, reminders);
+        await updateReminders(remindersPath, (all) => { all.push({ id: randomUUID(), text, at }); });
         return `reminder saved for ${at}`;
       },
     },
@@ -530,25 +528,23 @@ app.whenReady().then(async () => {
   // (no live reload — restart Bean after editing clis.json).
   const cliModels: CliModels[] = await loadCliModels(clisFile(projectDir), clisFile(dir));
 
+  // Chatops reminders (a `target`) go to the outbox for the Discord bot to deliver; untargeted
+  // ones stay desktop notifications.
+  const reminderFailed = (r: Reminder, err: unknown): void => {
+    console.error("bean: reminder delivery failed", r.id, err);
+    const why = err instanceof Error ? err.message : String(err);
+    taskStatus.error("reminder:error", { kind: "reminder", name: "Reminder", line: `Couldn't deliver: ${r.text}`, detail: why });
+  };
   setInterval(() => {
-    void (async () => {
-      const reminders = await loadReminders(remindersPath);
-      const due = dueReminders(reminders, new Date());
-      if (due.length === 0) return;
-      const firedAt = new Date().toISOString();
-      for (const r of due) {
+    fireDueReminders(remindersPath, new Date(), {
+      untargeted: (r) => {
         void deliver({ body: r.text }, transports).then((outcomes) => {
-          for (const o of outcomes) {
-            if (o.ok) continue;
-            console.error("bean: deliver failed", o.name, o.error);
-            const why = o.error instanceof Error ? o.error.message : String(o.error);
-            taskStatus.error("reminder:error", { kind: "reminder", name: "Reminder", line: `Couldn't deliver: ${r.text}`, detail: `${o.name}: ${why}` });
-          }
+          for (const o of outcomes) if (!o.ok) reminderFailed(r, `${o.name}: ${o.error instanceof Error ? o.error.message : String(o.error)}`);
         });
-        r.firedAt = firedAt;
-      }
-      await saveReminders(remindersPath, reminders);
-    })();
+      },
+      enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID),
+      failed: reminderFailed,
+    }).catch((err: unknown) => console.error("bean: reminder loop failed", err));
   }, 30_000);
 
   try {

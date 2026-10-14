@@ -5,6 +5,8 @@ import { converse, speakerLine, type ConverseDeps, type ImageAttachment, type Pr
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
+import { makeReminderTools } from "./reminder-tools.js";
+import { cancelReminder } from "../reminders.js";
 import { availableModels } from "../models.js";
 import type { Skill, Project } from "../types.js";
 import type { Persona } from "../persona.js";
@@ -159,6 +161,9 @@ export interface TeamsBotDeps {
   imageGen?: Pick<ImageGenDeps, "generate" | "model" | "imagesDir">;
   /** Bean's turns (converse path only) for the desktop app's status bubbles (see activity.ts). */
   onActivity?: ChatopsActivitySink;
+  /** Enables the chatops reminder tools (member+): reminders.json path plus this surface's
+   * outbox transport. Omit on surfaces whose outbox can't DM a specific user (Teams). */
+  reminders?: { file: string; transport: "discord" };
   /** Owner / admin / guest — required, no permissive default (see .memory/safety-chatops-roles.md). */
   roles: Roles;
 }
@@ -570,6 +575,17 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     else await fx.post(text === undefined ? "Already forgotten." : "Only the owner can forget household facts or another member's.");
   }
 
+  // Cancel button on a reminder receipt: same idempotent, no-proposal-store shape as Forget.
+  // `setBy` set = only that person's reminder (non-owners); checked inside the locked update.
+  async function handleCancelReminder(reminderId: string | undefined, actor: string, setBy: string | undefined, fx: BotEffects): Promise<void> {
+    if (!reminderId || !deps.reminders) return;
+    const res = await cancelReminder(deps.reminders.file, reminderId, setBy);
+    if (res.outcome === "cancelled") await fx.post(`Reminder cancelled (by ${actor}): ${res.text ?? ""}`);
+    else await fx.post(res.outcome === "forbidden"
+      ? "Only whoever set that reminder (or the owner) can cancel it."
+      : "That reminder already fired or was cancelled.");
+  }
+
   // Post a live-session proposal from a verbatim instruction — no converse()/LLM in the path, so
   // the prompt reaches the card (and then claude) exactly as typed. Shared by the /live-session
   // slash command and its literal-text form in onMessage. Returns a one-line status for the caller.
@@ -785,6 +801,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           append: deps.appendMemories, forget: (ids) => deps.deleteMemories(ids, isOwner ? undefined : msg.fromId),
           memories, projects, latestUserText: typed, ...(scope === "private" ? { subjectId: msg.fromId } : {}),
         });
+        // Delivery goes where it was asked: a DM → this speaker's DM, a channel → this channel.
+        const reminderTools = deps.reminders && can(role, "reminders")
+          ? makeReminderTools({
+              file: deps.reminders.file,
+              target: msg.direct
+                ? { transport: deps.reminders.transport, userId: msg.fromId }
+                : { transport: deps.reminders.transport, channelId: msg.conversationId },
+              setBy: msg.fromId, isOwner,
+            })
+          : undefined;
         // runAvailable=false: propose_run is never offered here — confirming one couldn't
         // execute anything from Teams/Discord; propose_delegate is the only run path.
         // The tool list is built from the role (action tools run inside converse(), so leaving
@@ -811,7 +837,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           speaker: msg.fromName,
         };
         const result = await converse({
-          ...converseBase, actions: [...converseBase.actions, ...(canMemory ? memoryTools.tools : [])],
+          ...converseBase,
+          actions: [...converseBase.actions, ...(canMemory ? memoryTools.tools : []), ...(reminderTools?.tools ?? [])],
           history, latestUserText: msg.text, latestUserImages: msg.images,
         });
         turnFailed = result.error !== undefined;
@@ -843,6 +870,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               memoryId: m.id, text: m.text, projectName: m.projectPath ? nameFor(m.projectPath) : undefined, scope,
             }));
           }
+        }
+        for (const r of reminderTools?.set ?? []) {
+          if (deps.cards.reminderCard) await fx.postCard(deps.cards.reminderCard({ reminderId: r.id, text: r.text, at: r.at }));
         }
         void maybeCompact(msg.conversationId, deps.conversations, { chat: deps.chat, model: deps.model });
         if (result.proposedRun) {
@@ -982,6 +1012,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (beanAction === "forget-memory") {
         // proposalId carries the memory id here (the surfaces' generic id slot).
         await handleForget(proposalId, action.fromName, role === "owner" ? undefined : action.fromId, fx);
+        return;
+      }
+      if (beanAction === "cancel-reminder") {
+        // proposalId carries the reminder id here (the surfaces' generic id slot).
+        await handleCancelReminder(proposalId, action.fromName, role === "owner" ? undefined : action.fromId, fx);
         return;
       }
       if (beanAction === "resume-live") {

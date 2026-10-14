@@ -12,7 +12,7 @@ export const atLeast = (role: Role, need: Role): boolean => RANK[role] >= RANK[n
 /** The least role each gated capability needs — the one table the tool list, the runtime
  * checks and the card gates read, so they can't drift apart. */
 const NEEDS = {
-  memory: "member", notes: "member", todos: "member", fresh: "member",
+  memory: "member", notes: "member", todos: "member", reminders: "member", fresh: "member",
   delegate: "admin", runSkills: "admin", images: "admin", cancelRuns: "admin",
   systemControl: "owner", liveSession: "owner", skillWrites: "owner", manageAdmins: "owner",
 } as const satisfies Record<string, Role>;
@@ -145,6 +145,7 @@ export function cardActionNeeds(beanAction: string | undefined): Role {
   if (a === "save-note" || a === "cancel-note") return needs("notes");
   if (a === "queue-todo" || a === "cancel-todo") return needs("todos");
   if (a === "forget-memory") return needs("memory");
+  if (a === "cancel-reminder") return needs("reminders");
   return "admin";
 }
 
@@ -167,11 +168,11 @@ export function roleLine(role: Role, roles: Roles, scopeId: string | undefined):
       `session, a new or changed skill, or Mac control, reply exactly: "${ownerOnly}"`;
   }
   if (role === "member") {
-    return "The current speaker is a household member (not your owner): memories, notes and task " +
+    return "The current speaker is a household member (not your owner): memories, notes, reminders and task " +
       "queues are open to them, but delegation, live sessions, skills, images and Mac control are not. " +
       `If they ask for one of those, reply exactly: "${memberRefusal("do that", roles)}" Never claim you did it.`;
   }
   return "The current speaker is a guest: you have no memories, notes, tasks or delegation for them. " +
-    "If they ask you to remember or forget something, look up or save a note, or run, queue or " +
+    "If they ask you to remember or forget something, set a reminder, look up or save a note, or run, queue or " +
     `delegate a task, reply exactly: "${gatedRefusal("do that", roles, scopeId)}" Never claim you did it.`;
 }

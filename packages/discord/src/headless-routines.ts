@@ -1,7 +1,7 @@
 import {
   addTodo, clearReservations, killAllCommands, killAllDelegates, createRoutineHost, createRoutineScheduler, dbFile, enqueueOutbox, execWatchCommand, fetchText,
   isWatchSeeded, listTodos, loadLayeredSkills, loadMemories, loadRoutines, loadRoutineStates, makeRoutineSteps, markNewItems,
-  outboxDir, pinnedStepSelection, pollWatch, pruneStepAttempts, recoverInterruptedTodos, resolveDelegateSelection,
+  outboxDir, fireDueReminders, remindersFile, pinnedStepSelection, pollWatch, pruneStepAttempts, recoverInterruptedTodos, resolveDelegateSelection,
   retrieveNoteTool, routinesDir, routineStateFile, availableModels, saveRoutine, saveRoutineStates, searchNotes, seedWatch,
   skillsDir, unseenIds,
   type CliModels, type CliName, type RoutineHostDeps,
@@ -119,7 +119,18 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
   );
   scheduler.start();
 
+  // Reminders: the desktop app's 30s loop, here. Targeted ones go through the outbox this
+  // process drains; untargeted (desktop-set) ones become owner DMs like the other notices.
+  const reminderTimer = setInterval(() => {
+    fireDueReminders(remindersFile(dir), new Date(), {
+      untargeted: (r) => ownerDm(r.text, "⏰ Reminder"),
+      enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID),
+      failed: (r, err) => console.error(`bean: reminder ${r.id} not delivered`, err),
+    }).catch((err: unknown) => console.error("bean: reminder loop failed", err));
+  }, 30_000);
+
   return async () => {
+    clearInterval(reminderTimer);
     scheduler.stop();
     // A state write stuck on a dead disk must not hang shutdown past the container's grace period.
     await Promise.race([scheduler.settle(), new Promise((r) => setTimeout(r, 5_000))]);
