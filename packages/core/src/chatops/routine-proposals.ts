@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { ProposedRoutine } from "../converse.js";
 import { parseCron } from "../cron.js";
@@ -22,11 +23,13 @@ const EXPIRY_MS = 10 * 60_000;
 export class RoutineProposalStore {
   private byId = new Map<string, PendingRoutine>();
   private seq = 0;
+  // Per-process prefix: after a restart, a stale card's id must not land on a new draft.
+  private readonly prefix = randomUUID().slice(0, 8);
 
   constructor(private nowMs: () => number = () => Date.now()) {}
 
   add(p: Omit<PendingRoutine, "id" | "createdAt">): PendingRoutine {
-    const full: PendingRoutine = { ...p, id: `routine-${++this.seq}`, createdAt: this.nowMs() };
+    const full: PendingRoutine = { ...p, id: `routine-${this.prefix}-${++this.seq}`, createdAt: this.nowMs() };
     this.byId.set(full.id, full);
     return full;
   }
