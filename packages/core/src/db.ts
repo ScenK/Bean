@@ -127,6 +127,19 @@ CREATE TABLE IF NOT EXISTS chatops_admins (
   PRIMARY KEY (surface, scope_id, user_id)
 );
 
+-- One row per admitted chatops turn (chatops/turn-cap.ts), for the per-member daily cap. The
+-- platform message/interaction id is the key, so a redelivered message never counts twice.
+-- day is the calendar date in the process's TZ; older days are pruned on insert.
+CREATE TABLE IF NOT EXISTS chatops_turn_counts (
+  surface   TEXT NOT NULL,
+  turn_id   TEXT NOT NULL,
+  user_id   TEXT NOT NULL,
+  user_name TEXT NOT NULL,
+  day       TEXT NOT NULL,
+  PRIMARY KEY (surface, turn_id)
+);
+CREATE INDEX IF NOT EXISTS chatops_turn_counts_day ON chatops_turn_counts(surface, day, user_id);
+
 -- A thread's resumable delegate session, one per CLI (each CLI keeps its own session store),
 -- so a follow-up delegate in the thread continues the agent that produced the earlier result.
 CREATE TABLE IF NOT EXISTS thread_sessions (

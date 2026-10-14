@@ -51,6 +51,8 @@ command (verbatim, not reworded by the model).
 
 ## Headless routines (no desktop app)
 
+Household container recipe and owner checklist: [`docs/headless.md`](../../docs/headless.md).
+
 On a bot-only install (e.g. a Linux container) the bot can run your scheduled routines itself:
 
     TZ=America/Toronto BEAN_HEADLESS_ROUTINES=1 pnpm --filter @bean/discord start

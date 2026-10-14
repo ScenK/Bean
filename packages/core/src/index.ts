@@ -49,9 +49,11 @@ export * from "./chatops/proposals.js";
 export * from "./chatops/note-proposals.js";
 export * from "./chatops/todo-proposals.js";
 export * from "./chatops/skill-proposals.js";
+export * from "./chatops/routine-proposals.js";
 export * from "./chatops/runs.js";
 export * from "./chatops/resolve.js";
 export * from "./chatops/roles.js";
+export * from "./chatops/turn-cap.js";
 export * from "./chatops/reminder-tools.js";
 export * from "./chatops/todo-tools.js";
 export { parseCron, isValidCron, nextRun } from "./cron.js";
@@ -64,7 +66,7 @@ export * from "./watch-io.js";
 export * from "./safe-fetch.js";
 export * from "./spawn-env.js";
 export {
-  appendRunRecord, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines, watchEveryMinutes, DEFAULT_WATCH_MINUTES,
+  appendRunRecord, chatRoutineProblem, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines, watchEveryMinutes, DEFAULT_WATCH_MINUTES,
   loadRoutineStates, memberTodoEligible, resolveTodoRoutine, saveRoutine, todoRunHint, saveRoutineStates, usesGates,
 } from "./routine-store.js";
 export type {

@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { ConverseResult } from "../src/index.js";
 import { buildTeamsBot, parseResumeArg, type BotEffects, type TeamsBotDeps } from "../src/chatops/bot.js";
 import type { ResumableRun } from "../src/delegate-runs.js";
@@ -15,6 +15,8 @@ import { makeRoles } from "../src/chatops/roles.js";
 import type { CardBuilders } from "../src/chatops/cards-api.js";
 import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index.js";
 import { SkillProposalStore } from "../src/chatops/skill-proposals.js";
+import { RoutineProposalStore } from "../src/chatops/routine-proposals.js";
+import type { Routine } from "../src/routine-store.js";
 import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-sessions.js";
 import { LiveSessionProposalStore } from "../src/chatops/live-session-proposals.js";
 import type { LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest } from "../src/live-session.js";
@@ -2114,4 +2116,95 @@ test("reminders: members list and cancel only their own, by text and by tap; the
   expect(await tap("u1")).toEqual(["Reminder cancelled (by u1): take out the bins"]);
   expect(await tap("mia")).toEqual(["That reminder already fired or was cancelled."]); // idempotent
   expect(await h.load()).toEqual([]);
+});
+
+describe("owner routines from chat (#285)", () => {
+  const routineJson = {
+    name: "mia-summary", enabled: true, cron: "0 7 * * 1-5",
+    steps: [{ kind: "chat", instruction: "Summarize Mia's day" }],
+    sinks: { chatops: [{ transport: "discord", user: "mia" }] },
+  };
+  function setup(json: unknown = routineJson, existing: Routine[] = []) {
+    const store: Routine[] = [...existing];
+    const offered: string[][] = [];
+    const made = makeDeps({
+      chat: async ({ tools }) => {
+        const names = (tools ?? []).map((t) => t.name);
+        offered.push(names);
+        return names.includes("propose_routine")
+          ? { content: "Here's a draft.", toolCalls: [{ name: "propose_routine", args: { json: JSON.stringify(json) } }] }
+          : { content: "Sorry, I can't set up routines for you.", toolCalls: [] };
+      },
+      cards: { ...fakeCards, routineProposalCard: (i: object) => ({ kind: "routine-proposal", ...i }), routineResultCard: (i: object) => ({ kind: "routine-result", ...i }) } as CardBuilders,
+      routines: {
+        load: async () => store,
+        save: async (r) => { const i = store.findIndex((x) => x.name === r.name); if (i >= 0) store[i] = r; else store.push(r); },
+        recipients: async () => [{ id: "u1", name: "Scen" }, { id: "mia", name: "Mia" }],
+        proposals: new RoutineProposalStore(),
+      },
+    });
+    made.deps.roles = makeRoles({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-rt-"))), surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia"] });
+    return { ...made, store, offered, bot: buildTeamsBot(made.deps) };
+  }
+  const tap = (beanAction: string, proposalId: string, fromId = "u1") =>
+    ({ conversationId: "c1", fromId, fromName: fromId, value: { beanAction, proposalId } });
+
+  test("the owner gets a card naming the recipient; Save writes the routine", async () => {
+    const h = setup();
+    const effects = fx();
+    await h.bot.onMessage({ ...msg, text: "weekday 7am summary to Mia" }, effects);
+    const card = effects.cards[0] as { kind: string; proposalId: string; sinks: string[]; schedule: string; enabled: boolean };
+    expect(card).toMatchObject({ kind: "routine-proposal", sinks: ["DM Mia"], enabled: true });
+    expect(card.schedule).toMatch(/^Weekdays at 7:00 AM \(/);
+    await h.bot.onCardAction(tap("toggle-routine", card.proposalId), effects);
+    expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "routine-proposal", enabled: false });
+    await h.bot.onCardAction(tap("save-routine", card.proposalId), effects);
+    expect(h.store).toEqual([{ ...routineJson, enabled: false }]);
+    expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "routine-result", outcome: "saved" });
+  });
+
+  test("a member is never offered the tool, and a member's tap on the owner's card is refused", async () => {
+    const h = setup();
+    const member = fx();
+    await h.bot.onMessage({ ...msg, fromId: "mia", fromName: "Mia", text: "make me a routine" }, member);
+    expect(h.offered[0]).not.toContain("propose_routine");
+    expect(member.cards).toEqual([]);
+    const owner = fx();
+    await h.bot.onMessage({ ...msg, text: "weekday 7am summary to Mia" }, owner);
+    const id = (owner.cards[0] as { proposalId: string }).proposalId;
+    const forged = fx();
+    await h.bot.onCardAction(tap("save-routine", id, "mia"), forged);
+    expect(forged.posted[0]).toMatch(/Only Scen/);
+    expect(h.store).toEqual([]);
+    // Refused before the claim: the owner can still save it.
+    await h.bot.onCardAction(tap("save-routine", id), owner);
+    expect(h.store.map((r) => r.name)).toEqual(["mia-summary"]);
+  });
+
+  test("an invalid routine shows its reason on the card and never saves", async () => {
+    const h = setup({ ...routineJson, cron: "weekdays" });
+    const effects = fx();
+    await h.bot.onMessage({ ...msg, text: "make it" }, effects);
+    const card = effects.cards[0] as { proposalId: string; problem?: string };
+    expect(card.problem).toMatch(/not a valid 5-field cron/);
+    await h.bot.onCardAction(tap("save-routine", card.proposalId), effects);
+    expect(h.store).toEqual([]);
+    expect(effects.posted.at(-1)).toMatch(/Couldn't save the routine/);
+  });
+
+  test("owner commands list, disable and enable; members are refused", async () => {
+    const h = setup(routineJson, [{ ...(routineJson as Routine) }]);
+    const effects = fx();
+    await h.bot.onMessage({ ...msg, text: "routines" }, effects);
+    expect(effects.posted.at(-1)).toMatch(/\*\*mia-summary\*\* — on — Weekdays at 7:00 AM/);
+    await h.bot.onMessage({ ...msg, text: "disable Mia-Summary" }, effects);
+    expect(h.store[0]?.enabled).toBe(false);
+    await h.bot.onMessage({ ...msg, text: "enable nope" }, effects);
+    expect(effects.posted.at(-1)).toMatch(/No routine named "nope"/);
+    const member = fx();
+    await h.bot.onMessage({ ...msg, fromId: "mia", fromName: "Mia", text: "enable mia-summary" }, member);
+    expect(member.posted[0]).toMatch(/Routines and coding tasks are set up by Scen/);
+    expect(h.store[0]?.enabled).toBe(false);
+    expect(h.offered).toEqual([]); // commands never reach the model
+  });
 });
