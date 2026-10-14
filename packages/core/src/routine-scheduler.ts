@@ -297,6 +297,17 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       timer = undefined;
     },
     tick,
+    /** Hosts with no Run-now (headless): drop the missed flag and rebase the schedule to now, so
+     * each routine fires at its next slot — the missed one is still never run. */
+    async clearMissed(names: string[]): Promise<void> {
+      const at = startedAt.toISOString();
+      await withStates((all) => {
+        const next = { ...all };
+        for (const name of names) next[name] = { ...(next[name] ?? { history: [] }), lastRun: at, missed: undefined };
+        return next;
+      });
+      for (const name of names) missedNames.delete(name);
+    },
     /** Resolves once every queued .state.json write has landed (shutdown: stop(), then await this). */
     settle: (): Promise<void> => stateChain.then(() => {}),
     isRunning: (name: string): boolean => running.has(name),
