@@ -212,7 +212,8 @@ function routineProposalCard(input: RoutineProposalCardInput): object {
   return {
     embeds: [{
       title: (input.updating ? `Bean proposes replacing routine ${input.name}` : `Bean proposes routine ${input.name}`).slice(0, 256),
-      ...(input.description ? { description: input.description.slice(0, 4096) } : {}),
+      // 1000, not 4096: Discord also caps a whole embed at 6000 chars, and the fields take up to ~3.2k.
+      ...(input.description ? { description: input.description.slice(0, 1000) } : {}),
       fields,
     }],
     components: [row(input.problem
