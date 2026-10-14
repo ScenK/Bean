@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { cardActionNeeds, makeRoles, parseRoleCommand } from "../src/chatops/roles.js";
+import { can, cardActionNeeds, dmAllowed, makeRoles, parseRoleCommand, type Capability } from "../src/chatops/roles.js";
 
 const db = (): string => join(mkdtempSync(join(tmpdir(), "bean-roles-")), "bean.db");
 
@@ -36,13 +36,28 @@ test("setup mode (no owner) and a missing actor id fail closed", () => {
   expect(roles.allowGuestDms).toBe(false);
 });
 
-test("card actions: live-session and skill controls are owner-only, the rest admin", () => {
+test("card actions: live-session and skill controls are owner-only, notes/todos/forget member, the rest admin", () => {
   for (const a of ["start-live", "cancel-live", "resume-live", "live-mode", "live-editsubmit", "save-skill", "cancel-skill"]) {
     expect(cardActionNeeds(a)).toBe("owner");
   }
-  for (const a of ["confirm", "cancel-proposal", "cancel-run", "save-note", "forget-memory", "skill", "delegate-edit", undefined]) {
+  for (const a of ["save-note", "cancel-note", "queue-todo", "cancel-todo", "forget-memory"]) {
+    expect(cardActionNeeds(a)).toBe("member");
+  }
+  for (const a of ["confirm", "cancel-proposal", "cancel-run", "skill", "cli", "model", "delegate-edit", "delegate-editsubmit", undefined]) {
     expect(cardActionNeeds(a)).toBe("admin");
   }
+});
+
+test("members are household-wide (DMs too), rank below admins, and need an owner configured", () => {
+  const roles = makeRoles({ dbPath: db(), surface: "discord", ownerId: "o", memberIds: ["m"] });
+  expect(roles.roleOf({ fromId: "m" })).toBe("member");
+  expect(roles.roleOf({ fromId: "m", scopeId: "chan" })).toBe("member");
+  roles.addAdmins("chan", [{ id: "m", name: "M" }]);
+  expect(roles.roleOf({ fromId: "m", scopeId: "chan" })).toBe("admin");
+  expect(makeRoles({ dbPath: db(), surface: "discord", memberIds: ["m"] }).roleOf({ fromId: "m" })).toBe("guest");
+  expect(can("member", "memory") && can("member", "notes") && can("member", "todos")).toBe(true);
+  expect(["delegate", "systemControl", "liveSession", "skillWrites", "cancelRuns"].some((c) => can("member", c as Capability))).toBe(false);
+  expect(dmAllowed("member", roles) && !dmAllowed("guest", roles)).toBe(true);
 });
 
 test("role commands parse with an optional leading slash", () => {

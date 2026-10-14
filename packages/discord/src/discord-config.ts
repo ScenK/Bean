@@ -13,6 +13,9 @@ export interface DiscordConfig {
   ownerName?: string;
   /** Let non-owners DM Bean (as guests). Default false: they get one fixed line. */
   allowGuestDms: boolean;
+  /** Household members' Discord user ids: memory, notes and todos everywhere, DMs included
+   * (no delegates, live sessions, skills or Mac control). Read at startup — restart to change. */
+  memberIds: string[];
 }
 
 export function discordConfigFile(dir: string): string {
@@ -50,10 +53,14 @@ export async function loadDiscordConfig(file: string): Promise<DiscordConfig> {
   if (!ownerId) {
     throw new Error(`Discord config incomplete: ${file} needs ownerId (your Discord user id) — allowedUserIds is replaced by owner/admin roles`);
   }
+  const memberIds = parsed.memberIds ?? [];
+  if (!Array.isArray(memberIds) || !memberIds.every((x) => typeof x === "string" && /^\d+$/.test(x))) {
+    throw new Error(`Discord config invalid: ${file} memberIds must be a list of Discord user ids (digits)`);
+  }
   const guildId = typeof parsed.guildId === "string" && parsed.guildId ? parsed.guildId : undefined;
   const ownerName = typeof parsed.ownerName === "string" && parsed.ownerName ? parsed.ownerName : undefined;
   return {
-    botToken: parsed.botToken, ownerId, allowGuestDms: parsed.allowGuestDms === true,
+    botToken: parsed.botToken, ownerId, allowGuestDms: parsed.allowGuestDms === true, memberIds,
     ...(guildId ? { guildId } : {}), ...(ownerName ? { ownerName } : {}),
   };
 }
