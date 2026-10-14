@@ -1,9 +1,23 @@
-# Chatops roles: owner / admin / guest (#254)
+# Chatops roles: owner / admin / member / guest (#254, #280)
 
-Teams and Discord speakers get one of three roles from `core/src/chatops/roles.ts` `makeRoles()`:
-**owner** (config `ownerId`, global), **admin** (granted per channel / group chat by the owner with
-`add-admin @x`, `bean.db` `chatops_admins`), **guest** (everyone else: Bean's own model only).
-Desktop and routines run as the owner and are untouched.
+Teams and Discord speakers get one of four roles (`guest < member < admin < owner`) from
+`core/src/chatops/roles.ts` `makeRoles()`: **owner** (config `ownerId`, global), **admin** (granted
+per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_admins`), **member**
+(Discord config `memberIds`, household-wide so DMs too, restart to change; Teams has none yet),
+**guest** (everyone else: Bean's own model only). Desktop and routines run as the owner.
+
+- **Capabilities, not role names**: `NEEDS` in roles.ts maps each capability to its least role
+  and `can(role, cap)` reads it — the tool list, `permitted()` runtime checks and `cardActionNeeds`
+  all go through it. Members get memory, notes and todos only: no delegates, chat skills, images,
+  `system_control`, live sessions, skill writes or run cancels. A member refusal says the owner
+  sets those up (`memberRefusal`), never "ask to be made admin".
+- **DM gate** is `dmAllowed(role, roles)` (member+, or `allowGuestDms`) in both `bot.ts` and the
+  surfaces' pre-work gates. The non-member DM line points at `whoami`.
+- **Member is checked before admin grants** in `roleOf`: a household member never gains admin
+  powers from a stale channel grant.
+- **Live capture runs before the role checks**, so it excludes members itself (bot.ts capture
+  branch, Discord's transcription gate and `/stop`): no steering even in war-room mode or as a
+  co-driver — live sessions bypass permissions.
 
 - **Enforcement is two layers — keep both.** (1) `onMessage` builds the tool list, catalog and
   memories from the role (guests get `[]` for all of them). (2) Runtime checks: `converse()` refuses

@@ -6,7 +6,7 @@ import {
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
-  makeRoles, atLeast, cardActionNeeds, cardRefusal, gatedRefusal, ownerOnlyRefusal, type Role,
+  makeRoles, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, refusal, type Capability, type Role,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -60,6 +60,7 @@ mkdirSync(scratchPath, { recursive: true });
 const roles = makeRoles({
   dbPath: dbFile(dir), surface: "discord",
   ownerId: discordConfig.ownerId, ownerName: discordConfig.ownerName, allowGuestDms: discordConfig.allowGuestDms,
+  memberIds: discordConfig.memberIds,
 });
 const transcribe = makeOpenAITranscribe(beanConfig.openaiApiKey);
 const speak = makeOpenAISpeak(beanConfig.openaiApiKey);
@@ -251,7 +252,7 @@ client.on("messageCreate", async (message) => {
     // Role before any paid pre-work: a non-owner DM with guest DMs off gets core's one fixed
     // line (or a whoami answer) — no transcription, no downloads.
     const role: Role = roles.roleOf({ fromId: message.author.id, scopeId: isDm ? undefined : scopeId });
-    const dmBlocked = isDm && role !== "owner" && !roles.allowGuestDms;
+    const dmBlocked = isDm && !dmAllowed(role, roles);
     // Only an explicit address (DM, @mention, reply-to-Bean) gets a turn. Naming the bot in
     // passing ("we should add x to bean") is about Bean, not to it — it stays ambient context.
     const addressed =
@@ -265,7 +266,8 @@ client.on("messageCreate", async (message) => {
     // content — transcribe them into the turn's text so they get a normal reply. In a captured
     // channel only someone who can steer the session pays for a transcription (onMessage would
     // drop anyone else's turn anyway).
-    const canTranscribe = !dmBlocked && (!capturing || liveSessions.canSteer(message.channelId, message.author.id));
+    const canTranscribe = !dmBlocked &&
+      (!capturing || (role !== "member" && liveSessions.canSteer(message.channelId, message.author.id)));
     let transcribeFailed = false;
     let heardAudio = false;
     // What the sender typed, before any transcript is appended: an attached clip may be someone
@@ -377,16 +379,14 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     });
     if (interaction.isChatInputCommand()) {
       const channelId = interaction.channelId;
-      const refuse = async (need: Role, what: string): Promise<boolean> => {
-        if (atLeast(role, need)) return false;
+      const refuse = async (cap: Capability, what: string): Promise<boolean> => {
+        if (can(role, cap)) return false;
         const scopeId = interaction.inGuild() && interaction.channel ? scopeOf(interaction.channel) : undefined;
-        await interaction.reply({
-          content: need === "owner" ? ownerOnlyRefusal(what, roles) : gatedRefusal(what, roles, scopeId), ephemeral: true,
-        });
+        await interaction.reply({ content: refusal(needs(cap), role, what, roles, scopeId), ephemeral: true });
         return true;
       };
       if (interaction.commandName === "new") {
-        if (await refuse("admin", "start a fresh conversation")) return;
+        if (await refuse("fresh", "start a fresh conversation")) return;
         conversations.clear(channelId);
         noteProposals.forgetImages(channelId);
         conversations.setAmbientCutoff(channelId, Date.now()); // fence pre-reset chatter out of ambient
@@ -394,7 +394,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         return;
       }
       if (interaction.commandName === "cancel") {
-        if (await refuse("admin", "cancel runs")) return;
+        if (await refuse("cancelRuns", "cancel runs")) return;
         // Admins stop only this conversation's runs; the owner stops everything.
         const n = runs.cancelAll(role === "owner" ? undefined : channelId);
         await interaction.reply({ content: n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.", ephemeral: true });
@@ -403,7 +403,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       if (interaction.commandName === "stop") {
         // Same steering gate as a plain `stop` message: in a restricted session only the
         // starter/co-drivers may end it, not any allow-listed bystander.
-        if (liveSessions.has(channelId) && !liveSessions.canSteer(channelId, interaction.user.id)) {
+        if (liveSessions.has(channelId) && (role === "member" || !liveSessions.canSteer(channelId, interaction.user.id))) {
           await interaction.reply({ content: "Only the session starter or a co-driver can stop this live session.", ephemeral: true });
           return;
         }
@@ -412,7 +412,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         return;
       }
       if (interaction.commandName === "live-session" && interaction.channel) {
-        if (await refuse("owner", "start a live session")) return;
+        if (await refuse("liveSession", "start a live session")) return;
         await interaction.deferReply({ ephemeral: true }); // proposeLiveSession posts to the channel; ack within 3s
         const reply = await bot.proposeLiveSession(
           { conversationId: channelId, instruction: interaction.options.getString("prompt", true), proposedBy: interaction.user.displayName },
@@ -428,7 +428,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
     if (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) {
       const need = cardActionNeeds(/^bean:([a-z-]+):/.exec(interaction.customId)?.[1]);
       if (!atLeast(role, need)) {
-        await interaction.reply({ content: need === "owner" ? ownerOnlyRefusal("confirm this", roles) : cardRefusal(roles), ephemeral: true });
+        await interaction.reply({ content: cardTapRefusal(need, role, roles), ephemeral: true });
         return;
       }
     }

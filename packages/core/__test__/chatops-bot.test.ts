@@ -1665,10 +1665,13 @@ test("a refused send (codex queue full) replies and stays out of history", async
 
 // ---- Owner / admin / guest roles (#254) ----
 
-/** Real roles over the test's db: u1 owns, "ana" is admin of scope s1, everyone else a guest. */
+/** Real roles over the test's db: u1 owns, "ana" is admin of scope s1, "mia" is a household
+ * member, everyone else a guest. */
 function withRoles(overrides: Parameters<typeof makeDeps>[0] = {}) {
   const made = makeDeps(overrides);
-  const roles = makeRoles({ dbPath: mkdtempSync(join(tmpdir(), "bean-roles-")) + "/bean.db", surface: "discord", ownerId: "u1", ownerName: "Scen" });
+  const roles = makeRoles({
+    dbPath: mkdtempSync(join(tmpdir(), "bean-roles-")) + "/bean.db", surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia"],
+  });
   roles.addAdmins("s1", [{ id: "ana", name: "Ana" }]);
   made.deps.roles = roles;
   return { ...made, roles };
@@ -1676,6 +1679,80 @@ function withRoles(overrides: Parameters<typeof makeDeps>[0] = {}) {
 const owner = { ...msg, scopeId: "s1" };
 const admin = { ...msg, fromId: "ana", fromName: "Ana", scopeId: "s1" };
 const guest = { ...msg, fromId: "gus", fromName: "Gus", scopeId: "s1" };
+const member = { ...msg, fromId: "mia", fromName: "Mia", scopeId: "s1" };
+
+test("capability matrix: each role's tool list in a channel and a DM", async () => {
+  const tools: Record<string, string[] | undefined> = {};
+  const { deps } = withRoles({ systemControlsEnabled: () => true, listTodoRoutines: async () => ["inbox"] });
+  const chat = deps.chat;
+  let key = "";
+  deps.chat = async (a) => { tools[key] ??= a.tools.map((t) => t.name); return chat(a); };
+  const bot = buildTeamsBot(deps);
+  for (const [name, who] of Object.entries({ guest, member, admin, owner })) {
+    for (const direct of [false, true]) {
+      key = `${name}${direct ? "-dm" : ""}`;
+      await bot.onMessage({ ...who, direct, conversationId: key, text: "remember that I like tea" }, fx());
+    }
+  }
+  const memberTools = ["propose_note", "retrieve_note", "remember", "propose_todo"];
+  const adminTools = ["propose_delegate"];
+  const ownerTools = ["system_control", "propose_skill"];
+  expect(tools.guest).toEqual([]);
+  expect(tools["guest-dm"]).toBeUndefined(); // DM gate: no model call
+  expect(tools["admin-dm"]).toBeUndefined(); // admins don't carry into DMs
+  for (const k of ["member", "member-dm"]) {
+    expect(tools[k]).toEqual(expect.arrayContaining(memberTools));
+    for (const t of [...adminTools, ...ownerTools, "propose_run"]) expect(tools[k]).not.toContain(t);
+  }
+  expect(tools.admin).toEqual(expect.arrayContaining([...memberTools, ...adminTools]));
+  for (const t of ownerTools) expect(tools.admin).not.toContain(t);
+  for (const k of ["owner", "owner-dm"]) expect(tools[k]).toEqual(expect.arrayContaining([...memberTools, ...adminTools, ...ownerTools]));
+});
+
+test("a member's forced delegate/skill proposal (not offered) is refused at runtime: no card, no IO", async () => {
+  for (const converseResult of [delegateResult, { reply: "", proposedSkill: { name: "x", body: "b" } } as ConverseResult]) {
+    const { deps, delegateCalls, savedSkills } = withRoles({ converseResult });
+    const effects = fx();
+    await buildTeamsBot(deps).onMessage({ ...member, direct: true }, effects);
+    expect(effects.cards).toHaveLength(0);
+    expect(delegateCalls).toHaveLength(0);
+    expect(savedSkills).toHaveLength(0);
+  }
+});
+
+test("a member can't tap a delegate or live card; the forged tap is refused before the claim", async () => {
+  const { deps, delegateCalls } = withRoles({ converseResult: delegateResult, liveSessionsEnabled: () => true });
+  const effects = fx();
+  const bot = buildTeamsBot(deps);
+  await bot.onMessage(owner, effects);
+  const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(effects.cards[0]))![1]!;
+  const tap = { conversationId: "c1", scopeId: "s1", fromId: "mia", fromName: "Mia" };
+  await bot.onCardAction({ ...tap, value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+  await bot.onCardAction({ ...tap, value: { beanAction: "cancel-run", projectPath: "/p/bean" } }, effects);
+  await bot.onCardAction({ ...tap, value: { beanAction: "start-live", proposalId: "live-1" } }, effects);
+  expect(delegateCalls).toHaveLength(0);
+  expect(effects.posted).toContain("Sorry, I can't confirm this for you. Routines and coding tasks are set up by Scen.");
+  expect(effects.posted).toContain("Only Scen can confirm this.");
+  expect(deps.proposals.get(id)).toBeDefined(); // not claimed: the owner can still run it
+  await bot.onCardAction({ ...tap, fromId: "u1", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+  expect(delegateCalls).toHaveLength(1);
+});
+
+test("a member DM is admitted without allowGuestDms; a non-member DM's refusal points at whoami", async () => {
+  const { deps } = withRoles();
+  const effects = fx();
+  const bot = buildTeamsBot(deps);
+  await bot.onMessage({ ...member, direct: true, text: "whoami" }, effects);
+  await bot.onMessage({ ...member, direct: true }, effects);
+  await bot.onMessage({ ...guest, direct: true }, effects);
+  await bot.onMessage({ ...member, direct: true, text: "/cancel" }, effects);
+  expect(effects.posted).toEqual([
+    "You're a household member here. Your id: mia.",
+    "hello there",
+    "Hi! I only take direct messages from Scen's household. To be added, send Scen the id from `whoami`. Or mention me in a shared chat and I'll help there.",
+    "Sorry, I can't cancel runs for you. Routines and coding tasks are set up by Scen.",
+  ]);
+});
 
 test("a guest's forced proposal (tool not offered) produces no card and no IO; their tool list is bare", async () => {
   const tools: string[][] = [];
@@ -1761,7 +1838,7 @@ test("whoami/admins work for guests; the DM gate answers once with no model call
   expect(effects.posted).toEqual([
     "You're a guest here. Your id: gus.",
     "Owner: Scen. Admins here: Ana.",
-    "Hi! I only take direct messages from Scen. Mention me in a shared chat and I'll help there.",
+    "Hi! I only take direct messages from Scen's household. To be added, send Scen the id from `whoami`. Or mention me in a shared chat and I'll help there.",
     "You're a guest here. Your id: gus.",
   ]);
 });
@@ -1807,4 +1884,25 @@ test("live-session entry points refuse non-owners", async () => {
   expect(effects.posted.filter((p) => p === "Only Scen can start a live session." || p === "Only Scen can confirm this.")).toHaveLength(3);
   expect(deps.liveSessions.has("c1")).toBe(false);
   expect(deps.liveSessionProposals.get(id)).toBeDefined();
+});
+
+test("live capture excludes members: no steering in war-room mode or as a co-driver, no stop", async () => {
+  for (const steering of ["open", "restricted"] as const) {
+    const { startFn, sent } = fakeLiveStartFn();
+    const { deps } = withRoles({
+      liveSessionsEnabled: () => true,
+      liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+    });
+    deps.liveSessions.start({ channelId: "c1", projectPath: "/p/bean", instruction: "go", starterId: "u1", steering, sink: { post: async () => "m1", edit: async () => {} } });
+    if (steering === "restricted") deps.liveSessions.addCoDriver("c1", "mia");
+    const bot = buildTeamsBot(deps);
+    await bot.onMessage({ ...member, text: "rm -rf it" }, fx());
+    await bot.onMessage({ ...member, text: "stop" }, fx());
+    expect(sent).not.toContain("rm -rf it");
+    expect(deps.liveSessions.has("c1")).toBe(true);
+    if (steering === "open") {
+      await bot.onMessage({ ...guest, text: "look at auth" }, fx());
+      expect(sent).toContain("look at auth"); // war-room still open to everyone else
+    }
+  }
 });

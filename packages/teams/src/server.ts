@@ -5,7 +5,7 @@ import {
   detectClis, type CliName, runDelegate, claimOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
-  LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles,
+  LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, dmAllowed,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -331,8 +331,7 @@ app.post("/api/messages", (req, res) => {
     const direct = a.conversation.conversationType === "personal";
     // Role before any paid pre-work: a non-owner DM with guest DMs off gets core's one fixed
     // line (or a whoami answer), so its images are never downloaded.
-    const dmBlocked = direct && !roles.allowGuestDms &&
-      roles.roleOf({ fromId: a.from.id, fromAltId: a.from.aadObjectId }) !== "owner";
+    const dmBlocked = direct && !dmAllowed(roles.roleOf({ fromId: a.from.id, fromAltId: a.from.aadObjectId }), roles);
     // Downloaded only after the addressing gate: ambient channel images must not cost
     // token-authenticated fetches for messages Bean immediately discards. Also skipped
     // while a live session captures the conversation — the bridged agent only takes text.
