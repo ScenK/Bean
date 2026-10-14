@@ -47,6 +47,22 @@ enabled — `/live-session <prompt>`. The same words also work as plain text (`c
 `/new`, `/live-session …`), so an `@bean /live-session …` message routes the same as the slash
 command (verbatim, not reworded by the model).
 
+## Headless routines (no desktop app)
+
+On a bot-only install (e.g. a Linux container) the bot can run your scheduled routines itself:
+
+    TZ=America/Toronto BEAN_HEADLESS_ROUTINES=1 pnpm --filter @bean/discord start
+
+- **Only one scheduler per `~/.bean`.** Never set this where the desktop app also runs against
+  the same `~/.bean` — both would fire every routine. The app strips the variable from the bot it
+  spawns, so the normal Mac setup is unaffected.
+- `TZ` is required (cron matches in local time); the bot exits with one line if it's unset.
+- Boot logs the detected CLIs, whether each has auth, the routine count, and the owner id.
+- Notices that are desktop notifications on the Mac — a failing watch, `notify` sinks, routines
+  missed while the bot was down — arrive as DMs to `ownerId`.
+- On boot, run reservations left in `~/.bean/runs/` are killed and cleared (one owner DM if any).
+- SIGTERM stops the scheduler, lets pending state writes land, and kills routine children.
+
 ## Manual verification checklist
 
 - [ ] Server logs "logged in as …" with detected CLIs.

@@ -13,7 +13,7 @@ import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, M
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
-  isValidSessionId, recordDelegateSession, resumeCommand, listSkillProposals, pruneStepAttempts, listStepAttempts, CLI_NAMES,
+  isValidSessionId, resumeCommand, listSkillProposals, pruneStepAttempts, listStepAttempts, CLI_NAMES,
   modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
@@ -22,14 +22,14 @@ import {
   loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, claimOutbox, runDelegate, killAllDelegates, killAllCommands,
-  composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, runShellCommand, systemControlTool, imagesDir, makeOpenAIImageGen,
+  scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   recoverInterruptedTodos, deleteTodosForRoutine,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  reserveRun, releaseRun, RunBusyError, availableModels, pinnedStepSelection,
-  createRoutineScheduler, createRoutineHost, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch, spawnEnv,
+  availableModels, pinnedStepSelection,
+  createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool, Transport, CommandStepRequest, CommandStepOutcome, RoutineHold, DelegateStepRequest, DelegateStepResult, CliName } from "@bean/core";
+import type { RouteSuggestion, ActionTool, Transport, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
@@ -642,104 +642,17 @@ app.whenReady().then(async () => {
     const recovered = await recoverInterruptedTodos(dbFile(dir));
     if (recovered > 0) console.warn(`bean: marked ${recovered} interrupted todo(s) as failed`);
 
-    // Delegate step adapter: runDelegate's callback shape → a promise, prior outputs folded
-    // into the prompt, scratch workspace when the step has no project. Reuses the same
-    // resolved login-shell PATH spawn as delegate-tasks (safety-packaged-app-path-detection)
-    // and enforces the 15-minute routine step timeout explicitly (runDelegate's own default
-    // is 30 minutes, meant for the interactive chat delegate button, not routines).
-    // Watch-fired todo runs (req.todoId set): a project-less step gets its own scratch subdir
-    // (removed afterwards) so it neither collides with the shared ~/.bean/workspace reservation
-    // nor piles up clones; a project step must win the cross-process run reservation, else the
-    // todo goes back to pending (RunBusyError) and the next tick retries it.
-    // onSession: the step's started CLI session (already recorded in bean.db) for the run's
-    // resume footer — see createRoutineHost.
-    // `hold` (gated routines): a todo's reservation and scratch subdir outlive the step, so a gate
-    // loop re-entering a step never hits RunBusyError against itself and its resumed session
-    // keeps its workspace; the routine host releases them when the run ends.
-    const delegateStep = (
-      req: DelegateStepRequest,
-      onSession?: (cli: CliName, sessionId: string, projectPath: string) => void,
-      hold?: RoutineHold,
-    ): Promise<DelegateStepResult> =>
-      new Promise((resolve, reject) => {
-        let choice;
-        try {
-          // A pinned harness refuses here, before any reservation or spawn — never a silent swap.
-          choice = req.cli
-            ? pinnedStepSelection({ cli: req.cli, model: req.model }, enabledClis(), availableModels(cliModels, enabledClis()))
-            : resolveDelegateCli(req.model);
-        } catch (err) { reject(err); return; }
-        if (!choice) { reject(new Error("No enabled delegate CLI found — enable one in Settings.")); return; }
-        const prompt =
-          (req.skill ? composePrompt(req.skill, req.instruction) : req.instruction) +
-          (req.memories ? `\n\n${req.memories}` : "") +
-          (req.priorOutputs ? `\n\nOutput of this routine's earlier steps:\n${req.priorOutputs}` : "");
-        const perTodo = req.todoId && !req.projectPath ? join(scratchDir(dir), req.todoId) : undefined;
-        const projectPath = req.projectPath ?? perTodo ?? scratchDir(dir);
-        const reserved = Boolean(req.todoId && req.projectPath) && !hold?.reserved.has(projectPath);
-        if (reserved && !reserveRun(dir, projectPath, process.pid, randomUUID)) {
-          reject(new RunBusyError(`${basename(projectPath)} is busy with another run`));
-          return;
-        }
-        if (reserved) hold?.reserved.add(projectPath);
-        if (perTodo) { mkdirSync(perTodo, { recursive: true }); hold?.scratch.add(perTodo); }
-        const cleanup = (): void => {
-          if (hold) return;
-          if (reserved) releaseRun(dir, projectPath);
-          if (perTodo) rmSync(perTodo, { recursive: true, force: true });
-        };
-        runDelegate(
-          {
-            cli: choice.cli,
-            projectPath,
-            prompt,
-            ...(choice.model ? { model: choice.model } : {}),
-            ...(req.skill?.browser ? { browser: true } : {}),
-            // Only the same harness can resume; a rejected id starts fresh (runDelegate's notice).
-            ...(req.resume?.cli === choice.cli ? { resume: req.resume.sessionId } : {}),
-          },
-          {
-            onOutput: () => {},
-            onDone: (out, sessionId) => {
-              cleanup();
-              resolve({
-                output: out, cli: choice.cli,
-                ...(choice.model ? { model: choice.model } : {}),
-                ...(sessionId && isValidSessionId(sessionId) ? { sessionId } : {}),
-              });
-            },
-            onError: (err) => { cleanup(); reject(err); },
-            onSessionStart: (_pid, sessionId) => {
-              recordDelegateSession(dbFile(dir), { surface: "routine", cli: choice.cli, sessionId, projectPath, instruction: req.instruction });
-              if (isValidSessionId(sessionId)) onSession?.(choice.cli, sessionId, projectPath);
-            },
-          },
-          resolvedPathSpawnFn(resolvedPath),
-          req.timeoutMinutes ? req.timeoutMinutes * 60_000 : ROUTINE_STEP_TIMEOUT_MS,
-        );
-      });
-
-    // Command step adapter: same cwd rules as a delegate step (project, else the per-todo or shared
-    // scratch dir) and the same resolved login-shell PATH as watch commands, so a Finder-launched
-    // Bean still finds pnpm/gh. No run reservation: a check reads the tree, it doesn't edit it.
-    const commandStep = async (
-      req: CommandStepRequest,
-      hold?: RoutineHold,
-    ): Promise<CommandStepOutcome> => {
-      const perTodo = req.todoId && !req.projectPath ? join(scratchDir(dir), req.todoId) : undefined;
-      const cwd = req.projectPath ?? perTodo ?? scratchDir(dir);
-      if (!req.projectPath) mkdirSync(cwd, { recursive: true });
-      if (perTodo) hold?.scratch.add(perTodo);
-      try {
-        return await runShellCommand(req.command, {
-          cwd,
-          env: spawnEnv({ PATH: resolvedPath, ...req.env }),
-          timeoutMs: req.timeoutMinutes ? req.timeoutMinutes * 60_000 : ROUTINE_STEP_TIMEOUT_MS,
-        });
-      } finally {
-        if (perTodo && !hold) rmSync(perTodo, { recursive: true, force: true });
-      }
-    };
+    // Delegate/command step adapters (core routine-steps.ts), on the same resolved login-shell
+    // PATH spawn as delegate-tasks (safety-packaged-app-path-detection).
+    const { delegateStep, commandStep } = makeRoutineSteps({
+      dir,
+      // A pinned harness refuses here, before any reservation or spawn — never a silent swap.
+      selectCli: (req) => req.cli
+        ? pinnedStepSelection({ cli: req.cli, model: req.model }, enabledClis(), availableModels(cliModels, enabledClis()))
+        : resolveDelegateCli(req.model),
+      spawnFn: resolvedPathSpawnFn(resolvedPath),
+      path: resolvedPath,
+    });
 
     const { runOneRoutine, deliverDigest } = createRoutineHost({
       dir,

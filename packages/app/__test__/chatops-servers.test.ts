@@ -68,10 +68,12 @@ describe("createChatopsServers", () => {
         return fakeProcess().proc;
       },
       serverEntries: { discord: "chatops/discord/server.js", teams: "chatops/teams/server.js" },
-      extraEnv: { BEAN_BUILTIN_DIR: "/Resources/builtin" },
+      // Even if set, the spawned bot must not run its own scheduler — the app owns it.
+      extraEnv: { BEAN_BUILTIN_DIR: "/Resources/builtin", BEAN_HEADLESS_ROUTINES: "1" },
     });
 
     servers.start("discord");
+    expect(spawned[0]?.env.BEAN_HEADLESS_ROUTINES).toBeUndefined();
 
     expect(spawned).toEqual([{ command: process.execPath, args: ["/Resources/chatops/discord/server.js"], cwd: "/Resources", env: expect.objectContaining({ PATH: "/usr/bin", BEAN_BUILTIN_DIR: "/Resources/builtin", ELECTRON_RUN_AS_NODE: "1" }) }]);
     expect(sent).toEqual([{ bot: "discord", running: true, enabled: true }]);

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { runsDir } from "./config.js";
 
@@ -100,6 +100,26 @@ export function updateReservationPid(dir: string, projectPath: string, pid: numb
   const existing = readReservation(path);
   if (!existing) return;
   writeReservation(path, { ...existing, pid }, "w");
+}
+
+/** Headless boot only (the bot owns ~/.bean alone): kill each recorded reservation's process
+ * group, then delete every reservation. After a container restart pids start low again, so a
+ * stale reservation's pid can match an unrelated live process and block its project forever.
+ * Returns the cleared project paths. Skips this process and pid ≤ 1. */
+export function clearReservations(dir: string, kill: (pid: number) => void = (pid) => process.kill(-pid, "SIGKILL")): string[] {
+  let files: string[];
+  try { files = readdirSync(runsDir(dir)).filter((f) => f.endsWith(".json")); } catch { return []; }
+  const cleared: string[] = [];
+  for (const f of files) {
+    const path = join(runsDir(dir), f);
+    const r = readReservation(path);
+    if (r && r.pid > 1 && r.pid !== process.pid) {
+      try { kill(r.pid); } catch { /* already gone, or not a group leader */ }
+    }
+    rmSync(path, { force: true });
+    cleared.push(r?.projectPath ?? f);
+  }
+  return cleared;
 }
 
 export function releaseRun(dir: string, projectPath: string): void {

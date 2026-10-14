@@ -1,5 +1,5 @@
 // packages/core/__test__/routine-store.test.ts
-import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -33,6 +33,14 @@ describe("save/load/delete routines", () => {
     await writeFile(join(dir, "broken.json"), "{nope", "utf8");
     await writeFile(join(dir, "wrong.json"), JSON.stringify({ name: "wrong" }), "utf8");
     await saveRoutine(dir, routine());
+    expect((await loadRoutines(dir)).map((r) => r.name)).toEqual(["morning-triage"]);
+  });
+  it("writes atomically: no temp file left, and a stray .json.tmp is never loaded", async () => {
+    const dir = await tmp();
+    await saveRoutine(dir, routine());
+    await saveRoutineStates(join(dir, ".state.json"), {});
+    expect((await readdir(dir)).sort()).toEqual([".state.json", "morning-triage.json"]);
+    await writeFile(join(dir, "torn.json.tmp"), JSON.stringify(routine({ name: "torn" })), "utf8");
     expect((await loadRoutines(dir)).map((r) => r.name)).toEqual(["morning-triage"]);
   });
   it("rejects bad names (traversal) and bad cron at save time", async () => {
