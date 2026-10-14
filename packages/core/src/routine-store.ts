@@ -225,6 +225,25 @@ export function isValidRoutine(v: unknown): v is Routine {
   return describeRoutineError(v) === null;
 }
 
+/** A routine the owner drafts in chat (#285): the store's validator, plus what chat may not
+ * create — command steps/watches (same trust as hand-edited shell) — and DMs only to `recipients`
+ * (the owner and household members), never an arbitrary user id the model wrote. */
+export function chatRoutineProblem(v: unknown, recipients: { id: string }[], cliModels?: CliModels[]): string | null {
+  const error = describeRoutineError(v, cliModels);
+  if (error) return error;
+  const r = v as Routine;
+  if (r.steps.some((s) => s.kind === "command") || r.watch?.kind === "command") {
+    return "command steps and command watches can't be set up from chat — add them on the desktop";
+  }
+  for (const s of r.sinks.chatops ?? []) {
+    if (s.transport !== "discord") return "only Discord delivery can be set up from chat";
+    if (s.user !== undefined && !recipients.some((p) => p.id === s.user)) {
+      return `user ${s.user} isn't the owner or a household member — routines only DM the household`;
+    }
+  }
+  return null;
+}
+
 /** A step that runs a CLI or shell with the todo text as its input — owner-only (#283). */
 const privilegedStep = (r: Routine): RoutineStep | undefined =>
   r.steps.find((s) => s.kind === "delegate" || s.kind === "command");
