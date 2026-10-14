@@ -147,3 +147,48 @@ test("memory tools are only offered when the typed message asks to remember or f
   expect(offered("note that the build is slow")).toEqual([]);
   expect(offered("please delete that memory about tabs")).toEqual(["forget_memory"]);
 });
+
+test("a pre-scoping bean.db gains subject_id on open; old rows read as shared everywhere", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { mkdir } = await import("node:fs/promises");
+  await mkdir(dir, { recursive: true });
+  const legacy = new DatabaseSync(file);
+  legacy.exec(
+    "CREATE TABLE memories (id TEXT PRIMARY KEY, text TEXT NOT NULL, project_path TEXT, created_at TEXT NOT NULL);" +
+      "CREATE VIRTUAL TABLE memories_fts USING fts5(text, content='memories', content_rowid='rowid');" +
+      "CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, text) VALUES (new.rowid, new.text); END;" +
+      "INSERT INTO memories VALUES ('a', 'prefers tabs', NULL, '2026-07-01T00:00:00.000Z');",
+  );
+  legacy.close();
+
+  const all = await loadMemories(file);
+  expect(all).toEqual([{ id: "a", text: "prefers tabs", createdAt: "2026-07-01T00:00:00.000Z" }]);
+  // Desktop recall (no scope), a channel/routine (shared only) and a DM all see the old row.
+  expect(await loadMemories(file, null)).toEqual(all);
+  expect(await loadMemories(file, "mia")).toEqual(all);
+  // A member can't delete it; the owner (no subject) can.
+  expect(await deleteMemories(file, ["a"], "mia")).toBe(0);
+  expect(await deleteMemories(file, ["a"])).toBe(1);
+});
+
+test("scoped recall and delete: private rows reach only their speaker", async () => {
+  await appendMemories(file, [m("s", "household wifi is bean"), { ...m("p", "mia likes oat milk"), subjectId: "mia" }]);
+  expect((await loadMemories(file, "mia")).map((x) => x.id).sort()).toEqual(["p", "s"]);
+  expect((await loadMemories(file, "max")).map((x) => x.id)).toEqual(["s"]);
+  expect((await loadMemories(file, null)).map((x) => x.id)).toEqual(["s"]);
+  expect((await loadMemories(file)).find((x) => x.id === "p")?.subjectId).toBe("mia");
+  expect(await deleteMemories(file, ["p", "s"], "max")).toBe(0);
+  expect(await deleteMemories(file, ["p", "s"], "mia")).toBe(1);
+  expect((await loadMemories(file)).map((x) => x.id)).toEqual(["s"]);
+});
+
+test("saveScope: DM private, channel shared; overrides only when unambiguous", async () => {
+  const { saveScope } = await import("../src/memory/tools.js");
+  expect(saveScope("remember that I prefer espresso", true)).toBe("private");
+  expect(saveScope("remember that I prefer espresso", false)).toBe("shared");
+  expect(saveScope("remember that I prefer espresso for everyone", true)).toBe("shared");
+  expect(saveScope("remember that I prefer espresso; this is not for everyone", true)).toBe("private");
+  expect(saveScope("remember that I prefer espresso, just for me", false)).toBe("private");
+  expect(saveScope("remember that I want mint tea, save it for everyone", true)).toBe("shared");
+  expect(saveScope("remember that I prefer espresso but don't share it for everyone", true)).toBe("private");
+});

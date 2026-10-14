@@ -662,7 +662,8 @@ app.whenReady().then(async () => {
       commandStep,
       tools: actionTools,
       loadSkills: () => loadLayeredSkills(skillsDir(projectDir), skillsDir(dir)),
-      memories: () => loadMemories(dbFile(dir)),
+      // Household-shared only: routines never see a member's private facts.
+      memories: () => loadMemories(dbFile(dir), null),
       getRoutineDigestContext: () => runtime.getRoutineDigestContext(),
       onStatus: (e) => {
         if (e.type === "start") taskStatus.upsert(e.id, { kind: "routine", name: e.name, line: e.steps[0] ?? "", detail: e.detail, steps: e.steps, step: 0, startedAt: e.startedAt, state: "running" });

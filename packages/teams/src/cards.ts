@@ -4,7 +4,7 @@ import type {
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE } from "@bean/core";
+import { BROWSER_SKILL_NOTE, rememberedScopeLine } from "@bean/core";
 
 const SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json";
 
@@ -226,6 +226,7 @@ export function rememberedCard(input: RememberedCardInput): object {
     body: [
       { type: "TextBlock", weight: "bolder", text: "🧠 Got it — remembered" },
       { type: "TextBlock", text: `${input.projectName ? `(${input.projectName}) ` : ""}${input.text}`, wrap: true },
+      { type: "TextBlock", text: rememberedScopeLine(input.scope), isSubtle: true, wrap: true },
     ],
     actions: [{ type: "Action.Submit", title: "Forget", data: { beanAction: "forget-memory", proposalId: input.memoryId } }],
   };

@@ -4,7 +4,7 @@ import type {
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
-import { BROWSER_SKILL_NOTE } from "@bean/core";
+import { BROWSER_SKILL_NOTE, rememberedScopeLine } from "@bean/core";
 
 // Raw Discord API component payloads (type 1 = action row, 2 = button, 3 = string select).
 // Plain JSON keeps the builders pure/testable and discord.js accepts them directly.
@@ -203,6 +203,7 @@ function rememberedCard(input: RememberedCardInput): object {
     embeds: [{
       title: "🧠 Got it — remembered",
       description: `${input.projectName ? `(${input.projectName}) ` : ""}${input.text}`.slice(0, 4096),
+      footer: { text: rememberedScopeLine(input.scope) },
     }],
     components: [row([
       { type: BUTTON, style: 2, label: "Forget", custom_id: `bean:forget-memory:${input.memoryId}` },

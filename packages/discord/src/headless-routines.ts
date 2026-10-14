@@ -77,8 +77,8 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
     commandStep: steps.commandStep,
     tools: [retrieveNoteTool((q) => searchNotes(dbFile(dir), q))],
     loadSkills: () => loadLayeredSkills(skillsDir(deps.builtinDir), skillsDir(dir)),
-    // Household-shared memories only; until per-member memory (#281) that is every memory.
-    memories: () => loadMemories(dbFile(dir)),
+    // Household-shared memories only — never a member's private facts.
+    memories: () => loadMemories(dbFile(dir), null),
     getRoutineDigestContext: () => deps.routineDigestContext,
     notify: (msg) => ownerDm(msg.body, msg.title),
   });

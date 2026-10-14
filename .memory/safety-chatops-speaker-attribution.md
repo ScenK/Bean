@@ -1,4 +1,4 @@
-# Chatops turns carry the speaker; memories belong to the owner
+# Chatops turns carry the speaker; memories are the household's (or the speaker's own)
 
 One Bean (one `~/.bean`, one memory store) answers everyone who reaches the Teams/Discord bot —
 Teams Store installs, shared channels, group chats. Before this, user turns reached `converse()`
@@ -9,8 +9,9 @@ owner (and treated their instructions as the owner's).
   `speakerLine(fromName, text)` → `[Name]: text` (brackets stripped from the name so it can't fake
   a second speaker).
 - With `speaker` set, `converse()` adds the constant `SHARED_CHAT_NOTE` to the leading system
-  message (constant per surface, so prompt caching holds) and frames memories as
-  "about your owner". The desktop chat omits `speaker` and is unchanged.
+  message (constant per surface, so prompt caching holds) and frames shared memories as
+  "about the household", the speaker's private ones (DMs only, #281) as "about <speaker>". The
+  desktop chat omits `speaker` and is unchanged.
 - `latestUserText` stays the raw text: memory ranking, `remember` citation and the
   `propose_delegate` instruction fallback must not see the `[Name]:` prefix.
 

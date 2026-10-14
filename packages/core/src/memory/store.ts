@@ -3,17 +3,28 @@ import { DatabaseSync } from "node:sqlite";
 import { openDb } from "../db.js";
 import type { Memory } from "./memory.js";
 
-interface MemoryRow { id: string; text: string; project_path: string | null; created_at: string }
+interface MemoryRow { id: string; text: string; project_path: string | null; created_at: string; subject_id?: string | null }
 
 function toMemory(row: MemoryRow): Memory {
-  return { id: row.id, text: row.text, projectPath: row.project_path ?? undefined, createdAt: row.created_at };
+  return {
+    id: row.id, text: row.text, projectPath: row.project_path ?? undefined, createdAt: row.created_at,
+    ...(row.subject_id ? { subjectId: row.subject_id } : {}),
+  };
 }
 
 // Declared async for call-site compatibility (every caller already awaits these) even though
 // node:sqlite's DatabaseSync is synchronous under the hood — same convention as outbox.ts.
-export async function loadMemories(file: string): Promise<Memory[]> {
+/** `subject` scopes recall, filtered in SQL before any ranking: absent = every row (desktop and
+ * Persona, the owner's own machine), `null` = household-shared only (channels, routines), an id =
+ * shared plus that speaker's private rows (their DMs). */
+export async function loadMemories(file: string, subject?: string | null): Promise<Memory[]> {
   const db = openDb(file);
-  const rows = db.prepare("SELECT id, text, project_path, created_at FROM memories ORDER BY created_at").all() as unknown as MemoryRow[];
+  const cols = "SELECT id, text, project_path, created_at, subject_id FROM memories";
+  const rows = (subject === undefined
+    ? db.prepare(`${cols} ORDER BY created_at`).all()
+    : subject === null
+      ? db.prepare(`${cols} WHERE subject_id IS NULL ORDER BY created_at`).all()
+      : db.prepare(`${cols} WHERE subject_id IS NULL OR subject_id = ? ORDER BY created_at`).all(subject)) as unknown as MemoryRow[];
   return rows.map(toMemory);
 }
 
@@ -28,11 +39,11 @@ export async function loadMemories(file: string): Promise<Memory[]> {
 export async function appendMemories(file: string, additions: Memory[]): Promise<void> {
   const db = openDb(file);
   const insert = db.prepare(
-    "INSERT INTO memories (id, text, project_path, created_at) VALUES (?, ?, ?, ?)",
+    "INSERT INTO memories (id, text, project_path, created_at, subject_id) VALUES (?, ?, ?, ?, ?)",
   );
   db.exec("BEGIN");
   try {
-    for (const m of additions) insert.run(m.id, m.text, m.projectPath ?? null, m.createdAt);
+    for (const m of additions) insert.run(m.id, m.text, m.projectPath ?? null, m.createdAt, m.subjectId ?? null);
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -46,10 +57,16 @@ export async function updateMemory(file: string, id: string, text: string): Prom
   openDb(file).prepare("UPDATE memories SET text = ? WHERE id = ?").run(text, id);
 }
 
-/** Deletes exactly these ids; idempotent (already-gone ids are ignored). Returns rows removed. */
-export async function deleteMemories(file: string, ids: string[]): Promise<number> {
+/** Deletes exactly these ids; idempotent (already-gone ids are ignored). Returns rows removed.
+ * `subject` set = a non-owner speaker: only their own private rows go — never a shared row or
+ * another member's (enforced here in SQL, not by the caller's id list). */
+export async function deleteMemories(file: string, ids: string[], subject?: string): Promise<number> {
   if (ids.length === 0) return 0;
-  const res = openDb(file).prepare(`DELETE FROM memories WHERE id IN (${ids.map(() => "?").join(",")})`).run(...ids);
+  const inList = `id IN (${ids.map(() => "?").join(",")})`;
+  const db = openDb(file);
+  const res = subject === undefined
+    ? db.prepare(`DELETE FROM memories WHERE ${inList}`).run(...ids)
+    : db.prepare(`DELETE FROM memories WHERE ${inList} AND subject_id = ?`).run(...ids, subject);
   return Number(res.changes);
 }
 
@@ -84,7 +101,8 @@ export async function getMemoryMeta(file: string, key: "lastDreamAt" | "lastDrea
 }
 
 export async function countMemoriesSince(file: string, iso: string): Promise<number> {
-  const row = openDb(file).prepare("SELECT count(*) AS n FROM memories WHERE created_at > ?").get(iso) as { n: number };
+  // Shared rows only — dream never touches private ones (see dream.ts).
+  const row = openDb(file).prepare("SELECT count(*) AS n FROM memories WHERE created_at > ? AND subject_id IS NULL").get(iso) as { n: number };
   return Number(row.n);
 }
 
