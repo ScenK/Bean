@@ -865,6 +865,16 @@ describe("propose_routine", () => {
       .toMatch(/command steps/);
   });
 
+  it("posts only in the channel it was drafted in — any other id could be a stranger's DM channel", async () => {
+    const posting = (channel: string) => JSON.stringify({ ...routine, sinks: { chatops: [{ transport: "discord", channel }] } });
+    const here = { ...authoring, channelId: "c1" };
+    expect((await conv({ latestUserText: "x", deps: call(posting("c1")), routineAuthoring: here })).proposedRoutine?.problem).toBeUndefined();
+    expect((await conv({ latestUserText: "x", deps: call(posting("dm-999")), routineAuthoring: here })).proposedRoutine?.problem)
+      .toMatch(/only post in the channel/);
+    expect((await conv({ latestUserText: "x", deps: call(posting("c1")), routineAuthoring: authoring })).proposedRoutine?.problem)
+      .toMatch(/only post in the channel/);
+  });
+
   it("rejects unparseable JSON back to the model", async () => {
     const res = await conv({ latestUserText: "x", deps: call("{not json"), routineAuthoring: authoring });
     expect(res.proposedRoutine).toBeUndefined();

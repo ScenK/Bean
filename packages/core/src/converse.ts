@@ -739,7 +739,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       // An invalid draft still reaches the card, which shows the reason instead of a Save button.
-      const problem = chatRoutineProblem(parsed, routineAuthoring.recipients, routineAuthoring.cliModels);
+      const problem = chatRoutineProblem(parsed, routineAuthoring.recipients, routineAuthoring.cliModels, routineAuthoring.channelId);
       return {
         reply: content,
         model: deps.model,

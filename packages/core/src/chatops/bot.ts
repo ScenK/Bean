@@ -652,7 +652,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     // Re-validated at save: the household or clis.json may have changed while the card sat.
-    const problem = pending.proposal.problem ?? chatRoutineProblem(routine, recipients, deps.cliModels);
+    const problem = pending.proposal.problem ?? chatRoutineProblem(routine, recipients, deps.cliModels, pending.channelId);
     if (problem) {
       await updateTo(resultCard("failed", problem));
       await fx.post(`Couldn't save the routine: ${problem}`);
@@ -1082,6 +1082,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           if (!deps.routines || !deps.cards.routineProposalCard) return;
           const pending = deps.routines.proposals.add({
             proposal: result.proposedRoutine, conversationId: msg.conversationId, proposedBy: msg.fromName,
+            ...(routineAuthoring?.channelId ? { channelId: routineAuthoring.channelId } : {}),
           });
           const activityId = await fx.postCard(deps.cards.routineProposalCard(
             routineCardInput(pending, routineAuthoring?.recipients ?? [], deps.roles.ownerName),

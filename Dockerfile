@@ -17,7 +17,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code @openai/codex \
  && npm cache clean --force \
- && mkdir -p /data && chown node:node /data
+ && mkdir -p /data/.codex && chown -R node:node /data
 
 # server.js is self-contained (esbuild bundles @bean/core and discord.js); .bean holds the
 # built-in skills/persona/clis.json that ~/.bean layers over.

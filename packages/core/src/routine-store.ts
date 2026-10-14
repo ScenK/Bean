@@ -227,8 +227,12 @@ export function isValidRoutine(v: unknown): v is Routine {
 
 /** A routine the owner drafts in chat (#285): the store's validator, plus what chat may not
  * create — command steps/watches (same trust as hand-edited shell) — and DMs only to `recipients`
- * (the owner and household members), never an arbitrary user id the model wrote. */
-export function chatRoutineProblem(v: unknown, recipients: { id: string }[], cliModels?: CliModels[]): string | null {
+ * (the owner and household members), never an arbitrary user id the model wrote. A channel sink
+ * may only be `channelId`, the server channel it was drafted in: any other id could be a DM
+ * channel, which would bypass the recipient check. */
+export function chatRoutineProblem(
+  v: unknown, recipients: { id: string }[], cliModels?: CliModels[], channelId?: string,
+): string | null {
   const error = describeRoutineError(v, cliModels);
   if (error) return error;
   const r = v as Routine;
@@ -239,6 +243,9 @@ export function chatRoutineProblem(v: unknown, recipients: { id: string }[], cli
     if (s.transport !== "discord") return "only Discord delivery can be set up from chat";
     if (s.user !== undefined && !recipients.some((p) => p.id === s.user)) {
       return `user ${s.user} isn't the owner or a household member — routines only DM the household`;
+    }
+    if (s.channel !== undefined && s.channel !== channelId) {
+      return "routines from chat can only post in the channel they're drafted in — set other channels on the desktop";
     }
   }
   return null;

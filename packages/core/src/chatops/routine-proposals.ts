@@ -11,6 +11,8 @@ export interface PendingRoutine {
   id: string;
   proposal: ProposedRoutine;
   conversationId: string;
+  /** The server channel it was drafted in — the only channel sink it may save with. */
+  channelId?: string;
   proposedBy: string;
   cardActivityId?: string;
   createdAt: number;

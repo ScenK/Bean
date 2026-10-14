@@ -59,7 +59,7 @@ volume before first start). Every path below is inside the container.
    - Claude: on any machine, run `claude setup-token` while logged in as the household account.
      Pass the token as the `CLAUDE_CODE_OAUTH_TOKEN` secret (`-e` from your shell, or a
      compose/orchestrator secret). Never write it into an image or a committed file.
-   - Codex: `docker exec -it bean codex login --device-auth`. The login lands in
+   - Codex: `docker exec -it bean sh -c 'mkdir -p "$CODEX_HOME" && codex login --device-auth'`. The login lands in
      `CODEX_HOME=/data/.codex`, on the volume, so it survives restarts.
    - Check: the boot line reports each CLI's auth, for example
      `@bean/discord headless routines on: TZ=America/Toronto, clis: claude, codex (auth claude=yes codex=no), 0 routine(s) (0 enabled), owner 111`.
