@@ -245,6 +245,9 @@ export function openDb(file: string): DatabaseSync {
     ["skill_proposals", "prev_body", "TEXT"],
     ["skill_proposals", "applied_hash", "TEXT"],
     ["skill_proposals", "decided_at", "TEXT"],
+    // Per-speaker memory (#281): the chatops speaker a fact is private to; NULL = household-shared,
+    // so every pre-existing row reads as shared.
+    ["memories", "subject_id", "TEXT"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");

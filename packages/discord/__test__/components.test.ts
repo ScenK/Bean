@@ -137,11 +137,12 @@ test("note proposal clamps a long body to Discord's 4096-char embed description 
 
 test("remembered card shows the fact and a Forget button carrying the memory id within Discord's 100-char custom_id", () => {
   const id = "0f8c2a4e-6b1d-4c3e-9a7f-2d5b8e1c4a90";
-  const card = discordCards.rememberedCard({ memoryId: id, text: "uses vitest", projectName: "bean" }) as {
+  const card = discordCards.rememberedCard({ memoryId: id, text: "uses vitest", projectName: "bean", scope: "private" }) as {
     components: { components: { custom_id: string; label: string }[] }[];
   };
   const s = JSON.stringify(card);
   expect(s).toContain("(bean) uses vitest");
+  expect(s).toContain("Saved for you — used in our DMs.");
   const button = card.components[0]!.components[0]!;
   expect(button.label).toBe("Forget");
   expect(button.custom_id).toBe(`bean:forget-memory:${id}`);

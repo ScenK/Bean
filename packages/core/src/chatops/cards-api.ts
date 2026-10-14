@@ -76,6 +76,12 @@ export interface RememberedCardInput {
   text: string;
   /** Resolved display name of the fact's project; absent = a global fact. */
   projectName?: string;
+  /** Who the fact is for — the receipt states it ("saved for you — used in our DMs"). */
+  scope: "private" | "shared";
+}
+
+export function rememberedScopeLine(scope: RememberedCardInput["scope"]): string {
+  return scope === "private" ? "Saved for you — used in our DMs." : "Saved for the household.";
 }
 
 export interface SkillProposalCardInput {

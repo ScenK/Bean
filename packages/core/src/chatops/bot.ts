@@ -4,7 +4,7 @@ import type { ChatopsActivitySink } from "./activity.js";
 import { converse, speakerLine, type ConverseDeps, type ImageAttachment, type ProposedLiveSession } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
-import { makeMemoryTools } from "../memory/tools.js";
+import { makeMemoryTools, saveScope } from "../memory/tools.js";
 import { availableModels } from "../models.js";
 import type { Skill, Project } from "../types.js";
 import type { Persona } from "../persona.js";
@@ -109,7 +109,9 @@ export interface TeamsBotDeps {
   loadSkills: () => Promise<Skill[]>;
   loadProjects: () => Promise<Project[]>;
   loadPersona: () => Promise<Persona>;
-  loadMemories: () => Promise<Memory[]>;
+  /** Scoped like core's loadMemories: absent = all, `null` = household-shared only, an id =
+   * shared plus that speaker's private facts. */
+  loadMemories: (subject?: string | null) => Promise<Memory[]>;
   loadModelMemory: () => Promise<Record<string, string>>;
   saveModelMemory: (m: Record<string, string>) => Promise<void>;
   detectClis: () => CliName[];
@@ -135,8 +137,9 @@ export interface TeamsBotDeps {
   /** Insert-only add of new facts — never lose a concurrent writer's addition (see
    * memory/store.ts's appendMemories doc comment). */
   appendMemories: (additions: Memory[]) => Promise<void>;
-  /** Idempotent per-id delete (remember card's Forget button, forget_memory tool). */
-  deleteMemories: (ids: string[]) => Promise<number>;
+  /** Idempotent per-id delete (remember card's Forget button, forget_memory tool). `subject`
+   * set = only that speaker's private rows may go (non-owners); absent = any row (the owner). */
+  deleteMemories: (ids: string[], subject?: string) => Promise<number>;
   conversations: ConversationStore;
   cards: CardBuilders;
   /** Gates the system_control action tool, same as main.ts's desktop wiring. */
@@ -558,11 +561,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
 
   // Forget button on a remembered card. The id rides the button itself and delete is
   // idempotent, so no proposal store: a second tap (or a stale card) just says so.
-  async function handleForget(memoryId: string | undefined, actor: string, fx: BotEffects): Promise<void> {
+  // A member forgets only their own private facts; the owner (`subject` undefined) forgets any.
+  async function handleForget(memoryId: string | undefined, actor: string, subject: string | undefined, fx: BotEffects): Promise<void> {
     if (!memoryId) return;
     const text = (await deps.loadMemories()).find((m) => m.id === memoryId)?.text;
-    const n = await deps.deleteMemories([memoryId]);
-    await fx.post(n > 0 ? `Forgot (by ${actor}): ${text ?? "that fact"}` : "Already forgotten.");
+    const n = await deps.deleteMemories([memoryId], subject);
+    if (n > 0) await fx.post(`Forgot (by ${actor}): ${text ?? "that fact"}`);
+    else await fx.post(text === undefined ? "Already forgotten." : "Only the owner can forget household facts or another member's.");
   }
 
   // Post a live-session proposal from a verbatim instruction — no converse()/LLM in the path, so
@@ -739,7 +744,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const [skills, projects, persona, memories, modelMemory, todoRoutines] = await Promise.all([
           canDelegate ? loadActiveSkills() : [],
           canDelegate || canMemory || can(role, "notes") ? deps.loadProjects() : [], deps.loadPersona(),
-          canMemory ? deps.loadMemories() : [], deps.loadModelMemory(), can(role, "todos") ? deps.listTodoRoutines() : [],
+          // Recall is scoped before ranking: a DM sees the speaker's private facts plus shared
+          // ones; a channel sees shared only.
+          canMemory ? deps.loadMemories(msg.direct ? msg.fromId : null) : [], deps.loadModelMemory(), can(role, "todos") ? deps.listTodoRoutines() : [],
         ]);
         const detected = deps.detectClis();
         let history = deps.conversations.history(msg.conversationId);
@@ -772,8 +779,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           : undefined;
         // The msg.text is what this person typed, so it's the one citable source for remember;
         // the chat-skill follow-up below reuses converseBase without these tools.
+        const typed = msg.typedText ?? msg.text;
+        const scope = saveScope(typed, msg.direct);
         const memoryTools = makeMemoryTools({
-          append: deps.appendMemories, forget: deps.deleteMemories, memories, projects, latestUserText: msg.typedText ?? msg.text,
+          append: deps.appendMemories, forget: (ids) => deps.deleteMemories(ids, isOwner ? undefined : msg.fromId),
+          memories, projects, latestUserText: typed, ...(scope === "private" ? { subjectId: msg.fromId } : {}),
         });
         // runAvailable=false: propose_run is never offered here — confirming one couldn't
         // execute anything from Teams/Discord; propose_delegate is the only run path.
@@ -830,7 +840,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           const nameFor = (path: string): string => projects.find((p) => p.path === path)?.name ?? path;
           for (const m of memoryTools.remembered) {
             await fx.postCard(deps.cards.rememberedCard({
-              memoryId: m.id, text: m.text, projectName: m.projectPath ? nameFor(m.projectPath) : undefined,
+              memoryId: m.id, text: m.text, projectName: m.projectPath ? nameFor(m.projectPath) : undefined, scope,
             }));
           }
         }
@@ -971,7 +981,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (beanAction === "forget-memory") {
         // proposalId carries the memory id here (the surfaces' generic id slot).
-        await handleForget(proposalId, action.fromName, fx);
+        await handleForget(proposalId, action.fromName, role === "owner" ? undefined : action.fromId, fx);
         return;
       }
       if (beanAction === "resume-live") {
