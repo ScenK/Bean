@@ -57,6 +57,7 @@ export type { CronSpec } from "./cron.js";
 export * from "./watch-window.js";
 export * from "./routine-scheduler.js";
 export * from "./routine-host.js";
+export * from "./routine-steps.js";
 export * from "./watch-io.js";
 export * from "./safe-fetch.js";
 export * from "./spawn-env.js";
@@ -73,7 +74,7 @@ export { runRoutine, unfence, withResumeFooter, ROUTINE_STEP_TIMEOUT_MS, RunBusy
 export type { CommandStepRequest, DelegateStepRequest, DelegateStepResult, RoutineRunnerDeps, RoutineRunResult, StepInfo, StepResult } from "./routine-runner.js";
 export { claimOutbox, enqueueOutbox } from "./outbox.js";
 export type { OutboxMessage } from "./outbox.js";
-export { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice } from "./run-queue.js";
+export { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice, clearReservations } from "./run-queue.js";
 export type { RunReservation } from "./run-queue.js";
 export * from "./live-session.js";
 export * from "./codex-live-session.js";

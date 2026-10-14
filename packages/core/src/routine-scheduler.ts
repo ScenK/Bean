@@ -36,6 +36,8 @@ export interface RoutineSchedulerDeps {
   /** Fired once when a watch fails ALARM_AFTER polls in a row (desktop notification only —
    * never chatops sinks). Best-effort: the panel's status line is the guarantee. */
   alarm?: (routine: Routine, error: string) => void;
+  /** Fired once at start() with every routine just flagged missed (headless hosts DM the owner). */
+  onMissed?: (names: string[]) => void;
 }
 
 export interface WatchCheckResult { newItems: number; error?: string }
@@ -282,6 +284,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       for (const name of flagged) next[name] = { ...(next[name] ?? { history: [] }), missed: true };
       return next;
     });
+    deps.onMissed?.(flagged);
   }
 
   return {
@@ -294,6 +297,8 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       timer = undefined;
     },
     tick,
+    /** Resolves once every queued .state.json write has landed (shutdown: stop(), then await this). */
+    settle: (): Promise<void> => stateChain.then(() => {}),
     isRunning: (name: string): boolean => running.has(name),
     pollFailures: (name: string): number => failures.get(name) ?? 0,
     async runNow(name: string): Promise<{ started: boolean; reason?: string }> {

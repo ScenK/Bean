@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import {
   runDelegate, reserveRun, releaseRun, updateReservationPid, enqueueOutbox, outboxDir, dbFile,
-  interruptedRunNotice, BEAN_GIT_IDENTITY, availableModels, resolveCliModelSelection,
+  interruptedRunNotice, BEAN_GIT_IDENTITY,
   isValidSessionId, recordDelegateSession, resumeCommand, shQuote, spawnEnv,
 } from "@bean/core";
-import type { CliModelSelection, CliModels, CliName, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
+import type { CliModelSelection, CliName, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
 
 /** The started CLI session, for the delegate card's Copy chip: `label` is `claude · 3f2a…`,
  * `command` is `cd '<projectPath>' && claude --resume <id>`. Never put into chat text. */
@@ -67,23 +67,7 @@ export function resolvedPathSpawnFn(resolvedPath: string | undefined): DelegateS
     : undefined;
 }
 
-/** Resolve the Settings delegate preference together with an optional explicit model pick.
- * Auto (or a now-disabled saved preference) means the first enabled CLI; only an explicit
- * model request may move the selection to another compatible enabled provider. */
-export function resolveDelegateSelection(
-  cliModels: CliModels[],
-  enabled: CliName[],
-  configuredCli: string,
-  explicitModel?: string,
-): CliModelSelection | undefined {
-  const preferredCli = enabled.includes(configuredCli as CliName)
-    ? configuredCli as CliName
-    : enabled[0];
-  return resolveCliModelSelection(availableModels(cliModels, enabled), enabled, {
-    ...(preferredCli ? { cli: preferredCli } : {}),
-    ...(explicitModel ? { model: explicitModel } : {}),
-  });
-}
+export { resolveDelegateSelection } from "@bean/core";
 
 interface Task {
   cancel: DelegateHandle["cancel"];

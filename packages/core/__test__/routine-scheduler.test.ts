@@ -80,10 +80,13 @@ describe("routine scheduler", () => {
       loadStates: async () => ({ morning: { lastRun: d(6, 30, 10).toISOString(), history: [] } }),
       now: () => d(9, 0), // started at 9:00; 6:30 on the 11th and 12th passed while closed
     });
-    const sched = createRoutineScheduler(deps);
+    const onMissed = vi.fn();
+    const sched = createRoutineScheduler({ ...deps, onMissed });
     sched.start();
     await vi.runOnlyPendingTimersAsync(); // flush the async missed-marking
     expect(getStates().morning?.missed).toBe(true);
+    expect(onMissed).toHaveBeenCalledExactlyOnceWith(["morning"]);
+    await sched.settle();
     expect(deps.runRoutine).not.toHaveBeenCalled();
     sched.stop();
     vi.useRealTimers();

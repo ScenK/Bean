@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice } from "../src/run-queue.js";
+import { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice, clearReservations } from "../src/run-queue.js";
 import { runsDir } from "../src/config.js";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "bean-runqueue-"));
@@ -29,6 +29,18 @@ describe("run-queue", () => {
     const b = reserveRun(dir, "/p", process.pid, newId);
     expect([a, b].filter(Boolean)).toHaveLength(1);
     expect(readdirSync(runsDir(dir))).toHaveLength(1);
+  });
+
+  it("clearReservations kills each recorded group (never this process) and empties runs/", () => {
+    const dir = tmp();
+    expect(clearReservations(dir)).toEqual([]); // no runs/ yet
+    reserveRun(dir, "/stale", 424242, newId);
+    reserveRun(dir, "/self", process.pid, newId);
+    const killed: number[] = [];
+    expect(clearReservations(dir, (pid) => { killed.push(pid); }).sort()).toEqual(["/self", "/stale"]);
+    expect(killed).toEqual([424242]);
+    expect(readdirSync(runsDir(dir))).toEqual([]);
+    expect(reserveRun(dir, "/stale", process.pid, newId)).toBeDefined();
   });
 
   it("release frees the path for a new reservation", () => {

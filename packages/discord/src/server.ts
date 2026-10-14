@@ -20,12 +20,21 @@ import { chunkText } from "./chunk.js";
 import { discordCards } from "./components.js";
 import { deliverOutboxDm } from "./outbox-dm.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
+import { headlessRoutinesOn, startHeadlessRoutines, tzProblem } from "./headless-routines.js";
 
 const dir = beanDir();
 const builtinDir = process.env.BEAN_BUILTIN_DIR || projectBeanDir();
 const discordConfig = await loadDiscordConfig(discordConfigFile(dir));
 const beanConfig = await loadConfig(configFile(dir), dir);
 if (!beanConfig.openaiApiKey) throw new Error("openaiApiKey missing in ~/.bean/config.json");
+// Headless routines (no desktop app): this process schedules them. Checked before anything starts.
+const headless = headlessRoutinesOn(process.env);
+const tzError = headless ? tzProblem(process.env) : undefined;
+if (tzError) {
+  console.error(tzError);
+  process.exit(1);
+}
+let stopRoutines: (() => Promise<void>) | undefined;
 
 // Re-scanned per call so a CLI installed after the bot started is picked up.
 const clis = (): CliName[] => detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
@@ -563,7 +572,9 @@ process.on("SIGTERM", () => {
   // SIGKILL fallback on a setTimeout that would never fire before process.exit below runs,
   // leaving a permissions-bypassed child orphaned if it doesn't honor SIGTERM promptly.
   liveSessions.forceKillAll();
-  process.exit(0);
+  // Headless: stop the scheduler, let its queued .state.json writes land, kill routine children.
+  if (!stopRoutines) process.exit(0);
+  void stopRoutines().finally(() => process.exit(0));
 });
 
 client.once("clientReady", async () => {
@@ -643,6 +654,14 @@ setInterval(() => {
     }
   })();
 }, OUTBOX_POLL_MS);
+
+// Before login: boot cleanup of stale run reservations must finish before a chat run can reserve.
+if (headless) {
+  stopRoutines = await startHeadlessRoutines({
+    dir, builtinDir, converse: converseChat, model: beanConfig.model, clis, cliModels,
+    delegateCli: beanConfig.delegateCli, routineDigestContext: beanConfig.routineDigestContext, ownerId: discordConfig.ownerId,
+  });
+}
 
 // Die with the desktop app that spawned us — see exitWhenOrphaned's doc comment. Discord
 // binds no port, so a stale orphan doesn't announce itself with EADDRINUSE: it just stays
