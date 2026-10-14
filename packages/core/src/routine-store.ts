@@ -9,7 +9,8 @@ import { describeEdgeError } from "./routine-graph.js";
 
 // Absent/empty channel = DM the user directly (the default); a non-empty channel targets a
 // specific discord channel id or teams conversation id instead.
-export interface RoutineChatopsSink { transport: "teams" | "discord"; channel?: string }
+// `user` (Discord only, exclusive with `channel`): DM that Discord user id instead of the owner.
+export interface RoutineChatopsSink { transport: "teams" | "discord"; channel?: string; user?: string }
 export interface RoutineSinks { chatops?: RoutineChatopsSink[]; note?: boolean; notify?: boolean }
 
 /** A gated step ends its output with `VERDICT: PASS|FAIL`; FAIL either stops the run or jumps
@@ -209,6 +210,11 @@ export function describeRoutineError(v: unknown, cliModels?: CliModels[]): strin
       if (typeof cs !== "object" || cs === null) return `${at} is malformed`;
       if (cs.transport !== "teams" && cs.transport !== "discord") return `${at} needs transport "teams" or "discord"`;
       if (cs.channel !== undefined && !str(cs.channel)) return `${at} has an invalid channel`;
+      if (cs.user !== undefined) {
+        if (!str(cs.user) || !cs.user.trim()) return `${at} has an invalid user`;
+        if (cs.channel !== undefined) return `${at} can't have both a channel and a user`;
+        if (cs.transport !== "discord") return `${at}: user is Discord-only`;
+      }
     }
   }
   return null;

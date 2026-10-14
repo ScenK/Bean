@@ -128,6 +128,15 @@ describe("createRoutineHost", () => {
     expect(notify).toHaveBeenCalledWith({ title: "Routine: r", body: "hello" });
   });
 
+  it("maps a user sink to outbox userId with a whose-routine footer", async () => {
+    const h = host();
+    const r = routine([], { sinks: { chatops: [{ transport: "discord", user: "u1" }] } });
+    await h.deliverDigest(r, { digest: "hello", results: [], record: {} as never });
+    const [msg] = await claimOutbox(outboxDir(dir), "discord");
+    expect(msg).toMatchObject({ userId: "u1", body: 'hello\n\n_Sent by Bean\'s owner\'s routine "r"._' });
+    expect(msg?.channel).toBeUndefined();
+  });
+
   it("skips the notify sink when the host has no notifier", async () => {
     const h = host();
     await expect(h.deliverDigest(routine([], { sinks: { notify: true } }), { digest: "x", results: [], record: {} as never })).resolves.toBeUndefined();
