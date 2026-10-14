@@ -13,7 +13,7 @@ import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, M
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
-  isValidSessionId, recordDelegateSession, resumeCommand, withResumeFooter, withProposalFooter, saveSkillProposals, listSkillProposals, RETRO_SKILL, recordStepAttempt, pruneStepAttempts, listStepAttempts, DEFAULT_GATE_ROUNDS, CLI_NAMES,
+  isValidSessionId, recordDelegateSession, resumeCommand, listSkillProposals, pruneStepAttempts, listStepAttempts, CLI_NAMES,
   modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
@@ -21,14 +21,15 @@ import {
   loadReminders, saveReminders, dueReminders, extractPageText,
   loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
-  routinesDir, routineStateFile, outboxDir, enqueueOutbox, claimOutbox, runRoutine, runDelegate, killAllDelegates, killAllCommands,
+  routinesDir, routineStateFile, outboxDir, claimOutbox, runDelegate, killAllDelegates, killAllCommands,
   composePrompt, scratchDir, ROUTINE_STEP_TIMEOUT_MS, runShellCommand, systemControlTool, imagesDir, makeOpenAIImageGen,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
-  updateTodoStatus, recoverInterruptedTodos, deleteTodosForRoutine,
+  recoverInterruptedTodos, deleteTodosForRoutine,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  reserveRun, releaseRun, RunBusyError, availableModels, pinnedStepSelection, usesGates,
+  reserveRun, releaseRun, RunBusyError, availableModels, pinnedStepSelection,
+  createRoutineScheduler, createRoutineHost, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch, spawnEnv,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool, Transport, CommandStepRequest, CommandStepOutcome, DelegateStepRequest, DelegateStepResult, Routine, RoutineRunResult, StepInfo, TodoStatus, CliName } from "@bean/core";
+import type { RouteSuggestion, ActionTool, Transport, CommandStepRequest, CommandStepOutcome, RoutineHold, DelegateStepRequest, DelegateStepResult, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
@@ -42,9 +43,7 @@ import {
 import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
 import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } from "./delegate-tasks.js";
-import { createRoutineScheduler } from "./routine-scheduler.js";
 import { createRoutineBuilder } from "./routine-builder.js";
-import { detectTools, execWatchCommand, fetchText, sinkRecipients } from "./watch-io.js";
 import { createTaskStatus } from "./task-status.js";
 import { createKeepAwake, keepAwakeFile, keepAwakeTooltip, loadKeepAwake, saveKeepAwake, type KeepAwakeState } from "./keep-awake.js";
 import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
@@ -509,9 +508,10 @@ app.whenReady().then(async () => {
         return `error: only http(s) URLs can be fetched, got ${parsed.protocol}`;
       }
       try {
-        const res = await fetch(parsed, { signal: AbortSignal.timeout(15_000) });
+        // safeFetch refuses loopback/LAN/metadata addresses (also after redirects) and caps the body.
+        const res = await safeFetch(parsed.toString(), { timeoutMs: 15_000, maxBytes: 5 * 1024 * 1024 });
         if (!res.ok) return `error: fetch failed with HTTP ${res.status}`;
-        const text = extractPageText(await res.text());
+        const text = extractPageText(res.body);
         return text || "error: page had no readable text";
       } catch (err) {
         return `error: fetch failed — ${err instanceof Error ? err.message : String(err)}`;
@@ -652,14 +652,14 @@ app.whenReady().then(async () => {
     // nor piles up clones; a project step must win the cross-process run reservation, else the
     // todo goes back to pending (RunBusyError) and the next tick retries it.
     // onSession: the step's started CLI session (already recorded in bean.db) for the run's
-    // resume footer — see runOneRoutine.
+    // resume footer — see createRoutineHost.
     // `hold` (gated routines): a todo's reservation and scratch subdir outlive the step, so a gate
     // loop re-entering a step never hits RunBusyError against itself and its resumed session
-    // keeps its workspace; runOneRoutine releases them when the run ends.
+    // keeps its workspace; the routine host releases them when the run ends.
     const delegateStep = (
       req: DelegateStepRequest,
       onSession?: (cli: CliName, sessionId: string, projectPath: string) => void,
-      hold?: { reserved: Set<string>; scratch: Set<string> },
+      hold?: RoutineHold,
     ): Promise<DelegateStepResult> =>
       new Promise((resolve, reject) => {
         let choice;
@@ -724,7 +724,7 @@ app.whenReady().then(async () => {
     // Bean still finds pnpm/gh. No run reservation: a check reads the tree, it doesn't edit it.
     const commandStep = async (
       req: CommandStepRequest,
-      hold?: { reserved: Set<string>; scratch: Set<string> },
+      hold?: RoutineHold,
     ): Promise<CommandStepOutcome> => {
       const perTodo = req.todoId && !req.projectPath ? join(scratchDir(dir), req.todoId) : undefined;
       const cwd = req.projectPath ?? perTodo ?? scratchDir(dir);
@@ -733,7 +733,7 @@ app.whenReady().then(async () => {
       try {
         return await runShellCommand(req.command, {
           cwd,
-          env: { ...process.env, PATH: resolvedPath, ...req.env },
+          env: spawnEnv({ PATH: resolvedPath, ...req.env }),
           timeoutMs: req.timeoutMinutes ? req.timeoutMinutes * 60_000 : ROUTINE_STEP_TIMEOUT_MS,
         });
       } finally {
@@ -741,126 +741,23 @@ app.whenReady().then(async () => {
       }
     };
 
-    // Act-now note saving for routine chat steps (chat's propose_note stays confirm-first;
-    // this is the pre-authorized routine counterpart — the user consented by writing the step).
-    // Deliberately NOT added to actionTools: that array also backs the interactive chat window,
-    // which must keep save_note confirm-first.
-    const saveNoteTool: ActionTool = {
-      spec: {
-        name: "save_note",
-        description: "Save a markdown note to the user's notes. Use only when the routine step's instruction asks for it.",
-        parameters: {
-          type: "object",
-          properties: {
-            title: { type: "string", description: "short note title" },
-            body: { type: "string", description: "markdown body" },
-          },
-          required: ["title", "body"],
-        },
+    const { runOneRoutine, deliverDigest } = createRoutineHost({
+      dir,
+      converse: runtime.converse,
+      getModel: () => runtime.getModel(),
+      delegateStep,
+      commandStep,
+      tools: actionTools,
+      loadSkills: () => loadLayeredSkills(skillsDir(projectDir), skillsDir(dir)),
+      memories: () => loadMemories(dbFile(dir)),
+      getRoutineDigestContext: () => runtime.getRoutineDigestContext(),
+      onStatus: (e) => {
+        if (e.type === "start") taskStatus.upsert(e.id, { kind: "routine", name: e.name, line: e.steps[0] ?? "", detail: e.detail, steps: e.steps, step: 0, startedAt: e.startedAt, state: "running" });
+        else if (e.type === "step") taskStatus.upsert(e.id, { step: e.step, line: e.line });
+        else taskStatus.finish(e.id, e.state, e.line);
       },
-      run: async (args) => {
-        const { title, body } = (args ?? {}) as { title?: unknown; body?: unknown };
-        if (typeof title !== "string" || typeof body !== "string") return "error: save_note needs { title, body }";
-        const slug = await saveNote(dbFile(dir), { title, body, source: "manual" });
-        return `note saved as ${slug}`;
-      },
-    };
-
-    const runOneRoutine = async (routine: Routine): Promise<RoutineRunResult> => {
-      const skills = await loadLayeredSkills(skillsDir(projectDir), skillsDir(dir));
-      const id = `routine:${routine.name}`;
-      const steps = routine.steps.map((st) => {
-        const text = st.kind === "command" ? st.command : st.instruction;
-        return st.skill || (text.length > 60 ? `${text.slice(0, 59)}…` : text);
-      });
-      taskStatus.upsert(id, { kind: "routine", name: routine.name, line: steps[0] ?? "", detail: routine.description ?? "", steps, step: 0, startedAt: Date.now(), state: "running" });
-      let result: RoutineRunResult | undefined;
-      // Run-scoped, so concurrent routines never mix receipts. Bean writes the footer itself —
-      // the model never sees or retypes an id.
-      const receipts: string[] = [];
-      let at: StepInfo = { index: 0 };
-      const hold = usesGates(routine.steps) ? { reserved: new Set<string>(), scratch: new Set<string>() } : undefined;
-      try {
-        result = await runRoutine(routine, {
-          onStep: (info) => {
-            at = info;
-            // A looping gate shows its cap: `review · round 2/3 · codex`.
-            const onFail = routine.steps[info.index]?.gate?.onFail;
-            const loopTarget = typeof onFail === "object" ? routine.steps.findIndex((s) => s.id === onFail.goto) : -1;
-            const cap = typeof onFail === "object" && loopTarget >= 0 && loopTarget < info.index ? `/${onFail.maxRounds ?? DEFAULT_GATE_ROUNDS}` : "";
-            const tags = [steps[info.index] ?? "", ...(info.round && info.round > 1 ? [`round ${info.round}${cap}`] : []), ...(info.cli ? [info.cli] : [])];
-            taskStatus.upsert(id, { step: info.index, line: tags.filter(Boolean).join(" · ") });
-          },
-          chat: runtime.converse,
-          model: runtime.getModel(),
-          delegate: (req) => {
-            const step = `step ${at.index + 1}${at.round && at.round > 1 ? ` round ${at.round}` : ""}`;
-            return delegateStep(req, (cli, sessionId, projectPath) => {
-              receipts.push(`${step} (${req.projectPath ? basename(projectPath) : "workspace"}) — ${resumeCommand(cli, sessionId)}`);
-            }, hold);
-          },
-          command: (req) => commandStep(req, hold),
-          tools: [...actionTools, saveNoteTool],
-          findSkill: (name) => skills.find((s) => s.name === name),
-          memories: () => loadMemories(dbFile(dir)),
-          recordAttempt: (a) => recordStepAttempt(dbFile(dir), a),
-          retro: {
-            history: async (name) => {
-              const analyzed = (await loadRoutines(routinesPath)).find((r) => r.name === name);
-              if (!analyzed) return undefined;
-              const history = (await loadRoutineStates(routineStatePath))[name]?.history ?? [];
-              return { routine: analyzed, runs: history.map((record) => ({ record, attempts: record.id ? listStepAttempts(dbFile(dir), record.id) : [] })) };
-            },
-            save: (proposals) => saveSkillProposals(dbFile(dir), proposals),
-          },
-          todos: {
-            listPending: async (r) => (await listTodos(dbFile(dir), r)).filter((t) => t.status === "pending"),
-            setStatus: (todoId, status: TodoStatus, resultSummary?: string) =>
-              updateTodoStatus(dbFile(dir), todoId, status, resultSummary),
-          },
-        });
-        // Before the scheduler saves the record and delivers it to sinks.
-        result = withResumeFooter(result, receipts);
-        if (routine.steps.some((st) => st.kind === "chat" && st.skill === RETRO_SKILL)) {
-          result = withProposalFooter(result, listSkillProposals(dbFile(dir)).length);
-        }
-        return result;
-      } finally {
-        for (const p of hold?.reserved ?? []) releaseRun(dir, p);
-        for (const p of hold?.scratch ?? []) rmSync(p, { recursive: true, force: true });
-        const status = result?.record.status;
-        taskStatus.finish(
-          id, status === "ok" ? "done" : "failed",
-          !status ? "Run failed"
-            : status === "failed" ? "Finished with a failed step"
-            : status === "needs-attention" ? "Needs attention — a gate stopped it"
-            : `Done · ${steps.length} step${steps.length === 1 ? "" : "s"}`,
-        );
-      }
-    };
-
-    const deliverDigest = async (routine: Routine, result: RoutineRunResult): Promise<void> => {
-      if (routine.sinks.note) {
-        await saveNote(dbFile(dir), {
-          title: `routine: ${routine.name}`,
-          body: result.digest,
-          source: "manual",
-          slug: `routine-${routine.name}`, // update-in-place: one living note per routine
-        });
-      }
-      for (const sink of routine.sinks.chatops ?? []) {
-        await enqueueOutbox(outboxDir(dir), {
-          transport: sink.transport, channel: sink.channel,
-          title: `Routine: ${routine.name}`, body: result.digest,
-          // Read live, not at boot: flipping the Settings toggle takes effect on the next run
-          // without restarting the bot servers (they just honor the flag on the message).
-          context: runtime.getRoutineDigestContext(),
-        }, randomUUID);
-      }
-      if (routine.sinks.notify && notificationTransport.available()) {
-        await notificationTransport.send({ title: `Routine: ${routine.name}`, body: result.digest });
-      }
-    };
+      notify: async (msg) => { if (notificationTransport.available()) await notificationTransport.send(msg); },
+    });
 
     const watchPoll = { fetchText, exec: execWatchCommand(resolvedPath) };
     const routineScheduler = createRoutineScheduler({

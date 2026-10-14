@@ -55,6 +55,11 @@ export * from "./chatops/roles.js";
 export { parseCron, isValidCron, nextRun } from "./cron.js";
 export type { CronSpec } from "./cron.js";
 export * from "./watch-window.js";
+export * from "./routine-scheduler.js";
+export * from "./routine-host.js";
+export * from "./watch-io.js";
+export * from "./safe-fetch.js";
+export * from "./spawn-env.js";
 export {
   appendRunRecord, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines, watchEveryMinutes, DEFAULT_WATCH_MINUTES,
   loadRoutineStates, resolveTodoRoutine, saveRoutine, saveRoutineStates, usesGates,

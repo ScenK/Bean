@@ -3,7 +3,7 @@
 Routines fire on `cron` XOR `watch` (#173). A watch is a deterministic poll — **no model per
 check**: `{kind:"feed", url}` (hand Atom/RSS parser in `core/watch.ts`, no XML dep) or
 `{kind:"command", command}` (`/bin/sh -c`, resolved login-shell PATH, 60 s / 1 MB, stdout =
-JSON lines or one array of `{id,text}`; `app/watch-io.ts`). `steps: []` = notify-only (digest
+JSON lines or one array of `{id,text}`; `core/watch-io.ts`). `steps: []` = notify-only (digest
 built in the scheduler, one `RunRecord{steps:[]}` per fire); steps present ⇒ must be
 `todoDriven` and each new item is queued as a todo — **the queue is the due signal**, the poller
 never calls `runRoutine`.

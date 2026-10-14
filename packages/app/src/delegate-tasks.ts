@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import {
   runDelegate, reserveRun, releaseRun, updateReservationPid, enqueueOutbox, outboxDir, dbFile,
   interruptedRunNotice, BEAN_GIT_IDENTITY, availableModels, resolveCliModelSelection,
-  isValidSessionId, recordDelegateSession, resumeCommand, shQuote,
+  isValidSessionId, recordDelegateSession, resumeCommand, shQuote, spawnEnv,
 } from "@bean/core";
 import type { CliModelSelection, CliModels, CliName, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
 
@@ -62,7 +62,7 @@ export function resolvedPathSpawnFn(resolvedPath: string | undefined): DelegateS
           cwd,
           stdio: ["ignore", "pipe", "pipe"],
           detached: true,
-          env: { ...process.env, PATH: resolvedPath, ...BEAN_GIT_IDENTITY, PWD: cwd }, // PWD: see core defaultDelegateSpawn
+          env: spawnEnv({ PATH: resolvedPath, ...BEAN_GIT_IDENTITY, PWD: cwd }), // PWD: see core defaultDelegateSpawn
         })
     : undefined;
 }

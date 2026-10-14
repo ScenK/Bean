@@ -1,6 +1,11 @@
-// packages/app/src/routine-scheduler.ts
-import { appendRunRecord, inWatchWindow, nextRun, watchDigest, watchEveryMinutes, watchSourceKey, watchTodoText } from "@bean/core";
-import type { Routine, RoutineRunResult, RoutineState, RoutineWatch, RunRecord, WatchItem } from "@bean/core";
+// packages/core/src/routine-scheduler.ts
+import { nextRun } from "./cron.js";
+import { appendRunRecord, watchEveryMinutes } from "./routine-store.js";
+import type { Routine, RoutineState, RoutineWatch, RunRecord } from "./routine-store.js";
+import type { RoutineRunResult } from "./routine-runner.js";
+import { watchDigest, watchSourceKey, watchTodoText } from "./watch.js";
+import type { WatchItem } from "./watch.js";
+import { inWatchWindow } from "./watch-window.js";
 
 /** The seen-set for watch routines (bean.db in the app; a Map in tests). */
 export interface WatchSeenDeps {

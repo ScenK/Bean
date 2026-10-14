@@ -10,7 +10,7 @@ import type { TaskJob } from "./task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch } from "./ipc.js";
 import type { RoutineBuildView } from "./routine-builder.js";
-import type { WatchCheckResult } from "./routine-scheduler.js";
+import type { WatchCheckResult } from "@bean/core";
 
 contextBridge.exposeInMainWorld("bean", {
   route: (input: RouteInput): Promise<RouteSuggestion> => ipcRenderer.invoke(IPC.route, input),
