@@ -416,8 +416,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       onTurnResult: (result) =>
         deps.conversations.append(p.conversationId, { role: "assistant", content: `[live session] ${result}` }),
       onEnded: (notice) => {
-        void updateToEnded();
-        void fx.post(notice);
+        updateToEnded().catch(logRunEffectError);
+        fx.post(notice).catch(logRunEffectError);
       },
     });
     async function updateToEnded(): Promise<void> {
