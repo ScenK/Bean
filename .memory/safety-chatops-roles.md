@@ -39,3 +39,8 @@ per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_ad
   The role line in the trailing system message is guidance only; never treat it as the gate.
 - Live sessions: every *launch* entry point is owner-only; steering a running one keeps the
   starter/co-driver/war-room model ([project-live-sessions](project-live-sessions.md)).
+- **Daily turn cap (#284, Discord)**: every non-owner gets 200 addressed turns a day (`turn-cap.ts`,
+  `chatops_turn_counts` keyed by message id, day = local date in `TZ`). Checked in `server.ts`
+  right after the role check, before transcription/downloads/thread title; keyword commands,
+  blocked DMs and live steering don't count. One atomic `INSERT … SELECT WHERE count < cap` —
+  don't split it into read-then-write. Owner `usage` lists today's counts.

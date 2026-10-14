@@ -6,7 +6,7 @@ import {
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
-  makeRoles, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, refusal, type Capability, type Role,
+  makeRoles, makeTurnCap, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, refusal, type Capability, type Role,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -62,6 +62,11 @@ const roles = makeRoles({
   ownerId: discordConfig.ownerId, ownerName: discordConfig.ownerName, allowGuestDms: discordConfig.allowGuestDms,
   memberIds: discordConfig.memberIds,
 });
+// Per-member daily turn cap, checked in messageCreate before any paid pre-work.
+const turnCap = makeTurnCap({ dbPath: dbFile(dir), surface: "discord" });
+// The at-cap line goes out once per member per day per conversation (this process).
+const capNotices = new Set<string>();
+let capNoticeDay = "";
 const transcribe = makeOpenAITranscribe(beanConfig.openaiApiKey);
 const speak = makeOpenAISpeak(beanConfig.openaiApiKey);
 
@@ -135,7 +140,7 @@ const scopeOf = (channel: TextBasedChannel): string =>
 
 // bot.ts's keyword commands (same optional leading slash). They act on the channel and answer
 // in one line, so they never open a session thread.
-const KEYWORD_COMMAND = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins)$|live-session\b|(?:add|remove)-admin\b)/i;
+const KEYWORD_COMMAND = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins|usage)$|live-session\b|(?:add|remove)-admin\b)/i;
 
 // A thread Bean opened is a session: every message in it is addressed to Bean. The Discord
 // API's ownerId survives restarts, so no local record of owned threads is needed.
@@ -267,6 +272,33 @@ client.on("messageCreate", async (message) => {
       message.mentions.repliedUser?.id === client.user?.id;
     if (!addressed && !capturing) return;
     let text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
+    // Owner-only `usage`: today's turn counts. Anyone else gets one line (a blocked DM falls
+    // through to core's DM refusal) — never a free, uncounted model turn.
+    if (!capturing && !dmBlocked && /^\/*usage$/i.test(text)) {
+      if (role !== "owner") { await message.reply("Only the owner can see usage."); return; }
+      const rows = turnCap.usage();
+      await message.reply(rows.length === 0
+        ? `No member turns yet today (${localTimeZone()}).`
+        : `Today's turns (${localTimeZone()}, cap ${DAILY_TURN_CAP}): ${rows.map((r) => `${r.name} ${r.count}`).join(", ")}.`);
+      return;
+    }
+    // Daily turn cap, before transcription, downloads and the thread title. Only turns headed for
+    // converse() count: not the owner, keyword commands, blocked DMs, or live-session steering.
+    // Counted on admission, so a turn that later fails still counts.
+    if (
+      role !== "owner" && !capturing && !dmBlocked && !KEYWORD_COMMAND.test(text) &&
+      (text || message.attachments.size > 0) &&
+      !turnCap.admit({ turnId: message.id, userId: message.author.id, userName: message.author.displayName })
+    ) {
+      const day = localDay();
+      if (day !== capNoticeDay) { capNotices.clear(); capNoticeDay = day; }
+      const key = `${message.author.id}:${message.channelId}`;
+      if (!capNotices.has(key)) {
+        capNotices.add(key);
+        await message.reply(`You've used today's ${DAILY_TURN_CAP} messages — resets at midnight (${localTimeZone()}).`);
+      }
+      return;
+    }
     // Voice messages (and other audio clips ≤25MB, the transcription API cap) arrive with empty
     // content — transcribe them into the turn's text so they get a normal reply. In a captured
     // channel only someone who can steer the session pays for a transcription (onMessage would
