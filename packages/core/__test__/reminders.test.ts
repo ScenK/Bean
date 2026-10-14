@@ -75,6 +75,7 @@ test("fireDueReminders: targeted → outbox (DM or channel), untargeted → desk
     r({ id: "chan", target: { transport: "discord", channelId: "c1" } }),
     { ...r({ id: "bad" }), target: { transport: "discord" } },
     { ...r({ id: "both" }), target: { transport: "discord", userId: "mia", channelId: "c1" } },
+    { ...r({ id: "null" }), target: null },
   ]), "utf8");
   const desktop: string[] = [];
   const queued: object[] = [];
@@ -89,6 +90,6 @@ test("fireDueReminders: targeted → outbox (DM or channel), untargeted → desk
     { transport: "discord", title: "⏰ Reminder", body: "stretch", userId: "mia" },
     { transport: "discord", title: "⏰ Reminder", body: "stretch", channel: "c1" },
   ]);
-  expect(failed).toEqual(["bad", "both"]);
+  expect(failed).toEqual(["bad", "both", "null"]);
   expect((await loadReminders(file)).every((x) => x.firedAt)).toBe(true);
 });
