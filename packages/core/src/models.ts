@@ -116,3 +116,21 @@ export function pinnedStepSelection(
   const model = step.model ?? pickModel(models, step.cli);
   return { cli: step.cli, ...(model ? { model } : {}) };
 }
+
+/** Resolve the Settings delegate preference together with an optional explicit model pick.
+ * Auto (or a now-disabled saved preference) means the first enabled CLI; only an explicit
+ * model request may move the selection to another compatible enabled provider. */
+export function resolveDelegateSelection(
+  cliModels: CliModels[],
+  enabled: CliName[],
+  configuredCli: string,
+  explicitModel?: string,
+): CliModelSelection | undefined {
+  const preferredCli = enabled.includes(configuredCli as CliName)
+    ? configuredCli as CliName
+    : enabled[0];
+  return resolveCliModelSelection(availableModels(cliModels, enabled), enabled, {
+    ...(preferredCli ? { cli: preferredCli } : {}),
+    ...(explicitModel ? { model: explicitModel } : {}),
+  });
+}
