@@ -6,7 +6,7 @@ import {
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
-  makeRoles, makeTurnCap, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, refusal, type Capability, type Role,
+  makeRoles, makeTurnCap, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, parseRoleCommand, refusal, type Capability, type Role,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -283,11 +283,20 @@ client.on("messageCreate", async (message) => {
       return;
     }
     // Daily turn cap, before transcription, downloads and the thread title. Only turns headed for
-    // converse() count: not the owner, keyword commands, blocked DMs, or live-session steering.
-    // Counted on admission, so a turn that later fails still counts.
+    // converse() count: not the owner, blocked DMs, live-session steering, or a keyword command
+    // bot.ts answers itself — mirrored from its checks, and only attachment-free (a transcript
+    // appended to `whoami` turns it into a model turn). Counted on admission, so a turn that
+    // later fails still counts.
+    const cmd = text.toLowerCase().replace(/^\/+/, "");
+    const coreCommand = message.attachments.size === 0 &&
+      (cmd === "cancel" || cmd === "new" || parseRoleCommand(text) !== undefined || /^\/?live-session\b/i.test(text));
+    const usable = text !== "" || message.attachments.some((a) => {
+      const mime = a.contentType?.split(";")[0]?.trim() ?? "";
+      return (mime.startsWith("audio/") && a.size <= 25 * 1024 * 1024) ||
+        ((SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) && a.size <= 10 * 1024 * 1024);
+    });
     if (
-      role !== "owner" && !capturing && !dmBlocked && !KEYWORD_COMMAND.test(text) &&
-      (text || message.attachments.size > 0) &&
+      role !== "owner" && !capturing && !dmBlocked && !coreCommand && usable &&
       !turnCap.admit({ turnId: message.id, userId: message.author.id, userName: message.author.displayName })
     ) {
       const day = localDay();
