@@ -14,6 +14,8 @@ export interface MemoryToolDeps {
   /** The user's latest *typed* message. remember quotes must come from it — offer these tools
    * only on a typed turn, never on a delegate loopback or composed skill prompt. */
   latestUserText: string;
+  /** Saved facts are private to this speaker (chatops DM, or "just for me"); absent = shared. */
+  subjectId?: string;
 }
 
 // Code-side intent gate: a tool is only offered when the typed message actually asks for it, so
@@ -23,6 +25,17 @@ export interface MemoryToolDeps {
 // ponytail: phrase heuristics; a miss just means the user rephrases or uses Persona.
 const REMEMBER_INTENT =
   /(?<!\b(?:can'?t|cannot|don'?t|do not|never|not)\s)\b(?:remember|memori[sz]e)\s+(?:that|this|my|me|i|i'm|we|our|to|how|what)\b|\bkeep in mind\b|\b(?:save|add)\b[^.?!]*\b(?:to|in)\s+(?:your\s+)?memory\b/i;
+const PRIVATE_SCOPE = /\b(?:just|only)\s+(?:for|between)\s+(?:me|us)\b|\bkeep\s+(?:it|this|that)\s+private\b|\bprivately\b/i;
+const SHARED_SCOPE = /\bfor\s+(?:everyone|everybody|all\s+of\s+us|the\s+(?:whole\s+)?(?:household|family|house))\b/i;
+
+/** Where a chatops remember lands: a DM saves private to the speaker, a channel saves to the
+ * household; explicit wording ("just for me" / "for everyone") overrides. */
+export function saveScope(typedText: string, direct: boolean): "private" | "shared" {
+  if (PRIVATE_SCOPE.test(typedText)) return "private";
+  if (SHARED_SCOPE.test(typedText)) return "shared";
+  return direct ? "private" : "shared";
+}
+
 const FORGET_INTENT =
   /\bforget\s+(?:that|what|about|this|my|everything|i|i'm)\b|\b(?:delete|remove|erase|drop|clear)\b[^.?!]*\b(?:memor(?:y|ies)|remember\w*)\b/i;
 
@@ -48,7 +61,10 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
       if (typeof c === "string") return `error: not remembered — ${c}`;
       if (texts.has(c.text.toLowerCase())) return "Already remembered.";
       // randomUUID: `id` is a SQLite PRIMARY KEY shared across processes (desktop + bots).
-      const m: Memory = { id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: new Date().toISOString() };
+      const m: Memory = {
+        id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: new Date().toISOString(),
+        ...(deps.subjectId ? { subjectId: deps.subjectId } : {}),
+      };
       await deps.append([m]);
       texts.add(c.text.toLowerCase());
       remembered.push(m);
@@ -74,7 +90,10 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
       if (ids.length === 0) return "error: no matching remembered facts — check the ids.";
       const n = await deps.forget(ids);
       forgotten.push(...ids);
-      return `Forgot ${n} fact(s).`;
+      // The surface's forget may refuse rows the speaker doesn't own (household or another member's).
+      return n < ids.length
+        ? `Forgot ${n} fact(s). The other ${ids.length - n} weren't removed: already gone, or not yours to forget (only the owner removes household facts or another member's).`
+        : `Forgot ${n} fact(s).`;
     },
   };
 

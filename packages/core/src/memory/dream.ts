@@ -84,7 +84,9 @@ export async function maybeDream(deps: DreamDeps): Promise<DreamDigest | undefin
       // Re-check under the lease: another run may have committed between the check and the claim.
       if (!(await isDue(deps.dbFile, now()))) return undefined;
       const skip = new Set(deps.exclude?.() ?? []);
-      const memories = (await loadMemories(deps.dbFile)).filter((m) => !skip.has(m.id)).slice(0, MAX_PER_RUN);
+      // Household-shared only: a merge must never fold one member's private fact into a shared
+      // one (or another member's), and the apply/undo history doesn't carry subject_id.
+      const memories = (await loadMemories(deps.dbFile, null)).filter((m) => !skip.has(m.id)).slice(0, MAX_PER_RUN);
       const result = await proposeMemoryConsolidation(memories, { chat: deps.chat, model: deps.model });
       if (result.failed) return undefined; // an outage leaves the watermark alone — retried next close
       const plan = planDream(memories, result, runId, now().toISOString());

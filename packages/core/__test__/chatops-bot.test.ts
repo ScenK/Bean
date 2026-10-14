@@ -157,7 +157,7 @@ test("plain message: replies with converse text and records history", async () =
   ]);
 });
 
-test("shared chat: each turn names its speaker and memories are framed as the owner's", async () => {
+test("shared chat: each turn names its speaker and shared memories are framed as the household's", async () => {
   const seen: { role: string; content: string }[][] = [];
   const { deps } = makeDeps({
     loadMemories: async () => [{ id: "1", text: "prefers to be called Scen", createdAt: "" }],
@@ -174,7 +174,7 @@ test("shared chat: each turn names its speaker and memories are framed as the ow
   // history keeps alice's turn attributed; the latest turn names bob (brackets stripped)
   expect(second.map((m) => m.content)).toContain("[alice]: hi bean");
   expect(second.at(-1)).toEqual({ role: "user", content: "[bob]: me too" });
-  expect(second.map((m) => m.content).join("\n")).toContain("(about your owner) prefers to be called Scen");
+  expect(second.map((m) => m.content).join("\n")).toContain("(about the household) prefers to be called Scen");
 });
 
 test("onActivity brackets a converse turn with who/where, never the message text", async () => {
@@ -1905,4 +1905,96 @@ test("live capture excludes members: no steering in war-room mode or as a co-dri
       expect(sent).toContain("look at auth"); // war-room still open to everyone else
     }
   }
+});
+
+// ---- Per-speaker memory scoping (#281) ----
+
+/** Two household members (mia, max) over a real bean.db; u1 owns. The chat fake records every
+ * prompt and, when asked to remember, saves the fact quoted from the message. */
+async function household() {
+  const { appendMemories, deleteMemories, loadMemories } = await import("../src/memory/store.js");
+  const file = dbFile(mkdtempSync(join(tmpdir(), "bean-household-")));
+  const prompts: string[] = [];
+  let pending = true;
+  const made = makeDeps({
+    loadMemories: (subject) => loadMemories(file, subject),
+    appendMemories: (m) => appendMemories(file, m),
+    deleteMemories: (ids, subject) => deleteMemories(file, ids, subject),
+    chat: async ({ messages, tools }) => {
+      prompts.push(messages.map((x) => String(x.content)).join("\n"));
+      const latest = String(messages.at(-1)?.content ?? "");
+      const drink = /I prefer (oat milk|rooibos|espresso)/.exec(latest)?.[1];
+      if (pending && tools?.some((t) => t.name === "remember") && drink) {
+        pending = false;
+        return { content: "", toolCalls: [{ name: "remember", args: { text: `Prefers ${drink}`, quote: `I prefer ${drink}` } }] };
+      }
+      pending = true;
+      return { content: "ok", toolCalls: [] };
+    },
+  });
+  made.deps.roles = makeRoles({ dbPath: file, surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia", "max"] });
+  const say = (who: string, direct: boolean, text = "what do you know?") =>
+    ({ ...msg, conversationId: direct ? `dm-${who}` : "c1", fromId: who, fromName: who, direct, scopeId: direct ? undefined : "s1", text });
+  return { ...made, file, prompts, say, loadMemories };
+}
+
+test("a DM remember is private: recalled in that member's DM only, never another DM, a channel, or a routine", async () => {
+  const h = await household();
+  const bot = buildTeamsBot(h.deps);
+  const effects = fx();
+  await bot.onMessage(h.say("mia", true, "remember that I prefer oat milk"), effects);
+  const saved = await h.loadMemories(h.file);
+  expect(saved).toMatchObject([{ text: "Prefers oat milk", subjectId: "mia" }]);
+  expect(effects.cards[0]).toMatchObject({ kind: "remembered", scope: "private" });
+
+  const recalled = async (m: Parameters<typeof h.say>): Promise<boolean> => {
+    h.prompts.length = 0;
+    await bot.onMessage(h.say(...m), fx());
+    return h.prompts.some((p) => p.includes("Prefers oat milk"));
+  };
+  expect(await recalled(["mia", true])).toBe(true);
+  expect(await recalled(["max", true])).toBe(false);
+  expect(await recalled(["mia", false])).toBe(false);
+  expect(await recalled(["u1", false])).toBe(false);
+  // Routines load with `null` (shared only) — see main.ts / headless-routines.ts.
+  expect(await h.loadMemories(h.file, null)).toEqual([]);
+});
+
+test("a channel remember is shared; explicit wording overrides the default scope", async () => {
+  const h = await household();
+  const bot = buildTeamsBot(h.deps);
+  const channel = fx();
+  await bot.onMessage(h.say("mia", false, "remember that I prefer oat milk"), channel);
+  expect(channel.cards[0]).toMatchObject({ scope: "shared" });
+  const dm = fx();
+  await bot.onMessage(h.say("max", true, "remember that I prefer rooibos for everyone"), dm);
+  expect(dm.cards[0]).toMatchObject({ scope: "shared" });
+  const chan = fx();
+  await bot.onMessage(h.say("max", false, "remember that I prefer espresso just for me"), chan);
+  expect(chan.cards[0]).toMatchObject({ scope: "private" });
+  const rows = await h.loadMemories(h.file);
+  expect(rows.map((r) => [r.text, r.subjectId])).toEqual([
+    ["Prefers oat milk", undefined], ["Prefers rooibos", undefined], ["Prefers espresso", "max"],
+  ]);
+});
+
+test("forget: a member removes only their own private facts; the owner removes any", async () => {
+  const h = await household();
+  const { appendMemories } = await import("../src/memory/store.js");
+  await appendMemories(h.file, [
+    { id: "shared", text: "wifi is bean", createdAt: "2026-01-01T00:00:00.000Z" },
+    { id: "mias", text: "mia likes oat milk", createdAt: "2026-01-01T00:00:00.000Z", subjectId: "mia" },
+  ]);
+  const bot = buildTeamsBot(h.deps);
+  const tap = async (who: string, id: string): Promise<string[]> => {
+    const effects = fx();
+    await bot.onCardAction({ conversationId: "c1", fromId: who, fromName: who, value: { beanAction: "forget-memory", proposalId: id } }, effects);
+    return effects.posted;
+  };
+  expect(await tap("max", "mias")).toContain("Only the owner can forget household facts or another member's.");
+  expect(await tap("max", "shared")).toContain("Only the owner can forget household facts or another member's.");
+  expect((await h.loadMemories(h.file)).map((m) => m.id).sort()).toEqual(["mias", "shared"]);
+  await tap("mia", "mias");
+  await tap("u1", "shared");
+  expect(await h.loadMemories(h.file)).toEqual([]);
 });
