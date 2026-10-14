@@ -61,6 +61,8 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
         return;
       }
       if (reserved) hold?.reserved.add(projectPath);
+      // This step's child carries the reservation (held across a gated run's later steps too).
+      const owns = reserved || Boolean(hold?.reserved.has(projectPath));
       if (perTodo) { mkdirSync(perTodo, { recursive: true }); hold?.scratch.add(perTodo); }
       // The shared scratch workspace must exist for the spawn's cwd.
       if (!req.projectPath && !perTodo) mkdirSync(projectPath, { recursive: true });
@@ -90,7 +92,8 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
             });
           },
           onError: (err) => { cleanup(); reject(err); },
-          onSessionStart: (_pid, sessionId) => {
+          onSessionStart: (pid, sessionId) => {
+            if (owns && pid) updateReservationPid(dir, projectPath, pid); // a resume fallback is a new child
             recordDelegateSession(dbFile(dir), { surface: "routine", cli, sessionId, projectPath, instruction: req.instruction });
             if (isValidSessionId(sessionId)) onSession?.(cli, sessionId, projectPath);
           },
@@ -100,7 +103,7 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
       );
       // Track the detached child, not this host: a crashed host's boot cleanup must kill the
       // delegate, and a live delegate must keep its project reserved (run-queue.ts).
-      if (reserved && handle.pid) updateReservationPid(dir, projectPath, handle.pid);
+      if (owns && handle.pid) updateReservationPid(dir, projectPath, handle.pid);
     });
 
   const commandStep: RoutineHostDeps["commandStep"] = async (req: CommandStepRequest, hold) => {
