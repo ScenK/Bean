@@ -52,6 +52,7 @@ export * from "./chatops/skill-proposals.js";
 export * from "./chatops/runs.js";
 export * from "./chatops/resolve.js";
 export * from "./chatops/roles.js";
+export * from "./chatops/turn-cap.js";
 export * from "./chatops/reminder-tools.js";
 export * from "./chatops/todo-tools.js";
 export { parseCron, isValidCron, nextRun } from "./cron.js";
