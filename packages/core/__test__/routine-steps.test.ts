@@ -29,4 +29,18 @@ describe("makeRoutineSteps delegate adapter", () => {
     expect(reservedPid).toBe(childPid);
     expect(readdirSync(runsDir(dir))).toEqual([]);
   });
+
+  it("a gated hold hands the reservation back to the live host once the child exits", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bean-steps-"));
+    const project = mkdtempSync(join(tmpdir(), "bean-proj-"));
+    const { delegateStep } = makeRoutineSteps({
+      dir, path: process.env.PATH ?? "",
+      selectCli: () => ({ cli: "claude" }),
+      spawnFn: (_cmd, _args, cwd) => spawn(process.execPath, ["-e", ""], { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] }),
+    });
+    const hold = { reserved: new Set<string>(), scratch: new Set<string>() };
+    await delegateStep({ projectPath: project, instruction: "x", priorOutputs: "", todoId: "t1" }, undefined, hold).catch(() => {});
+    const [f] = readdirSync(runsDir(dir));
+    expect((JSON.parse(readFileSync(join(runsDir(dir), f!), "utf8")) as { pid: number }).pid).toBe(process.pid);
+  });
 });
