@@ -189,4 +189,6 @@ test("saveScope: DM private, channel shared; overrides only when unambiguous", a
   expect(saveScope("remember that I prefer espresso for everyone", true)).toBe("shared");
   expect(saveScope("remember that I prefer espresso; this is not for everyone", true)).toBe("private");
   expect(saveScope("remember that I prefer espresso, just for me", false)).toBe("private");
+  expect(saveScope("remember that I want mint tea, save it for everyone", true)).toBe("shared");
+  expect(saveScope("remember that I prefer espresso but don't share it for everyone", true)).toBe("private");
 });

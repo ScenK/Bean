@@ -30,7 +30,7 @@ const SHARED_SCOPE = /\bfor\s+(?:everyone|everybody|all\s+of\s+us|the\s+(?:whole
 
 // Any negation in the message ("this is not for everyone") voids a sharing override: widening a
 // private fact must be unambiguous, so a doubtful DM stays private.
-const NEGATED = /\b(?:not|never|no)\b|n'?t\b/i;
+const NEGATED = /\b(?:not|never|no)\b|\b\w+n['’]t\b|\b(?:dont|doesnt|isnt|wont|cant)\b/i;
 
 /** Where a chatops remember lands: a DM saves private to the speaker, a channel saves to the
  * household; explicit wording ("just for me" / "for everyone") overrides. */
