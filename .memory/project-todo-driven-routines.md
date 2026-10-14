@@ -28,3 +28,12 @@ unit level. One item never got real interactive coverage: the end-to-end `pnpm d
 GUI automation, so Tasks 8/9 and this task's own boot-check could only confirm the app boots
 clean and typechecks/builds, never a real click-through. Accepted as a known limitation, not a
 blocker; the unit tests above are the closest available evidence for that flow's correctness.
+
+Member todos (#283): `todos.created_by` is set only for a **non-owner** chatops speaker; NULL =
+the owner's (desktop, watch-created, legacy, or the owner on chat). Non-owners may queue only on
+`memberTodoEligible` routines (todo-driven, no `delegate`/`command` step) — checked at catalog
+(`listTodoRoutines(member)`), confirm (`resolveTodoRoutine(..., member)`), and again in the runner
+at drain against the current definition (refused todos fail, the rest still run). Because the drain
+gate keys on NULL vs non-NULL, no routine host needs an owner id — don't stamp the owner's id.
+Chatops `list_todos`/`cancel_todo` filter by creator in SQL; todo proposal taps are bound to the
+requester + conversation, checked before `claim()`.

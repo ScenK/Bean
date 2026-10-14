@@ -6,6 +6,11 @@ export interface PendingTodo {
   todo: ProposedTodo;
   conversationId: string;
   proposedBy: string;
+  /** The requester's platform id: only they (or the owner) may tap Queue/Cancel, and a
+   * non-owner's todo is stamped with it. */
+  requesterId: string;
+  /** Requested by a non-owner: the routine must be member-eligible and the todo is stamped. */
+  member: boolean;
   cardActivityId?: string;
   createdAt: number;
 }
@@ -29,6 +34,11 @@ export class TodoProposalStore {
   setCardActivityId(id: string, activityId: string): void {
     const p = this.byId.get(id);
     if (p) p.cardActivityId = activityId;
+  }
+
+  /** Read without claiming — for checks that must leave a refused card usable. */
+  peek(id: string): PendingTodo | undefined {
+    return this.byId.get(id);
   }
 
   claim(id: string): PendingTodo | undefined {

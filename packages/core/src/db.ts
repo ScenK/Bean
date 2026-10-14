@@ -248,6 +248,9 @@ export function openDb(file: string): DatabaseSync {
     // Per-speaker memory (#281): the chatops speaker a fact is private to; NULL = household-shared,
     // so every pre-existing row reads as shared.
     ["memories", "subject_id", "TEXT"],
+    // Member todos (#283): the non-owner chatops speaker who queued it; NULL = the owner's (desktop,
+    // watch-created, legacy rows, or the owner on chat) — only NULL rows may reach delegate/command steps.
+    ["todos", "created_by", "TEXT"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");

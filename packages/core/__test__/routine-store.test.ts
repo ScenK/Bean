@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   appendRunRecord, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines,
-  loadRoutineStates, resolveTodoRoutine, saveRoutine, saveRoutineStates, type Routine, type RunRecord,
+  loadRoutineStates, resolveTodoRoutine, todoRunHint, saveRoutine, saveRoutineStates, type Routine, type RunRecord,
 } from "../src/routine-store.js";
 
 const routine = (over: Partial<Routine> = {}): Routine => ({
@@ -132,6 +132,18 @@ describe("resolveTodoRoutine", () => {
   it("throws 'is not todo-driven' when present but not todo-driven", () => {
     const routines = [routine({ name: "morning-triage" })];
     expect(() => resolveTodoRoutine(routines, "morning-triage")).toThrow('routine "morning-triage" is not todo-driven');
+  });
+  it("a member may queue only on routines with no delegate or command steps", () => {
+    const chat = routine({ name: "chat-only", todoDriven: true, steps: [{ kind: "chat", instruction: "x" }] });
+    const cmd = routine({ name: "cmd", todoDriven: true, steps: [{ kind: "chat", instruction: "x" }, { kind: "command", command: "ls" }] });
+    expect(resolveTodoRoutine([chat], "chat-only", true)).toBe(chat);
+    expect(() => resolveTodoRoutine([cmd], "cmd", true)).toThrow("only the owner can queue on it");
+    expect(resolveTodoRoutine([cmd], "cmd")).toBe(cmd);
+  });
+  it("todoRunHint: next cron fire, watch tick, or off", () => {
+    const now = new Date(2026, 9, 13, 9, 30);
+    expect(todoRunHint(routine({ cron: "0 2 * * *" }), now)).toMatch(/^It runs next at Oct 14, 2026, 2:00\sAM /);
+    expect(todoRunHint(routine({ enabled: false }), now)).toContain("off");
   });
 });
 

@@ -88,7 +88,7 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
   const savedMemories: import("../src/memory/memory.js").Memory[][] = [];
   const forgotten: string[] = [];
   const savedSkills: { name: string; body: string }[] = [];
-  const queuedTodos: { routine: string; text: string }[] = [];
+  const queuedTodos: { routine: string; text: string; createdBy?: string }[] = [];
   const result = overrides.converseResult ?? { reply: "hello there" };
   const deps: TeamsBotDeps = {
     // bot.ts calls converse() internally; we exercise it through a chat fn that
@@ -124,8 +124,10 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     saveNote: async (draft) => { savedNotes.push(draft); return "our-chat"; },
     searchNotes: async () => [],
     todoProposals: new TodoProposalStore(),
-    queueTodo: async (routine, text) => { queuedTodos.push({ routine, text }); },
+    queueTodo: async (routine, text, createdBy) => { queuedTodos.push({ routine, text, ...(createdBy ? { createdBy } : {}) }); },
     listTodoRoutines: async () => [],
+    listOpenTodos: async () => [],
+    cancelTodo: async () => false,
     appendMemories: async (additions) => { savedMemories.push(additions); },
     deleteMemories: async (ids) => { forgotten.push(...ids); return ids.length; },
     conversations: new ConversationStore(dbFile(runsBeanDir)),
@@ -1707,6 +1709,42 @@ test("capability matrix: each role's tool list in a channel and a DM", async () 
   expect(tools.admin).toEqual(expect.arrayContaining([...memberTools, ...adminTools]));
   for (const t of ownerTools) expect(tools.admin).not.toContain(t);
   for (const k of ["owner", "owner-dm"]) expect(tools[k]).toEqual(expect.arrayContaining([...memberTools, ...adminTools, ...ownerTools]));
+});
+
+test("member todos: eligible-only catalog, stamped queue, requester-only taps checked before the claim", async () => {
+  const asked: boolean[] = [];
+  const { deps, queuedTodos } = withRoles({
+    chat: todoChat,
+    listTodoRoutines: async (m) => { asked.push(m); return ["nightly"]; },
+  });
+  const effects = fx();
+  const bot = buildTeamsBot(deps);
+  await bot.onMessage({ ...member, direct: true, conversationId: "dm-mia" }, effects);
+  expect(asked).toEqual([true]);
+  const id = /"proposalId":"(todo-\d+)"/.exec(JSON.stringify(effects.cards[0]))![1]!;
+  // Another member (forged id) and the right person in the wrong conversation are both refused.
+  await bot.onCardAction({ conversationId: "dm-mia", fromId: "gus", fromName: "Gus", value: { beanAction: "queue-todo", proposalId: id } }, effects);
+  await bot.onCardAction({ conversationId: "elsewhere", fromId: "mia", fromName: "Mia", value: { beanAction: "queue-todo", proposalId: id } }, effects);
+  expect(queuedTodos).toHaveLength(0);
+  // The refusals didn't burn the card: the requester can still queue it, stamped with their id.
+  await bot.onCardAction({ conversationId: "dm-mia", fromId: "mia", fromName: "Mia", value: { beanAction: "queue-todo", proposalId: id } }, effects);
+  expect(queuedTodos).toEqual([{ routine: "nightly", text: "fix it", createdBy: "mia" }]);
+});
+
+test("list_todos / cancel_todo pass the member's id (own only); the owner's are unfiltered", async () => {
+  const seen: (string | undefined)[] = [];
+  for (const who of [member, owner]) {
+    let call = 0;
+    const { deps } = withRoles({
+      chat: async () => (++call === 1
+        ? { content: "", toolCalls: [{ name: "list_todos", args: {} }, { name: "cancel_todo", args: { id: "t1" } }] }
+        : { content: "ok", toolCalls: [] }),
+    });
+    deps.listOpenTodos = async (by) => { seen.push(by); return []; };
+    deps.cancelTodo = async (_id, by) => { seen.push(by); return false; };
+    await buildTeamsBot(deps).onMessage({ ...who, direct: true, conversationId: `dm-${who.fromId}` }, fx());
+  }
+  expect(seen).toEqual(["mia", "mia", undefined, undefined]);
 });
 
 test("a member's forced delegate/skill proposal (not offered) is refused at runtime: no card, no IO", async () => {

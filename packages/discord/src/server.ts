@@ -2,7 +2,7 @@ import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
-  detectClis, type CliName, runDelegate, claimOutbox, enqueueOutbox, outboxDir, saveSkill, addTodo, loadRoutines, resolveTodoRoutine,
+  detectClis, type CliName, runDelegate, claimOutbox, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
@@ -84,11 +84,15 @@ const bot = buildTeamsBot({
   saveNoteImage: (bytes) => saveNoteImage(dbFile(dir), bytes),
   searchNotes: (query) => searchNotes(dbFile(dir), query),
   todoProposals: new TodoProposalStore(),
-  queueTodo: async (routine, text) => {
-    resolveTodoRoutine(await loadRoutines(routinesDir(dir)), routine);
-    await addTodo(dbFile(dir), routine, text);
+  queueTodo: async (routine, text, createdBy) => {
+    const target = resolveTodoRoutine(await loadRoutines(routinesDir(dir)), routine, createdBy !== undefined);
+    await addTodo(dbFile(dir), routine, text, undefined, undefined, createdBy);
+    return target;
   },
-  listTodoRoutines: async () => (await loadRoutines(routinesDir(dir))).filter((r) => r.todoDriven).map((r) => r.name),
+  listTodoRoutines: async (member) => (await loadRoutines(routinesDir(dir)))
+    .filter((r) => (member ? memberTodoEligible(r) : r.todoDriven)).map((r) => r.name),
+  listOpenTodos: (createdBy) => listOpenTodos(dbFile(dir), createdBy),
+  cancelTodo: (id, createdBy) => cancelPendingTodo(dbFile(dir), id, createdBy),
   skillProposals: new SkillProposalStore(),
   saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
   appendMemories: (m) => appendMemories(dbFile(dir), m),
