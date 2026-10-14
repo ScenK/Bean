@@ -282,7 +282,7 @@ function effectsFor(context: TurnContext): BotEffects {
     // file (public route + auth tokens + rate limiting) isn't worth it — core's fallback
     // posts the saved file's path instead, and the user opens it locally.
     sendTyping: () => {
-      void proactive(async (ctx) => { await ctx.sendActivity({ type: ActivityTypes.Typing }); });
+      proactive(async (ctx) => { await ctx.sendActivity({ type: ActivityTypes.Typing }); }).catch(() => {});
     },
     updateCard: async (activityId, card) => {
       await proactive(async (ctx) => {
@@ -348,7 +348,9 @@ app.post("/api/messages", (req, res) => {
     fx.fetchRecent = async (sinceMs) => ambient.since(a.conversation.id, sinceMs);
     await context.sendActivity({ type: ActivityTypes.Typing });
     // Teams clears the typing indicator quickly; resend while onMessage is still working.
-    const typing = setInterval(() => { void context.sendActivity({ type: ActivityTypes.Typing }); }, 5000);
+    // Caught: a send still in flight when the turn ends rejects on the revoked context
+    // ("Cannot perform 'set' on a proxy that has been revoked") and would crash the bot.
+    const typing = setInterval(() => { context.sendActivity({ type: ActivityTypes.Typing }).catch(() => {}); }, 5000);
     try {
       await bot.onMessage(
         {
