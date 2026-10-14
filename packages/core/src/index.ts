@@ -76,7 +76,7 @@ export * from "./command-step.js";
 export * from "./routine-graph.js";
 export { runRoutine, unfence, withResumeFooter, ROUTINE_STEP_TIMEOUT_MS, RunBusyError } from "./routine-runner.js";
 export type { CommandStepRequest, DelegateStepRequest, DelegateStepResult, RoutineRunnerDeps, RoutineRunResult, StepInfo, StepResult } from "./routine-runner.js";
-export { claimOutbox, enqueueOutbox } from "./outbox.js";
+export { claimOutbox, enqueueOutbox, ackOutbox, recoverOutbox, drainOutbox, OUTBOX_MAX_ATTEMPTS } from "./outbox.js";
 export type { OutboxMessage } from "./outbox.js";
 export { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice, clearReservations } from "./run-queue.js";
 export type { RunReservation } from "./run-queue.js";

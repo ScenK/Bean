@@ -30,8 +30,8 @@ mid-run just killed the child and forgot about it.
   `"chat"` transport alongside `"discord"`/`"teams"`) rather than inventing a
   `proposed→running→done|failed|interrupted→reported` state machine. "done"/"failed" already
   report live, in-process, exactly like before this change — nothing to persist there. Only
-  "interrupted" needs durable delivery, and outbox already does durable, claim-once-and-delete
-  cross-process delivery. Widening `OutboxMessage.transport` required also fixing
+  "interrupted" needs durable delivery, and outbox already does durable, at-least-once
+  cross-process delivery (main.ts claims + acks its `"chat"` notices at boot). Widening `OutboxMessage.transport` required also fixing
   `claimOutbox`'s orphan-sweep check (it only knew about `"teams-"`/`"discord-"` prefixes — a
   `"chat-*.json"` file would've been swept as an orphan by the next Discord/Teams poll before
   main.ts's own one-shot claim ever saw it).

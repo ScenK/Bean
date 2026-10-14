@@ -1,15 +1,15 @@
-import { mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { claimOutbox, enqueueOutbox } from "../src/outbox.js";
+import { ackOutbox, claimOutbox, drainOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, recoverOutbox } from "../src/outbox.js";
 
 const tmp = () => mkdtemp(join(tmpdir(), "bean-outbox-"));
 let n = 0;
 const newId = () => `id-${++n}`;
 
 describe("outbox", () => {
-  it("claim returns only the requested transport's messages, oldest first, and deletes them", async () => {
+  it("claim returns only the requested transport's messages, oldest first, and holds them until acked", async () => {
     const dir = await tmp();
     const t0 = () => new Date("2026-07-12T06:00:00Z");
     const t1 = () => new Date("2026-07-12T07:00:00Z");
@@ -22,6 +22,8 @@ describe("outbox", () => {
     const teams = await claimOutbox(dir, "teams");
     expect(teams).toHaveLength(1);
     expect(teams[0]).toMatchObject({ channel: "conv1", title: "T", body: "teams msg" });
+    expect((await readdir(dir)).every((f) => f.endsWith(".json.sending"))).toBe(true);
+    for (const m of [...discord, ...teams]) await ackOutbox(dir, m);
     expect(await readdir(dir)).toEqual([]);
   });
   it("missing dir → [], malformed files are deleted and skipped", async () => {
@@ -38,6 +40,7 @@ describe("outbox", () => {
 
     const discord = await claimOutbox(dir, "discord");
     expect(discord.map((m) => m.body)).toEqual(["hi"]);
+    await ackOutbox(dir, discord[0]!);
     expect(await readdir(dir)).toEqual(["teams-x.json"]); // malformed teams file left alone
 
     const teams = await claimOutbox(dir, "teams");
@@ -70,7 +73,7 @@ describe("outbox", () => {
     expect(await readdir(dir)).toEqual([expect.stringMatching(/^chat-/)]); // left untouched, not swept
     const chat = await claimOutbox(dir, "chat");
     expect(chat.map((m) => m.body)).toEqual(["interrupted"]);
-    expect(await readdir(dir)).toEqual([]);
+    expect(await claimOutbox(dir, "chat")).toEqual([]);
   });
 
   it("displayBody round-trips alongside body when present, and is absent for plain messages", async () => {
@@ -81,5 +84,49 @@ describe("outbox", () => {
     expect(chat[0]).toMatchObject({ body: "full instruction here", displayBody: "short version" });
     const discord = await claimOutbox(dir, "discord");
     expect(discord[0]!.displayBody).toBeUndefined();
+  });
+
+  it("a failed send is kept and retried with backoff, then given up on once with one notice", async () => {
+    const dir = await tmp();
+    let t = new Date("2026-07-12T06:00:00Z").getTime();
+    const now = () => new Date(t);
+    await enqueueOutbox(dir, { transport: "discord", channel: "c1", body: "flaky" }, newId, now);
+    await enqueueOutbox(dir, { transport: "teams", body: "not mine" }, newId, now);
+    const sent: string[] = [];
+    const gaveUp: string[] = [];
+    const failing = async () => { throw new Error("network blip"); };
+    const onGiveUp = async (m: { body: string }) => { gaveUp.push(m.body); };
+
+    await drainOutbox(dir, "discord", failing, onGiveUp, now);
+    const [file] = (await readdir(dir)).filter((f) => f.startsWith("discord-"));
+    expect(file).toMatch(/\.json$/); // back in the queue, not lost
+    expect(JSON.parse(await readFile(join(dir, file!), "utf8"))).toMatchObject({ attempts: 1, retryAt: "2026-07-12T06:01:00.000Z" });
+    await drainOutbox(dir, "discord", async (m) => { sent.push(m.body); }, onGiveUp, now);
+    expect(sent).toEqual([]); // still backing off
+
+    for (let i = 1; i < OUTBOX_MAX_ATTEMPTS; i++) {
+      t += 60 * 60_000;
+      await drainOutbox(dir, "discord", failing, onGiveUp, now);
+    }
+    expect(gaveUp).toEqual(["flaky"]);
+    expect(await readdir(dir)).toEqual([expect.stringMatching(/^teams-.*\.json$/)]); // other transport untouched
+
+    // a later success acks it
+    await enqueueOutbox(dir, { transport: "discord", body: "ok" }, newId, now);
+    await drainOutbox(dir, "discord", async (m) => { sent.push(m.body); }, onGiveUp, now);
+    expect(sent).toEqual(["ok"]);
+    expect(await readdir(dir)).toEqual([expect.stringMatching(/^teams-/)]);
+  });
+
+  it("boot recovery re-queues this transport's mid-send files as one failed attempt", async () => {
+    const dir = await tmp();
+    await enqueueOutbox(dir, { transport: "discord", body: "crashed mid-send" }, newId);
+    await enqueueOutbox(dir, { transport: "teams", body: "teams in flight" }, newId);
+    await claimOutbox(dir, "discord"); // ...and the bot dies before acking
+    await claimOutbox(dir, "teams");
+    await recoverOutbox(dir, "discord");
+    const files = (await readdir(dir)).sort();
+    expect(files).toEqual([expect.stringMatching(/^discord-.*\.json$/), expect.stringMatching(/^teams-.*\.json\.sending$/)]);
+    expect(JSON.parse(await readFile(join(dir, files[0]!), "utf8"))).toMatchObject({ body: "crashed mid-send", attempts: 1 });
   });
 });
