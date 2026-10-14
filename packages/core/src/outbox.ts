@@ -21,6 +21,9 @@ export interface OutboxMessage {
   // conversation(s)) — the default delivery mode. Present = a specific channel id (discord)
   // or conversation id (teams).
   channel?: string;
+  // Discord only, ignored when `channel` is set: DM this user id instead of the owner. A failed
+  // DM to a non-owner queues one owner notice (no retry). Teams ignores it.
+  userId?: string;
   title?: string;
   body: string;
   // A shorter, human-facing rendering of `body` — set only when `body` itself is meant for
@@ -83,6 +86,7 @@ export async function claimOutbox(dir: string, transport: "teams" | "discord" | 
     if (
       parsed.transport === transport &&
       (parsed.channel === undefined || typeof parsed.channel === "string") &&
+      (parsed.userId === undefined || typeof parsed.userId === "string") &&
       typeof parsed.body === "string"
     ) {
       out.push(parsed);

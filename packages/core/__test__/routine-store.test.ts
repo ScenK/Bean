@@ -79,6 +79,12 @@ describe("isValidRoutine", () => {
     expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "discord", channel: 5 }] } }))).toBe(false);
     expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "slack" }] } }))).toBe(false);
   });
+  it("accepts a Discord user sink, exclusive with channel and Discord-only", () => {
+    expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "discord", user: "u1" }] } }))).toBe(true);
+    expect(describeRoutineError(routine({ sinks: { chatops: [{ transport: "discord", channel: "c1", user: "u1" }] } }))).toMatch(/both a channel and a user/);
+    expect(describeRoutineError(routine({ sinks: { chatops: [{ transport: "teams", user: "u1" }] } }))).toMatch(/Discord-only/);
+    expect(describeRoutineError(routine({ sinks: { chatops: [{ transport: "discord", user: " " }] } }))).toMatch(/invalid user/);
+  });
   it("accepts todoDriven boolean and rejects non-boolean", () => {
     expect(isValidRoutine(routine({ todoDriven: true }))).toBe(true);
     expect(isValidRoutine(routine({ todoDriven: false }))).toBe(true);

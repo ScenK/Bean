@@ -178,8 +178,10 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     }
     for (const sink of routine.sinks.chatops ?? []) {
       await enqueueOutbox(outboxDir(dir), {
-        transport: sink.transport, channel: sink.channel,
-        title: `Routine: ${routine.name}`, body: result.digest,
+        transport: sink.transport, channel: sink.channel, userId: sink.user,
+        title: `Routine: ${routine.name}`,
+        // A member DM says whose routine it is — they didn't set it up.
+        body: sink.user ? `${result.digest}\n\n_Sent by Bean's owner's routine "${routine.name}"._` : result.digest,
         context: deps.getRoutineDigestContext(),
       }, newId);
     }
