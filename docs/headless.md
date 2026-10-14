@@ -96,8 +96,9 @@ volume before first start). Every path below is inside the container.
 Delegates run with permissions skipped, so a delegate can read anything on the volume:
 `config.json` (the OpenAI key), `discord.json` (the bot token), `bean.db` (every member's private
 memories) and the CLI logins. Bean passes only an allowlisted environment to spawned CLIs, but
-the files are still readable. This is why delegates, live sessions and skills stay owner-only.
-It is also why the delegate login is a separate household account and the container mounts
+the files are still readable. This is why members never get delegates, live sessions or
+skills. A channel admin (`add-admin`) can run delegates and skills, so on this install grant
+admin to no one: keep delegates owner-only. It is also why the delegate login is a separate household account and the container mounts
 nothing personal.
 
 ## Lifecycle
