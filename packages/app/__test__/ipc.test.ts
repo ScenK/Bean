@@ -241,7 +241,7 @@ test("note image handlers accept raw bytes only and serve stored rows as data: U
   const handlers = buildNotesHandlers({
     loadNotes: async () => [],
     saveNote: async (_f, draft) => { saves.push({ body: draft.body }); return "s"; },
-    deleteNote: async () => {},
+    archiveNote: async () => true,
     starNote: async () => {},
     loadNoteHistory: async () => [],
     saveNoteImage: async (_f, bytes) => { stored.push(bytes); return "abcdef12-2222-4333-8444-555555555555"; },
@@ -260,12 +260,23 @@ test("note image handlers accept raw bytes only and serve stored rows as data: U
   expect(saves[0]!.body).toBe("B\n\n![image](bean-image:abcdef12-2222-4333-8444-555555555555)\n");
 });
 
+test("notes save copies only known draft fields", async () => {
+  const drafts: unknown[] = [];
+  const handlers = buildNotesHandlers({
+    loadNotes: async () => [], saveNote: async (_f, draft) => { drafts.push(draft); return "s"; },
+    archiveNote: async () => true, starNote: async () => {}, loadNoteHistory: async () => [],
+    saveNoteImage: async () => "x", loadNoteImage: async () => undefined, dbFile: "/b/bean.db",
+  });
+  await handlers.save({ title: "T", body: "B", slug: "s1", project: "/p", source: "manual", archivedAt: "x", upsert: true } as never);
+  expect(drafts).toEqual([{ title: "T", body: "B", slug: "s1", project: "/p", source: "manual" }]);
+});
+
 test("notes handlers pass the configured dir through to the injected store fns", async () => {
   const calls: unknown[][] = [];
   const handlers = buildNotesHandlers({
     loadNotes: async (dir) => { calls.push(["list", dir]); return []; },
     saveNote: async (dir, draft) => { calls.push(["save", dir, draft.title]); return "slug"; },
-    deleteNote: async (dir, slug) => { calls.push(["delete", dir, slug]); },
+    archiveNote: async (dir, slug) => { calls.push(["archive", dir, slug]); return true; },
     loadNoteHistory: async (dir, slug) => { calls.push(["history", dir, slug]); return []; },
     dbFile: "/b/notes",
   });
@@ -273,7 +284,7 @@ test("notes handlers pass the configured dir through to the injected store fns",
   expect(await handlers.save({ title: "T", body: "B" })).toBe("slug");
   await handlers.delete("t");
   await handlers.history("t");
-  expect(calls).toEqual([["list", "/b/notes"], ["save", "/b/notes", "T"], ["delete", "/b/notes", "t"], ["history", "/b/notes", "t"]]);
+  expect(calls).toEqual([["list", "/b/notes"], ["save", "/b/notes", "T"], ["archive", "/b/notes", "t"], ["history", "/b/notes", "t"]]);
 });
 
 test("chat handler passes action tools through to converse and executes them", async () => {

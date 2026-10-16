@@ -19,7 +19,7 @@ import {
   makeOpenAIChat, makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
   maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, type DreamDigest,
   loadReminders, updateReminders, fireDueReminders, enqueueOutbox, type Reminder, extractPageText,
-  loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
+  loadNotes, saveNote, archiveNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, claimOutbox, ackOutbox, runDelegate, killAllDelegates, killAllCommands,
   scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
@@ -759,7 +759,7 @@ app.whenReady().then(async () => {
           }
         })().catch((err) => console.error("memory bubble/dream failed:", err));
       },
-      loadNotes, saveNote, deleteNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage,
+      loadNotes, saveNote, archiveNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage,
       dbFile: dbFile(dir),
       chat: runtime.chat,
       converse: runtime.converse,

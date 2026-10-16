@@ -529,7 +529,7 @@ function toTranscript(v: unknown): ChatTurn[] {
 export interface NotesHandlerDeps {
   loadNotes: (file: string) => Promise<Note[]>;
   saveNote: (file: string, draft: NoteDraft) => Promise<string>;
-  deleteNote: (file: string, slug: string) => Promise<void>;
+  archiveNote: (file: string, slug: string) => Promise<boolean>;
   starNote: (file: string, slug: string, starred: boolean) => Promise<void>;
   loadNoteHistory: (file: string, slug: string) => Promise<Note[]>;
   saveNoteImage: (file: string, bytes: Uint8Array) => Promise<string>;
@@ -548,7 +548,9 @@ export function buildNotesHandlers(deps: NotesHandlerDeps) {
         ? images.filter((i): i is ImageAttachment => typeof (i as ImageAttachment)?.data === "string")
         : [];
       const body = valid.length > 0 ? await attachNoteImages(storeImage, draft.body, valid) : draft.body;
-      return deps.saveNote(deps.dbFile, { ...draft, body });
+      // Copy known fields only — never spread the renderer payload into core.
+      const { title, project, source, slug } = draft;
+      return deps.saveNote(deps.dbFile, { title, body, project, source, slug });
     },
     // Trust boundary for editor paste/drop: bytes only, never a path; size capped here before
     // storing, format checked by magic bytes in core.
@@ -563,7 +565,8 @@ export function buildNotesHandlers(deps: NotesHandlerDeps) {
       const img = await deps.loadNoteImage(deps.dbFile, id);
       return img ? `data:${img.mime};base64,${Buffer.from(img.bytes).toString("base64")}` : undefined;
     },
-    delete: (slug: string): Promise<void> => deps.deleteNote(deps.dbFile, slug),
+    // The Delete button archives (restore/purge UI lands later in the epic).
+    delete: async (slug: string): Promise<void> => { await deps.archiveNote(deps.dbFile, slug); },
     star: (slug: string, starred: boolean): Promise<void> => deps.starNote(deps.dbFile, slug, starred),
     history: (slug: string): Promise<Note[]> => deps.loadNoteHistory(deps.dbFile, slug),
   };
@@ -760,7 +763,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   dreamDetails: MemoryHandlerDeps["dreamDetails"];
   loadNotes: NotesHandlerDeps["loadNotes"];
   saveNote: NotesHandlerDeps["saveNote"];
-  deleteNote: NotesHandlerDeps["deleteNote"];
+  archiveNote: NotesHandlerDeps["archiveNote"];
   starNote: NotesHandlerDeps["starNote"];
   loadNoteHistory: NotesHandlerDeps["loadNoteHistory"];
   saveNoteImage: NotesHandlerDeps["saveNoteImage"];

@@ -36,6 +36,7 @@
 
 ## convention — how we do things here
 
+- [convention-note-slugs-opaque-strict.md](convention-note-slugs-opaque-strict.md) — note slugs are UUIDs; a save to a missing/archived slug throws; only the routine sink may `upsert`; archive/restore/purge lifecycle.
 - [convention-bean-db-column-additions.md](convention-bean-db-column-additions.md) — a new column on an existing `bean.db` table needs its own `ALTER TABLE` in `openDb()`, guarded by `PRAGMA table_info` inside `BEGIN IMMEDIATE` (never a bare try/catch); and leave the FTS5 triggers firing on every UPDATE.
 - [convention-ipc-channels.md](convention-ipc-channels.md) — IPC channel names are defined once in `app/src/channels.ts`; never string-literal them.
 - [convention-route-by-own-capabilities.md](convention-route-by-own-capabilities.md) — `converse()` hands off anything its own tools don't cover (don't list harness task types); `propose_delegate` project is optional via `scratchPath`. Config `webSearch` switches the "web" rule to a public-vs-private split — re-run `converse-web-search.live.test.ts` after wording edits.
