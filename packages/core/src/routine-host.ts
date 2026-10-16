@@ -174,7 +174,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         body: result.digest,
         source: "manual",
         slug: `routine-${routine.name}`, // update-in-place: one living note per routine
-      });
+      }, undefined, { upsert: true }); // the only upsert caller: the sink (re)creates its note
     }
     for (const sink of routine.sinks.chatops ?? []) {
       await enqueueOutbox(outboxDir(dir), {

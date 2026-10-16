@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS notes (
   updated TEXT NOT NULL,
   version INTEGER NOT NULL,
   source  TEXT NOT NULL,
-  starred INTEGER NOT NULL DEFAULT 0
+  starred INTEGER NOT NULL DEFAULT 0,
+  archived_at TEXT
 );
 CREATE TABLE IF NOT EXISTS notes_history (
   slug    TEXT NOT NULL,
@@ -254,6 +255,8 @@ export function openDb(file: string): DatabaseSync {
     !(db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]).some((c) => c.name === column);
   const columns: [table: string, column: string, type: string][] = [
     ["notes", "starred", "INTEGER NOT NULL DEFAULT 0"],
+    // Note archive (#304): NULL = live.
+    ["notes", "archived_at", "TEXT"],
     // skill_proposals' approve/undo bookkeeping (#263), added after the table first shipped.
     ["skill_proposals", "prev_body", "TEXT"],
     ["skill_proposals", "applied_hash", "TEXT"],
