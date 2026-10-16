@@ -1,6 +1,6 @@
 import type {
   CardBuilders, FinishedCardInput, RememberedCardInput, ReminderCardInput,
-  NoteProposalCardInput, NoteResultCardInput, ProposalCardInput, RunningCardInput,
+  NoteProposalCardInput, NoteResultCardInput, NoteArchiveProposalCardInput, NoteArchiveResultCardInput, ProposalCardInput, RunningCardInput,
   SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
@@ -236,6 +236,38 @@ function routineResultCard(input: RoutineResultCardInput): object {
   };
 }
 
+function noteArchiveProposalCard(input: NoteArchiveProposalCardInput): object {
+  return {
+    embeds: [{
+      title: "Archive this note?",
+      description: noteDescription(input.title, input.snippet),
+      fields: [
+        { name: "Note", value: input.projectName ?? "general", inline: true },
+        { name: "Updated", value: `<t:${Math.floor(Date.parse(input.updated) / 1000)}:D>`, inline: true },
+      ],
+    }],
+    components: [row([
+      { type: BUTTON, style: 4, label: "Archive", custom_id: `bean:archive-note:${input.proposalId}` },
+      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-archive-note:${input.proposalId}` },
+    ])],
+  };
+}
+
+// Restore carries the note id in its custom_id — rendered only when it fits Discord's 100-char
+// cap (a UUID is ~55; a long legacy title-derived slug would restore nothing if truncated).
+function noteArchiveResultCard(input: NoteArchiveResultCardInput): object {
+  const customId = `bean:restore-note:${input.noteId}`;
+  return {
+    embeds: [{
+      title: `Note archive ${input.outcome === "archived" ? "done" : "cancelled"} (by ${input.by})`,
+      description: input.title.slice(0, 4096),
+    }],
+    components: input.outcome === "archived" && input.noteId && customId.length <= 100
+      ? [row([{ type: BUTTON, style: 2, label: "Restore", custom_id: customId }])]
+      : [],
+  };
+}
+
 // custom_id caps at 100 chars; a UUID memory id plus the prefix is ~55.
 function rememberedCard(input: RememberedCardInput): object {
   return {
@@ -344,7 +376,8 @@ function liveSessionResultCard(input: LiveSessionResultCardInput): object {
 }
 
 export const discordCards: CardBuilders = {
-  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, rememberedCard, reminderCard,
+  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard,
+  rememberedCard, reminderCard,
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 };

@@ -40,7 +40,7 @@ test("card actions: live-session and skill controls are owner-only, notes/todos/
   for (const a of ["start-live", "cancel-live", "resume-live", "live-mode", "live-editsubmit", "save-skill", "cancel-skill", "save-routine", "cancel-routine", "toggle-routine"]) {
     expect(cardActionNeeds(a)).toBe("owner");
   }
-  for (const a of ["save-note", "cancel-note", "queue-todo", "cancel-todo", "forget-memory", "cancel-reminder"]) {
+  for (const a of ["save-note", "cancel-note", "archive-note", "cancel-archive-note", "restore-note", "queue-todo", "cancel-todo", "forget-memory", "cancel-reminder"]) {
     expect(cardActionNeeds(a)).toBe("member");
   }
   for (const a of ["confirm", "cancel-proposal", "cancel-run", "skill", "cli", "model", "delegate-edit", "delegate-editsubmit", undefined]) {

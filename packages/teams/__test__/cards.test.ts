@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  finishedCard, rememberedCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
+  finishedCard, rememberedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "../src/cards.js";
@@ -159,4 +159,14 @@ test("fresh live card: CLI picker defaults to the selected CLI; combined models 
   expect(card).toContain('"id":"cli","label":"CLI","value":"codex"');
   expect(card).toContain("opus (claude)");
   expect(card).toContain("gpt-5.5 (codex)");
+});
+
+test("note archive cards wire archive/cancel data and a Restore carrying the note id", () => {
+  const p = flatten(noteArchiveProposalCard({ proposalId: "archive-1", title: "Groceries", updated: "2026-10-01T12:00:00.000Z", snippet: "milk" }));
+  expect(p).toContain("archive-note");
+  expect(p).toContain("cancel-archive-note");
+  expect(p).toContain("2026-10-01");
+  expect(flatten(noteArchiveResultCard({ title: "Groceries", by: "mia", outcome: "archived", noteId: "n-1" }))).toContain("restore-note");
+  const cancelled = noteArchiveResultCard({ title: "Groceries", by: "mia", outcome: "cancelled" }) as { actions: unknown[] };
+  expect(cancelled.actions).toHaveLength(0);
 });

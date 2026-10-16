@@ -1,7 +1,7 @@
 import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
@@ -18,7 +18,7 @@ import { mkdirSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
-  finishedCard, rememberedCard, noteProposalCard, noteResultCard, proposalCard, runningCard,
+  finishedCard, rememberedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
@@ -126,6 +126,9 @@ const bot = buildTeamsBot({
   saveNote: (draft) => saveNote(dbFile(dir), draft),
   saveNoteImage: (bytes) => saveNoteImage(dbFile(dir), bytes),
   searchNotes: (query) => searchNotes(dbFile(dir), query),
+  noteArchiveProposals: new NoteArchiveProposalStore(),
+  archiveNote: (slug) => archiveNote(dbFile(dir), slug),
+  restoreNote: (slug) => restoreNoteOutcome(dbFile(dir), slug),
   todoProposals: new TodoProposalStore(),
   queueTodo: async (routine, text, createdBy) => {
     const target = resolveTodoRoutine(await loadRoutines(routinesDir(dir)), routine, createdBy !== undefined);
@@ -150,7 +153,7 @@ const bot = buildTeamsBot({
   findDelegateRun: (sessionId) => findDelegateRun(dbFile(dir), sessionId),
   scratchPath,
   cards: {
-    proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, rememberedCard,
+    proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, rememberedCard,
     skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
     liveSessionProposalCard, liveSessionResultCard,
   },

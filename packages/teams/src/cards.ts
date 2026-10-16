@@ -1,5 +1,6 @@
 import type {
   ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
+  NoteArchiveProposalCardInput, NoteArchiveResultCardInput,
   RememberedCardInput,
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput,
@@ -138,6 +139,47 @@ export function noteResultCard(input: NoteResultCardInput): object {
       { type: "TextBlock", text: input.title, wrap: true, isSubtle: true },
     ],
     actions: [],
+  };
+}
+
+/** Confirm-first note archive: title, project, last update, first-line snippet, Archive/Cancel. */
+export function noteArchiveProposalCard(input: NoteArchiveProposalCardInput): object {
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", size: "medium", weight: "bolder", text: "Archive this note?" },
+      { type: "TextBlock", text: input.title, weight: "bolder", wrap: true },
+      ...(input.snippet ? [{ type: "TextBlock", text: input.snippet, wrap: true, isSubtle: true }] : []),
+      {
+        type: "FactSet",
+        facts: [
+          { title: "Note", value: input.projectName ?? "general" },
+          { title: "Updated", value: input.updated.slice(0, 10) },
+        ],
+      },
+    ],
+    actions: [
+      { type: "Action.Submit", title: "Archive", style: "destructive", data: { beanAction: "archive-note", proposalId: input.proposalId } },
+      { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-archive-note", proposalId: input.proposalId } },
+    ],
+  };
+}
+
+/** Archive receipt; Restore carries the note id. */
+export function noteArchiveResultCard(input: NoteArchiveResultCardInput): object {
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", weight: "bolder", text: `Note archive ${input.outcome === "archived" ? "done" : "cancelled"} (by ${input.by})` },
+      { type: "TextBlock", text: input.title, wrap: true, isSubtle: true },
+    ],
+    actions: input.outcome === "archived" && input.noteId
+      ? [{ type: "Action.Submit", title: "Restore", data: { beanAction: "restore-note", proposalId: input.noteId } }]
+      : [],
   };
 }
 

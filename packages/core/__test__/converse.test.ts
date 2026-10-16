@@ -880,3 +880,22 @@ describe("propose_routine", () => {
     expect(res.proposedRoutine).toBeUndefined();
   });
 });
+
+describe("propose_note_archive", () => {
+  it("is never offered by default (the desktop chat)", async () => {
+    let offered: string[] = [];
+    await conv({
+      latestUserText: "archive my groceries note", skills: [], projects: [],
+      deps: { model: "m", chat: async ({ tools }) => { offered = tools.map((t) => t.name); return { content: "ok", toolCalls: [] }; } },
+    });
+    expect(offered).not.toContain("propose_note_archive");
+  });
+
+  it("refuses the call when not offered, and returns the query when offered", async () => {
+    const chat = async () => ({ content: "", toolCalls: [{ name: "propose_note_archive", args: { query: " groceries " } }] });
+    const off = await conv({ latestUserText: "archive it", skills: [], projects: [], deps: { model: "m", chat } });
+    expect(off.proposedNoteArchive).toBeUndefined();
+    const on = await conv({ latestUserText: "archive it", skills: [], projects: [], deps: { model: "m", chat }, noteArchiveAvailable: true });
+    expect(on.proposedNoteArchive).toEqual({ query: "groceries" });
+  });
+});

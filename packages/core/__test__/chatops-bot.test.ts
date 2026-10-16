@@ -9,6 +9,7 @@ import { ConversationStore } from "../src/chatops/conversation.js";
 import { dbFile } from "../src/config.js";
 import { ProposalStore } from "../src/chatops/proposals.js";
 import { NoteProposalStore } from "../src/chatops/note-proposals.js";
+import { NoteArchiveProposalStore } from "../src/chatops/note-archive-proposals.js";
 import { TodoProposalStore } from "../src/chatops/todo-proposals.js";
 import { RunRegistry } from "../src/chatops/runs.js";
 import { makeRoles } from "../src/chatops/roles.js";
@@ -30,6 +31,8 @@ const fakeCards = {
   finishedCard: (i: object) => ({ kind: "finished", ...i }),
   noteProposalCard: (i: object) => ({ kind: "note-proposal", ...i }),
   noteResultCard: (i: object) => ({ kind: "note-result", ...i }),
+  noteArchiveProposalCard: (i: object) => ({ kind: "note-archive-proposal", ...i }),
+  noteArchiveResultCard: (i: object) => ({ kind: "note-archive-result", ...i }),
   todoProposalCard: (i: object) => ({ kind: "todo-proposal", ...i }),
   todoResultCard: (i: object) => ({ kind: "todo-result", ...i }),
   rememberedCard: (i: object) => ({ kind: "remembered", ...i }),
@@ -125,6 +128,9 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     noteProposals: new NoteProposalStore(),
     saveNote: async (draft) => { savedNotes.push(draft); return "our-chat"; },
     searchNotes: async () => [],
+    noteArchiveProposals: new NoteArchiveProposalStore(),
+    archiveNote: async () => false,
+    restoreNote: async () => "missing",
     todoProposals: new TodoProposalStore(),
     queueTodo: async (routine, text, createdBy) => { queuedTodos.push({ routine, text, ...(createdBy ? { createdBy } : {}) }); },
     listTodoRoutines: async () => [],
@@ -2207,4 +2213,105 @@ describe("owner routines from chat (#285)", () => {
     expect(h.store[0]?.enabled).toBe(false);
     expect(h.offered).toEqual([]); // commands never reach the model
   });
+});
+
+// Note archive (#306): real bean.db notes, a model that proposes an archive on cue, real roles.
+async function archiveHousehold() {
+  const notes = await import("../src/note-store.js");
+  const file = dbFile(mkdtempSync(join(tmpdir(), "bean-archive-")));
+  const slug = await notes.saveNote(file, { title: "Groceries", body: "## Summary\n\nmilk and eggs" });
+  let offered: string[] = [];
+  const made = makeDeps({
+    searchNotes: (q) => notes.searchNotes(file, q),
+    archiveNote: (s) => notes.archiveNote(file, s),
+    restoreNote: (s) => notes.restoreNoteOutcome(file, s),
+    chat: async ({ tools }) => {
+      offered = tools.map((t) => t.name);
+      return offered.includes("propose_note_archive")
+        ? { content: "", toolCalls: [{ name: "propose_note_archive", args: { query: "groceries" } }] }
+        : { content: "can't", toolCalls: [] };
+    },
+  });
+  made.deps.roles = makeRoles({ dbPath: file, surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia"] });
+  const bot = buildTeamsBot(made.deps);
+  const ask = async (who: string, conversationId = "c1") => {
+    const effects = fx();
+    await bot.onMessage({ ...msg, conversationId, fromId: who, fromName: who, text: "archive my groceries note" }, effects);
+    return effects;
+  };
+  const tap = async (who: string, beanAction: string, proposalId: string, conversationId = "c1") => {
+    const effects = fx();
+    await bot.onCardAction({ conversationId, fromId: who, fromName: who, value: { beanAction, proposalId } }, effects);
+    return effects;
+  };
+  return { ...made, notes, file, slug, ask, tap, offered: () => offered };
+}
+
+const archiveIdOf = (effects: ReturnType<typeof fx>): string => {
+  const m = /"proposalId":"(archive-\d+)"/.exec(JSON.stringify(effects.cards[0]));
+  if (!m?.[1]) throw new Error("no archive proposal card");
+  return m[1];
+};
+
+test("archive: a member's ask posts a card for the top match; confirm archives it and the receipt restores it", async () => {
+  const h = await archiveHousehold();
+  const asked = await h.ask("mia");
+  expect(asked.cards[0]).toMatchObject({ kind: "note-archive-proposal", title: "Groceries", snippet: "milk and eggs", projectName: undefined });
+  const done = await h.tap("mia", "archive-note", archiveIdOf(asked));
+  expect(done.updates.at(-1)?.card).toMatchObject({ kind: "note-archive-result", outcome: "archived", noteId: h.slug });
+  expect(await h.notes.searchNotes(h.file, "groceries")).toEqual([]);
+  expect((await h.tap("mia", "restore-note", h.slug)).posted).toEqual(["Restored (by mia)."]);
+  expect((await h.notes.searchNotes(h.file, "groceries")).map((n) => n.slug)).toEqual([h.slug]);
+  expect((await h.tap("mia", "restore-note", h.slug)).posted).toEqual(["Already restored."]);
+});
+
+test("archive: Restore after a purge creates nothing", async () => {
+  const h = await archiveHousehold();
+  await h.notes.archiveNote(h.file, h.slug);
+  await h.notes.purgeNote(h.file, h.slug);
+  expect((await h.tap("u1", "restore-note", h.slug)).posted).toEqual(["That note was permanently deleted — it can't be restored."]);
+  expect(await h.notes.loadNotes(h.file, { includeArchived: true })).toEqual([]);
+});
+
+test("archive: a guest is never offered the tool and can't tap either action", async () => {
+  const h = await archiveHousehold();
+  const asked = await h.ask("stranger");
+  expect(h.offered()).not.toContain("propose_note_archive");
+  expect(asked.cards).toEqual([]);
+  const id = archiveIdOf(await h.ask("mia"));
+  expect((await h.tap("stranger", "archive-note", id)).posted[0]).toContain("Only Scen or an admin");
+  await h.notes.archiveNote(h.file, h.slug);
+  await h.tap("stranger", "restore-note", h.slug);
+  expect(await h.notes.searchNotes(h.file, "groceries")).toEqual([]);
+  // The refused tap left the card usable.
+  await h.notes.restoreNote(h.file, h.slug);
+  await h.tap("mia", "archive-note", id);
+  expect(await h.notes.searchNotes(h.file, "groceries")).toEqual([]);
+});
+
+test("archive: wrong-conversation, repeated and expired taps archive nothing", async () => {
+  const h = await archiveHousehold();
+  const id = archiveIdOf(await h.ask("mia"));
+  expect((await h.tap("mia", "archive-note", id, "elsewhere")).posted).toEqual(["That archive request expired — ask me again."]);
+  expect(await h.notes.searchNotes(h.file, "groceries")).toHaveLength(1);
+  await h.tap("mia", "cancel-archive-note", id);
+  expect((await h.tap("mia", "archive-note", id)).posted).toEqual(["That archive request expired — ask me again."]);
+  expect(await h.notes.searchNotes(h.file, "groceries")).toHaveLength(1);
+  let now = 0;
+  h.deps.noteArchiveProposals = new NoteArchiveProposalStore(() => now);
+  const bot = buildTeamsBot(h.deps);
+  const effects = fx();
+  await bot.onMessage({ ...msg, fromId: "mia", fromName: "mia", text: "archive my groceries note" }, effects);
+  now = 11 * 60_000;
+  await bot.onCardAction({ conversationId: "c1", fromId: "mia", fromName: "mia", value: { beanAction: "archive-note", proposalId: archiveIdOf(effects) } }, effects);
+  expect(await h.notes.searchNotes(h.file, "groceries")).toHaveLength(1);
+});
+
+test("archive: no match is a plain reply, no card", async () => {
+  const h = await archiveHousehold();
+  h.deps.searchNotes = async () => [];
+  const effects = fx();
+  await buildTeamsBot(h.deps).onMessage({ ...msg, fromId: "u1", fromName: "u1" }, effects);
+  expect(effects.cards).toEqual([]);
+  expect(effects.posted).toContain('I couldn\'t find a note matching "groceries".');
 });

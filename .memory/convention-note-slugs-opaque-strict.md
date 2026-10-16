@@ -16,3 +16,9 @@ by default; the desktop Notes window lists with `includeArchived: true` and rend
 group (folded by default via localStorage `bean.notes.archiveOpen`) with a read-only view offering
 Restore / Delete permanently (#305). A failed linked chat save re-lists with `includeArchived` to
 tell archived from deleted from transient, and only unlinks on the first two.
+
+Chat bots (#306): `propose_note_archive({ query })` is offered only with converse's
+`noteArchiveAvailable` (chatops passes `can(role, "notes")`; the desktop never gets it). The bot
+resolves the top `searchNotes` match into a one-shot, conversation-bound `NoteArchiveProposalStore`;
+the receipt's Restore carries the slug in `proposalId` and calls `restoreNoteOutcome` (never
+creates, so a purged note stays gone). No purge from chat.

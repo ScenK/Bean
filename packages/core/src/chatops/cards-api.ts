@@ -57,6 +57,25 @@ export interface NoteResultCardInput {
   outcome: "saved" | "cancelled";
 }
 
+export interface NoteArchiveProposalCardInput {
+  proposalId: string;
+  title: string;
+  /** Resolved display name of the note's project; absent = a general note. */
+  projectName?: string;
+  /** ISO timestamp of the note's last save. */
+  updated: string;
+  /** First non-blank line of the body, clamped. */
+  snippet: string;
+}
+
+/** "archived" carries the note id for the receipt's Restore button (beanAction `restore-note`). */
+export interface NoteArchiveResultCardInput {
+  title: string;
+  by: string;
+  outcome: "archived" | "cancelled";
+  noteId?: string;
+}
+
 export interface TodoProposalCardInput {
   proposalId: string;
   routine: string;
@@ -174,6 +193,8 @@ export interface CardBuilders {
   finishedCard: (input: FinishedCardInput) => object;
   noteProposalCard: (input: NoteProposalCardInput) => object;
   noteResultCard: (input: NoteResultCardInput) => object;
+  noteArchiveProposalCard: (input: NoteArchiveProposalCardInput) => object;
+  noteArchiveResultCard: (input: NoteArchiveResultCardInput) => object;
   todoProposalCard: (input: TodoProposalCardInput) => object;
   todoResultCard: (input: TodoResultCardInput) => object;
   rememberedCard: (input: RememberedCardInput) => object;

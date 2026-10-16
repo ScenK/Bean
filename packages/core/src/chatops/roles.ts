@@ -143,7 +143,7 @@ export const cardRefusal = (roles: Roles): string => `Only ${roles.ownerName} or
 export function cardActionNeeds(beanAction: string | undefined): Role {
   const a = beanAction ?? "";
   if (a.startsWith("live-") || a.endsWith("-live") || a === "save-skill" || a === "cancel-skill" || a.endsWith("-routine")) return "owner";
-  if (a === "save-note" || a === "cancel-note") return needs("notes");
+  if (["save-note", "cancel-note", "archive-note", "cancel-archive-note", "restore-note"].includes(a)) return needs("notes");
   if (a === "queue-todo" || a === "cancel-todo") return needs("todos");
   if (a === "forget-memory") return needs("memory");
   if (a === "cancel-reminder") return needs("reminders");
