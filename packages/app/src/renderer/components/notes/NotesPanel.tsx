@@ -73,10 +73,11 @@ export function NotesPanel() {
   // A write to a note archived or deleted elsewhere (a bot, another window) fails in core;
   // re-sync the list and say what happened instead of showing the raw IPC error.
   const reportWriteError = async (slug: string, err: unknown): Promise<void> => {
-    const now = (await refresh().catch(() => undefined))?.find((n) => n.slug === slug);
+    const list = await refresh().catch(() => undefined);
+    const now = list?.find((n) => n.slug === slug);
     setSaveError(
-      now === undefined ? "This note was deleted elsewhere."
-        : now.archivedAt ? "This note was archived elsewhere — restore it to edit."
+      list && !now ? `This note was deleted elsewhere${mode === "edit" ? " — Save keeps your text as a new note" : ""}.`
+        : now?.archivedAt ? "This note was archived elsewhere — restore it to edit."
           : err instanceof Error ? err.message : String(err),
     );
   };
@@ -467,7 +468,8 @@ export function NotesPanel() {
       </div>
       <div class="bean-skills-detail">
         {mode === "add" ? editor : null}
-        {mode === "edit" && selected ? editor : null}
+        {/* No `selected` check: a note deleted elsewhere mid-edit keeps the draft (Save makes a new note). */}
+        {mode === "edit" ? editor : null}
         {mode === "view" && selected?.archivedAt ? (
           <>
             <div class="bean-skills-header">
