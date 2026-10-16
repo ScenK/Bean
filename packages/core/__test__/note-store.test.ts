@@ -107,6 +107,15 @@ test("upsert v1 drops history orphaned by a pre-archive delete instead of collid
   expect((await loadNoteHistory(file, "routine-r")).map((h) => h.body)).toEqual(["1"]);
 });
 
+test("an update drops legacy orphan history at/above the live version instead of colliding", async () => {
+  // Pre-#304 shape: edit → delete → recreate under the same title slug left v1 history behind.
+  const db = openDb(file);
+  db.prepare("INSERT INTO notes (slug, title, body, project, updated, version, source) VALUES ('same', 'Same', 'new', NULL, 'x', 1, 'chat')").run();
+  db.prepare("INSERT INTO notes_history (slug, version, title, body, project, updated, source) VALUES ('same', 1, 'Same', 'stale', NULL, 'x', 'chat')").run();
+  await saveNote(file, { title: "Same", body: "v2", slug: "same" }, t1);
+  expect((await loadNoteHistory(file, "same")).map((h) => h.body)).toEqual(["new"]);
+});
+
 test("archive and restore change neither version, history, star nor project", async () => {
   const slug = await saveNote(file, { title: "T", body: "1", project: "/p" }, t0);
   await saveNote(file, { title: "T", body: "2", project: "/p", slug }, t1);

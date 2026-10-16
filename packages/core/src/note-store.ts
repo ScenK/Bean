@@ -101,6 +101,9 @@ export async function saveNote(
       }
       if (prev) {
         version = prev.version + 1;
+        // A live note's own history is always below its version; rows at/above it are orphans of a
+        // pre-UUID deleteNote whose title slug got reused — drop them so the snapshot can't collide.
+        db.prepare("DELETE FROM notes_history WHERE slug = ? AND version >= ?").run(slug, prev.version);
         db.prepare(
           "INSERT INTO notes_history (slug, version, title, body, project, updated, source) " +
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
