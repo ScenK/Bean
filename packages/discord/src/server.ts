@@ -1,7 +1,7 @@
 import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, appendMemories, deleteMemories,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
@@ -88,6 +88,9 @@ const bot = buildTeamsBot({
   saveNote: (draft) => saveNote(dbFile(dir), draft),
   saveNoteImage: (bytes) => saveNoteImage(dbFile(dir), bytes),
   searchNotes: (query) => searchNotes(dbFile(dir), query),
+  noteArchiveProposals: new NoteArchiveProposalStore(),
+  archiveNote: (slug) => archiveNote(dbFile(dir), slug),
+  restoreNote: (slug) => restoreNoteOutcome(dbFile(dir), slug),
   todoProposals: new TodoProposalStore(),
   queueTodo: async (routine, text, createdBy) => {
     const target = resolveTodoRoutine(await loadRoutines(routinesDir(dir)), routine, createdBy !== undefined);

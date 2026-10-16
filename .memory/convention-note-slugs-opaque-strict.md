@@ -12,4 +12,13 @@ without restoring it. Don't pass `upsert` from chat/IPC/bot paths.
 Lifecycle: `archiveNote`/`restoreNote` only flip `archived_at` (version, history, star, project
 untouched); `purgeNote` is archived-only and deletes history then the row. The `ON CONFLICT`
 update never touches `archived_at` or `starred`. `loadNotes`/`searchNotes` hide archived notes
-by default. The desktop Delete button calls `archiveNote` (#304).
+by default; the desktop Notes window lists with `includeArchived: true` and renders an Archive
+group (folded by default via localStorage `bean.notes.archiveOpen`) with a read-only view offering
+Restore / Delete permanently (#305). A failed linked chat save re-lists with `includeArchived` to
+tell archived from deleted from transient, and only unlinks on the first two.
+
+Chat bots (#306): `propose_note_archive({ query })` is offered only with converse's
+`noteArchiveAvailable` (chatops passes `can(role, "notes")`; the desktop never gets it). The bot
+resolves the top `searchNotes` match into a one-shot, conversation-bound `NoteArchiveProposalStore`;
+the receipt's Restore carries the slug in `proposalId` and calls `restoreNoteOutcome` (never
+creates, so a purged note stays gone). No purge from chat.

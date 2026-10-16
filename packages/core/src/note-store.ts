@@ -149,6 +149,13 @@ export async function restoreNote(file: string, slug: string): Promise<boolean> 
     .run(slug).changes) > 0;
 }
 
+/** restoreNote for the chat-bot receipt, which must tell its three answers apart: "live" = already
+ * restored, "missing" = purged (or never existed). Never creates a row. */
+export async function restoreNoteOutcome(file: string, slug: string): Promise<"restored" | "live" | "missing"> {
+  if (await restoreNote(file, slug)) return "restored";
+  return openDb(file).prepare("SELECT 1 FROM notes WHERE slug = ?").get(slug) ? "live" : "missing";
+}
+
 /** Permanently deletes an archived note and all its history. Refuses a live (or missing) note —
  * archive first. Returns whether the note was purged. */
 export async function purgeNote(file: string, slug: string): Promise<boolean> {

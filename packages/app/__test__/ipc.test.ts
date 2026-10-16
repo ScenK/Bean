@@ -241,7 +241,7 @@ test("note image handlers accept raw bytes only and serve stored rows as data: U
   const handlers = buildNotesHandlers({
     loadNotes: async () => [],
     saveNote: async (_f, draft) => { saves.push({ body: draft.body }); return "s"; },
-    archiveNote: async () => true,
+    archiveNote: async () => true, restoreNote: async () => true, purgeNote: async () => true,
     starNote: async () => {},
     loadNoteHistory: async () => [],
     saveNoteImage: async (_f, bytes) => { stored.push(bytes); return "abcdef12-2222-4333-8444-555555555555"; },
@@ -264,7 +264,8 @@ test("notes save copies only known draft fields", async () => {
   const drafts: unknown[] = [];
   const handlers = buildNotesHandlers({
     loadNotes: async () => [], saveNote: async (_f, draft) => { drafts.push(draft); return "s"; },
-    archiveNote: async () => true, starNote: async () => {}, loadNoteHistory: async () => [],
+    archiveNote: async () => true, restoreNote: async () => true, purgeNote: async () => true,
+    starNote: async () => {}, loadNoteHistory: async () => [],
     saveNoteImage: async () => "x", loadNoteImage: async () => undefined, dbFile: "/b/bean.db",
   });
   await handlers.save({ title: "T", body: "B", slug: "s1", project: "/p", source: "manual", archivedAt: "x", upsert: true } as never);
@@ -273,18 +274,34 @@ test("notes save copies only known draft fields", async () => {
 
 test("notes handlers pass the configured dir through to the injected store fns", async () => {
   const calls: unknown[][] = [];
+  let purged = true;
   const handlers = buildNotesHandlers({
-    loadNotes: async (dir) => { calls.push(["list", dir]); return []; },
+    loadNotes: async (dir, opts) => { calls.push(["list", dir, opts]); return []; },
     saveNote: async (dir, draft) => { calls.push(["save", dir, draft.title]); return "slug"; },
     archiveNote: async (dir, slug) => { calls.push(["archive", dir, slug]); return true; },
+    restoreNote: async (dir, slug) => { calls.push(["restore", dir, slug]); return true; },
+    purgeNote: async (dir, slug) => { calls.push(["purge", dir, slug]); return purged; },
     loadNoteHistory: async (dir, slug) => { calls.push(["history", dir, slug]); return []; },
     dbFile: "/b/notes",
   });
   await handlers.list();
+  await handlers.list({ includeArchived: "yes" });
+  await handlers.list({ includeArchived: true });
   expect(await handlers.save({ title: "T", body: "B" })).toBe("slug");
-  await handlers.delete("t");
+  await handlers.archive("t");
+  await handlers.restore("t");
+  await handlers.purge("t");
   await handlers.history("t");
-  expect(calls).toEqual([["list", "/b/notes"], ["save", "/b/notes", "T"], ["archive", "/b/notes", "t"], ["history", "/b/notes", "t"]]);
+  expect(calls).toEqual([
+    ["list", "/b/notes", { includeArchived: false }], ["list", "/b/notes", { includeArchived: false }],
+    ["list", "/b/notes", { includeArchived: true }], ["save", "/b/notes", "T"], ["archive", "/b/notes", "t"],
+    ["restore", "/b/notes", "t"], ["purge", "/b/notes", "t"], ["history", "/b/notes", "t"],
+  ]);
+  // Slugs cross IPC untyped: non-strings never reach core, and a refused purge surfaces.
+  await expect(handlers.restore(42)).rejects.toThrow(/invalid note slug/);
+  await expect(handlers.purge(undefined)).rejects.toThrow(/invalid note slug/);
+  purged = false;
+  await expect(handlers.purge("live")).rejects.toThrow(/archived/);
 });
 
 test("chat handler passes action tools through to converse and executes them", async () => {

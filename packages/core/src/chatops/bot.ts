@@ -27,6 +27,7 @@ import type { ConversationStore } from "./conversation.js";
 import { maybeCompact } from "./compact.js";
 import { MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
+import type { NoteArchiveProposalStore } from "./note-archive-proposals.js";
 import type { TodoProposalStore } from "./todo-proposals.js";
 import type { SkillProposalStore } from "./skill-proposals.js";
 import {
@@ -134,6 +135,11 @@ export interface TeamsBotDeps {
   saveNoteImage?: (bytes: Uint8Array) => Promise<string>;
   /** FTS5 search over saved notes (server injects the db path); backs retrieve_note. */
   searchNotes: (query: string) => Promise<Note[]>;
+  /** Confirm-first propose_note_archive: the pending archive, the archive itself (false = already
+   * archived or gone) and the receipt's Restore (never creates — see restoreNoteOutcome). */
+  noteArchiveProposals: NoteArchiveProposalStore;
+  archiveNote: (slug: string) => Promise<boolean>;
+  restoreNote: (slug: string) => Promise<"restored" | "live" | "missing">;
   todoProposals: TodoProposalStore;
   /** Queues a confirmed todo (server injects the db path + routine validation). `createdBy` set =
    * a non-owner's todo: the routine must be `memberTodoEligible` and the row is stamped with it.
@@ -522,6 +528,50 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await fx.post(`Saved note "${pending.note.title}".`);
     } catch (err) {
       await fx.post(`Couldn't save the note: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async function handleNoteArchiveAction(
+    kind: "archive-note" | "cancel-archive-note",
+    proposalId: string | undefined,
+    actor: string,
+    conversationId: string,
+    fx: BotEffects,
+  ): Promise<void> {
+    if (!proposalId) return;
+    const pending = deps.noteArchiveProposals.claim(proposalId, conversationId);
+    if (!pending) {
+      await fx.post("That archive request expired — ask me again.");
+      return;
+    }
+    const updateTo = async (card: object): Promise<void> => {
+      if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, card);
+    };
+    if (kind === "cancel-archive-note") {
+      await updateTo(deps.cards.noteArchiveResultCard({ title: pending.title, by: actor, outcome: "cancelled" }));
+      return;
+    }
+    try {
+      if (!(await deps.archiveNote(pending.slug))) {
+        await fx.post(`"${pending.title}" is already archived or gone.`);
+        return;
+      }
+      await updateTo(deps.cards.noteArchiveResultCard({ title: pending.title, by: actor, outcome: "archived", noteId: pending.slug }));
+    } catch (err) {
+      await fx.post(`Couldn't archive the note: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Restore button on an archive receipt. The note id rides the button (like Forget) and restore
+  // is idempotent, so no proposal store.
+  async function handleRestoreNote(slug: string | undefined, actor: string, fx: BotEffects): Promise<void> {
+    if (!slug) return;
+    try {
+      const outcome = await deps.restoreNote(slug);
+      await fx.post(outcome === "restored" ? `Restored (by ${actor}).`
+        : outcome === "live" ? "Already restored." : "That note was permanently deleted — it can't be restored.");
+    } catch (err) {
+      await fx.post(`Couldn't restore the note: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -951,6 +1001,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           scratchPath: canDelegate ? deps.scratchPath : undefined,
           liveSessionAvailable: can(role, "liveSession") && liveClis().length > 0,
           noteAvailable: can(role, "notes"),
+          noteArchiveAvailable: can(role, "notes"),
           skillAuthoringAvailable: can(role, "skillWrites"),
           roleNote: roleLine(role, deps.roles, scopeId),
           availableClis: detected,
@@ -1055,6 +1106,26 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps.noteProposals.setCardActivityId(pending.id, activityId);
           return;
         }
+        if (result.proposedNoteArchive) {
+          if (!(await permitted("notes", "archive notes"))) return;
+          const { query } = result.proposedNoteArchive;
+          const note = (await deps.searchNotes(query))[0];
+          if (!note) {
+            await fx.post(`I couldn't find a note matching "${query}".`);
+            return;
+          }
+          const pending = deps.noteArchiveProposals.add({
+            slug: note.slug, title: note.title, conversationId: msg.conversationId, proposedBy: msg.fromName,
+          });
+          const activityId = await fx.postCard(deps.cards.noteArchiveProposalCard({
+            proposalId: pending.id, title: note.title, updated: note.updated,
+            projectName: note.project ? (projects.find((p) => p.path === note.project)?.name ?? note.project) : undefined,
+            // First non-blank, non-heading line (note bodies open with "## Summary").
+            snippet: (note.body.split("\n").find((l) => l.trim() && !l.trimStart().startsWith("#")) ?? "").trim().slice(0, 200),
+          }));
+          deps.noteArchiveProposals.setCardActivityId(pending.id, activityId);
+          return;
+        }
         if (result.proposedSkill) {
           if (!(await permitted("skillWrites", "save skills"))) return;
           const skill = result.proposedSkill;
@@ -1139,6 +1210,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (beanAction === "save-note" || beanAction === "cancel-note") {
         await handleNoteAction(beanAction, proposalId, action.fromName, action.conversationId, fx);
+        return;
+      }
+      if (beanAction === "archive-note" || beanAction === "cancel-archive-note") {
+        await handleNoteArchiveAction(beanAction, proposalId, action.fromName, action.conversationId, fx);
+        return;
+      }
+      if (beanAction === "restore-note") {
+        // proposalId carries the note id here (the surfaces' generic id slot).
+        await handleRestoreNote(proposalId, action.fromName, fx);
         return;
       }
       if (beanAction === "save-skill" || beanAction === "cancel-skill") {

@@ -263,3 +263,18 @@ test("routine card: toggle shows the current state, an invalid draft offers only
   const bad = discordCards.routineProposalCard!({ ...input, problem: "bad cron" }) as typeof ok;
   expect(bad.components[0]!.components.map((b) => b.custom_id)).toEqual(["bean:cancel-routine:routine-1"]);
 });
+
+test("note archive cards: Archive/Cancel on the proposal, Restore with the note id on the receipt only", () => {
+  const p = JSON.stringify(discordCards.noteArchiveProposalCard({
+    proposalId: "archive-1", title: "Groceries", updated: "2026-10-01T12:00:00.000Z", snippet: "milk and eggs",
+  }));
+  expect(p).toContain("bean:archive-note:archive-1");
+  expect(p).toContain("bean:cancel-archive-note:archive-1");
+  expect(p).toContain("milk and eggs");
+  const id = "0f8c2a4e-6b1d-4c3e-9a7f-2d5b8e1c4a90";
+  expect(JSON.stringify(discordCards.noteArchiveResultCard({ title: "Groceries", by: "mia", outcome: "archived", noteId: id })))
+    .toContain(`bean:restore-note:${id}`);
+  expect(JSON.stringify(discordCards.noteArchiveResultCard({ title: "Groceries", by: "mia", outcome: "cancelled" }))).not.toContain("restore-note");
+  // A slug too long for the 100-char custom_id gets no (truncated, useless) button.
+  expect(JSON.stringify(discordCards.noteArchiveResultCard({ title: "G", by: "mia", outcome: "archived", noteId: "x".repeat(90) }))).not.toContain("restore-note");
+});

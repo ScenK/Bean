@@ -55,6 +55,9 @@ export type ProposedRun = RouteSuggestion;
 /** A note draft awaiting user confirmation in the chat — notes are never saved silently.
  * `slug` present = update that existing note in place (chat linked to a note). */
 export interface ProposedNote { title: string; body: string; project?: string; slug?: string; }
+/** A request to archive a saved note (chatops). The bot resolves `query` to its top match and
+ * shows a confirm card — converse() has no note search of its own. */
+export interface ProposedNoteArchive { query: string; }
 /** A skill draft awaiting user confirmation — skills are never written silently.
  * `updating` = a skill with this name already exists (user or built-in; confirming
  * writes/overrides the user copy in ~/.bean/skills). */
@@ -106,7 +109,7 @@ export interface ProposedLiveSession {
  * propose_note from this chat targets it (update in place) by default. */
 export interface LinkedNote { slug: string; title: string; version: number; body: string; }
 export interface ConverseResult {
-  reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo; proposedRoutine?: ProposedRoutine;
+  reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedNoteArchive?: ProposedNoteArchive; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo; proposedRoutine?: ProposedRoutine;
   /** Files produced by generate_image this turn — set by surface handlers (buildChatHandler
    * fills dataUrl for inline rendering), never by converse() itself; bots use sendFile instead. */
   generatedImages?: Array<{ path: string; dataUrl?: string }>;
@@ -221,6 +224,20 @@ function proposeNoteTool(projects: Project[], linkedNote?: LinkedNote): ToolSpec
     parameters: { type: "object", properties, required: ["title", "body"] },
   };
 }
+
+// Static (no per-chat values) so the tool list stays cache-stable.
+const PROPOSE_NOTE_ARCHIVE: ToolSpec = {
+  name: "propose_note_archive",
+  description:
+    "Archive one of the user's saved notes when they ask to archive, delete or remove it. Bean finds " +
+    "the best match for the query and shows a card the user confirms. Archiving is reversible (the " +
+    "receipt has a Restore button); permanently deleting a note isn't available in chat.",
+  parameters: {
+    type: "object",
+    properties: { query: { type: "string", description: "words from the note's title or topic" } },
+    required: ["query"],
+  },
+};
 
 // Mirrors saveSkill's traversal guard — converse() must reject what the writer would reject,
 // so an invalid model-supplied name dies here instead of as a save-time error on the card.
@@ -461,6 +478,8 @@ export interface ConverseInput {
   /** Offer propose_note / propose_skill (default true). Chatops turns them off by speaker role. */
   noteAvailable?: boolean;
   skillAuthoringAvailable?: boolean;
+  /** Offer propose_note_archive (default false — chatops only; the desktop has its own Archive). */
+  noteArchiveAvailable?: boolean;
   /** Per-turn guidance about the speaker's role (chatops); rides the trailing system message. */
   roleNote?: string;
   /** Offer propose_routine (chatops, owner only). */
@@ -499,6 +518,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     speaker,
     noteAvailable = true,
     skillAuthoringAvailable = true,
+    noteArchiveAvailable = false,
     roleNote,
     routineAuthoring,
   } = input;
@@ -562,6 +582,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     ...(liveSessionAvailable && projects.length > 0 ? [proposeLiveSessionTool(projects, models, liveClis)] : []),
     ...(noteAvailable ? [proposeNoteTool(projects, linkedNote)] : []),
     ...(skillAuthoringAvailable ? [proposeSkillTool()] : []),
+    ...(noteArchiveAvailable ? [PROPOSE_NOTE_ARCHIVE] : []),
     ...(todoRoutines.length > 0 ? [proposeTodoTool(todoRoutines)] : []),
     ...(routineAuthoring ? [proposeRoutineTool(routineAuthoring)] : []),
     ...actions.map((a) => a.spec),
@@ -697,6 +718,16 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         model: deps.model,
         proposedNote: { title: args.title.trim(), body: args.body, project, slug: linkedNote?.slug },
       };
+    }
+
+    const archiveCall = toolCalls.find((c) => c.name === "propose_note_archive");
+    if (archiveCall) {
+      const query = (archiveCall.args as { query?: unknown } | undefined)?.query;
+      if (typeof query !== "string" || !query.trim()) {
+        reject(archiveCall, "propose_note_archive needs a query.");
+        continue;
+      }
+      return { reply: content, model: deps.model, proposedNoteArchive: { query: query.trim() } };
     }
 
     const skillCall = toolCalls.find((c) => c.name === "propose_skill");

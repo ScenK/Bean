@@ -13,6 +13,9 @@ type Mode = "view" | "edit" | "add";
 // value just unfolds everything.
 const COLLAPSED_KEY = "bean.notes.collapsedGroups";
 const STARRED_KEY = "starred";
+// The Archive group folds the other way round: shut unless the user opened it (absent = folded).
+const ARCHIVE_KEY = "archive";
+const ARCHIVE_OPEN_KEY = "bean.notes.archiveOpen";
 
 // The colored spine is what carries project identity in the index-dense list, which is why the
 // group labels can stay whisper-quiet. Indexed by the project's position in the registry rather
@@ -49,18 +52,34 @@ export function NotesPanel() {
   const [history, setHistory] = useState<Note[] | undefined>(undefined);
   const [viewVersion, setViewVersion] = useState<Note | undefined>(undefined);
   const [collapsed, setCollapsed] = useState<string[]>(loadCollapsed);
+  const [archiveOpen, setArchiveOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem(ARCHIVE_OPEN_KEY) === "1"; } catch { return false; }
+  });
   // Bumped whenever the editor switches drafts, so an image upload that finishes after the
   // user moved on can't splice its ref into a different note at stale offsets.
   const draftGen = useRef(0);
 
-  const refresh = async (): Promise<void> => {
+  const refresh = async (): Promise<Note[]> => {
     const [nextNotes, nextProjects] = await Promise.all([
-      window.bean.listNotes(),
+      window.bean.listNotes({ includeArchived: true }),
       window.bean.listProjects(),
     ]);
     setNotes(nextNotes);
     setProjects(nextProjects);
     setSelectedSlug((prev) => (prev && nextNotes.some((n) => n.slug === prev) ? prev : undefined));
+    return nextNotes;
+  };
+
+  // A write to a note archived or deleted elsewhere (a bot, another window) fails in core;
+  // re-sync the list and say what happened instead of showing the raw IPC error.
+  const reportWriteError = async (slug: string, err: unknown): Promise<void> => {
+    const list = await refresh().catch(() => undefined);
+    const now = list?.find((n) => n.slug === slug);
+    setSaveError(
+      list && !now ? `This note was deleted elsewhere${mode === "edit" ? " — Save keeps your text as a new note" : ""}.`
+        : now?.archivedAt ? "This note was archived elsewhere — restore it to edit."
+          : err instanceof Error ? err.message : String(err),
+    );
   };
 
   useEffect(() => { void refresh(); }, []);
@@ -81,18 +100,22 @@ export function NotesPanel() {
   // `key` is the project path, not the display name: names are neither unique nor stable, and
   // one could even be "General" — folding is keyed off this, so it has to identify the group.
   // STARRED_KEY can't collide: project paths are absolute.
+  // Archived notes leave every other group for the Archive group, pinned last.
   const groups = useMemo(() => {
     const byTitle = (a: Note, b: Note) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
     const out: { key: string; label: string; notes: Note[] }[] = [];
-    const starred = filtered.filter((n) => n.starred);
+    const live = filtered.filter((n) => !n.archivedAt);
+    const starred = live.filter((n) => n.starred);
     if (starred.length > 0) out.push({ key: STARRED_KEY, label: "★ Starred", notes: starred.sort(byTitle) });
-    const rest = filtered.filter((n) => !n.starred);
+    const rest = live.filter((n) => !n.starred);
     for (const p of projects) {
       const own = rest.filter((n) => n.project === p.path);
       if (own.length > 0) out.push({ key: p.path, label: p.name, notes: own.sort(byTitle) });
     }
     const general = rest.filter((n) => !n.project || !projects.some((p) => p.path === n.project));
     if (general.length > 0) out.push({ key: "", label: "General", notes: general.sort(byTitle) });
+    const archived = filtered.filter((n) => n.archivedAt);
+    if (archived.length > 0) out.push({ key: ARCHIVE_KEY, label: "Archive", notes: archived.sort(byTitle) });
     return out;
   }, [filtered, projects]);
 
@@ -106,8 +129,9 @@ export function NotesPanel() {
     return i < 0 ? "var(--bean-border)" : SPINES[i % SPINES.length]!;
   };
 
-  const shortDay = (n: Note): string =>
-    n.updated ? new Date(n.updated).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+  const dayOf = (iso?: string): string =>
+    iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+  const shortDay = (n: Note): string => dayOf(n.updated);
 
   const metaLine = (n: Note): string => {
     const day = n.updated ? new Date(n.updated).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
@@ -124,6 +148,15 @@ export function NotesPanel() {
   };
 
   const toggleGroup = (key: string): void => {
+    if (key === ARCHIVE_KEY) {
+      setArchiveOpen((prev) => {
+        try {
+          if (prev) localStorage.removeItem(ARCHIVE_OPEN_KEY); else localStorage.setItem(ARCHIVE_OPEN_KEY, "1");
+        } catch { /* private mode / quota: fold still works this session */ }
+        return !prev;
+      });
+      return;
+    }
     setCollapsed((prev) => {
       const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
       try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next)); } catch { /* private mode / quota: fold still works this session */ }
@@ -161,7 +194,7 @@ export function NotesPanel() {
       await refresh();
       setSelectedSlug(selected.slug);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : String(err));
+      await reportWriteError(selected.slug, err);
     }
   };
 
@@ -194,16 +227,43 @@ export function NotesPanel() {
       setMode("view");
       setSaveError(undefined);
     } catch (err) {
+      if (mode === "edit" && selected) await reportWriteError(selected.slug, err);
+      else setSaveError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  // Archive is reversible, so no confirm; the note stays selected and shows its archived view.
+  const archive = async (): Promise<void> => {
+    if (!selected) return;
+    try {
+      await window.bean.archiveNote(selected.slug);
+      setHistory(undefined); setViewVersion(undefined); setSaveError(undefined);
+      await refresh();
+    } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
     }
   };
 
-  const remove = async (): Promise<void> => {
+  const restore = async (): Promise<void> => {
     if (!selected) return;
-    if (!confirm(`Delete note "${selected.title}"? Past versions stay in .history.`)) return;
     try {
-      await window.bean.deleteNote(selected.slug);
+      await window.bean.restoreNote(selected.slug);
+      setSaveError(undefined);
+      await refresh();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const purge = async (): Promise<void> => {
+    if (!selected) return;
+    const versions = selected.version === 1 ? "its only version" : `all ${selected.version} versions`;
+    const routine = selected.slug.startsWith("routine-") ? " Its routine will create a new note on its next run." : "";
+    if (!confirm(`Delete "${selected.title}" permanently? This removes ${versions} and can't be undone.${routine}`)) return;
+    try {
+      await window.bean.purgeNote(selected.slug);
       setSelectedSlug(undefined);
+      setSaveError(undefined);
       await refresh();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
@@ -218,7 +278,7 @@ export function NotesPanel() {
       });
       await refresh();
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : String(err));
+      await reportWriteError(selected.slug, err);
     }
   };
 
@@ -239,7 +299,7 @@ export function NotesPanel() {
       await refresh();
       setSelectedSlug(slug);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : String(err));
+      await reportWriteError(selected.slug, err);
     }
   };
 
@@ -256,15 +316,19 @@ export function NotesPanel() {
   // space, lifting into a card with its snippet, meta and Continue action.
   const noteRow = (n: Note) => {
     const on = selectedSlug === n.slug;
+    const archived = n.archivedAt !== undefined;
     return (
       <div
         key={n.slug}
-        class={`bean-notes-idx${on ? " bean-notes-idx--on" : ""}`}
+        class={`bean-notes-idx${on ? " bean-notes-idx--on" : ""}${archived ? " bean-notes-idx--archived" : ""}`}
         onClick={() => select(n.slug)}
       >
         <div class="bean-notes-idx-line">
           <span class="bean-notes-spine" style={{ background: spineColor(n) }} />
           <span class="bean-notes-idx-title">{n.title}</span>
+          {archived ? (
+            <span class="bean-notes-idx-date" title="Archived">{dayOf(n.archivedAt)}</span>
+          ) : (<>
           <button
             type="button"
             class={`bean-notes-star bean-notes-idx-star${n.starred ? " bean-notes-star--on" : ""}`}
@@ -279,6 +343,7 @@ export function NotesPanel() {
           ) : (
             <span class="bean-notes-idx-date">{shortDay(n)}</span>
           )}
+          </>)}
         </div>
         {on ? (
           <>
@@ -286,13 +351,15 @@ export function NotesPanel() {
             <div class="bean-notes-idx-foot">
               <span>{metaLine(n)}</span>
               <span class="bean-skills-spacer" />
-              <button
-                type="button"
-                class="bean-notes-idx-continue"
-                onClick={(e) => { e.stopPropagation(); continueInChat(); }}
-              >
-                Continue {"\u2197"}
-              </button>
+              {archived ? null : (
+                <button
+                  type="button"
+                  class="bean-notes-idx-continue"
+                  onClick={(e) => { e.stopPropagation(); continueInChat(); }}
+                >
+                  Continue {"\u2197"}
+                </button>
+              )}
             </div>
           </>
         ) : null}
@@ -363,7 +430,7 @@ export function NotesPanel() {
             onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
           />
         </div>
-        <div class="bean-skills-list-label">All notes · {notes.length}</div>
+        <div class="bean-skills-list-label">All notes · {notes.filter((n) => !n.archivedAt).length}</div>
         {notes.length === 0 ? (
           <div class="bean-panel-empty">No notes yet — save a talk from chat, or add one below.</div>
         ) : filtered.length === 0 ? (
@@ -375,7 +442,7 @@ export function NotesPanel() {
             // clears. Folding is disabled meanwhile — a click that silently rearranged the list
             // only once the query cleared would look like it had done nothing.
             const searching = query.trim() !== "";
-            const open = searching || !collapsed.includes(g.key);
+            const open = searching || (g.key === ARCHIVE_KEY ? archiveOpen : !collapsed.includes(g.key));
             return (
               <div key={g.key}>
                 <button
@@ -401,8 +468,36 @@ export function NotesPanel() {
       </div>
       <div class="bean-skills-detail">
         {mode === "add" ? editor : null}
-        {mode === "edit" && selected ? editor : null}
-        {mode === "view" && selected ? (
+        {/* No `selected` check: a note deleted elsewhere mid-edit keeps the draft (Save makes a new note). */}
+        {mode === "edit" ? editor : null}
+        {mode === "view" && selected?.archivedAt ? (
+          <>
+            <div class="bean-skills-header">
+              <div class="bean-skills-header-main">
+                <div class="bean-skills-title-row">
+                  <div class="bean-skills-title">{selected.title}</div>
+                  {selected.project ? <span class="bean-skills-tag">{projectName(selected.project)}</span> : null}
+                </div>
+                <div class="bean-skills-description bean-notes-archived-meta">
+                  Archived {dayOf(selected.archivedAt)}
+                  {/* ISO strings compare chronologically; a routine sink can still update an archived note. */}
+                  {selected.updated > selected.archivedAt ? ` · updated ${dayOf(selected.updated)}` : ""}
+                  {` · v${selected.version}`}
+                </div>
+              </div>
+            </div>
+            <div class="bean-skills-preview-box bean-notes-body">
+              <NoteBody body={selected.body} />
+            </div>
+            {saveError ? <div class="bean-status bean-status--error">{saveError}</div> : null}
+            <div class="bean-card-actions">
+              <button type="button" class="bean-btn bean-notes-restore" onClick={() => void restore()}>Restore</button>
+              <span class="bean-skills-spacer" />
+              <button type="button" class="bean-btn bean-btn--ghost bean-notes-purge" onClick={() => void purge()}>Delete permanently…</button>
+            </div>
+          </>
+        ) : null}
+        {mode === "view" && selected && !selected.archivedAt ? (
           <>
             <div class="bean-skills-header">
               <div class="bean-skills-header-main">
@@ -507,7 +602,7 @@ export function NotesPanel() {
             <div class="bean-card-actions">
               <button type="button" class="bean-btn bean-btn--ghost" onClick={startEdit}>Edit note</button>
               <span class="bean-skills-spacer" />
-              <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void remove()}>Delete…</button>
+              <button type="button" class="bean-btn bean-btn--ghost bean-notes-archive" onClick={() => void archive()}>Archive</button>
             </div>
           </>
         ) : null}

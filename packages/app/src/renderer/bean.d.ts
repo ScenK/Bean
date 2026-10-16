@@ -71,11 +71,15 @@ declare global {
       checkForUpdate(): Promise<UpdateStatus>;
       installUpdate(): Promise<InstallUpdateResult | undefined>;
       openUpdateReleasePage(): void;
-      listNotes(): Promise<Note[]>;
+      /** Live notes; `includeArchived` adds archived ones (each with `archivedAt`). */
+      listNotes(opts?: { includeArchived?: boolean }): Promise<Note[]>;
       saveNote(draft: NoteDraft, images?: ImageAttachment[]): Promise<string>;
       saveNoteImage(bytes: Uint8Array): Promise<string>;
       noteImage(id: string): Promise<string | undefined>;
-      deleteNote(slug: string): Promise<void>;
+      archiveNote(slug: string): Promise<void>;
+      restoreNote(slug: string): Promise<void>;
+      /** Permanently deletes an archived note and its history. */
+      purgeNote(slug: string): Promise<void>;
       starNote(slug: string, starred: boolean): Promise<void>;
       noteHistory(slug: string): Promise<Note[]>;
       skillProposalsList(): Promise<{ pending: SkillProposalView[]; applied: SkillProposalView[] }>;

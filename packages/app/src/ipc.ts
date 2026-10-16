@@ -527,9 +527,11 @@ function toTranscript(v: unknown): ChatTurn[] {
 }
 
 export interface NotesHandlerDeps {
-  loadNotes: (file: string) => Promise<Note[]>;
+  loadNotes: (file: string, opts?: { includeArchived?: boolean }) => Promise<Note[]>;
   saveNote: (file: string, draft: NoteDraft) => Promise<string>;
   archiveNote: (file: string, slug: string) => Promise<boolean>;
+  restoreNote: (file: string, slug: string) => Promise<boolean>;
+  purgeNote: (file: string, slug: string) => Promise<boolean>;
   starNote: (file: string, slug: string, starred: boolean) => Promise<void>;
   loadNoteHistory: (file: string, slug: string) => Promise<Note[]>;
   saveNoteImage: (file: string, bytes: Uint8Array) => Promise<string>;
@@ -537,10 +539,17 @@ export interface NotesHandlerDeps {
   dbFile: string;
 }
 
+// Slugs cross IPC untyped; core re-checks traversal, this rejects non-strings before it.
+function noteSlug(slug: unknown): string {
+  if (typeof slug !== "string" || slug === "") throw new Error("invalid note slug");
+  return slug;
+}
+
 export function buildNotesHandlers(deps: NotesHandlerDeps) {
   const storeImage = (bytes: Uint8Array): Promise<string> => deps.saveNoteImage(deps.dbFile, bytes);
   return {
-    list: (): Promise<Note[]> => deps.loadNotes(deps.dbFile),
+    list: (opts?: unknown): Promise<Note[]> =>
+      deps.loadNotes(deps.dbFile, { includeArchived: (opts as { includeArchived?: unknown } | undefined)?.includeArchived === true }),
     // `images` = the chat's latest attached images carried into a desktop propose_note save;
     // core stores them and appends code-written bean-image refs (limits re-checked there).
     save: async (draft: NoteDraft, images?: unknown): Promise<string> => {
@@ -565,8 +574,11 @@ export function buildNotesHandlers(deps: NotesHandlerDeps) {
       const img = await deps.loadNoteImage(deps.dbFile, id);
       return img ? `data:${img.mime};base64,${Buffer.from(img.bytes).toString("base64")}` : undefined;
     },
-    // The Delete button archives (restore/purge UI lands later in the epic).
-    delete: async (slug: string): Promise<void> => { await deps.archiveNote(deps.dbFile, slug); },
+    archive: async (slug: unknown): Promise<void> => { await deps.archiveNote(deps.dbFile, noteSlug(slug)); },
+    restore: async (slug: unknown): Promise<void> => { await deps.restoreNote(deps.dbFile, noteSlug(slug)); },
+    purge: async (slug: unknown): Promise<void> => {
+      if (!(await deps.purgeNote(deps.dbFile, noteSlug(slug)))) throw new Error("only an archived note can be deleted permanently");
+    },
     star: (slug: string, starred: boolean): Promise<void> => deps.starNote(deps.dbFile, slug, starred),
     history: (slug: string): Promise<Note[]> => deps.loadNoteHistory(deps.dbFile, slug),
   };
@@ -764,6 +776,8 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   loadNotes: NotesHandlerDeps["loadNotes"];
   saveNote: NotesHandlerDeps["saveNote"];
   archiveNote: NotesHandlerDeps["archiveNote"];
+  restoreNote: NotesHandlerDeps["restoreNote"];
+  purgeNote: NotesHandlerDeps["purgeNote"];
   starNote: NotesHandlerDeps["starNote"];
   loadNoteHistory: NotesHandlerDeps["loadNoteHistory"];
   saveNoteImage: NotesHandlerDeps["saveNoteImage"];
@@ -915,11 +929,13 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.dreamDetails, () => memoryHandlers.dreamDetails());
 
   const notesHandlers = buildNotesHandlers(deps);
-  ipcMain.handle(IPC.listNotes, () => notesHandlers.list());
+  ipcMain.handle(IPC.listNotes, (_e, opts?: unknown) => notesHandlers.list(opts));
   ipcMain.handle(IPC.saveNote, (_e, draft: NoteDraft, images?: unknown) => notesHandlers.save(draft, images));
   ipcMain.handle(IPC.saveNoteImage, (_e, bytes: unknown) => notesHandlers.saveImage(bytes));
   ipcMain.handle(IPC.noteImage, (_e, id: unknown) => notesHandlers.image(id));
-  ipcMain.handle(IPC.deleteNote, (_e, slug: string) => notesHandlers.delete(slug));
+  ipcMain.handle(IPC.archiveNote, (_e, slug: unknown) => notesHandlers.archive(slug));
+  ipcMain.handle(IPC.restoreNote, (_e, slug: unknown) => notesHandlers.restore(slug));
+  ipcMain.handle(IPC.purgeNote, (_e, slug: unknown) => notesHandlers.purge(slug));
   // === true, not a cast: the renderer's types are erased by the time a value crosses IPC,
   // and every truthy payload ("false" included) would otherwise star the note.
   ipcMain.handle(IPC.starNote, (_e, slug: string, starred: unknown) => notesHandlers.star(slug, starred === true));
