@@ -2248,7 +2248,7 @@ async function archiveHousehold() {
 }
 
 const archiveIdOf = (effects: ReturnType<typeof fx>): string => {
-  const m = /"proposalId":"(archive-\d+)"/.exec(JSON.stringify(effects.cards[0]));
+  const m = /"proposalId":"(archive-[0-9a-f-]+)"/.exec(JSON.stringify(effects.cards[0]));
   if (!m?.[1]) throw new Error("no archive proposal card");
   return m[1];
 };

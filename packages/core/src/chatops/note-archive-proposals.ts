@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 /** A pending confirm-first note archive awaiting an Archive/Cancel tap on its card. */
 export interface PendingNoteArchive {
   id: string;
@@ -12,17 +14,17 @@ export interface PendingNoteArchive {
 const EXPIRY_MS = 10 * 60_000;
 
 /** Pending note archives — the archive counterpart to NoteProposalStore. claim() is one-shot and
- * conversation-bound, so a repeated, expired or other-conversation tap archives nothing. */
+ * conversation-bound, so a repeated, expired or other-conversation tap archives nothing. Ids are
+ * UUIDs, not a counter: after a restart an old card must not claim a new archive of another note. */
 export class NoteArchiveProposalStore {
   private byId = new Map<string, PendingNoteArchive>();
-  private seq = 0;
 
   constructor(private nowMs: () => number = () => Date.now()) {}
 
   add(p: Omit<PendingNoteArchive, "id" | "createdAt">): PendingNoteArchive {
     const now = this.nowMs();
     for (const [k, v] of this.byId) if (now - v.createdAt > EXPIRY_MS) this.byId.delete(k);
-    const full: PendingNoteArchive = { ...p, id: `archive-${++this.seq}`, createdAt: now };
+    const full: PendingNoteArchive = { ...p, id: `archive-${randomUUID()}`, createdAt: now };
     this.byId.set(full.id, full);
     return full;
   }
