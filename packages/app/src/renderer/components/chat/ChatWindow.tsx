@@ -139,6 +139,7 @@ export function ChatWindow() {
         // "Continue in chat" from a note: link this chat to it before the first send so the
         // note body rides along in the system prompt and saves default to update-in-place.
         if (p.noteSlug) {
+          // Default listNotes() hides archived notes, so an archived note is never linked.
           const note = (await window.bean.listNotes()).find((n) => n.slug === p.noteSlug);
           if (note) {
             const linked = { slug: note.slug, title: note.title, version: note.version, body: note.body };
@@ -347,7 +348,22 @@ export function ChatWindow() {
         { kind: "status", id: newId(), text: `✓ Saved to Notes — "${edited.title}"`, tone: "done" },
       ]);
     } catch (err) {
-      setItems((prev) => [...prev, { kind: "status", id: newId(), text: `Couldn't save the note: ${err instanceof Error ? err.message : String(err)}`, tone: "error" }]);
+      let text = `Couldn't save the note: ${err instanceof Error ? err.message : String(err)}`;
+      // A linked update fails once its note is archived or deleted elsewhere: unlink and point
+      // at the way out. Any other failure (transient) keeps the link so a retry still updates.
+      if (!asNew && edited.slug !== undefined) {
+        const notes = await window.bean.listNotes({ includeArchived: true }).catch(() => undefined);
+        const now = notes?.find((n) => n.slug === edited.slug);
+        if (notes && (!now || now.archivedAt)) {
+          const name = now?.title ?? edited.title;
+          text = now ? `"${name}" is archived — restore it in Notes, or use Save as new note.` : `"${name}" was deleted — use Save as new note.`;
+          if (linkedNoteRef.current?.slug === edited.slug) {
+            linkedNoteRef.current = undefined;
+            setLinkedNote(undefined);
+          }
+        }
+      }
+      setItems((prev) => [...prev, { kind: "status", id: newId(), text, tone: "error" }]);
     }
   };
 

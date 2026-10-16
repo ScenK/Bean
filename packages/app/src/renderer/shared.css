@@ -1268,6 +1268,8 @@ button, input, textarea, select, a {
 }
 .bean-notes-idx-open { flex: none; font: 600 10px ui-monospace, monospace; color: var(--bean-accent-text); }
 .bean-notes-idx-date { flex: none; font: 10px ui-monospace, monospace; color: var(--bean-text-dim); }
+/* Archived rows read as set aside: dim-toned title (a color token, not opacity — see theme contrast). */
+.bean-notes-idx--archived .bean-notes-idx-title { font-weight: 500; color: var(--bean-text-dim); }
 
 /* Always the filled glyph — gold when starred, quiet grey when not. An outline star reads as a
    bordered box at this size, which is why the off state is a color change, not a different mark. */
