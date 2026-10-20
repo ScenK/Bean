@@ -2046,7 +2046,7 @@ test("forget: a member removes only their own private facts; the owner removes a
 });
 
 // Reminders: a model that sets / lists / cancels on cue, against a real reminders.json.
-async function reminderHousehold() {
+async function reminderHousehold(transport: "discord" | "teams" = "discord", forge = false) {
   const { loadReminders } = await import("../src/reminders.js");
   const dir = mkdtempSync(join(tmpdir(), "bean-remind-"));
   const file = join(dir, "reminders.json");
@@ -2061,7 +2061,8 @@ async function reminderHousehold() {
       if (pending) {
         pending = false;
         if (/remind me/.test(latest) && names.has("set_reminder")) {
-          return { content: "", toolCalls: [{ name: "set_reminder", args: { text: "take out the bins", at: "2026-07-03T10:00:00.000Z" } }] };
+          const forged = forge ? { target: { transport: "discord", userId: "u1" }, setBy: "u1" } : {};
+          return { content: "", toolCalls: [{ name: "set_reminder", args: { text: "take out the bins", at: "2026-07-03T10:00:00.000Z", ...forged } }] };
         }
         if (/\blist$/.test(latest) && names.has("list_reminders")) return { content: "", toolCalls: [{ name: "list_reminders", args: {} }] };
         const cancel = /\bcancel (\S+)/.exec(latest);
@@ -2072,10 +2073,10 @@ async function reminderHousehold() {
     },
   });
   made.deps.roles = makeRoles({ dbPath: dbFile(dir), surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia", "max"] });
-  made.deps.reminders = { file, transport: "discord" };
+  made.deps.reminders = { file, transport };
   made.deps.cards = { ...fakeCards, reminderCard: (i: object) => ({ kind: "reminder", ...i }) } as CardBuilders;
-  const say = (who: string, direct: boolean, text: string) =>
-    ({ ...msg, conversationId: direct ? `dm-${who}` : "c1", fromId: who, fromName: who, direct, scopeId: direct ? undefined : "s1", text });
+  const say = (who: string, direct: boolean, text: string, conversationId = direct ? `dm-${who}` : "c1") =>
+    ({ ...msg, conversationId, fromId: who, fromName: who, direct, scopeId: direct ? undefined : "s1", text });
   return { ...made, file, say, toolResults, load: () => loadReminders(file) };
 }
 
@@ -2119,8 +2120,67 @@ test("reminders: members list and cancel only their own, by text and by tap; the
   expect(h.toolResults.at(-1)).toContain(id);
   await bot.onMessage(h.say("u1", true, "list"), fx());
   expect(h.toolResults.at(-1)).toContain(id);
-  expect(await tap("u1")).toEqual(["Reminder cancelled (by u1): take out the bins"]);
+  // The owner's tap isn't in the reminder's own conversation (mia's DM target): no text echo.
+  expect(await tap("u1")).toEqual(["Reminder cancelled (by u1)."]);
   expect(await tap("mia")).toEqual(["That reminder already fired or was cancelled."]); // idempotent
+  expect(await h.load()).toEqual([]);
+});
+
+test("reminders (#343): Teams stamps the full ingress id everywhere, forged args ignored; Discord DM still targets the speaker", async () => {
+  const h = await reminderHousehold("teams", true);
+  const bot = buildTeamsBot(h.deps);
+  await bot.onMessage(h.say("mia", false, "remind me to take out the bins", "19:ch@thread.tacv2;messageid=42"), fx());
+  await bot.onMessage(h.say("mia", false, "remind me to take out the bins", "19:group@thread.v2"), fx());
+  await bot.onMessage(h.say("mia", true, "remind me to take out the bins", "a:1to1"), fx());
+  expect((await h.load()).map((r) => [r.setBy, r.target])).toEqual([
+    ["mia", { transport: "teams", channelId: "19:ch@thread.tacv2;messageid=42" }],
+    ["mia", { transport: "teams", channelId: "19:group@thread.v2" }],
+    ["mia", { transport: "teams", channelId: "a:1to1" }],
+  ]);
+  const d = await reminderHousehold("discord", true);
+  await buildTeamsBot(d.deps).onMessage(d.say("mia", true, "remind me to take out the bins"), fx());
+  expect((await d.load())[0]).toMatchObject({ setBy: "mia", target: { transport: "discord", userId: "mia" } });
+});
+
+test("reminders (#343): channel listing is conversation-scoped; a DM is unfiltered for the owner", async () => {
+  const h = await reminderHousehold();
+  const bot = buildTeamsBot(h.deps);
+  await bot.onMessage(h.say("u1", false, "remind me to take out the bins", "c1"), fx());
+  const { updateReminders } = await import("../src/reminders.js");
+  await updateReminders(h.file, (all) => { all.push({ id: "desk", text: "desktop one", at: "2026-07-03T10:00:00.000Z" }); });
+  const id = (await h.load())[0]!.id;
+  await bot.onMessage(h.say("u1", false, "list", "c2"), fx());
+  expect(h.toolResults.at(-1)).toBe("no pending reminders"); // another channel's, and the targetless one, are hidden
+  await bot.onMessage(h.say("u1", false, "list", "c1"), fx());
+  expect(h.toolResults.at(-1)).toContain(id);
+  expect(h.toolResults.at(-1)).not.toContain("desk");
+  await bot.onMessage(h.say("u1", true, "list"), fx());
+  expect(h.toolResults.at(-1)).toContain(id);
+  expect(h.toolResults.at(-1)).toContain("desk");
+});
+
+test("reminders (#343): Teams sibling threads of one channel see each other's reminders", async () => {
+  const h = await reminderHousehold("teams");
+  const bot = buildTeamsBot(h.deps);
+  await bot.onMessage(h.say("mia", false, "remind me to take out the bins", "19:ch@thread.tacv2;messageid=1"), fx());
+  const id = (await h.load())[0]!.id;
+  await bot.onMessage(h.say("mia", false, "list", "19:ch@thread.tacv2;messageid=2"), fx());
+  expect(h.toolResults.at(-1)).toContain(id);
+  await bot.onMessage(h.say("mia", false, "list", "19:other@thread.tacv2;messageid=2"), fx());
+  expect(h.toolResults.at(-1)).toBe("no pending reminders");
+});
+
+test("reminders (#343): the owner cancelling another conversation's reminder gets the generic confirmation", async () => {
+  const h = await reminderHousehold();
+  const bot = buildTeamsBot(h.deps);
+  await bot.onMessage(h.say("mia", false, "remind me to take out the bins", "c1"), fx());
+  await bot.onMessage(h.say("mia", false, "remind me to take out the bins", "c1"), fx());
+  const [a, b] = await h.load();
+  await bot.onMessage(h.say("u1", false, `cancel ${a!.id}`, "c2"), fx());
+  expect(h.toolResults.at(-1)).toBe("Reminder cancelled.");
+  const effects = fx();
+  await bot.onCardAction({ conversationId: "c2", fromId: "u1", fromName: "u1", value: { beanAction: "cancel-reminder", proposalId: b!.id } }, effects);
+  expect(effects.posted).toEqual(["Reminder cancelled (by u1)."]);
   expect(await h.load()).toEqual([]);
 });
 

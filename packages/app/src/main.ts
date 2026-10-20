@@ -528,7 +528,7 @@ app.whenReady().then(async () => {
   // (no live reload — restart Bean after editing clis.json).
   const cliModels: CliModels[] = await loadCliModels(clisFile(projectDir), clisFile(dir));
 
-  // Chatops reminders (a `target`) go to the outbox for the Discord bot to deliver; untargeted
+  // Chatops reminders (a `target`) go to the outbox for their bot (Discord / Teams) to deliver; untargeted
   // ones stay desktop notifications.
   const reminderFailed = (r: Reminder, err: unknown): void => {
     console.error("bean: reminder delivery failed", r.id, err);

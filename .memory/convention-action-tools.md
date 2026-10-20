@@ -32,8 +32,12 @@ Discord host — via Electron `Notification`.
 `cancel_reminder` (`chatops/reminder-tools.ts`); the receipt's Cancel button carries the id.
 `Reminder.target` (DM → `userId`, channel → `channelId`) and `setBy` are stamped from the
 ingress, never model args; non-owners list/cancel only their own. Targeted reminders go out
-via the outbox; a malformed target fails loudly (never the owner's DM). Discord-only: Teams'
-outbox ignores `userId`. **Every write goes through `updateReminders`** (in-process chain +
+via the outbox; a malformed target fails loudly (never the owner's DM). Teams targets are
+always `{ transport: "teams", channelId: <full ingress conversation id> }` — its outbox
+ignores `userId` (#343). Outside a DM, `list_reminders` shows only this conversation's
+reminders (same transport + bare id, `id.split(";")[0]`, so Teams sibling threads match),
+and cancel (tool or card) echoes the text only into its own conversation — the owner's
+authority is global, its visibility isn't. **Every write goes through `updateReminders`** (in-process chain +
 `reminders.json.lock` O_EXCL lock, since the desktop loop and its spawned bot share the file);
 `claimDueReminders` marks fired *before* delivery — never go back to bare load/save. New helper capabilities (notes, routines) should follow this
 ActionTool shape, keeping IO pure/DI in core.
