@@ -44,3 +44,9 @@ test("a long quote is capped and marked truncated", () => {
   expect(r.repliedTo?.text).toHaveLength(2000);
   expect(r.repliedTo?.truncated).toBe(true);
 });
+
+test("legacy html: an ellipsis-ended preview is marked truncated too", () => {
+  const a = fixture("quote-reply-legacy-html");
+  a.attachments = [{ contentType: "text/html", content: String(a.attachments?.[0]?.content).replace("lunch at noon?", "lunch at noon, or...") }];
+  expect(parseQuote(a, typed(a)).repliedTo?.truncated).toBe(true);
+});

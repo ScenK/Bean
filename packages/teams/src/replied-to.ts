@@ -25,8 +25,10 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
+/** Capped; a preview ending in an ellipsis is Teams having cut a longer message. */
 function capped(text: string): { text: string; truncated?: true } {
-  return text.length > MAX_CHARS ? { text: text.slice(0, MAX_CHARS), truncated: true } : { text };
+  if (text.length > MAX_CHARS) return { text: text.slice(0, MAX_CHARS), truncated: true };
+  return /(…|\.\.\.)$/.test(text) ? { text, truncated: true } : { text };
 }
 
 /** Teams stamps bot ids as `28:<appId>`; a quote may carry either form. */
@@ -49,13 +51,11 @@ export function parseQuote(a: QuoteActivity, text: string): { text: string; repl
     const preview = htmlToText(entity.preview ?? "");
     if (entity.isReplyDeleted || !preview) return { text: own, repliedTo: UNAVAILABLE };
     const c = capped(preview);
-    // `preview` is all Teams gives: an ellipsis end means it cut a longer message.
-    const truncated = c.truncated || /(…|\.\.\.)$/.test(preview) || undefined;
     return {
       text: own,
       repliedTo: {
         fromName: entity.senderName ?? "", byBean: isBean(entity.senderId, a.recipient.id),
-        text: c.text, at: Number(entity.time) || 0, ...(truncated ? { truncated } : {}),
+        text: c.text, at: Number(entity.time) || 0, ...(c.truncated ? { truncated: true } : {}),
       },
     };
   }
