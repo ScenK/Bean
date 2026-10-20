@@ -2,7 +2,7 @@ import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories,
-  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine,
+  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, saveRoutine, RoutineProposalStore, memberTodoEligible, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, dmAllowed,
@@ -19,7 +19,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   finishedCard, rememberedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
-  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
 import { startDevtunnel } from "./devtunnel.js";
@@ -154,13 +154,22 @@ const bot = buildTeamsBot({
   scratchPath,
   cards: {
     proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, rememberedCard,
-    skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+    skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
     liveSessionProposalCard, liveSessionResultCard,
   },
   systemControlsEnabled: () => beanConfig.systemControls,
   webSearchEnabled: () => beanConfig.webSearch,
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
   roles,
+  // Digests reach a channel/group chat via scopeOf's keys, or the owner's 1:1 (no channel).
+  routines: {
+    transport: "teams",
+    load: () => loadRoutines(routinesDir(dir)),
+    save: (r) => saveRoutine(routinesDir(dir), r),
+    // Owner only: a Teams digest DMs nobody else.
+    recipients: async () => (teamsConfig.ownerId ? [{ id: teamsConfig.ownerId, name: teamsConfig.ownerName ?? "owner" }] : []),
+    proposals: new RoutineProposalStore(),
+  },
 });
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;

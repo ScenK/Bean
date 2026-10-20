@@ -89,6 +89,7 @@ members (`routines.recipients()`, never a model-written id); an invalid draft st
 showing the reason with only Cancel, and Save re-validates. Card taps (`*-routine`) are owner-only
 and conversation-bound; the enabled toggle mutates the pending draft. Owner text commands
 `routines` / `enable <name>` / `disable <name>` are core keyword commands (exempt from the turn cap,
-no thread) — `parseRoutineCommand` is shared with server.ts. Teams doesn't wire it yet. "Every N
+no thread) — `parseRoutineCommand` is shared with Discord's server.ts. Teams wires it too (#321): owner-only
+recipients (no `user` sinks), channel sink = `scopeOf`'s bare channel id / group chat id. "Every N
 days" is steered to weekday lists: a `*/N` day-of-month restarts on the 1st, and the card's
 `warnings` say so.

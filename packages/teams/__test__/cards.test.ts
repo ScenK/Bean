@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import {
   finishedCard, rememberedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
-  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard,
+  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "../src/cards.js";
 
@@ -169,4 +169,32 @@ test("note archive cards wire archive/cancel data and a Restore carrying the not
   expect(flatten(noteArchiveResultCard({ title: "Groceries", by: "mia", outcome: "archived", noteId: "n-1" }))).toContain("restore-note");
   const cancelled = noteArchiveResultCard({ title: "Groceries", by: "mia", outcome: "cancelled" }) as { actions: unknown[] };
   expect(cancelled.actions).toHaveLength(0);
+});
+
+test("routine proposal card: FactSet, warnings, toggle/save/cancel", () => {
+  const card = routineProposalCard({
+    proposalId: "routine-1", name: "standup", updating: false, enabled: true,
+    schedule: "Weekdays at 9:00 AM (UTC)", steps: ["1. chat: post standup"], sinks: ["This chat"],
+    warnings: ["restarts monthly"],
+  }) as { body: { type: string; facts?: { title: string; value: string }[] }[]; actions: { title: string; data: { beanAction: string } }[] };
+  const facts = card.body.find((b) => b.type === "FactSet")?.facts ?? [];
+  expect(facts.map((f) => f.title)).toEqual(["When", "Steps", "Sends to"]);
+  expect(flatten(card)).toContain("Heads up: restarts monthly");
+  expect(card.actions.map((a) => a.data.beanAction)).toEqual(["toggle-routine", "save-routine", "cancel-routine"]);
+  expect(card.actions[0]?.title).toBe("Enabled: on");
+});
+
+test("invalid routine draft shows the reason and Cancel only", () => {
+  const card = routineProposalCard({
+    proposalId: "routine-2", name: "bad", updating: false, enabled: true,
+    schedule: "", steps: [], sinks: [], problem: "command steps can't be set up from chat",
+  }) as { actions: { data: { beanAction: string } }[] };
+  expect(flatten(card)).toContain("Can't save: command steps");
+  expect(flatten(card)).not.toContain("FactSet");
+  expect(card.actions.map((a) => a.data.beanAction)).toEqual(["cancel-routine"]);
+});
+
+test("routine result card is a one-line receipt", () => {
+  expect(flatten(routineResultCard({ name: "standup", by: "Scen", outcome: "saved", enabled: false }))).toContain("Routine saved (by Scen) — off");
+  expect(flatten(routineResultCard({ name: "standup", by: "Scen", outcome: "failed", problem: "nope" }))).toContain("standup: nope");
 });

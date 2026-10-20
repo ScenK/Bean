@@ -204,7 +204,7 @@ export interface CardBuilders {
   reminderCard?: (input: ReminderCardInput) => object;
   skillProposalCard: (input: SkillProposalCardInput) => object;
   skillResultCard: (input: SkillResultCardInput) => object;
-  /** Optional: only surfaces that wire `routines` (Discord) need them. */
+  /** Optional: only surfaces that wire `routines` need them. */
   routineProposalCard?: (input: RoutineProposalCardInput) => object;
   routineResultCard?: (input: RoutineResultCardInput) => object;
   liveSessionProposalCard: (input: LiveSessionProposalCardInput) => object;
