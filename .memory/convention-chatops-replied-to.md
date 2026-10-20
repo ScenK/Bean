@@ -19,3 +19,9 @@ command gates) treats it like the ambient block — see
   `startThread` (the thread's history starts empty). Same channel only; a forward uses its
   snapshot (author unknown, no origin fetch). A Bean chunk is stitched from `chatops_chunks`
   siblings — contiguous, nearest first, each re-checked as Bean-authored, fetch- and 6k-char-capped.
+- **Teams** (`packages/teams/src/replied-to.ts` `parseQuote`) reads the `quotedReply` entity
+  (`senderId`/`senderName`/`preview`/`time`, per the Teams SDK) and strips the `<quoted messageId/>`
+  placeholder from the typed text; the legacy `text/html` `schema.skype.com/Reply` blockquote is
+  parsed too, with the sender's words taken from the HTML outside it (`a.text` flattens the quote
+  inline). The fixtures in `packages/teams/__test__/fixtures/` are schema-built, not live captures —
+  replace them when a real activity is captured.

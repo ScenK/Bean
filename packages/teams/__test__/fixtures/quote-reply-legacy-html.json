@@ -1,0 +1,17 @@
+{
+  "_note": "Redacted legacy Teams quote-reply: the quote rides in a text/html attachment's schema.skype.com/Reply blockquote and a.text flattens it inline.",
+  "type": "message",
+  "text": "Bean Alex Doe 10:15 AM lunch at noon? sounds good, book it",
+  "from": { "id": "29:user-redacted", "name": "Sam Roe" },
+  "recipient": { "id": "28:00000000-0000-0000-0000-0000000000b0", "name": "Bean" },
+  "conversation": { "id": "19:group-redacted@thread.v2", "conversationType": "groupChat" },
+  "entities": [
+    { "type": "mention", "text": "<at>Bean</at>", "mentioned": { "id": "28:00000000-0000-0000-0000-0000000000b0", "name": "Bean" } }
+  ],
+  "attachments": [
+    {
+      "contentType": "text/html",
+      "content": "<div><p><at>Bean</at></p><blockquote itemscope=\"\" itemtype=\"http://schema.skype.com/Reply\" itemid=\"1772050100000\"><strong itemprop=\"mri\" itemid=\"8:orgid:00000000-0000-0000-0000-000000000002\">Alex Doe</strong><span itemprop=\"time\" itemid=\"1772050100000\"></span><p itemprop=\"preview\">lunch at noon?</p></blockquote><p>sounds good, book it</p></div>"
+    }
+  ]
+}

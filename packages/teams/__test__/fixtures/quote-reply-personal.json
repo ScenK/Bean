@@ -1,0 +1,22 @@
+{
+  "_note": "Redacted shape of a Teams personal-chat quote-reply, built from the Teams SDK's quotedReply entity (microsoft/teams.ts quoted-reply-entity.ts) — replace with a live capture when one is taken.",
+  "type": "message",
+  "id": "1772050399000",
+  "text": "<quoted messageId=\"1772050344000\"/> can you shorten this?",
+  "textFormat": "plain",
+  "from": { "id": "29:user-redacted", "name": "Alex Doe", "aadObjectId": "00000000-0000-0000-0000-000000000001" },
+  "recipient": { "id": "28:00000000-0000-0000-0000-0000000000b0", "name": "Bean" },
+  "conversation": { "id": "a:personal-redacted", "conversationType": "personal" },
+  "entities": [
+    {
+      "type": "quotedReply",
+      "quotedReply": {
+        "messageId": "1772050344000",
+        "senderId": "28:00000000-0000-0000-0000-0000000000b0",
+        "senderName": "Bean",
+        "preview": "Here is the long summary of the incident, starting with the timeline...",
+        "time": "1772050344000"
+      }
+    }
+  ]
+}
