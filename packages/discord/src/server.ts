@@ -397,7 +397,8 @@ client.on("messageCreate", async (message) => {
     const ref = message.reference;
     const repliedTo = capturing || dmBlocked ? undefined : await resolveRepliedTo(
       forward ? { channelId: message.channelId, forward: toRef(forward) }
-        : ref?.type === MessageReferenceType.Default ? { channelId: ref.channelId, messageId: ref.messageId }
+        // A reference with no type is a reply (Discord's default); a forward is handled above.
+        : ref && ref.type !== MessageReferenceType.Forward ? { channelId: ref.channelId, messageId: ref.messageId }
         : undefined,
       {
         channelId: message.channelId,
