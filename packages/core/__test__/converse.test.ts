@@ -875,6 +875,16 @@ describe("propose_routine", () => {
       .toMatch(/only post in the channel/);
   });
 
+  it("refuses names that could hit .state.json or case-collide, and matches existing names case-insensitively", async () => {
+    for (const name of [".state", "Deploy", "my routine", "-x"]) {
+      expect((await conv({ latestUserText: "x", deps: call(JSON.stringify({ ...routine, name })), routineAuthoring: authoring })).proposedRoutine?.problem)
+        .toMatch(/lowercase letters, digits, and dashes/);
+    }
+    const res = await conv({ latestUserText: "x", deps: call(JSON.stringify({ ...routine, name: "deploy" })), routineAuthoring: { ...authoring, existing: ["Deploy"] } });
+    expect(res.proposedRoutine?.updating).toBe(true);
+    expect(res.proposedRoutine?.problem).toBeUndefined();
+  });
+
   it("rejects unparseable JSON back to the model", async () => {
     const res = await conv({ latestUserText: "x", deps: call("{not json"), routineAuthoring: authoring });
     expect(res.proposedRoutine).toBeUndefined();
