@@ -85,7 +85,7 @@ function stamp(ms: number): string {
  * second reply to the same message yields the same block and can be deduped against history.
  * Every quoted line is `> `-prefixed, so quoted text can't forge the framing lines. */
 export function formatRepliedBlock(r: RepliedMessage): string {
-  const author = r.byBean ? "you (Bean)" : r.fromName;
+  const author = r.byBean ? "you (Bean)" : r.fromName.replace(/[[\]\r\n]/g, "").trim() || "someone";
   const quoted = r.text.split("\n").map((l) => `> ${l}`).join("\n");
   return (
     `[The user is replying to this earlier message by ${author}, sent ${stamp(r.at)} — for context. ` +
