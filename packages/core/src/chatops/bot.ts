@@ -840,7 +840,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (roleCmd === "whoami") {
           const as = { owner: "the owner", admin: "an admin", member: "a household member", guest: "a guest" }[role];
           await fx.reply(`You're ${as} here. ` +
-            `Your id: ${msg.fromId}${msg.fromAltId ? ` (AAD object id: ${msg.fromAltId})` : ""}.`);
+            `Your id: ${msg.fromId}${msg.fromAltId ? ` (AAD object id: ${msg.fromAltId})` : ""}.` +
+            (scopeId ? ` This chat's id: \`${scopeId}\`.` : ""));
           return;
         }
         if (roleCmd === "admins") {
