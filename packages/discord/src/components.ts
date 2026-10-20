@@ -209,6 +209,7 @@ function routineProposalCard(input: RoutineProposalCardInput): object {
         { name: "Sends to", value: clampField(input.sinks.join("\n")) },
         ...(input.todoNote ? [{ name: "Todos", value: clampField(input.todoNote) }] : []),
         ...(input.warnings?.length ? [{ name: "Heads up", value: clampField(input.warnings.join("\n")) }] : []),
+        ...(input.ownerEnables ? [{ name: "Starts off", value: clampField(`${input.ownerEnables} turns it on.`) }] : []),
       ];
   return {
     embeds: [{
@@ -217,9 +218,13 @@ function routineProposalCard(input: RoutineProposalCardInput): object {
       ...(input.description ? { description: input.description.slice(0, 1000) } : {}),
       fields,
     }],
+    // A non-owner's draft: no toggle (it always saves off).
     components: [row(input.problem
       ? [{ type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-routine:${id}` }]
-      : [
+      : input.ownerEnables ? [
+          { type: BUTTON, style: 3, label: "Save draft", custom_id: `bean:save-routine:${id}` },
+          { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-routine:${id}` },
+        ] : [
           { type: BUTTON, style: 2, label: input.enabled ? "Enabled: on" : "Enabled: off", custom_id: `bean:toggle-routine:${id}` },
           { type: BUTTON, style: 3, label: input.updating ? "Replace routine" : "Save routine", custom_id: `bean:save-routine:${id}` },
           { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-routine:${id}` },

@@ -262,6 +262,9 @@ test("routine card: toggle shows the current state, an invalid draft offers only
   expect(ok.components[0]!.components[0]!.label).toBe("Enabled: on");
   const bad = discordCards.routineProposalCard!({ ...input, problem: "bad cron" }) as typeof ok;
   expect(bad.components[0]!.components.map((b) => b.custom_id)).toEqual(["bean:cancel-routine:routine-1"]);
+  const draft = discordCards.routineProposalCard!({ ...input, enabled: false, ownerEnables: "Scen" }) as typeof ok;
+  expect(draft.components[0]!.components.map((b) => b.label)).toEqual(["Save draft", "Cancel"]);
+  expect(JSON.stringify(draft.embeds)).toContain("Scen turns it on.");
 });
 
 test("note archive cards: Archive/Cancel on the proposal, Restore with the note id on the receipt only", () => {

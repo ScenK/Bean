@@ -140,7 +140,10 @@ chat context (including ambient chatter) so the next message starts fresh.
 The owner can describe a routine ("every weekday at 9, summarize my inbox here") and get a
 card to save it; its digest posts to the channel or group chat it was drafted in, or DMs the
 owner from a 1:1 chat. `routines`, `enable <name>` and `disable <name>` list and switch them.
-Routines run only while the desktop app is open.
+Routines run only while the desktop app is open. A channel or group-chat admin can draft a new
+routine too: it saves switched off (never replacing an existing one), and the owner gets a DM
+with `enable <name>`. **DM the bot once as the owner** so it knows your 1:1 chat — until then
+those notices (and channel-less digests) wait in the outbox.
 
 In the packaged desktop app, the tray menu's **Teams** toggle spawns this exact same built
 `dist/server.js` (via Electron's bundled Node) — don't also run `pnpm --filter @bean/teams

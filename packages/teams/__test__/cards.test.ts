@@ -184,6 +184,15 @@ test("routine proposal card: FactSet, warnings, toggle/save/cancel", () => {
   expect(card.actions[0]?.title).toBe("Enabled: on");
 });
 
+test("a non-owner's routine draft: Save draft + Cancel, no toggle, starts off", () => {
+  const card = routineProposalCard({
+    proposalId: "routine-3", name: "standup", updating: false, enabled: false,
+    schedule: "Weekdays at 9:00 AM (UTC)", steps: [], sinks: ["This chat"], ownerEnables: "Scen",
+  }) as { actions: { title: string; data: { beanAction: string } }[] };
+  expect(card.actions.map((a) => [a.title, a.data.beanAction])).toEqual([["Save draft", "save-routine"], ["Cancel", "cancel-routine"]]);
+  expect(flatten(card)).toContain("Starts off — Scen turns it on.");
+});
+
 test("invalid routine draft shows the reason and Cancel only", () => {
   const card = routineProposalCard({
     proposalId: "routine-2", name: "bad", updating: false, enabled: true,

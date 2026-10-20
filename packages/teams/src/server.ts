@@ -2,7 +2,7 @@ import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories,
-  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, saveRoutine, RoutineProposalStore, memberTodoEligible, resolveTodoRoutine,
+  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, saveRoutine, createRoutine, RoutineProposalStore, memberTodoEligible, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, dmAllowed,
@@ -166,6 +166,9 @@ const bot = buildTeamsBot({
     transport: "teams",
     load: () => loadRoutines(routinesDir(dir)),
     save: (r) => saveRoutine(routinesDir(dir), r),
+    create: (r) => createRoutine(routinesDir(dir), r),
+    // No channel = the owner's DM.
+    notifyOwner: async (body) => { await enqueueOutbox(outboxDir(beanDir()), { transport: "teams", body }, () => randomUUID()); },
     // Owner only: a Teams digest DMs nobody else.
     recipients: async () => (teamsConfig.ownerId ? [{ id: teamsConfig.ownerId, name: teamsConfig.ownerName ?? "owner" }] : []),
     proposals: new RoutineProposalStore(),

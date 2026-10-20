@@ -305,7 +305,7 @@ function proposeRoutineTool(a: RoutineAuthoring): ToolSpec {
       (discord ? `"user" DMs one of: ${people || "nobody else"}; ` : "") + '"channel" posts in a channel' +
       (a.channelId ? ` (this chat's channel id is ${a.channelId})` : "") + ". " +
       (a.existing.length > 0 ? `Existing routines: ${a.existing.join(", ")}. ` : "") +
-      "Nothing is saved until the owner confirms the card.",
+      "Nothing is saved until the card is confirmed.",
     parameters: {
       type: "object",
       properties: { json: { type: "string", description: "the complete routine as a JSON object" } },

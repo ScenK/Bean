@@ -1,6 +1,6 @@
 // packages/core/src/routine-store.ts
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isValidCron, nextRun } from "./cron.js";
 import { describeWatchWindowError, type WatchWindow } from "./watch-window.js";
@@ -328,6 +328,23 @@ export async function saveRoutine(dir: string, routine: Routine, cliModels?: Cli
   if (error) throw new Error(error);
   await mkdir(dir, { recursive: true });
   await writeAtomic(join(dir, `${routine.name}.json`), JSON.stringify(routine, null, 2) + "\n");
+}
+
+/** Create-only save (non-owner drafts, #322): validated like saveRoutine, but `link` refuses an
+ * existing file, so a draft can never replace a routine — even one created mid-save. Throws
+ * an `EEXIST` error on a clash. */
+export async function createRoutine(dir: string, routine: Routine, cliModels?: CliModels[]): Promise<void> {
+  const error = describeRoutineError(routine as unknown, cliModels);
+  if (error) throw new Error(error);
+  await mkdir(dir, { recursive: true });
+  const file = join(dir, `${routine.name}.json`);
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  await writeFile(tmp, JSON.stringify(routine, null, 2) + "\n", "utf8");
+  try {
+    await link(tmp, file);
+  } finally {
+    await rm(tmp, { force: true });
+  }
 }
 
 export async function deleteRoutine(dir: string, name: string): Promise<void> {

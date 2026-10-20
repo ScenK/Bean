@@ -14,6 +14,12 @@ export interface PendingRoutine {
   /** The server channel it was drafted in — the only channel sink it may save with. */
   channelId?: string;
   proposedBy: string;
+  /** Platform id of the proposer: only they or the owner may tap Save/Cancel/toggle (#322). */
+  proposedById: string;
+  /** false = an admin's draft: it saves switched off, create-only, and the owner gets a DM. */
+  byOwner: boolean;
+  /** Where it was drafted (the conversation's display name), for the owner notice. */
+  where?: string;
   cardActivityId?: string;
   createdAt: number;
 }
@@ -137,7 +143,10 @@ export function routineCardInput(
   p: PendingRoutine, people: { id: string; name: string }[], ownerName: string,
 ): RoutineProposalCardInput {
   const { routine: r, updating, problem } = p.proposal;
-  const base = { proposalId: p.id, name: String(r.name), updating, enabled: r.enabled === true };
+  const base = {
+    proposalId: p.id, name: String(r.name), updating, enabled: r.enabled === true,
+    ...(p.byOwner ? {} : { ownerEnables: ownerName }),
+  };
   // An invalid draft can be any shape: show only its name and the reason.
   if (problem) return { ...base, schedule: "", steps: [], sinks: [], problem };
   const shared = (r.sinks.chatops?.length ?? 0) > 0;
@@ -153,6 +162,20 @@ export function routineCardInput(
       : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
+}
+
+/** The owner's DM after an admin saves a draft: who, what, where, when, the clipped steps (the
+ * card's own lines) and the command that turns it on. */
+export function ownerDraftNotice(p: PendingRoutine, people: { id: string; name: string }[], ownerName: string): string {
+  const c = routineCardInput(p, people, ownerName);
+  return [
+    `${p.proposedBy} saved a routine draft "${c.name}"${p.where ? ` in ${p.where}` : ""}. It's off.`,
+    `When: ${c.schedule}`,
+    ...(c.warnings ?? []).map((w) => `Heads up: ${w}`),
+    "Steps:", ...(c.steps.length > 0 ? c.steps : ["None — it only notifies"]),
+    `Sends to: ${c.sinks.join(", ")}`,
+    `Say \`enable ${c.name}\` to turn it on.`,
+  ].join("\n");
 }
 
 export type RoutineCommand = { kind: "list" } | { kind: "enable" | "disable"; name: string };

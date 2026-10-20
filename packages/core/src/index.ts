@@ -67,7 +67,7 @@ export * from "./watch-io.js";
 export * from "./safe-fetch.js";
 export * from "./spawn-env.js";
 export {
-  appendRunRecord, chatRoutineProblem, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines, watchEveryMinutes, DEFAULT_WATCH_MINUTES,
+  appendRunRecord, chatRoutineProblem, createRoutine, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines, watchEveryMinutes, DEFAULT_WATCH_MINUTES,
   loadRoutineStates, memberTodoEligible, resolveTodoRoutine, saveRoutine, todoRunHint, saveRoutineStates, usesGates,
 } from "./routine-store.js";
 export type {
