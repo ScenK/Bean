@@ -44,3 +44,8 @@ per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_ad
   right after the role check, before transcription/downloads/thread title; keyword commands,
   blocked DMs and live steering don't count. One atomic `INSERT … SELECT WHERE count < cap` —
   don't split it into read-then-write. Owner `usage` lists today's counts.
+- **Admin routine drafts (#322)**: `routineDrafts` (admin) offers `propose_routine` with an empty
+  catalog; `routineWrites` (owner) keeps replace/`routines`/`enable`/`disable`. Draft taps are bound
+  to the proposer (`proposedById`, checked before `claim()`); a non-owner Save forces `enabled:false`
+  and uses create-only `createRoutine` (`link`, `EEXIST`) after a case-insensitive name check;
+  the owner gets an outbox DM (`notifyOwner`). The admin reply never claims the owner was notified.

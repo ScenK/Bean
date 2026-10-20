@@ -2132,6 +2132,7 @@ describe("owner routines from chat (#285)", () => {
   };
   function setup(json: unknown = routineJson, existing: Routine[] = []) {
     const store: Routine[] = [...existing];
+    const notices: string[] = [];
     const offered: string[][] = [];
     const made = makeDeps({
       chat: async ({ tools }) => {
@@ -2146,15 +2147,23 @@ describe("owner routines from chat (#285)", () => {
         transport: "discord",
         load: async () => store,
         save: async (r) => { const i = store.findIndex((x) => x.name === r.name); if (i >= 0) store[i] = r; else store.push(r); },
+        create: async (r) => {
+          if (store.some((x) => x.name === r.name)) throw Object.assign(new Error("EEXIST: file already exists"), { code: "EEXIST" });
+          store.push(r);
+        },
+        notifyOwner: async (text) => { notices.push(text); },
         recipients: async () => [{ id: "u1", name: "Scen" }, { id: "mia", name: "Mia" }],
         proposals: new RoutineProposalStore(),
       },
     });
     made.deps.roles = makeRoles({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-rt-"))), surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia"] });
-    return { ...made, store, offered, bot: buildTeamsBot(made.deps) };
+    made.deps.roles.addAdmins("s1", [{ id: "ada", name: "Ada" }, { id: "bo", name: "Bo" }]);
+    return { ...made, store, offered, notices, bot: buildTeamsBot(made.deps) };
   }
   const tap = (beanAction: string, proposalId: string, fromId = "u1") =>
-    ({ conversationId: "c1", fromId, fromName: fromId, value: { beanAction, proposalId } });
+    ({ conversationId: "c1", scopeId: "s1", fromId, fromName: fromId, value: { beanAction, proposalId } });
+  const adminMsg = (fromId = "ada") => ({ ...msg, scopeId: "s1", channelName: "#ops", fromId, fromName: fromId === "ada" ? "Ada" : "Bo", text: "weekday 7am summary" });
+  const channelJson = { ...routineJson, sinks: { chatops: [{ transport: "discord", channel: "s1" }] } };
 
   test("the owner gets a card naming the recipient; Save writes the routine", async () => {
     const h = setup();
@@ -2181,7 +2190,7 @@ describe("owner routines from chat (#285)", () => {
     const id = (owner.cards[0] as { proposalId: string }).proposalId;
     const forged = fx();
     await h.bot.onCardAction(tap("save-routine", id, "mia"), forged);
-    expect(forged.posted[0]).toMatch(/Only Scen/);
+    expect(forged.posted[0]).toMatch(/set up by Scen/);
     expect(h.store).toEqual([]);
     // Refused before the claim: the owner can still save it.
     await h.bot.onCardAction(tap("save-routine", id), owner);
@@ -2197,6 +2206,70 @@ describe("owner routines from chat (#285)", () => {
     await h.bot.onCardAction(tap("save-routine", card.proposalId), effects);
     expect(h.store).toEqual([]);
     expect(effects.posted.at(-1)).toMatch(/Couldn't save the routine/);
+  });
+
+  test("an admin's draft saves off (even when toggled on), create-only, and DMs the owner", async () => {
+    const h = setup({ ...channelJson, enabled: true });
+    const effects = fx();
+    await h.bot.onMessage(adminMsg(), effects);
+    const card = effects.cards[0] as { proposalId: string; enabled: boolean; ownerEnables?: string };
+    expect(card).toMatchObject({ enabled: false, ownerEnables: "Scen" });
+    // A forged toggle flips the draft on; Save still lands it off.
+    await h.bot.onCardAction(tap("toggle-routine", card.proposalId, "ada"), effects);
+    await h.bot.onCardAction({ ...tap("save-routine", card.proposalId, "ada"), fromName: "Ada" }, effects);
+    expect(h.store).toEqual([{ ...channelJson, enabled: false }]);
+    expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "routine-result", outcome: "saved", enabled: false });
+    expect(effects.posted.at(-1)).toBe('Saved "mia-summary" (off). Ask Scen to run `enable mia-summary`.');
+    expect(h.notices).toHaveLength(1);
+    expect(h.notices[0]).toMatch(/^Ada saved a routine draft "mia-summary" in #ops\. It's off\./);
+    expect(h.notices[0]).toMatch(/Say `enable mia-summary` to turn it on\.$/);
+  });
+
+  test("an admin never sees the catalog and can't replace a routine, in any case", async () => {
+    const existing = { ...(channelJson as Routine), name: "Mia-Summary", enabled: true };
+    const h = setup(channelJson, [existing]);
+    const effects = fx();
+    await h.bot.onMessage(adminMsg(), effects);
+    expect(h.offered[0]).toContain("propose_routine");
+    const card = effects.cards[0] as { proposalId: string; problem?: string; updating: boolean };
+    expect(card).toMatchObject({ updating: false, problem: expect.stringMatching(/already exists/) });
+    await h.bot.onCardAction(tap("save-routine", card.proposalId, "ada"), effects);
+    expect(h.store).toEqual([existing]);
+    expect(h.notices).toEqual([]);
+  });
+
+  test("a clash that appears after drafting still can't be saved", async () => {
+    const h = setup(channelJson);
+    const effects = fx();
+    await h.bot.onMessage(adminMsg(), effects);
+    const id = (effects.cards[0] as { proposalId: string }).proposalId;
+    const owned = { ...(channelJson as Routine), enabled: true };
+    h.store.push(owned);
+    await h.bot.onCardAction(tap("save-routine", id, "ada"), effects);
+    expect(h.store).toEqual([owned]);
+    expect(effects.updates.at(-1)?.card).toMatchObject({ outcome: "failed", problem: expect.stringMatching(/already exists/) });
+  });
+
+  test("another admin's tap is refused and the draft stays usable", async () => {
+    const h = setup(channelJson);
+    const effects = fx();
+    await h.bot.onMessage(adminMsg(), effects);
+    const id = (effects.cards[0] as { proposalId: string }).proposalId;
+    const other = fx();
+    await h.bot.onCardAction(tap("cancel-routine", id, "bo"), other);
+    expect(other.posted[0]).toBe("Only Ada or Scen can confirm this draft.");
+    await h.bot.onCardAction(tap("save-routine", id, "ada"), effects);
+    expect(h.store.map((r) => r.name)).toEqual(["mia-summary"]);
+  });
+
+  test("admins get the drafting refusal for routine commands", async () => {
+    const h = setup(routineJson, [{ ...(routineJson as Routine), enabled: false }]);
+    for (const text of ["routines", "enable mia-summary", "disable mia-summary"]) {
+      const effects = fx();
+      await h.bot.onMessage({ ...adminMsg(), text }, effects);
+      expect(effects.posted[0]).toMatch(/Only Scen can list or switch routines\. Describe one and I'll draft it/);
+    }
+    expect(h.store[0]?.enabled).toBe(false);
   });
 
   test("owner commands list, disable and enable; members are refused", async () => {

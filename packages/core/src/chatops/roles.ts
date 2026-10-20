@@ -14,6 +14,8 @@ export const atLeast = (role: Role, need: Role): boolean => RANK[role] >= RANK[n
 const NEEDS = {
   memory: "member", notes: "member", todos: "member", reminders: "member", fresh: "member",
   delegate: "admin", runSkills: "admin", images: "admin", cancelRuns: "admin",
+  // Drafting saves a routine switched off; turning it on, replacing one, or listing them is routineWrites (#322).
+  routineDrafts: "admin",
   systemControl: "owner", liveSession: "owner", skillWrites: "owner", routineWrites: "owner", manageAdmins: "owner",
 } as const satisfies Record<string, Role>;
 export type Capability = keyof typeof NEEDS;
@@ -138,11 +140,21 @@ export const cardTapRefusal = (need: Role, role: Role, roles: Roles): string =>
 
 export const cardRefusal = (roles: Roles): string => `Only ${roles.ownerName} or an admin here can confirm this.`;
 
+/** A routine draft's Save/Cancel belongs to whoever drafted it, plus the owner. */
+export const routineDraftRefusal = (proposer: string, roles: Roles): string =>
+  `Only ${proposer} or ${roles.ownerName} can confirm this draft.`;
+
+/** An admin asking for `routines` / `enable` / `disable`: point them at drafting instead. */
+export const routineAdminRefusal = (roles: Roles): string =>
+  `Only ${roles.ownerName} can list or switch routines. Describe one and I'll draft it — it saves off, and ${roles.ownerName} turns it on.`;
+
 /** Role a card action needs. Discord-only component ids (live-* selects/modals, delegate edits,
  * cli/model/skill selects) map here too so the surface can gate them before touching state. */
 export function cardActionNeeds(beanAction: string | undefined): Role {
   const a = beanAction ?? "";
-  if (a.startsWith("live-") || a.endsWith("-live") || a === "save-skill" || a === "cancel-skill" || a.endsWith("-routine")) return "owner";
+  if (a.startsWith("live-") || a.endsWith("-live") || a === "save-skill" || a === "cancel-skill") return "owner";
+  // Routine drafts are further bound to their proposer in bot.ts (handleRoutineAction).
+  if (a.endsWith("-routine")) return needs("routineDrafts");
   if (["save-note", "cancel-note", "archive-note", "cancel-archive-note", "restore-note"].includes(a)) return needs("notes");
   if (a === "queue-todo" || a === "cancel-todo") return needs("todos");
   if (a === "forget-memory") return needs("memory");
@@ -163,10 +175,12 @@ export function parseRoleCommand(text: string): "add-admin" | "remove-admin" | "
  * the tool list plus bot.ts's runtime checks. */
 export function roleLine(role: Role, roles: Roles, scopeId: string | undefined): string {
   if (role === "owner") return "The current speaker is your owner.";
-  const ownerOnly = ownerOnlyRefusal("start a live session, save skills or routines, or control the Mac", roles);
+  const ownerOnly = ownerOnlyRefusal("start a live session, save skills, change existing routines, or control the Mac", roles);
   if (role === "admin") {
-    return "The current speaker is an admin of this chat (not your owner). If they ask for a live " +
-      `session, a new or changed skill or routine, or Mac control, reply exactly: "${ownerOnly}"`;
+    return "The current speaker is an admin of this chat (not your owner). They may draft a new routine " +
+      `with propose_routine: it saves switched off and ${roles.ownerName} turns it on — never say it will run ` +
+      `before that. If they ask for a live session, a new or changed skill, changing or enabling an existing ` +
+      `routine, or Mac control, reply exactly: "${ownerOnly}"`;
   }
   if (role === "member") {
     return "The current speaker is a household member (not your owner): memories, notes, reminders and task " +

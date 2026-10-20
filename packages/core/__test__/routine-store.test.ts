@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  appendRunRecord, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines,
+  appendRunRecord, createRoutine, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines,
   loadRoutineStates, resolveTodoRoutine, todoRunHint, saveRoutine, saveRoutineStates, type Routine, type RunRecord,
 } from "../src/routine-store.js";
 
@@ -26,6 +26,14 @@ describe("save/load/delete routines", () => {
     expect(loaded).toEqual([routine()]);
     await deleteRoutine(dir, "morning-triage");
     expect(await loadRoutines(dir)).toEqual([]);
+  });
+  it("createRoutine never replaces an existing file and leaves no temp behind", async () => {
+    const dir = await tmp();
+    await createRoutine(dir, routine());
+    await expect(createRoutine(dir, routine({ enabled: false }))).rejects.toMatchObject({ code: "EEXIST" });
+    expect(await loadRoutines(dir)).toEqual([routine()]);
+    expect(await readdir(dir)).toEqual(["morning-triage.json"]);
+    await expect(createRoutine(dir, routine({ name: "../evil" }))).rejects.toThrow();
   });
   it("skips invalid files and non-json entries, missing dir → []", async () => {
     expect(await loadRoutines("/nonexistent/nowhere")).toEqual([]);

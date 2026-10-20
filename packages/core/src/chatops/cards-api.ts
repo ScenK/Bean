@@ -144,6 +144,9 @@ export interface RoutineProposalCardInput {
   warnings?: string[];
   /** Validation failure: shown instead of a Save button. */
   problem?: string;
+  /** Set (to the owner's name) on a non-owner's draft: "Save draft" + Cancel, no toggle, and
+   * "Starts off — <owner> turns it on". */
+  ownerEnables?: string;
 }
 
 export interface RoutineResultCardInput {

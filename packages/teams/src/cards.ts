@@ -283,9 +283,14 @@ export function routineProposalCard(input: RoutineProposalCardInput): object {
         : [
             { type: "FactSet", facts },
             ...(input.warnings ?? []).map((w) => ({ type: "TextBlock", text: `Heads up: ${w}`, wrap: true, color: "warning" })),
+            ...(input.ownerEnables ? [{ type: "TextBlock", text: `Starts off — ${input.ownerEnables} turns it on.`, wrap: true, isSubtle: true }] : []),
           ]),
     ],
-    actions: input.problem ? [cancel] : [
+    // A non-owner's draft: no toggle (it always saves off).
+    actions: input.problem ? [cancel] : input.ownerEnables ? [
+      { type: "Action.Submit", title: "Save draft", style: "positive", data: { beanAction: "save-routine", proposalId: id } },
+      cancel,
+    ] : [
       { type: "Action.Submit", title: input.enabled ? "Enabled: on" : "Enabled: off", data: { beanAction: "toggle-routine", proposalId: id } },
       { type: "Action.Submit", title: input.updating ? "Replace routine" : "Save routine", style: "positive", data: { beanAction: "save-routine", proposalId: id } },
       cancel,

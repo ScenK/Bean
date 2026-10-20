@@ -31,7 +31,7 @@ import type { NoteArchiveProposalStore } from "./note-archive-proposals.js";
 import type { TodoProposalStore } from "./todo-proposals.js";
 import type { SkillProposalStore } from "./skill-proposals.js";
 import {
-  parseRoutineCommand, routineCardInput, routineListText, type RoutineCommand, type RoutineProposalStore,
+  ownerDraftNotice, parseRoutineCommand, routineCardInput, routineListText, type RoutineCommand, type RoutineProposalStore,
 } from "./routine-proposals.js";
 import { retrieveNoteTool, type Note, type NoteDraft } from "../note-store.js";
 import { attachNoteImages } from "../note-images.js";
@@ -41,6 +41,7 @@ import { LiveSessionProposalStore, type PendingLiveSession } from "./live-sessio
 import { LiveSessionRegistry, type LiveSessionSink } from "./live-sessions.js";
 import {
   atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, dmRefusal, needs, parseRoleCommand, refusal, roleLine,
+  routineAdminRefusal, routineDraftRefusal,
   type Capability, type Role, type Roles,
 } from "./roles.js";
 
@@ -185,17 +186,23 @@ export interface TeamsBotDeps {
   /** Owner / admin / guest — required, no permissive default (see .memory/safety-chatops-roles.md). */
   roles: Roles;
   /** Owner routine management (#285): propose_routine plus the `routines` / `enable <name>` /
-   * `disable <name>` commands. Omit on surfaces that don't support it. `save` writes as
-   * given (callers validate); `recipients` = the owner and household members a routine may DM;
-   * `transport` = this surface, the only chatops sink transport a draft may use. */
+   * `disable <name>` commands; admins draft only (#322). Omit on surfaces that don't support it.
+   * `save` writes as given (callers validate); `create` is the create-only save for non-owner
+   * drafts (throws `EEXIST` on a clash); `notifyOwner` DMs the owner (no channel);
+   * `recipients` = the owner and household members a routine may DM; `transport` = this
+   * surface, the only chatops sink transport a draft may use. */
   routines?: {
     transport: "discord" | "teams";
     load: () => Promise<Routine[]>;
     save: (routine: Routine) => Promise<void>;
+    create: (routine: Routine) => Promise<void>;
+    notifyOwner: (text: string) => Promise<void>;
     recipients: () => Promise<{ id: string; name: string }[]>;
     proposals: RoutineProposalStore;
   };
 }
+
+const nameTaken = (name: string): string => `a routine named "${name}" already exists — ask for a different name.`;
 
 const DESKTOP_ONLY =
   "That needs the Bean desktop app — from here I can only chat and run background delegate tasks. Ask me again and I'll run it as one.";
@@ -666,6 +673,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     kind: "save-routine" | "cancel-routine" | "toggle-routine",
     proposalId: string | undefined,
     action: CardAction,
+    role: Role,
     fx: BotEffects,
   ): Promise<void> {
     const r = deps.routines;
@@ -678,6 +686,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     if (peek.conversationId !== action.conversationId) {
       await fx.post("That draft belongs to another conversation.");
+      return;
+    }
+    // Bound to the proposer (checked before claim, so the draft stays usable): another admin
+    // in the same channel can't save or cancel it.
+    const isOwner = role === "owner";
+    if (!isOwner && action.fromId !== peek.proposedById) {
+      await fx.post(routineDraftRefusal(peek.proposedBy, deps.roles));
       return;
     }
     const recipients = await r.recipients();
@@ -695,7 +710,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await fx.post(expired);
       return;
     }
-    const routine = pending.proposal.routine;
+    // A non-owner's Save always lands switched off, whatever the draft (or a forged toggle) says.
+    const routine = isOwner ? pending.proposal.routine : { ...pending.proposal.routine, enabled: false };
     const name = String(routine.name);
     const resultCard = (outcome: "saved" | "cancelled" | "failed", problem?: string): object | undefined =>
       deps.cards.routineResultCard?.({ name, by: action.fromName, outcome, enabled: routine.enabled, ...(problem ? { problem } : {}) });
@@ -703,22 +719,47 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await updateTo(resultCard("cancelled"));
       return;
     }
+    const fail = async (problem: string): Promise<void> => {
+      await updateTo(resultCard("failed", problem));
+      await fx.post(`Couldn't save the routine: ${problem}`);
+    };
     // Re-validated at save: the household or clis.json may have changed while the card sat.
     const problem = pending.proposal.problem ?? chatRoutineProblem(routine, r.transport, recipients, deps.cliModels, pending.channelId);
     if (problem) {
-      await updateTo(resultCard("failed", problem));
-      await fx.post(`Couldn't save the routine: ${problem}`);
+      await fail(problem);
+      return;
+    }
+    // An admin's draft never replaces a routine: case-insensitive check here (the filesystem may
+    // be case-sensitive), then a create-only write for the race.
+    const createOnly = !isOwner || !pending.byOwner;
+    if (createOnly && (await r.load()).some((x) => x.name.toLowerCase() === name.toLowerCase())) {
+      await fail(nameTaken(name));
       return;
     }
     try {
-      await r.save(routine);
-      await updateTo(resultCard("saved"));
-      await fx.post(routine.enabled
-        ? `Saved routine "${name}" — it's on. ${todoRunHint(routine, new Date())}`.trim()
-        : `Saved routine "${name}" — it's off. Say \`enable ${name}\` to turn it on.`);
+      await (createOnly ? r.create(routine) : r.save(routine));
     } catch (err) {
-      await fx.post(`Couldn't save the routine: ${err instanceof Error ? err.message : String(err)}`);
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") await fail(nameTaken(name));
+      else await fx.post(`Couldn't save the routine: ${err instanceof Error ? err.message : String(err)}`);
+      return;
     }
+    if (!isOwner) {
+      // Queued right after the write, before any card/reply effect that could throw.
+      try {
+        await r.notifyOwner(ownerDraftNotice({ ...pending, proposedBy: action.fromName }, recipients, deps.roles.ownerName));
+      } catch (err) {
+        console.error("routines: owner draft notice failed", err);
+      }
+    }
+    await updateTo(resultCard("saved"));
+    if (!isOwner) {
+      // Never claim the owner was told: the DM is queued, not delivered.
+      await fx.post(`Saved "${name}" (off). Ask ${deps.roles.ownerName} to run \`enable ${name}\`.`);
+      return;
+    }
+    await fx.post(routine.enabled
+      ? `Saved routine "${name}" — it's on. ${todoRunHint(routine, new Date())}`.trim()
+      : `Saved routine "${name}" — it's off. Say \`enable ${name}\` to turn it on.`);
   }
 
   // Forget button on a remembered card. The id rides the button itself and delete is
@@ -902,6 +943,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }
         const routineCmd = deps.routines ? parseRoutineCommand(msg.text) : undefined;
         if (routineCmd) {
+          if (role === "admin") {
+            await fx.reply(routineAdminRefusal(deps.roles));
+            return;
+          }
           if (!(await permitted("routineWrites", "manage routines"))) return;
           await fx.reply(await runRoutineCommand(routineCmd));
           return;
@@ -930,10 +975,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         ]);
         // Owner only: who a routine may DM, and the existing names a draft would replace. A channel
         // sink targets the channel, never the session thread (threads archive).
-        const routineAuthoring = deps.routines && can(role, "routineWrites")
+        const routineAuthoring = deps.routines && can(role, "routineDrafts")
           ? {
               transport: deps.routines.transport,
-              existing: (await deps.routines.load()).map((r) => r.name),
+              // Admins draft new routines only, so they never see (or target) the catalog.
+              existing: isOwner ? (await deps.routines.load()).map((r) => r.name) : [],
               recipients: await deps.routines.recipients(),
               ...(msg.direct || !msg.scopeId ? {} : { channelId: msg.scopeId }),
               cliModels: deps.cliModels,
@@ -1153,10 +1199,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           return;
         }
         if (result.proposedRoutine) {
-          if (!(await permitted("routineWrites", "set up routines"))) return;
+          if (!(await permitted("routineDrafts", "set up routines"))) return;
           if (!deps.routines || !deps.cards.routineProposalCard) return;
+          let proposal = result.proposedRoutine;
+          if (!isOwner && !proposal.problem) {
+            // An admin's draft starts off, and a name clash is shown up front ("Can't save").
+            const name = String(proposal.routine.name);
+            const taken = (await deps.routines.load()).some((x) => x.name.toLowerCase() === name.toLowerCase());
+            proposal = { ...proposal, routine: { ...proposal.routine, enabled: false }, ...(taken ? { problem: nameTaken(name) } : {}) };
+          }
           const pending = deps.routines.proposals.add({
-            proposal: result.proposedRoutine, conversationId: msg.conversationId, proposedBy: msg.fromName,
+            proposal, conversationId: msg.conversationId, proposedBy: msg.fromName,
+            proposedById: msg.fromId, byOwner: isOwner, ...(msg.channelName ? { where: msg.channelName } : {}),
             ...(routineAuthoring?.channelId ? { channelId: routineAuthoring.channelId } : {}),
           });
           const activityId = await fx.postCard(deps.cards.routineProposalCard(
@@ -1230,7 +1284,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         return;
       }
       if (beanAction === "save-routine" || beanAction === "cancel-routine" || beanAction === "toggle-routine") {
-        await handleRoutineAction(beanAction, proposalId, action, fx);
+        await handleRoutineAction(beanAction, proposalId, action, role, fx);
         return;
       }
       if (beanAction === "queue-todo" || beanAction === "cancel-todo") {
