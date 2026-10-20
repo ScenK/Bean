@@ -743,15 +743,18 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       else await fx.post(`Couldn't save the routine: ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
-    await updateTo(resultCard("saved"));
     if (!isOwner) {
-      // Never claim the owner was told: the DM is queued, not delivered.
-      await fx.post(`Saved "${name}" (off). Ask ${deps.roles.ownerName} to run \`enable ${name}\`.`);
+      // Queued right after the write, before any card/reply effect that could throw.
       try {
         await r.notifyOwner(ownerDraftNotice({ ...pending, proposedBy: action.fromName }, recipients, deps.roles.ownerName));
       } catch (err) {
         console.error("routines: owner draft notice failed", err);
       }
+    }
+    await updateTo(resultCard("saved"));
+    if (!isOwner) {
+      // Never claim the owner was told: the DM is queued, not delivered.
+      await fx.post(`Saved "${name}" (off). Ask ${deps.roles.ownerName} to run \`enable ${name}\`.`);
       return;
     }
     await fx.post(routine.enabled
