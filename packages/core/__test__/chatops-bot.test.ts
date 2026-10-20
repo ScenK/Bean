@@ -1882,7 +1882,7 @@ test("whoami/admins work for guests; the DM gate answers once with no model call
   await bot.onMessage({ ...guest, direct: true, text: "whoami" }, effects);
   expect(calls).toBe(0);
   expect(effects.posted).toEqual([
-    "You're a guest here. Your id: gus.",
+    "You're a guest here. Your id: gus. This chat's id: `s1`.",
     "Owner: Scen. Admins here: Ana.",
     "Hi! I only take direct messages from Scen's household. To be added, send Scen the id from `whoami`. Or mention me in a shared chat and I'll help there.",
     "You're a guest here. Your id: gus.",
