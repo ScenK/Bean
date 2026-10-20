@@ -828,7 +828,7 @@ test("a failing chat call surfaces the real reason, not a blanket API-key blame"
 });
 
 describe("propose_routine", () => {
-  const authoring = { existing: ["morning"], recipients: [{ id: "u1", name: "Scen" }, { id: "mia", name: "Mia" }] };
+  const authoring = { transport: "discord" as const, existing: ["morning"], recipients: [{ id: "u1", name: "Scen" }, { id: "mia", name: "Mia" }] };
   const routine = {
     name: "mia-summary", enabled: true, cron: "0 7 * * 1-5",
     steps: [{ kind: "chat", instruction: "Summarize the day ahead" }],
@@ -873,6 +873,32 @@ describe("propose_routine", () => {
       .toMatch(/only post in the channel/);
     expect((await conv({ latestUserText: "x", deps: call(posting("c1")), routineAuthoring: authoring })).proposedRoutine?.problem)
       .toMatch(/only post in the channel/);
+  });
+
+  it("on Teams, posts only in the drafting chat — no user sinks, no Discord sinks (#320)", async () => {
+    const teams = { ...authoring, transport: "teams" as const, channelId: "19:abc@thread.v2" };
+    const draft = (chatops: unknown[]) => call(JSON.stringify({ ...routine, sinks: { chatops } }));
+    const problem = async (chatops: unknown[]) =>
+      (await conv({ latestUserText: "x", deps: draft(chatops), routineAuthoring: teams })).proposedRoutine?.problem;
+    expect(await problem([{ transport: "teams", channel: "19:abc@thread.v2" }])).toBeUndefined();
+    expect(await problem([{ transport: "teams" }])).toBeUndefined();
+    expect(await problem([{ transport: "teams", channel: "19:other@thread.v2" }])).toMatch(/only post in the channel/);
+    expect(await problem([{ transport: "teams", user: "mia" }])).toMatch(/Discord-only/);
+    expect(await problem([{ transport: "discord", channel: "19:abc@thread.v2" }])).toMatch(/only Teams delivery/);
+  });
+
+  it("names the surface's transport in the tool text and steers 'every N days' to weekdays", async () => {
+    const texts: string[] = [];
+    const deps: ConverseDeps = { model: "m", chat: async ({ tools }) => {
+      texts.push((tools ?? []).find((t) => t.name === "propose_routine")?.description ?? "");
+      return { content: "", toolCalls: [] };
+    } };
+    await conv({ latestUserText: "x", deps, routineAuthoring: authoring });
+    await conv({ latestUserText: "x", deps, routineAuthoring: { ...authoring, transport: "teams" } });
+    expect(texts[0]).toContain('"transport": "discord", "user"?: id');
+    expect(texts[1]).toContain('"transport": "teams", "channel"?: id');
+    expect(texts[1]).not.toContain('"user"');
+    for (const t of texts) expect(t).toMatch(/every N days.*weekdays/);
   });
 
   it("refuses names that could hit .state.json or case-collide, and matches existing names case-insensitively", async () => {

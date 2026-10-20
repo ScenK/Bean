@@ -56,3 +56,24 @@ test("the store expires drafts and claims once", () => {
   now = 11 * 60_000;
   expect(store.get(q.id)).toBeUndefined();
 });
+
+test("the drafting channel reads as This channel/This chat; other Teams channels show the plain id (#320)", () => {
+  const store = new RoutineProposalStore();
+  const card = (chatops: Routine["sinks"]["chatops"], channelId?: string) => routineCardInput(
+    store.add({ proposal: { routine: { ...base, sinks: { chatops } }, updating: false }, conversationId: "c", proposedBy: "Scen", ...(channelId ? { channelId } : {}) }),
+    [], "Scen",
+  ).sinks;
+  expect(card([{ transport: "discord", channel: "42" }, { transport: "discord", channel: "7" }], "42")).toEqual(["This channel", "<#7>"]);
+  expect(card([{ transport: "teams", channel: "19:a" }, { transport: "teams", channel: "19:b" }], "19:a")).toEqual(["This chat", "19:b"]);
+});
+
+test("a stepped day-of-month gets a resets-monthly warning; weekday lists don't", () => {
+  const store = new RoutineProposalStore();
+  const warnings = (cron: string) => routineCardInput(
+    store.add({ proposal: { routine: { ...base, cron }, updating: false }, conversationId: "c", proposedBy: "Scen" }), [], "Scen",
+  ).warnings;
+  expect(warnings("0 9 */3 * *")?.[0]).toMatch(/restarts every month on the 1st/);
+  expect(warnings("0 9 1-31/2 * *")).toHaveLength(1);
+  expect(warnings("0 9 * * 1,4")).toBeUndefined();
+  expect(warnings("*/15 * * * *")).toBeUndefined();
+});

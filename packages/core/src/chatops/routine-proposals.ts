@@ -103,15 +103,34 @@ export function describeStep(s: RoutineStep, i: number): string {
   return `${i + 1}. ${what}`;
 }
 
-/** Destinations by name: a user sink resolves through `people`, a channel is a Discord mention. */
-export function describeSinks(r: Routine, people: { id: string; name: string }[], ownerName: string): string[] {
+/** Destinations by name: a user sink resolves through `people`; the drafting channel reads as
+ * "This channel"/"This chat"; another channel is a Discord mention, or the plain id on Teams. */
+export function describeSinks(
+  r: Routine, people: { id: string; name: string }[], ownerName: string, channelId?: string,
+): string[] {
   const out = (r.sinks.chatops ?? []).map((s) =>
     s.user ? `DM ${people.find((p) => p.id === s.user)?.name ?? s.user}`
-      : s.channel ? `<#${s.channel}>`
-        : `DM ${ownerName}`);
+      : s.channel === undefined ? `DM ${ownerName}`
+        : s.channel === channelId ? (s.transport === "teams" ? "This chat" : "This channel")
+          : s.transport === "teams" ? s.channel : `<#${s.channel}>`);
   if (r.sinks.note) out.push("Saved as a note");
   if (r.sinks.notify) out.push("Desktop notification");
   return out.length > 0 ? out : ["Nowhere — results are only kept in the run history"];
+}
+
+/** Schedule pitfalls worth a heads-up on the card: a day-of-month step (e.g. every 3rd day) restarts on
+ * the 1st, so "every 3 days" fires on the 31st and again on the 1st. */
+export function scheduleWarnings(r: Routine): string[] {
+  if (!r.cron) return [];
+  try {
+    if (!parseCron(r.cron).dayRestricted) return [];
+  } catch {
+    return [];
+  }
+  const day = r.cron.trim().split(/\s+/)[2] ?? "";
+  return day.includes("/")
+    ? [`The day-of-month step "${day}" restarts every month on the 1st, so the gap isn't always the same — pick weekdays for an even rhythm.`]
+    : [];
 }
 
 export function routineCardInput(
@@ -122,15 +141,17 @@ export function routineCardInput(
   // An invalid draft can be any shape: show only its name and the reason.
   if (problem) return { ...base, schedule: "", steps: [], sinks: [], problem };
   const shared = (r.sinks.chatops?.length ?? 0) > 0;
+  const warnings = scheduleWarnings(r);
   return {
     ...base,
     ...(r.description ? { description: r.description } : {}),
     schedule: describeSchedule(r),
     steps: r.steps.map(describeStep),
-    sinks: describeSinks(r, people, ownerName),
+    sinks: describeSinks(r, people, ownerName, p.channelId),
     ...(memberTodoEligible(r) && shared
       ? { todoNote: "Household members can queue todos on this — one digest covers everyone's todos and goes to every destination above." }
       : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
