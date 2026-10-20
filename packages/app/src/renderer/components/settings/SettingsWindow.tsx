@@ -346,7 +346,7 @@ export function SettingsWindow() {
           <div class="bean-settings-row">
             <span class="bean-settings-row-label">Routine digests</span>
             <div class="bean-settings-row-control">
-              <label class="bean-chatops-row" title="Keeps each routine digest in the conversation it was posted to, so you can ask follow-up questions about it. Off by default — digests nobody asks about still cost tokens on every later turn.">
+              <label class="bean-chatops-row" title="Keeps each routine digest in the conversation it was posted to, so you can ask follow-up questions about it. Off by default — digests nobody asks about still cost tokens on every later turn. Teams channel digests are always kept in their own post's thread, so replies there can follow up either way.">
                 <input
                   type="checkbox"
                   checked={routineDigestContext}

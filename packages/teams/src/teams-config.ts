@@ -30,6 +30,29 @@ export function ownerDmRefs<R extends DmRef>(refs: Record<string, R>, ownerId: s
     r.conversation?.conversationType === "personal" && (r.user?.id === ownerId || r.user?.aadObjectId === ownerId));
 }
 
+type Delivered = { channel?: string; context?: boolean; displayBody?: string; body: string };
+
+/** Where one delivered outbox message is saved as chat history: a key + body, `"missing-id"`
+ * when it should be saved but can't be, or null for no save. A post to a bare channel id starts
+ * a new thread, whose replies arrive as `<channel>;messageid=<post id>` — so it is always saved
+ * under that thread key (never the bare id, which no reply ever uses), whatever `msg.context`
+ * says. The saved body is model-facing (`body` when a `displayBody` was shown instead).
+ * ponytail: one history row per digest post and no retention sweep; add one if bean.db size matters. */
+export function deliveredAppend(
+  msg: Delivered,
+  conversation: { id: string; conversationType?: string },
+  postedText: string,
+  postedId: string | undefined,
+): { key: string; body: string } | "missing-id" | null {
+  if (conversation.conversationType === "channel" && !conversation.id.includes(";")) {
+    if (!postedId) return "missing-id";
+    return { key: `${conversation.id};messageid=${postedId}`, body: msg.displayBody ? msg.body : postedText };
+  }
+  if (msg.context) return { key: conversation.id, body: msg.body };
+  if (msg.displayBody && msg.channel) return { key: msg.channel, body: msg.body };
+  return null;
+}
+
 export function teamsConfigFile(dir: string): string {
   return join(dir, "teams.json");
 }
