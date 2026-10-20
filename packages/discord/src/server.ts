@@ -6,7 +6,7 @@ import {
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
-  makeRoles, makeTurnCap, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, parseRoleCommand, parseRoutineCommand, RoutineProposalStore, refusal, type Capability, type Role,
+  makeRoles, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, parseRoleCommand, parseRoutineCommand, RoutineProposalStore, refusal, type Capability, type Role,
 } from "@bean/core";
 import {
   ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -16,7 +16,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { basename } from "node:path";
-import { chunkText } from "./chunk.js";
+import { sendChunks } from "./chunk.js";
 import { discordCards } from "./components.js";
 import { deliverOutboxDm } from "./outbox-dm.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
@@ -64,6 +64,7 @@ const roles = makeRoles({
 });
 // Per-member daily turn cap, checked in messageCreate before any paid pre-work.
 const turnCap = makeTurnCap({ dbPath: dbFile(dir), surface: "discord" });
+const chunkGroups = makeChunkGroups({ dbPath: dbFile(dir) });
 // The at-cap line goes out once per member per day per conversation (this process).
 const capNotices = new Set<string>();
 let capNoticeDay = "";
@@ -224,7 +225,7 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voi
     return channel.send(options as MessageCreateOptions);
   };
   const reply = async (text: string): Promise<void> => {
-    for (const c of chunkText(text)) await send(c);
+    await sendChunks(text, send, chunkGroups);
     if (!voiceReply || !text.trim()) return;
     // Audio is a bonus on top of the text already sent — a TTS failure must not fail the turn.
     try {
@@ -236,7 +237,7 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voi
   return {
     reply,
     postResult: reply,
-    post: async (text) => { for (const c of chunkText(text)) await send(c); },
+    post: async (text) => { await sendChunks(text, send, chunkGroups); },
     postCard: async (card) => {
       const { id } = await send(card as MessageCreateOptions);
       if (voiceReply) voiceCards.add(id);
@@ -710,13 +711,14 @@ setInterval(() => {
       const dmChannelId = await deliverOutboxDm(msg, text, {
         ownerId: discordConfig.ownerId,
         fetchUser: (id) => client.users.fetch(id),
+        groups: chunkGroups,
       });
       if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body);
       return;
     }
     const channel = await client.channels.fetch(msg.channel);
     if (!channel?.isTextBased() || !("send" in channel)) throw new Error(`channel ${msg.channel} not sendable`);
-    for (const chunk of chunkText(text)) await channel.send(chunk);
+    await sendChunks(text, async (chunk): Promise<{ id: string }> => channel.send(chunk), chunkGroups);
     if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body);
   }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: discord drain failed", err));
 }, OUTBOX_POLL_MS);

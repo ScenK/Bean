@@ -1,8 +1,8 @@
-import type { OutboxMessage } from "@bean/core";
-import { chunkText } from "./chunk.js";
+import type { ChunkGroups, OutboxMessage } from "@bean/core";
+import { sendChunks } from "./chunk.js";
 
 export interface DmUser {
-  send(text: string): Promise<{ channelId: string }>;
+  send(text: string): Promise<{ channelId: string; id: string }>;
 }
 
 /** Delivers a channel-less outbox message as a DM to `msg.userId ?? ownerId`. Returns the DM
@@ -14,11 +14,11 @@ export async function deliverOutboxDm(
   deps: {
     ownerId: string;
     fetchUser: (id: string) => Promise<DmUser>;
+    groups: Pick<ChunkGroups, "record">;
   },
 ): Promise<string> {
   const user = await deps.fetchUser(msg.userId ?? deps.ownerId);
   // The DM channel id is only learned from a sent message — capture it rather than resolving it up front.
-  let dmChannelId = "";
-  for (const chunk of chunkText(text)) dmChannelId = (await user.send(chunk)).channelId;
-  return dmChannelId;
+  const sent = await sendChunks(text, (chunk) => user.send(chunk), deps.groups);
+  return sent.at(-1)?.channelId ?? "";
 }
