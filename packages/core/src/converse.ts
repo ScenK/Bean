@@ -775,7 +775,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reply: content,
         model: deps.model,
         proposedRoutine: {
-          routine: parsed as Routine, updating: routineAuthoring.existing.includes(name), ...(problem ? { problem } : {}),
+          routine: parsed as Routine, updating: routineAuthoring.existing.some((e) => e.toLowerCase() === name.toLowerCase()), ...(problem ? { problem } : {}),
         },
       };
     }

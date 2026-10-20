@@ -236,6 +236,11 @@ export function chatRoutineProblem(
   const error = describeRoutineError(v, cliModels);
   if (error) return error;
   const r = v as Routine;
+  // Lowercase-only so a draft can't hit `.state.json` or case-collide with another routine
+  // on a case-insensitive volume (#319). Desktop and hand-edited names keep the looser rule.
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(r.name)) {
+    return `routine name ${JSON.stringify(r.name)} must be lowercase letters, digits, and dashes (starting with a letter or digit)`;
+  }
   if (r.steps.some((s) => s.kind === "command") || r.watch?.kind === "command") {
     return "command steps and command watches can't be set up from chat — add them on the desktop";
   }
