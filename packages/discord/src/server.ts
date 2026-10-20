@@ -120,6 +120,7 @@ const bot = buildTeamsBot({
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
   roles,
   routines: {
+    transport: "discord",
     load: () => loadRoutines(routinesDir(dir)),
     save: (r) => saveRoutine(routinesDir(dir), r),
     // The owner and household members — the only people a routine may DM — by display name.

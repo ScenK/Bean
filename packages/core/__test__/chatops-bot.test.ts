@@ -2143,6 +2143,7 @@ describe("owner routines from chat (#285)", () => {
       },
       cards: { ...fakeCards, routineProposalCard: (i: object) => ({ kind: "routine-proposal", ...i }), routineResultCard: (i: object) => ({ kind: "routine-result", ...i }) } as CardBuilders,
       routines: {
+        transport: "discord",
         load: async () => store,
         save: async (r) => { const i = store.findIndex((x) => x.name === r.name); if (i >= 0) store[i] = r; else store.push(r); },
         recipients: async () => [{ id: "u1", name: "Scen" }, { id: "mia", name: "Mia" }],

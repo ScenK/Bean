@@ -140,6 +140,8 @@ export interface RoutineProposalCardInput {
   sinks: string[];
   /** Set when members can queue todos and one digest covers several members' todos. */
   todoNote?: string;
+  /** Schedule pitfalls (e.g. a day-of-month step that restarts monthly) — the draft still saves. */
+  warnings?: string[];
   /** Validation failure: shown instead of a Save button. */
   problem?: string;
 }

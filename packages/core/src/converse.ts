@@ -68,6 +68,8 @@ export interface ProposedRoutine { routine: Routine; updating: boolean; problem?
 /** What propose_routine needs: who a routine may DM, the names it would replace, and the chat's
  * own channel id (absent in a DM). Offered only when set — chatops sets it for the owner. */
 export interface RoutineAuthoring {
+  /** The surface drafting it: the only transport its chatops sinks may use (#320). */
+  transport: "discord" | "teams";
   existing: string[];
   recipients: { id: string; name: string }[];
   channelId?: string;
@@ -287,17 +289,20 @@ function proposeTodoTool(todoRoutines: string[]): ToolSpec {
 // converse() validates it with the store's own validator anyway. Stable per chat (prefix caching).
 function proposeRoutineTool(a: RoutineAuthoring): ToolSpec {
   const people = a.recipients.map((p) => `${p.name} (${p.id})`).join(", ");
+  const discord = a.transport === "discord";
   return {
     name: "propose_routine",
     description:
       "Draft a scheduled routine for the owner to confirm — a new one, or a replacement for an " +
       "existing one (reuse its name). Write the complete routine as one JSON object: " +
       '{"name": kebab-case, "description"?: text, "enabled": true, "cron": 5-field cron in local time ' +
-      '(e.g. "0 7 * * 1-5" = weekdays 7:00), "todoDriven"?: true to run once per queued todo, ' +
+      '(e.g. "0 7 * * 1-5" = weekdays 7:00; for "every N days" pick weekdays, e.g. "0 9 * * 1,4", since a ' +
+      'day-of-month step like */3 restarts on the 1st), "todoDriven"?: true to run once per queued todo, ' +
       '"steps": [{"kind": "chat", "instruction": ..., "skill"?: ...} or {"kind": "delegate", "skill": ..., ' +
-      '"project"?: path, "instruction": ...}], "sinks": {"chatops"?: [{"transport": "discord", "user"?: id, ' +
-      '"channel"?: id}], "note"?: true}}. A chatops sink with neither user nor channel DMs the owner; ' +
-      `"user" DMs one of: ${people || "nobody else"}; "channel" posts in a channel` +
+      `"project"?: path, "instruction": ...}], "sinks": {"chatops"?: [{"transport": "${a.transport}", ` +
+      (discord ? '"user"?: id, ' : "") + '"channel"?: id}], "note"?: true}}. A chatops sink with ' +
+      (discord ? "neither user nor channel" : "no channel") + " DMs the owner; " +
+      (discord ? `"user" DMs one of: ${people || "nobody else"}; ` : "") + '"channel" posts in a channel' +
       (a.channelId ? ` (this chat's channel id is ${a.channelId})` : "") + ". " +
       (a.existing.length > 0 ? `Existing routines: ${a.existing.join(", ")}. ` : "") +
       "Nothing is saved until the owner confirms the card.",
@@ -770,7 +775,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       // An invalid draft still reaches the card, which shows the reason instead of a Save button.
-      const problem = chatRoutineProblem(parsed, routineAuthoring.recipients, routineAuthoring.cliModels, routineAuthoring.channelId);
+      const problem = chatRoutineProblem(parsed, routineAuthoring.transport, routineAuthoring.recipients, routineAuthoring.cliModels, routineAuthoring.channelId);
       return {
         reply: content,
         model: deps.model,

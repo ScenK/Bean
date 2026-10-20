@@ -185,9 +185,11 @@ export interface TeamsBotDeps {
   /** Owner / admin / guest — required, no permissive default (see .memory/safety-chatops-roles.md). */
   roles: Roles;
   /** Owner routine management (#285): propose_routine plus the `routines` / `enable <name>` /
-   * `disable <name>` commands. Omit on surfaces that don't support it (Teams). `save` writes as
-   * given (callers validate); `recipients` = the owner and household members a routine may DM. */
+   * `disable <name>` commands. Omit on surfaces that don't support it. `save` writes as
+   * given (callers validate); `recipients` = the owner and household members a routine may DM;
+   * `transport` = this surface, the only chatops sink transport a draft may use. */
   routines?: {
+    transport: "discord" | "teams";
     load: () => Promise<Routine[]>;
     save: (routine: Routine) => Promise<void>;
     recipients: () => Promise<{ id: string; name: string }[]>;
@@ -702,7 +704,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     // Re-validated at save: the household or clis.json may have changed while the card sat.
-    const problem = pending.proposal.problem ?? chatRoutineProblem(routine, recipients, deps.cliModels, pending.channelId);
+    const problem = pending.proposal.problem ?? chatRoutineProblem(routine, r.transport, recipients, deps.cliModels, pending.channelId);
     if (problem) {
       await updateTo(resultCard("failed", problem));
       await fx.post(`Couldn't save the routine: ${problem}`);
@@ -930,6 +932,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // sink targets the channel, never the session thread (threads archive).
         const routineAuthoring = deps.routines && can(role, "routineWrites")
           ? {
+              transport: deps.routines.transport,
               existing: (await deps.routines.load()).map((r) => r.name),
               recipients: await deps.routines.recipients(),
               ...(msg.direct || !msg.scopeId ? {} : { channelId: msg.scopeId }),

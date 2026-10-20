@@ -208,6 +208,7 @@ function routineProposalCard(input: RoutineProposalCardInput): object {
         { name: "Steps", value: clampField(input.steps.join("\n") || "None — it only notifies") },
         { name: "Sends to", value: clampField(input.sinks.join("\n")) },
         ...(input.todoNote ? [{ name: "Todos", value: clampField(input.todoNote) }] : []),
+        ...(input.warnings?.length ? [{ name: "Heads up", value: clampField(input.warnings.join("\n")) }] : []),
       ];
   return {
     embeds: [{

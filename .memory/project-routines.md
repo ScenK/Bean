@@ -81,11 +81,14 @@ implement / test (command) / review steps, gate test and review with "Go to → 
 end with a pr step — or open the Dev loop example and copy its watch command over. The
 ReviewPane shows `stepProblemsText` before Enable, so a pinned harness that's missing warns.
 
-**Chat authoring (#285, Discord, owner only).** `propose_routine` (one JSON-string arg) is offered
+**Chat authoring (#285, owner only).** `propose_routine` (one JSON-string arg) is offered
 only when bot deps wire `routines` and the speaker can `routineWrites` (owner). `chatRoutineProblem`
-= `describeRoutineError` + no command steps/watches + `user` sinks only to the owner/household
+= `describeRoutineError` + no command steps/watches + chatops sinks only on the surface's own
+`routines.transport` (#320; a channel sink only the drafting channel) + `user` sinks only to the owner/household
 members (`routines.recipients()`, never a model-written id); an invalid draft still gets a card
 showing the reason with only Cancel, and Save re-validates. Card taps (`*-routine`) are owner-only
 and conversation-bound; the enabled toggle mutates the pending draft. Owner text commands
 `routines` / `enable <name>` / `disable <name>` are core keyword commands (exempt from the turn cap,
-no thread) — `parseRoutineCommand` is shared with server.ts. Teams doesn't wire it.
+no thread) — `parseRoutineCommand` is shared with server.ts. Teams doesn't wire it yet. "Every N
+days" is steered to weekday lists: a `*/N` day-of-month restarts on the 1st, and the card's
+`warnings` say so.
