@@ -3,6 +3,7 @@ import type {
   NoteArchiveProposalCardInput, NoteArchiveResultCardInput,
   RememberedCardInput,
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
+  RoutineProposalCardInput, RoutineResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput,
 } from "@bean/core";
 import { BROWSER_SKILL_NOTE, rememberedScopeLine } from "@bean/core";
@@ -254,6 +255,55 @@ export function skillResultCard(input: SkillResultCardInput): object {
     body: [
       { type: "TextBlock", weight: "bolder", text: `Skill ${input.outcome} (by ${input.savedBy})` },
       { type: "TextBlock", text: input.name, wrap: true, isSubtle: true },
+    ],
+    actions: [],
+  };
+}
+
+// Mobile-first: When / Steps / Sends to as a FactSet; the toggle title shows the CURRENT state.
+// An invalid draft shows the reason and only Cancel.
+export function routineProposalCard(input: RoutineProposalCardInput): object {
+  const id = input.proposalId;
+  const cancel = { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-routine", proposalId: id } };
+  const facts = [
+    { title: "When", value: input.schedule },
+    { title: "Steps", value: input.steps.join("\n") || "None — it only notifies" },
+    { title: "Sends to", value: input.sinks.join("\n") },
+    ...(input.todoNote ? [{ title: "Todos", value: input.todoNote }] : []),
+  ];
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", size: "medium", weight: "bolder", wrap: true, text: input.updating ? `Bean proposes replacing routine ${input.name}` : `Bean proposes routine ${input.name}` },
+      ...(input.description ? [{ type: "TextBlock", text: input.description, wrap: true }] : []),
+      ...(input.problem
+        ? [{ type: "TextBlock", text: `Can't save: ${input.problem}`, wrap: true, color: "attention" }]
+        : [
+            { type: "FactSet", facts },
+            ...(input.warnings ?? []).map((w) => ({ type: "TextBlock", text: `Heads up: ${w}`, wrap: true, color: "warning" })),
+          ]),
+    ],
+    actions: input.problem ? [cancel] : [
+      { type: "Action.Submit", title: input.enabled ? "Enabled: on" : "Enabled: off", data: { beanAction: "toggle-routine", proposalId: id } },
+      { type: "Action.Submit", title: input.updating ? "Replace routine" : "Save routine", style: "positive", data: { beanAction: "save-routine", proposalId: id } },
+      cancel,
+    ],
+  };
+}
+
+export function routineResultCard(input: RoutineResultCardInput): object {
+  const title = input.outcome === "saved"
+    ? `Routine saved (by ${input.by}) — ${input.enabled ? "on" : "off"}`
+    : input.outcome === "failed" ? "Routine not saved" : `Routine cancelled (by ${input.by})`;
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", weight: "bolder", text: title, wrap: true },
+      { type: "TextBlock", text: input.problem ? `${input.name}: ${input.problem}` : input.name, wrap: true, isSubtle: true },
     ],
     actions: [],
   };

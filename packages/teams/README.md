@@ -137,6 +137,11 @@ thread when the run finishes.
 Two plain-text commands: `cancel` stops in-flight runs, and `/new` clears the conversation's
 chat context (including ambient chatter) so the next message starts fresh.
 
+The owner can describe a routine ("every weekday at 9, summarize my inbox here") and get a
+card to save it; its digest posts to the channel or group chat it was drafted in, or DMs the
+owner from a 1:1 chat. `routines`, `enable <name>` and `disable <name>` list and switch them.
+Routines run only while the desktop app is open.
+
 In the packaged desktop app, the tray menu's **Teams** toggle spawns this exact same built
 `dist/server.js` (via Electron's bundled Node) — don't also run `pnpm --filter @bean/teams
 start` at the same time, they'll fight over port 3978.
@@ -174,3 +179,5 @@ silently with the same generic Teams error and guessing wastes a round trip:
       → summary references the ambient messages; the non-mention messages got no reply.
 - [ ] (RSC granted) an untagged message naming Bean ("bean is slow today") → no reply at all.
 - [ ] "@Bean /new" → "Fresh start"; a follow-up shows no memory of the prior chat or ambient.
+- [ ] (owner) "@Bean every weekday at 9 post a standup reminder here" in a channel → routine
+      card; Save → `routines` lists it; its digest lands as a new channel post.
