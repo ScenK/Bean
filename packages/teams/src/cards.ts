@@ -1,7 +1,7 @@
 import type {
   ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
   NoteArchiveProposalCardInput, NoteArchiveResultCardInput,
-  RememberedCardInput,
+  RememberedCardInput, ReminderCardInput,
   SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
   RoutineProposalCardInput, RoutineResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput,
@@ -326,6 +326,24 @@ export function rememberedCard(input: RememberedCardInput): object {
       { type: "TextBlock", text: rememberedScopeLine(input.scope), isSubtle: true, wrap: true },
     ],
     actions: [{ type: "Action.Submit", title: "Forget", data: { beanAction: "forget-memory", proposalId: input.memoryId } }],
+  };
+}
+
+/** Receipt for a set_reminder; Teams renders {{DATE()}}/{{TIME()}} in each viewer's timezone.
+ * They need RFC 3339 with a `Z` and no milliseconds, so normalise whatever `at` the model gave. */
+export function reminderCard(input: ReminderCardInput): object {
+  const at = new Date(input.at).toISOString().replace(/\.\d{3}Z$/, "Z");
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", weight: "bolder", text: "⏰ Reminder set" },
+      { type: "TextBlock", text: input.text, wrap: true },
+      // TextBlock, not FactSet: DATE()/TIME() are documented for TextBlock text.
+      { type: "TextBlock", text: `When: {{DATE(${at}, SHORT)}} {{TIME(${at})}}`, isSubtle: true, wrap: true },
+    ],
+    actions: [{ type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-reminder", proposalId: input.reminderId } }],
   };
 }
 

@@ -28,7 +28,7 @@ tool-call turn, appends one `role: "tool"` result per executed action, and
 shape. Reminders fire from a 30s poll (`fireDueReminders`) in `main.ts` — or in the headless
 Discord host — via Electron `Notification`.
 
-**Chatops reminders (#282).** Discord members+ get `set_reminder`/`list_reminders`/
+**Chatops reminders (#282, Teams #344).** Discord and Teams members+ get `set_reminder`/`list_reminders`/
 `cancel_reminder` (`chatops/reminder-tools.ts`); the receipt's Cancel button carries the id.
 `Reminder.target` (DM → `userId`, channel → `channelId`) and `setBy` are stamped from the
 ingress, never model args; non-owners list/cancel only their own. Targeted reminders go out

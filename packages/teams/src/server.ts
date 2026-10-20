@@ -1,6 +1,6 @@
 import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
-  skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir,
+  skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, saveRoutine, createRoutine, RoutineProposalStore, memberTodoEligible, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
@@ -18,7 +18,7 @@ import { mkdirSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
-  finishedCard, rememberedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
+  finishedCard, rememberedCard, reminderCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
@@ -153,10 +153,12 @@ const bot = buildTeamsBot({
   findDelegateRun: (sessionId) => findDelegateRun(dbFile(dir), sessionId),
   scratchPath,
   cards: {
-    proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, rememberedCard,
+    proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, rememberedCard, reminderCard,
     skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
     liveSessionProposalCard, liveSessionResultCard,
   },
+  // Fired by the desktop app's reminder loop into the outbox; the drain below delivers them.
+  reminders: { file: remindersFile(dir), transport: "teams" },
   systemControlsEnabled: () => beanConfig.systemControls,
   webSearchEnabled: () => beanConfig.webSearch,
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },

@@ -203,7 +203,7 @@ export interface CardBuilders {
   todoProposalCard: (input: TodoProposalCardInput) => object;
   todoResultCard: (input: TodoResultCardInput) => object;
   rememberedCard: (input: RememberedCardInput) => object;
-  /** Optional: only surfaces that wire `reminders` (Discord) need it. */
+  /** Optional: only surfaces that wire `reminders` need it. */
   reminderCard?: (input: ReminderCardInput) => object;
   skillProposalCard: (input: SkillProposalCardInput) => object;
   skillResultCard: (input: SkillResultCardInput) => object;

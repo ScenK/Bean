@@ -51,3 +51,9 @@ Bean has two chat adapters over one shared brain:
   messages at all; without them the feature silently no-ops. Non-mention Teams messages are
   stored in the `AmbientStore` (`chatops_ambient` table in `bean.db`, 200/conversation, survives
   restarts) and never replied to.
+- **Reminders**: Teams passes `reminders: { transport: "teams" }`; core stamps the full ingress
+  conversation id as the target, the desktop app's reminder loop enqueues it to the outbox, and
+  the Teams drain posts to exactly that id (`;messageid=` = thread reply). No reminder loop in
+  the Teams server — reminders fire only while Bean.app runs (late after it was off). The receipt
+  card's When uses Adaptive Card `{{DATE()}} {{TIME()}}`, which needs a `Z` RFC 3339 string with no
+  milliseconds (`reminderCard` normalises).
