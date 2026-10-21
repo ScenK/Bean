@@ -17,6 +17,12 @@ to #178 — group channels mix several people's words, and chatops has no "conve
   with a **Forget** button. The button carries the memory id in the generic `proposalId` slot
   (`bean:forget-memory:<uuid>` on Discord, ~55 of 100 custom_id chars); delete is idempotent, so
   no proposal store — a second tap says "Already forgotten."
+- A **private** receipt also gets **Share with everyone** (`bean:share-memory:<uuid>` / Teams
+  `beanAction: "share-memory"`), gated `needs("memory")` before the store is touched. Author-only
+  (SQL `AND subject_id = actor`, owner included), same no-proposal-store shape: 0 rows changed →
+  "Nothing changed — already shared or forgotten." with no fact text; the success reply quotes the
+  stored row, never the card payload. The model gets no share tool — a private `remember` result
+  just tells it to point at the button when the fact updates a household one.
 - `forget_memory(ids)` is the text-command equivalent; ids come from the `[id]`-tagged recall
   block in `converse()`.
 - `ConversationStore` (`chatops/conversation.ts`) is `bean.db`-backed (`chatops_turns`); `bot.ts`

@@ -147,6 +147,12 @@ test("remembered card shows the fact and a Forget button carrying the memory id 
   expect(button.label).toBe("Forget");
   expect(button.custom_id).toBe(`bean:forget-memory:${id}`);
   expect(button.custom_id.length).toBeLessThanOrEqual(100);
+  const share = card.components[0]!.components[1]!;
+  expect(share.label).toBe("Share with everyone");
+  expect(share.custom_id).toBe(`bean:share-memory:${id}`);
+  expect(share.custom_id.length).toBeLessThanOrEqual(100);
+  const shared = discordCards.rememberedCard({ memoryId: id, text: "uses vitest", scope: "shared" });
+  expect(JSON.stringify(shared)).not.toContain("share-memory");
 });
 
 test("live-session card renders project/skill/cli/model dropdowns, edit+start+cancel, defaults selected", () => {

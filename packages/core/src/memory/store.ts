@@ -70,6 +70,15 @@ export async function deleteMemories(file: string, ids: string[], subject?: stri
   return Number(res.changes);
 }
 
+/** Makes the author's private row household-shared (the receipt card's Share button). Only the
+ * row's own subject can share it — the owner gets no bypass — and text, project and date stay
+ * as they are. Returns rows changed: 0 for anyone else's row, a shared row, or a gone one. */
+export async function shareMemory(file: string, id: string, actor: string): Promise<number> {
+  if (!actor) return 0;
+  const res = openDb(file).prepare("UPDATE memories SET subject_id = NULL WHERE id = ? AND subject_id = ?").run(id, actor);
+  return Number(res.changes);
+}
+
 // --- dream bookkeeping (memory/dream.ts) ---
 
 /** One change a dream run makes: `ids` are replaced by one fact with `text` (a merge, or a

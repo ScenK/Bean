@@ -164,6 +164,8 @@ export interface TeamsBotDeps {
   /** Idempotent per-id delete (remember card's Forget button, forget_memory tool). `subject`
    * set = only that speaker's private rows may go (non-owners); absent = any row (the owner). */
   deleteMemories: (ids: string[], subject?: string) => Promise<number>;
+  /** Share button on a private receipt: only the row's author (`actor`) can make it household-shared. */
+  shareMemory: (id: string, actor: string) => Promise<number>;
   conversations: ConversationStore;
   cards: CardBuilders;
   /** Gates the system_control action tool, same as main.ts's desktop wiring. */
@@ -777,6 +779,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     else await fx.post(text === undefined ? "Already forgotten." : "Only the owner can forget household facts or another member's.");
   }
 
+  // Share button on a private remembered card. Same id-in-the-button, no-proposal-store shape as
+  // Forget; the SQL only flips the tapper's own private row, so the owner gets no bypass either.
+  // The reply text comes from the stored row, never the card payload.
+  async function handleShare(memoryId: string | undefined, actor: string, actorId: string, fx: BotEffects): Promise<void> {
+    if (!memoryId) return;
+    if (await deps.shareMemory(memoryId, actorId) === 0) {
+      await fx.post("Nothing changed — already shared or forgotten.");
+      return;
+    }
+    const text = (await deps.loadMemories(null)).find((m) => m.id === memoryId)?.text;
+    await fx.post(`Shared with the household (by ${actor}): ${text ?? "that fact"}. Only the owner can forget it now.`);
+  }
+
   // Cancel button on a reminder receipt: same idempotent, no-proposal-store shape as Forget.
   // `setBy` set = only that person's reminder (non-owners); checked inside the locked update.
   async function handleCancelReminder(reminderId: string | undefined, actor: string, fromId: string, conversationId: string, setBy: string | undefined, fx: BotEffects): Promise<void> {
@@ -1313,6 +1328,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (beanAction === "forget-memory") {
         // proposalId carries the memory id here (the surfaces' generic id slot).
         await handleForget(proposalId, action.fromName, role === "owner" ? undefined : action.fromId, fx);
+        return;
+      }
+      if (beanAction === "share-memory") {
+        // proposalId carries the memory id here (the surfaces' generic id slot).
+        await handleShare(proposalId, action.fromName, action.fromId, fx);
         return;
       }
       if (beanAction === "cancel-reminder") {

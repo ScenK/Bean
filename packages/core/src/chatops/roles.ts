@@ -157,7 +157,7 @@ export function cardActionNeeds(beanAction: string | undefined): Role {
   if (a.endsWith("-routine")) return needs("routineDrafts");
   if (["save-note", "cancel-note", "archive-note", "cancel-archive-note", "restore-note"].includes(a)) return needs("notes");
   if (a === "queue-todo" || a === "cancel-todo") return needs("todos");
-  if (a === "forget-memory") return needs("memory");
+  if (a === "forget-memory" || a === "share-memory") return needs("memory");
   if (a === "cancel-reminder") return needs("reminders");
   return "admin";
 }

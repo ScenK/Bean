@@ -78,7 +78,9 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
       await deps.append([m]);
       texts.add(c.text.toLowerCase());
       remembered.push(m);
-      return `Remembered: ${m.text}`;
+      return deps.subjectId
+        ? `Remembered: ${m.text}. Saved privately. If this updates a household fact shown in what you remember, say so and mention the Share with everyone button on the receipt.`
+        : `Remembered: ${m.text}`;
     },
   };
 

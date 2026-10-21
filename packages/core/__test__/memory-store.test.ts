@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { loadMemories, appendMemories, updateMemory, deleteMemories, selectRelevantMemories } from "../src/memory/store.js";
+import { loadMemories, appendMemories, updateMemory, deleteMemories, shareMemory, selectRelevantMemories } from "../src/memory/store.js";
 import { makeMemoryTools } from "../src/memory/tools.js";
 import { closeDb } from "../src/db.js";
 import { dbFile } from "../src/config.js";
@@ -133,6 +133,16 @@ test("remember/forget_memory tools save only quoted facts and forget only known 
   expect((await loadMemories(file)).map((x) => x.text)).toEqual(["Prefers tabs over spaces"]);
 });
 
+test("a private remember tells the model about the Share with everyone button; a shared one doesn't", async () => {
+  const tools = (subjectId?: string) => makeMemoryTools({
+    append: (a) => appendMemories(file, a), forget: async () => 0, memories: [], projects: [],
+    latestUserText: "remember that I prefer tabs", ...(subjectId ? { subjectId } : {}),
+  }).tools[0]!;
+  const args = { text: "Prefers tabs", quote: "I prefer tabs" };
+  expect(await tools("mia").run(args)).toContain("Saved privately. If this updates a household fact shown in what you remember, say so and mention the Share with everyone button on the receipt.");
+  expect(await tools().run(args)).toBe("Remembered: Prefers tabs");
+});
+
 test("memory tools are only offered when the typed message asks to remember or forget", () => {
   const offered = (text: string) => makeMemoryTools({
     append: async () => {}, forget: async () => 0, memories: [], projects: [], latestUserText: text,
@@ -202,4 +212,23 @@ test("saveScope: DM private, channel shared; overrides only when unambiguous", a
   expect(saveScope("remember that Leo coaches; it isn’t “for everyone”", true)).toBe("private");
   expect(saveScope("it's not Kim, remember that Leo coaches just for me, not for everyone", false)).toBe("private");
   expect(saveScope("just for me … remember that Leo coaches for everyone", false)).toBe("private");
+});
+
+test("shareMemory: only the author flips their private row to shared, text/project/date unchanged", async () => {
+  await appendMemories(file, [
+    { id: "mias", text: "wifi is now bean2", projectPath: "/p/home", createdAt: "2026-02-01T00:00:00.000Z", subjectId: "mia" },
+    { id: "shared", text: "wifi is bean", createdAt: "2026-01-01T00:00:00.000Z" },
+  ]);
+  expect(await shareMemory(file, "mias", "max")).toBe(0); // another member
+  expect(await shareMemory(file, "mias", "u1")).toBe(0); // the owner gets no bypass
+  expect(await shareMemory(file, "mias", "")).toBe(0); // empty actor
+  expect(await shareMemory(file, "shared", "mia")).toBe(0); // already shared
+  expect(await loadMemories(file, null)).toHaveLength(1);
+  // Two concurrent taps: exactly one flips the row.
+  const taps = await Promise.all([shareMemory(file, "mias", "mia"), shareMemory(file, "mias", "mia")]);
+  expect(taps.reduce((a, b) => a + b, 0)).toBe(1);
+  const row = (await loadMemories(file, null)).find((m) => m.id === "mias");
+  expect(row).toEqual({ id: "mias", text: "wifi is now bean2", projectPath: "/p/home", createdAt: "2026-02-01T00:00:00.000Z" });
+  await deleteMemories(file, ["mias"]);
+  expect(await shareMemory(file, "mias", "mia")).toBe(0); // deleted row
 });

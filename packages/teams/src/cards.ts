@@ -325,7 +325,12 @@ export function rememberedCard(input: RememberedCardInput): object {
       { type: "TextBlock", text: `${input.projectName ? `(${input.projectName}) ` : ""}${input.text}`, wrap: true },
       { type: "TextBlock", text: rememberedScopeLine(input.scope), isSubtle: true, wrap: true },
     ],
-    actions: [{ type: "Action.Submit", title: "Forget", data: { beanAction: "forget-memory", proposalId: input.memoryId } }],
+    actions: [
+      { type: "Action.Submit", title: "Forget", data: { beanAction: "forget-memory", proposalId: input.memoryId } },
+      ...(input.scope === "private"
+        ? [{ type: "Action.Submit", title: "Share with everyone", data: { beanAction: "share-memory", proposalId: input.memoryId } }]
+        : []),
+    ],
   };
 }
 
