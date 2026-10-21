@@ -141,6 +141,17 @@ CREATE TABLE IF NOT EXISTS chatops_turn_counts (
 );
 CREATE INDEX IF NOT EXISTS chatops_turn_counts_day ON chatops_turn_counts(surface, day, user_id);
 
+-- Messages sent as chunks of one over-long text (chatops/chunk-groups.ts): every chunk's platform
+-- message id maps to the group's first id and its position, so a reply to any chunk can rebuild
+-- the whole text. Metadata only, no message text; at is epoch ms, rows past 30 days pruned on insert.
+CREATE TABLE IF NOT EXISTS chatops_chunks (
+  message_id TEXT PRIMARY KEY,
+  first_id   TEXT NOT NULL,
+  seq        INTEGER NOT NULL,
+  at         INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chatops_chunks_group ON chatops_chunks(first_id, seq);
+
 -- A thread's resumable delegate session, one per CLI (each CLI keeps its own session store),
 -- so a follow-up delegate in the thread continues the agent that produced the earlier result.
 CREATE TABLE IF NOT EXISTS thread_sessions (
