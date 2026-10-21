@@ -15,12 +15,20 @@ const REPLY_BLOCKQUOTE = /<blockquote\b[^>]*itemtype="http:\/\/schema\.skype\.co
 
 /** Tags out, block breaks kept as newlines, the common entities decoded. */
 export function htmlToText(html: string): string {
-  return html
+  let out = html
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li)>/gi, "\n")
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&")
+    .replace(/<\/(p|div|li)>/gi, "\n");
+
+  let previous: string;
+  do {
+    previous = out;
+    out = out
+      .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&")
+      .replace(/<[^>]*>/g, "");
+  } while (out !== previous);
+
+  return out
     .replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n")
     .trim();
 }
