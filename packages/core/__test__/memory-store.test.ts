@@ -191,4 +191,12 @@ test("saveScope: DM private, channel shared; overrides only when unambiguous", a
   expect(saveScope("remember that I prefer espresso, just for me", false)).toBe("private");
   expect(saveScope("remember that I want mint tea, save it for everyone", true)).toBe("shared");
   expect(saveScope("remember that I prefer espresso but don't share it for everyone", true)).toBe("private");
+  // A negation elsewhere in a correction doesn't void the override; one next to the scope phrase does.
+  expect(saveScope("it's not Kim anymore, remember for everyone that Leo coaches", true)).toBe("shared");
+  expect(saveScope("no, Leo coaches now, not Kim. Remember that for the family", true)).toBe("shared");
+  expect(saveScope("remember that Leo coaches, not for everyone", true)).toBe("private");
+  expect(saveScope("remember that Leo coaches; it isn’t for the family", true)).toBe("private");
+  expect(saveScope("remember that Leo coaches. No, not for everyone!", true)).toBe("private");
+  expect(saveScope("it's not Kim, remember that Leo coaches just for me, not for everyone", false)).toBe("private");
+  expect(saveScope("just for me … remember that Leo coaches for everyone", false)).toBe("private");
 });
