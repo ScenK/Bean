@@ -1,7 +1,6 @@
 # Live sessions (chat-bridged interactive agent)
 
-Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and Teams. Spec:
-`docs/superpowers/specs/2026-07-18-live-sessions-design.md`.
+Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and Teams.
 
 - `core/live-session.ts` = multi-turn sibling of `delegate.ts`: a long-lived
   `claude -p --input-format stream-json --output-format stream-json --verbose

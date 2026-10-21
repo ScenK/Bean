@@ -49,6 +49,4 @@ see `db.ts`'s `migrateFromFiles`.
   digest is a `memory:dream` bubble + Persona's "Last dream" row — never written into a transcript
   (it would be re-extracted).
 
-Design spec: `docs/superpowers/specs/2026-07-03-bean-memory-design.md`.
-
 - Gotcha: app `RegisterDeps` (ipc.ts) re-declares `ChatHandlerDeps` fields instead of extending it, so a new chat-handler dep (e.g. `loadMemories`/`dbFile`) must be added to BOTH interfaces and to the `registerIpc` deps object in `main.ts`.

@@ -18,7 +18,6 @@ is **optional** — absent/empty = DM the **owner** only (`ownerId` in `discord.
 and logged — never fan out to every allow-listed user / personal chat, coworkers would get the
 owner's digests, #253); present = a specific discord channel id or teams conversation id instead. The
 `save_note` act-now tool is routine-only; the chat window keeps confirm-first `propose_note`.
-Spec: `docs/superpowers/specs/2026-07-12-routines-design.md`.
 
 **Headless host (#279).** `BEAN_HEADLESS_ROUTINES=1` makes the Discord server a routine host
 (`discord/src/headless-routines.ts`): scheduler + `createRoutineHost` + core `makeRoutineSteps`

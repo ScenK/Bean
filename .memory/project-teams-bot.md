@@ -8,8 +8,6 @@ Bean has two chat adapters over one shared brain:
 - **Adapters**: `packages/teams/` (Azure Bot + Adaptive Cards + tunnel; work group) and
   `packages/discord/` (gateway + embeds/buttons; personal, allowlist-only). Each is
   config + card builders + one impure `server.ts`.
-- Specs: docs/superpowers/specs/2026-07-10-teams-bot-design.md and
-  2026-07-10-discord-adapter-design.md.
 - `converse()` grew a trailing `availableClis` param; `ProposedDelegate` has optional
   `cli`/`model` (chat-stated). Backward-compatible; the desktop ignores them so far.
 - Model memory keys `teams:cli` / `teams:model:<cli>` are intentionally shared by ALL chat

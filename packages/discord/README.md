@@ -2,7 +2,7 @@
 
 Personal single-user Discord adapter over the same chatops brain as `@bean/teams`
 (`packages/core/src/chatops/`). Gateway (outbound WebSocket) — no tunnel, no public
-endpoint. Design: `docs/superpowers/specs/2026-07-10-discord-adapter-design.md`.
+endpoint.
 
 ## One-time setup
 

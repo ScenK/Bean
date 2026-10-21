@@ -12,8 +12,7 @@ items, no PNG assets needed (macOS-only API; this app is macOS-only). Accelerato
 system App-menu convention: `⌘,` for Settings (preferences), `⌘Q` for Exit (quit), and **none**
 for About — macOS's own About item never has one either, so don't add one "for consistency".
 
-This is a deliberate simplification of an earlier design (see git history / the dated plan at
-`docs/superpowers/plans/2026-07-01-bean-settings-about-context-menu.md`) that had a **right-click**
+This is a deliberate simplification of an earlier design (see git history) that had a **right-click**
 context card on the avatar body (`#bean-context`, a `"context"` `AvatarMode`) *and* a
 matching tray right-click, mirrored so both surfaces behaved the same. That whole right-click
 path — the `"context"` `AvatarMode`, `AVATAR_CONTEXT_SIZE`, `CONTEXT_ACTIONS`, `#bean-context`

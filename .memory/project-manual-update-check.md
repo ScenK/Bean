@@ -11,8 +11,7 @@ pure) and `packages/app/src/updater.ts` (fetch/download/extract/install — IO),
 `bean:check-for-update`/`bean:install-update` IPC. No background polling; every step is a
 user click.
 
-**Why not Sparkle/electron-updater:** see
-`docs/superpowers/specs/2026-07-14-manual-update-check-design.md`. Short version: ad-hoc
+**Why not Sparkle/electron-updater:** ad-hoc
 signing (matching [safety-mac-adhoc-signing.md](safety-mac-adhoc-signing.md)) is NOT the
 blocker it looks like — Sparkle's authenticity check is EdDSA, independent of code-signing
 tier — but Sparkle.framework itself has no supported Electron embedding (electron/electron

@@ -1,7 +1,6 @@
 // Multi-turn interactive counterpart to delegate.ts's one-shot runDelegate: a long-lived
 // `claude -p` process fed user turns over stdin (stream-json), streaming events back on
-// stdout, driven remotely from a chatops channel. Spec: docs/superpowers/specs/
-// 2026-07-18-live-sessions-design.md — permissions are deliberately bypassed (true bypass).
+// stdout, driven remotely from a chatops channel. Permissions are deliberately bypassed (true bypass).
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { BEAN_GIT_IDENTITY, GIT_TRAILER_INSTRUCTION, claudeTailLine } from "./delegate.js";

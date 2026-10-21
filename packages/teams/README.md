@@ -3,7 +3,7 @@
 Local Node server that lets you chat with Bean in a Teams 1:1 chat or @mention it in a
 group. Chat goes through
 `converse()`; delegate runs (headless `claude`/`opencode`) are confirm-first via an
-Adaptive Card and execute on THIS machine. Design: `docs/superpowers/specs/2026-07-10-teams-bot-design.md`.
+Adaptive Card and execute on THIS machine.
 
 ## One-time setup
 

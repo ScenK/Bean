@@ -1,7 +1,5 @@
 # Image support (recognition + generation)
 
-Spec: `docs/superpowers/specs/2026-07-26-image-support-design.md`.
-
 - **Recognition is latest-turn-only.** `ConverseInput.latestUserImages` attaches images to
   the current user turn; `ChatTurn`/history stays text with a `[image attached]` placeholder
   (all surfaces do this). Deliberate ceiling: multi-turn follow-ups about the same image lose
