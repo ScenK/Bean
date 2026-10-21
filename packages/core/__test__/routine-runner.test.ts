@@ -440,7 +440,8 @@ describe("routine memories", () => {
       }),
     );
     const sys = calls[0]!.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n");
-    expect(sys).toContain("- (about the user) SENTINEL likes terse # heading"); // one line, no [id]
+    expect(sys).toContain("- (about the user) SENTINEL likes terse # heading (saved 2026-07-01 00:00 UTC)"); // one line, no [id]
+    expect(sys).toContain("when two facts conflict, the later-saved one is current");
     expect(sys).toContain("don't quote these");
     expect(reqs[0]!.memories).toContain("SENTINEL");
     expect(reqs[0]!.instruction).toBe("fix it");
