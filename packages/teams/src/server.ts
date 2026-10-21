@@ -23,7 +23,7 @@ import {
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
 import { startDevtunnel } from "./devtunnel.js";
-import { loadTeamsConfig, ownerDmRefs, teamsConfigFile } from "./teams-config.js";
+import { deliveredAppend, loadTeamsConfig, ownerDmRefs, teamsConfigFile } from "./teams-config.js";
 
 const dir = beanDir();
 const builtinDir = process.env.BEAN_BUILTIN_DIR || projectBeanDir();
@@ -471,20 +471,20 @@ setInterval(() => {
     let delivered = false;
     for (const ref of targets) {
       try {
+        const posted: { id?: string } = {};
         await adapter.continueConversationAsync(teamsConfig.botAppId, ref, async (context) => {
-          await context.sendActivity(text);
+          posted.id = (await context.sendActivity(text))?.id;
         });
         delivered = true;
         // Per-target, because a DM fanout has no msg.channel to append to.
-        if (msg.context && ref.conversation?.id) {
-          appendDelivered(ref.conversation.id, msg.body);
-        }
+        const save = ref.conversation?.id ? deliveredAppend(msg, ref.conversation, text, posted.id) : null;
+        if (save === "missing-id") console.error(`outbox: teams post to ${ref.conversation?.id} returned no id; digest not saved`);
+        else if (save) appendDelivered(save.key, save.body);
       } catch (err) {
         console.error("outbox: teams send failed", err);
         lastErr = err;
       }
     }
     if (!delivered) throw lastErr;
-    if (msg.displayBody && !msg.context && msg.channel) appendDelivered(msg.channel, msg.body);
   }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: teams drain failed", err));
 }, OUTBOX_POLL_MS);

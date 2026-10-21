@@ -17,9 +17,17 @@ via `runtime.getRoutineDigestContext()` at enqueue time, so the bot servers — 
 `~/.bean/config.json` once at boot — need no restart when the toggle flips. Don't "simplify"
 this by having the bots read the config themselves; that reintroduces the restart.
 
+**Exception — Teams channel posts.** A digest sent to a bare Teams channel id starts a new
+post, and replies in its thread arrive as `<channel>;messageid=<post id>`. The drain keeps
+`sendActivity`'s returned id and always saves the posted text under that thread key, whatever
+`context` says (`deliveredAppend` in `teams/src/teams-config.ts`): a reply in that thread is
+an explicit follow-up, and nothing else ever reads the key, so it costs no tokens elsewhere. No
+returned id = logged and not saved, never the bare key. Thread (`;messageid=`) targets, DMs,
+and group chats follow the flag as below.
+
 `displayBody` is the separate, unconditional append path (interrupted-run notices, whose `body`
-is model-facing). The two are mutually exclusive by convention; Teams' trailing append guards
-on `!msg.context` so a message carrying both can't double-write.
+is model-facing). The two are mutually exclusive by convention; `deliveredAppend` picks exactly
+one of them per delivery, so a message carrying both can't double-write.
 
 Delivery-side appends go through each server's local `appendDelivered`, which also fires
 `maybeCompact` — `bot.ts` only compacts after an *inbound* turn, so a channel that merely
