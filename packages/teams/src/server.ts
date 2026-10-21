@@ -23,6 +23,7 @@ import {
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
 import { startDevtunnel } from "./devtunnel.js";
+import { parseQuote } from "./replied-to.js";
 import { deliveredAppend, loadTeamsConfig, ownerDmRefs, teamsConfigFile } from "./teams-config.js";
 
 const dir = beanDir();
@@ -340,7 +341,8 @@ app.post("/api/messages", (req, res) => {
       );
       return;
     }
-    const text = TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "";
+    // A quote-reply's quoted message is context, never input: split it out of the typed words.
+    const { text, repliedTo } = parseQuote(a, TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "");
     // A live session bound to this conversation is its own authorization boundary: forward every
     // message (mention or not) so allowed drivers can steer/stop it — core's onMessage decides
     // who may. Mirrors the Discord surface's `capturing` bypass.
@@ -371,7 +373,7 @@ app.post("/api/messages", (req, res) => {
     try {
       await bot.onMessage(
         {
-          conversationId: a.conversation.id, text: text || "(image)",
+          conversationId: a.conversation.id, text: text || "(image)", repliedTo,
           images: images.length > 0 ? images : undefined,
           fromId: a.from.id, fromAltId: a.from.aadObjectId, fromName: a.from.name ?? "someone",
           scopeId: scopeOf(a), direct,

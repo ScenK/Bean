@@ -1,0 +1,25 @@
+{
+  "_note": "Redacted shape of a Teams group-chat quote-reply, built from the Teams SDK's quotedReply entity (microsoft/teams.ts quoted-reply-entity.ts) — replace with a live capture when one is taken.",
+  "type": "message",
+  "id": "1772050299000",
+  "text": "<at>Bean</at> <quoted messageId=\"1772050244572\"/> what about Friday?",
+  "textFormat": "plain",
+  "from": { "id": "29:user-redacted", "name": "Alex Doe", "aadObjectId": "00000000-0000-0000-0000-000000000001" },
+  "recipient": { "id": "28:00000000-0000-0000-0000-0000000000b0", "name": "Bean" },
+  "conversation": { "id": "19:group-redacted@thread.v2", "conversationType": "groupChat", "isGroup": true },
+  "entities": [
+    { "type": "mention", "text": "<at>Bean</at>", "mentioned": { "id": "28:00000000-0000-0000-0000-0000000000b0", "name": "Bean" } },
+    {
+      "type": "quotedReply",
+      "quotedReply": {
+        "messageId": "1772050244572",
+        "senderId": "28:00000000-0000-0000-0000-0000000000b0",
+        "senderName": "Bean",
+        "preview": "The deploy window is Thursday 3-5pm &amp; needs sign-off.",
+        "time": "1772050244572",
+        "validatedMessageReference": true
+      }
+    },
+    { "type": "clientInfo", "locale": "en-US", "country": "US", "platform": "Mac" }
+  ]
+}
