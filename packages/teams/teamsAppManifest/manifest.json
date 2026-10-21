@@ -3,7 +3,6 @@
   "manifestVersion": "1.30",
   "version": "1.2.0",
   "id": "1ba7fc48-d369-4d8a-b643-94c56555faee",
-  "packageName": "com.bean.teamsbot",
   "developer": {
     "name": "Scen.K",
     "websiteUrl": "https://example.com",
@@ -23,6 +22,7 @@
     "outline": "outline.png"
   },
   "accentColor": "#5B4B8A",
+  "supportsChannelFeatures": "tier1",
   "bots": [
     {
       "botId": "<APP_ID>",
