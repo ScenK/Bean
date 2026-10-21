@@ -5,7 +5,7 @@ import { converse, speakerLine, type ConverseDeps, type ImageAttachment, type Pr
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
-import { makeReminderTools } from "./reminder-tools.js";
+import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
 import { chatRoutineProblem, todoRunHint, type Routine } from "../routine-store.js";
 import type { TodoItem } from "../todo-store.js";
@@ -181,8 +181,9 @@ export interface TeamsBotDeps {
   /** Bean's turns (converse path only) for the desktop app's status bubbles (see activity.ts). */
   onActivity?: ChatopsActivitySink;
   /** Enables the chatops reminder tools (member+): reminders.json path plus this surface's
-   * outbox transport. Omit on surfaces whose outbox can't DM a specific user (Teams). */
-  reminders?: { file: string; transport: "discord" };
+   * outbox transport. Teams targets are always the asking conversation (its outbox can't DM
+   * a specific user); Discord DMs target the speaker. */
+  reminders?: { file: string; transport: "discord" | "teams" };
   /** Owner / admin / guest — required, no permissive default (see .memory/safety-chatops-roles.md). */
   roles: Roles;
   /** Owner routine management (#285): propose_routine plus the `routines` / `enable <name>` /
@@ -775,10 +776,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
 
   // Cancel button on a reminder receipt: same idempotent, no-proposal-store shape as Forget.
   // `setBy` set = only that person's reminder (non-owners); checked inside the locked update.
-  async function handleCancelReminder(reminderId: string | undefined, actor: string, setBy: string | undefined, fx: BotEffects): Promise<void> {
+  async function handleCancelReminder(reminderId: string | undefined, actor: string, fromId: string, conversationId: string, setBy: string | undefined, fx: BotEffects): Promise<void> {
     if (!reminderId || !deps.reminders) return;
     const res = await cancelReminder(deps.reminders.file, reminderId, setBy);
-    if (res.outcome === "cancelled") await fx.post(`Reminder cancelled (by ${actor}): ${res.text ?? ""}`);
+    // Echo the text only into the conversation it belongs to (or the setter's own DM).
+    const t = res.target as { userId?: unknown } | undefined;
+    const here = reminderInConversation(res.target, deps.reminders.transport, conversationId) ||
+      (typeof t?.userId === "string" && t.userId === fromId);
+    if (res.outcome === "cancelled") await fx.post(here ? `Reminder cancelled (by ${actor}): ${res.text ?? ""}` : `Reminder cancelled (by ${actor}).`);
     else await fx.post(res.outcome === "forbidden"
       ? "Only whoever set that reminder (or the owner) can cancel it."
       : "That reminder already fired or was cancelled.");
@@ -1022,14 +1027,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           append: deps.appendMemories, forget: (ids) => deps.deleteMemories(ids, isOwner ? undefined : msg.fromId),
           memories, projects, latestUserText: typed, ...(scope === "private" ? { subjectId: msg.fromId } : {}),
         });
-        // Delivery goes where it was asked: a DM → this speaker's DM, a channel → this channel.
+        // Delivery goes where it was asked: a Discord DM → this speaker's DM, anything else
+        // (every Teams conversation, a Discord channel) → this conversation's full ingress id.
         const reminderTools = deps.reminders && can(role, "reminders")
           ? makeReminderTools({
               file: deps.reminders.file,
-              target: msg.direct
-                ? { transport: deps.reminders.transport, userId: msg.fromId }
-                : { transport: deps.reminders.transport, channelId: msg.conversationId },
-              setBy: msg.fromId, isOwner,
+              target: deps.reminders.transport === "teams"
+                ? { transport: "teams", channelId: msg.conversationId }
+                : msg.direct ? { transport: "discord", userId: msg.fromId } : { transport: "discord", channelId: msg.conversationId },
+              setBy: msg.fromId, isOwner, direct: msg.direct, conversationId: msg.conversationId,
             })
           : undefined;
         const todoTools = can(role, "todos")
@@ -1298,7 +1304,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (beanAction === "cancel-reminder") {
         // proposalId carries the reminder id here (the surfaces' generic id slot).
-        await handleCancelReminder(proposalId, action.fromName, role === "owner" ? undefined : action.fromId, fx);
+        await handleCancelReminder(proposalId, action.fromName, action.fromId, action.conversationId, role === "owner" ? undefined : action.fromId, fx);
         return;
       }
       if (beanAction === "resume-live") {

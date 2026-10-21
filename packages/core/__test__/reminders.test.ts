@@ -76,6 +76,11 @@ test("fireDueReminders: targeted → outbox (DM or channel), untargeted → desk
     { ...r({ id: "bad" }), target: { transport: "discord" } },
     { ...r({ id: "both" }), target: { transport: "discord", userId: "mia", channelId: "c1" } },
     { ...r({ id: "null" }), target: null },
+    r({ id: "teams", target: { transport: "teams", channelId: "19:ch@thread.tacv2;messageid=1" } }),
+    { ...r({ id: "teamsUser" }), target: { transport: "teams", userId: "mia" } },
+    { ...r({ id: "teamsBoth" }), target: { transport: "teams", userId: "mia", channelId: "c1" } },
+    { ...r({ id: "teamsEmpty" }), target: { transport: "teams", channelId: "" } },
+    { ...r({ id: "slack" }), target: { transport: "slack", channelId: "c1" } },
   ]), "utf8");
   const desktop: string[] = [];
   const queued: object[] = [];
@@ -89,7 +94,8 @@ test("fireDueReminders: targeted → outbox (DM or channel), untargeted → desk
   expect(queued).toEqual([
     { transport: "discord", title: "⏰ Reminder", body: "stretch", userId: "mia" },
     { transport: "discord", title: "⏰ Reminder", body: "stretch", channel: "c1" },
+    { transport: "teams", title: "⏰ Reminder", body: "stretch", channel: "19:ch@thread.tacv2;messageid=1" },
   ]);
-  expect(failed).toEqual(["bad", "both", "null"]);
+  expect(failed).toEqual(["bad", "both", "null", "teamsUser", "teamsBoth", "teamsEmpty", "slack"]);
   expect((await loadReminders(file)).every((x) => x.firedAt)).toBe(true);
 });

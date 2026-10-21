@@ -145,6 +145,12 @@ routine too: it saves switched off (never replacing an existing one), and the ow
 with `enable <name>`. **DM the bot once as the owner** so it knows your 1:1 chat — until then
 those notices (and channel-less digests) wait in the outbox.
 
+Members can ask for a reminder ("remind me at 5 to call the vet") in a channel thread, a group
+chat, or a 1:1 chat; it fires back into that same place (a thread reminder replies in the thread)
+with a receipt card whose **Cancel** works for whoever set it or the owner. `list_reminders` in a
+channel shows only that channel's reminders. Reminders fire only while Bean.app is running — one
+due while it was off fires late, on the next launch.
+
 In the packaged desktop app, the tray menu's **Teams** toggle spawns this exact same built
 `dist/server.js` (via Electron's bundled Node) — don't also run `pnpm --filter @bean/teams
 start` at the same time, they'll fight over port 3978.
@@ -184,3 +190,6 @@ silently with the same generic Teams error and guessing wastes a round trip:
 - [ ] "@Bean /new" → "Fresh start"; a follow-up shows no memory of the prior chat or ambient.
 - [ ] (owner) "@Bean every weekday at 9 post a standup reminder here" in a channel → routine
       card; Save → `routines` lists it; its digest lands as a new channel post.
+- [ ] "@Bean remind me in 2 minutes to stretch" in a channel thread, a group chat and a 1:1
+      chat → "⏰ Reminder set" card with a local time; each fires back in the same place (thread
+      reply for the thread) while Bean.app runs; Cancel on another one → "Reminder cancelled".

@@ -2,12 +2,14 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/prom
 import { dirname } from "node:path";
 import type { OutboxMessage } from "./outbox.js";
 
-/** Where a chatops reminder goes: the setter's DM (`userId`) or the channel it was set in.
- * Stamped from the authenticated ingress, never from model arguments. Discord only: Teams'
- * outbox ignores `userId`, so a Teams DM target would land in the owner's chat. */
+/** Where a chatops reminder goes: Discord — the setter's DM (`userId`) or the channel it was
+ * set in; Teams — always the conversation it was set in (1:1, group chat or channel thread),
+ * since Teams' outbox ignores `userId`. Stamped from the authenticated ingress, never from
+ * model arguments. */
 export type ReminderTarget =
   | { transport: "discord"; userId: string }
-  | { transport: "discord"; channelId: string };
+  | { transport: "discord"; channelId: string }
+  | { transport: "teams"; channelId: string };
 
 export interface Reminder {
   id: string;
@@ -106,14 +108,14 @@ export function claimDueReminders(file: string, now: Date): Promise<Reminder[]> 
 
 /** Removes a pending reminder. `setBy` set = only that person's reminder may go (non-owners);
  * absent = any (the owner). Idempotent: an unknown or already-fired id is "missing". */
-export function cancelReminder(file: string, id: string, setBy?: string): Promise<{ outcome: "cancelled" | "missing" | "forbidden"; text?: string }> {
+export function cancelReminder(file: string, id: string, setBy?: string): Promise<{ outcome: "cancelled" | "missing" | "forbidden"; text?: string; target?: ReminderTarget }> {
   return updateReminders(file, (reminders) => {
     const i = reminders.findIndex((r) => r.id === id && !r.firedAt);
     const r = reminders[i];
     if (!r) return { outcome: "missing" as const };
     if (setBy !== undefined && r.setBy !== setBy) return { outcome: "forbidden" as const };
     reminders.splice(i, 1);
-    return { outcome: "cancelled" as const, text: r.text };
+    return { outcome: "cancelled" as const, text: r.text, ...(r.target === undefined ? {} : { target: r.target }) };
   });
 }
 
@@ -122,6 +124,12 @@ export function cancelReminder(file: string, id: string, setBy?: string): Promis
 export function reminderOutbox(r: Reminder): Omit<OutboxMessage, "id" | "createdAt"> {
   const t = r.target as Record<string, unknown> | undefined;
   const transport = t?.transport;
+  if (transport === "teams") {
+    if (typeof t?.channelId === "string" && t.channelId && t.userId === undefined) {
+      return { transport, channel: t.channelId, title: "⏰ Reminder", body: r.text };
+    }
+    throw new Error(`reminder ${r.id}: a Teams target needs a channelId and no userId`);
+  }
   if (transport !== "discord") throw new Error(`reminder ${r.id}: bad target transport`);
   const base = { transport, title: "⏰ Reminder", body: r.text } as const;
   if (typeof t?.userId === "string" && t.userId && t.channelId === undefined) return { ...base, userId: t.userId };

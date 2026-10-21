@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  finishedCard, rememberedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
+  finishedCard, rememberedCard, reminderCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "../src/cards.js";
@@ -106,6 +106,15 @@ test("remembered card shows the fact and a Forget action carrying the memory id"
   expect(s).toContain("prefers tabs");
   expect(s).toContain('"beanAction":"forget-memory"');
   expect(s).toContain('"proposalId":"m-1"');
+});
+
+test("reminder card shows the text, a Z-normalised DATE/TIME, and a Cancel carrying the reminder id", () => {
+  const s = flatten(reminderCard({ reminderId: "r-1", text: "take out the bins", at: "2026-07-03T12:00:00.000+02:00" }));
+  expect(s).toContain("⏰ Reminder set");
+  expect(s).toContain("take out the bins");
+  expect(s).toContain("{{DATE(2026-07-03T10:00:00Z, SHORT)}} {{TIME(2026-07-03T10:00:00Z)}}");
+  expect(s).toContain('"beanAction":"cancel-reminder"');
+  expect(s).toContain('"proposalId":"r-1"');
 });
 
 test("skill proposal card shows name and body and wires save/cancel data", () => {
