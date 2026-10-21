@@ -1,7 +1,7 @@
 {
-  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
-  "manifestVersion": "1.16",
-  "version": "1.1.0",
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.30/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.30",
+  "version": "1.2.0",
   "id": "1ba7fc48-d369-4d8a-b643-94c56555faee",
   "packageName": "com.bean.teamsbot",
   "developer": {
@@ -26,12 +26,106 @@
   "bots": [
     {
       "botId": "<APP_ID>",
-      "scopes": ["personal", "groupChat", "team"],
+      "scopes": [
+        "personal",
+        "groupChat",
+        "team"
+      ],
       "supportsFiles": false,
-      "isNotificationOnly": false
+      "isNotificationOnly": false,
+      "supportsTargetedMessages": true,
+      "commandLists": [
+        {
+          "scopes": [
+            "personal",
+            "team",
+            "groupChat"
+          ],
+          "triggers": [
+            "slash",
+            "mention"
+          ],
+          "commands": [
+            {
+              "title": "stop",
+              "description": "stop — end the live session"
+            },
+            {
+              "title": "cancel",
+              "description": "cancel — cancel running delegated tasks"
+            },
+            {
+              "title": "new",
+              "description": "new — start a fresh conversation"
+            },
+            {
+              "title": "whoami",
+              "description": "whoami — show your Bean role"
+            },
+            {
+              "title": "live-session",
+              "description": "live-session <prompt> — start an interactive coding session (owner only)"
+            }
+          ]
+        },
+        {
+          "scopes": [
+            "team",
+            "groupChat"
+          ],
+          "triggers": [
+            "slash",
+            "mention"
+          ],
+          "commands": [
+            {
+              "title": "drivers",
+              "description": "drivers — who may steer the live session"
+            },
+            {
+              "title": "admins",
+              "description": "admins — list this chat's admins"
+            },
+            {
+              "title": "add-admin",
+              "description": "add-admin @name — owner only"
+            },
+            {
+              "title": "remove-admin",
+              "description": "remove-admin @name — owner only"
+            }
+          ]
+        },
+        {
+          "scopes": [
+            "personal"
+          ],
+          "triggers": [
+            "slash",
+            "mention"
+          ],
+          "commands": [
+            {
+              "title": "routines",
+              "description": "routines — list routines (owner only)"
+            },
+            {
+              "title": "enable",
+              "description": "enable <routine name> — owner only"
+            },
+            {
+              "title": "disable",
+              "description": "disable <routine name> — owner only"
+            }
+          ]
+        }
+      ]
     }
   ],
-  "permissions": ["identity", "messageTeamMembers"],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
   "validDomains": [],
   "webApplicationInfo": {
     "id": "<APP_ID>",
@@ -40,8 +134,14 @@
   "authorization": {
     "permissions": {
       "resourceSpecific": [
-        { "name": "ChannelMessage.Read.Group", "type": "Application" },
-        { "name": "ChatMessage.Read.Chat", "type": "Application" }
+        {
+          "name": "ChannelMessage.Read.Group",
+          "type": "Application"
+        },
+        {
+          "name": "ChatMessage.Read.Chat",
+          "type": "Application"
+        }
       ]
     }
   }

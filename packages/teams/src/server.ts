@@ -22,6 +22,7 @@ import {
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
+import { addressedToBot } from "./addressing.js";
 import { startDevtunnel } from "./devtunnel.js";
 import { parseQuote } from "./replied-to.js";
 import { deliveredAppend, loadTeamsConfig, ownerDmRefs, teamsConfigFile } from "./teams-config.js";
@@ -230,17 +231,6 @@ process.on("SIGTERM", () => {
 // grants the RSC permission ChannelMessage.Read.Group — see packages/teams/README.md.
 const ambient = new AmbientStore(dbFile(dir));
 
-/** True only when the message @mentions the bot; personal (1:1) chats always count.
- * Naming the bot in passing ("we should add x to bean") deliberately does NOT count —
- * that message is about Bean, not to it, and becomes ambient context instead. Untagged
- * channel messages only arrive at all with the RSC permission above. */
-function addressedToBot(a: Activity): boolean {
-  if (a.conversation.conversationType === "personal") return true;
-  return (a.entities ?? []).some(
-    (e) => e.type === "mention" && (e as { mentioned?: { id?: string } }).mentioned?.id === a.recipient.id,
-  );
-}
-
 /** Users @mentioned in this activity, minus the bot — feeds core's `+driver`/`-driver` and
  * `add-admin`/`remove-admin`. Only `29:` user ids: tag and channel mentions are not people. */
 function mentionedUsers(a: Activity): { id: string; name: string }[] {
@@ -342,13 +332,22 @@ app.post("/api/messages", (req, res) => {
       );
       return;
     }
+    // TEMP: confirm the real slash-picker payload on the dev tenant (is `/` in the text, is
+    // there a mention entity). stdout only; remove after the check (#359).
+    if ((a.recipient as { isTargeted?: unknown }).isTargeted !== undefined) {
+      console.log("teams targeted message:", JSON.stringify({
+        recipient: a.recipient,
+        entities: (a.entities ?? []).map((e) => ({ type: e.type, mentionedId: (e as { mentioned?: { id?: string } }).mentioned?.id })),
+        text: a.text?.slice(0, 40),
+      }));
+    }
     // A quote-reply's quoted message is context, never input: split it out of the typed words.
     const { text, repliedTo } = parseQuote(a, TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "");
     // A live session bound to this conversation is its own authorization boundary: forward every
     // message (mention or not) so allowed drivers can steer/stop it — core's onMessage decides
     // who may. Mirrors the Discord surface's `capturing` bypass.
     const capturing = liveSessions.has(a.conversation.id);
-    if (!addressedToBot(a) && !capturing) {
+    if (!addressedToBot(a, `28:${teamsConfig.botAppId}`) && !capturing) {
       // Not for Bean — remember it as context for a later mention, but don't reply.
       if (text) ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
       return;
