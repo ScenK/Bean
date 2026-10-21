@@ -108,6 +108,13 @@ test("remembered card shows the fact and a Forget action carrying the memory id"
   expect(s).toContain('"proposalId":"m-1"');
 });
 
+test("remembered card offers Share with everyone only on a private fact", () => {
+  const priv = flatten(rememberedCard({ memoryId: "m-1", text: "prefers tabs", scope: "private" }));
+  expect(priv).toContain('"title":"Share with everyone","data":{"beanAction":"share-memory","proposalId":"m-1"}');
+  const shared = flatten(rememberedCard({ memoryId: "m-1", text: "prefers tabs", scope: "shared" }));
+  expect(shared).not.toContain("share-memory");
+});
+
 test("reminder card shows the text, a Z-normalised DATE/TIME, and a Cancel carrying the reminder id", () => {
   const s = flatten(reminderCard({ reminderId: "r-1", text: "take out the bins", at: "2026-07-03T12:00:00.000+02:00" }));
   expect(s).toContain("⏰ Reminder set");

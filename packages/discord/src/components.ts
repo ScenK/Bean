@@ -284,6 +284,9 @@ function rememberedCard(input: RememberedCardInput): object {
     }],
     components: [row([
       { type: BUTTON, style: 2, label: "Forget", custom_id: `bean:forget-memory:${input.memoryId}` },
+      ...(input.scope === "private"
+        ? [{ type: BUTTON, style: 2, label: "Share with everyone", custom_id: `bean:share-memory:${input.memoryId}` }]
+        : []),
     ])],
   };
 }

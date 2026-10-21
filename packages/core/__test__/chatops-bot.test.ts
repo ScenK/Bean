@@ -138,6 +138,7 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     cancelTodo: async () => false,
     appendMemories: async (additions) => { savedMemories.push(additions); },
     deleteMemories: async (ids) => { forgotten.push(...ids); return ids.length; },
+    shareMemory: async () => { throw new Error("shareMemory not stubbed"); },
     conversations: new ConversationStore(dbFile(runsBeanDir)),
     cards: fakeCards as CardBuilders,
     skillProposals: new SkillProposalStore(),
@@ -1958,7 +1959,7 @@ test("live capture excludes members: no steering in war-room mode or as a co-dri
 /** Two household members (mia, max) over a real bean.db; u1 owns. The chat fake records every
  * prompt and, when asked to remember, saves the fact quoted from the message. */
 async function household() {
-  const { appendMemories, deleteMemories, loadMemories } = await import("../src/memory/store.js");
+  const { appendMemories, deleteMemories, shareMemory, loadMemories } = await import("../src/memory/store.js");
   const file = dbFile(mkdtempSync(join(tmpdir(), "bean-household-")));
   const prompts: string[] = [];
   let pending = true;
@@ -1966,6 +1967,7 @@ async function household() {
     loadMemories: (subject) => loadMemories(file, subject),
     appendMemories: (m) => appendMemories(file, m),
     deleteMemories: (ids, subject) => deleteMemories(file, ids, subject),
+    shareMemory: (id, actor) => shareMemory(file, id, actor),
     chat: async ({ messages, tools }) => {
       prompts.push(messages.map((x) => String(x.content)).join("\n"));
       const latest = String(messages.at(-1)?.content ?? "");
@@ -2043,6 +2045,54 @@ test("forget: a member removes only their own private facts; the owner removes a
   await tap("mia", "mias");
   await tap("u1", "shared");
   expect(await h.loadMemories(h.file)).toEqual([]);
+});
+
+test("share: the author's tap makes a private fact household-shared and dated in channel + routine recall", async () => {
+  const h = await household();
+  const { appendMemories } = await import("../src/memory/store.js");
+  await appendMemories(h.file, [{ id: "mias", text: "wifi is now bean2", createdAt: "2026-02-01T09:30:00.000Z", subjectId: "mia" }]);
+  const bot = buildTeamsBot(h.deps);
+  const tap = async (who: string, extra: Record<string, unknown> = {}): Promise<string[]> => {
+    const effects = fx();
+    await bot.onCardAction({ conversationId: `dm-${who}`, fromId: who, fromName: who, value: { beanAction: "share-memory", proposalId: "mias", ...extra } }, effects);
+    return effects.posted;
+  };
+  const inChannel = async (): Promise<boolean> => {
+    h.prompts.length = 0;
+    await bot.onMessage(h.say("max", false), fx());
+    return h.prompts.some((p) => p.includes("wifi is now bean2 (saved 2026-02-01 09:30 UTC)"));
+  };
+  expect(await inChannel()).toBe(false);
+  expect(await h.loadMemories(h.file, null)).toEqual([]);
+  // Another member and the owner change nothing; the refusal never echoes the fact.
+  for (const who of ["max", "u1"]) {
+    const posted = await tap(who);
+    expect(posted).toEqual(["Nothing changed — already shared or forgotten."]);
+  }
+  // A forged payload text is ignored: the reply quotes the stored row.
+  expect(await tap("mia", { text: "forged" })).toEqual([
+    "Shared with the household (by mia): wifi is now bean2. Only the owner can forget it now.",
+  ]);
+  expect(await inChannel()).toBe(true);
+  expect(await h.loadMemories(h.file, null)).toMatchObject([{ id: "mias", createdAt: "2026-02-01T09:30:00.000Z" }]);
+  expect(await tap("mia")).toEqual(["Nothing changed — already shared or forgotten."]);
+});
+
+test("share: a guest or a revoked member is refused before the store is touched", async () => {
+  const shared: string[] = [];
+  const { deps } = makeDeps({ shareMemory: async (id) => { shared.push(id); return 1; } });
+  const dbPath = dbFile(mkdtempSync(join(tmpdir(), "bean-share-")));
+  const tap = async (memberIds: string[]): Promise<string[]> => {
+    deps.roles = makeRoles({ dbPath, surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds });
+    const effects = fx();
+    await buildTeamsBot(deps).onCardAction({ conversationId: "dm-mia", fromId: "mia", fromName: "mia", value: { beanAction: "share-memory", proposalId: "m1" } }, effects);
+    return effects.posted;
+  };
+  expect(await tap([])).not.toContainEqual(expect.stringMatching(/^Shared/)); // guest
+  expect(await tap(["mia"])).toContainEqual(expect.stringMatching(/^Shared/)); // member
+  expect(shared).toEqual(["m1"]);
+  expect(await tap([])).not.toContainEqual(expect.stringMatching(/^Shared/)); // revoked
+  expect(shared).toEqual(["m1"]);
 });
 
 // Reminders: a model that sets / lists / cancels on cue, against a real reminders.json.

@@ -1,7 +1,7 @@
 import {
   beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine, createRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
@@ -107,6 +107,7 @@ const bot = buildTeamsBot({
   saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
   appendMemories: (m) => appendMemories(dbFile(dir), m),
   deleteMemories: (ids, subject) => deleteMemories(dbFile(dir), ids, subject),
+  shareMemory: (id, actor) => shareMemory(dbFile(dir), id, actor),
   conversations,
   liveSessions,
   liveSessionProposals,

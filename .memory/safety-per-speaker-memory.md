@@ -14,6 +14,10 @@ pre-#281 row and every desktop/auto-memory save is shared.
   `AND subject_id = ?` means they can drop only their own private rows (not shared, not another
   member's); the owner passes nothing. Both the `forget_memory` tool and the Forget card go
   through it — keep the check in SQL, not in the caller's id list.
+- **Share** (#354) — `shareMemory(file, id, actor)`: `UPDATE … SET subject_id = NULL WHERE id = ?
+  AND subject_id = ?`, so only the row's author can share it — **the owner included** (no bypass;
+  forgetting is where the owner has power). Text, project and `created_at` stay, so the recall
+  date still reflects when it was said. Once shared, only the owner can forget it.
 - **Dream never sees private rows**: `maybeDream` loads `null` and `countMemoriesSince` counts
   shared only. `memories_history` has no `subject_id`, so a private row merged/undone by dream
   would come back shared — don't widen dream without adding the column there. Dream stays off on
