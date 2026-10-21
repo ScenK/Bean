@@ -18,3 +18,7 @@ pre-#281 row and every desktop/auto-memory save is shared.
   shared only. `memories_history` has no `subject_id`, so a private row merged/undone by dream
   would come back shared — don't widen dream without adding the column there. Dream stays off on
   the headless host (only the desktop triggers it).
+- **Recall is dated** (#352): `memoriesBlock()` suffixes every line with `(saved YYYY-MM-DD HH:MM UTC)`
+  from `createdAt` (`(saved unknown)` if it doesn't parse), and both the default header and
+  `ROUTINE_MEMORY_HEADER` carry `MEMORY_CONFLICT_CLAUSE` (later-saved wins). It stays in the
+  trailing context message — never move it into the leading (cached) system message.
