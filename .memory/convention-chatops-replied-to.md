@@ -15,3 +15,7 @@ command gates) treats it like the ambient block — see
   dedupes it — don't add a current-time line.
 - **`unavailable`** adds `REPLIED_UNAVAILABLE` to the history passed to both model hops (the
   chat-skill second hop re-reads the store, so it's appended there too) and is never saved.
+- **Discord** (`packages/discord/src/replied-to.ts`) resolves `message.reference` before
+  `startThread` (the thread's history starts empty). Same channel only; a forward uses its
+  snapshot (author unknown, no origin fetch). A Bean chunk is stitched from `chatops_chunks`
+  siblings — contiguous, nearest first, each re-checked as Bean-authored, fetch- and 6k-char-capped.

@@ -9,9 +9,9 @@ import {
   makeRoles, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, parseRoleCommand, parseRoutineCommand, RoutineProposalStore, refusal, type Capability, type Role,
 } from "@bean/core";
 import {
-  ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
+  ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, MessageReferenceType, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
   type ApplicationCommandDataResolvable,
-  type Interaction, type Message, type MessageCreateOptions, type TextBasedChannel,
+  type Interaction, type Message, type MessageCreateOptions, type MessageSnapshot, type TextBasedChannel,
 } from "discord.js";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -19,6 +19,7 @@ import { basename } from "node:path";
 import { sendChunks } from "./chunk.js";
 import { discordCards } from "./components.js";
 import { deliverOutboxDm } from "./outbox-dm.js";
+import { resolveRepliedTo, type RefMessage } from "./replied-to.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
 import { headlessRoutinesOn, startHeadlessRoutines, tzProblem } from "./headless-routines.js";
 
@@ -267,6 +268,17 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voi
   };
 }
 
+function toRef(m: Message | MessageSnapshot): RefMessage {
+  return {
+    authorId: m.author?.id,
+    fromName: m.member?.displayName ?? m.author?.displayName ?? "someone",
+    content: m.content ?? "",
+    embeds: m.embeds.map((e) => ({ title: e.title, description: e.description, fields: e.fields })),
+    attachments: [...m.attachments.values()].map((a) => ({ name: a.name })),
+    at: m.createdTimestamp,
+  };
+}
+
 client.on("messageCreate", async (message) => {
   try {
     if (message.author.bot) return;
@@ -289,6 +301,8 @@ client.on("messageCreate", async (message) => {
       message.mentions.repliedUser?.id === client.user?.id;
     if (!addressed && !capturing) return;
     let text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
+    // A forward arrives with empty content; its snapshot is the thing to talk about.
+    const forward = message.reference?.type === MessageReferenceType.Forward ? message.messageSnapshots.first() : undefined;
     // Owner-only `usage`: today's turn counts. Anyone else gets one line (a blocked DM falls
     // through to core's DM refusal) — never a free, uncounted model turn.
     if (!capturing && !dmBlocked && /^\/*usage$/i.test(text)) {
@@ -309,7 +323,7 @@ client.on("messageCreate", async (message) => {
     const coreCommand = !hasAudio &&
       (cmd === "cancel" || cmd === "new" || parseRoleCommand(text) !== undefined || parseRoutineCommand(text) !== undefined ||
         /^\/?live-session\b/i.test(text));
-    const usable = text !== "" || hasAudio || message.attachments.some((a) => {
+    const usable = text !== "" || hasAudio || forward !== undefined || message.attachments.some((a) => {
       const mime = a.contentType?.split(";")[0]?.trim() ?? "";
       return (SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) && a.size <= 10 * 1024 * 1024;
     });
@@ -370,13 +384,29 @@ client.on("messageCreate", async (message) => {
       }
     }
     // A blocked DM still reaches core (as "(image)") so its one refusal line is sent.
-    if (!text && images.length === 0 && !dmBlocked) {
+    if (!text && images.length === 0 && !forward && !dmBlocked) {
       if (transcribeFailed) await message.reply("I couldn't transcribe that voice message — try again, or type it out.");
       return;
     }
     // A top-level address in a plain text channel opens a session thread on that message; the
     // turn (and its cards, runs, results) then lives in the thread. Not while a live session
     // captures the channel — that session owns the channel's turns.
+    const turnText = text || (forward && images.length === 0 ? "(forwarded message)" : "(image)");
+    // The message this one replies to (or forwards) — resolved before the thread opens, since the
+    // turn then runs under the thread's fresh, empty history. Context only (see core's repliedTo).
+    const ref = message.reference;
+    const repliedTo = capturing || dmBlocked ? undefined : await resolveRepliedTo(
+      forward ? { channelId: message.channelId, forward: toRef(forward) }
+        // A reference with no type is a reply (Discord's default); a forward is handled above.
+        : ref && ref.type !== MessageReferenceType.Forward ? { channelId: ref.channelId, messageId: ref.messageId }
+        : undefined,
+      {
+        channelId: message.channelId,
+        botId: client.user?.id ?? "",
+        fetch: async (id) => toRef(await message.channel.messages.fetch(id)),
+        groups: chunkGroups,
+      },
+    );
     let channel: TextBasedChannel = message.channel;
     // Both permissions are checked up front: creating a thread Bean can't then post in would
     // swallow the answer, while skipping it falls back to answering in the channel.
@@ -391,7 +421,13 @@ client.on("messageCreate", async (message) => {
       await message.channel.sendTyping();
       try {
         channel = await message.startThread({
-          name: await threadTitle(text || "(image)", { chat: converseChat, model: beanConfig.model }),
+          // The user's words lead; the quoted message only fills in what "this" refers to.
+          name: await threadTitle(
+            repliedTo && !repliedTo.unavailable
+              ? `${turnText}\n\nQuoted message they're replying to:\n> ${repliedTo.text.slice(0, 500).replace(/\n/g, "\n> ")}`
+              : turnText,
+            { chat: converseChat, model: beanConfig.model },
+          ),
           autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
         });
       } catch (err) {
@@ -407,7 +443,7 @@ client.on("messageCreate", async (message) => {
     try {
       await bot.onMessage(
         {
-          conversationId: channel.id, text: text || "(image)", typedText: heardAudio ? typed : undefined,
+          conversationId: channel.id, text: turnText, typedText: heardAudio ? typed : undefined, repliedTo,
           images: images.length > 0 ? images : undefined,
           fromId: message.author.id, fromName: message.author.displayName, scopeId, direct: isDm,
           // Everyone @mentioned except Bean — feeds `+driver`/`-driver` and `add-admin`/`remove-admin`.
