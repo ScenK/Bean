@@ -28,15 +28,20 @@ const REMEMBER_INTENT =
 const PRIVATE_SCOPE = /\b(?:just|only)\s+(?:for|between)\s+(?:me|us)\b|\bkeep\s+(?:it|this|that)\s+private\b|\bprivately\b/i;
 const SHARED_SCOPE = /\bfor\s+(?:everyone|everybody|all\s+of\s+us|the\s+(?:whole\s+)?(?:household|family|house))\b/i;
 
-// Any negation in the message ("this is not for everyone") voids a sharing override: widening a
-// private fact must be unambiguous, so a doubtful DM stays private.
-const NEGATED = /\b(?:not|never|no)\b|\b\w+n['’]t\b|\b(?:dont|doesnt|isnt|wont|cant)\b/i;
+// A negation within a few words of the sharing phrase ("not for everyone", "isn't for the family",
+// "don't share it for everyone") voids the override, so a doubtful DM stays private. The gap can't
+// cross punctuation: a correction's "it's not Kim anymore, remember for everyone" still shares.
+// ponytail: word-window heuristic; a miss errs private in a DM, and "for everyone" can be re-said.
+const NEGATED_SHARED = new RegExp(
+  String.raw`\b(?:not|never|no|\w+n['’]t|dont|doesnt|isnt|wont|cant)(?:\s+[\w'’]+){0,3}?\s+` + SHARED_SCOPE.source,
+  "i",
+);
 
 /** Where a chatops remember lands: a DM saves private to the speaker, a channel saves to the
  * household; explicit wording ("just for me" / "for everyone") overrides. */
 export function saveScope(typedText: string, direct: boolean): "private" | "shared" {
   if (PRIVATE_SCOPE.test(typedText)) return "private";
-  if (SHARED_SCOPE.test(typedText) && !NEGATED.test(typedText)) return "shared";
+  if (SHARED_SCOPE.test(typedText) && !NEGATED_SHARED.test(typedText)) return "shared";
   return direct ? "private" : "shared";
 }
 
