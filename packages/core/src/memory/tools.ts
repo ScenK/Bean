@@ -30,10 +30,10 @@ const SHARED_SCOPE = /\bfor\s+(?:everyone|everybody|all\s+of\s+us|the\s+(?:whole
 
 // A negation within a few words of the sharing phrase ("not for everyone", "isn't for the family",
 // "don't share it for everyone") voids the override, so a doubtful DM stays private. The gap can't
-// cross punctuation: a correction's "it's not Kim anymore, remember for everyone" still shares.
+// cross punctuation (opening quotes/parens aside): a correction's "it's not Kim anymore, remember for everyone" still shares.
 // ponytail: word-window heuristic; a miss errs private in a DM, and "for everyone" can be re-said.
 const NEGATED_SHARED = new RegExp(
-  String.raw`\b(?:not|never|no|\w+n['’]t|dont|doesnt|isnt|wont|cant)(?:\s+[\w'’]+){0,3}?\s+` + SHARED_SCOPE.source,
+  String.raw`\b(?:not|never|no|\w+n['’]t|dont|doesnt|isnt|wont|cant)(?:\s+[\w'’]+){0,3}?\s+["“'‘(]*` + SHARED_SCOPE.source,
   "i",
 );
 

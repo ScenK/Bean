@@ -197,6 +197,9 @@ test("saveScope: DM private, channel shared; overrides only when unambiguous", a
   expect(saveScope("remember that Leo coaches, not for everyone", true)).toBe("private");
   expect(saveScope("remember that Leo coaches; it isn’t for the family", true)).toBe("private");
   expect(saveScope("remember that Leo coaches. No, not for everyone!", true)).toBe("private");
+  expect(saveScope('remember that Leo coaches; this is not "for everyone"', true)).toBe("private");
+  expect(saveScope("remember that Leo coaches, not (for the family)", true)).toBe("private");
+  expect(saveScope("remember that Leo coaches; it isn’t “for everyone”", true)).toBe("private");
   expect(saveScope("it's not Kim, remember that Leo coaches just for me, not for everyone", false)).toBe("private");
   expect(saveScope("just for me … remember that Leo coaches for everyone", false)).toBe("private");
 });
