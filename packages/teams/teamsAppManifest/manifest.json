@@ -48,11 +48,11 @@
           "commands": [
             {
               "title": "stop",
-              "description": "stop — stop the running task or live session"
+              "description": "stop — end the live session"
             },
             {
               "title": "cancel",
-              "description": "cancel — drop the pending proposal"
+              "description": "cancel — cancel running delegated tasks"
             },
             {
               "title": "new",
