@@ -99,6 +99,33 @@ Adaptive Card and execute on THIS machine.
    non-mention ones in memory (last ~200 per conversation, lost on restart) and never replies
    to them. Without RSC, everything else still works — Bean just can't see ambient chatter.
 
+## Slash commands
+
+Typing `/` in a channel, group chat or meeting chat lists Bean's keyword commands (manifest
+`bots[0].commandLists`, triggers `slash` + `mention`). Picking one sends a Teams *targeted
+message* to Bean (`recipient.isTargeted`), which Bean treats as addressed to it — the same as
+`@Bean <command>`. You can still type any command (`@Bean stop`, or plain `stop` in a 1:1).
+
+| Command | 1:1 | Channel | Group chat |
+|---|---|---|---|
+| `stop`, `cancel`, `new`, `whoami`, `live-session <prompt>` | ✓ | ✓ | ✓ |
+| `drivers`, `admins`, `add-admin @name`, `remove-admin @name` | | ✓ | ✓ |
+| `routines`, `enable <routine name>`, `disable <routine name>` | ✓ | | |
+
+- **Bean's replies are always visible to the whole chat.** Only your picked message is private.
+  A live-session card still shows the prompt and who started it.
+- **Targeted messages enter Bean's conversation context for that chat**, like any message
+  addressed to it. They never enter the untagged ambient context.
+- **The menu is only for finding commands; it does not grant permission.** Owner/admin/member/
+  guest checks are unchanged — a guest picking `enable` is still refused.
+- A picked command with no arguments (bare `enable`) is a normal chat turn; add the argument
+  shown in the command's description.
+- The `/` picker may not appear in 1:1 chats; the mention menu and typed commands still work.
+- **Changing the menu needs a manifest `version` bump and a re-upload**, which on corporate
+  tenants can go through the admin approval queue again (unlike Discord, which registers
+  commands at bot startup). Batch menu changes; new behavior can ship bot-side and be typed
+  (`@Bean foo`) before it gets a menu entry.
+
 ## Testing before rolling out to the org
 
 Three ways to validate the bot without touching your employer's tenant or IT policy:
