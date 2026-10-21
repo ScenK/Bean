@@ -7,9 +7,7 @@ thread on a top-level @mention; on Teams the user's new post is the session. DMs
 chats and personal chats have no threads and stay single-session on purpose.
 
 Decided against: any text session list (`/sessions`, `/resume <n>` — PR #153, closed), a
-Claude-API brain, and reworking live sessions. Spec with the three ordered steps:
-`docs/superpowers/specs/2026-09-26-thread-sessions-design.md` (delete after merge, keep this
-entry). Delegate follow-ups inside a thread reuse that thread's session for the picked CLI —
+Claude-API brain, and reworking live sessions. Delegate follow-ups inside a thread reuse that thread's session for the picked CLI —
 never lock resume to claude; per-CLI choice is Bean's point. Each CLI's own resume is used, no
 transcript replay: `claude -p --resume <id>` (id from the `system`/`init` event), `codex exec
 resume … -- <id> <prompt>` (`thread.started.thread_id`), `opencode run --format json --session

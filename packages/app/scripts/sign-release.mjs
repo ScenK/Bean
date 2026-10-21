@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // Signs a release asset with the update's Ed25519 private key so Bean's updater can verify
 // authenticity before installing (see
-// docs/superpowers/specs/2026-07-14-manual-update-check-design.md and
 // .memory/project-manual-update-check.md).
 import { createPrivateKey, sign, generateKeyPairSync } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";

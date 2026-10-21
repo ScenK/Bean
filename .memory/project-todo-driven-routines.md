@@ -12,7 +12,6 @@ todoDriven routine names); routine runs themselves never get propose_* tools. De
 cascades its todos (`onRoutineDeleted`); renames don't exist in the panel, so
 `renameTodosRoutine` is exported but unwired. Deferred to v2: user-owned checkbox follow-ups
 and Bean-filed follow-ups from run results.
-Spec: `docs/superpowers/specs/2026-07-15-todo-driven-routines-design.md`.
 
 Addendum (Task 11 cross-check): no undocumented gaps found — every spec section maps to shipped
 code (Model → `Routine.todoDriven`/`isValidRoutine` in `routine-store.ts` + `TodoItem`/CRUD in
