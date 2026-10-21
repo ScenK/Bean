@@ -21,7 +21,7 @@ import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type 
 import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
 import { TURN_QUEUE_FULL } from "../turn-live-session.js";
 import type { CardBuilders } from "./cards-api.js";
-import { formatAmbientBlock, type AmbientMessage } from "./ambient.js";
+import { formatAmbientBlock, formatRepliedBlock, REPLIED_UNAVAILABLE, type AmbientMessage, type RepliedMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
 import { maybeCompact } from "./compact.js";
@@ -74,6 +74,9 @@ export interface IncomingMessage {
   /** Image attachments (image/*, ≤10MB) already downloaded by the surface — attached to this
    * turn only; history keeps a text placeholder. */
   images?: ImageAttachment[];
+  /** The message this one replies to, if any. Context only: it never feeds `text`/`typedText`,
+   * command parsing, remember citations, or the role check. */
+  repliedTo?: RepliedMessage;
 }
 
 export interface CardAction {
@@ -1009,6 +1012,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             history = [...history, { role: "user", content: block }];
           }
         }
+        // The replied-to message: saved (once) like ambient so follow-ups still see it; an
+        // unreadable one gets a hint for this turn's model hops only.
+        const repliedHint: typeof history = msg.repliedTo?.unavailable ? [{ role: "user", content: REPLIED_UNAVAILABLE }] : [];
+        if (msg.repliedTo && !msg.repliedTo.unavailable) {
+          const block = formatRepliedBlock(msg.repliedTo);
+          if (!history.some((t) => t.content === block)) {
+            deps.conversations.append(msg.conversationId, { role: "user", content: block });
+            history = [...history, { role: "user", content: block }];
+          }
+        }
         // Per-turn (not shared) so `paths` collects only this request's generated files.
         const imageTool = deps.imageGen && can(role, "images")
           ? makeGenerateImageTool({
@@ -1071,7 +1084,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const result = await converse({
           ...converseBase,
           actions: [...converseBase.actions, ...(canMemory ? memoryTools.tools : []), ...(reminderTools?.tools ?? []), ...todoTools],
-          history, latestUserText: msg.text, latestUserImages: msg.images,
+          history: [...history, ...repliedHint], latestUserText: msg.text, latestUserImages: msg.images,
         });
         turnFailed = result.error !== undefined;
         // History keeps only "[image attached]"; the bytes stay in bounded memory for a
@@ -1116,7 +1129,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             const run = result.proposedRun;
             const followup = await converse({
               ...converseBase,
-              history: deps.conversations.history(msg.conversationId),
+              history: [...deps.conversations.history(msg.conversationId), ...repliedHint],
               latestUserText: run.composedPrompt,
             });
             deps.conversations.append(msg.conversationId, { role: "user", content: speakerLine(msg.fromName, run.composedPrompt) });
