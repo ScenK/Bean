@@ -17,3 +17,11 @@ Replies stay public by decision (no targeted-reply path).
 A `// TEMP:` stdout log in `server.ts` dumps targeted payloads (recipient, entity types/ids, 40
 chars of text) for the dev-tenant check — remove it once confirmed. If it shows no mention
 entity, `add-admin`/`remove-admin` picks can't carry the target; mark them typed-only.
+
+Bumping `manifestVersion` can remove fields, not just add them: the schema sets
+`additionalProperties: false`, and 1.30 dropped `packageName`. Teams then rejects the upload
+("Property "packageName" has not been defined"). Validate the filled manifest against the new
+`$schema` (draft-04 — use `ajv-draft-04`) before zipping.
+Teams also enforces rules the schema can't express: ≥ 1.25 with the `team` scope must declare
+`supportsChannelFeatures` (only `"tier1"` validates = works in private/shared channels too).
+The schema passing doesn't mean the upload will; the upload is the real check.
