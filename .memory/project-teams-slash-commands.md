@@ -30,3 +30,6 @@ The command list itself lives in core's `CHATOPS_COMMANDS` (`chatops/commands.ts
 if its names drift from the manifest's `commandLists`. Surfaces that invoke a command directly
 (a slash menu) call `bot.onCommand(msg, fx)` — never re-implement a command surface-side (Discord's
 old `/new` did and skipped the reset bump that keeps a late delegate from restoring its session).
+Discord registers the whole catalog (`packages/discord/src/slash.ts`, live-session unconditionally)
+and answers every pick through `onCommand`: replies are collected into the ephemeral interaction
+reply; `announce` (a real admin change) is the one public post, with `allowedMentions: { parse: [] }`.
