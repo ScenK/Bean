@@ -25,3 +25,8 @@ Bumping `manifestVersion` can remove fields, not just add them: the schema sets
 Teams also enforces rules the schema can't express: ≥ 1.25 with the `team` scope must declare
 `supportsChannelFeatures` (only `"tier1"` validates = works in private/shared channels too).
 The schema passing doesn't mean the upload will; the upload is the real check.
+
+The command list itself lives in core's `CHATOPS_COMMANDS` (`chatops/commands.ts`); a test fails
+if its names drift from the manifest's `commandLists`. Surfaces that invoke a command directly
+(a slash menu) call `bot.onCommand(msg, fx)` — never re-implement a command surface-side (Discord's
+old `/new` did and skipped the reset bump that keeps a late delegate from restoring its session).

@@ -114,6 +114,9 @@ export interface BotEffects {
    * to `post`; Discord uses it to speak the result when that turn was a voice message. Not
    * `reply`: Teams' reply rides the original turn context, long gone by the time a run ends. */
   postResult?: (text: string) => Promise<void>;
+  /** A public receipt (a real admin change) on surfaces where `reply` may be private. Optional,
+   * falls back to `reply`. */
+  announce?: (text: string) => Promise<void>;
 }
 
 export interface TeamsBotDeps {
@@ -231,6 +234,9 @@ export function parseResumeArg(rest: string): { id: string } | { error: string }
 export function buildTeamsBot(deps: TeamsBotDeps): {
   onMessage: (msg: IncomingMessage, fx: BotEffects) => Promise<void>;
   onCardAction: (action: CardAction, fx: BotEffects) => Promise<void>;
+  /** One CHATOPS_COMMANDS command, for surfaces that invoke it directly (a slash menu) rather
+   * than as typed text. true = handled (answered or refused); false = not a command. */
+  onCommand: (msg: IncomingMessage, fx: BotEffects) => Promise<boolean>;
   /** Explicit /live-session entry: validate + post the same confirm card the LLM path posts.
    * Returns a short line for the invoker (surface shows it as an ephemeral ack). */
   proposeLiveSession: (
@@ -831,7 +837,141 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     return "Proposed a live session — pick the project/model, edit the prompt if you want, then Start.";
   }
 
+  // Keyword commands accept an optional leading slash: Discord exposes them as real slash
+  // commands and users carry the habit to Teams, where they arrive as plain text that must still
+  // match. Surface-agnostic normalized form (the `live-session` regex does its own slash match).
+  const commandWord = (text: string): string => text.trim().toLowerCase().replace(/^\/+/, "");
+
+  // DMs never have admins; the scope is what admin grants hang off.
+  function speakerRole(msg: IncomingMessage): { role: Role; scopeId: string | undefined } {
+    const scopeId = msg.direct ? undefined : msg.scopeId;
+    const role = deps.roles.roleOf({ fromId: msg.fromId, fromAltId: msg.fromAltId, scopeId });
+    if (role === "admin") deps.roles.touch(scopeId, msg.fromId, msg.fromName);
+    return { role, scopeId };
+  }
+
+  async function dmBlocked(msg: IncomingMessage, role: Role, fx: BotEffects): Promise<boolean> {
+    if (!msg.direct || dmAllowed(role, deps.roles)) return false;
+    if (firstRefusal(`dm:${msg.fromId}`)) await fx.reply(dmRefusal(deps.roles));
+    return true;
+  }
+
+  // The runtime check behind every write: refuses (and says so) when the role is short.
+  const permittedFor = (role: Role, scopeId: string | undefined, fx: BotEffects) =>
+    async (cap: Capability, what: string): Promise<boolean> => {
+      if (can(role, cap)) return true;
+      await fx.reply(refusal(needs(cap), role, what, deps.roles, scopeId));
+      return false;
+    };
+
+  // Who may steer the bound live session. Bystanders in restricted mode are kept out of the
+  // agent. Members never steer (not even in war-room mode or as a co-driver): live sessions
+  // bypass permissions, which is past a member's powers.
+  const steers = (msg: IncomingMessage): boolean =>
+    deps.liveSessions.canSteer(msg.conversationId, msg.fromId) &&
+    deps.roles.roleOf({ fromId: msg.fromId, fromAltId: msg.fromAltId, scopeId: msg.direct ? undefined : msg.scopeId }) !== "member";
+
+  // The CHATOPS_COMMANDS keyword commands, without text-parsing side paths: never calls the model
+  // and never forwards to a live CLI. Returns false for anything else (the caller's turn).
+  async function onCommand(msg: IncomingMessage, fx: BotEffects): Promise<boolean> {
+    const cmd = commandWord(msg.text);
+    const conv = msg.conversationId;
+    if (cmd === "stop" || cmd === "drivers") {
+      if (!deps.liveSessions.has(conv)) {
+        await fx.reply("No live session running here.");
+        return true;
+      }
+      if (!steers(msg)) return true;
+      if (cmd === "drivers") {
+        const co = deps.liveSessions.coDrivers(conv);
+        await fx.reply(co.length === 0 ? "No co-drivers yet." : `Co-drivers: ${co.length}.`);
+      } else {
+        deps.liveSessions.stop(conv); // the registry's onEnded posts the end notice
+      }
+      return true;
+    }
+    const roleCmd = parseRoleCommand(msg.text);
+    const routineCmd = deps.routines ? parseRoutineCommand(msg.text) : undefined;
+    const liveCmd = /^\/?live-session\b\s*([\s\S]*)$/i.exec(msg.text.trim());
+    if (!roleCmd && !routineCmd && !liveCmd && cmd !== "cancel" && cmd !== "new") return false;
+    const { role, scopeId } = speakerRole(msg);
+    const isOwner = role === "owner";
+    if (roleCmd === "whoami") {
+      const as = { owner: "the owner", admin: "an admin", member: "a household member", guest: "a guest" }[role];
+      await fx.reply(`You're ${as} here. ` +
+        `Your id: ${msg.fromId}${msg.fromAltId ? ` (AAD object id: ${msg.fromAltId})` : ""}.` +
+        (scopeId ? ` This chat's id: \`${scopeId}\`.` : ""));
+      return true;
+    }
+    if (roleCmd === "admins") {
+      const names = deps.roles.admins(scopeId).map((a) => a.name);
+      await fx.reply(`Owner: ${deps.roles.ownerName}. Admins here: ${names.length > 0 ? names.join(", ") : "none"}.`);
+      return true;
+    }
+    if (await dmBlocked(msg, role, fx)) return true;
+    const permitted = permittedFor(role, scopeId, fx);
+    if (roleCmd === "add-admin" || roleCmd === "remove-admin") {
+      if (!(await permitted("manageAdmins", "change admins"))) return true;
+      if (!scopeId) {
+        await fx.reply("Admins are per channel or group chat — run this there, not in a DM.");
+        return true;
+      }
+      const targets = msg.mentions ?? [];
+      if (targets.length === 0) {
+        await fx.reply(`@mention who to ${roleCmd === "add-admin" ? "add" : "remove"}, e.g. \`${roleCmd} @name\`.`);
+        return true;
+      }
+      const changed = roleCmd === "add-admin"
+        ? deps.roles.addAdmins(scopeId, targets)
+        : deps.roles.removeAdmins(scopeId, targets.map((t) => t.id));
+      if (changed.length === 0) {
+        await fx.reply("No change — already set that way.");
+        return true;
+      }
+      const names = targets.filter((t) => changed.includes(t.id)).map((t) => t.name).join(", ");
+      // A real change is the chat's business: announce it publicly where the surface can.
+      await (fx.announce ?? fx.reply)(roleCmd === "add-admin"
+        ? `Added ${names} as admin${changed.length > 1 ? "s" : ""}${msg.channelName ? ` in ${msg.channelName}` : ""}.`
+        : `Removed ${names}.`);
+      return true;
+    }
+    if (cmd === "cancel") {
+      if (!(await permitted("cancelRuns", "cancel runs"))) return true;
+      // Admins stop only this conversation's runs; the owner stops everything.
+      const n = deps.runs.cancelAll(isOwner ? undefined : conv);
+      await fx.reply(n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.");
+      return true;
+    }
+    if (cmd === "new") {
+      if (!(await permitted("fresh", "start a fresh conversation"))) return true;
+      deps.conversations.clear(conv);
+      deps.noteProposals.forgetImages(conv);
+      resets.set(conv, (resets.get(conv) ?? 0) + 1);
+      // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
+      deps.conversations.setAmbientCutoff(conv, Date.now());
+      await fx.reply("Fresh start — I've cleared this conversation's context.");
+      return true;
+    }
+    if (routineCmd) {
+      if (role === "admin") {
+        await fx.reply(routineAdminRefusal(deps.roles));
+        return true;
+      }
+      if (!(await permitted("routineWrites", "manage routines"))) return true;
+      await fx.reply(await runRoutineCommand(routineCmd));
+      return true;
+    }
+    // Literal `/live-session <prompt>` typed as a message (not Discord's slash-command picker):
+    // route it verbatim, bypassing converse(), so the LLM never rewrites the prompt the way it
+    // does for free-form "start a live session…" phrasing.
+    if (!(await permitted("liveSession", "start a live session"))) return true;
+    await fx.reply(await proposeLiveSessionFrom(conv, liveCmd?.[1] ?? "", msg.fromName, fx));
+    return true;
+  }
+
   return {
+    onCommand,
+
     proposeLiveSession(args, fx): Promise<string> {
       return proposeLiveSessionFrom(args.conversationId, args.instruction, args.proposedBy, fx);
     },
@@ -841,12 +981,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       let turnId: string | undefined;
       let turnFailed = false;
       try {
-        // Keyword commands (stop/drivers/cancel/new) accept an optional leading slash: Discord
-        // exposes them as real `/stop`-style slash commands, so users carry the slash habit to
-        // Teams — which has no slash-command infra, leaving these to arrive as plain text that
-        // must still match. `cmd` is the surface-agnostic normalized form used by every keyword
-        // check below (the `/live-session` regex does its own optional-slash match).
-        const cmd = msg.text.trim().toLowerCase().replace(/^\/+/, "");
+        const cmd = commandWord(msg.text);
         if (deps.liveSessions.has(msg.conversationId)) {
           // Fence this message out of a later ambient replay: fetchRecent's 15-min window is
           // keyed off this same cutoff, so without advancing it here, the next addressed
@@ -874,21 +1009,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               return;
             }
           }
-          // Bystanders in restricted mode: kept out of the agent, but their message is still
-          // fenced from ambient replay above so it can't leak back in after the session ends.
-          // Members never steer (not even in war-room mode or as a co-driver): live sessions
-          // bypass permissions, which is past a member's powers.
-          if (!deps.liveSessions.canSteer(conv, msg.fromId)) return;
-          if (deps.roles.roleOf({ fromId: msg.fromId, fromAltId: msg.fromAltId, scopeId: msg.direct ? undefined : msg.scopeId }) === "member") return;
-          if (cmd === "drivers") {
-            const co = deps.liveSessions.coDrivers(conv);
-            await fx.reply(co.length === 0 ? "No co-drivers yet." : `Co-drivers: ${co.length}.`);
+          if (cmd === "stop" || cmd === "drivers") {
+            await onCommand(msg, fx);
             return;
           }
-          if (cmd === "stop") {
-            deps.liveSessions.stop(conv);
-            return; // the registry's onEnded posts the end notice
-          }
+          if (!steers(msg)) return;
           // Refused text (a per-turn CLI's next-turn queue is full) never reaches history.
           if (!deps.liveSessions.send(conv, msg.text)) {
             await fx.reply(TURN_QUEUE_FULL);
@@ -897,92 +1022,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps.conversations.append(conv, { role: "user", content: speakerLine(msg.fromName, msg.text) });
           return;
         }
-        // DMs never have admins; the scope is what admin grants hang off.
-        const scopeId = msg.direct ? undefined : msg.scopeId;
-        const role: Role = deps.roles.roleOf({ fromId: msg.fromId, fromAltId: msg.fromAltId, scopeId });
-        if (role === "admin") deps.roles.touch(scopeId, msg.fromId, msg.fromName);
+        // Typed `stop` with nothing live stays a model turn, as it always was.
+        if (cmd !== "stop" && await onCommand(msg, fx)) return;
+        const { role, scopeId } = speakerRole(msg);
         const isOwner = role === "owner";
-        const roleCmd = parseRoleCommand(msg.text);
-        if (roleCmd === "whoami") {
-          const as = { owner: "the owner", admin: "an admin", member: "a household member", guest: "a guest" }[role];
-          await fx.reply(`You're ${as} here. ` +
-            `Your id: ${msg.fromId}${msg.fromAltId ? ` (AAD object id: ${msg.fromAltId})` : ""}.` +
-            (scopeId ? ` This chat's id: \`${scopeId}\`.` : ""));
-          return;
-        }
-        if (roleCmd === "admins") {
-          const names = deps.roles.admins(scopeId).map((a) => a.name);
-          await fx.reply(`Owner: ${deps.roles.ownerName}. Admins here: ${names.length > 0 ? names.join(", ") : "none"}.`);
-          return;
-        }
-        if (msg.direct && !dmAllowed(role, deps.roles)) {
-          if (firstRefusal(`dm:${msg.fromId}`)) await fx.reply(dmRefusal(deps.roles));
-          return;
-        }
-        // Small helper for the runtime checks below: refuses (and says so) when the role is short.
-        const permitted = async (cap: Capability, what: string): Promise<boolean> => {
-          if (can(role, cap)) return true;
-          await fx.reply(refusal(needs(cap), role, what, deps.roles, scopeId));
-          return false;
-        };
-        if (roleCmd === "add-admin" || roleCmd === "remove-admin") {
-          if (!(await permitted("manageAdmins", "change admins"))) return;
-          if (!scopeId) {
-            await fx.reply("Admins are per channel or group chat — run this there, not in a DM.");
-            return;
-          }
-          const targets = msg.mentions ?? [];
-          if (targets.length === 0) {
-            await fx.reply(`@mention who to ${roleCmd === "add-admin" ? "add" : "remove"}, e.g. \`${roleCmd} @name\`.`);
-            return;
-          }
-          const changed = roleCmd === "add-admin"
-            ? deps.roles.addAdmins(scopeId, targets)
-            : deps.roles.removeAdmins(scopeId, targets.map((t) => t.id));
-          const names = targets.filter((t) => changed.includes(t.id)).map((t) => t.name).join(", ");
-          await fx.reply(changed.length === 0
-            ? "No change — already set that way."
-            : roleCmd === "add-admin"
-              ? `Added ${names} as admin${changed.length > 1 ? "s" : ""}${msg.channelName ? ` in ${msg.channelName}` : ""}.`
-              : `Removed ${names}.`);
-          return;
-        }
-        if (cmd === "cancel") {
-          if (!(await permitted("cancelRuns", "cancel runs"))) return;
-          // Admins stop only this conversation's runs; the owner stops everything.
-          const n = deps.runs.cancelAll(isOwner ? undefined : msg.conversationId);
-          await fx.reply(n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.");
-          return;
-        }
-        if (cmd === "new") {
-          if (!(await permitted("fresh", "start a fresh conversation"))) return;
-          deps.conversations.clear(msg.conversationId);
-          deps.noteProposals.forgetImages(msg.conversationId);
-          resets.set(msg.conversationId, (resets.get(msg.conversationId) ?? 0) + 1);
-          // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
-          deps.conversations.setAmbientCutoff(msg.conversationId, Date.now());
-          await fx.reply("Fresh start — I've cleared this conversation's context.");
-          return;
-        }
-        const routineCmd = deps.routines ? parseRoutineCommand(msg.text) : undefined;
-        if (routineCmd) {
-          if (role === "admin") {
-            await fx.reply(routineAdminRefusal(deps.roles));
-            return;
-          }
-          if (!(await permitted("routineWrites", "manage routines"))) return;
-          await fx.reply(await runRoutineCommand(routineCmd));
-          return;
-        }
-        // Literal `/live-session <prompt>` typed as a message (not Discord's slash-command
-        // picker): route it verbatim, bypassing converse(), so the LLM never rewrites the prompt
-        // the way it does for free-form "start a live session…" phrasing.
-        const liveCmd = /^\/?live-session\b\s*([\s\S]*)$/i.exec(msg.text.trim());
-        if (liveCmd) {
-          if (!(await permitted("liveSession", "start a live session"))) return;
-          await fx.reply(await proposeLiveSessionFrom(msg.conversationId, liveCmd[1] ?? "", msg.fromName, fx));
-          return;
-        }
+        if (await dmBlocked(msg, role, fx)) return;
+        const permitted = permittedFor(role, scopeId, fx);
         turnId = randomUUID();
         deps.onActivity?.({ type: "turn", phase: "start", id: turnId, who: msg.fromName, where: msg.channelName });
         // Guests get Bean's own model and nothing else: no catalog, recall, or todo/delegate tools.
