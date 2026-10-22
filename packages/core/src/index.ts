@@ -40,6 +40,7 @@ export * from "./update-public-key.js";
 export * from "./chatops/ambient.js";
 export * from "./chatops/orphan-guard.js";
 export * from "./chatops/bot.js";
+export * from "./chatops/commands.js";
 export * from "./chatops/activity.js";
 export * from "./chatops/cards-api.js";
 export * from "./chatops/conversation.js";

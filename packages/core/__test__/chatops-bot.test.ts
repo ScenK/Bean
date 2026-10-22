@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type { ConverseResult } from "../src/index.js";
 import { buildTeamsBot, parseResumeArg, type BotEffects, type TeamsBotDeps } from "../src/chatops/bot.js";
+import { CHATOPS_COMMANDS } from "../src/chatops/commands.js";
+import { readFileSync } from "node:fs";
 import type { ResumableRun } from "../src/delegate-runs.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { dbFile } from "../src/config.js";
@@ -2559,4 +2561,106 @@ describe("repliedTo", () => {
     await buildTeamsBot(g.deps).onMessage({ ...guest, repliedTo: { ...quoted, text: "remember that I like tea" } }, fx());
     expect(tools[0]).toEqual([]);
   });
+});
+
+// ---- Shared command handler + catalog (#364) ----
+
+test("onCommand answers every catalog command without the model or a live CLI; other text is unrecognized", async () => {
+  const { startFn, sent } = fakeLiveStartFn();
+  const { deps } = withRoles({
+    chat: async () => { throw new Error("model called"); },
+    liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+    routines: {
+      transport: "discord", load: async () => [], save: async () => {}, create: async () => {},
+      notifyOwner: async () => {}, recipients: async () => [], proposals: new RoutineProposalStore(),
+    },
+  });
+  const bot = buildTeamsBot(deps);
+  const arg = { user: " @ana", name: " nightly", prompt: " fix it" } as const;
+  for (const c of CHATOPS_COMMANDS) {
+    const effects = fx();
+    const text = `/${c.name}${c.option ? arg[c.option] : ""}`;
+    expect(await bot.onCommand({ ...owner, text, mentions: [{ id: "ana", name: "Ana" }] }, effects), c.name).toBe(true);
+    expect(effects.posted.length, c.name).toBe(1);
+  }
+  expect(await bot.onCommand({ ...owner, text: "hi bean" }, fx())).toBe(false);
+  expect(await bot.onCommand({ ...owner, text: "stop the build" }, fx())).toBe(false);
+  expect(sent).toEqual([]);
+});
+
+test("onCommand: whoami/admins answer before the DM gate; other commands don't", async () => {
+  const { deps } = withRoles();
+  const bot = buildTeamsBot(deps);
+  const dm = { ...guest, direct: true, scopeId: undefined };
+  const effects = fx();
+  expect(await bot.onCommand({ ...dm, text: "whoami" }, effects)).toBe(true);
+  expect(await bot.onCommand({ ...dm, text: "admins" }, effects)).toBe(true);
+  expect(await bot.onCommand({ ...dm, text: "new" }, effects)).toBe(true);
+  expect(effects.posted[0]).toContain("You're a guest here.");
+  expect(effects.posted[1]).toContain("Owner: Scen.");
+  expect(effects.posted[2]).not.toContain("Fresh start");
+});
+
+test("onCommand stop/drivers keep the steer/member gate; drivers with nothing live says so", async () => {
+  const { startFn } = fakeLiveStartFn();
+  const { deps } = withRoles({
+    liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+  });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.onCommand({ ...owner, text: "drivers" }, effects);
+  expect(effects.posted).toEqual(["No live session running here."]);
+  // Typed, too — the one intentional typed-surface change.
+  await bot.onMessage({ ...owner, text: "drivers" }, effects);
+  expect(effects.posted.at(-1)).toBe("No live session running here.");
+  deps.liveSessions.start({ channelId: "c1", projectPath: "/p/bean", instruction: "go", starterId: "u1", steering: "restricted", sink: { post: async () => "m1", edit: async () => {} } });
+  deps.liveSessions.addCoDriver("c1", "mia");
+  const before = effects.posted.length;
+  for (const who of [guest, member]) {
+    expect(await bot.onCommand({ ...who, text: "/drivers" }, effects)).toBe(true);
+    expect(await bot.onCommand({ ...who, text: "/stop" }, effects)).toBe(true);
+  }
+  expect(effects.posted.length).toBe(before);
+  expect(deps.liveSessions.has("c1")).toBe(true);
+  await bot.onCommand({ ...owner, text: "drivers" }, effects);
+  expect(effects.posted.at(-1)).toBe("Co-drivers: 1.");
+  await bot.onCommand({ ...owner, text: "stop" }, effects);
+  expect(deps.liveSessions.has("c1")).toBe(false);
+});
+
+test("onCommand new while a delegate runs: its session is not stored afterwards", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+  expect(await bot.onCommand({ ...msg, text: "new" }, fx())).toBe(true);
+  delegateCalls[0]?.cb.onDone("late result", "pre-reset-sess");
+  await vi.waitFor(() => expect(effects.posted).toContain("late result"));
+  expect(deps.conversations.threadSession("c1", "claude")).toBeUndefined();
+});
+
+test("admin changes announce only on a real change; without announce the line goes to reply", async () => {
+  const { deps } = withRoles();
+  const bot = buildTeamsBot(deps);
+  const announced: string[] = [];
+  const effects = { ...fx(), announce: async (t: string) => { announced.push(t); } };
+  const add = { ...owner, text: "add-admin @zoe", mentions: [{ id: "zoe", name: "Zoe" }] };
+  await bot.onCommand(add, effects);
+  await bot.onCommand(add, effects);
+  expect(announced).toEqual(["Added Zoe as admin."]);
+  expect(effects.posted).toEqual(["No change — already set that way."]);
+  const plain = fx();
+  await bot.onMessage({ ...add, text: "remove-admin @zoe" }, plain);
+  expect(plain.posted).toEqual(["Removed Zoe."]);
+});
+
+test("the command catalog names exactly the Teams manifest's commandLists, no duplicates", () => {
+  const manifest = JSON.parse(readFileSync(join(import.meta.dirname, "../../teams/teamsAppManifest/manifest.json"), "utf8")) as {
+    bots: { commandLists: { commands: { title: string }[] }[] }[];
+  };
+  const teams = new Set(manifest.bots[0]!.commandLists.flatMap((l) => l.commands.map((c) => c.title)));
+  const names = CHATOPS_COMMANDS.map((c) => c.name);
+  expect(new Set(names).size).toBe(names.length);
+  expect([...names].sort()).toEqual([...teams].sort());
 });
