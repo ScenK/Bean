@@ -26,6 +26,7 @@ import { addressedToBot } from "./addressing.js";
 import { startDevtunnel } from "./devtunnel.js";
 import { parseQuote } from "./replied-to.js";
 import { deliveredAppend, loadTeamsConfig, ownerDmRefs, teamsConfigFile } from "./teams-config.js";
+import { teamsText } from "./teams-text.js";
 
 const dir = beanDir();
 const builtinDir = process.env.BEAN_BUILTIN_DIR || projectBeanDir();
@@ -258,8 +259,8 @@ function effectsFor(context: TurnContext): BotEffects {
     await adapter.continueConversationAsync(teamsConfig.botAppId, ref, fn);
   };
   return {
-    reply: async (text) => { await context.sendActivity({ type: ActivityTypes.Message, text }); },
-    post: async (text) => { await proactive(async (ctx) => { await ctx.sendActivity({ type: ActivityTypes.Message, text }); }); },
+    reply: async (text) => { await context.sendActivity({ type: ActivityTypes.Message, text: teamsText(text) }); },
+    post: async (text) => { await proactive(async (ctx) => { await ctx.sendActivity({ type: ActivityTypes.Message, text: teamsText(text) }); }); },
     postCard: async (card) => {
       const res = await context.sendActivity({
         type: ActivityTypes.Message,
@@ -273,7 +274,7 @@ function effectsFor(context: TurnContext): BotEffects {
     postStream: async (text) => {
       let id = "";
       await proactive(async (ctx) => {
-        const res = await ctx.sendActivity({ type: ActivityTypes.Message, text });
+        const res = await ctx.sendActivity({ type: ActivityTypes.Message, text: teamsText(text) });
         id = res?.id ?? "";
       });
       return id;
@@ -281,7 +282,7 @@ function effectsFor(context: TurnContext): BotEffects {
     editStream: async (id, text) => {
       await proactive(async (ctx) => {
         await ctx.updateActivity({
-          id, type: ActivityTypes.Message, text, conversation: ref.conversation,
+          id, type: ActivityTypes.Message, text: teamsText(text), conversation: ref.conversation,
         } as Partial<Activity> as Activity);
       });
     },
@@ -475,7 +476,7 @@ setInterval(() => {
       try {
         const posted: { id?: string } = {};
         await adapter.continueConversationAsync(teamsConfig.botAppId, ref, async (context) => {
-          posted.id = (await context.sendActivity(text))?.id;
+          posted.id = (await context.sendActivity(teamsText(text)))?.id;
         });
         delivered = true;
         // Per-target, because a DM fanout has no msg.channel to append to.
