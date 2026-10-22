@@ -6,11 +6,10 @@ import {
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
-  makeRoles, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, can, cardActionNeeds, cardTapRefusal, dmAllowed, needs, parseRoleCommand, parseRoutineCommand, RoutineProposalStore, refusal, type Capability, type Role,
+  makeRoles, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, RoutineProposalStore, type Role,
 } from "@bean/core";
 import {
-  ApplicationCommandOptionType, ChannelType, Client, GatewayIntentBits, MessageReferenceType, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
-  type ApplicationCommandDataResolvable,
+  ChannelType, Client, GatewayIntentBits, MessageReferenceType, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
   type Interaction, type Message, type MessageCreateOptions, type MessageSnapshot, type TextBasedChannel,
 } from "discord.js";
 import { randomUUID } from "node:crypto";
@@ -22,6 +21,7 @@ import { deliverOutboxDm } from "./outbox-dm.js";
 import { resolveRepliedTo, type RefMessage } from "./replied-to.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
 import { headlessRoutinesOn, startHeadlessRoutines, tzProblem } from "./headless-routines.js";
+import { answerSlash, slashCommands, slashMessage } from "./slash.js";
 
 const dir = beanDir();
 const builtinDir = process.env.BEAN_BUILTIN_DIR || projectBeanDir();
@@ -319,10 +319,11 @@ client.on("messageCreate", async (message) => {
     // bot.ts answers itself — mirrored from its checks, and only without audio (a transcript
     // appended to `whoami` turns it into a model turn). Counted on admission, so a turn that
     // later fails still counts.
+    // Typed `stop` is absent on purpose: with no live session (capturing turns never count) it stays a model turn.
     const cmd = text.toLowerCase().replace(/^\/+/, "");
     const hasAudio = message.attachments.some((a) => a.contentType?.startsWith("audio/") === true && a.size <= 25 * 1024 * 1024);
     const coreCommand = !hasAudio &&
-      (cmd === "cancel" || cmd === "new" || parseRoleCommand(text) !== undefined || parseRoutineCommand(text) !== undefined ||
+      (cmd === "cancel" || cmd === "new" || cmd === "drivers" || parseRoleCommand(text) !== undefined || parseRoutineCommand(text) !== undefined ||
         /^\/?live-session\b/i.test(text));
     const usable = text !== "" || hasAudio || forward !== undefined || message.attachments.some((a) => {
       const mime = a.contentType?.split(";")[0]?.trim() ?? "";
@@ -479,48 +480,36 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       scopeId: interaction.inGuild() && interaction.channel ? scopeOf(interaction.channel) : undefined,
     });
     if (interaction.isChatInputCommand()) {
-      const channelId = interaction.channelId;
-      const refuse = async (cap: Capability, what: string): Promise<boolean> => {
-        if (can(role, cap)) return false;
-        const scopeId = interaction.inGuild() && interaction.channel ? scopeOf(interaction.channel) : undefined;
-        await interaction.reply({ content: refusal(needs(cap), role, what, roles, scopeId), ephemeral: true });
-        return true;
-      };
-      if (interaction.commandName === "new") {
-        if (await refuse("fresh", "start a fresh conversation")) return;
-        conversations.clear(channelId);
-        noteProposals.forgetImages(channelId);
-        conversations.setAmbientCutoff(channelId, Date.now()); // fence pre-reset chatter out of ambient
-        await interaction.reply({ content: "Fresh start — I've cleared this conversation's context.", ephemeral: true });
+      // Every pick is core's onCommand, the same handler a typed command reaches. The answer is
+      // ephemeral; cards and live-session posts still go to the channel.
+      await interaction.deferReply({ ephemeral: true });
+      const channel = interaction.channel ?? await client.channels.fetch(interaction.channelId);
+      if (!channel?.isTextBased()) {
+        await interaction.editReply("I can't post in this channel.");
         return;
       }
-      if (interaction.commandName === "cancel") {
-        if (await refuse("cancelRuns", "cancel runs")) return;
-        // Admins stop only this conversation's runs; the owner stops everything.
-        const n = runs.cancelAll(role === "owner" ? undefined : channelId);
-        await interaction.reply({ content: n > 0 ? `Cancelled ${n} run(s).` : "Nothing is running.", ephemeral: true });
-        return;
-      }
-      if (interaction.commandName === "stop") {
-        // Same steering gate as a plain `stop` message: in a restricted session only the
-        // starter/co-drivers may end it, not any allow-listed bystander.
-        if (liveSessions.has(channelId) && (role === "member" || !liveSessions.canSteer(channelId, interaction.user.id))) {
-          await interaction.reply({ content: "Only the session starter or a co-driver can stop this live session.", ephemeral: true });
-          return;
-        }
-        const stopped = liveSessions.stop(channelId);
-        await interaction.reply({ content: stopped ? "Stopping the live session." : "No live session running in this channel.", ephemeral: true });
-        return;
-      }
-      if (interaction.commandName === "live-session" && interaction.channel) {
-        if (await refuse("liveSession", "start a live session")) return;
-        await interaction.deferReply({ ephemeral: true }); // proposeLiveSession posts to the channel; ack within 3s
-        const reply = await bot.proposeLiveSession(
-          { conversationId: channelId, instruction: interaction.options.getString("prompt", true), proposedBy: interaction.user.displayName },
-          effectsFor(interaction.channel),
-        );
-        await interaction.editReply(reply);
-      }
+      const inGuild = interaction.inGuild();
+      const parent = channel.isThread() ? channel.parent : channel;
+      const target = interaction.options.getUser("user");
+      const msg = slashMessage({
+        commandName: interaction.commandName,
+        user: { id: interaction.user.id, name: interaction.user.displayName },
+        target: target ? { id: target.id, name: target.displayName, bot: target.bot } : undefined,
+        arg: interaction.options.getString("name") ?? interaction.options.getString("prompt") ?? undefined,
+        conversationId: interaction.channelId,
+        scopeId: inGuild ? scopeOf(channel) : undefined,
+        direct: !inGuild,
+        channelName: !inGuild ? "DM" : parent && "name" in parent && parent.name ? `#${parent.name}` : undefined,
+      });
+      const fx = effectsFor(channel);
+      await answerSlash((own) => bot.onCommand(msg, { ...fx, ...own }), {
+        editReply: (text) => interaction.editReply(text),
+        followUp: (text) => interaction.followUp({ content: text, ephemeral: true }),
+        announce: async (text) => {
+          if (!("send" in channel)) throw new Error("channel is not sendable");
+          await channel.send({ content: text, allowedMentions: { parse: [] } });
+        },
+      });
       return;
     }
     // Every card control (buttons, selects, edit modals) is gated before it touches pending
@@ -680,24 +669,9 @@ process.on("SIGTERM", () => {
 
 client.once("clientReady", async () => {
   console.log(`@bean/discord logged in as ${client.user?.tag} (clis: ${clis().join(", ") || "none"})`);
-  // Control commands map to Bean's existing text commands; /live-session is added only when
-  // Claude is detected and config-enabled. Project/model/skill are picked on its card, so the
-  // command itself carries just the opening prompt.
-  const liveEnabled = clis().some(isLiveCli);
-  const liveCmd: ApplicationCommandDataResolvable = {
-    name: "live-session",
-    description: "Start a chat-bridged live coding session",
-    dmPermission: true,
-    options: [
-      { type: ApplicationCommandOptionType.String, name: "prompt", description: "What the agent should start on (editable before you Start)", required: true },
-    ],
-  };
-  const commands: ApplicationCommandDataResolvable[] = [
-    { name: "new", description: "Clear this conversation's context (fresh start)", dmPermission: true },
-    { name: "cancel", description: "Cancel any running background task(s)", dmPermission: true },
-    { name: "stop", description: "Stop the live session bound to this channel", dmPermission: true },
-    ...(liveEnabled ? [liveCmd] : []),
-  ];
+  // Every core keyword command, from the shared catalog; live-session too (core answers
+  // "disabled" when no live-capable CLI is around).
+  const commands = slashCommands();
   const app = client.application;
   if (!app) return;
   // guildId set → register to that one server (instant); else global (all guilds Bean is in,
