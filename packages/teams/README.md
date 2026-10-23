@@ -32,7 +32,7 @@ Adaptive Card and execute on THIS machine.
 4. **Config**: create `~/.bean/teams.json`:
    `{ "botAppId": "<app-id>", "botAppPassword": "<client-secret>", "tenantId": "<tenant-id>", "port": 3978 }`
    Add `"ownerId": "<your Teams user id (29:...) or AAD object id>"` and `"ownerName"`. The
-   owner has full powers and alone receives channel-less routine digests as DMs. Without
+   owner has full powers and alone receives channel-less sprout digests as DMs. Without
    `ownerId` the bot runs in setup mode: everyone is a guest (chat only) — DM Bean `whoami` to
    read your ids. Everyone else is a guest unless the owner runs `add-admin @name` in a channel
    or group chat; `admins` lists them. `"allowGuestDms": true` lets guests DM Bean (default off).
@@ -110,7 +110,7 @@ message* to Bean (`recipient.isTargeted`), which Bean treats as addressed to it 
 |---|---|---|---|
 | `stop`, `cancel`, `new`, `whoami`, `live-session <prompt>` | ✓ | ✓ | ✓ |
 | `drivers`, `admins`, `add-admin @name`, `remove-admin @name` | | ✓ | ✓ |
-| `routines`, `enable <routine name>`, `disable <routine name>` | ✓ | | |
+| `sprouts`, `enable <sprout name>`, `disable <sprout name>` | ✓ | | |
 
 - **Bean's replies are always visible to the whole chat.** Only your picked message is private.
   A live-session card still shows the prompt and who started it.
@@ -125,6 +125,9 @@ message* to Bean (`recipient.isTargeted`), which Bean treats as addressed to it 
   tenants can go through the admin approval queue again (unlike Discord, which registers
   commands at bot startup). Batch menu changes; new behavior can ship bot-side and be typed
   (`@Bean foo`) before it gets a menu entry.
+- **The repo manifest is 1.3.0 (`sprouts`); your tenant may still run 1.2.0 (`routines`)** until
+  the next batched upload. The old menu entry keeps working — Bean answers a typed or picked
+  `routines` the same as `sprouts`.
 
 ## Testing before rolling out to the org
 
@@ -164,11 +167,11 @@ thread when the run finishes.
 Two plain-text commands: `cancel` stops in-flight runs, and `/new` clears the conversation's
 chat context (including ambient chatter) so the next message starts fresh.
 
-The owner can describe a routine ("every weekday at 9, summarize my inbox here") and get a
+The owner can describe a sprout ("every weekday at 9, summarize my inbox here") and get a
 card to save it; its digest posts to the channel or group chat it was drafted in, or DMs the
-owner from a 1:1 chat. `routines`, `enable <name>` and `disable <name>` list and switch them.
-Routines run only while the desktop app is open. A channel or group-chat admin can draft a new
-routine too: it saves switched off (never replacing an existing one), and the owner gets a DM
+owner from a 1:1 chat. `sprouts`, `enable <name>` and `disable <name>` list and switch them
+(typing the old `routines` still works). Sprouts run only while the desktop app is open. A
+channel or group-chat admin can draft a new sprout too: it saves switched off (never replacing an existing one), and the owner gets a DM
 with `enable <name>`. **DM the bot once as the owner** so it knows your 1:1 chat — until then
 those notices (and channel-less digests) wait in the outbox.
 
@@ -215,8 +218,8 @@ silently with the same generic Teams error and guessing wastes a round trip:
       → summary references the ambient messages; the non-mention messages got no reply.
 - [ ] (RSC granted) an untagged message naming Bean ("bean is slow today") → no reply at all.
 - [ ] "@Bean /new" → "Fresh start"; a follow-up shows no memory of the prior chat or ambient.
-- [ ] (owner) "@Bean every weekday at 9 post a standup reminder here" in a channel → routine
-      card; Save → `routines` lists it; its digest lands as a new channel post.
+- [ ] (owner) "@Bean every weekday at 9 post a standup reminder here" in a channel → sprout
+      card; Save → `sprouts` lists it; its digest lands as a new channel post.
 - [ ] "@Bean remind me in 2 minutes to stretch" in a channel thread, a group chat and a 1:1
       chat → "⏰ Reminder set" card with a local time; each fires back in the same place (thread
       reply for the thread) while Bean.app runs; Cancel on another one → "Reminder cancelled".

@@ -5,7 +5,7 @@ description: Implement a ticket on a new branch, with tests, without opening a P
 # Implement
 
 Implement the ticket you are given in the current directory. Stay in it: don't create a
-worktree or switch to another checkout — the routine's later steps (tests, review, PR) run in
+worktree or switch to another checkout — the sprout's later steps (tests, review, PR) run in
 this same directory, so work done elsewhere would never be checked.
 
 1. Read the repo's agent guide (`AGENTS.md`/`CLAUDE.md`) if there is one and follow its code

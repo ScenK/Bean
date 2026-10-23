@@ -1,6 +1,6 @@
 # Headless household Bean (container)
 
-Bean's Discord bot runs your household's chat, reminders and scheduled routines in a Linux
+Bean's Discord bot runs your household's chat, reminders and scheduled sprouts in a Linux
 container, with no desktop app. The recipe is the repo-root `Dockerfile`. This page is the owner's
 setup checklist.
 
@@ -12,7 +12,7 @@ setup checklist.
   live there.
 - Sets a fixed `PATH`. The bot finds CLIs on `PATH` only; there is no login-shell probe.
 - Installs the `claude` and `codex` CLIs.
-- Sets `BEAN_HEADLESS_ROUTINES=1`, so this process runs the routine scheduler and reminders.
+- Sets `BEAN_HEADLESS_ROUTINES=1`, so this process runs the sprout scheduler and reminders.
 - Mounts no Docker socket and no personal directories. Keep it that way.
 
 ```bash
@@ -27,14 +27,14 @@ docker logs -f bean
 ```
 
 Run one container per volume. Never point the desktop app at this volume: two schedulers on one
-`~/.bean` fire every routine twice.
+`~/.bean` fire every sprout twice.
 
 ## Owner checklist
 
 Write files into the volume with `docker exec -it bean sh` (or a throwaway container on the same
 volume before first start). Every path below is inside the container.
 
-1. **`TZ` (required).** Cron routines and reminders run in local time. Without `TZ` the bot exits
+1. **`TZ` (required).** Cron sprouts and reminders run in local time. Without `TZ` the bot exits
    at boot:
    `bean: BEAN_HEADLESS_ROUTINES=1 needs TZ set (e.g. TZ=America/Toronto) — cron routines fire in local time.`
 
@@ -50,9 +50,9 @@ volume before first start). Every path below is inside the container.
    startup only: **restart the container after changing it** (`docker restart bean`). Boot error
    when it is missing: `Discord config missing: /data/.bean/discord.json — …`.
 
-4. **Headless routines switch.** The image sets `BEAN_HEADLESS_ROUTINES=1`. Leave it on. Notices
-   that are desktop notifications on a Mac (a failing watch, `notify` sinks, routines missed
-   while the bot was down) arrive as DMs to `ownerId`. Missed routines do not catch up.
+4. **Headless sprouts switch.** The image sets `BEAN_HEADLESS_ROUTINES=1`. Leave it on. Notices
+   that are desktop notifications on a Mac (a failing watch, `notify` sinks, sprouts missed
+   while the bot was down) arrive as DMs to `ownerId`. Missed sprouts do not catch up.
 
 5. **Household delegate login.** Use a separate household subscription account, never your
    personal login.

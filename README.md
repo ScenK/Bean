@@ -39,15 +39,15 @@ Skills are just markdown files. Adding a new ability is writing a note, not code
 Point Bean at your project folders and it learns where your work lives.
 
 ⏰ **Runs on a schedule.**
-Turn any task into a *routine* — a recurring pipeline on a cron schedule. The morning
-digest, the weekly cleanup, the "check this and tell me" job. Routines can chain
+Turn any task into a *sprout* — a recurring pipeline on a cron schedule. The morning
+digest, the weekly cleanup, the "check this and tell me" job. Sprouts can chain
 steps and drain a to-do queue, then drop the result wherever you want it. Steps can
 gate on a PASS/FAIL verdict to stop, branch, or loop — start from an example flow (dev
-loop, ticket lint first, review only) in the Routines panel and reshape it.
+loop, ticket lint first, review only) in the Sprouts panel and reshape it.
 
 💬 **Reach it from anywhere.**
 Wire Bean up to Discord or Teams and message it from your phone or your work chat.
-Kick off a task, get an answer, have a routine post its results back to a channel —
+Kick off a task, get an answer, have a sprout post its results back to a channel —
 Bean doesn't have to be in front of you to work for you.
 
 🎛️ **Controls your Mac.**
@@ -64,11 +64,11 @@ you're off. Your key, your models, your machine.
 
 The same pet fits both halves of your day:
 
-- **Personal & family** — a morning brief, reminders, a routine that tidies photos or
+- **Personal & family** — a morning brief, reminders, a sprout that tidies photos or
   drafts the grocery list, music and volume by voice, notes that remember birthdays and
   preferences.
 - **On the job** — hand a coding task to `opencode`/`claude`/`codex`, schedule the standup
-  summary, trigger a build from Teams, queue up to-dos and let a routine work them down.
+  summary, trigger a build from Teams, queue up to-dos and let a sprout work them down.
 
 Set it up once; it quietly covers everything from the family calendar to the sprint.
 
@@ -83,7 +83,7 @@ Set it up once; it quietly covers everything from the family calendar to the spr
 4. **Say hi.** That's it. Bean bootstraps everything else on first launch.
 
 Set it up entirely from the UI panels — **Settings** (key/model/terminal/editor),
-**Persona** (your name and tastes), **Skills**, **Projects**, and **Routines**.
+**Persona** (your name and tastes), **Skills**, **Projects**, and **Sprouts**.
 Nothing to hand-edit.
 
 ## Requirements
