@@ -34,13 +34,13 @@ rather than promising it.
   asked. A background "dream" pass periodically tidies and merges memories.
 - **Notes** — you can propose saving, updating, or archiving a note (SQLite-backed, full-text
   searchable, images allowed, never saved silently) and pull notes back into a chat.
-- **Reminders & todos** — set, list, and cancel reminders; queue todos for a routine to work
+- **Reminders & todos** — set, list, and cancel reminders; queue todos for a sprout to work
   through.
-- **Routines** — background automations, fired on a schedule or by a watch (polling a feed
+- **Sprouts** — agents that run on their own, fired on a schedule or by a watch (polling a feed
   or a command for new items). Steps can delegate to a coding agent, chat on your own model,
   or run a shell check, with pass/fail gates that stop, branch, or loop. Results go to a chat
   channel, a note, or a desktop notification; the Dashboard shows run history. Describe a
-  routine in plain words and you'll draft it. A retro step can review recent runs and suggest
+  sprout in plain words and you'll draft it. A retro step can review recent runs and suggest
   skill improvements for the user to approve.
 - **Skills self-authoring** — via the `generate-skill` skill you can draft a new skill and
   propose it; the user confirms before anything is written to `~/.bean/skills/`.
@@ -72,7 +72,7 @@ rather than promising it.
   skills run right in this chat on Bean's own model, others are meant for a terminal
   coding agent. User skills with the same name override built-ins.
 - Per-user data lives in `~/.bean/`: `config.json` (OpenAI API key, model, and feature
-  toggles), `projects.json`, `clis.json` (optional per-CLI model lists), skills, routines,
+  toggles), `projects.json`, `clis.json` (optional per-CLI model lists), skills, sprouts (`routines/`),
   and `bean.db` (SQLite with full-text search: memories, notes, chat history, delegate
   sessions).
 

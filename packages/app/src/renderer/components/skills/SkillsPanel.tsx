@@ -298,7 +298,7 @@ export function SkillsPanel({
                     role="switch"
                     aria-checked={selectedSkill.enabled !== false}
                     class={`bean-skills-toggle${selectedSkill.enabled !== false ? " bean-skills-toggle--on" : ""}`}
-                    title="Off switches the skill off everywhere — chat, chatops, routines and quick-launch"
+                    title="Off switches the skill off everywhere — chat, chatops, sprouts and quick-launch"
                     onClick={() => void setFlag(selectedSkill, "enabled", selectedSkill.enabled === false)}
                   >
                     <span class="bean-skills-toggle-knob" />

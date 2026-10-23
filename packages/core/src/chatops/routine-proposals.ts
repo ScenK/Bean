@@ -169,7 +169,7 @@ export function routineCardInput(
 export function ownerDraftNotice(p: PendingRoutine, people: { id: string; name: string }[], ownerName: string): string {
   const c = routineCardInput(p, people, ownerName);
   return [
-    `${p.proposedBy} saved a routine draft "${c.name}"${p.where ? ` in ${p.where}` : ""}. It's off.`,
+    `${p.proposedBy} saved a sprout draft "${c.name}"${p.where ? ` in ${p.where}` : ""}. It's off.`,
     `When: ${c.schedule}`,
     ...(c.warnings ?? []).map((w) => `Heads up: ${w}`),
     "Steps:", ...(c.steps.length > 0 ? c.steps : ["None — it only notifies"]),
@@ -180,10 +180,10 @@ export function ownerDraftNotice(p: PendingRoutine, people: { id: string; name: 
 
 export type RoutineCommand = { kind: "list" } | { kind: "enable" | "disable"; name: string };
 
-/** Owner text commands `routines`, `enable <name>`, `disable <name>` (optional leading slash). */
+/** Owner text commands `sprouts` (or the old `routines`), `enable <name>`, `disable <name>` (optional leading slash). */
 export function parseRoutineCommand(text: string): RoutineCommand | undefined {
   const t = text.trim().replace(/^\/+/, "");
-  if (/^routines$/i.test(t)) return { kind: "list" };
+  if (/^(sprouts|routines)$/i.test(t)) return { kind: "list" };
   const m = /^(enable|disable)\s+(\S.*)$/is.exec(t);
   if (!m) return undefined;
   return { kind: m[1]!.toLowerCase() as "enable" | "disable", name: stripQuotes(m[2]!.trim()) };
@@ -200,7 +200,7 @@ function stripQuotes(s: string): string {
 }
 
 export function routineListText(routines: Routine[], tz: string = localTimeZone()): string {
-  if (routines.length === 0) return "No routines yet — describe one and I'll draft it.";
+  if (routines.length === 0) return "No sprouts yet — describe one and I'll draft it.";
   return routines
     .map((r) => `• **${r.name}** — ${r.enabled ? "on" : "off"} — ${describeSchedule(r, tz).replace(` (${tz})`, "")}`)
     .join("\n") + `\nTimes are ${tz}. \`enable <name>\` / \`disable <name>\` to switch one.`;

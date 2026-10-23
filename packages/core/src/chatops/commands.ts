@@ -1,4 +1,4 @@
-/** What a command's single argument is: an @mentioned user, a routine name, or free text. */
+/** What a command's single argument is: an @mentioned user, a sprout name, or free text. */
 export type ChatopsCommandOption = "user" | "name" | "prompt";
 
 export interface ChatopsCommand {
@@ -19,7 +19,7 @@ export const CHATOPS_COMMANDS: readonly ChatopsCommand[] = [
   { name: "admins", description: "list this chat's admins" },
   { name: "add-admin", description: "owner only", option: "user" },
   { name: "remove-admin", description: "owner only", option: "user" },
-  { name: "routines", description: "list routines (owner only)" },
-  { name: "enable", description: "owner only", option: "name" },
-  { name: "disable", description: "owner only", option: "name" },
+  { name: "sprouts", description: "list sprouts (owner only)" },
+  { name: "enable", description: "turn a sprout on (owner only)", option: "name" },
+  { name: "disable", description: "turn a sprout off (owner only)", option: "name" },
 ];

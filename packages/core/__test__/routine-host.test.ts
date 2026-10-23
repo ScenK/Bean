@@ -122,10 +122,10 @@ describe("createRoutineHost", () => {
     const r = routine([], { sinks: { note: true, notify: true, chatops: [{ transport: "discord", channel: "c1" }] } });
     await h.deliverDigest(r, { digest: "hello", results: [], record: {} as never });
     const notes = await loadNotes(dbFile(dir));
-    expect(notes.map((n) => [n.slug, n.title, n.body])).toEqual([["routine-r", "routine: r", "hello"]]);
+    expect(notes.map((n) => [n.slug, n.title, n.body])).toEqual([["routine-r", "sprout: r", "hello"]]);
     const out = await claimOutbox(outboxDir(dir), "discord");
-    expect(out).toEqual([expect.objectContaining({ id: "id-1", transport: "discord", channel: "c1", title: "Routine: r", body: "hello", context: true })]);
-    expect(notify).toHaveBeenCalledWith({ title: "Routine: r", body: "hello" });
+    expect(out).toEqual([expect.objectContaining({ id: "id-1", transport: "discord", channel: "c1", title: "Sprout: r", body: "hello", context: true })]);
+    expect(notify).toHaveBeenCalledWith({ title: "Sprout: r", body: "hello" });
   });
 
   it("maps a user sink to outbox userId with a whose-routine footer", async () => {
@@ -133,7 +133,7 @@ describe("createRoutineHost", () => {
     const r = routine([], { sinks: { chatops: [{ transport: "discord", user: "u1" }] } });
     await h.deliverDigest(r, { digest: "hello", results: [], record: {} as never });
     const [msg] = await claimOutbox(outboxDir(dir), "discord");
-    expect(msg).toMatchObject({ userId: "u1", body: 'hello\n\n_Sent by Bean\'s owner\'s routine "r"._' });
+    expect(msg).toMatchObject({ userId: "u1", body: 'hello\n\n_Sent by Bean\'s owner\'s sprout "r"._' });
     expect(msg?.channel).toBeUndefined();
   });
 

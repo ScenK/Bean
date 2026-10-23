@@ -220,6 +220,6 @@ test("invalid routine draft shows the reason and Cancel only", () => {
 });
 
 test("routine result card is a one-line receipt", () => {
-  expect(flatten(routineResultCard({ name: "standup", by: "Scen", outcome: "saved", enabled: false }))).toContain("Routine saved (by Scen) — off");
+  expect(flatten(routineResultCard({ name: "standup", by: "Scen", outcome: "saved", enabled: false }))).toContain("Sprout saved (by Scen) — off");
   expect(flatten(routineResultCard({ name: "standup", by: "Scen", outcome: "failed", problem: "nope" }))).toContain("standup: nope");
 });

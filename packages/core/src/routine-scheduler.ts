@@ -315,7 +315,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     async runNow(name: string): Promise<{ started: boolean; reason?: string }> {
       if (running.has(name)) return { started: false, reason: "already running" };
       const routine = (await deps.loadRoutines()).find((r) => r.name === name);
-      if (!routine) return { started: false, reason: `no routine named "${name}"` };
+      if (!routine) return { started: false, reason: `no sprout named "${name}"` };
       if (routine.watch && routine.steps.length === 0) return { started: false, reason: "a notify-only watch has no steps to run — use Check now" };
       await execute(routine);
       return { started: true };
@@ -324,8 +324,8 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
      * drain via a tick. */
     async checkNow(name: string): Promise<WatchCheckResult> {
       const routine = (await deps.loadRoutines()).find((r) => r.name === name);
-      if (!routine?.watch) return { newItems: 0, error: `no watch routine named "${name}"` };
-      if (!routine.enabled) return { newItems: 0, error: "enable the routine first" };
+      if (!routine?.watch) return { newItems: 0, error: `no watch sprout named "${name}"` };
+      if (!routine.enabled) return { newItems: 0, error: "enable the sprout first" };
       const result = await poll(routine);
       if (result.newItems > 0 && routine.steps.length > 0) void tick();
       return result;
@@ -334,7 +334,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
      * preview), optionally queue what's already there, then save enabled. */
     async enableWatch(name: string, queueExisting: boolean): Promise<{ count: number }> {
       const routine = (await deps.loadRoutines()).find((r) => r.name === name);
-      if (!routine?.watch) throw new Error(`no watch routine named "${name}"`);
+      if (!routine?.watch) throw new Error(`no watch sprout named "${name}"`);
       if (!deps.pollWatch || !deps.watchSeen || !deps.saveRoutine) throw new Error("watch polling isn't available");
       if (polling.has(name)) throw new Error("already checking — try again in a moment");
       polling.add(name);

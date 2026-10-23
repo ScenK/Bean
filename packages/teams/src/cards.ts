@@ -276,7 +276,7 @@ export function routineProposalCard(input: RoutineProposalCardInput): object {
     type: "AdaptiveCard",
     version: "1.4",
     body: [
-      { type: "TextBlock", size: "medium", weight: "bolder", wrap: true, text: input.updating ? `Bean proposes replacing routine ${input.name}` : `Bean proposes routine ${input.name}` },
+      { type: "TextBlock", size: "medium", weight: "bolder", wrap: true, text: input.updating ? `Bean proposes replacing sprout ${input.name}` : `Bean proposes sprout ${input.name}` },
       ...(input.description ? [{ type: "TextBlock", text: input.description, wrap: true }] : []),
       ...(input.problem
         ? [{ type: "TextBlock", text: `Can't save: ${input.problem}`, wrap: true, color: "attention" }]
@@ -292,7 +292,7 @@ export function routineProposalCard(input: RoutineProposalCardInput): object {
       cancel,
     ] : [
       { type: "Action.Submit", title: input.enabled ? "Enabled: on" : "Enabled: off", data: { beanAction: "toggle-routine", proposalId: id } },
-      { type: "Action.Submit", title: input.updating ? "Replace routine" : "Save routine", style: "positive", data: { beanAction: "save-routine", proposalId: id } },
+      { type: "Action.Submit", title: input.updating ? "Replace sprout" : "Save sprout", style: "positive", data: { beanAction: "save-routine", proposalId: id } },
       cancel,
     ],
   };
@@ -300,8 +300,8 @@ export function routineProposalCard(input: RoutineProposalCardInput): object {
 
 export function routineResultCard(input: RoutineResultCardInput): object {
   const title = input.outcome === "saved"
-    ? `Routine saved (by ${input.by}) — ${input.enabled ? "on" : "off"}`
-    : input.outcome === "failed" ? "Routine not saved" : `Routine cancelled (by ${input.by})`;
+    ? `Sprout saved (by ${input.by}) — ${input.enabled ? "on" : "off"}`
+    : input.outcome === "failed" ? "Sprout not saved" : `Sprout cancelled (by ${input.by})`;
   return {
     $schema: SCHEMA,
     type: "AdaptiveCard",

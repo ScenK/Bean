@@ -42,7 +42,7 @@ export async function addTodo(
 ): Promise<TodoItem> {
   const trimmed = text.trim();
   if (!trimmed) throw new Error("todo text is required");
-  if (!routine.trim()) throw new Error("todo routine is required");
+  if (!routine.trim()) throw new Error("todo sprout is required");
   const db = openDb(file);
   const item: TodoItem = {
     id: newId(), routine, text: trimmed, status: "pending", createdAt: now().toISOString(), order: 0,

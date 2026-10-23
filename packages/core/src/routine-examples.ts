@@ -83,7 +83,7 @@ export const ROUTINE_EXAMPLES: RoutineExample[] = [
       enabled: false,
       cron: "0 9 * * 1",
       steps: [
-        { kind: "chat", id: "retro", skill: "retro", instruction: 'Review the recent runs of the routine "dev-loop" and draft skill improvements.' },
+        { kind: "chat", id: "retro", skill: "retro", instruction: 'Review the recent runs of the sprout "dev-loop" and draft skill improvements.' },
       ],
       sinks: { notify: true },
     },

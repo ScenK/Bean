@@ -61,9 +61,9 @@ export function createRoutineBuilder(deps: RoutineBuilderDeps) {
 
   async function save(entry: RoutineBuildView, routine: Routine, skills: { name: string; markdown: string }[] = []): Promise<void> {
     const error = describeRoutineError(routine);
-    if (error) throw new Error(`the built routine is invalid: ${error}`);
+    if (error) throw new Error(`the built sprout is invalid: ${error}`);
     if ((await deps.loadRoutines()).some((r) => r.name === routine.name)) {
-      throw new Error(`a routine named "${routine.name}" already exists — rename the brief`);
+      throw new Error(`a sprout named "${routine.name}" already exists — rename the brief`);
     }
     if (!live(entry)) return; // cancelled while validating
     await deps.saveRoutine({ ...routine, enabled: false });
@@ -126,12 +126,12 @@ export function createRoutineBuilder(deps: RoutineBuilderDeps) {
     async start(brief: RoutineBrief): Promise<void> {
       // Trust boundary: the name becomes a file and a scratch dir name — kebab-case only.
       if (typeof brief?.name !== "string" || !BRIEF_NAME.test(brief.name)) {
-        throw new Error("routine names are lowercase letters, digits and dashes (e.g. review-queue)");
+        throw new Error("sprout names are lowercase letters, digits and dashes (e.g. review-queue)");
       }
-      if (brief.trigger !== "watch") throw new Error("only watch routines are built — a scheduled one opens in the editor");
+      if (brief.trigger !== "watch") throw new Error("only watch sprouts are built — a scheduled one opens in the editor");
       if (builds.get(brief.name)?.status === "building") throw new Error(`"${brief.name}" is already building`);
       if ((await deps.loadRoutines()).some((r) => r.name === brief.name)) {
-        throw new Error(`a routine named "${brief.name}" already exists — pick another name`);
+        throw new Error(`a sprout named "${brief.name}" already exists — pick another name`);
       }
       const entry: RoutineBuildView = { name: brief.name, brief, status: "building", stage: "sent", startedAt: now().toISOString() };
       builds.set(brief.name, entry);

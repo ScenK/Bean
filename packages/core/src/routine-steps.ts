@@ -52,7 +52,7 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
       const prompt =
         (req.skill ? composePrompt(req.skill, req.instruction) : req.instruction) +
         (req.memories ? `\n\n${req.memories}` : "") +
-        (req.priorOutputs ? `\n\nOutput of this routine's earlier steps:\n${req.priorOutputs}` : "");
+        (req.priorOutputs ? `\n\nOutput of this sprout's earlier steps:\n${req.priorOutputs}` : "");
       const perTodo = req.todoId && !req.projectPath ? join(scratchDir(dir), req.todoId) : undefined;
       const projectPath = req.projectPath ?? perTodo ?? scratchDir(dir);
       const reserved = Boolean(req.todoId && req.projectPath) && !hold?.reserved.has(projectPath);

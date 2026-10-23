@@ -211,7 +211,7 @@ export interface TeamsBotDeps {
   };
 }
 
-const nameTaken = (name: string): string => `a routine named "${name}" already exists — ask for a different name.`;
+const nameTaken = (name: string): string => `a sprout named "${name}" already exists — ask for a different name.`;
 
 const DESKTOP_ONLY =
   "That needs the Bean desktop app — from here I can only chat and run background delegate tasks. Ask me again and I'll run it as one.";
@@ -673,7 +673,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     // Exact name, else a unique case-insensitive match (phones capitalize the first letter).
     const loose = all.filter((x) => x.name.toLowerCase() === c.name.toLowerCase());
     const target = all.find((x) => x.name === c.name) ?? (loose.length === 1 ? loose[0] : undefined);
-    if (!target) return `No routine named "${c.name}". Say \`routines\` to list them.`;
+    if (!target) return `No sprout named "${c.name}". Say \`sprouts\` to list them.`;
     const on = c.kind === "enable";
     if (target.enabled === on) return `"${target.name}" is already ${on ? "on" : "off"}.`;
     const next = { ...target, enabled: on };
@@ -690,7 +690,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   ): Promise<void> {
     const r = deps.routines;
     if (!proposalId || !r) return;
-    const expired = "That routine draft expired — ask me to draft it again.";
+    const expired = "That sprout draft expired — ask me to draft it again.";
     const peek = r.proposals.get(proposalId);
     if (!peek) {
       await fx.post(expired);
@@ -733,7 +733,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     const fail = async (problem: string): Promise<void> => {
       await updateTo(resultCard("failed", problem));
-      await fx.post(`Couldn't save the routine: ${problem}`);
+      await fx.post(`Couldn't save the sprout: ${problem}`);
     };
     // Re-validated at save: the household or clis.json may have changed while the card sat.
     const problem = pending.proposal.problem ?? chatRoutineProblem(routine, r.transport, recipients, deps.cliModels, pending.channelId);
@@ -752,7 +752,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await (createOnly ? r.create(routine) : r.save(routine));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") await fail(nameTaken(name));
-      else await fx.post(`Couldn't save the routine: ${err instanceof Error ? err.message : String(err)}`);
+      else await fx.post(`Couldn't save the sprout: ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
     if (!isOwner) {
@@ -770,8 +770,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     await fx.post(routine.enabled
-      ? `Saved routine "${name}" — it's on. ${todoRunHint(routine, new Date())}`.trim()
-      : `Saved routine "${name}" — it's off. Say \`enable ${name}\` to turn it on.`);
+      ? `Saved sprout "${name}" — it's on. ${todoRunHint(routine, new Date())}`.trim()
+      : `Saved sprout "${name}" — it's off. Say \`enable ${name}\` to turn it on.`);
   }
 
   // Forget button on a remembered card. The id rides the button itself and delete is
@@ -957,7 +957,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         await fx.reply(routineAdminRefusal(deps.roles));
         return true;
       }
-      if (!(await permitted("routineWrites", "manage routines"))) return true;
+      if (!(await permitted("routineWrites", "manage sprouts"))) return true;
       await fx.reply(await runRoutineCommand(routineCmd));
       return true;
     }
@@ -1278,7 +1278,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           return;
         }
         if (result.proposedRoutine) {
-          if (!(await permitted("routineDrafts", "set up routines"))) return;
+          if (!(await permitted("routineDrafts", "set up sprouts"))) return;
           if (!deps.routines || !deps.cards.routineProposalCard) return;
           let proposal = result.proposedRoutine;
           if (!isOwner && !proposal.problem) {

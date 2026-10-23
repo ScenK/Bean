@@ -40,7 +40,7 @@ const str = (v: unknown): v is string => typeof v === "string";
 
 export function briefMessages(sentence: string, ctx: BriefContext, previous?: RoutineBrief): ConvoMsg[] {
   const system = [
-    "You turn one sentence into a routine brief for Bean, a desktop assistant. Reply with ONE JSON object and nothing else.",
+    "You turn one sentence into a sprout brief for Bean, a desktop assistant. Reply with ONE JSON object and nothing else.",
     "Shape:",
     `{"name": "kebab-case", "description": "one line, first person, what it does",
  "trigger": "schedule" | "watch",
@@ -138,7 +138,7 @@ function cleanSinks(v: unknown): RoutineSinks {
 }
 
 const slug = (s: string): string =>
-  s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63) || "new-routine";
+  s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63) || "new-sprout";
 
 /** Sanitizes the model's brief: unknown skills/projects dropped (and asked about), bad values
  * reset to safe defaults. Throws only when the reply isn't JSON at all. */
@@ -240,7 +240,7 @@ function lastJsonFence(raw: string): Record<string, unknown> | undefined {
  * agent's; the result is validated like any saved routine. */
 export function parseBuildResult(text: string, brief: RoutineBrief): BuildResult {
   const parsed = lastJsonFence(text);
-  if (!parsed) throw new Error("the build agent didn't return the routine JSON");
+  if (!parsed) throw new Error("the build agent didn't return the sprout JSON");
   const te = parsed.testError as Record<string, unknown> | string | undefined;
   if (te) {
     const message = str(te) ? te : str(te.message) ? te.message : "the watch command failed its test";
@@ -248,13 +248,13 @@ export function parseBuildResult(text: string, brief: RoutineBrief): BuildResult
     return { skills: [], testError: { message, ...(exitCode !== undefined ? { exitCode } : {}) } };
   }
   const r = parsed.routine as Record<string, unknown> | undefined;
-  if (typeof r !== "object" || r === null) throw new Error("the build agent's JSON has no routine");
+  if (typeof r !== "object" || r === null) throw new Error("the build agent's JSON has no sprout");
   const w = r.watch as Record<string, unknown> | undefined;
-  if (!w || w.kind !== "command" || !str(w.command) || !w.command.trim()) throw new Error("the built routine has no watch command");
+  if (!w || w.kind !== "command" || !str(w.command) || !w.command.trim()) throw new Error("the built sprout has no watch command");
   const agentSteps = Array.isArray(r.steps) ? r.steps as RoutineStep[] : brief.steps;
   const routine = briefToRoutine(brief, { kind: "command", command: w.command.trim() }, agentSteps);
   const error = describeRoutineError(routine);
-  if (error) throw new Error(`the built routine is invalid: ${error}`);
+  if (error) throw new Error(`the built sprout is invalid: ${error}`);
   const skills = Array.isArray(parsed.skills)
     ? parsed.skills.flatMap((s) => {
       const k = s as Record<string, unknown> | null;

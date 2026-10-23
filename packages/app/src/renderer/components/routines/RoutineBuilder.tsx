@@ -95,7 +95,7 @@ export function DescribePane(props: CatalogProps & {
 
   const build = async (): Promise<void> => {
     if (!brief) return;
-    const problem = !brief.name.trim() ? "give the routine a name"
+    const problem = !brief.name.trim() ? "give the sprout a name"
       : brief.trigger === "watch" && !brief.source?.trim() ? "say what to watch"
       : brief.trigger === "schedule" && !brief.cron?.trim() ? "set a schedule"
       : !(brief.trigger === "watch" && brief.notifyOnly) && brief.steps.some((s) => !(s.kind === "command" ? s.command : s.instruction).trim()) ? "every step needs an instruction"
@@ -437,14 +437,14 @@ export function BuildPane(props: {
       { label: "Read the brief", doneAt: 0 },
       { label: "Found the feed", doneAt: 2 },
       { label: "Checked it", doneAt: 4 },
-      { label: "Bean validates the routine", doneAt: 5 },
+      { label: "Bean validates the sprout", doneAt: 5 },
     ]
     : [
       { label: `Brief sent to ${cliLabel(build.brief.builder?.cli)}`, doneAt: 0 },
       { label: "Wrote the watch command", doneAt: 1 },
       { label: `Testing it with your ${build.brief.via ?? "CLI"} login`, doneAt: 2 },
       { label: build.brief.notifyOnly ? "Checking the output" : "Drafting the steps", doneAt: 3 },
-      { label: "Bean validates the routine", doneAt: 5 },
+      { label: "Bean validates the sprout", doneAt: 5 },
     ];
   const at = STAGE_INDEX[build.stage];
   const active = items.findIndex((i) => i.doneAt > at);

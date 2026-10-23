@@ -32,7 +32,7 @@ const COMPONENT_WINDOW_TITLE: Record<ComponentKind, string> = {
   plan: "Plan",
   settings: "Settings",
   about: "About Bean",
-  routines: "Routines",
+  routines: "Sprouts",
   dashboard: "Dashboard",
 };
 

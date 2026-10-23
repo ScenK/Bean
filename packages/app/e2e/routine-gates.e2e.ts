@@ -35,7 +35,7 @@ test("routines: add a loop gate in the editor, save, reload, edges intact", asyn
     await win.getByRole("button", { name: /Go to → step 1/ }).click();
     await expect(second.getByRole("button", { name: /max rounds · 3/ })).toBeVisible();
     await expect(second.locator(".bean-routines-step-edge")).toHaveText("↩1");
-    await win.getByRole("button", { name: "Save routine" }).click();
+    await win.getByRole("button", { name: "Save sprout" }).click();
 
     await expect.poll(async () => {
       const saved = JSON.parse(await readFile(file, "utf8")) as { steps: { id?: string; gate?: { onFail: { goto: string } } }[] };

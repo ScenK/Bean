@@ -258,7 +258,7 @@ export function NotesPanel() {
   const purge = async (): Promise<void> => {
     if (!selected) return;
     const versions = selected.version === 1 ? "its only version" : `all ${selected.version} versions`;
-    const routine = selected.slug.startsWith("routine-") ? " Its routine will create a new note on its next run." : "";
+    const routine = selected.slug.startsWith("routine-") ? " Its sprout will create a new note on its next run." : "";
     if (!confirm(`Delete "${selected.title}" permanently? This removes ${versions} and can't be undone.${routine}`)) return;
     try {
       await window.bean.purgeNote(selected.slug);

@@ -679,7 +679,7 @@ export interface RoutineHandlerDeps {
 
 export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
   const watch = (): RoutineWatchDeps => {
-    if (!deps.watch) throw new Error("watch routines aren't available");
+    if (!deps.watch) throw new Error("watch sprouts aren't available");
     return deps.watch;
   };
   return {
@@ -714,7 +714,7 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
     enableWatch: (name: string, queueExisting: boolean): Promise<{ count: number }> => watch().enableWatch(name, queueExisting === true),
     sinkRecipients: (): Promise<SinkRecipients> => watch().sinkRecipients(),
     draftBrief: (sentence: string, previous?: RoutineBrief): Promise<BriefDraft> => {
-      if (typeof sentence !== "string" || !sentence.trim()) throw new Error("describe the routine first");
+      if (typeof sentence !== "string" || !sentence.trim()) throw new Error("describe the sprout first");
       return watch().draftBrief(sentence.trim().slice(0, 2000), previous);
     },
     build: (brief: RoutineBrief): Promise<void> => watch().builds.start(brief),
