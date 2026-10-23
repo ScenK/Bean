@@ -124,7 +124,7 @@ export const dmRefusal = (roles: Roles): string =>
 
 /** A member asking for an admin/owner capability: not "ask to be made admin" — the owner sets those up. */
 export const memberRefusal = (what: string, roles: Roles): string =>
-  `Sorry, I can't ${what} for you. Routines and coding tasks are set up by ${roles.ownerName}.`;
+  `Sorry, I can't ${what} for you. Sprouts and coding tasks are set up by ${roles.ownerName}.`;
 
 /** What `role` hears when refused something that needs `need`. */
 export function refusal(need: Role, role: Role, what: string, roles: Roles, scopeId: string | undefined): string {
@@ -144,9 +144,9 @@ export const cardRefusal = (roles: Roles): string => `Only ${roles.ownerName} or
 export const routineDraftRefusal = (proposer: string, roles: Roles): string =>
   `Only ${proposer} or ${roles.ownerName} can confirm this draft.`;
 
-/** An admin asking for `routines` / `enable` / `disable`: point them at drafting instead. */
+/** An admin asking for `sprouts` / `enable` / `disable`: point them at drafting instead. */
 export const routineAdminRefusal = (roles: Roles): string =>
-  `Only ${roles.ownerName} can list or switch routines. Describe one and I'll draft it — it saves off, and ${roles.ownerName} turns it on.`;
+  `Only ${roles.ownerName} can list or switch sprouts. Describe one and I'll draft it — it saves off, and ${roles.ownerName} turns it on.`;
 
 /** Role a card action needs. Discord-only component ids (live-* selects/modals, delegate edits,
  * cli/model/skill selects) map here too so the surface can gate them before touching state. */
@@ -175,16 +175,16 @@ export function parseRoleCommand(text: string): "add-admin" | "remove-admin" | "
  * the tool list plus bot.ts's runtime checks. */
 export function roleLine(role: Role, roles: Roles, scopeId: string | undefined): string {
   if (role === "owner") return "The current speaker is your owner.";
-  const ownerOnly = ownerOnlyRefusal("start a live session, save skills, change existing routines, or control the Mac", roles);
+  const ownerOnly = ownerOnlyRefusal("start a live session, save skills, change existing sprouts, or control the Mac", roles);
   if (role === "admin") {
-    return "The current speaker is an admin of this chat (not your owner). They may draft a new routine " +
+    return "The current speaker is an admin of this chat (not your owner). They may draft a new sprout " +
       `with propose_routine: it saves switched off and ${roles.ownerName} turns it on — never say it will run ` +
       `before that. If they ask for a live session, a new or changed skill, changing or enabling an existing ` +
-      `routine, or Mac control, reply exactly: "${ownerOnly}"`;
+      `sprout, or Mac control, reply exactly: "${ownerOnly}"`;
   }
   if (role === "member") {
     return "The current speaker is a household member (not your owner): memories, notes, reminders and task " +
-      "queues are open to them, but delegation, live sessions, skills, routines, images and Mac control are not. " +
+      "queues are open to them, but delegation, live sessions, skills, sprouts, images and Mac control are not. " +
       `If they ask for one of those, reply exactly: "${memberRefusal("do that", roles)}" Never claim you did it.`;
   }
   return "The current speaker is a guest: you have no memories, notes, tasks or delegation for them. " +

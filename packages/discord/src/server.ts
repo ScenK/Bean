@@ -159,7 +159,7 @@ const scopeOf = (channel: TextBasedChannel): string =>
 
 // bot.ts's keyword commands (same optional leading slash). They act on the channel and answer
 // in one line, so they never open a session thread.
-const KEYWORD_COMMAND = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins|usage|routines)$|live-session\b|(?:add|remove)-admin\b|(?:enable|disable)\s)/i;
+const KEYWORD_COMMAND = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins|usage|sprouts|routines)$|live-session\b|(?:add|remove)-admin\b|(?:enable|disable)\s)/i;
 
 // A thread Bean opened is a session: every message in it is addressed to Bean. The Discord
 // API's ownerId survives restarts, so no local record of owned threads is needed.

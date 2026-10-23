@@ -213,7 +213,7 @@ function routineProposalCard(input: RoutineProposalCardInput): object {
       ];
   return {
     embeds: [{
-      title: (input.updating ? `Bean proposes replacing routine ${input.name}` : `Bean proposes routine ${input.name}`).slice(0, 256),
+      title: (input.updating ? `Bean proposes replacing sprout ${input.name}` : `Bean proposes sprout ${input.name}`).slice(0, 256),
       // 1000, not 4096: Discord also caps a whole embed at 6000 chars, and the fields take up to ~3.2k.
       ...(input.description ? { description: input.description.slice(0, 1000) } : {}),
       fields,
@@ -226,7 +226,7 @@ function routineProposalCard(input: RoutineProposalCardInput): object {
           { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-routine:${id}` },
         ] : [
           { type: BUTTON, style: 2, label: input.enabled ? "Enabled: on" : "Enabled: off", custom_id: `bean:toggle-routine:${id}` },
-          { type: BUTTON, style: 3, label: input.updating ? "Replace routine" : "Save routine", custom_id: `bean:save-routine:${id}` },
+          { type: BUTTON, style: 3, label: input.updating ? "Replace sprout" : "Save sprout", custom_id: `bean:save-routine:${id}` },
           { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-routine:${id}` },
         ])],
   };
@@ -234,8 +234,8 @@ function routineProposalCard(input: RoutineProposalCardInput): object {
 
 function routineResultCard(input: RoutineResultCardInput): object {
   const title = input.outcome === "saved"
-    ? `Routine saved (by ${input.by}) — ${input.enabled ? "on" : "off"}`
-    : input.outcome === "failed" ? "Routine not saved" : `Routine cancelled (by ${input.by})`;
+    ? `Sprout saved (by ${input.by}) — ${input.enabled ? "on" : "off"}`
+    : input.outcome === "failed" ? "Sprout not saved" : `Sprout cancelled (by ${input.by})`;
   return {
     embeds: [{ title: title.slice(0, 256), description: input.problem ? `${input.name}: ${input.problem}`.slice(0, 4096) : input.name }],
     components: [],

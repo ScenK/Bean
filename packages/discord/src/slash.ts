@@ -5,7 +5,7 @@ import { chunkText } from "./chunk.js";
 // The one option each kind of command carries; always required.
 const OPTIONS = {
   user: { type: ApplicationCommandOptionType.User, name: "user", description: "Who" },
-  name: { type: ApplicationCommandOptionType.String, name: "name", description: "Routine name" },
+  name: { type: ApplicationCommandOptionType.String, name: "name", description: "Sprout name" },
   prompt: { type: ApplicationCommandOptionType.String, name: "prompt", description: "What the agent should start on (editable before you Start)" },
 } as const;
 

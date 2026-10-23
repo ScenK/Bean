@@ -6,6 +6,9 @@ test("registers every catalog command, with its one required option", () => {
   const cmds = slashCommands() as { name: string; options?: { name: string; required: boolean }[] }[];
   expect(cmds.map((c) => c.name)).toEqual(CHATOPS_COMMANDS.map((c) => c.name));
   expect(cmds).toHaveLength(12);
+  // Users see "sprouts"; the old `routines` keyword still parses but isn't advertised.
+  expect(cmds.map((c) => c.name)).toContain("sprouts");
+  expect(cmds.map((c) => c.name)).not.toContain("routines");
   const opt = (name: string) => cmds.find((c) => c.name === name)?.options;
   expect(opt("add-admin")).toEqual([expect.objectContaining({ name: "user", required: true })]);
   expect(opt("enable")).toEqual([expect.objectContaining({ name: "name", required: true })]);

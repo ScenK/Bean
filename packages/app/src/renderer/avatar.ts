@@ -28,7 +28,7 @@ const QUICK_ACTIONS: { kind: ComponentKind; name: string; desc: string }[] = [
   { kind: "skills", name: "Skills", desc: "Manage skills" },
   { kind: "projects", name: "Projects", desc: "Your projects" },
   { kind: "notes", name: "Notes", desc: "Saved talks & ideas" },
-  { kind: "routines", name: "Routines", desc: "Scheduled automations" },
+  { kind: "routines", name: "Sprouts", desc: "Agents that run on their own" },
   { kind: "dashboard", name: "Dashboard", desc: "What ran while you were away" },
 ];
 const color = (i: number): string => TILE_COLORS[i % TILE_COLORS.length]!;

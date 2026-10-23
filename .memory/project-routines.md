@@ -1,5 +1,7 @@
 # project-routines
 
+> User-facing name is **sprouts**; code, paths, and this entry say routines — see [convention-sprouts-copy-routines-code.md](convention-sprouts-copy-routines-code.md).
+
 Routines: cron-scheduled (or watch-triggered — see project-watch-triggers.md) multi-step automations. Definitions in `~/.bean/routines/<name>.json`
 (panel-edited, hand-editable), runtime state + capped history in `~/.bean/routines/.state.json`.
 Core: `cron.ts` (own 5-field parser — no dep), `routine-store.ts`, `routine-runner.ts` (pure,

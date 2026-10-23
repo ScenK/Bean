@@ -1780,7 +1780,7 @@ test("a member can't tap a delegate or live card; the forged tap is refused befo
   await bot.onCardAction({ ...tap, value: { beanAction: "cancel-run", projectPath: "/p/bean" } }, effects);
   await bot.onCardAction({ ...tap, value: { beanAction: "start-live", proposalId: "live-1" } }, effects);
   expect(delegateCalls).toHaveLength(0);
-  expect(effects.posted).toContain("Sorry, I can't confirm this for you. Routines and coding tasks are set up by Scen.");
+  expect(effects.posted).toContain("Sorry, I can't confirm this for you. Sprouts and coding tasks are set up by Scen.");
   expect(effects.posted).toContain("Only Scen can confirm this.");
   expect(deps.proposals.get(id)).toBeDefined(); // not claimed: the owner can still run it
   await bot.onCardAction({ ...tap, fromId: "u1", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
@@ -1799,7 +1799,7 @@ test("a member DM is admitted without allowGuestDms; a non-member DM's refusal p
     "You're a household member here. Your id: mia.",
     "hello there",
     "Hi! I only take direct messages from Scen's household. To be added, send Scen the id from `whoami`. Or mention me in a shared chat and I'll help there.",
-    "Sorry, I can't cancel runs for you. Routines and coding tasks are set up by Scen.",
+    "Sorry, I can't cancel runs for you. Sprouts and coding tasks are set up by Scen.",
   ]);
 });
 
@@ -2317,7 +2317,7 @@ describe("owner routines from chat (#285)", () => {
     expect(card.problem).toMatch(/not a valid 5-field cron/);
     await h.bot.onCardAction(tap("save-routine", card.proposalId), effects);
     expect(h.store).toEqual([]);
-    expect(effects.posted.at(-1)).toMatch(/Couldn't save the routine/);
+    expect(effects.posted.at(-1)).toMatch(/Couldn't save the sprout/);
   });
 
   test("an admin's draft saves off (even when toggled on), create-only, and DMs the owner", async () => {
@@ -2333,7 +2333,7 @@ describe("owner routines from chat (#285)", () => {
     expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "routine-result", outcome: "saved", enabled: false });
     expect(effects.posted.at(-1)).toBe('Saved "mia-summary" (off). Ask Scen to run `enable mia-summary`.');
     expect(h.notices).toHaveLength(1);
-    expect(h.notices[0]).toMatch(/^Ada saved a routine draft "mia-summary" in #ops\. It's off\./);
+    expect(h.notices[0]).toMatch(/^Ada saved a sprout draft "mia-summary" in #ops\. It's off\./);
     expect(h.notices[0]).toMatch(/Say `enable mia-summary` to turn it on\.$/);
   });
 
@@ -2376,10 +2376,10 @@ describe("owner routines from chat (#285)", () => {
 
   test("admins get the drafting refusal for routine commands", async () => {
     const h = setup(routineJson, [{ ...(routineJson as Routine), enabled: false }]);
-    for (const text of ["routines", "enable mia-summary", "disable mia-summary"]) {
+    for (const text of ["sprouts", "routines", "enable mia-summary", "disable mia-summary"]) {
       const effects = fx();
       await h.bot.onMessage({ ...adminMsg(), text }, effects);
-      expect(effects.posted[0]).toMatch(/Only Scen can list or switch routines\. Describe one and I'll draft it/);
+      expect(effects.posted[0]).toMatch(/Only Scen can list or switch sprouts\. Describe one and I'll draft it/);
     }
     expect(h.store[0]?.enabled).toBe(false);
   });
@@ -2387,15 +2387,17 @@ describe("owner routines from chat (#285)", () => {
   test("owner commands list, disable and enable; members are refused", async () => {
     const h = setup(routineJson, [{ ...(routineJson as Routine) }]);
     const effects = fx();
-    await h.bot.onMessage({ ...msg, text: "routines" }, effects);
-    expect(effects.posted.at(-1)).toMatch(/\*\*mia-summary\*\* — on — Weekdays at 7:00 AM/);
+    for (const text of ["sprouts", "/Sprouts", "routines", "/routines"]) {
+      await h.bot.onMessage({ ...msg, text }, effects);
+      expect(effects.posted.at(-1)).toMatch(/\*\*mia-summary\*\* — on — Weekdays at 7:00 AM/);
+    }
     await h.bot.onMessage({ ...msg, text: "disable Mia-Summary" }, effects);
     expect(h.store[0]?.enabled).toBe(false);
     await h.bot.onMessage({ ...msg, text: "enable nope" }, effects);
-    expect(effects.posted.at(-1)).toMatch(/No routine named "nope"/);
+    expect(effects.posted.at(-1)).toMatch(/No sprout named "nope"/);
     const member = fx();
     await h.bot.onMessage({ ...msg, fromId: "mia", fromName: "Mia", text: "enable mia-summary" }, member);
-    expect(member.posted[0]).toMatch(/Routines and coding tasks are set up by Scen/);
+    expect(member.posted[0]).toMatch(/Sprouts and coding tasks are set up by Scen/);
     expect(h.store[0]?.enabled).toBe(false);
     expect(h.offered).toEqual([]); // commands never reach the model
   });

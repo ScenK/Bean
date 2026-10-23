@@ -179,13 +179,13 @@ async function runChatStep(
   webSearch: boolean,
 ): Promise<string> {
   const systemParts = [
-    `You are Bean executing step ${index + 1} of the scheduled routine "${routine.name}" unattended. ` +
+    `You are Bean executing step ${index + 1} of the scheduled sprout "${routine.name}" unattended. ` +
       "There is no user present: never ask questions, never wait for confirmation. Use the tools you are " +
       "given directly when the task calls for them, then reply with a concise plain-text report of what " +
       "you did and found — that report becomes this step's output for later steps and the final digest.",
     ...(skill ? [`Skill instructions:\n${skill.body}`] : []),
     ...(memories ? [memories] : []),
-    ...(prior ? [`Output of the routine's earlier steps:\n${prior}`] : []),
+    ...(prior ? [`Output of the sprout's earlier steps:\n${prior}`] : []),
     `Current date and time: ${(deps.now ?? (() => new Date()))().toString()}`,
   ];
   const messages: ConvoMsg[] = [
@@ -218,7 +218,7 @@ async function composeDigest(
   // Cap the JOINED block, not each step: N steps must not multiply into a prompt past the
   // model's window (a rejected digest falls back to this same block, fanned to every sink).
   const block = priorOutputsBlock(results, Math.floor(DIGEST_OUTPUT_CAP / Math.max(1, results.length)));
-  const fallback = `Routine "${routine.name}" finished.\n\n${block}`;
+  const fallback = `Sprout "${routine.name}" finished.\n\n${block}`;
   try {
     const res = await withTimeout(
       deps.chat({
@@ -227,7 +227,7 @@ async function composeDigest(
           {
             role: "system",
             content:
-              `Compose one digest of this run of the routine "${routine.name}" for the user. ` +
+              `Compose one digest of this run of the sprout "${routine.name}" for the user. ` +
               "Lead with a one-line overall status, then a short section per step. When step outputs are " +
               "prefixed with [todo: ...], group the sections by todo instead — one briefing per task. " +
               "Call out any FAILED " +
@@ -426,7 +426,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
     const pending = await deps.todos.listPending(routine.name);
     if (pending.length === 0) {
       // Scheduler already skips empty queues; this is the race backstop (and covers runNow).
-      const digest = `Routine "${routine.name}" finished.\n\nNo pending todos.`;
+      const digest = `Sprout "${routine.name}" finished.\n\nNo pending todos.`;
       return {
         record: { id, startedAt, finishedAt: now().toISOString(), status: "ok", digest, steps: [] },
         digest,
@@ -438,7 +438,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
       // Drain-time gate (#283), against this run's definition: the owner may have added a delegate
       // or command step since a member queued this. Their todo text must never reach one.
       if (item.createdBy && !memberTodoEligible(routine)) {
-        const why = `refused: this routine ${MEMBER_TODO_REFUSAL}`;
+        const why = `refused: this sprout ${MEMBER_TODO_REFUSAL}`;
         results.push({ index: 0, kind: routine.steps[0]?.kind ?? "chat", ok: false, output: labelPrefix + why });
         await deps.todos.setStatus(item.id, "failed", why);
         worst("failed");
@@ -484,7 +484,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
       if (outcome.attention) attention.push(`${labelPrefix}${outcome.attention}`);
     }
     if (results.length === 0) {
-      const digest = `Routine "${routine.name}" deferred — its project is busy.`;
+      const digest = `Sprout "${routine.name}" deferred — its project is busy.`;
       return { record: { id, startedAt, finishedAt: now().toISOString(), status: "ok", digest, steps: [] }, digest, results: [], deferred: true };
     }
   } else {

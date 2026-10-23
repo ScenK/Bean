@@ -418,7 +418,7 @@ export function RoutinesPanel() {
 
   const remove = async (): Promise<void> => {
     if (!selected) return;
-    if (!confirm(`${needsReview(draft, states[selected]) ? "Discard" : "Delete"} routine "${selected}"?`)) return;
+    if (!confirm(`${needsReview(draft, states[selected]) ? "Discard" : "Delete"} sprout "${selected}"?`)) return;
     await window.bean.routinesDelete(selected);
     setSelected(undefined);
     await refresh();
@@ -527,32 +527,32 @@ export function RoutinesPanel() {
           <input
             type="text"
             class="bean-skills-search-input"
-            placeholder="Search routines"
+            placeholder="Search sprouts"
             value={query}
             onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
           />
         </div>
-        <div class="bean-skills-list-label">Your routines · {routines.length}</div>
+        <div class="bean-skills-list-label">Your sprouts · {routines.length}</div>
         {describing ? (
           <div class="bean-skills-row bean-routines-row bean-routines-row--build bean-skills-row--selected">
             <span class="bean-skills-pill"><span class="bean-skills-pill-knob" /></span>
             <div class="bean-skills-row-main">
-              <div class="bean-skills-row-name">New routine</div>
+              <div class="bean-skills-row-name">New sprout</div>
               <div class="bean-routines-row-sub">{drafting ? "drafting…" : "describe it"}</div>
             </div>
           </div>
         ) : null}
         {builds.map(buildRow)}
         {routines.length === 0 && builds.length === 0 && !describing ? (
-          <div class="bean-panel-empty">No routines yet — set up something Bean should run on a schedule.</div>
+          <div class="bean-panel-empty">No sprouts yet — set up something Bean should run on its own.</div>
         ) : filtered.length === 0 ? (
-          <div class="bean-panel-empty">No routines match "{query}".</div>
+          <div class="bean-panel-empty">No sprouts match "{query}".</div>
         ) : (
           filtered.map(routineRow)
         )}
         <span class="bean-skills-spacer" />
-        <button type="button" class="bean-routines-new" onClick={startNew}>＋ New routine</button>
-        <div class="bean-skills-path">~/.bean/routines/*.json · runs via the scheduler</div>
+        <button type="button" class="bean-routines-new" onClick={startNew}>＋ New sprout</button>
+        <div class="bean-skills-path">Saved as ~/.bean/routines/*.json · runs via the scheduler</div>
       </div>
 
       <div class="bean-skills-detail">
@@ -593,7 +593,7 @@ export function RoutinesPanel() {
             onEnabled={(note) => { void refresh().then(() => { setEditorFor(savedRoutine.name); setNotice(note); }); }}
           />
         ) : !selected && !creating ? (
-          <PanelEmptyState message="Select a routine to view it, or set up a new one.">
+          <PanelEmptyState message="Select a sprout to view it, or set up a new one.">
             <ExampleChips taken={routines.map((r) => r.name)} onPick={openDraftInEditor} onBlank={startBlank} />
           </PanelEmptyState>
         ) : (
@@ -619,7 +619,7 @@ export function RoutinesPanel() {
                   <input
                     class="bean-input bean-input--boxed bean-routines-name-input"
                     type="text"
-                    placeholder="routine-name"
+                    placeholder="sprout-name"
                     value={draft.name}
                     onInput={(e) => setDraft({ ...draft, name: (e.target as HTMLInputElement).value })}
                   />
@@ -846,7 +846,7 @@ export function RoutinesPanel() {
             <div class="bean-routines-section-head">
               <div class="bean-field-label">QUEUE</div>
             </div>
-            <span class="bean-routines-section-note">Save this routine to start queuing todos.</span>
+            <span class="bean-routines-section-note">Save this sprout to start queuing todos.</span>
           </div>
         ) : null}
 
@@ -861,7 +861,7 @@ export function RoutinesPanel() {
               </span>
             </div>
             <div class="bean-routines-queue-meta">
-              {pendingCount} pending{draft.watch ? "" : " · gates this routine"}
+              {pendingCount} pending{draft.watch ? "" : " · gates this sprout"}
             </div>
             {(() => {
               // Reorder targets: pending items already arrive order-ASC from todosList, so this
@@ -1109,10 +1109,10 @@ export function RoutinesPanel() {
               {runNowNote ? <span class="bean-routines-section-note">{runNowNote}</span> : null}
             </>
           ) : null}
-          <button type="button" class="bean-btn" onClick={() => void save()}>Save routine</button>
+          <button type="button" class="bean-btn" onClick={() => void save()}>Save sprout</button>
         </div>
         {selected ? (
-          <button type="button" class="bean-skills-delete-link bean-routines-delete" onClick={() => void remove()}>Delete routine…</button>
+          <button type="button" class="bean-skills-delete-link bean-routines-delete" onClick={() => void remove()}>Delete sprout…</button>
         ) : null}
 
         {selected && selectedState && selectedState.history.length > 0 ? (

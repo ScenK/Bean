@@ -64,7 +64,7 @@ const stepTitle = (step: DashStep): string => {
 };
 
 function nextRunText(routine: Routine | undefined, state: RoutineStateView | undefined): string {
-  if (!routine) return "routine deleted — history kept";
+  if (!routine) return "sprout deleted — history kept";
   if (!routine.enabled) return "paused — won't run again until you enable it";
   // A watch has no "next run" — say what it's waiting for instead.
   if (routine.watch) return watchDashboardText(routine, state, new Date());
@@ -167,9 +167,9 @@ export function DashboardPanel() {
 
   const askBean = (run: DashRun, step: DashStep): void => {
     window.bean.runInChat(
-      `${stepTitle(step)} in my routine "${run.routine}" on its ${clock(run.startedAt)} run:\n\n` +
+      `${stepTitle(step)} in my sprout "${run.routine}" on its ${clock(run.startedAt)} run:\n\n` +
         `${step.summary}\n\nWhat happened, and what should I do about it?`,
-      `Routine: ${run.routine}`,
+      `Sprout: ${run.routine}`,
     );
   };
 
@@ -334,7 +334,7 @@ export function DashboardPanel() {
                 disabled={rerunning}
                 onClick={() => void rerun()}
               >
-                {rerunning ? "Starting…" : "Run routine again"}
+                {rerunning ? "Starting…" : "Run sprout again"}
               </button>
               {notice ? <span class="bean-dash-notice">{notice}</span> : null}
             </div>
@@ -405,7 +405,7 @@ export function DashboardPanel() {
       <div class="bean-skills-list" id="bean-dashboard-list">
         <div class="bean-skills-list-label">Runs · {runs.length}</div>
         {runs.length === 0 ? (
-          <div class="bean-panel-empty">Nothing has run yet — routines report here once they finish.</div>
+          <div class="bean-panel-empty">Nothing has run yet — sprouts report here once they finish.</div>
         ) : (
           days.map((day, i) => {
             const open = dayOpenByDefault(i) !== flipped.includes(day.date);
@@ -441,7 +441,7 @@ export function DashboardPanel() {
               {" · "}{nextRunText(routine, routine ? states[routine.name] : undefined)}
             </div>
             <button type="button" class="bean-dash-link" onClick={() => void window.bean.openComponent("routines")}>
-              Open routines →
+              Open sprouts →
             </button>
           </div>
         ) : null}

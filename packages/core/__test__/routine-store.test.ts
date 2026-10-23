@@ -135,11 +135,11 @@ describe("resolveTodoRoutine", () => {
     expect(resolveTodoRoutine(routines, "queue-me")).toEqual(routine({ name: "queue-me", todoDriven: true }));
   });
   it("throws 'no routine named' when absent", () => {
-    expect(() => resolveTodoRoutine([routine()], "missing")).toThrow('no routine named "missing"');
+    expect(() => resolveTodoRoutine([routine()], "missing")).toThrow('no sprout named "missing"');
   });
   it("throws 'is not todo-driven' when present but not todo-driven", () => {
     const routines = [routine({ name: "morning-triage" })];
-    expect(() => resolveTodoRoutine(routines, "morning-triage")).toThrow('routine "morning-triage" is not todo-driven');
+    expect(() => resolveTodoRoutine(routines, "morning-triage")).toThrow('sprout "morning-triage" is not todo-driven');
   });
   it("a member may queue only on routines with no delegate or command steps", () => {
     const chat = routine({ name: "chat-only", todoDriven: true, steps: [{ kind: "chat", instruction: "x" }] });

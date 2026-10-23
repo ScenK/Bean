@@ -100,7 +100,7 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
     },
     addTodo: async (r, text) => { await addTodo(dbFile(dir), r, text); },
     saveRoutine: (r) => saveRoutine(routinesDir(dir), r),
-    alarm: (routine, error) => void ownerDm(`Can't check for new items — ${error}`, `Routine: ${routine.name}`),
+    alarm: (routine, error) => void ownerDm(`Can't check for new items — ${error}`, `Sprout: ${routine.name}`),
     // No Run-now button here: rebase each to its next slot (still no catch-up), or the scheduler's
     // missed guard would skip it forever.
     onMissed: (names) => {

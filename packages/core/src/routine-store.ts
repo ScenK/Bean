@@ -164,13 +164,13 @@ function describeWatchError(v: unknown): string | null {
  * decide validity (isValidRoutine) and to give the save-time error a specific, actionable
  * reason instead of a bare "invalid routine". */
 export function describeRoutineError(v: unknown, cliModels?: CliModels[]): string | null {
-  if (typeof v !== "object" || v === null) return "routine must be an object";
+  if (typeof v !== "object" || v === null) return "sprout must be an object";
   const r = v as Record<string, unknown>;
-  if (!str(r.name) || !r.name) return "routine needs a name";
-  if (badName.test(r.name)) return `routine name ${JSON.stringify(r.name)} can't contain "/", "\\", or ".."`;
+  if (!str(r.name) || !r.name) return "sprout needs a name";
+  if (badName.test(r.name)) return `sprout name ${JSON.stringify(r.name)} can't contain "/", "\\", or ".."`;
   if (r.description !== undefined && !str(r.description)) return "description must be text";
   if (typeof r.enabled !== "boolean") return "enabled must be true or false";
-  if (r.cron !== undefined && r.watch !== undefined) return "a routine runs on a schedule or a watch, not both";
+  if (r.cron !== undefined && r.watch !== undefined) return "a sprout runs on a schedule or a watch, not both";
   if (r.watch !== undefined) {
     const watchError = describeWatchError(r.watch);
     if (watchError) return watchError;
@@ -183,7 +183,7 @@ export function describeRoutineError(v: unknown, cliModels?: CliModels[]): strin
   if (!Array.isArray(r.steps)) return "steps must be a list";
   if (r.steps.length === 0 && r.watch === undefined) return "add at least one step";
   if (r.watch !== undefined && r.steps.length > 0 && r.todoDriven !== true) {
-    return "a watch routine with steps must be todo-driven — each new item is queued as a todo";
+    return "a watch sprout with steps must be todo-driven — each new item is queued as a todo";
   }
   const ids = new Map<string, number>();
   for (let i = 0; i < r.steps.length; i++) {
@@ -241,7 +241,7 @@ export function chatRoutineProblem(
   // Lowercase-only so a draft can't hit `.state.json` or case-collide with another routine
   // on a case-insensitive volume (#319). Desktop and hand-edited names keep the looser rule.
   if (!/^[a-z0-9][a-z0-9-]*$/.test(r.name)) {
-    return `routine name ${JSON.stringify(r.name)} must be lowercase letters, digits, and dashes (starting with a letter or digit)`;
+    return `sprout name ${JSON.stringify(r.name)} must be lowercase letters, digits, and dashes (starting with a letter or digit)`;
   }
   if (r.steps.some((s) => s.kind === "command") || r.watch?.kind === "command") {
     return "command steps and command watches can't be set up from chat — add them on the desktop";
@@ -249,10 +249,10 @@ export function chatRoutineProblem(
   for (const s of r.sinks.chatops ?? []) {
     if (s.transport !== transport) return `only ${transport === "discord" ? "Discord" : "Teams"} delivery can be set up from this chat`;
     if (s.user !== undefined && !recipients.some((p) => p.id === s.user)) {
-      return `user ${s.user} isn't the owner or a household member — routines only DM the household`;
+      return `user ${s.user} isn't the owner or a household member — sprouts only DM the household`;
     }
     if (s.channel !== undefined && s.channel !== channelId) {
-      return "routines from chat can only post in the channel they're drafted in — set other channels on the desktop";
+      return "sprouts from chat can only post in the channel they're drafted in — set other channels on the desktop";
     }
   }
   return null;
@@ -273,16 +273,16 @@ export const MEMBER_TODO_REFUSAL = "runs delegate or command steps — only the 
  * non-owner is queueing, so the routine must also be `memberTodoEligible`. */
 export function resolveTodoRoutine(routines: Routine[], name: string, member = false): Routine {
   const target = routines.find((r) => r.name === name);
-  if (!target) throw new Error(`no routine named "${name}"`);
-  if (!target.todoDriven) throw new Error(`routine "${name}" is not todo-driven`);
-  if (member && !memberTodoEligible(target)) throw new Error(`routine "${name}" ${MEMBER_TODO_REFUSAL}`);
+  if (!target) throw new Error(`no sprout named "${name}"`);
+  if (!target.todoDriven) throw new Error(`sprout "${name}" is not todo-driven`);
+  if (member && !memberTodoEligible(target)) throw new Error(`sprout "${name}" ${MEMBER_TODO_REFUSAL}`);
   return target;
 }
 
 /** The queued receipt's "when": the next cron fire (process-local time, i.e. `TZ`), the next
  * scheduler tick (a watch routine drains its queue whenever it has work), or a note that it's off. */
 export function todoRunHint(r: Routine, now: Date): string {
-  if (!r.enabled) return "The routine is off — it runs once the owner turns it on.";
+  if (!r.enabled) return "The sprout is off — it runs once the owner turns it on.";
   if (r.cron) {
     let next: Date;
     try { next = nextRun(r.cron, now); } catch { return ""; } // e.g. Feb 29: no fire within a year
@@ -348,7 +348,7 @@ export async function createRoutine(dir: string, routine: Routine, cliModels?: C
 }
 
 export async function deleteRoutine(dir: string, name: string): Promise<void> {
-  if (badName.test(name)) throw new Error(`invalid routine name: ${name}`);
+  if (badName.test(name)) throw new Error(`invalid sprout name: ${name}`);
   await rm(join(dir, `${name}.json`), { force: true });
 }
 

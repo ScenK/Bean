@@ -689,7 +689,7 @@ app.whenReady().then(async () => {
       saveRoutine: (r) => saveRoutine(routinesPath, r),
       alarm: (routine, error) => {
         if (notificationTransport.available()) {
-          void notificationTransport.send({ title: `Routine: ${routine.name}`, body: `Can't check for new items — ${error}` });
+          void notificationTransport.send({ title: `Sprout: ${routine.name}`, body: `Can't check for new items — ${error}` });
         }
       },
     });

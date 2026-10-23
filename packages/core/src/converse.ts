@@ -193,7 +193,7 @@ const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean, w
   "When the user asks you to create a new skill or change an existing one, call propose_skill " +
   "with the complete markdown — the user confirms the card before anything is written. " +
   "If you are given a propose_todo tool, use it when the user wants a task queued for later " +
-  "instead of done now — the routine runs it on its own schedule; the card is the confirmation.";
+  "instead of done now — the sprout runs it on its own schedule; the card is the confirmation.";
   
 
 function proposeNoteTool(projects: Project[], linkedNote?: LinkedNote): ToolSpec {
@@ -271,13 +271,14 @@ function proposeTodoTool(todoRoutines: string[]): ToolSpec {
   return {
     name: "propose_todo",
     description:
-      "Queue a task on one of the user's todo-driven routines — the routine works through its " +
+      "Queue a task on one of the user's todo-driven sprouts — the sprout works through its " +
       "queue on its own schedule (e.g. overnight). Use when the user wants a task queued for " +
-      "later rather than done now. The user confirms a card before anything is queued.",
+      "later rather than done now. The user confirms a card before anything is queued. " +
+      "The user calls these sprouts; this tool's name and `routine` argument are internal — always say sprout.",
     parameters: {
       type: "object",
       properties: {
-        routine: { type: "string", enum: todoRoutines, description: "which routine's queue to add to" },
+        routine: { type: "string", enum: todoRoutines, description: "which sprout's queue to add to" },
         text: { type: "string", description: "the task as one self-contained sentence or short paragraph" },
       },
       required: ["routine", "text"],
@@ -293,8 +294,8 @@ function proposeRoutineTool(a: RoutineAuthoring): ToolSpec {
   return {
     name: "propose_routine",
     description:
-      "Draft a scheduled routine for the owner to confirm — a new one, or a replacement for an " +
-      "existing one (reuse its name). Write the complete routine as one JSON object: " +
+      "Draft a scheduled sprout for the owner to confirm — a new one, or a replacement for an " +
+      "existing one (reuse its name). Write the complete sprout as one JSON object: " +
       '{"name": kebab-case, "description"?: text, "enabled": true, "cron": 5-field cron in local time ' +
       '(e.g. "0 7 * * 1-5" = weekdays 7:00; for "every N days" pick weekdays, e.g. "0 9 * * 1,4", since a ' +
       'day-of-month step like */3 restarts on the 1st), "todoDriven"?: true to run once per queued todo, ' +
@@ -304,11 +305,12 @@ function proposeRoutineTool(a: RoutineAuthoring): ToolSpec {
       (discord ? "neither user nor channel" : "no channel") + " DMs the owner; " +
       (discord ? `"user" DMs one of: ${people || "nobody else"}; ` : "") + '"channel" posts in a channel' +
       (a.channelId ? ` (this chat's channel id is ${a.channelId})` : "") + ". " +
-      (a.existing.length > 0 ? `Existing routines: ${a.existing.join(", ")}. ` : "") +
-      "Nothing is saved until the card is confirmed.",
+      (a.existing.length > 0 ? `Existing sprouts: ${a.existing.join(", ")}. ` : "") +
+      "Nothing is saved until the card is confirmed. " +
+      "The user calls these sprouts; this tool's name is internal — always say sprout.",
     parameters: {
       type: "object",
-      properties: { json: { type: "string", description: "the complete routine as a JSON object" } },
+      properties: { json: { type: "string", description: "the complete sprout as a JSON object" } },
       required: ["json"],
     },
   };
@@ -755,7 +757,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       const args = (todoCall.args ?? {}) as { routine?: unknown; text?: unknown };
       const text = typeof args.text === "string" ? args.text.trim() : "";
       if (!text || typeof args.routine !== "string" || !todoRoutines.includes(args.routine)) {
-        reject(todoCall, "unknown routine or empty text.");
+        reject(todoCall, "unknown sprout or empty text.");
         continue;
       }
       return { reply: content, model: deps.model, proposedTodo: { routine: args.routine, text } };
@@ -771,7 +773,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       const name = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
         ? (parsed as { name?: unknown }).name : undefined;
       if (typeof name !== "string" || !name.trim()) {
-        reject(routineCall, "the routine must be one JSON object with a name.");
+        reject(routineCall, "the sprout must be one JSON object with a name.");
         continue;
       }
       // An invalid draft still reaches the card, which shows the reason instead of a Save button.

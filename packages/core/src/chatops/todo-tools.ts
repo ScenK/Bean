@@ -19,7 +19,7 @@ export function makeTodoTools(deps: TodoToolDeps): ActionTool[] {
     {
       spec: {
         name: "list_todos",
-        description: "List the speaker's queued (pending or running) routine todos.",
+        description: "List the speaker's queued (pending or running) sprout todos.",
         parameters: { type: "object", properties: {} },
       },
       run: async () => {

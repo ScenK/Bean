@@ -76,7 +76,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
   const saveNoteTool: ActionTool = {
     spec: {
       name: "save_note",
-      description: "Save a markdown note to the user's notes. Use only when the routine step's instruction asks for it.",
+      description: "Save a markdown note to the user's notes. Use only when the sprout step's instruction asks for it.",
       parameters: {
         type: "object",
         properties: {
@@ -170,7 +170,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
   const deliverDigest = async (routine: Routine, result: RoutineRunResult): Promise<void> => {
     if (routine.sinks.note) {
       await saveNote(dbFile(dir), {
-        title: `routine: ${routine.name}`,
+        title: `sprout: ${routine.name}`,
         body: result.digest,
         source: "manual",
         slug: `routine-${routine.name}`, // update-in-place: one living note per routine
@@ -179,14 +179,14 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     for (const sink of routine.sinks.chatops ?? []) {
       await enqueueOutbox(outboxDir(dir), {
         transport: sink.transport, channel: sink.channel, userId: sink.user,
-        title: `Routine: ${routine.name}`,
+        title: `Sprout: ${routine.name}`,
         // A member DM says whose routine it is — they didn't set it up.
-        body: sink.user ? `${result.digest}\n\n_Sent by Bean's owner's routine "${routine.name}"._` : result.digest,
+        body: sink.user ? `${result.digest}\n\n_Sent by Bean's owner's sprout "${routine.name}"._` : result.digest,
         context: deps.getRoutineDigestContext(),
       }, newId);
     }
     if (routine.sinks.notify && deps.notify) {
-      await deps.notify({ title: `Routine: ${routine.name}`, body: result.digest });
+      await deps.notify({ title: `Sprout: ${routine.name}`, body: result.digest });
     }
   };
 

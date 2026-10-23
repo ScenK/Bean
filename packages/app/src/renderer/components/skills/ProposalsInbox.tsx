@@ -53,7 +53,7 @@ export function ProposalsInbox({ proposals, onChanged }: { proposals: ProposalLi
   });
 
   if (proposals.pending.length === 0 && proposals.applied.length === 0) {
-    return <div class="bean-panel-empty">No skill proposals. A retro routine drafts them from recent runs.</div>;
+    return <div class="bean-panel-empty">No skill proposals. A retro sprout drafts them from recent runs.</div>;
   }
 
   return (
