@@ -17,7 +17,7 @@ endpoint.
    your name → "Copy User ID".
 4. **Config**: create `~/.bean/discord.json`:
    `{ "botToken": "<token>", "ownerId": "<your user id>", "ownerName": "<your name>" }`
-   `ownerId` is the owner (full powers; routine digests with no channel DM them). Everyone else
+   `ownerId` is the owner (full powers; sprout digests with no channel DM them). Everyone else
    is a guest (chat only) unless the owner runs `add-admin @name` in a channel; `admins` and
    `whoami` list roles. `"memberIds": ["<user id>", ...]` makes household members (memory, notes,
    todos — everywhere, DMs included; no delegates, live sessions, skills or Mac control); restart
@@ -49,23 +49,23 @@ enabled — `/live-session <prompt>`. The same words also work as plain text (`c
 `/new`, `/live-session …`), so an `@bean /live-session …` message routes the same as the slash
 command (verbatim, not reworded by the model).
 
-## Headless routines (no desktop app)
+## Headless sprouts (no desktop app)
 
 Household container recipe and owner checklist: [`docs/headless.md`](../../docs/headless.md).
 
-On a bot-only install (e.g. a Linux container) the bot can run your scheduled routines itself:
+On a bot-only install (e.g. a Linux container) the bot can run your scheduled sprouts itself:
 
     TZ=America/Toronto BEAN_HEADLESS_ROUTINES=1 pnpm --filter @bean/discord start
 
 - **Only one scheduler per `~/.bean`.** Never set this where the desktop app also runs against
-  the same `~/.bean` — both would fire every routine. The app strips the variable from the bot it
+  the same `~/.bean` — both would fire every sprout. The app strips the variable from the bot it
   spawns, so the normal Mac setup is unaffected.
 - `TZ` is required (cron matches in local time); the bot exits with one line if it's unset.
-- Boot logs the detected CLIs, whether each has auth, the routine count, and the owner id.
-- Notices that are desktop notifications on the Mac — a failing watch, `notify` sinks, routines
+- Boot logs the detected CLIs, whether each has auth, the sprout count, and the owner id.
+- Notices that are desktop notifications on the Mac — a failing watch, `notify` sinks, sprouts
   missed while the bot was down — arrive as DMs to `ownerId`.
 - On boot, run reservations left in `~/.bean/runs/` are killed and cleared (one owner DM if any).
-- SIGTERM stops the scheduler, lets pending state writes land, and kills routine children.
+- SIGTERM stops the scheduler, lets pending state writes land, and kills sprout children.
 
 ## Manual verification checklist
 

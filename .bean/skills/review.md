@@ -1,5 +1,5 @@
 ---
-description: Review a branch or pull request and end with a PASS/FAIL verdict — gates a routine
+description: Review a branch or pull request and end with a PASS/FAIL verdict — gates a sprout
 ---
 
 # Review

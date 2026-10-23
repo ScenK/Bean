@@ -1,6 +1,6 @@
 ---
 target: chat
-description: Check that a ticket is clear enough to implement unattended — gates a routine on PASS/FAIL
+description: Check that a ticket is clear enough to implement unattended — gates a sprout on PASS/FAIL
 ---
 
 # Ticket lint
