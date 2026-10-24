@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RoutineStep } from "@bean/core";
 import { stepEdgeProblems } from "@bean/core/routine-graph";
-import { duplicateStep, remapStepMissing, stepProblemsText, withStepIds } from "../src/renderer/components/routines/step-ids.js";
+import { duplicateStep, remapStepMissing, setStepNext, stepProblemsText, withStepIds } from "../src/renderer/components/routines/step-ids.js";
 
 describe("withStepIds", () => {
   it("assigns <skill>-<n>/<kind>-<n> to id-less steps and keeps existing ids through reorder/delete", () => {
@@ -89,5 +89,26 @@ describe("remapStepMissing", () => {
   it("uses the first index for a duplicated id", () => {
     const dup = [steps[0]!, { ...steps[0]! }];
     expect(remapStepMissing([q("steps.1")], dup, [steps[1]!, ...dup]).map((m) => m.field)).toEqual(["steps.1"]);
+  });
+});
+
+describe("setStepNext", () => {
+  const steps: RoutineStep[] = [
+    { kind: "chat", instruction: "a" },
+    { kind: "chat", instruction: "b" },
+    { kind: "chat", instruction: "c" },
+  ];
+
+  it("points next at a later step by id, at end, or clears it", () => {
+    const toLast = setStepNext(steps, 0, 2);
+    expect(toLast[0]!.next).toBe("chat-3");
+    expect(stepEdgeProblems(toLast)).toEqual([null, null, null]);
+    expect(setStepNext(toLast, 0, "end")[0]!.next).toBe("end");
+    expect("next" in setStepNext(toLast, 0, undefined)[0]!).toBe(false);
+  });
+
+  it("a reorder that makes next point backward shows the inline problem", () => {
+    const [a, b, c] = setStepNext(steps, 0, 2);
+    expect(stepEdgeProblems([c!, a!, b!])[1]).toMatch(/later step/);
   });
 });
