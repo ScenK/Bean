@@ -62,6 +62,11 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   // Routines a tick is deciding on — isRunning() reports them so the panel doesn't flicker idle
   // between "decided to run" and the run's own count.
   const checking = new Set<string>();
+  // Workers inside runRoutine — a finished run prunes only when no sibling's attempt rows are
+  // still unsaved. Dropped before the record is saved, so the last of two simultaneous
+  // finishers always sees 0.
+  const inFlight = new Map<string, number>();
+  const bump = (name: string, by: number): void => { inFlight.set(name, (inFlight.get(name) ?? 0) + by); };
   let stopped = false;
   // In-memory mirror of which routines markMissed() flagged, checked by tick() instead of a
   // fresh loadStates() read: nextRun(cron, a stale lastRun) keeps landing on the same past
@@ -122,7 +127,14 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     const left = count(routine.name) - 1;
     if (left > 0) running.set(routine.name, left);
     else running.delete(routine.name);
-    if (ran && routine.watch && !stopped) void poll(routine).then(() => (stopped ? undefined : tick()));
+    if (!ran || !routine.watch || stopped) return;
+    // Against the current definition: a watch disabled mid-run must not run its check again.
+    void deps.loadRoutines().then(async (all) => {
+      const current = all.find((r) => r.name === routine.name);
+      if (!current?.enabled || !current.watch || stopped) return;
+      await poll(current);
+      if (!stopped) await tick();
+    }).catch((err: unknown) => console.error(`bean: watch "${routine.name}" post-run check failed`, err));
   };
 
   /** The single run (maxParallel 1, plain routines): one runRoutine call drains the queue. */
@@ -146,9 +158,11 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     try {
       for (let todo = await claim(routine.name); todo; todo = await claim(routine.name)) {
         ran = true;
+        bump(routine.name, 1);
         try {
-          const result = await deps.runRoutine(routine, todo);
-          await appendAndPrune(routine.name, result.record, count(routine.name) > 1);
+          let result: RoutineRunResult;
+          try { result = await deps.runRoutine(routine, todo); } finally { bump(routine.name, -1); }
+          await appendAndPrune(routine.name, result.record, (inFlight.get(routine.name) ?? 0) > 0);
           await deps.deliverDigest(routine, result);
         } catch (err) {
           console.error(`bean: routine "${routine.name}" todo run failed`, err);
@@ -269,11 +283,15 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
           console.error(`bean: routine "${routine.name}" due check failed`, err);
         }
       }
-    } finally {
+    } catch (err) {
       for (const routine of candidates) checking.delete(routine.name);
+      throw err;
     }
     // Due routines start together (fill takes its slots synchronously, right after the flags clear).
-    await Promise.all(due.map(fill));
+    // One a Run now started while this tick was deciding (it dropped the flag) is already handled.
+    const go = due.filter((r) => checking.has(r.name));
+    for (const routine of candidates) checking.delete(routine.name);
+    await Promise.all(go.map(fill));
 
     async function consider(routine: Routine, state: RoutineState | undefined, nowT: Date): Promise<void> {
       if (routine.watch) {
@@ -371,6 +389,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       const slots = deps.claimTodo ? parallelSlots(routine) : 1;
       const live = count(name);
       if (live >= slots) return { started: false, reason: slots > 1 ? `${live}/${slots} running` : "already running" };
+      checking.delete(name); // an in-flight tick's due decision for it is now stale
       await fill(routine); // no await between the check above and fill's synchronous slot grab
       return { started: true };
     },
