@@ -51,4 +51,17 @@ describe("createTaskStatus", () => {
     s.error("bot:discord", { kind: "bot", name: "Discord", line: "crash 2" });
     expect(s.list()).toMatchObject([{ id: "bot:discord", state: "failed", count: 2, line: "crash 2" }]);
   });
+
+  // The bubble id is reused per routine: a rerun whose run wasn't recorded must not open the
+  // previous run's record.
+  it("finish sets runStartedAt; a rerun never inherits the last run's", () => {
+    const s = createTaskStatus(() => {});
+    s.upsert("routine:r", { kind: "routine", name: "r", runStartedAt: undefined });
+    s.finish("routine:r", "done", "Done", undefined, { runStartedAt: "2026-10-23T06:00:00.000Z" });
+    expect(s.list()[0]!.runStartedAt).toBe("2026-10-23T06:00:00.000Z");
+    s.upsert("routine:r", { kind: "routine", name: "r", state: "running", runStartedAt: undefined });
+    expect(s.list()[0]!.runStartedAt).toBeUndefined();
+    s.finish("routine:r", "failed", "Run failed", undefined, { runStartedAt: undefined });
+    expect(s.list()[0]).toMatchObject({ state: "failed", runStartedAt: undefined });
+  });
 });

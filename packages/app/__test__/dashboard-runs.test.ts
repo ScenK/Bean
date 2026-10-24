@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { attentionOf, executedPath, flattenRuns, groupRuns, reviewRuns, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
+import { attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, reviewRuns, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
 import type { RoutineStateView } from "../src/ipc.js";
 
 const record = (startedAt: string, finishedAt: string, ok: boolean[]) => ({
@@ -164,5 +164,17 @@ describe("gated runs", () => {
     const [day] = groupRuns([{ routine: "dev", id: "dev@1", startedAt: "2026-10-01T10:00:00Z", finishedAt: "2026-10-01T10:05:00Z", status: "needs-attention", digest: "", steps }]);
     expect(day!.buckets[0]!.attention).toBe(1);
     expect(day!.buckets[0]!.needs).toBe(0);
+  });
+
+  // Local days, like groupRuns: a run a minute either side of local midnight lands in two buckets,
+  // and the key names the same bucket groupRuns put it in.
+  test("bucketKeyFor names the local-day bucket a run lands in", () => {
+    const late = new Date(2026, 8, 21, 23, 59).toISOString();
+    const early = new Date(2026, 8, 22, 0, 1).toISOString();
+    expect(bucketKeyFor("r", late)).toBe("2026-09-21|r");
+    expect(bucketKeyFor("r", early)).toBe("2026-09-22|r");
+    const run = (startedAt: string) => ({ routine: "r", id: `r@${startedAt}`, startedAt, finishedAt: startedAt, status: "ok" as const, digest: "", steps: [] });
+    const keys = groupRuns([run(early), run(late)]).flatMap((d) => d.buckets.map((b) => b.key));
+    expect(keys).toEqual([bucketKeyFor("r", early), bucketKeyFor("r", late)]);
   });
 });

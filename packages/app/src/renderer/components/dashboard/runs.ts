@@ -146,6 +146,9 @@ const localDate = (iso: string): string => {
 
 export const bucketKey = (date: string, routine: string): string => `${date}|${routine}`;
 
+/** The bucket a run lands in: its routine on the run's local day. */
+export const bucketKeyFor = (routine: string, startedAt: string): string => bucketKey(localDate(startedAt), routine);
+
 /** Rail shape: local day → routine → that routine's runs on that day. A routine that fires
  * several times a day becomes ONE row, whose runs the spine then reads newest-first. Input must
  * already be newest-first (flattenRuns' order), which every level here preserves. */

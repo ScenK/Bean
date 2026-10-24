@@ -1,10 +1,12 @@
 import type { TaskJob } from "../task-status.js";
+import type { DashboardTarget } from "../channels.js";
 
 // Design 2a "speech bubble": one bubble per running job or failure, stacked above the bean, newest
 // nearest the bean and the only one with a tail. Click a bubble to expand its detail (read-only);
 // clicking an expanded failure dismisses it — failures stay until then. A memory bubble is the
 // exception: its click opens Persona's "Just remembered" (where Undo lives) — never an undo itself,
-// so a misclick can't lose data.
+// so a misclick can't lose data. A finished routine likewise: one click dismisses it and opens that
+// run in the Dashboard, whose card is the lasting record of a failure.
 const ICONS = {
   delegate: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   routine: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/><path d="M12 7v5l3 3"/>',
@@ -32,6 +34,8 @@ const meta = (j: TaskJob, now: number): string => {
 
 const iconKey = (j: TaskJob): keyof typeof ICONS => (j.state === "running" ? j.kind : j.state);
 
+const opensRun = (j: TaskJob): boolean => j.kind === "routine" && j.state !== "running";
+
 function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh: boolean, now: number): string {
   const running = j.state === "running";
   const steps = j.steps ?? [];
@@ -49,8 +53,12 @@ function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh:
     ? `<div class="bean-bubble-detail">${j.detail ? `<div class="bean-bubble-note">${esc(j.detail)}</div>` : ""}${stepRows ? `<div class="bean-bubble-steps">${stepRows}</div>` : ""}${hint}</div>`
     : "";
   const caret = running && j.kind === "delegate" ? '<span class="bean-bubble-caret"></span>' : "";
+  // A finished routine doesn't expand, it navigates — the label keeps its name and result audible.
+  const action = opensRun(j)
+    ? `title="Open in Dashboard" aria-label="${esc(`${j.name} — ${j.line}. Open in Dashboard`)}"`
+    : `aria-expanded="${open}"`;
   return `
-    <button type="button" class="bean-bubble bean-bubble--${j.state}${tail ? " bean-bubble--tail" : ""}${fresh ? " bean-bubble--new" : ""}" data-id="${esc(j.id)}" aria-expanded="${open}">
+    <button type="button" class="bean-bubble bean-bubble--${j.state}${tail ? " bean-bubble--tail" : ""}${fresh ? " bean-bubble--new" : ""}" data-id="${esc(j.id)}" ${action}>
       <span class="bean-bubble-head">
         <span class="bean-bubble-icon bean-bubble-icon--${iconKey(j)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${ICONS[iconKey(j)]}</svg></span>
         <span class="bean-bubble-name">${esc(j.name)}</span>
@@ -67,6 +75,7 @@ export const MAX_VISIBLE = 4;
 
 export function createTaskBubbles(
   container: HTMLElement, onHeight: (h: number) => void, onDismiss: (id: string) => void, onOpenMemory: () => void = () => {},
+  onOpenRun: (target: DashboardTarget) => void = () => {},
 ) {
   let jobs: TaskJob[] = [];
   let openId: string | undefined;
@@ -117,9 +126,15 @@ export function createTaskBubbles(
     }
     const id = (e.target as HTMLElement).closest<HTMLElement>(".bean-bubble")?.dataset.id;
     if (!id) return;
-    if (jobs.find((j) => j.id === id)?.kind === "memory") {
+    const job = jobs.find((j) => j.id === id);
+    if (job?.kind === "memory") {
       onDismiss(id);
       onOpenMemory();
+      return;
+    }
+    if (job && opensRun(job)) {
+      onDismiss(id);
+      onOpenRun(job.runStartedAt ? { routine: job.name, startedAt: job.runStartedAt } : { routine: job.name });
       return;
     }
     if (openId === id && jobs.find((j) => j.id === id)?.state === "failed") onDismiss(id);

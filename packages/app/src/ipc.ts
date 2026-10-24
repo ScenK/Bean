@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";
 import { BrowserWindow, dialog, screen, shell, type IpcMain } from "electron";
-import { IPC, type Theme, type ComponentKind, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import type { UpdateCheckOutcome } from "./updater.js";
@@ -45,6 +45,37 @@ export function buildDroppedUrlStore(): { set: (url: string) => void; get: () =>
     set: (url) => { pending = url; },
     get: () => { const u = pending; pending = undefined; return u; },
   };
+}
+
+// A Dashboard target crosses from a renderer (bubble click) or a notification's `meta` — both
+// untrusted shapes. Keep only a non-empty routine name and, if present, an ISO `startedAt`; a
+// present-but-invalid date rejects the whole target rather than being coerced.
+export function parseDashboardTarget(v: unknown): DashboardTarget | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const { routine, startedAt } = v as Record<string, unknown>;
+  if (typeof routine !== "string" || !routine) return undefined;
+  if (startedAt === undefined) return { routine };
+  const iso = typeof startedAt === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(startedAt) && !Number.isNaN(Date.parse(startedAt));
+  return iso ? { routine, startedAt } : undefined;
+}
+
+/** `openComponent`'s second argument, by kind: a dropped URL only for chat, a run target only for
+ * the dashboard; anything else is dropped. */
+export function openComponentPayload(kind: ComponentKind, payload: unknown): string | DashboardTarget | undefined {
+  if (kind === "chat") return typeof payload === "string" ? payload : undefined;
+  if (kind === "dashboard") return parseDashboardTarget(payload);
+  return undefined;
+}
+
+/** Where a desktop notification's click lands, from its `meta`: a routine digest opens its run in
+ * the Dashboard, a watch alarm the Routines panel, anything else (reminders) Chat. */
+export function notificationOpens(meta: Record<string, unknown> | undefined): { kind: ComponentKind; target?: DashboardTarget } {
+  if (meta?.open === "routines") return { kind: "routines" };
+  if (meta?.open === "dashboard") {
+    const target = parseDashboardTarget(meta.target);
+    return target ? { kind: "dashboard", target } : { kind: "dashboard" };
+  }
+  return { kind: "chat" };
 }
 
 // A chat-target skill run confirmed in the Plan popup: the composed prompt to auto-send in
@@ -788,10 +819,11 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   webSearch?: () => boolean;
   imageGen?: ChatHandlerDeps["imageGen"];
   broadcast: (channel: string, payload: unknown) => void;
-  openComponent: (kind: ComponentKind, droppedUrl?: string) => void;
+  openComponent: (kind: ComponentKind, payload?: string | DashboardTarget) => void;
   proposeRun: (suggestion: RouteSuggestion) => void;
   getPendingPlan: () => RouteSuggestion | undefined;
   getPendingDroppedUrl: () => string | undefined;
+  getPendingDashboardTarget: () => DashboardTarget | undefined;
   runInChat: (payload: ChatPromptPayload) => void;
   getPendingChatPrompt: () => ChatPromptPayload | undefined;
   getPendingInterruptedRunNotices: () => InterruptedRunNotice[] | undefined;
@@ -996,10 +1028,11 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.todosClearFinished, (_e, routine: string) => deps.todoHandlers.clearFinished(routine));
   ipcMain.handle(IPC.todosRetry, (_e, id: string) => deps.todoHandlers.retry(id));
 
-  ipcMain.handle(IPC.openComponent, (_e, kind: ComponentKind, droppedUrl?: string) => deps.openComponent(kind, droppedUrl));
+  ipcMain.handle(IPC.openComponent, (_e, kind: ComponentKind, payload?: unknown) => deps.openComponent(kind, openComponentPayload(kind, payload)));
   ipcMain.on(IPC.proposeRun, (_e, suggestion: RouteSuggestion) => deps.proposeRun(suggestion));
   ipcMain.handle(IPC.getPendingPlan, () => deps.getPendingPlan());
   ipcMain.handle(IPC.getPendingDroppedUrl, () => deps.getPendingDroppedUrl());
+  ipcMain.handle(IPC.getPendingDashboardTarget, () => deps.getPendingDashboardTarget());
   ipcMain.on(IPC.planFromDrop, (_e, skillName: string, droppedUrl: string) => deps.planFromDrop(skillName, droppedUrl));
   ipcMain.on(IPC.runInChat, (_e, payload: ChatPromptPayload) => deps.runInChat(payload));
   ipcMain.handle(IPC.getPendingChatPrompt, () => deps.getPendingChatPrompt());
