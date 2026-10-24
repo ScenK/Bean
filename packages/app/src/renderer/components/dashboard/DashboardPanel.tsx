@@ -160,6 +160,7 @@ export function DashboardPanel() {
     if (hit) {
       setPending(undefined);
       setSelectedKey(hit.key);
+      setFlippedDigests([]); // the same bucket again: still land with the newest digest open
       const i = days.findIndex((d) => d.date === hit.date);
       if (i >= 0 && dayOpenByDefault(i) === flipped.includes(hit.date)) toggleDay(hit.date); // folded: unfold
       if (!pending.startedAt) setDeepNotice("That run wasn't recorded — showing the latest recorded one.");

@@ -316,9 +316,8 @@ app.whenReady().then(async () => {
   // the push. droppedUrlStore.get() is stashed alongside every push so the renderer can pull it
   // on mount instead.
   const droppedUrlStore = buildDroppedUrlStore();
-  // A run to open in the Dashboard: pulled on mount by a fresh window, pushed to an open one. Only
-  // a fresh window stores it — stored for an open window, it would make a later reopen jump to an
-  // old run.
+  // A run to open in the Dashboard: pulled on mount by a fresh (or still-loading) window, pushed to
+  // an open one. A mounted window never stores it — that would make a later reopen jump to an old run.
   let pendingDashboardTarget: DashboardTarget | undefined;
   const openComponent = (kind: ComponentKind, payload?: string | DashboardTarget): void => {
     const droppedUrl = typeof payload === "string" ? payload : undefined;
@@ -327,7 +326,11 @@ app.whenReady().then(async () => {
     if (existing && !existing.isDestroyed()) {
       if (existing.isMinimized()) existing.restore();
       existing.focus();
-      if (target) sendToWindow(existing, IPC.dashboardTarget, target);
+      if (target) {
+        // Still loading (opened a moment ago): it may not have subscribed yet, so it pulls too.
+        if (existing.webContents.isLoading()) pendingDashboardTarget = target;
+        sendToWindow(existing, IPC.dashboardTarget, target);
+      }
       if (droppedUrl && kind === "chat") {
         droppedUrlStore.set(droppedUrl);
         sendToWindow(existing, IPC.componentDroppedUrl, droppedUrl);
