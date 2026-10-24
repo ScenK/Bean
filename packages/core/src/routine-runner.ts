@@ -1,7 +1,7 @@
 // packages/core/src/routine-runner.ts
 import { createHash, randomUUID } from "node:crypto";
 import type { ActionTool, ConverseDeps, ConvoMsg, ToolCall } from "./converse.js";
-import { DEFAULT_GATE_ROUNDS, MEMBER_TODO_REFUSAL, memberTodoEligible, usesGates, type Routine, type RoutineStep, type RunRecord, type RunStatus, type StepKind } from "./routine-store.js";
+import { DEFAULT_GATE_ROUNDS, MEMBER_TODO_REFUSAL, memberTodoEligible, parallelSlots, usesGates, type Routine, type RoutineStep, type RunRecord, type RunStatus, type StepKind } from "./routine-store.js";
 import type { CommandStepOutcome } from "./command-step.js";
 import type { Skill } from "./types.js";
 import type { CliName } from "./launcher.js";
@@ -71,7 +71,8 @@ export interface RoutineRunnerDeps {
   onStep?: (info: StepInfo) => void;
   /** Injected by the app for todo-driven routines: core never touches the DB itself. */
   todos?: {
-    listPending: (routine: string) => Promise<TodoItem[]>;
+    /** Atomically takes the routine's next pending todo (pending → running); undefined = none. */
+    claim: (routine: string) => Promise<TodoItem | undefined>;
     setStatus: (id: string, status: TodoStatus, resultSummary?: string) => Promise<void>;
   };
 }
@@ -402,10 +403,12 @@ async function runSteps(
 /** Executes a routine's steps sequentially, then composes the digest. Pure and DI'd: no
  * filesystem, no Electron, no clock beyond deps.now. Plain routines (`routine.todoDriven`
  * unset, or set with no `deps.todos` injected) run the step pipeline once, continuing past a
- * failed step. Todo-driven routines drain `deps.todos.listPending`, running the whole step
- * pipeline once per pending todo (prior-outputs chaining scoped per-todo); a failed step
- * aborts that todo and moves to the next. An empty queue is a successful no-op. */
-export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Promise<RoutineRunResult> {
+ * failed step. Todo-driven routines drain the queue via `deps.todos.claim`, running the whole
+ * step pipeline once per claimed todo (prior-outputs chaining scoped per-todo) until nothing is
+ * pending — a todo queued mid-drain is picked up; a failed step aborts that todo and moves to
+ * the next. An empty queue is a successful no-op. `todo` (already claimed by the caller — a
+ * maxParallel worker) runs just that one todo instead of draining. */
+export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo?: TodoItem): Promise<RoutineRunResult> {
   const now = deps.now ?? (() => new Date());
   const timeoutMs = deps.stepTimeoutMs ?? ROUTINE_STEP_TIMEOUT_MS;
   const id = (deps.newId ?? randomUUID)();
@@ -416,49 +419,55 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
   const attention: string[] = [];
   let soleLabelPrefix = ""; // only meaningful when the run ends up with exactly one result
 
-  if (routine.todoDriven && deps.todos) {
-    const pending = await deps.todos.listPending(routine.name);
-    if (pending.length === 0) {
-      // Scheduler already skips empty queues; this is the race backstop (and covers runNow).
-      const digest = `Sprout "${routine.name}" finished.\n\nNo pending todos.`;
-      return {
-        record: { id, startedAt, finishedAt: now().toISOString(), status: "ok", digest, steps: [] },
-        digest,
-        results: [],
-      };
+  /** Runs the pipeline for one claimed (already `running`) todo and settles its status. */
+  const runTodo = async (item: TodoItem, setStatus: NonNullable<RoutineRunnerDeps["todos"]>["setStatus"]): Promise<void> => {
+    const labelPrefix = `[todo: ${item.text}] `;
+    soleLabelPrefix = labelPrefix;
+    // Drain-time gate (#283), against this run's definition: the owner may have added a delegate
+    // or command step since a member queued this. Their todo text must never reach one.
+    if (item.createdBy && !memberTodoEligible(routine)) {
+      const why = `refused: this sprout ${MEMBER_TODO_REFUSAL}`;
+      results.push({ index: 0, kind: routine.steps[0]?.kind ?? "chat", ok: false, output: labelPrefix + why });
+      await setStatus(item.id, "failed", why);
+      worst("failed");
+      return;
     }
-    for (const item of pending) {
-      const labelPrefix = `[todo: ${item.text}] `;
-      // Drain-time gate (#283), against this run's definition: the owner may have added a delegate
-      // or command step since a member queued this. Their todo text must never reach one.
-      if (item.createdBy && !memberTodoEligible(routine)) {
-        const why = `refused: this sprout ${MEMBER_TODO_REFUSAL}`;
-        results.push({ index: 0, kind: routine.steps[0]?.kind ?? "chat", ok: false, output: labelPrefix + why });
-        await deps.todos.setStatus(item.id, "failed", why);
-        worst("failed");
-        soleLabelPrefix = labelPrefix;
-        continue;
+    const scoped: StepResult[] = []; // prior-outputs chain is per-todo, never cross-todo
+    // Watch todos and parallel todos get their own scratch subdir (see DelegateStepRequest.todoId).
+    const outcome = await runSteps(
+      routine, deps, timeoutMs, scoped,
+      `\n\nQueued task:\n${item.text}`,
+      labelPrefix,
+      id,
+      { id: item.id, text: item.text, scratch: Boolean(routine.watch) || parallelSlots(routine) > 1 },
+    );
+    results.push(...scoped);
+    const last = scoped[scoped.length - 1];
+    // Strip the label prefix for the setStatus summary — it's redundant there since the
+    // caller already knows which todo this is; `results`/the digest keep the labeled form.
+    const rawOutput = last?.output.startsWith(labelPrefix) ? last.output.slice(labelPrefix.length) : last?.output ?? "";
+    const summary = (outcome.attention ? `needs attention: ${outcome.attention}` : rawOutput).slice(0, SUMMARY_CAP);
+    await setStatus(item.id, outcome.status === "ok" ? "done" : "failed", summary);
+    worst(outcome.status);
+    if (outcome.attention) attention.push(`${labelPrefix}${outcome.attention}`);
+  };
+
+  if (routine.todoDriven && deps.todos) {
+    const { claim, setStatus } = deps.todos;
+    if (todo) {
+      await runTodo(todo, setStatus);
+    } else {
+      let item = await claim(routine.name);
+      if (!item) {
+        // Scheduler already skips empty queues; this is the race backstop (and covers runNow).
+        const digest = `Sprout "${routine.name}" finished.\n\nNo pending todos.`;
+        return {
+          record: { id, startedAt, finishedAt: now().toISOString(), status: "ok", digest, steps: [] },
+          digest,
+          results: [],
+        };
       }
-      await deps.todos.setStatus(item.id, "running");
-      const scoped: StepResult[] = []; // prior-outputs chain is per-todo, never cross-todo
-      // Watch todos get their own scratch subdir (see DelegateStepRequest.todoId).
-      const outcome = await runSteps(
-        routine, deps, timeoutMs, scoped,
-        `\n\nQueued task:\n${item.text}`,
-        labelPrefix,
-        id,
-        { id: item.id, text: item.text, scratch: Boolean(routine.watch) },
-      );
-      soleLabelPrefix = labelPrefix;
-      results.push(...scoped);
-      const last = scoped[scoped.length - 1];
-      // Strip the label prefix for the setStatus summary — it's redundant there since the
-      // caller already knows which todo this is; `results`/the digest keep the labeled form.
-      const rawOutput = last?.output.startsWith(labelPrefix) ? last.output.slice(labelPrefix.length) : last?.output ?? "";
-      const summary = (outcome.attention ? `needs attention: ${outcome.attention}` : rawOutput).slice(0, SUMMARY_CAP);
-      await deps.todos.setStatus(item.id, outcome.status === "ok" ? "done" : "failed", summary);
-      worst(outcome.status);
-      if (outcome.attention) attention.push(`${labelPrefix}${outcome.attention}`);
+      for (; item; item = await claim(routine.name)) await runTodo(item, setStatus);
     }
   } else {
     const outcome = await runSteps(routine, deps, timeoutMs, results, "", "", id);

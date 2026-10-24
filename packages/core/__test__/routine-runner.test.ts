@@ -7,6 +7,9 @@ import type { ActionTool, ConvoMsg, ToolSpec } from "../src/converse.js";
 import type { Skill } from "../src/types.js";
 import type { StepAttempt, TodoItem, TodoStatus } from "../src/index.js";
 
+/** A claim() fake: hands out a copy of `items` front to back. */
+const claimFrom = (items: TodoItem[]) => { const q = [...items]; return async () => q.shift(); };
+
 const skill = (name: string, target: "chat" | "terminal" = "terminal"): Skill =>
   ({ name, description: `${name} desc`, body: `# ${name} instructions`, target });
 
@@ -217,10 +220,15 @@ describe("todo-driven routines", () => {
 
   function fakeTodos(items: TodoItem[]) {
     const statusLog: { id: string; status: TodoStatus; resultSummary?: string }[] = [];
+    const claimed = new Set<string>();
     return {
       statusLog,
       dep: {
-        listPending: async (r: string) => items.filter((t) => t.routine === r && t.status === "pending"),
+        claim: async (r: string) => {
+          const next = items.find((t) => t.routine === r && t.status === "pending" && !claimed.has(t.id));
+          if (next) { claimed.add(next.id); statusLog.push({ id: next.id, status: "running", resultSummary: undefined }); }
+          return next;
+        },
         setStatus: async (id: string, status: TodoStatus, resultSummary?: string) => {
           statusLog.push({ id, status, resultSummary });
         },
@@ -352,8 +360,9 @@ describe("todo-driven routines", () => {
     expect(before.todos.statusLog.filter((s) => s.status === "done").map((s) => s.id)).toEqual(["1", "2"]);
     // The owner then adds a delegate step: the member's todo fails without running anything.
     const after = await run({ ...chatOnly, steps: [...chatOnly.steps, { kind: "delegate", skill: "plan", instruction: "plan it" }] });
-    expect(after.todos.statusLog.find((s) => s.id === "1")).toMatchObject({ status: "failed", resultSummary: expect.stringContaining("refused") });
-    expect(after.todos.statusLog.some((s) => s.id === "1" && s.status === "running")).toBe(false);
+    // Claimed (running) first, then refused straight to failed.
+    expect(after.todos.statusLog.filter((s) => s.id === "1").map((s) => s.status)).toEqual(["running", "failed"]);
+    expect(after.todos.statusLog.find((s) => s.id === "1" && s.status === "failed")).toMatchObject({ resultSummary: expect.stringContaining("refused") });
     expect(after.todos.statusLog.find((s) => s.id === "2" && s.status !== "running")?.status).toBe("done");
     expect(after.instructions.filter((i) => i.includes("plan it")).every((i) => !i.includes("member task"))).toBe(true);
   });
@@ -521,7 +530,7 @@ describe("step attempts", () => {
           ? { output: long, cli: "claude", model: "sonnet", sessionId: "sess-1" }
           : "impl out",
         recordAttempt: (a) => attempts.push(a),
-        todos: { listPending: async () => pending, setStatus: async () => {} },
+        todos: { claim: claimFrom(pending), setStatus: async () => {} },
       }),
     );
     expect(res.record.id).toBe("run-1");

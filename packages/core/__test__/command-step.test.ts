@@ -6,6 +6,9 @@ import { runRoutine, type CommandStepRequest, type RoutineRunnerDeps } from "../
 import { describeRoutineError, type Routine, type RoutineStep } from "../src/routine-store.js";
 import type { CommandStepOutcome, StepAttempt, TodoItem } from "../src/index.js";
 
+/** A claim() fake: hands out a copy of `items` front to back. */
+const claimFrom = (items: TodoItem[]) => { const q = [...items]; return async () => q.shift(); };
+
 const routine = (steps: RoutineStep[], over: Partial<Routine> = {}): Routine =>
   ({ name: "r", enabled: true, cron: "0 6 * * *", steps, sinks: {}, ...over });
 
@@ -124,7 +127,7 @@ describe("command steps in a run", () => {
     const f = fixed({ exitCode: 0, output: "" });
     const todo: TodoItem = { id: "t1", routine: "r", text: "PROJ-1 add login", status: "pending", createdAt: "x" } as TodoItem;
     await runRoutine(routine([{ kind: "command", command: "./lint-ticket.sh" }], { todoDriven: true }), baseDeps(f.command, {
-      todos: { listPending: async () => [todo], setStatus: async () => {} },
+      todos: { claim: claimFrom([todo]), setStatus: async () => {} },
     }));
     expect(f.calls[0]?.env).toEqual({ BEAN_TODO_ID: "t1", BEAN_TODO_TEXT: "PROJ-1 add login" });
     expect(f.calls[0]?.todoId).toBeUndefined(); // not watch-fired: shared scratch dir, like a delegate

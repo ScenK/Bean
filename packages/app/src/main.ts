@@ -23,7 +23,7 @@ import {
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, claimOutbox, ackOutbox, runDelegate, killAllDelegates, killAllCommands,
   scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
-  addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
+  addTodo, claimTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   recoverInterruptedTodos, deleteTodosForRoutine, sweepDeadRuns,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
   availableModels, pinnedStepSelection,
@@ -703,6 +703,7 @@ app.whenReady().then(async () => {
       pruneAttempts: (r, keep) => pruneStepAttempts(dbFile(dir), r, keep),
       deliverDigest,
       hasPendingTodos: async (r) => (await listTodos(dbFile(dir), r)).some((t) => t.status === "pending"),
+      claimTodo: (r) => claimTodo(dbFile(dir), r),
       pollWatch: (w) => pollWatch(w, watchPoll),
       watchSeen: {
         isSeeded: (r, source) => isWatchSeeded(dbFile(dir), r, source),

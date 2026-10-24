@@ -7,7 +7,10 @@ Routines: cron-scheduled (or watch-triggered — see project-watch-triggers.md) 
 Core: `cron.ts` (own 5-field parser — no dep), `routine-store.ts`, `routine-runner.ts` (pure,
 DI'd; chat steps get act-now tools incl. `save_note`, NO propose_* — routine runs are
 pre-authorized by saving the routine), `outbox.ts`. Core: `routine-scheduler.ts` (30s tick,
-skip-if-running, missed-marking, **no catch-up** — deliberate) and `routine-host.ts`
+per-routine live-run count — a running cron sprout is skipped, a running watch still polls and may
+fill free maxParallel slots, a watch polls once right after each run; due sprouts start together;
+`appendRunRecord` keeps `lastRun` monotonic and attempt pruning waits for the last live sibling;
+missed-marking, **no catch-up** — deliberate) and `routine-host.ts`
 (`createRoutineHost` — the runner-deps/footer/digest-sink glue every host shares; the host
 injects only spawn adapters, recall set, status/notify callbacks). Chatops digests go through
 `~/.bean/outbox/*.json`, drained by the Teams/Discord bot servers at-least-once (claim renames
