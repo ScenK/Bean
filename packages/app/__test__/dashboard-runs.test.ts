@@ -271,5 +271,8 @@ describe("runFlowOverlay", () => {
     expect(runFlowOverlay({ steps: [r("a"), r("gone")] }, line)).toBe("drift");
     const repointed = [s("a", { next: "c" }), s("b"), s("c")];
     expect(runFlowOverlay({ steps: [r("a"), r("b"), r("c")] }, repointed)).toBe("drift");
+    // The last step's chosen label no longer exists.
+    const relabeled = [s("triage", { route: { paths: [{ when: "bug", goto: "end" }, { when: "chore", goto: "end" }] } })];
+    expect(runFlowOverlay({ steps: [r("triage", { chose: "spec" })] }, relabeled)).toBe("drift");
   });
 });

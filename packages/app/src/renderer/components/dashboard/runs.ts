@@ -124,8 +124,9 @@ export function runFlowOverlay(run: Pick<RunRecord, "steps">, steps: RoutineStep
       // A hop with no matching edge today: the sprout was re-pointed since this run.
       if (e < 0 || edges[e]!.to !== at[k + 1]) return "drift";
       lit.add(e);
-    } else if (r.ok && e >= 0 && typeof edges[e]!.to !== "number") {
-      lit.add(e); // ended at ● end or ■ stop
+    } else if (r.ok) {
+      if (e < 0) return "drift"; // e.g. the route label it chose is gone
+      if (typeof edges[e]!.to !== "number") lit.add(e); // ended at ● end or ■ stop
     }
   }
   return { counts, failed, edges: lit };
