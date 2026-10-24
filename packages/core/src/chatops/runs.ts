@@ -36,6 +36,8 @@ export interface RunRegistryOptions {
 }
 
 interface ActiveRun {
+  projectPath: string;
+  cli: DelegateRequest["cli"];
   /** undefined only while runDelegate() is still executing synchronously. */
   handle: DelegateHandle | undefined;
   timer: ReturnType<typeof setInterval>;
@@ -48,12 +50,15 @@ interface ActiveRun {
   sessionId?: string;
 }
 
-/** One active delegate run per project path; tail output throttled to one card
- * edit per interval (Teams rate-limits message edits). The in-memory `byProject` map is
- * this process's own guard; `reserveRun`/`releaseRun` (run-queue.ts) extend that same
- * single-run-per-project invariant across processes (desktop chat + the other bot). */
+/** Active delegate runs keyed by run id (what a card's Cancel carries), still one per project
+ * path; tail output throttled to one card edit per interval (Teams rate-limits message edits).
+ * The in-memory map is this process's own guard; `reserveRun`/`releaseRun` (run-queue.ts) extend
+ * that same single-run-per-project invariant across processes (desktop chat + the other bot). */
 export class RunRegistry {
-  private byProject = new Map<string, ActiveRun>();
+  private byId = new Map<string, ActiveRun>();
+
+  /** Prefixed to a run's result when it started fresh because its thread was busy. */
+  static readonly BUSY_THREAD_NOTICE = "Started a fresh session — this thread's other run is still going.\n\n";
 
   constructor(
     private runDelegate: RunDelegateFn,
@@ -61,7 +66,7 @@ export class RunRegistry {
   ) {}
 
   isRunning(projectPath: string): boolean {
-    return this.byProject.has(projectPath);
+    return [...this.byId.values()].some((r) => r.projectPath === projectPath);
   }
 
   private newId(): string {
@@ -70,22 +75,31 @@ export class RunRegistry {
 
   // A run that fails to spawn settles synchronously: onError fires (and free() runs)
   // before start() ever reaches its map insert — `run.released` guards that hole.
-  async start(req: DelegateRequest, callerEvents: RunEvents, meta: RunMeta): Promise<boolean> {
-    if (this.byProject.has(req.projectPath)) return false;
+  /** Resolves to the new run's id (for cancel()), or undefined when the project is busy. */
+  async start(req: DelegateRequest, callerEvents: RunEvents, meta: RunMeta): Promise<string | undefined> {
+    if (this.isRunning(req.projectPath)) return undefined;
     // opencode resuming a session from another folder emits nothing and never exits (claude
     // rejects it, codex adopts the new cwd), so a thread follow-up on another project starts fresh.
     if (req.cli === "opencode" && req.resume && delegateRunProject(dbFile(this.opts.dir), req.resume) !== req.projectPath) {
       const { resume: _stale, ...fresh } = req;
       req = fresh;
     }
+    // Two live processes must never drive one CLI session: while this thread already has a run on
+    // this CLI, the new one starts fresh (the thread pointer keeps whichever completes last).
+    let notice = "";
+    if (req.resume && [...this.byId.values()].some((r) => r.cli === req.cli && r.meta.conversationId === meta.conversationId)) {
+      const { resume: _busy, ...fresh } = req;
+      req = fresh;
+      notice = RunRegistry.BUSY_THREAD_NOTICE;
+    }
     const reservation = reserveRun(this.opts.dir, req.projectPath, process.pid, () => this.newId());
-    if (!reservation) return false;
+    if (!reservation) return undefined;
     // Lost an in-process race — release the now-redundant reservation and defer to whichever
-    // call already won the in-memory map. (byProject.has was already checked above; this
-    // second check exists for symmetry if start() is ever made to await something before here.)
-    if (this.byProject.has(req.projectPath)) {
+    // call already won the in-memory map. (isRunning was already checked above; this second
+    // check exists for symmetry if start() is ever made to await something before here.)
+    if (this.isRunning(req.projectPath)) {
       releaseRun(this.opts.dir, req.projectPath);
-      return false;
+      return undefined;
     }
     const act = this.opts.onActivity;
     const runId = this.newId();
@@ -109,18 +123,16 @@ export class RunRegistry {
       latest = undefined;
       events.onTail(line);
     }, throttleMs);
-    const run: ActiveRun = { handle: undefined, timer, events, released: false, meta };
+    const run: ActiveRun = { projectPath: req.projectPath, cli: req.cli, handle: undefined, timer, events, released: false, meta };
     // Release this run only: mark it stale, stop its timer, release its reservation, and remove
-    // it from the registry only if it is still the run registered for this path. Only called
+    // it from the registry. Only called
     // once the delegate's own close event has actually fired (onDone/onError) — i.e. once the
     // child process is *confirmed* dead, not just asked to stop (see cancel()/interruptAll()
     // below, which intentionally do NOT go through this same-tick release).
     const free = (): void => {
       run.released = true;
       clearInterval(timer);
-      if (this.byProject.get(req.projectPath) === run) {
-        this.byProject.delete(req.projectPath);
-      }
+      this.byId.delete(runId);
       releaseRun(this.opts.dir, req.projectPath);
     };
     run.handle = this.runDelegate(req, {
@@ -130,7 +142,7 @@ export class RunRegistry {
       onDone: (result) => {
         if (run.released) return;
         free();
-        events.onDone(result, run.sessionId);
+        events.onDone(notice + result, run.sessionId);
       },
       onError: (err) => {
         if (run.released) return;
@@ -157,23 +169,23 @@ export class RunRegistry {
     if (!req.resume && !run.released && run.handle.pid !== undefined) {
       updateReservationPid(this.opts.dir, req.projectPath, run.handle.pid);
     }
-    if (!run.released) this.byProject.set(req.projectPath, run);
-    return true;
+    if (!run.released) this.byId.set(runId, run);
+    return runId;
   }
 
   /** `conversationId` set = cancel only if the run was started from that conversation. */
-  cancel(projectPath: string, conversationId?: string): boolean {
-    const run = this.byProject.get(projectPath);
+  cancel(runId: string, conversationId?: string): boolean {
+    const run = this.byId.get(runId);
     if (!run || (conversationId !== undefined && run.meta.conversationId !== conversationId)) return false;
     run.released = true;
     clearInterval(run.timer);
-    this.byProject.delete(projectPath);
+    this.byId.delete(runId);
     // Release only once the handle confirms the child has actually stopped (onCancelled fires
     // from the delegate's own close event) — releasing eagerly here would let a new run start
     // on this project while the old child (sent SIGTERM, possibly still shutting down or
     // ignoring it) is still alive.
     run.handle?.cancel(() => {
-      releaseRun(this.opts.dir, projectPath);
+      releaseRun(this.opts.dir, run.projectPath);
       run.events.onCancelled(run.sessionId);
     });
     return true;
@@ -181,11 +193,11 @@ export class RunRegistry {
 
   /** `conversationId` set = only that conversation's runs. */
   cancelAll(conversationId?: string): number {
-    const paths = [...this.byProject.entries()]
+    const ids = [...this.byId.entries()]
       .filter(([, r]) => conversationId === undefined || r.meta.conversationId === conversationId)
-      .map(([p]) => p);
-    for (const p of paths) this.cancel(p);
-    return paths.length;
+      .map(([id]) => id);
+    for (const id of ids) this.cancel(id);
+    return ids.length;
   }
 
   /** Called only when this process is dying (bot subprocess SIGTERM). Unlike cancel(), doesn't
@@ -205,20 +217,19 @@ export class RunRegistry {
    * async work, so this must be guaranteed to have written everything to disk by the time it
    * returns, not just "eventually". */
   interruptAll(): number {
-    const paths = [...this.byProject.keys()];
-    for (const p of paths) {
-      const run = this.byProject.get(p)!;
+    const runs = [...this.byId.values()];
+    this.byId.clear();
+    for (const run of runs) {
       run.released = true;
       clearInterval(run.timer);
-      this.byProject.delete(p);
       run.handle?.cancel(() => {});
-      const { full, display } = interruptedRunNotice(p, run.meta.instruction);
+      const { full, display } = interruptedRunNotice(run.projectPath, run.meta.instruction);
       void enqueueOutbox(
         outboxDir(this.opts.dir),
         { transport: this.opts.botKind, channel: run.meta.conversationId, body: full, displayBody: display },
         () => this.newId(),
       );
     }
-    return paths.length;
+    return runs.length;
   }
 }

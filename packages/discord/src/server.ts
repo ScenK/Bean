@@ -627,7 +627,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       await bot.onCardAction(
         {
           conversationId: interaction.channelId, fromId: interaction.user.id, scopeId: scopeOf(interaction.channel),
-          fromName: interaction.user.displayName, value: { beanAction: "cancel-run", projectPath: payload },
+          fromName: interaction.user.displayName, value: { beanAction: "cancel-run", runId: payload },
         },
         effectsFor(interaction.channel),
       );
