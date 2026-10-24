@@ -77,7 +77,7 @@ export function stepEdgeProblems(steps: RoutineStep[]): (string | null)[] {
  * `visit` sees each step reached, the step it came from, and whether a `next` led there. Render-only. */
 function walkRoutePaths(
   steps: RoutineStep[],
-  visit: (path: { route: number; label: string; entry: number; entries: Map<number, string> }, cur: number, from: number, viaNext: boolean) => void,
+  visit: (path: { key: string; label: string; entry: number; entries: Map<number, string> }, cur: number, from: number, viaNext: boolean) => void,
   ends?: (cur: number) => void,
 ): void {
   const ids = new Map<string, number>();
@@ -85,12 +85,14 @@ function walkRoutePaths(
   steps.forEach((s, r) => {
     if (!s.route || !Array.isArray(s.route.paths)) return;
     const targets = [...s.route.paths.map((p) => [p.when || "…", p.goto] as const), ...(s.route.otherwise ? [["otherwise", s.route.otherwise] as const] : [])]
-      .flatMap(([label, goto]) => { const entry = ids.get(goto); return entry !== undefined && entry > r ? [{ label, entry }] : []; });
+      // "end" is the sentinel even if a step happens to have that id; the key tells a path labeled
+      // "otherwise" apart from the fallback.
+      .flatMap(([label, goto], k) => { const entry = goto === "end" ? undefined : ids.get(goto); return entry !== undefined && entry > r ? [{ key: `${r}:${k}`, label, entry }] : []; });
     // Entry step → the first path that starts there.
     const entries = new Map<number, string>();
     for (const t of targets) if (!entries.has(t.entry)) entries.set(t.entry, t.label);
-    for (const { label, entry } of targets) {
-      const path = { route: r, label, entry, entries };
+    for (const { key, label, entry } of targets) {
+      const path = { key, label, entry, entries };
       let cur = entry, from = r, viaNext = true;
       // Forward-only edges, so every hop moves down: the walk ends within steps.length hops.
       while (cur > from) {
@@ -121,10 +123,10 @@ export function stepEdgeWarnings(steps: RoutineStep[]): (string | null)[] {
 /** Render-only captions per step: `on path · <label>`, `paths rejoin here` where paths arriving
  * from different steps meet, plus `· ends the run` on a path's last step. */
 export function stepPathCaptions(steps: RoutineStep[]): (string | null)[] {
-  // Per step: path key (route index + label) → [label, the step it arrived from].
+  // Per step: path key → [label, the step it arrived from].
   const reached = steps.map(() => new Map<string, [string, number]>());
   const ending = new Set<number>();
-  walkRoutePaths(steps, (path, cur, from) => { reached[cur]!.set(`${path.route}:${path.label}`, [path.label, from]); }, (cur) => ending.add(cur));
+  walkRoutePaths(steps, (path, cur, from) => { reached[cur]!.set(path.key, [path.label, from]); }, (cur) => ending.add(cur));
   return reached.map((paths, i) => {
     const arrivals = [...paths.values()];
     const caption = arrivals.length === 1 ? `on path · ${arrivals[0]![0]}`

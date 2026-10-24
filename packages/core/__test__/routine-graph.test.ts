@@ -64,6 +64,14 @@ describe("stepPathCaptions", () => {
     expect(stepPathCaptions(shared)).toEqual([null, "on path · bug", "on path · spec", "paths rejoin here", null]);
   });
 
+  it("keeps a path labeled otherwise apart from the fallback, and treats goto end as the sentinel", () => {
+    const steps = [s("d", { route: { paths: [{ when: "otherwise", goto: "a" }, { when: "b", goto: "end" }], otherwise: "o" } }), s("a", { next: "j" }), s("o"), s("j")];
+    expect(stepPathCaptions(steps)[3]).toBe("paths rejoin here · ends the run");
+    const endId = [s("d", route("end", "b", "b")), s("b", { next: "end" }), s("end")];
+    expect(stepPathCaptions(endId)[2]).toBeNull();
+    expect(stepEdgeWarnings(endId)).toEqual([null, null, null]);
+  });
+
   it("is all null without a route", () => {
     expect(stepPathCaptions([s("a"), s("b", { next: "end" })])).toEqual([null, null]);
   });
