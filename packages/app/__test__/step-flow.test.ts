@@ -75,7 +75,8 @@ describe("StepFlow", () => {
     expect(svg.getAttribute("aria-label")).toContain("5 on fail loops back to step 1");
     // The drawn text, without the <title> that keeps a long label's full text.
     const texts = [...root.querySelectorAll("text")].map((t) => [...t.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent).join(""));
-    expect(texts).toEqual(expect.arrayContaining(["1 · chat", "bug", "otherwise", "fail · ≤2×", "■ stop", "● end"]));
+    expect(texts).toEqual(expect.arrayContaining(["bug", "otherwise", "fail · ≤2×", "■ stop", "● end"]));
+    expect(root.querySelector(".bean-flow-title")!.textContent).toBe("1 · chat");
     expect([...root.querySelectorAll("text > title")].map((t) => t.textContent)).toContain("otherwise");
   });
 
