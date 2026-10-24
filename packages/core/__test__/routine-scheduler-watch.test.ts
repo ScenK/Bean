@@ -122,6 +122,10 @@ describe("watch triggers", () => {
     expect(t.deps.runRoutine).toHaveBeenCalledOnce();
     expect(t.deps.deliverDigest).not.toHaveBeenCalled();
     expect(t.states().prs?.history ?? []).toHaveLength(0);
+    // The todo is still pending, so the next tick retries it — no Run now needed.
+    t.advance(1);
+    await t.sched.tick();
+    expect(t.deps.runRoutine).toHaveBeenCalledTimes(2);
   });
 
   it("stores pollError from the first failure, alarms once after 3 in a row, resets on success", async () => {

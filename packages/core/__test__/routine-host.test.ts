@@ -11,7 +11,7 @@ import { dbFile, outboxDir } from "../src/config.js";
 import { claimOutbox } from "../src/outbox.js";
 import { loadNotes } from "../src/note-store.js";
 import { reserveRun } from "../src/run-queue.js";
-import { addTodo } from "../src/todo-store.js";
+import { addTodo, listTodos } from "../src/todo-store.js";
 import { listStepAttempts } from "../src/step-attempts.js";
 import { saveSkillProposals } from "../src/retro.js";
 
@@ -85,6 +85,18 @@ describe("createRoutineHost", () => {
     const res = await busy.runOneRoutine(routine([{ kind: "delegate", instruction: "review" }], { todoDriven: true }));
     expect(res.deferred).toBe(true);
     expect(busy.status.at(-1)).not.toHaveProperty("startedAt");
+  });
+
+  it("a deferred run (project busy) drops its bubble instead of finishing with a fake Done", async () => {
+    const h = host({ delegateStep: async () => { throw new RunBusyError("proj is busy with another run"); } });
+    const watch = routine([{ kind: "delegate", project: "/work/proj", instruction: "review" }],
+      { cron: undefined, watch: { kind: "command", command: "c" }, todoDriven: true });
+    await addTodo(dbFile(dir), "r", "PR 1");
+    const res = await h.runOneRoutine(watch);
+    expect(res.deferred).toBe(true);
+    expect(h.status.at(-1)).toEqual({ type: "drop", id: "routine:r" });
+    expect(h.status.some((e) => e.type === "finish")).toBe(false);
+    expect((await listTodos(dbFile(dir), "r")).map((t) => t.status)).toEqual(["pending"]);
   });
 
   it("gives chat steps the host tools plus save_note", async () => {
