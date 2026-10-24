@@ -147,6 +147,16 @@ describe("gated runs", () => {
     expect(executedPath({ steps })).toBe("test ✗ → implement r2 ✓ → test r2 ✗");
   });
 
+  test("executedPath marks a route's pick, per run, including a run that ended at the decider", () => {
+    const triage = (chose: string) => ({ kind: "chat" as const, id: "triage", round: 1, verdict: chose, chose, ok: true, summary: "" });
+    const step = (id: string) => ({ kind: "delegate" as const, id, round: 1, ok: true, summary: "" });
+    expect(executedPath({ steps: [triage("bug"), step("fix"), step("report")] })).toBe("triage ✓ ⑂bug → fix ✓ → report ✓");
+    expect(executedPath({ steps: [triage("feature"), step("build"), step("report")] })).toBe("triage ✓ ⑂feature → build ✓ → report ✓");
+    expect(executedPath({ steps: [triage("spam")] })).toBe("triage ✓ ⑂spam");
+    // A free-text VERDICT on a non-route step is not a decision.
+    expect(executedPath({ steps: [{ kind: "chat" as const, verdict: "LGTM", ok: true, summary: "" }] })).toBe("chat ✓");
+  });
+
   test("attentionOf names the gate that stopped the run and its verdict; ok runs have none", () => {
     expect(attentionOf({ status: "needs-attention", steps })).toEqual({ at: "test r2", verdict: "FAIL", summary: "still failing" });
     expect(attentionOf({ status: "ok", steps })).toBeUndefined();

@@ -522,7 +522,8 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     digest,
     steps: results.map((r) => ({
       kind: r.kind, ...(r.stepId ? { id: r.stepId } : {}), ...(r.cli ? { cli: r.cli } : {}),
-      ...(r.round ? { round: r.round } : {}), ...(r.verdict ? { verdict: r.verdict } : {}), ok: r.ok, summary: r.output.slice(0, SUMMARY_CAP),
+      ...(r.round ? { round: r.round } : {}), ...(r.verdict ? { verdict: r.verdict } : {}),
+      ...(r.chose ? { chose: r.chose } : {}), ok: r.ok, summary: r.output.slice(0, SUMMARY_CAP),
     })),
   };
   return { record, digest, results };

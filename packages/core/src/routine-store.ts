@@ -96,7 +96,9 @@ export interface RunRecord {
    * rounds, or the run's last gate decision was FAIL. */
   status: RunStatus;
   digest: string;
-  steps: { kind: StepKind; id?: string; cli?: CliName; round?: number; verdict?: string; ok: boolean; summary: string }[];
+  /** `chose`: a route step's picked label — set only on route steps, so the Dashboard can mark the
+   * decision without mistaking a free-text `VERDICT:` line for one. */
+  steps: { kind: StepKind; id?: string; cli?: CliName; round?: number; verdict?: string; chose?: string; ok: boolean; summary: string }[];
 }
 
 export interface RoutineState {
