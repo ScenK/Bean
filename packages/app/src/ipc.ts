@@ -659,11 +659,14 @@ export function buildChatopsHandlers(deps: ChatopsHandlerDeps) {
 
 export interface RoutineStateView {
   lastRun?: string; missed?: boolean; history: RunRecord[]; running: boolean;
+  /** Live runs (taken slots); `running` also covers a tick still deciding. */
+  runningCount: number;
+  /** Todo-driven routines only. */
+  queue?: { pending: number; running: number };
   /** Watch routines only. */
   lastPoll?: string; pollError?: string; pollFailures?: number;
   /** false = never enabled since its source was set — the list shows "needs review". */
   seeded?: boolean;
-  queue?: { pending: number; running: number };
 }
 
 /** One executed step of a run, for the Dashboard's full-output view. `resume` is Bean's own
@@ -680,7 +683,6 @@ export interface BriefDraft { brief: RoutineBrief; tools: string[] }
 /** Watch + builder verbs. Optional so tests (and a boot without them) can omit the lot. */
 export interface RoutineWatchDeps {
   isSeeded: (routine: Routine) => boolean;
-  queueCounts: (name: string) => Promise<{ pending: number; running: number }>;
   pollFailures: (name: string) => number;
   checkNow: (name: string) => Promise<WatchCheckResult>;
   previewWatch: (watch: RoutineWatch) => Promise<WatchItem[]>;
@@ -701,6 +703,8 @@ export interface RoutineHandlerDeps {
   deleteRoutine: (name: string) => Promise<void>;
   loadStates: () => Promise<Record<string, RoutineState>>;
   isRunning: (name: string) => boolean;
+  runningCount: (name: string) => number;
+  queueCounts?: (name: string) => Promise<{ pending: number; running: number }>;
   runNow: (name: string) => Promise<{ started: boolean; reason?: string }>;
   onRoutineDeleted?: (name: string) => Promise<void>;
   /** A run's step attempts (bean.db), oldest first. */
@@ -727,12 +731,15 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
       const out: Record<string, RoutineStateView> = {};
       for (const r of routines) {
         const s = states[r.name];
-        out[r.name] = { lastRun: s?.lastRun, missed: s?.missed, history: s?.history ?? [], running: deps.isRunning(r.name) };
+        out[r.name] = {
+          lastRun: s?.lastRun, missed: s?.missed, history: s?.history ?? [],
+          running: deps.isRunning(r.name), runningCount: deps.runningCount(r.name),
+          ...(r.todoDriven && deps.queueCounts ? { queue: await deps.queueCounts(r.name) } : {}),
+        };
         if (r.watch && deps.watch) {
           Object.assign(out[r.name]!, {
             lastPoll: s?.lastPoll, pollError: s?.pollError, pollFailures: deps.watch.pollFailures(r.name),
             seeded: deps.watch.isSeeded(r),
-            ...(r.todoDriven ? { queue: await deps.watch.queueCounts(r.name) } : {}),
           });
         }
       }

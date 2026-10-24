@@ -43,12 +43,15 @@ obsolete). Every step's run is recorded for crash cleanup only (project-durable-
 todos still get their own scratch subdir (`scratch: Boolean(routine.watch)` → `todoId`).
 
 maxParallel (#386): `Routine.maxParallel` (todo-driven only, integer 1–4, ignored on plain sprouts so the
-panel's type toggle still saves; JSON-only, no panel control). Every drain takes todos via `claimTodo`
+panel's type toggle still saves; the panel's "Run up to N at once" select sets it, and every switch
+away from todo-driven drops it). Every drain takes todos via `claimTodo`
 (one atomic `UPDATE … RETURNING` pending→running) — never a `listPending` snapshot + unconditional
 setStatus, so two drains can't run one todo. N=1 = today's single run (one runRoutine call that claims
 until empty, one digest; a todo queued mid-drain joins it). N>1 = the scheduler's `fill` starts
 `maxParallel − live` workers; each claims a todo and runs it as its own `runOneRoutine(routine, todo)`
 (bubble `routine:<name>:<todoId>`, own record + digest, own scratch subdir), then claims again. A lost
 claim does nothing. The host loads skills inside its `try` and fails a claimed todo whose run throws, so
-no todo is stranded `running` until restart. The panel's Run now still disables while any run is live
-(the scheduler would accept it below full).
+no todo is stranded `running` until restart. The panel reads the scheduler's live count (`RoutineStateView.runningCount`; `running` also covers a
+tick still deciding) against the *saved* definition's slots: the Queue caption shows "2/3 running", and
+Run now stays enabled below full (one-at-a-time sprouts still disable while anything runs). `queue`
+counts are filled for every todo-driven sprout, cron included (`RoutineHandlerDeps.queueCounts`).

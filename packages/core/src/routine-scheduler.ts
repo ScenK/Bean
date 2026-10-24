@@ -387,6 +387,8 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     /** Resolves once every queued .state.json write has landed (shutdown: stop(), then await this). */
     settle: (): Promise<void> => stateChain.then(() => {}),
     isRunning: (name: string): boolean => count(name) > 0 || checking.has(name),
+    /** Live runs of the routine (its taken slots) — the panel's "2/3 running". */
+    runningCount: count,
     pollFailures: (name: string): number => failures.get(name) ?? 0,
     /** Refuses only when every slot is taken; otherwise fills the free ones. */
     async runNow(name: string): Promise<{ started: boolean; reason?: string }> {
