@@ -56,6 +56,8 @@ interface ActiveRun {
  * that same single-run-per-project invariant across processes (desktop chat + the other bot). */
 export class RunRegistry {
   private byId = new Map<string, ActiveRun>();
+  /** Cancelled runs whose child hasn't confirmed it stopped — still driving their session. */
+  private stopping = new Set<ActiveRun>();
 
   /** Prefixed to a run's result when it started fresh because its thread was busy. */
   static readonly BUSY_THREAD_NOTICE = "Started a fresh session — this thread's other run is still going.\n\n";
@@ -87,7 +89,7 @@ export class RunRegistry {
     // Two live processes must never drive one CLI session: while this thread already has a run on
     // this CLI, the new one starts fresh (the thread pointer keeps whichever completes last).
     let notice = "";
-    if (req.resume && [...this.byId.values()].some((r) => r.cli === req.cli && r.meta.conversationId === meta.conversationId)) {
+    if (req.resume && [...this.byId.values(), ...this.stopping].some((r) => r.cli === req.cli && r.meta.conversationId === meta.conversationId)) {
       const { resume: _busy, ...fresh } = req;
       req = fresh;
       notice = RunRegistry.BUSY_THREAD_NOTICE;
@@ -180,11 +182,13 @@ export class RunRegistry {
     run.released = true;
     clearInterval(run.timer);
     this.byId.delete(runId);
+    this.stopping.add(run);
     // Release only once the handle confirms the child has actually stopped (onCancelled fires
     // from the delegate's own close event) — releasing eagerly here would let a new run start
     // on this project while the old child (sent SIGTERM, possibly still shutting down or
     // ignoring it) is still alive.
     run.handle?.cancel(() => {
+      this.stopping.delete(run);
       releaseRun(this.opts.dir, run.projectPath);
       run.events.onCancelled(run.sessionId);
     });

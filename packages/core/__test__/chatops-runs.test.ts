@@ -295,3 +295,18 @@ test("a resume in a thread already running that CLI starts fresh and says so", a
   expect(calls[2]?.req.resume).toBe("s-2");
   expect(calls[3]?.req.resume).toBe("s-3");
 });
+
+test("a cancelled run still keeps its thread's CLI busy until its child confirms it stopped", async () => {
+  const calls: DelegateRequest[] = [];
+  let confirm: (() => void) | undefined;
+  const reg = new RunRegistry((r) => { calls.push(r); return { cancel: (done?: () => void) => { confirm = done; } }; }, { dir: tmp(), botKind: "discord" });
+  const id = (await reg.start({ ...req, resume: "s-1" }, events(), meta))!;
+  reg.cancel(id);
+  const q = (await reg.start({ ...req, projectPath: "/q", resume: "s-1" }, events(), meta))!;
+  expect(calls[1]?.resume).toBeUndefined();
+  confirm?.(); // /p's child is gone…
+  reg.cancel(q);
+  confirm?.(); // …and so is /q's: the thread is free again
+  await reg.start({ ...req, projectPath: "/r", resume: "s-1" }, events(), meta);
+  expect(calls[2]?.resume).toBe("s-1");
+});
