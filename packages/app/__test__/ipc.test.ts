@@ -729,10 +729,25 @@ test("routine handlers merge in-memory running state into the state view", async
     deleteRoutine: vi.fn(async () => {}),
     loadStates: async () => ({ r: { lastRun: "2026-07-12T06:30:00.000Z", history: [] } }),
     isRunning: (name) => name === "r",
+    runningCount: () => 1,
     runNow: async () => ({ started: true }),
   });
   const state = await h.state();
-  expect(state.r).toMatchObject({ lastRun: "2026-07-12T06:30:00.000Z", running: true });
+  expect(state.r).toMatchObject({ lastRun: "2026-07-12T06:30:00.000Z", running: true, runningCount: 1 });
+  expect(state.r?.queue).toBeUndefined(); // not todo-driven
+});
+
+test("routine state fills the queue for every todo-driven sprout, cron included", async () => {
+  const queueCounts = vi.fn(async () => ({ pending: 2, running: 3 }));
+  const h = buildRoutineHandlers({
+    loadRoutines: async () => [{ ...routine, todoDriven: true, maxParallel: 3 }],
+    saveRoutine: vi.fn(async () => {}), deleteRoutine: vi.fn(async () => {}),
+    loadStates: async () => ({}), isRunning: () => true, runningCount: () => 3, queueCounts,
+    runNow: async () => ({ started: true }),
+  });
+  const state = await h.state();
+  expect(state.r).toMatchObject({ running: true, runningCount: 3, queue: { pending: 2, running: 3 } });
+  expect(queueCounts).toHaveBeenCalledWith("r");
 });
 
 test("routine handlers save delegates (validation is core saveRoutine's job); delete and runNow pass through", async () => {
@@ -740,7 +755,7 @@ test("routine handlers save delegates (validation is core saveRoutine's job); de
   const runNow = vi.fn(async () => ({ started: true }) as const);
   const h = buildRoutineHandlers({
     loadRoutines: async () => [], saveRoutine, deleteRoutine: vi.fn(async () => {}),
-    loadStates: async () => ({}), isRunning: () => false, runNow,
+    loadStates: async () => ({}), isRunning: () => false, runningCount: () => 0, runNow,
   });
   await h.save(routine);
   expect(saveRoutine).toHaveBeenCalledWith(routine);
@@ -760,6 +775,7 @@ it("buildRoutineHandlers.remove cascades to onRoutineDeleted", async () => {
     deleteRoutine: async () => {},
     loadStates: async () => ({}),
     isRunning: () => false,
+    runningCount: () => 0,
     runNow: async () => ({ started: true }),
     onRoutineDeleted: async (name) => { deleted.push(name); },
   });

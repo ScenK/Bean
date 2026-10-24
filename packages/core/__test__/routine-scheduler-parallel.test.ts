@@ -73,6 +73,7 @@ describe("maxParallel workers", () => {
     const tick = t.sched.tick();
     await vi.waitFor(() => expect(runs.openIds()).toHaveLength(3));
     expect(t.sched.isRunning("q")).toBe(true);
+    expect(t.sched.runningCount("q")).toBe(3);
     await drain(runs, tick);
     expect(runs.started.sort()).toEqual(["1", "2", "3", "4", "5"]);
     expect(runs.peak()).toBe(3);
