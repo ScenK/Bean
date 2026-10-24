@@ -178,6 +178,8 @@ describe("parseBrief keeps routes", () => {
       { paths: [{ when: "bug", goto: "fix" }, { when: "q", goto: "nowhere" }] }, // missing target
       { paths: [{ when: "bug", goto: "fix" }, { when: "Bug!", goto: "end" }] }, // bad label
       { paths: [{ when: "bug", goto: "fix" }, { when: "q" }] }, // shape: path without goto
+      { paths: [{ when: "bug", goto: "fix" }, { when: "q", goto: "end" }, { when: "x" }] }, // one malformed of three
+      { paths: [{ when: "bug", goto: "fix" }, { when: "q", goto: "end" }], otherwise: 3 },
       { paths: "bug" },
     ];
     for (const r of bad) {

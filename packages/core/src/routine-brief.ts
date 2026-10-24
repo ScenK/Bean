@@ -116,11 +116,13 @@ function cleanEdges(s: Record<string, unknown>): Pick<RoutineStep, "gate" | "nex
   const r = (typeof s.route === "object" && s.route !== null ? s.route : {}) as { paths?: unknown; otherwise?: unknown };
   const route = Array.isArray(r.paths) ? {
     route: {
-      paths: r.paths.flatMap((p) => {
+      // Every path is kept, malformed ones too, so validation drops the route whole rather than
+      // sending a lost case down `otherwise`.
+      paths: r.paths.map((p) => {
         const { when, goto } = (typeof p === "object" && p !== null ? p : {}) as { when?: unknown; goto?: unknown };
-        return str(when) && str(goto) ? [{ when, goto }] : [];
+        return { when, goto } as { when: string; goto: string };
       }),
-      ...(str(r.otherwise) ? { otherwise: r.otherwise } : {}),
+      ...(r.otherwise !== undefined ? { otherwise: r.otherwise as string } : {}),
     },
   } : {};
   const edges = { ...route, ...(str(s.next) && (s.next === "end" || STEP_ID_RE.test(s.next)) ? { next: s.next } : {}) };
