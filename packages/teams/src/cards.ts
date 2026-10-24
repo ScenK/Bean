@@ -72,7 +72,7 @@ export function runningCard(input: RunningCardInput): object {
       ...(input.tail ? [{ type: "TextBlock", text: input.tail, wrap: true, fontType: "monospace" }] : []),
     ],
     actions: [
-      { type: "Action.Submit", title: "Cancel run", data: { beanAction: "cancel-run", projectPath: input.projectPath } },
+      { type: "Action.Submit", title: "Cancel run", data: { beanAction: "cancel-run", runId: input.runId } },
     ],
   };
 }

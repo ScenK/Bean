@@ -949,7 +949,7 @@ test("a failed run's finished card carries the resume command; an unregistered p
   expect(JSON.stringify(effects.updates.at(-1)?.card)).not.toContain("/p/bean");
 });
 
-test("cancel-run on an idle project posts a message and does nothing else", async () => {
+test("cancel-run from a card without a runId (or a finished run's) says the run is gone", async () => {
   const { deps } = makeDeps();
   const bot = buildTeamsBot(deps);
   const effects = fx();
@@ -957,7 +957,52 @@ test("cancel-run on an idle project posts a message and does nothing else", asyn
     { conversationId: "c1", fromName: "a", value: { beanAction: "cancel-run", projectPath: "/p/bean" } },
     effects,
   );
-  expect(effects.posted).toContain("Nothing is running in that project.");
+  await bot.onCardAction({ conversationId: "c1", fromName: "a", value: { beanAction: "cancel-run", runId: "gone" } }, effects);
+  expect(effects.posted).toEqual(["That run is no longer running.", "That run is no longer running."]);
+});
+
+test("the running card's Cancel carries the run id, and a tap cancels that run", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+  const effects = fx();
+  const id = await proposeThenGetId(deps, effects);
+  const bot = buildTeamsBot(deps);
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+  expect(delegateCalls).toHaveLength(1);
+  const runId = (effects.updates.at(-1)?.card as { runId?: string }).runId;
+  expect(runId).toBeTruthy();
+  await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "cancel-run", runId } }, effects);
+  expect(deps.runs.isRunning("/p/bean")).toBe(false);
+  await vi.waitFor(() => expect(effects.posted).toContain("Run cancelled."));
+});
+
+test("a second same-thread, same-CLI run starts fresh with a notice; the thread keeps the last completion", async () => {
+  const result: ConverseResult = { ...delegateResult, proposedDelegate: { ...delegateResult.proposedDelegate! } };
+  const { deps, delegateCalls } = makeDeps({
+    converseResult: result,
+    loadProjects: async () => [{ name: "bean", path: "/p/bean" }, { name: "other", path: "/p/other" }],
+  });
+  const bot = buildTeamsBot(deps);
+  deps.conversations.setThreadSession("c1", "claude", "sess-0");
+  const confirm = async (): Promise<ReturnType<typeof fx>> => {
+    const effects = fx();
+    const id = await proposeThenGetId(deps, effects);
+    await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
+    return effects;
+  };
+  await confirm();
+  expect(delegateCalls[0]?.req.resume).toBe("sess-0");
+  delegateCalls[0]?.cb.onSessionStart?.(1, "sess-0");
+  result.proposedDelegate!.projectPath = "/p/other";
+  const second = await confirm();
+  expect(delegateCalls[1]?.req.projectPath).toBe("/p/other");
+  expect(delegateCalls[1]?.req.resume).toBeUndefined();
+  delegateCalls[1]?.cb.onSessionStart?.(2, "sess-new");
+  // Reversed completions: the later run finishes first; the pointer ends on whichever finished last.
+  delegateCalls[1]?.cb.onDone("second done");
+  await vi.waitFor(() => expect(second.posted).toContain("Started a fresh session — this thread's other run is still going.\n\nsecond done"));
+  expect(deps.conversations.threadSession("c1", "claude")).toBe("sess-new");
+  delegateCalls[0]?.cb.onDone("first done");
+  await vi.waitFor(() => expect(deps.conversations.threadSession("c1", "claude")).toBe("sess-0"));
 });
 
 test("loader throwing is caught and reported via reply", async () => {
@@ -1777,7 +1822,7 @@ test("a member can't tap a delegate or live card; the forged tap is refused befo
   const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(effects.cards[0]))![1]!;
   const tap = { conversationId: "c1", scopeId: "s1", fromId: "mia", fromName: "Mia" };
   await bot.onCardAction({ ...tap, value: { beanAction: "confirm", proposalId: id, cli: "claude" } }, effects);
-  await bot.onCardAction({ ...tap, value: { beanAction: "cancel-run", projectPath: "/p/bean" } }, effects);
+  await bot.onCardAction({ ...tap, value: { beanAction: "cancel-run", runId: "r" } }, effects);
   await bot.onCardAction({ ...tap, value: { beanAction: "start-live", proposalId: "live-1" } }, effects);
   expect(delegateCalls).toHaveLength(0);
   expect(effects.posted).toContain("Sorry, I can't confirm this for you. Sprouts and coding tasks are set up by Scen.");
@@ -1861,7 +1906,9 @@ test("an admin can't cancel another conversation's run, or every run; the owner 
   const id = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(effects.cards[0]))![1]!;
   await bot.onCardAction({ conversationId: "c1", scopeId: "s1", fromId: "u1", fromName: "Scen", value: { beanAction: "confirm", proposalId: id } }, effects);
   expect(delegateCalls).toHaveLength(1);
-  await bot.onCardAction({ conversationId: "c2", scopeId: "s1", fromId: "ana", fromName: "Ana", value: { beanAction: "cancel-run", projectPath: "/p/bean" } }, effects);
+  const runId = (effects.updates.at(-1)?.card as { runId?: string }).runId;
+  await bot.onCardAction({ conversationId: "c2", scopeId: "s1", fromId: "ana", fromName: "Ana", value: { beanAction: "cancel-run", runId } }, effects);
+  expect(effects.posted).toContain("That run wasn't started from this conversation, or it already finished.");
   await bot.onMessage({ ...admin, conversationId: "c2", text: "cancel" }, effects);
   expect(deps.runs.isRunning("/p/bean")).toBe(true);
   expect(effects.posted).toContain("Nothing is running.");

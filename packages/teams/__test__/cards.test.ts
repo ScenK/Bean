@@ -51,12 +51,12 @@ test("proposal card pre-selects the resolved cli and model in ChoiceSets", () =>
   expect(card.body.find((el) => el.id === "skillName")?.value).toBe("__none__");
 });
 
-test("running card carries a cancel-run action with the project path", () => {
+test("running card carries a cancel-run action with the run id", () => {
   const s = flatten(runningCard({
-    projectName: "bean", instruction: "x", startedBy: "bob", tail: "▸ Bash", projectPath: "/p/bean",
+    projectName: "bean", instruction: "x", startedBy: "bob", tail: "▸ Bash", runId: "run-1",
   }));
   expect(s).toContain('"beanAction":"cancel-run"');
-  expect(s).toContain('"projectPath":"/p/bean"');
+  expect(s).toContain('"runId":"run-1"');
   expect(s).toContain("▸ Bash");
   expect(s).toContain("bob");
 });
