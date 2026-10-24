@@ -18,6 +18,10 @@ until the session-started event (`onSessionStart`), because a rejected first chi
 would make the project reclaimable mid-run — don't armor that with ownership checks — never fail the run for it. `/new` clears the
 thread's sessions too, and a run launched before the `/new` doesn't store its id afterwards. Routine `DelegateStepRequest.resume` is not wired yet (follow-up). opencode resuming a session from a different folder emits nothing and never exits (it can't
 be rejected-and-retried), so `RunRegistry.start` drops an opencode resume whose newest
-`delegate_runs` row is for another project — no re-key of `thread_sessions`. Delegate spawns also
+`delegate_runs` row is for another project — no re-key of `thread_sessions`. It also drops a resume while the same
+thread already has an active run on that CLI (two processes must never drive one session); the
+result is prefixed with a "Started a fresh session" notice, and the thread pointer keeps whichever
+run completes last. `RunRegistry` is keyed by run id (the running card's Cancel carries `runId`;
+a card without one is treated as gone), still one run per project path. Delegate spawns also
 set `PWD: cwd`: opencode prefers an inherited `PWD` over the spawn cwd, so a shell-started Bean ran
 it in the shell's dir (#247).

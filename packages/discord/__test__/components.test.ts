@@ -63,9 +63,9 @@ test("proposal skill select drops names past Discord's 100-char option-value cap
 
 test("running message carries cancel-run and the tail in a code block", () => {
   const s = JSON.stringify(discordCards.runningCard({
-    projectName: "bean", instruction: "x", startedBy: "scen", tail: "▸ Bash", projectPath: "/p/bean",
+    projectName: "bean", instruction: "x", startedBy: "scen", tail: "▸ Bash", runId: "run-1",
   }));
-  expect(s).toContain("bean:cancel-run:");
+  expect(s).toContain("bean:cancel-run:run-1");
   expect(s).toContain("▸ Bash");
   expect(s).toContain("scen");
 });
@@ -83,7 +83,7 @@ test("delegate cards clamp a long instruction to Discord's 4096-char embed descr
   const base = { projectName: "bean", instruction, startedBy: "scen" };
   const cards = [
     discordCards.proposalCard({ ...proposalInput, instruction }),
-    discordCards.runningCard({ ...base, tail: "", projectPath: "/p/bean" }),
+    discordCards.runningCard({ ...base, tail: "", runId: "run-1" }),
     discordCards.finishedCard({ ...base, outcome: "done" }),
   ] as { embeds: { description: string }[] }[];
   for (const card of cards) {
@@ -206,7 +206,7 @@ test("live-session card omits model/skill/cli dropdowns when none are configured
 test("running card clamps a long tail to Discord's 1024-char field limit, keeping the newest end", () => {
   const tail = "a".repeat(2000) + "END";
   const card = discordCards.runningCard({
-    projectName: "bean", instruction: "search", startedBy: "scen", tail, projectPath: "/p",
+    projectName: "bean", instruction: "search", startedBy: "scen", tail, runId: "run-1",
   }) as { embeds: { fields: { value: string }[] }[] };
   const value = card.embeds[0]!.fields[0]!.value;
   expect(value.length).toBeLessThanOrEqual(1024);

@@ -324,7 +324,7 @@ app.post("/api/messages", (req, res) => {
           scopeId: scopeOf(a),
           fromName: a.from.name ?? "someone",
           value: {
-            beanAction: value.beanAction, proposalId: value.proposalId, projectPath: value.projectPath,
+            beanAction: value.beanAction, proposalId: value.proposalId, projectPath: value.projectPath, runId: value.runId,
             cli: value.cli, model: value.model,
             skillName: value.skillName, steering: value.steering, instruction: value.instruction,
           },
