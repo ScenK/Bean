@@ -3,6 +3,7 @@ import type { AvailableModel, CliName, Project, RoutineStep, Skill, StepGate, St
 import { stepAvailabilityProblem } from "@bean/core/models";
 import { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, stepEdgeProblems, stepEdgeWarnings, stepPathCaptions } from "@bean/core/routine-graph";
 import { ChipMenu } from "../../shared/ChipMenu.js";
+import { StepFlow } from "../../shared/StepFlow.js";
 import { duplicateStep, setStepNext, setStepRoute, withStepIds } from "./step-ids.js";
 
 const HARNESSES: CliName[] = ["claude", "codex", "opencode"];
@@ -518,6 +519,8 @@ export function StepsEditor(props: {
         Add a step
         <span class="bean-routines-add-hint">{props.addHint ?? "— another delegate under this cadence"}</span>
       </button>
+      {/* The whole shape at a glance; recomputed from the draft every render. */}
+      <StepFlow steps={steps} />
     </div>
   );
 }
