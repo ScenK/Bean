@@ -50,7 +50,16 @@ export async function makeBeanHome(options: BeanHomeOptions = {}): Promise<BeanH
     name, enabled: true, cron, steps: [{ kind: "chat", instruction: "check the build" }], sinks: {},
   });
   await writeFile(join(routinesPath, "nightly.json"), JSON.stringify(routine("nightly", "0 22 * * *"), null, 2), "utf8");
-  await writeFile(join(routinesPath, "weekly.json"), JSON.stringify(routine("weekly", "0 8 * * 1"), null, 2), "utf8");
+  // Gated, matching its seeded run below, so the Dashboard draws the run's flow diagram with the
+  // loop it took highlighted (under the contrast guard).
+  await writeFile(join(routinesPath, "weekly.json"), JSON.stringify({
+    ...routine("weekly", "0 8 * * 1"),
+    steps: [
+      { kind: "chat", id: "implement", instruction: "implement the change" },
+      { kind: "command", id: "test", command: "npm test", gate: { onFail: { goto: "implement", maxRounds: 2 } } },
+      { kind: "chat", id: "ship", instruction: "open the PR" },
+    ],
+  }, null, 2), "utf8");
   // Watch routines, so the list renders the watch captions: an enabled notify-only feed whose
   // source refuses connections (port 9 — fails fast, never leaves the machine, shows "check
   // failing"), and a disabled, never-seeded command watch ("needs review").

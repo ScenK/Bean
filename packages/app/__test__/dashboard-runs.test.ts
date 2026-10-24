@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, reviewRuns, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
+import { attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, reviewRuns, runFlowOverlay, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
+import type { RoutineStep, RunRecord } from "@bean/core";
+import { stepFlow } from "@bean/core/routine-graph";
 import type { RoutineStateView } from "../src/ipc.js";
 
 const record = (startedAt: string, finishedAt: string, ok: boolean[]) => ({
@@ -186,5 +188,91 @@ describe("gated runs", () => {
     const run = (startedAt: string) => ({ routine: "r", id: `r@${startedAt}`, startedAt, finishedAt: startedAt, status: "ok" as const, digest: "", steps: [] });
     const keys = groupRuns([run(early), run(late)]).flatMap((d) => d.buckets.map((b) => b.key));
     expect(keys).toEqual([bucketKeyFor("r", early), bucketKeyFor("r", late)]);
+  });
+});
+
+describe("runFlowOverlay", () => {
+  type Rec = RunRecord["steps"][number];
+  const s = (id: string, extra: Partial<RoutineStep> = {}): RoutineStep => ({ kind: "chat", id, instruction: "x", ...extra } as RoutineStep);
+  const r = (id: string, extra: Partial<Rec> = {}): Rec => ({ kind: "chat", id, round: 1, ok: true, summary: "", ...extra });
+  // Lit edges as readable `from>to:kind` strings, in edge order.
+  const lit = (steps: RoutineStep[], recs: Rec[]): string[] | "drift" => {
+    const o = runFlowOverlay({ steps: recs }, steps);
+    if (o === "drift") return o;
+    return stepFlow(steps).edges.flatMap((e, k) => (o.edges.has(k) ? [`${e.from}>${typeof e.to === "number" ? e.to : e.to}:${e.kind}`] : []));
+  };
+  const overlay = (steps: RoutineStep[], recs: Rec[]) => {
+    const o = runFlowOverlay({ steps: recs }, steps);
+    if (o === "drift") throw new Error("drift");
+    return o;
+  };
+  const line = [s("a"), s("b"), s("c")];
+
+  test("linear ok lights every hop and the end", () => {
+    expect(lit(line, [r("a"), r("b"), r("c")])).toEqual(["0>1:flow", "1>2:flow", "2>end:flow"]);
+    expect(overlay(line, [r("a"), r("b"), r("c")])).toMatchObject({ counts: [1, 1, 1], failed: [false, false, false] });
+  });
+
+  test("failed mid-way: the step is ✗, later steps never reached, no end", () => {
+    const o = overlay(line, [r("a"), r("b", { ok: false })]);
+    expect(o).toMatchObject({ counts: [1, 1, 0], failed: [false, true, false] });
+    expect(lit(line, [r("a"), r("b", { ok: false })])).toEqual(["0>1:flow"]);
+  });
+
+  const gated = [s("impl"), s("test", { gate: { onFail: { goto: "impl", maxRounds: 3 } } }), s("ship")];
+  test("gate loop round 2 lights the loop and counts ×2", () => {
+    const recs = [r("impl"), r("test", { verdict: "FAIL" }), r("impl", { round: 2 }), r("test", { round: 2, verdict: "PASS" }), r("ship")];
+    expect(lit(gated, recs)).toEqual(["0>1:flow", "1>2:pass", "1>0:loop", "2>end:flow"]);
+    expect(overlay(gated, recs)).toMatchObject({ counts: [2, 2, 1], failed: [false, false, false] });
+  });
+
+  test("an exhausted loop leaves the gate ✗ and the rest dimmed", () => {
+    const recs = [r("impl"), r("test", { verdict: "FAIL" }), r("impl", { round: 2 }), r("test", { round: 2, verdict: "FAIL" })];
+    expect(overlay(gated, recs)).toMatchObject({ counts: [2, 2, 0], failed: [false, true, false] });
+  });
+
+  const routed = [
+    s("triage", { route: { paths: [{ when: "bug", goto: "fix" }, { when: "spec", goto: "spec" }] } }),
+    s("fix", { next: "end" }),
+    s("spec"),
+  ];
+  test("a route lights the path it chose", () => {
+    expect(lit(routed, [r("triage", { chose: "spec", verdict: "spec" }), r("spec")])).toEqual(["0>2:path", "2>end:flow"]);
+    expect(overlay(routed, [r("triage", { chose: "spec" }), r("spec")]).counts).toEqual([1, 0, 1]);
+  });
+
+  test("no-match stop (needs-attention) lights the stop cap", () => {
+    expect(lit(routed, [r("triage")])).toEqual(["0>stop:otherwise"]);
+    const stopGate = [s("a", { gate: { onFail: "stop" } }), s("b")];
+    expect(lit(stopGate, [r("a", { verdict: "FAIL" })])).toEqual(["0>stop:fail"]);
+  });
+
+  test("todo-driven runs union their passes and count ×N", () => {
+    const recs = [r("a"), r("b"), r("c"), r("a"), r("b", { ok: false }), r("a"), r("b"), r("c")];
+    const o = overlay(line, recs);
+    expect(o).toMatchObject({ counts: [3, 3, 2], failed: [false, true, false] });
+    expect(lit(line, recs)).toEqual(["0>1:flow", "1>2:flow", "2>end:flow"]);
+  });
+
+  test("legacy runs without ids map by position when the kinds line up", () => {
+    const legacy: RoutineStep[] = [{ kind: "chat", instruction: "x" }, { kind: "command", command: "make" }];
+    const recs: Rec[] = [{ kind: "chat", ok: true, summary: "" }, { kind: "command", ok: false, summary: "" }];
+    expect(overlay(legacy, recs)).toMatchObject({ counts: [1, 1], failed: [false, true] });
+    // A todo pass that failed starts the next pass over at step 1.
+    const todo = (kind: "chat" | "command", ok: boolean): Rec => ({ kind, ok, summary: "[todo: t] out" });
+    expect(overlay(legacy, [todo("chat", false), todo("chat", true), todo("command", true)]).counts).toEqual([2, 1]);
+    expect(runFlowOverlay({ steps: [{ kind: "command", ok: true, summary: "" }] }, legacy)).toBe("drift");
+    // A plain run has one pass: more records than steps means steps were removed since.
+    expect(runFlowOverlay({ steps: [...recs, ...recs] }, legacy)).toBe("drift");
+    expect(runFlowOverlay({ steps: [{ kind: "chat", ok: true, summary: "" }] }, gated)).toBe("drift");
+  });
+
+  test("drift: a deleted step or a re-pointed edge draws no highlight", () => {
+    expect(runFlowOverlay({ steps: [r("a"), r("gone")] }, line)).toBe("drift");
+    const repointed = [s("a", { next: "c" }), s("b"), s("c")];
+    expect(runFlowOverlay({ steps: [r("a"), r("b"), r("c")] }, repointed)).toBe("drift");
+    // The last step's chosen label no longer exists.
+    const relabeled = [s("triage", { route: { paths: [{ when: "bug", goto: "end" }, { when: "chore", goto: "end" }] } })];
+    expect(runFlowOverlay({ steps: [r("triage", { chose: "spec" })] }, relabeled)).toBe("drift");
   });
 });

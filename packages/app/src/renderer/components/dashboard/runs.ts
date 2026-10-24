@@ -1,4 +1,6 @@
-import type { RunRecord, StepKind } from "@bean/core";
+import type { FlowEdge, RoutineStep, RunRecord, StepKind } from "@bean/core";
+import { stepFlow } from "@bean/core/routine-graph";
+import type { FlowOverlay } from "../../shared/StepFlow.js";
 import type { RoutineStateView } from "../../../ipc.js";
 
 /** One routine run, tagged with the routine it came from — the dashboard reads every
@@ -65,6 +67,70 @@ export const pathName = (step: { kind: StepKind; id?: string; round?: number }):
  * step adds the path it picked: `triage ✓ ⑂bug → fix ✓`. */
 export const executedPath = (run: Pick<RunRecord, "steps">): string =>
   run.steps.map((s) => `${pathName(s)} ${stepPassed(s) ? "✓" : "✗"}${s.chose ? ` ⑂${s.chose}` : ""}`).join(" → ");
+
+/** Maps a run's recorded steps onto the sprout's current flow diagram. `"drift"` = the record no
+ * longer fits today's definition (an unknown id, a hop with no edge, a legacy run whose kinds
+ * don't line up) — draw the diagram plain and say so. Todo-driven runs are the union of their
+ * passes; a pass restarts at the first step (round 1). A node is failed when it errored or its
+ * last execution didn't pass. Pure. */
+export function runFlowOverlay(run: Pick<RunRecord, "steps">, steps: RoutineStep[]): FlowOverlay | "drift" {
+  const { edges } = stepFlow(steps);
+  const recs = run.steps;
+  let at: number[];
+  if (recs.every((r) => r.id)) {
+    const ids = new Map<string, number>();
+    steps.forEach((s, i) => { if (s.id && !ids.has(s.id)) ids.set(s.id, i); });
+    at = recs.map((r) => ids.get(r.id!) ?? -1);
+  } else if (recs.some((r) => r.id) || steps.some((s) => s.gate || s.next !== undefined || s.route)) {
+    return "drift";
+  } else {
+    // Legacy: positional. A todo pass starts over after the last step or a failed step (the
+    // pipeline abandons that todo); a plain run is one pass that continues past a failure.
+    let p = -1;
+    at = recs.map((r, k) => {
+      const prev = recs[k - 1];
+      const restart = parseStep(r, k).todo !== undefined && (p + 1 >= steps.length || (prev !== undefined && !prev.ok));
+      p = restart ? 0 : p + 1;
+      return steps[p]?.kind === r.kind ? p : -1;
+    });
+  }
+  if (at.includes(-1) || (recs.length > 0 && at[0] !== 0)) return "drift";
+
+  // The edge the runner followed out of a recorded step: a route's chosen path (or otherwise when
+  // nothing matched), a gate's fail/loop on FAIL, else the step's forward edge.
+  const out = (k: number): number => {
+    const r = recs[k]!;
+    const from = at[k]!;
+    const want = (e: FlowEdge): boolean =>
+      steps[from]!.route ? (r.chose !== undefined ? e.kind === "path" && e.label === r.chose : e.kind === "otherwise")
+        : steps[from]!.gate && r.verdict === "FAIL" ? e.kind === "fail" || e.kind === "loop"
+        : e.kind === "flow" || e.kind === "next" || e.kind === "pass";
+    return edges.findIndex((e) => e.from === from && want(e));
+  };
+  const counts = steps.map(() => 0);
+  const failed = steps.map(() => false);
+  const errored = new Set<number>();
+  const lit = new Set<number>();
+  for (let k = 0; k < recs.length; k++) {
+    const r = recs[k]!;
+    const i = at[k]!;
+    counts[i]!++;
+    if (!r.ok) errored.add(i);
+    failed[i] = errored.has(i) || !stepPassed(r);
+    const next = recs[k + 1];
+    const passEnds = !next || (at[k + 1] === 0 && !(next.round && next.round > 1));
+    const e = out(k);
+    if (!passEnds) {
+      // A hop with no matching edge today: the sprout was re-pointed since this run.
+      if (e < 0 || edges[e]!.to !== at[k + 1]) return "drift";
+      lit.add(e);
+    } else if (r.ok) {
+      if (e < 0) return "drift"; // e.g. the route label it chose is gone
+      if (typeof edges[e]!.to !== "number") lit.add(e); // ended at ● end or ■ stop
+    }
+  }
+  return { counts, failed, edges: lit };
+}
 
 /** A gate stopped (or exhausted) this run: where it stopped and the verdict it stopped on — the
  * last step that didn't pass (a later todo pass may have succeeded after it). */

@@ -75,7 +75,8 @@ describe("StepFlow", () => {
     expect(svg.getAttribute("aria-label")).toContain("5 on fail loops back to step 1");
     // The drawn text, without the <title> that keeps a long label's full text.
     const texts = [...root.querySelectorAll("text")].map((t) => [...t.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent).join(""));
-    expect(texts).toEqual(expect.arrayContaining(["1 · chat", "bug", "otherwise", "fail · ≤2×", "■ stop", "● end"]));
+    expect(texts).toEqual(expect.arrayContaining(["bug", "otherwise", "fail · ≤2×", "■ stop", "● end"]));
+    expect(root.querySelector(".bean-flow-title")!.textContent).toBe("1 · chat");
     expect([...root.querySelectorAll("text > title")].map((t) => t.textContent)).toContain("otherwise");
   });
 
@@ -91,5 +92,21 @@ describe("StepFlow", () => {
     act(() => render(h("div", null, h(StepFlow, { steps: triage() }), h(StepFlow, { steps: triage() })), root));
     const ids = [...root.querySelectorAll("marker")].map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("StepFlow overlay", () => {
+  it("accents exactly the edges the run took, whatever the layout order", () => {
+    const steps = [s("a"), s("b", { gate: { onFail: { goto: "a", maxRounds: 2 } } }), s("c")];
+    const edges = stepFlow(steps).edges;
+    const taken = new Set(edges.flatMap((e, k) => (e.kind === "loop" || (e.from === 0 && e.to === 1) ? [k] : [])));
+    const root = document.createElement("div");
+    document.body.append(root);
+    act(() => { render(h(StepFlow, { steps, overlay: { counts: [2, 2, 0], failed: [false, true, false], edges: taken } }), root); });
+    const lit = [...root.querySelectorAll(".bean-flow-edge--lit")];
+    expect(lit).toHaveLength(2);
+    expect(lit.some((p) => p.classList.contains("bean-flow-edge--loop"))).toBe(true);
+    expect(root.querySelectorAll(".bean-flow-dim")).toHaveLength(1);
+    expect(root.querySelector(".bean-flow-title")!.textContent).toContain("×2");
   });
 });
