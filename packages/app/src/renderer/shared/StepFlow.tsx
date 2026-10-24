@@ -73,8 +73,11 @@ export function StepFlow(props: { steps: RoutineStep[]; overlay?: FlowOverlay })
           return (
             <g key={node.key} class={overlay && count === 0 ? "bean-flow-dim" : undefined}>
               <rect class={`bean-flow-node${node.flagged ? " bean-flow-node--flagged" : ""}${overlay && count > 0 ? " bean-flow-node--ran" : ""}`} x={b.x} y={b.y} width={NODE_W} height={NODE_H} rx="9" />
-              <text class="bean-flow-title" x={b.x + 10} y={b.y + 18}>{clip(`${b.index + 1} · ${step.skill || step.kind}`, 22 - mark.length)}{mark}</text>
-              <text class="bean-flow-snippet" x={b.x + 10} y={b.y + 34}>{clip(text ?? "", 30)}</text>
+              {/* HTML, not <text>: CSS ellipsis clips by real glyph width, a char count can't. */}
+              <foreignObject x={b.x + 10} y={b.y + 5} width={NODE_W - 20} height={NODE_H - 10}>
+                <div class="bean-flow-title"><span class="bean-flow-clip">{`${b.index + 1} · ${step.skill || step.kind}`}</span>{mark}</div>
+                <div class="bean-flow-snippet bean-flow-clip">{(text ?? "").replace(/\s+/g, " ").trim()}</div>
+              </foreignObject>
             </g>
           );
         })}

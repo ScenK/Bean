@@ -2519,8 +2519,9 @@ button, input, textarea, select, a {
 .bean-flow-node { fill: var(--bean-surface-2); stroke: var(--bean-control-border); stroke-width: 1; }
 .bean-flow-node--flagged { stroke: var(--bean-error); stroke-width: 2; }
 .bean-flow-svg text { fill: currentColor; }
-.bean-flow-title { color: var(--bean-text); font-size: 12px; font-weight: 600; }
-.bean-flow-snippet { color: var(--bean-text-dim); font-size: 10px; }
+.bean-flow-title { display: flex; white-space: pre; color: var(--bean-text); font-size: 12px; font-weight: 600; line-height: 17px; }
+.bean-flow-snippet { color: var(--bean-text-dim); font-size: 10px; line-height: 15px; }
+.bean-flow-clip { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .bean-flow-label, .bean-flow-cap { color: var(--bean-text-dim); font-size: 10px; paint-order: stroke; stroke: var(--bean-surface); stroke-width: 3px; stroke-linejoin: round; }
 .bean-flow-cap { font-weight: 600; color: var(--bean-text); }
 .bean-flow-cap--stop { color: var(--bean-error); }
