@@ -82,6 +82,17 @@ export async function updateTodoStatus(
     .run(status, finished ? now().toISOString() : null, resultSummary ?? null, id);
 }
 
+/** Atomically moves the routine's first pending todo (queue order) to `running` and returns it;
+ * undefined = nothing pending. One statement, so two drains can never claim the same todo, and
+ * an edit/cancel (pending-only) can't land on a todo once it's claimed. */
+export async function claimTodo(file: string, routine: string): Promise<TodoItem | undefined> {
+  const row = openDb(file).prepare(
+    "UPDATE todos SET status = 'running' WHERE id = (SELECT id FROM todos WHERE routine = ? AND status = 'pending' ORDER BY ord ASC, created_at ASC LIMIT 1) " +
+    "AND status = 'pending' RETURNING id, routine, text, status, created_at, finished_at, result_summary, ord, created_by",
+  ).get(routine) as unknown as TodoRow | undefined;
+  return row ? toItem(row) : undefined;
+}
+
 export async function editTodoText(file: string, id: string, text: string): Promise<void> {
   const trimmed = text.trim();
   if (!trimmed) throw new Error("todo text is required");

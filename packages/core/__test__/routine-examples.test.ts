@@ -8,6 +8,9 @@ import { runRoutine, type RoutineRunnerDeps } from "../src/routine-runner.js";
 import type { CommandStepOutcome } from "../src/command-step.js";
 import type { TodoItem } from "../src/todo-store.js";
 
+/** A claim() fake: hands out a copy of `items` front to back. */
+const claimFrom = (items: TodoItem[]) => { const q = [...items]; return async () => q.shift(); };
+
 const example = (key: string) => ROUTINE_EXAMPLES.find((e) => e.key === key)!.routine;
 
 describe("routine examples", () => {
@@ -46,7 +49,7 @@ async function run(key: string, answers: { chat?: string[]; delegate?: Record<st
       return { output: answers.delegate?.[id] ?? "done", cli: "claude" };
     },
     command: async (): Promise<CommandStepOutcome> => { ran.push("test"); const exitCode = exits.length > 1 ? exits.shift()! : exits[0]!; return { exitCode, output: "" }; },
-    todos: { listPending: async () => [todo], setStatus: async () => {} },
+    todos: { claim: claimFrom([todo]), setStatus: async () => {} },
   };
   const res = await runRoutine({ ...example(key), enabled: true }, deps);
   return { ran, status: res.record.status };

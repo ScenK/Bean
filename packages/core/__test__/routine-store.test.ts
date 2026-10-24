@@ -107,6 +107,13 @@ describe("isValidRoutine", () => {
     expect(isValidRoutine(routine())).toBe(true); // old files: field absent
     expect(isValidRoutine({ ...routine(), todoDriven: "yes" })).toBe(false);
   });
+  it("maxParallel: a whole number 1–4; ignored (not rejected) on a plain sprout", () => {
+    expect(describeRoutineError(routine({ todoDriven: true, maxParallel: 4 }))).toBeNull();
+    expect(describeRoutineError(routine({ maxParallel: 3 }))).toBeNull();
+    for (const bad of [0, 5, 2.5, "3"]) {
+      expect(describeRoutineError({ ...routine({ todoDriven: true }), maxParallel: bad })).toMatch(/maxParallel must be a whole number from 1 to 4/);
+    }
+  });
 });
 
 describe("routine state", () => {
@@ -126,6 +133,12 @@ describe("routine state", () => {
     expect(state.history).toHaveLength(20);
     expect(state.history[0]!.digest).toBe("run 24"); // newest first
     expect(state.missed).toBe(false);
+  });
+  it("appendRunRecord keeps lastRun monotonic when parallel runs finish out of start order", () => {
+    let state = appendRunRecord(undefined, record({ startedAt: "2026-07-12T06:33:00.000Z" }));
+    state = appendRunRecord(state, record({ startedAt: "2026-07-12T06:32:00.000Z" }));
+    expect(state.lastRun).toBe("2026-07-12T06:33:00.000Z");
+    expect(state.history).toHaveLength(2);
   });
 });
 
