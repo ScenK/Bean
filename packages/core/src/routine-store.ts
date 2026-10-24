@@ -70,7 +70,7 @@ export interface Routine {
   todoDriven?: boolean;
   /** Todo-driven only (ignored otherwise): how many queued todos may run at once (integer 1–4).
    * Absent = 1 — one run drains the queue in order. Above 1, each todo is its own run (bubble,
-   * record, digest). Hand-edited JSON; no panel control. */
+   * record, digest). The panel's "Run up to N at once" sets it and drops it with todo-driven. */
   maxParallel?: number;
   /** Opt-in: this routine's chat steps may search the public web. Off by default — report
    * routines don't need it and each search is billed. No panel toggle; set it in the JSON. */
