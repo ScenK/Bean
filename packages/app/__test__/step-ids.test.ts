@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RoutineStep } from "@bean/core";
 import { stepEdgeProblems } from "@bean/core/routine-graph";
-import { duplicateStep, remapStepMissing, setStepNext, stepProblemsText, withStepIds } from "../src/renderer/components/routines/step-ids.js";
+import { duplicateStep, remapStepMissing, setStepNext, setStepRoute, stepProblemsText, withStepIds } from "../src/renderer/components/routines/step-ids.js";
 
 describe("withStepIds", () => {
   it("assigns <skill>-<n>/<kind>-<n> to id-less steps and keeps existing ids through reorder/delete", () => {
@@ -110,5 +110,25 @@ describe("setStepNext", () => {
   it("a reorder that makes next point backward shows the inline problem", () => {
     const [a, b, c] = setStepNext(steps, 0, 2);
     expect(stepEdgeProblems([c!, a!, b!])[1]).toMatch(/later step/);
+  });
+});
+
+describe("setStepRoute", () => {
+  const steps: RoutineStep[] = [
+    { kind: "chat", instruction: "a", gate: { onFail: "stop" }, next: "end" },
+    { kind: "chat", instruction: "b" },
+    { kind: "chat", instruction: "c" },
+  ];
+
+  it("sets a route in place of gate and next, and clears it", () => {
+    const routed = setStepRoute(steps, 0, { paths: [{ when: "x", goto: "chat-2" }, { when: "y", goto: "end" }] });
+    expect(routed[0]).toEqual({ kind: "chat", id: "chat-1", instruction: "a", route: { paths: [{ when: "x", goto: "chat-2" }, { when: "y", goto: "end" }] } });
+    expect(stepEdgeProblems(routed)).toEqual([null, null, null]);
+    expect("route" in setStepRoute(routed, 0, undefined)[0]!).toBe(false);
+  });
+
+  it("a duplicate keeps the route", () => {
+    const routed = setStepRoute(steps, 0, { paths: [{ when: "x", goto: "chat-3" }, { when: "y", goto: "end" }] });
+    expect(duplicateStep(routed, 0)[1]!.route).toEqual(routed[0]!.route);
   });
 });

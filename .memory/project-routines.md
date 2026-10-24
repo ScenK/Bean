@@ -63,6 +63,9 @@ failure. Chat/delegate deciders get a ROUTE contract listing the labels; a comma
 its raw stdout (before `(exit N)`) and a non-zero exit is still a step error. `verdict` = the
 label. The ROUTE line is stripped from `StepResult.output` (digest, summary, lone-step
 deliverable) but kept in `routine_step_attempts`; the prior block header says `chose "<label>"`.
+Editor (#401): `stepEdgeWarnings` (fall-through into a sibling path's entry) and
+`stepPathCaptions` live beside `stepEdgeProblems` in `routine-graph.ts` but are render-only —
+never fold a warning into `stepEdgeProblems`: `parseBrief` drops flagged edges and save blocks.
 
 **Command steps (#265).** `kind: "command"` runs `command` via `/bin/sh -c` (core `runShellCommand`,
 own process group, timeout SIGKILLs the group) in `project`, else the same scratch dir a delegate
