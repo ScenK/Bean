@@ -42,8 +42,23 @@ export function parseVerdict(output: string): string | undefined {
 /** A gate's verdict: PASS only when the last non-empty line is exactly `VERDICT: PASS`.
  * Missing, malformed, or a VERDICT line anywhere else (quoted, mid-output) is FAIL. */
 export function gateVerdict(output: string): "PASS" | "FAIL" {
-  const last = output.trimEnd().split(/\r?\n/).at(-1)?.trim();
-  return last !== undefined && /^VERDICT:[ \t]*PASS$/.test(last) ? "PASS" : "FAIL";
+  return /^VERDICT:[ \t]*PASS$/.test(lastLine(output)) ? "PASS" : "FAIL";
+}
+
+/** The last non-empty line, trimmed ("" when there is none). */
+export const lastLine = (output: string): string => output.trimEnd().split(/\r?\n/).at(-1)?.trim() ?? "";
+
+/** A route's choice: the label only when the last non-empty line is exactly `ROUTE: <label>` and
+ * `labels` declares it. Missing, malformed, quoted, mid-output, or undeclared = undefined. */
+export function routeLabel(output: string, labels: string[]): string | undefined {
+  const label = /^ROUTE:[ \t]*([a-z0-9-]+)$/.exec(lastLine(output))?.[1];
+  return label !== undefined && labels.includes(label) ? label : undefined;
+}
+
+/** `output` without a trailing `ROUTE:` line — Bean's routing signal, not part of the report. */
+export function dropRouteLine(output: string): string {
+  const lines = output.trimEnd().split(/\r?\n/);
+  return lines.at(-1)?.trim().startsWith("ROUTE:") ? lines.slice(0, -1).join("\n").trimEnd() : output;
 }
 
 /** Never throws — bookkeeping must not fail or alter the run. Logs the error class only. */

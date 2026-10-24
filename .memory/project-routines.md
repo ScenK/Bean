@@ -54,6 +54,16 @@ steps resume their own session (same CLI only). Outcome `needs-attention` (stop 
 last gate FAIL) is a third `RunRecord.status` — treat any `!== "ok"` as needing the user. In
 gated routines the app holds a todo's run reservation + scratch dir until the run ends.
 
+**Routes (#400).** `route: { paths: [{ when, goto }], otherwise? }` (≥2 paths, labels
+`[a-z0-9-]`, unique, not pass/fail; targets forward-only or "end"; exclusive with gate/next) is
+a multi-way choice that also turns on graph mode. `routeLabel()` is as strict as `gateVerdict`:
+only an exact last line `ROUTE: <declared label>` counts, else `otherwise`, else needs-attention
+"no path matched". A route never touches the last-gate-FAIL state — taking a path isn't a
+failure. Chat/delegate deciders get a ROUTE contract listing the labels; a command step routes on
+its raw stdout (before `(exit N)`) and a non-zero exit is still a step error. `verdict` = the
+label. The ROUTE line is stripped from `StepResult.output` (digest, summary, lone-step
+deliverable) but kept in `routine_step_attempts`; the prior block header says `chose "<label>"`.
+
 **Command steps (#265).** `kind: "command"` runs `command` via `/bin/sh -c` (core `runShellCommand`,
 own process group, timeout SIGKILLs the group) in `project`, else the same scratch dir a delegate
 step would use, with the app's resolved login-shell PATH. No model/memories/skill — the validator

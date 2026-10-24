@@ -8,7 +8,7 @@ import type { CliName } from "./launcher.js";
 import type { TodoItem, TodoStatus } from "./todo-store.js";
 import { MEMORY_CONFLICT_CLAUSE, memoriesBlock, type Memory } from "./memory/memory.js";
 import { selectRelevantMemories } from "./memory/store.js";
-import { gateVerdict, parseVerdict, type StepAttempt } from "./step-attempts.js";
+import { dropRouteLine, gateVerdict, lastLine, parseVerdict, routeLabel, type StepAttempt } from "./step-attempts.js";
 import { RETRO_SKILL, retroSession, type RetroDeps } from "./retro.js";
 
 export interface DelegateStepRequest {
@@ -92,6 +92,8 @@ export interface StepInfo { index: number; id?: string; round?: number; cli?: Cl
 export interface StepResult {
   index: number; kind: StepKind; ok: boolean; output: string;
   stepId?: string; cli?: CliName; verdict?: string; round?: number;
+  /** A route step's chosen label (also its verdict). */
+  chose?: string;
 }
 export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[] }
 
@@ -106,6 +108,13 @@ const VERDICT_CONTRACT =
   "\n\nBean gates this step on your verdict. End your output with one final line that is exactly " +
   "`VERDICT: PASS` (the check passed) or `VERDICT: FAIL` (it found problems), with nothing after it. " +
   "A missing or malformed verdict counts as FAIL.";
+
+const routeContract = (labels: string[]): string =>
+  "\n\nBean picks the next step from your answer. End your output with one final line that is exactly " +
+  `\`ROUTE: <label>\`, where <label> is one of: ${labels.join(", ")} — with nothing after it. ` +
+  "A missing or unknown label picks none of them.";
+
+const commandOutput = (text: string, exitCode: number): string => `${text.trimEnd()}\n(exit ${exitCode})`.trimStart();
 
 /** The newest FAIL output of the gate that fired, handed to its goto target as quoted data. */
 const feedbackBlock = (gate: string, output: string): string =>
@@ -144,7 +153,7 @@ async function stepMemories(deps: RoutineRunnerDeps, step: Exclude<RoutineStep, 
 function priorOutputsBlock(results: StepResult[], cap = PRIOR_OUTPUT_CAP): string {
   if (results.length === 0) return "";
   return results
-    .map((r) => `--- step ${r.index + 1}${r.round && r.round > 1 ? ` round ${r.round}` : ""} (${r.kind}, ${r.ok ? "ok" : "FAILED"}) ---\n${r.output.slice(-cap)}`)
+    .map((r) => `--- step ${r.index + 1}${r.round && r.round > 1 ? ` round ${r.round}` : ""} (${r.kind}, ${r.ok ? "ok" : "FAILED"}${r.chose ? `, chose "${r.chose}"` : ""}) ---\n${r.output.slice(-cap)}`)
     .join("\n\n");
 }
 
@@ -249,7 +258,8 @@ async function composeDigest(
  * Legacy (no gate/next anywhere): sequential; plain routines continue past a failed step, a
  * todo pipeline abandons the rest of that todo's steps on its first failure.
  * Gated: walks the step graph — a gate's FAIL stops the pass or jumps (backward = bounded
- * loop), `next` skips ahead, any hard step error stops the pass `failed`. */
+ * loop), `next` skips ahead, a route jumps to its chosen path, any hard step error stops the
+ * pass `failed`. */
 async function runSteps(
   routine: Routine,
   deps: RoutineRunnerDeps,
@@ -283,8 +293,11 @@ async function runSteps(
     rounds.set(index, round);
     const prior = priorOutputsBlock(graph ? [...latest.values()] : results);
     // A command step takes no prompt: the todo reaches it as env vars, gate feedback is dropped.
+    const labels = step.route?.paths.map((p) => p.when) ?? [];
     const effective = step.kind === "command" ? step : {
-      ...step, instruction: step.instruction + instructionSuffix + feedback + (step.gate ? VERDICT_CONTRACT : ""),
+      ...step,
+      instruction: step.instruction + instructionSuffix + feedback + (step.gate ? VERDICT_CONTRACT : "") +
+        (step.route ? routeContract(labels) : ""),
     } as RoutineStep;
     feedback = "";
     const resume = sessions.get(index);
@@ -298,6 +311,7 @@ async function runSteps(
     let ok = true;
     let output: string;
     let exitCode: number | undefined;
+    let said: string | undefined; // a command's raw stdout — its ROUTE line comes before `(exit N)`
     try {
       if (effective.kind === "command") {
         if (!deps.command) throw new Error("command steps can't run here");
@@ -309,7 +323,8 @@ async function runSteps(
           ...(todo?.scratch ? { todoId: todo.id } : {}),
         });
         exitCode = res.exitCode;
-        output = `${res.output.trimEnd()}\n(exit ${exitCode})`.trimStart();
+        said = res.output;
+        output = commandOutput(res.output, exitCode);
         // Ungated, a non-zero exit is a failed step; gated, it's a FAIL verdict the gate routes.
         if (exitCode !== 0 && !step.gate) ok = false;
       } else {
@@ -351,16 +366,23 @@ async function runSteps(
     // Parsed from the full output, before any cap; a failed adapter still reports a pinned cli.
     // A gate's verdict is the strict last-line PASS/FAIL that drives the walk.
     // A command's verdict is its exit code, never its output text.
-    const verdict = exitCode !== undefined ? (exitCode === 0 ? "PASS" : "FAIL")
+    // A route's verdict is the label it chose (none when unmatched).
+    said ??= output;
+    const chose = step.route && ok ? routeLabel(said, labels) : undefined;
+    const verdict = step.route ? chose : exitCode !== undefined ? (exitCode === 0 ? "PASS" : "FAIL")
       : step.gate ? (ok ? gateVerdict(output) : undefined) : parseVerdict(output);
+    // The ROUTE line drives the walk, not the report: strip it for the digest/summary;
+    // recordAttempt keeps the raw output.
+    const shown = !step.route || !ok ? output
+      : exitCode !== undefined ? commandOutput(dropRouteLine(said), exitCode) : dropRouteLine(output);
     const cli = ran.cli ?? (effective.kind === "delegate" ? effective.cli : undefined);
     const model = ran.model ?? (effective.kind === "delegate" ? effective.model
       : effective.kind === "chat" ? effective.model ?? deps.model : undefined);
     if (cli && ran.sessionId) sessions.set(index, { cli, sessionId: ran.sessionId });
     const result: StepResult = {
-      index, kind: step.kind, ok, output: labelPrefix + output,
+      index, kind: step.kind, ok, output: labelPrefix + shown,
       ...(step.id ? { stepId: step.id } : {}), ...(cli ? { cli } : {}), ...(verdict ? { verdict } : {}),
-      ...(graph ? { round } : {}),
+      ...(graph ? { round } : {}), ...(chose ? { chose } : {}),
     };
     results.push(result);
     latest.delete(index);
@@ -393,6 +415,15 @@ async function runSteps(
         pc = target;
         continue;
       }
+    }
+    if (step.route) {
+      // Never touches lastFail: a route is a choice, not a check.
+      const goto = step.route.paths.find((p) => p.when === chose)?.goto ?? step.route.otherwise;
+      if (goto === undefined) {
+        return { status: "needs-attention", attention: `no path matched at ${name(index)} (said: '${lastLine(said).slice(0, 120)}')` };
+      }
+      pc = goto === "end" ? steps.length : byId.get(goto) ?? steps.length;
+      continue;
     }
     pc = step.next === "end" ? steps.length : step.next !== undefined ? byId.get(step.next) ?? steps.length : index + 1;
   }

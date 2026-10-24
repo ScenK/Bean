@@ -1,8 +1,8 @@
 // packages/core/__test__/routine-gates.test.ts
 import { describe, expect, it } from "vitest";
 import { runRoutine, type DelegateStepRequest, type RoutineRunnerDeps, type StepInfo } from "../src/routine-runner.js";
-import { describeRoutineError, type Routine, type RoutineStep } from "../src/routine-store.js";
-import { gateVerdict } from "../src/step-attempts.js";
+import { describeRoutineError, usesGates, type Routine, type RoutineStep } from "../src/routine-store.js";
+import { gateVerdict, routeLabel } from "../src/step-attempts.js";
 import { stepEdgeProblems } from "../src/routine-graph.js";
 import type { StepAttempt, TodoItem, TodoStatus } from "../src/index.js";
 
@@ -253,5 +253,168 @@ describe("stepEdgeProblems (the editor's inline check)", () => {
       'step 2: next must point to a later step (or "end") — loop back with a gate instead',
       'step 3: gate goto step "gone" doesn\'t exist',
     ]);
+  });
+});
+
+describe("routeLabel", () => {
+  it("takes a declared label only from an exact last line", () => {
+    const labels = ["bug", "feature"];
+    expect(routeLabel("triaged\r\nROUTE: bug\r\n\r\n", labels)).toBe("bug");
+    expect(routeLabel("ROUTE:feature", labels)).toBe("feature");
+    expect(routeLabel("no route", labels)).toBeUndefined();
+    expect(routeLabel('ROUTE: "bug"', labels)).toBeUndefined();
+    expect(routeLabel("ROUTE: bug\nmore text", labels)).toBeUndefined();
+    expect(routeLabel("ROUTE: question", labels)).toBeUndefined();
+    expect(routeLabel("ROUTE: Bug", labels)).toBeUndefined();
+  });
+});
+
+describe("route validation", () => {
+  const err = (steps: unknown[]): string | null =>
+    describeRoutineError({ name: "r", enabled: true, cron: "0 6 * * *", steps, sinks: {} });
+  const s = (id: string, extra: object = {}) => ({ kind: "chat", id, instruction: "x", ...extra });
+  const two = (over: object = {}) => ({ paths: [{ when: "a", goto: "x" }, { when: "b", goto: "end" }], ...over });
+
+  it("accepts a route to later steps / end, with an optional otherwise", () => {
+    expect(err([s("d", { route: two({ otherwise: "y" }) }), s("x"), s("y")])).toBeNull();
+    expect(err([s("d", { route: two() }), s("x")])).toBeNull();
+  });
+
+  it("rejects each invalid shape", () => {
+    expect(err([s("d", { route: { paths: [{ when: "a", goto: "x" }] } }), s("x")])).toMatch(/step 1: a route needs at least 2 paths/);
+    expect(err([s("d", { route: "x" }), s("x")])).toMatch(/at least 2 paths/);
+    expect(err([s("d", { route: { paths: [{ when: "A b", goto: "x" }, { when: "b", goto: "x" }] } }), s("x")])).toMatch(/route label must use a-z/);
+    expect(err([s("d", { route: { paths: [{ when: "PASS", goto: "x" }, { when: "b", goto: "x" }] } }), s("x")])).toMatch(/route label must use a-z/);
+    expect(err([s("d", { route: { paths: [{ when: "fail", goto: "x" }, { when: "b", goto: "x" }] } }), s("x")])).toMatch(/"fail" can't be a route label/);
+    expect(err([s("d", { route: { paths: [{ when: "a", goto: "x" }, { when: "a", goto: "end" }] } }), s("x")])).toMatch(/route label "a" is used twice/);
+    expect(err([s("d", { route: two() }), s("y")])).toMatch(/route "a" step "x" doesn't exist/);
+    expect(err([s("x"), s("d", { route: two() })])).toMatch(/step 2: route "a" must point to a later step/);
+    expect(err([s("d", { route: { paths: [{ when: "a", goto: "d" }, { when: "b", goto: "end" }] } })])).toMatch(/must point to a later step/);
+    expect(err([s("d", { route: { paths: [{ when: "a" }, { when: "b", goto: "end" }] } })])).toMatch(/route "a" needs a step id or "end"/);
+    expect(err([s("x"), s("d", { route: { paths: [{ when: "a", goto: "end" }, { when: "b", goto: "end" }], otherwise: "x" } })])).toMatch(/route otherwise must point to a later step/);
+    expect(err([s("d", { route: two(), gate: { onFail: "stop" } }), s("x")])).toMatch(/can't be combined with a gate or next/);
+    expect(err([s("d", { route: two(), next: "end" }), s("x")])).toMatch(/can't be combined with a gate or next/);
+  });
+});
+
+describe("routed runs", () => {
+  const triage = (over: object = {}): RoutineStep => step("triage", {
+    route: { paths: [{ when: "bug", goto: "fix" }, { when: "feature", goto: "build" }, { when: "question", goto: "answer" }], ...over },
+  });
+  const threeWay = (over: object = {}): RoutineStep[] => [
+    triage(over), step("fix", { next: "ship" }), step("build", { next: "ship" }), step("answer", { next: "ship" }), step("ship"),
+  ];
+
+  it("a three-way route with a rejoin runs only the chosen path and the shared step", async () => {
+    expect(describeRoutineError(routine(threeWay()))).toBeNull();
+    const attempts: StepAttempt[] = [];
+    const f = fakeDelegate({ triage: ["it crashes\nROUTE: feature"] });
+    const res = await runRoutine(routine(threeWay()), deps(f.delegate, { recordAttempt: (a) => attempts.push(a) }));
+    expect(f.ids).toEqual(["triage", "build", "ship"]);
+    expect(res.record.status).toBe("ok");
+    expect(f.calls[0]!.instruction).toMatch(/exactly `ROUTE: <label>`, where <label> is one of: bug, feature, question/);
+    expect(f.calls[1]!.instruction).not.toMatch(/ROUTE/);
+    // The prior block names the choice and drops the ROUTE line; history keeps it raw.
+    expect(f.calls[1]!.priorOutputs).toBe('--- step 1 (delegate, ok, chose "feature") ---\nit crashes');
+    expect(res.record.steps[0]).toMatchObject({ id: "triage", verdict: "feature", summary: "it crashes", round: 1 });
+    expect(attempts[0]).toMatchObject({ verdict: "feature", output: "it crashes\nROUTE: feature" });
+  });
+
+  it('goto "end", a tail next: "end", and running off the last step all end ok; a todo ends done', async () => {
+    const steps = (endAt: object): RoutineStep[] => [
+      step("d", { route: { paths: [{ when: "stop", goto: "end" }, { when: "go", goto: "tail" }] } }),
+      step("skipped"), step("tail", endAt), step("after"),
+    ];
+    const toEnd = fakeDelegate({ d: ["ROUTE: stop"] });
+    expect((await runRoutine(routine(steps({})), deps(toEnd.delegate))).record.status).toBe("ok");
+    expect(toEnd.ids).toEqual(["d"]);
+
+    const tailEnd = fakeDelegate({ d: ["ROUTE: go"] });
+    expect((await runRoutine(routine(steps({ next: "end" })), deps(tailEnd.delegate))).record.status).toBe("ok");
+    expect(tailEnd.ids).toEqual(["d", "tail"]);
+
+    const offEnd = fakeDelegate({ d: ["ROUTE: go"] });
+    expect((await runRoutine(routine(steps({})), deps(offEnd.delegate))).record.status).toBe("ok");
+    expect(offEnd.ids).toEqual(["d", "tail", "after"]);
+
+    const statuses: [string, TodoStatus][] = [];
+    const todo = fakeDelegate({ d: ["ROUTE: stop"] });
+    const one = { id: "t1", routine: "r", text: "go", status: "running", createdAt: "x" } as TodoItem;
+    await runRoutine(routine(steps({}), { todoDriven: true }), deps(todo.delegate, {
+      todos: { claim: async () => undefined, setStatus: async (id, s) => { statuses.push([id, s]); } },
+    }), one);
+    expect(statuses).toEqual([["t1", "done"]]);
+  });
+
+  it("a missing, malformed, quoted, mid-output or undeclared label takes otherwise, else needs attention", async () => {
+    for (const said of ["no route here", "ROUTE bug", 'ROUTE: "bug"', "ROUTE: bug\nthen more", "ROUTE: chore"]) {
+      const withDefault = fakeDelegate({ triage: [said] });
+      const res = await runRoutine(routine(threeWay({ otherwise: "answer" })), deps(withDefault.delegate));
+      expect(withDefault.ids).toEqual(["triage", "answer", "ship"]);
+      expect(res.record.status).toBe("ok");
+      expect(res.record.steps[0]!.verdict).toBeUndefined();
+
+      const without = fakeDelegate({ triage: [said] });
+      const stuck = await runRoutine(routine(threeWay()), deps(without.delegate));
+      expect(without.ids).toEqual(["triage"]);
+      expect(stuck.record.status).toBe("needs-attention");
+      expect(stuck.digest).toContain(`Needs attention: no path matched at triage (said: '${said.split("\n").at(-1)}')`);
+    }
+  });
+
+  it("a command step routes on its stdout ROUTE line; a non-zero exit fails the step", async () => {
+    const steps: RoutineStep[] = [
+      { kind: "command", id: "probe", command: "./probe", route: { paths: [{ when: "dirty", goto: "clean" }, { when: "tidy", goto: "end" }] } },
+      step("clean"),
+    ];
+    const f = fakeDelegate({});
+    const res = await runRoutine(routine(steps), deps(f.delegate, { command: async () => ({ exitCode: 0, output: "3 files\nROUTE: dirty\n" }) }));
+    expect(f.ids).toEqual(["clean"]);
+    expect(res.record.steps[0]).toMatchObject({ verdict: "dirty", summary: "3 files\n(exit 0)" });
+    expect(res.record.status).toBe("ok");
+
+    const bad = fakeDelegate({});
+    const failed = await runRoutine(routine(steps), deps(bad.delegate, { command: async () => ({ exitCode: 2, output: "ROUTE: dirty" }) }));
+    expect(bad.ids).toEqual([]);
+    expect(failed.record.status).toBe("failed");
+    expect(failed.record.steps[0]).toMatchObject({ ok: false, summary: "ROUTE: dirty\n(exit 2)" });
+  });
+
+  it("a sprout whose only edges are routes still runs as a graph", async () => {
+    const steps = threeWay().map((s) => ({ ...s, next: undefined }));
+    expect(usesGates(steps)).toBe(true);
+    const f = fakeDelegate({ triage: ["ROUTE: answer-me"] });
+    const res = await runRoutine(routine([
+      step("triage", { route: { paths: [{ when: "answer-me", goto: "answer" }, { when: "other", goto: "end" }] } }),
+      step("fix"), step("answer"),
+    ]), deps(f.delegate));
+    expect(f.ids).toEqual(["triage", "answer"]);
+    expect(res.record.steps.map((s) => s.round)).toEqual([1, 1]);
+  });
+
+  it('a lone decider routed to "end" delivers its report without the ROUTE line; the attempt keeps it', async () => {
+    const attempts: StepAttempt[] = [];
+    const f = fakeDelegate({ d: ["All quiet today.\nROUTE: done"] });
+    const res = await runRoutine(routine([
+      step("d", { route: { paths: [{ when: "done", goto: "end" }, { when: "more", goto: "x" }] } }), step("x"),
+    ]), deps(f.delegate, { recordAttempt: (a) => attempts.push(a) }));
+    expect(res.digest).toBe("All quiet today.");
+    expect(attempts[0]!.output).toBe("All quiet today.\nROUTE: done");
+  });
+
+  it("a member todo is refused when a delegate step sits only on an untaken path", async () => {
+    const statuses: [string, TodoStatus][] = [];
+    const f = fakeDelegate({});
+    const chat: RoutineRunnerDeps["chat"] = async () => ({ content: "ROUTE: easy", toolCalls: [] });
+    const r = routine([
+      { kind: "chat", id: "d", instruction: "decide", route: { paths: [{ when: "easy", goto: "end" }, { when: "hard", goto: "code" }] } },
+      step("code"),
+    ], { todoDriven: true });
+    const one = { id: "t1", routine: "r", text: "hi", status: "running", createdAt: "x", createdBy: "member-1" } as TodoItem;
+    await runRoutine(r, deps(f.delegate, {
+      chat, todos: { claim: async () => undefined, setStatus: async (id, s) => { statuses.push([id, s]); } },
+    }), one);
+    expect(f.ids).toEqual([]);
+    expect(statuses).toEqual([["t1", "failed"]]);
   });
 });
