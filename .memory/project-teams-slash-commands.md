@@ -33,3 +33,8 @@ old `/new` did and skipped the reset bump that keeps a late delegate from restor
 Discord registers the whole catalog (`packages/discord/src/slash.ts`, live-session unconditionally)
 and answers every pick through `onCommand`: replies are collected into the ephemeral interaction
 reply; `announce` (a real admin change) is the one public post, with `allowedMentions: { parse: [] }`.
+
+Upload state (2026-10-23, sprouts rename #370): repo manifest is `1.3.0`, tenant still on `1.2.0`;
+upload deferred to the next batched menu change. Until then the live Teams menu entry says
+`routines` (still works via the parser alias) while the reply says sprouts — expected seam. When the
+next menu change ships, upload once and reuse `1.3.0` unless that change bumped it.
