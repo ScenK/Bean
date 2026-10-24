@@ -61,10 +61,11 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   const count = (name: string): number => running.get(name) ?? 0;
   // Routines a tick is deciding on — isRunning() reports them so the panel doesn't flicker idle
   // between "decided to run" and the run's own count.
-  const checking = new Set<string>();
-  // Workers inside runRoutine — a finished run prunes only when no sibling's attempt rows are
-  // still unsaved. Dropped before the record is saved, so the last of two simultaneous
-  // finishers always sees 0.
+  // Value = the deciding tick's token, so a tick only acts on / clears its own flags.
+  const checking = new Map<string, symbol>();
+  // Worker runs whose record isn't saved yet (running, or finished and saving) — a run prunes
+  // only when it's the last one, else it could drop a sibling's attempt rows. Checked after the
+  // save and dropped right after it; saves are serialized, so the last saver always prunes.
   const inFlight = new Map<string, number>();
   const bump = (name: string, by: number): void => { inFlight.set(name, (inFlight.get(name) ?? 0) + by); };
   let stopped = false;
@@ -98,14 +99,14 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   /** Saves the record, then drops step attempts of runs the history just evicted (and of
    * interrupted runs) — skipped while a run of this routine is live, its rows aren't saved yet
    * (a sibling parallel run; the last finisher prunes). */
-  const appendAndPrune = async (name: string, record: RunRecord, live = false): Promise<void> => {
+  const appendAndPrune = async (name: string, record: RunRecord, live: () => boolean = () => false): Promise<void> => {
     let keep: string[] = [];
     await updateState(name, (s) => {
       const next = appendRunRecord(s, record);
       keep = next.history.flatMap((r) => (r.id ? [r.id] : []));
       return next;
     });
-    if (live) return;
+    if (live()) return; // read after the save: a sibling may have started a run meanwhile
     try { deps.pruneAttempts?.(name, keep); } catch (err) { console.warn("bean: step attempt prune failed", err instanceof Error ? err.name : err); }
   };
 
@@ -161,8 +162,12 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         bump(routine.name, 1);
         try {
           let result: RoutineRunResult;
-          try { result = await deps.runRoutine(routine, todo); } finally { bump(routine.name, -1); }
-          await appendAndPrune(routine.name, result.record, (inFlight.get(routine.name) ?? 0) > 0);
+          try {
+            result = await deps.runRoutine(routine, todo);
+            await appendAndPrune(routine.name, result.record, () => (inFlight.get(routine.name) ?? 0) > 1);
+          } finally {
+            bump(routine.name, -1);
+          }
           await deps.deliverDigest(routine, result);
         } catch (err) {
           console.error(`bean: routine "${routine.name}" todo run failed`, err);
@@ -197,7 +202,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   async function fireNotify(routine: Routine, items: WatchItem[], at: string): Promise<void> {
     const digest = watchDigest(items);
     const record = { startedAt: at, finishedAt: now().toISOString(), status: "ok" as const, digest, steps: [] };
-    await appendAndPrune(routine.name, record, count(routine.name) > 0);
+    await appendAndPrune(routine.name, record, () => count(routine.name) > 0);
     await deps.deliverDigest(routine, { record, digest, results: [] });
   }
 
@@ -269,7 +274,9 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     // A running watch still polls (and may fill free slots); a running cron routine waits — its
     // own run/workers already drain the queue.
     const candidates = routines.filter((r) => r.enabled && !checking.has(r.name) && (count(r.name) === 0 || r.watch));
-    for (const routine of candidates) checking.add(routine.name);
+    const token = Symbol("tick");
+    for (const routine of candidates) checking.set(routine.name, token);
+    const unflag = (): void => { for (const r of candidates) if (checking.get(r.name) === token) checking.delete(r.name); };
     const due: Routine[] = [];
     try {
       const states = await deps.loadStates();
@@ -284,13 +291,13 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         }
       }
     } catch (err) {
-      for (const routine of candidates) checking.delete(routine.name);
+      unflag();
       throw err;
     }
     // Due routines start together (fill takes its slots synchronously, right after the flags clear).
     // One a Run now started while this tick was deciding (it dropped the flag) is already handled.
-    const go = due.filter((r) => checking.has(r.name));
-    for (const routine of candidates) checking.delete(routine.name);
+    const go = due.filter((r) => checking.get(r.name) === token);
+    unflag();
     await Promise.all(go.map(fill));
 
     async function consider(routine: Routine, state: RoutineState | undefined, nowT: Date): Promise<void> {

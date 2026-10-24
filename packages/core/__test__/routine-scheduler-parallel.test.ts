@@ -191,6 +191,64 @@ describe("maxParallel workers", () => {
     expect(t.deps.pollWatch).not.toHaveBeenCalled();
   });
 
+  it("a sibling that starts a run while a finished run's record is saving isn't pruned out from under", async () => {
+    const runs = gatedRuns();
+    const pruneAttempts = vi.fn();
+    let states: Record<string, RoutineState> = { q: { lastRun: d(6, 30, 11).toISOString(), history: [] } };
+    let hold = false;
+    const saves: (() => void)[] = [];
+    const t = setup(cronQueue({ maxParallel: 2 }), ["1", "2", "3"].map((id) => todo(id)), {
+      runRoutine: runs.runRoutine, pruneAttempts,
+      loadStates: async () => states,
+      saveStates: async (next) => { if (hold) await new Promise<void>((res) => saves.push(res)); states = next; },
+    });
+    const tick = t.sched.tick();
+    await vi.waitFor(() => expect(runs.openIds()).toEqual(["1", "2"]));
+    hold = true;
+    runs.release("2"); // B finishes first (A live): its save waits
+    runs.release("1"); // A finishes with nothing in flight: its save queues behind B's
+    await vi.waitFor(() => expect(saves).toHaveLength(1));
+    hold = false;
+    saves.shift()!(); // B's record lands; B claims todo 3 and starts it
+    await vi.waitFor(() => expect(runs.openIds()).toEqual(["3"]));
+    expect(pruneAttempts).not.toHaveBeenCalled(); // A saw run 3 live after its save
+    runs.release("3");
+    await tick;
+    expect(pruneAttempts).toHaveBeenCalledOnce(); // the last finisher
+  });
+
+  it("an older tick never runs a sprout on a newer tick's flag after Run now", async () => {
+    let releasePoll!: () => void;
+    let releaseStates: (() => void) | undefined;
+    let blockStates = false;
+    const watch: Routine = { name: "w", enabled: true, watch: { kind: "command", command: "x" }, steps: [], sinks: {} };
+    const r = cronQueue({ maxParallel: undefined, todoDriven: false });
+    let states: Record<string, RoutineState> = { q: { lastRun: d(6, 30, 11).toISOString(), history: [] } };
+    const runRoutineFn = vi.fn(async (): Promise<RoutineRunResult> => ({ record: { startedAt: d(6, 31).toISOString(), finishedAt: "b", status: "ok", digest: "d", steps: [] }, digest: "d", results: [] }));
+    const t = setup(r, [], {
+      runRoutine: runRoutineFn,
+      loadRoutines: async () => [r, watch],
+      loadStates: async () => {
+        if (blockStates) { blockStates = false; await new Promise<void>((res) => { releaseStates = res; }); }
+        return states;
+      },
+      saveStates: async (next) => { states = next; },
+      pollWatch: vi.fn(() => new Promise((res) => { releasePoll = () => res([]); })),
+      watchSeen: { isSeeded: () => true, seed: () => {}, unseen: () => [], markNew: () => [] },
+    });
+    const first = t.sched.tick(); // q due; the slow watch poll holds this tick
+    await vi.waitFor(() => expect(t.deps.pollWatch).toHaveBeenCalled());
+    await t.sched.runNow("q");
+    blockStates = true;
+    const second = t.sched.tick(); // re-flags q, then waits in its states load
+    await vi.waitFor(() => expect(releaseStates).toBeDefined());
+    releasePoll();
+    await first;
+    releaseStates!();
+    await second;
+    expect(runRoutineFn).toHaveBeenCalledOnce();
+  });
+
   it("maxParallel 1 (or absent) is today's single drain run: one runRoutine call, no todo, one digest", async () => {
     const runRoutineFn = vi.fn(async (): Promise<RoutineRunResult> => ({ record: { startedAt: "a", finishedAt: "b", status: "ok", digest: "d", steps: [] }, digest: "d", results: [] }));
     const claimTodo = vi.fn(async () => undefined);
