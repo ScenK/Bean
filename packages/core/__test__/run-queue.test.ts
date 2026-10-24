@@ -2,118 +2,67 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice, clearReservations } from "../src/run-queue.js";
+import { recordRun, releaseRun, updateRunPid, interruptedRunNotice, clearReservations, sweepDeadRuns } from "../src/run-queue.js";
 import { runsDir } from "../src/config.js";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "bean-runqueue-"));
-let n = 0;
-const newId = () => `run-${++n}`;
+const DEAD = 999_999; // a pid that (almost certainly) doesn't exist
+const read = (dir: string, f: string) => JSON.parse(readFileSync(join(runsDir(dir), f), "utf8"));
 
 describe("run-queue", () => {
-  it("reserves a free project path and refuses a second reservation for the same path while alive", () => {
-    const dir = tmp();
-    const first = reserveRun(dir, "/p", process.pid, newId);
-    expect(first?.projectPath).toBe("/p");
-    expect(reserveRun(dir, "/p", process.pid, newId)).toBeUndefined();
-    // A different project path is unaffected.
-    expect(reserveRun(dir, "/q", process.pid, newId)?.projectPath).toBe("/q");
+  it("records overlapping runs on one project, one file per run id (never refuses)", () => {
+    const dir = tmp(); // no runs/ yet — created on demand
+    recordRun(dir, "a", "/p", process.pid);
+    recordRun(dir, "b", "/p", process.pid);
+    expect(readdirSync(runsDir(dir)).sort()).toEqual(["a.json", "b.json"]);
+    expect(read(dir, "a.json")).toMatchObject({ id: "a", projectPath: "/p", pid: process.pid });
+    expect(typeof read(dir, "a.json").createdAt).toBe("string");
   });
 
-  it("reservation is keyed by project path atomically (O_EXCL create) — no scan-then-write window", () => {
-    // Can't truly simulate two racing OS processes in a single-threaded synchronous test; what
-    // this does verify is that a second reserveRun call for the same (alive) project never
-    // creates a second file — the write itself is exclusive (O_EXCL), not a separate
-    // check-then-write that a directory-scan-then-write-a-new-file scheme would have raced.
+  it("release removes only that run; releasing an unknown run is a no-op", () => {
     const dir = tmp();
-    const a = reserveRun(dir, "/p", process.pid, newId);
-    const b = reserveRun(dir, "/p", process.pid, newId);
-    expect([a, b].filter(Boolean)).toHaveLength(1);
-    expect(readdirSync(runsDir(dir))).toHaveLength(1);
+    recordRun(dir, "a", "/p", process.pid);
+    recordRun(dir, "b", "/p", process.pid);
+    releaseRun(dir, "a");
+    expect(readdirSync(runsDir(dir))).toEqual(["b.json"]);
+    expect(() => releaseRun(dir, "nope")).not.toThrow();
   });
 
-  it("clearReservations kills each recorded group (never this process) and empties runs/", () => {
+  it("updateRunPid rewrites the tracked pid; a no-op once the record is gone", () => {
+    const dir = tmp();
+    recordRun(dir, "a", "/p", process.pid);
+    updateRunPid(dir, "a", 4242);
+    expect(read(dir, "a.json")).toMatchObject({ id: "a", projectPath: "/p", pid: 4242 });
+    releaseRun(dir, "a");
+    updateRunPid(dir, "a", 1);
+    expect(readdirSync(runsDir(dir))).toEqual([]);
+    expect(() => updateRunPid(tmp(), "never", 1)).not.toThrow(); // no runs/ at all
+  });
+
+  it("sweepDeadRuns deletes dead-pid and malformed records (legacy hash files too), keeps live ones, never kills", () => {
+    const dir = tmp();
+    expect(sweepDeadRuns(dir)).toBe(0); // no runs/ yet
+    recordRun(dir, "live", "/p", process.pid);
+    recordRun(dir, "dead", "/p", DEAD);
+    writeFileSync(join(runsDir(dir), "broken.json"), "{broken", "utf8");
+    // A pre-#385 per-project reservation: same shape, hash filename.
+    writeFileSync(join(runsDir(dir), "0123456789abcdef0123456789abcdef.json"),
+      JSON.stringify({ id: "old", projectPath: "/p", pid: DEAD, createdAt: "2026-01-01T00:00:00Z" }), "utf8");
+    expect(sweepDeadRuns(dir)).toBe(3);
+    expect(readdirSync(runsDir(dir))).toEqual(["live.json"]);
+  });
+
+  it("clearReservations kills each recorded group (never this process) and empties runs/, legacy files included", () => {
     const dir = tmp();
     expect(clearReservations(dir)).toEqual([]); // no runs/ yet
-    reserveRun(dir, "/stale", 424242, newId);
-    reserveRun(dir, "/self", process.pid, newId);
+    recordRun(dir, "a", "/stale", 424242);
+    recordRun(dir, "b", "/self", process.pid);
+    writeFileSync(join(runsDir(dir), "0123456789abcdef0123456789abcdef.json"),
+      JSON.stringify({ id: "old", projectPath: "/legacy", pid: 434343, createdAt: "2026-01-01T00:00:00Z" }), "utf8");
     const killed: number[] = [];
-    expect(clearReservations(dir, (pid) => { killed.push(pid); }).sort()).toEqual(["/self", "/stale"]);
-    expect(killed).toEqual([424242]);
+    expect(clearReservations(dir, (pid) => { killed.push(pid); }).sort()).toEqual(["/legacy", "/self", "/stale"]);
+    expect(killed.sort()).toEqual([424242, 434343]);
     expect(readdirSync(runsDir(dir))).toEqual([]);
-    expect(reserveRun(dir, "/stale", process.pid, newId)).toBeDefined();
-  });
-
-  it("release frees the path for a new reservation", () => {
-    const dir = tmp();
-    const first = reserveRun(dir, "/p", process.pid, newId);
-    expect(first).toBeDefined();
-    releaseRun(dir, "/p");
-    expect(readdirSync(runsDir(dir))).toEqual([]);
-    expect(reserveRun(dir, "/p", process.pid, newId)).toBeDefined();
-  });
-
-  it("reclaims a reservation left by a dead pid (crash recovery)", () => {
-    const dir = tmp();
-    // A pid that (almost certainly) doesn't exist — simulates a crashed/force-quit process
-    // that never ran its own cleanup.
-    const deadPid = 999_999;
-    const stale = reserveRun(dir, "/p", deadPid, newId);
-    expect(stale).toBeDefined();
-    const reclaimed = reserveRun(dir, "/p", process.pid, newId);
-    expect(reclaimed).toBeDefined();
-    expect(reclaimed?.pid).toBe(process.pid);
-    // The stale file was swept, only the reclaiming reservation remains.
-    expect(readdirSync(runsDir(dir))).toHaveLength(1);
-  });
-
-  it("missing runs dir → reserve succeeds (mkdir on demand)", () => {
-    const dir = tmp();
-    expect(reserveRun(dir, "/p", process.pid, newId)).toBeDefined();
-  });
-
-  it("a malformed reservation file is reclaimed rather than blocking forever", () => {
-    const dir = tmp();
-    reserveRun(dir, "/p", process.pid, newId);
-    const [file] = readdirSync(runsDir(dir));
-    writeFileSync(join(runsDir(dir), file!), "{broken", "utf8"); // corrupt the live reservation in place
-    const r = reserveRun(dir, "/p", process.pid, newId);
-    expect(r).toBeDefined();
-    expect(readdirSync(runsDir(dir))).toHaveLength(1);
-  });
-
-  it("release of a project with no reservation is a no-op", () => {
-    const dir = tmp();
-    expect(() => releaseRun(dir, "/nope")).not.toThrow();
-  });
-
-  it("reservation file content round-trips (id, projectPath, pid, createdAt)", () => {
-    const dir = tmp();
-    const r = reserveRun(dir, "/p", process.pid, newId);
-    const [file] = readdirSync(runsDir(dir));
-    const onDisk = JSON.parse(readFileSync(join(runsDir(dir), file!), "utf8"));
-    expect(onDisk).toMatchObject({ id: r!.id, projectPath: "/p", pid: process.pid });
-    expect(typeof onDisk.createdAt).toBe("string");
-  });
-
-  it("updateReservationPid rewrites the tracked pid, and the busy-check follows the new pid not the old one", () => {
-    const dir = tmp();
-    // Reserve under a pid that's (almost certainly) dead — simulates the owning-process pid
-    // used before a delegate child exists — then switch it to a genuinely live one.
-    const deadPid = 999_999;
-    const r = reserveRun(dir, "/p", deadPid, newId)!;
-    updateReservationPid(dir, "/p", process.pid);
-    // Busy now under the NEW (live) pid — if the update hadn't taken effect, this would instead
-    // reclaim the still-dead-pid'd reservation and succeed.
-    expect(reserveRun(dir, "/p", 1, newId)).toBeUndefined();
-    const [file] = readdirSync(runsDir(dir));
-    const onDisk = JSON.parse(readFileSync(join(runsDir(dir), file!), "utf8"));
-    expect(onDisk).toMatchObject({ id: r.id, projectPath: "/p", pid: process.pid });
-  });
-
-  it("updateReservationPid is a no-op if the reservation is already gone", () => {
-    const dir = tmp();
-    // No runs/ dir exists yet at all — updateReservationPid must not try to create one.
-    expect(() => updateReservationPid(dir, "/never-reserved", 1)).not.toThrow();
   });
 });
 

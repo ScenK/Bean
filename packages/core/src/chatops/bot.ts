@@ -364,11 +364,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       },
       { instruction: p.proposal.instruction, conversationId: p.conversationId },
     );
-    if (started === undefined) {
-      await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled" }));
-      await fx.post("A run is already going in that project — wait for it or cancel it first.");
-      return;
-    }
     runId = started;
     await updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, runId }));
     const memory = await deps.loadModelMemory();
@@ -457,10 +452,6 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     if (started === "channel") {
       await fx.post("A live session is already running in this channel — say `stop` to end it first.");
-      return;
-    }
-    if (started === "project") {
-      await fx.post(`Another run is using ${projectName} — wait for it to finish.`);
       return;
     }
     await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started" }));

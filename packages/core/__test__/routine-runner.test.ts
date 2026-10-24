@@ -1,6 +1,6 @@
 // packages/core/__test__/routine-runner.test.ts
 import { describe, expect, it, vi } from "vitest";
-import { runRoutine, RunBusyError, withResumeFooter, type RoutineRunnerDeps } from "../src/routine-runner.js";
+import { runRoutine, withResumeFooter, type RoutineRunnerDeps } from "../src/routine-runner.js";
 import { availableModels, pinnedStepSelection } from "../src/models.js";
 import type { Routine } from "../src/routine-store.js";
 import type { ActionTool, ConvoMsg, ToolSpec } from "../src/converse.js";
@@ -373,58 +373,37 @@ describe("todo-driven routines", () => {
     expect(todos.statusLog).toHaveLength(0);
   });
 
-  it("cron todo routines never pass a todo id, so they never reserve a project and never defer", async () => {
+  it("cron todo routines never pass a todo id (no per-todo scratch)", async () => {
     const cron: Routine = { ...routine, steps: [{ kind: "delegate", project: "/p", instruction: "review" }] };
     const seen: (string | undefined)[] = [];
-    const result = await runRoutine(cron, {
+    await runRoutine(cron, {
       chat: async () => ({ content: "digest", toolCalls: [] }), model: "m",
       delegate: async (req) => { seen.push(req.todoId); return "ok"; },
       tools: [], findSkill: () => undefined, todos: fakeTodos([todo("1", "PR 1")]).dep,
     });
     expect(seen).toEqual([undefined]);
-    expect(result.deferred).toBeUndefined();
   });
 
-  it("watch routines pass the todo id; a busy project defers the todo back to pending", async () => {
+  it("watch routines pass the todo id; a failed delegate fails only its todo and the drain goes on", async () => {
     const watch: Routine = { name: "nightly", enabled: true, watch: { kind: "command", command: "c" }, todoDriven: true,
-      steps: [{ kind: "delegate", skill: "review", instruction: "review" }], sinks: {} };
-    const todos = fakeTodos([todo("1", "PR 1"), todo("2", "PR 2")]);
+      steps: [{ kind: "delegate", skill: "review", project: "/p", instruction: "review" }], sinks: {} };
+    const todos = fakeTodos([todo("1", "PR 1"), todo("2", "PR 2"), todo("3", "PR 3")]);
     const seen: (string | undefined)[] = [];
     const result = await runRoutine(watch, {
       chat: async () => ({ content: "digest", toolCalls: [] }),
       model: "m",
       delegate: async (req) => {
         seen.push(req.todoId);
-        if (req.todoId === "2") throw new RunBusyError("busy");
+        if (req.todoId === "2") throw new Error("boom");
         return "reviewed";
       },
       tools: [], findSkill: () => undefined,
       todos: todos.dep,
     });
-    expect(seen).toEqual(["1", "2"]);
-    expect(todos.statusLog.filter((l) => l.id === "2").map((l) => l.status)).toEqual(["running", "pending"]);
-    expect(result.deferred).toBeUndefined(); // todo 1 ran, so the run is real
-    const onlyBusy = fakeTodos([todo("3", "PR 3")]);
-    const deferred = await runRoutine(watch, {
-      chat: async () => ({ content: "digest", toolCalls: [] }), model: "m",
-      delegate: async () => { throw new RunBusyError("busy"); },
-      tools: [], findSkill: () => undefined, todos: onlyBusy.dep,
-    });
-    expect(deferred.deferred).toBe(true);
-  });
-
-  it("busy after an earlier step already ran fails the todo instead of replaying its side effects", async () => {
-    const watch: Routine = { name: "nightly", enabled: true, watch: { kind: "command", command: "c" }, todoDriven: true,
-      steps: [{ kind: "chat", instruction: "save a note" }, { kind: "delegate", skill: "review", project: "/p", instruction: "review" }], sinks: {} };
-    const todos = fakeTodos([todo("1", "PR 1")]);
-    const result = await runRoutine(watch, {
-      chat: async () => ({ content: "noted", toolCalls: [] }), model: "m",
-      delegate: async () => { throw new RunBusyError("p is busy"); },
-      tools: [], findSkill: () => undefined, todos: todos.dep,
-    });
-    expect(todos.statusLog.map((l) => l.status)).toEqual(["running", "failed"]);
+    expect(seen).toEqual(["1", "2", "3"]);
+    expect(todos.statusLog.filter((l) => l.id === "2").map((l) => l.status)).toEqual(["running", "failed"]);
+    expect(todos.statusLog.filter((l) => l.id === "3").map((l) => l.status)).toEqual(["running", "done"]);
     expect(result.record.status).toBe("failed");
-    expect(result.deferred).toBeUndefined();
   });
 });
 

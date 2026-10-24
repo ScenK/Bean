@@ -24,7 +24,7 @@ import {
   routinesDir, routineStateFile, outboxDir, claimOutbox, ackOutbox, runDelegate, killAllDelegates, killAllCommands,
   scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
   addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
-  recoverInterruptedTodos, deleteTodosForRoutine,
+  recoverInterruptedTodos, deleteTodosForRoutine, sweepDeadRuns,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
   availableModels, pinnedStepSelection,
   createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
@@ -658,6 +658,8 @@ app.whenReady().then(async () => {
     // Anything stuck `running` was interrupted by the previous quit — fail it visibly (retryable).
     const recovered = await recoverInterruptedTodos(dbFile(dir));
     if (recovered > 0) console.warn(`bean: marked ${recovered} interrupted todo(s) as failed`);
+    // Run records a crash left behind (run-queue.ts). Never kills: the bots share runs/.
+    sweepDeadRuns(dir);
 
     // Delegate/command step adapters (core routine-steps.ts), on the same resolved login-shell
     // PATH spawn as delegate-tasks (safety-packaged-app-path-detection).
@@ -685,7 +687,6 @@ app.whenReady().then(async () => {
       onStatus: (e) => {
         if (e.type === "start") taskStatus.upsert(e.id, { kind: "routine", name: e.name, line: e.steps[0] ?? "", detail: e.detail, steps: e.steps, step: 0, startedAt: e.startedAt, state: "running", runStartedAt: undefined });
         else if (e.type === "step") taskStatus.upsert(e.id, { step: e.step, line: e.line });
-        else if (e.type === "drop") taskStatus.dismiss(e.id);
         else taskStatus.finish(e.id, e.state, e.line, undefined, { runStartedAt: e.startedAt });
       },
       notify: async ({ target, ...msg }) => {
