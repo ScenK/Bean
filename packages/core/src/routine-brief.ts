@@ -52,6 +52,7 @@ export function briefMessages(sentence: string, ctx: BriefContext, previous?: Ro
  "notifyOnly": true | false,
  "steps": [{"kind": "delegate", "skill": "<skill name>", "project": "<project path>", "cli"?: "claude" | "codex" | "opencode", "instruction": "..."} | {"kind": "chat", "skill": "<optional>", "instruction": "..."} | {"kind": "command", "command": "shell check, e.g. pnpm test", "project"?: "<project path>"}],
    every step may also carry "id": "kebab-case", "gate": {"onFail": "stop" | {"goto": "<step id>", "maxRounds"?: 1-5}}, "next": "<later step id>" | "end",
+   or instead of gate/next, "route": {"paths": [{"when": "kebab-label", "goto": "<later step id>" | "end"}, ...], "otherwise"?: "<later step id>" | "end"},
  "sinks": {"chatops": [{"transport": "discord" | "teams", "channel"?: "id"}], "note": true, "notify": true},
  "missing": [{"field": "steps.0.project" | "sinks" | "source" | "cron" | ..., "question": "plain question"}]}`,
     "Rules:",
@@ -59,9 +60,10 @@ export function briefMessages(sentence: string, ctx: BriefContext, previous?: Ro
     "- For a YouTube handle like @name use source \"https://www.youtube.com/@name\" and sourceKind \"feed\".",
     "- notifyOnly = true when the user only wants to be told (\"ping me\", \"let me know\"); then steps is []. Otherwise one step per thing Bean should do to each new item; delegate for code/repo/review work, chat for summarising/writing.",
     "- everyMinutes: 5 for work queues (PRs, tickets), 15 for feeds, unless the user says otherwise.",
-    "- Keep each existing step's \"id\", \"cli\" and \"model\" exactly as in the current brief; never invent a model, and set cli only when the user names that coding agent.",
+    "- Keep each existing step's \"id\", \"cli\", \"model\" and \"route\" exactly as in the current brief unless the user changes them; never invent a model, and set cli only when the user names that coding agent.",
     "- command steps: a deterministic shell check (tests, lint, build) — exit 0 passes. Use one only when the user describes a check a command can run.",
     "- Gates: when the user says to stop, loop back, or branch on a step's result, give that step a gate. \"stop if it fails\" = {\"onFail\": \"stop\"}; \"loop back to X up to N times\" = {\"onFail\": {\"goto\": \"<X's id>\", \"maxRounds\": N}} (an earlier step); a goto to a later step is a branch. \"next\": \"end\" ends the run after that step on success. Give a step an id only when an edge points at it, and point edges only at ids in this brief. No gates unless the user asked for that control flow.",
+    "- Routes: when the user picks between paths by what a step finds (\"if it's X do A, if it's Y do B, otherwise …\"), give that deciding step a route — at least 2 paths, one per case, each \"when\" a short kebab-case label (never pass/fail) and \"goto\" the id of that path's first step; \"otherwise\" covers everything else (\"end\" to stop). Write the criteria for each label into the deciding step's instruction. Lay each path's steps out after the deciding step; a path that rejoins a shared later step sets \"next\" on its last step to that step's id. Every path that doesn't rejoin, including the last one, ends explicitly: \"goto\": \"end\", or \"next\": \"end\" on its last step. A route step has no gate or next. No routes unless the user described choices.",
     "- Pick a step skill only from the skill list; for a delegate step set project only when the user named one from the project list.",
     "- Destinations: DM on Discord/Teams = a chatops sink with no channel; set channel only when the user gives a specific channel/conversation id. Only include sinks the user asked for; if none, ask in missing.",
     "- missing: only what the sentence truly leaves open. Leave a field out rather than invent it.",
@@ -110,14 +112,24 @@ function cleanStep(v: unknown, ctx: BriefContext): RoutineStep | undefined {
 
 /** Shape-only: whether the targets exist and point the right way is checked once every step's
  * id is known (parseBrief drops a bad edge rather than the step). */
-function cleanEdges(s: Record<string, unknown>): Pick<RoutineStep, "gate" | "next"> {
-  const next = str(s.next) && (s.next === "end" || STEP_ID_RE.test(s.next)) ? { next: s.next } : {};
+function cleanEdges(s: Record<string, unknown>): Pick<RoutineStep, "gate" | "next" | "route"> {
+  const r = (typeof s.route === "object" && s.route !== null ? s.route : {}) as { paths?: unknown; otherwise?: unknown };
+  const route = Array.isArray(r.paths) ? {
+    route: {
+      paths: r.paths.flatMap((p) => {
+        const { when, goto } = (typeof p === "object" && p !== null ? p : {}) as { when?: unknown; goto?: unknown };
+        return str(when) && str(goto) ? [{ when, goto }] : [];
+      }),
+      ...(str(r.otherwise) ? { otherwise: r.otherwise } : {}),
+    },
+  } : {};
+  const edges = { ...route, ...(str(s.next) && (s.next === "end" || STEP_ID_RE.test(s.next)) ? { next: s.next } : {}) };
   const onFail = (s.gate as { onFail?: unknown } | null | undefined)?.onFail;
-  if (onFail === "stop") return { ...next, gate: { onFail: "stop" } };
+  if (onFail === "stop") return { ...edges, gate: { onFail: "stop" } };
   const { goto, maxRounds } = (typeof onFail === "object" && onFail !== null ? onFail : {}) as { goto?: unknown; maxRounds?: unknown };
-  if (!str(goto) || !STEP_ID_RE.test(goto)) return next;
+  if (!str(goto) || !STEP_ID_RE.test(goto)) return edges;
   const rounds = typeof maxRounds === "number" && Number.isInteger(maxRounds) ? { maxRounds: Math.min(Math.max(maxRounds, 1), MAX_GATE_ROUNDS) } : {};
-  return { ...next, gate: { onFail: { goto, ...rounds } } };
+  return { ...edges, gate: { onFail: { goto, ...rounds } } };
 }
 
 function cleanSinks(v: unknown): RoutineSinks {
@@ -160,14 +172,19 @@ export function parseBrief(raw: string, ctx: BriefContext): RoutineBrief {
       const { id: _dup, ...rest } = s; // a repeated id would fail validation — the editor re-assigns one
       return rest as RoutineStep;
     });
-  // A bad edge (missing target, backward next, rounds on a branch) is dropped, never the step —
-  // each edge on its own, so a bad `next` can't take a valid stop gate with it.
-  const without = (key: "gate" | "next") => steps.map((s) => { const { [key]: _drop, ...rest } = s; return rest as RoutineStep; });
-  const badNext = stepEdgeProblems(without("gate"));
-  const badGate = stepEdgeProblems(without("next"));
+  // A bad edge (missing target, backward next, rounds on a branch, a malformed route) is dropped,
+  // never the step — each edge on its own, so a bad `next` can't take a valid stop gate with it,
+  // and a route is kept or dropped whole.
+  const only = (key: "gate" | "next" | "route") => stepEdgeProblems(steps.map((s) => {
+    const { gate: _g, next: _n, route: _r, ...rest } = s;
+    return (s[key] === undefined ? rest : { ...rest, [key]: s[key] }) as RoutineStep;
+  }));
+  const bad = { gate: only("gate"), next: only("next"), route: only("route") };
   steps.forEach((s, i) => {
-    const { gate, next, ...rest } = s;
-    steps[i] = { ...rest, ...(gate && !badGate[i] ? { gate } : {}), ...(next && !badNext[i] ? { next } : {}) } as RoutineStep;
+    const { gate, next, route, ...rest } = s;
+    // A valid route wins: it can't share a step with a gate or next.
+    steps[i] = (route && !bad.route[i] ? { ...rest, route }
+      : { ...rest, ...(gate && !bad.gate[i] ? { gate } : {}), ...(next && !bad.next[i] ? { next } : {}) }) as RoutineStep;
   });
   const minutes = typeof b.everyMinutes === "number" && Number.isInteger(b.everyMinutes) && b.everyMinutes >= 1 ? b.everyMinutes : undefined;
   const source = str(b.source) && b.source.trim() ? b.source.trim() : undefined;

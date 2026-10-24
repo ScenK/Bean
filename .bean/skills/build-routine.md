@@ -38,7 +38,13 @@ unattended with the user's existing CLI logins.
      stderr and exit code.
 3. Draft the routine's steps from the brief. Each step's instruction is run once per new item,
    with the item's `text` appended as "Queued task". Keep the brief's skills, projects, and
-   models unless they can't work. If a step needs a skill that doesn't exist, draft it (a Bean
+   models unless they can't work, and keep each step's `id`, `gate`, `next`, and `route` exactly.
+   When the brief asks to pick between paths ("if it's X do A, if it's Y do B, otherwise …"), the
+   deciding step gets `"route": {"paths": [{"when": "<kebab-label>", "goto": "<later step id>" | "end"}, …], "otherwise"?: …}`
+   (at least 2 paths, labels never `pass`/`fail`, no `gate`/`next` on that step) with each label's
+   criteria written into its instruction. A path that rejoins a shared step sets `next` on its last
+   step to that step's id; every path that doesn't rejoin, including the last one, ends with an
+   explicit `"end"` (`goto: "end"` or `next: "end"` on its last step). If a step needs a skill that doesn't exist, draft it (a Bean
    skill is markdown with optional `description:` frontmatter; omit `target:` for coding-agent
    skills) and return it under `skills` — Bean saves it only if the name is free.
    Print on its own line: `BEAN-STEP: steps`
