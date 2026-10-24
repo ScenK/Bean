@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { runsDir } from "./config.js";
 
@@ -52,8 +52,12 @@ function readRun(path: string): TrackedRun | undefined {
   return undefined;
 }
 
+// Temp + rename: a plain rewrite truncates first, and another process's sweep reading the empty
+// file would delete a live record. The `.tmp` name never matches runFiles' `.json` filter.
 function writeRun(path: string, run: TrackedRun): void {
-  writeFileSync(path, JSON.stringify(run, null, 2) + "\n", "utf8");
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(run, null, 2) + "\n", "utf8");
+  renameSync(tmp, path);
 }
 
 /** Record a run against `pid` (the owning process until its child spawns — see updateRunPid).
