@@ -61,9 +61,10 @@ export const stepPassed = (step: { ok: boolean; verdict?: string }): boolean => 
 export const pathName = (step: { kind: StepKind; id?: string; round?: number }): string =>
   `${step.id ?? step.kind}${step.round && step.round > 1 ? ` r${step.round}` : ""}`;
 
-/** The route a run actually took, e.g. `lint ✓ → test ✗ → implement r2 ✓ → test r2 ✓`. */
+/** The route a run actually took, e.g. `lint ✓ → test ✗ → implement r2 ✓ → test r2 ✓`; a route
+ * step adds the path it picked: `triage ✓ ⑂bug → fix ✓`. */
 export const executedPath = (run: Pick<RunRecord, "steps">): string =>
-  run.steps.map((s) => `${pathName(s)} ${stepPassed(s) ? "✓" : "✗"}`).join(" → ");
+  run.steps.map((s) => `${pathName(s)} ${stepPassed(s) ? "✓" : "✗"}${s.chose ? ` ⑂${s.chose}` : ""}`).join(" → ");
 
 /** A gate stopped (or exhausted) this run: where it stopped and the verdict it stopped on — the
  * last step that didn't pass (a later todo pass may have succeeded after it). */

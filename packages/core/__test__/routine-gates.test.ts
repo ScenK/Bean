@@ -316,7 +316,8 @@ describe("routed runs", () => {
     expect(f.calls[1]!.instruction).not.toMatch(/ROUTE/);
     // The prior block names the choice and drops the ROUTE line; history keeps it raw.
     expect(f.calls[1]!.priorOutputs).toBe('--- step 1 (delegate, ok, chose "feature") ---\nit crashes');
-    expect(res.record.steps[0]).toMatchObject({ id: "triage", verdict: "feature", summary: "it crashes", round: 1 });
+    expect(res.record.steps[0]).toMatchObject({ id: "triage", verdict: "feature", chose: "feature", summary: "it crashes", round: 1 });
+    expect(res.record.steps[1]).not.toHaveProperty("chose");
     expect(attempts[0]).toMatchObject({ verdict: "feature", output: "it crashes\nROUTE: feature" });
   });
 
