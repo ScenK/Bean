@@ -373,6 +373,18 @@ describe("todo-driven routines", () => {
     expect(todos.statusLog).toHaveLength(0);
   });
 
+  it("cron todo routines never pass a todo id, so they never reserve a project and never defer", async () => {
+    const cron: Routine = { ...routine, steps: [{ kind: "delegate", project: "/p", instruction: "review" }] };
+    const seen: (string | undefined)[] = [];
+    const result = await runRoutine(cron, {
+      chat: async () => ({ content: "digest", toolCalls: [] }), model: "m",
+      delegate: async (req) => { seen.push(req.todoId); return "ok"; },
+      tools: [], findSkill: () => undefined, todos: fakeTodos([todo("1", "PR 1")]).dep,
+    });
+    expect(seen).toEqual([undefined]);
+    expect(result.deferred).toBeUndefined();
+  });
+
   it("watch routines pass the todo id; a busy project defers the todo back to pending", async () => {
     const watch: Routine = { name: "nightly", enabled: true, watch: { kind: "command", command: "c" }, todoDriven: true,
       steps: [{ kind: "delegate", skill: "review", instruction: "review" }], sinks: {} };

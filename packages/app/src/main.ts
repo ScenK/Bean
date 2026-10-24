@@ -664,6 +664,7 @@ app.whenReady().then(async () => {
       onStatus: (e) => {
         if (e.type === "start") taskStatus.upsert(e.id, { kind: "routine", name: e.name, line: e.steps[0] ?? "", detail: e.detail, steps: e.steps, step: 0, startedAt: e.startedAt, state: "running" });
         else if (e.type === "step") taskStatus.upsert(e.id, { step: e.step, line: e.line });
+        else if (e.type === "drop") taskStatus.dismiss(e.id);
         else taskStatus.finish(e.id, e.state, e.line);
       },
       notify: async (msg) => { if (notificationTransport.available()) await notificationTransport.send(msg); },

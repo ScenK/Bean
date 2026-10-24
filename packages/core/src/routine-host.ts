@@ -30,7 +30,9 @@ export interface RoutineHold { reserved: Set<string>; scratch: Set<string> }
 export type RoutineHostStatus =
   | { type: "start"; id: string; name: string; detail: string; steps: string[]; startedAt: number }
   | { type: "step"; id: string; step: number; line: string }
-  | { type: "finish"; id: string; state: "done" | "failed"; line: string };
+  | { type: "finish"; id: string; state: "done" | "failed"; line: string }
+  /** The run deferred (its project was busy): nothing ran, so clear the bubble — no "Done". */
+  | { type: "drop"; id: string };
 
 export interface RoutineHostDeps {
   /** ~/.bean — bean.db, outbox, routines and run reservations all derive from it. */
@@ -157,7 +159,10 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       for (const p of hold?.reserved ?? []) releaseRun(dir, p);
       for (const p of hold?.scratch ?? []) rmSync(p, { recursive: true, force: true });
       const status = result?.record.status;
-      deps.onStatus?.({
+      // ponytail: the `start` bubble still shows for the moment before the reservation fails;
+      // move `start` after the first step's reservation if that flash proves visible each tick.
+      if (result?.deferred) deps.onStatus?.({ type: "drop", id });
+      else deps.onStatus?.({
         type: "finish", id, state: status === "ok" ? "done" : "failed",
         line: !status ? "Run failed"
           : status === "failed" ? "Finished with a failed step"

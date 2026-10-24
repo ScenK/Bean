@@ -36,3 +36,10 @@ at drain against the current definition (refused todos fail, the rest still run)
 gate keys on NULL vs non-NULL, no routine host needs an owner id — don't stamp the owner's id.
 Chatops `list_todos`/`cancel_todo` filter by creator in SQL; todo proposal taps are bound to the
 requester + conversation, checked before `claim()`.
+
+Deferral (#380) is watch-only: only watch todos reserve their project (`reserve: Boolean(routine.watch)`
+in `routine-runner.ts`), so only they can hit `RunBusyError` before a step ran → todo back to
+pending, `deferred: true`, scheduler records nothing, next 30s tick retries. The desktop host emits
+a `drop` status (bubble dismissed) instead of a fake "Done". Enabling reservation for cron todo
+routines would make a deferral consume the cron slot (`lastRun` is stamped at start) — needs its own
+retry design.

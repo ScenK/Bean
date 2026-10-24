@@ -460,6 +460,9 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
         if (!(err instanceof RunBusyError)) throw err;
         if (scoped.length === 0) {
           // Busy before anything ran: back to pending untouched, stop draining — the next tick retries.
+          // Watch-only: only watch todos reserve (`reserve` above), and a watch routine is due
+          // every tick while its queue has pending work. Reserving for cron todo routines would
+          // make a deferral consume the cron slot (lastRun is stamped at start) — needs its own retry design.
           await deps.todos.setStatus(item.id, "pending");
           break;
         }

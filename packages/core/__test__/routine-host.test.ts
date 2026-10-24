@@ -13,6 +13,8 @@ import { loadNotes } from "../src/note-store.js";
 import { reserveRun } from "../src/run-queue.js";
 import { listStepAttempts } from "../src/step-attempts.js";
 import { saveSkillProposals } from "../src/retro.js";
+import { RunBusyError } from "../src/routine-runner.js";
+import { addTodo, listTodos } from "../src/todo-store.js";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bean-host-")); });
@@ -71,6 +73,18 @@ describe("createRoutineHost", () => {
     expect(res.record.status).toBe("failed");
     expect(res.digest).toContain("step 1 (proj) — codex resume abc");
     expect(h.status.at(-1)).toEqual({ type: "finish", id: "routine:r", state: "failed", line: "Finished with a failed step" });
+  });
+
+  it("a deferred run (project busy) drops its bubble instead of finishing with a fake Done", async () => {
+    const h = host({ delegateStep: async () => { throw new RunBusyError("proj is busy with another run"); } });
+    const watch = routine([{ kind: "delegate", project: "/work/proj", instruction: "review" }],
+      { cron: undefined, watch: { kind: "command", command: "c" }, todoDriven: true });
+    await addTodo(dbFile(dir), "r", "PR 1");
+    const res = await h.runOneRoutine(watch);
+    expect(res.deferred).toBe(true);
+    expect(h.status.at(-1)).toEqual({ type: "drop", id: "routine:r" });
+    expect(h.status.some((e) => e.type === "finish")).toBe(false);
+    expect((await listTodos(dbFile(dir), "r")).map((t) => t.status)).toEqual(["pending"]);
   });
 
   it("gives chat steps the host tools plus save_note", async () => {
