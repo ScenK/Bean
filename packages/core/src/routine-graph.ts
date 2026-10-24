@@ -134,3 +134,52 @@ export function stepPathCaptions(steps: RoutineStep[]): (string | null)[] {
     return caption && ending.has(i) ? `${caption} · ends the run` : caption;
   });
 }
+
+/** One edge of the read-only flow picture. `to` is a step index, or the run ending ok (`end`) /
+ * asking for you (`stop`). `fail` goes forward, `loop` back (with its round cap); a route's
+ * no-match is `otherwise` → `stop`. */
+export interface FlowEdge {
+  from: number;
+  to: number | "end" | "stop";
+  kind: "flow" | "next" | "pass" | "fail" | "loop" | "path" | "otherwise";
+  label?: string;
+  maxRounds?: number;
+}
+export interface FlowNode { key: string; index: number; id?: string; kind: RoutineStep["kind"]; flagged: boolean }
+
+/** The steps as a graph for the editor's diagram — the same edges the runner follows. Never
+ * assigns ids and never throws on a half-edited draft: an edge `describeEdgeError` rejects is
+ * left out and its step flagged, so the picture never contradicts the card's alert. Render-only. */
+export function stepFlow(steps: RoutineStep[]): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  const ids = new Map<string, number>();
+  steps.forEach((s, i) => { if (s.id && !ids.has(s.id)) ids.set(s.id, i); });
+  const at = (goto: string): number | "end" => (goto === "end" ? "end" : ids.get(goto)!);
+  const broken = (s: unknown, i: number): boolean => describeEdgeError(s as Record<string, unknown>, i, ids) !== null;
+  const edges: FlowEdge[] = [];
+  const nodes = steps.map((s, i): FlowNode => {
+    const flagged = broken(s, i);
+    if (s.route) {
+      // A route with any bad path (or a gate/next beside it) is dropped whole, like at save.
+      if (!flagged) {
+        // By index, not label: a path may be labelled "otherwise".
+        for (const p of s.route.paths) edges.push({ from: i, to: at(p.goto), kind: "path", label: p.when });
+        edges.push({ from: i, to: s.route.otherwise === undefined ? "stop" : at(s.route.otherwise), kind: "otherwise" });
+      }
+    } else {
+      if (!broken({ next: s.next }, i)) {
+        const to = s.next !== undefined ? at(s.next) : i + 1 < steps.length ? i + 1 : "end";
+        edges.push({ from: i, to, kind: s.gate ? "pass" : s.next !== undefined ? "next" : "flow" });
+      }
+      const onFail = s.gate?.onFail;
+      if (onFail !== undefined && !broken({ gate: s.gate }, i)) {
+        if (onFail === "stop") edges.push({ from: i, to: "stop", kind: "fail" });
+        else {
+          const to = ids.get(onFail.goto)!;
+          edges.push(to > i ? { from: i, to, kind: "fail" } : { from: i, to, kind: "loop", maxRounds: onFail.maxRounds ?? DEFAULT_GATE_ROUNDS });
+        }
+      }
+    }
+    return { key: `${i}:${s.id ?? ""}`, index: i, ...(s.id ? { id: s.id } : {}), kind: s.kind, flagged };
+  });
+  return { nodes, edges };
+}

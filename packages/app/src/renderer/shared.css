@@ -2507,6 +2507,24 @@ button, input, textarea, select, a {
 .bean-routines-step-path { font-size: 11.5px; color: var(--bean-text-dim); }
 .bean-routines-step-warning { font-size: 12px; color: var(--bean-text); border-left: 2px solid var(--bean-accent-text); padding: 2px 8px; }
 
+/* Sprout editor: read-only flow diagram (StepFlow). SVG text paints with currentColor so the
+   contrast scan reads its CSS color; lines use the 3:1 control border. */
+.bean-flow { margin-left: 36px; width: fit-content; max-width: calc(100% - 36px); box-sizing: border-box; overflow-x: auto; background: var(--bean-surface); border: 1px solid var(--bean-border); border-radius: 14px; padding: 6px; }
+.bean-flow-svg { display: block; }
+.bean-flow-line { color: var(--bean-control-border); }
+.bean-flow-accent { color: var(--bean-accent-text); }
+.bean-flow-svg marker path { fill: currentColor; }
+.bean-flow-edge { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.bean-flow-edge--loop { stroke-dasharray: 4 3; }
+.bean-flow-node { fill: var(--bean-surface-2); stroke: var(--bean-control-border); stroke-width: 1; }
+.bean-flow-node--flagged { stroke: var(--bean-error); stroke-width: 2; }
+.bean-flow-svg text { fill: currentColor; }
+.bean-flow-title { color: var(--bean-text); font-size: 12px; font-weight: 600; }
+.bean-flow-snippet { color: var(--bean-text-dim); font-size: 10px; }
+.bean-flow-label, .bean-flow-cap { color: var(--bean-text-dim); font-size: 10px; paint-order: stroke; stroke: var(--bean-surface); stroke-width: 3px; stroke-linejoin: round; }
+.bean-flow-cap { font-weight: 600; color: var(--bean-text); }
+.bean-flow-cap--stop { color: var(--bean-error); }
+
 /* Dashboard: executed path, needs-attention tone, per-attempt output. */
 .bean-dash-dot--needs-attention,
 .bean-dash-health-bar--needs-attention { background: var(--bean-accent-text); }
