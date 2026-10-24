@@ -88,7 +88,7 @@ export interface CardAction {
   /** Admin scope of the tapped card's channel (see IncomingMessage.scopeId). */
   scopeId?: string;
   fromName: string;
-  value: { beanAction?: string; proposalId?: string; projectPath?: string; cli?: string; model?: string; skillName?: string; steering?: string; instruction?: string };
+  value: { beanAction?: string; proposalId?: string; projectPath?: string; runId?: string; cli?: string; model?: string; skillName?: string; steering?: string; instruction?: string };
 }
 
 export interface BotEffects {
@@ -331,11 +331,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const updateTo = async (card: object): Promise<void> => {
       if (cardId !== undefined) await fx.updateCard(cardId, card);
     };
+    let runId = "";
     const started = await deps.runs.start(
       req,
       {
         onTail: (line) => {
-          updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, tail: line, projectPath: req.projectPath }))
+          updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, tail: line, runId }))
             .catch(logRunEffectError);
         },
         onDone: (result, sessionId) => {
@@ -363,12 +364,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       },
       { instruction: p.proposal.instruction, conversationId: p.conversationId },
     );
-    if (!started) {
+    if (started === undefined) {
       await updateTo(deps.cards.finishedCard({ projectName, instruction: p.proposal.instruction, startedBy, outcome: "cancelled" }));
       await fx.post("A run is already going in that project — wait for it or cancel it first.");
       return;
     }
-    await updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, projectPath: req.projectPath }));
+    runId = started;
+    await updateTo(deps.cards.runningCard({ projectName, instruction: p.proposal.instruction, startedBy, runId }));
     const memory = await deps.loadModelMemory();
     await deps.saveModelMemory({ ...memory, ...memoryUpdatesFor({ cli, model }) });
   }
@@ -1327,12 +1329,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     },
 
     async onCardAction(action: CardAction, fx: BotEffects): Promise<void> {
-      const { beanAction, proposalId, projectPath } = action.value;
+      const { beanAction, proposalId, projectPath, runId } = action.value;
       // Checked before any claim(), so a refused tap leaves the card usable for someone who may.
       const role = deps.roles.roleOf({ fromId: action.fromId, fromAltId: action.fromAltId, scopeId: action.scopeId });
       const need = cardActionNeeds(beanAction);
       if (!atLeast(role, need)) {
-        if (firstRefusal(`card:${action.fromId}:${proposalId ?? projectPath ?? beanAction}`)) {
+        if (firstRefusal(`card:${action.fromId}:${proposalId ?? runId ?? projectPath ?? beanAction}`)) {
           await fx.post(cardTapRefusal(need, role, deps.roles));
         }
         return;
@@ -1340,8 +1342,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (beanAction === "cancel-run") {
         // An admin cancels only runs started from this conversation; the owner, any run.
         const scope = role === "owner" ? undefined : action.conversationId;
-        if (!deps.runs.cancel(projectPath ?? "", scope)) {
-          await fx.post(scope ? "Nothing started from this conversation is running in that project." : "Nothing is running in that project.");
+        // A card from before runs were keyed by id has no runId; its run is long gone.
+        if (!runId || !deps.runs.cancel(runId, scope)) {
+          await fx.post(runId && scope ? "That run wasn't started from this conversation, or it already finished." : "That run is no longer running.");
         }
         return;
       }

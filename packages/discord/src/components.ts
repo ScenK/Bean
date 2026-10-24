@@ -98,10 +98,8 @@ function runningCard(input: RunningCardInput): object {
       description: clampInstruction(input.instruction),
       ...(input.tail ? { fields: [{ name: "Progress", value: `\`\`\`\n${clampTail(input.tail)}\n\`\`\`` }] } : {}),
     }],
-    // cancel-run carries the projectPath in the customId's id slot; server.ts resolves it
-    // via its proposal-message state (spec: adapter-local maps). Using projectPath directly
-    // here keeps the id self-contained instead.
-    components: [row([{ type: BUTTON, style: 4, label: "Cancel run", custom_id: `bean:cancel-run:${input.projectPath}` }])],
+    // cancel-run carries the run id in the customId's id slot (self-contained, no adapter state).
+    components: [row([{ type: BUTTON, style: 4, label: "Cancel run", custom_id: `bean:cancel-run:${input.runId}` }])],
   };
 }
 

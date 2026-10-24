@@ -35,12 +35,12 @@ test("second start on the same project is rejected while the first runs", async 
   const { fn, calls } = fakeRun();
   const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord" });
   const ev = events();
-  expect(await reg.start(req, ev, meta)).toBe(true);
-  expect(await reg.start(req, ev, meta)).toBe(false);
+  expect(await reg.start(req, ev, meta)).toBeDefined();
+  expect(await reg.start(req, ev, meta)).toBeUndefined();
   calls[0]?.cb.onSessionStart?.(123, "sess-1");
   calls[0]?.cb.onDone("result", "sess-1");
   expect(ev.onDone).toHaveBeenCalledWith("result", "sess-1");
-  expect(await reg.start(req, ev, meta)).toBe(true); // freed after completion
+  expect(await reg.start(req, ev, meta)).toBeDefined(); // freed after completion
 });
 
 test("tail lines are throttled: only the latest line flushes per interval", async () => {
@@ -84,20 +84,20 @@ test("a run that settles synchronously (spawn failure) leaves the project free",
     return { cancel: () => {} };
   }, { dir: tmp(), botKind: "discord" });
   const ev = events();
-  expect(await reg.start(req, ev, meta)).toBe(true);
+  expect(await reg.start(req, ev, meta)).toBeDefined();
   expect(ev.onError).toHaveBeenCalledWith("spawn failed", undefined);
   expect(reg.isRunning("/p")).toBe(false);
-  expect(await reg.start(req, events(), meta)).toBe(true); // path not stuck busy
+  expect(await reg.start(req, events(), meta)).toBeDefined(); // path not stuck busy
 });
 
 test("stale callbacks from a cancelled run cannot corrupt a newer run", async () => {
   const { fn, calls } = fakeRun();
   const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord", throttleMs: 5000 });
   const evA = events();
-  await reg.start(req, evA, meta);
-  reg.cancel("/p");
+  const id = (await reg.start(req, evA, meta))!;
+  reg.cancel(id);
   const evB = events();
-  expect(await reg.start(req, evB, meta)).toBe(true);
+  expect(await reg.start(req, evB, meta)).toBeDefined();
   // Run A's delegate misbehaves and fires onDone after cancel.
   calls[0]?.cb.onDone("late");
   expect(evA.onDone).not.toHaveBeenCalled();
@@ -112,12 +112,12 @@ test("cancel cancels the underlying handle and fires onCancelled", async () => {
   const { fn, cancelled } = fakeRun();
   const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord" });
   const ev = events();
-  await reg.start(req, ev, meta);
-  expect(reg.cancel("/p")).toBe(true);
+  const id = (await reg.start(req, ev, meta))!;
+  expect(reg.cancel(id)).toBe(true);
   expect(cancelled).toHaveLength(1);
   expect(ev.onCancelled).toHaveBeenCalled();
   expect(reg.isRunning("/p")).toBe(false);
-  expect(reg.cancel("/p")).toBe(false);
+  expect(reg.cancel(id)).toBe(false);
 });
 
 test("cancel does not release the reservation until the handle confirms the child actually stopped", async () => {
@@ -126,8 +126,8 @@ test("cancel does not release the reservation until the handle confirms the chil
   const fn = () => ({ cancel: (done?: () => void) => { confirm = done; } });
   const reg = new RunRegistry(fn, { dir, botKind: "discord" });
   const ev = events();
-  await reg.start(req, ev, meta);
-  expect(reg.cancel("/p")).toBe(true);
+  const id = (await reg.start(req, ev, meta))!;
+  expect(reg.cancel(id)).toBe(true);
   // SIGTERM sent, but the child hasn't confirmed it stopped yet — the project must still read
   // as busy, or a relaunch/other surface could start a second run on it right now.
   expect(readdirSync(join(dir, "runs"))).toHaveLength(1);
@@ -143,8 +143,8 @@ test("start reserves the project cross-process (a second RunRegistry sharing the
   const { fn: fnB } = fakeRun();
   const regA = new RunRegistry(fnA, { dir, botKind: "discord" });
   const regB = new RunRegistry(fnB, { dir, botKind: "teams" });
-  expect(await regA.start(req, events(), meta)).toBe(true);
-  expect(await regB.start(req, events(), meta)).toBe(false); // same projectPath, different process (simulated)
+  expect(await regA.start(req, events(), meta)).toBeDefined();
+  expect(await regB.start(req, events(), meta)).toBeUndefined(); // same projectPath, different process (simulated)
 });
 
 test("interruptAll leaves the reservation in place (doesn't free the project) and leaves an outbox notice per run", async () => {
@@ -166,7 +166,7 @@ test("interruptAll leaves the reservation in place (doesn't free the project) an
   // A second RunRegistry (simulating a relaunch) sharing the same dir still sees it as busy.
   const { fn: fn2 } = fakeRun();
   const reg2 = new RunRegistry(fn2, { dir, botKind: "discord" });
-  expect(await reg2.start(req, events(), meta)).toBe(false);
+  expect(await reg2.start(req, events(), meta)).toBeUndefined();
 });
 
 test("start() tracks the delegate child's own pid, so a relaunch reclaims once that child is actually dead", async () => {
@@ -180,7 +180,7 @@ test("start() tracks the delegate child's own pid, so a relaunch reclaims once t
   await reg.start(req, events(), meta);
   reg.interruptAll();
   const reg2 = new RunRegistry(fn, { dir, botKind: "discord" });
-  expect(await reg2.start(req, events(), meta)).toBe(true);
+  expect(await reg2.start(req, events(), meta)).toBeDefined();
 });
 
 test("onActivity reports the run lifecycle under one id, named after the project, without output", async () => {
@@ -204,8 +204,8 @@ test("onActivity reports a cancel as cancelled", async () => {
   const { fn } = fakeRun();
   const seen: { phase: string }[] = [];
   const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord", onActivity: (e) => seen.push(e) });
-  await reg.start(req, events(), meta);
-  reg.cancel(req.projectPath);
+  const id = (await reg.start(req, events(), meta))!;
+  reg.cancel(id);
   expect(seen.map((e) => e.phase)).toEqual(["start", "cancelled"]);
 });
 
@@ -231,9 +231,9 @@ test("every started run (not just resumes) is recorded, and error/cancel carry t
   calls[0]?.cb.onSessionStart?.(123, "s-err");
   calls[0]?.cb.onError(new Error("boom"));
   expect(ev.onError).toHaveBeenCalledWith("boom", "s-err");
-  await reg.start(req, ev, meta);
+  const id = (await reg.start(req, ev, meta))!;
   calls[1]?.cb.onSessionStart?.(124, "s-cancel");
-  reg.cancel("/p");
+  reg.cancel(id);
   expect(ev.onCancelled).toHaveBeenCalledWith("s-cancel");
   await reg.start(req, ev, meta);
   calls[2]?.cb.onSessionStart?.(125, "--help"); // option-like: no row, no receipt
@@ -264,4 +264,49 @@ test("an opencode resume recorded for another project starts fresh; the same pro
   await reg.start({ ...req, projectPath: "/z", resume: "ses_x" }, events(), meta);
   expect(calls[3]?.req.resume).toBe("ses_x");
   closeDb(dbFile(dir));
+});
+
+test("cancel resolves by run id; a conversation scope cancels only that conversation's run", async () => {
+  const { fn, cancelled } = fakeRun();
+  const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord" });
+  const a = (await reg.start(req, events(), meta))!;
+  const b = (await reg.start({ ...req, projectPath: "/q" }, events(), { ...meta, conversationId: "c2" }))!;
+  expect(a).not.toBe(b);
+  expect(reg.cancel("/p")).toBe(false); // a path is not a run id
+  expect(reg.cancel(b, "c1")).toBe(false); // c2's run, c1's scope
+  expect(reg.cancel(b, "c2")).toBe(true);
+  expect(reg.isRunning("/p")).toBe(true);
+  expect(reg.cancel(a)).toBe(true); // unscoped (owner)
+  expect(cancelled).toHaveLength(2);
+});
+
+test("a resume in a thread already running that CLI starts fresh and says so", async () => {
+  const { fn, calls } = fakeRun();
+  const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord" });
+  await reg.start({ ...req, resume: "s-1" }, events(), meta);
+  const ev = events();
+  await reg.start({ ...req, projectPath: "/q", resume: "s-1" }, ev, meta);
+  expect(calls[1]?.req.resume).toBeUndefined();
+  calls[1]?.cb.onDone("ok");
+  expect(ev.onDone).toHaveBeenCalledWith(`${RunRegistry.BUSY_THREAD_NOTICE}ok`, undefined);
+  // Another CLI, or another thread, keeps its resume.
+  await reg.start({ ...req, cli: "codex", projectPath: "/r", resume: "s-2" }, events(), meta);
+  await reg.start({ ...req, projectPath: "/s", resume: "s-3" }, events(), { ...meta, conversationId: "c2" });
+  expect(calls[2]?.req.resume).toBe("s-2");
+  expect(calls[3]?.req.resume).toBe("s-3");
+});
+
+test("a cancelled run still keeps its thread's CLI busy until its child confirms it stopped", async () => {
+  const calls: DelegateRequest[] = [];
+  let confirm: (() => void) | undefined;
+  const reg = new RunRegistry((r) => { calls.push(r); return { cancel: (done?: () => void) => { confirm = done; } }; }, { dir: tmp(), botKind: "discord" });
+  const id = (await reg.start({ ...req, resume: "s-1" }, events(), meta))!;
+  reg.cancel(id);
+  const q = (await reg.start({ ...req, projectPath: "/q", resume: "s-1" }, events(), meta))!;
+  expect(calls[1]?.resume).toBeUndefined();
+  confirm?.(); // /p's child is gone…
+  reg.cancel(q);
+  confirm?.(); // …and so is /q's: the thread is free again
+  await reg.start({ ...req, projectPath: "/r", resume: "s-1" }, events(), meta);
+  expect(calls[2]?.resume).toBe("s-1");
 });

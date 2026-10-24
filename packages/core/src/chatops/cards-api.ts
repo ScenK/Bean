@@ -24,7 +24,8 @@ export interface RunningCardInput {
   instruction: string;
   startedBy: string;
   tail?: string;
-  projectPath: string;
+  /** RunRegistry id the Cancel button carries. */
+  runId: string;
 }
 
 export interface FinishedCardInput {
