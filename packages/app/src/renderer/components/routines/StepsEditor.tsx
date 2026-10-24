@@ -3,7 +3,7 @@ import type { AvailableModel, CliName, Project, RoutineStep, Skill, StepGate } f
 import { stepAvailabilityProblem } from "@bean/core/models";
 import { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, stepEdgeProblems } from "@bean/core/routine-graph";
 import { ChipMenu } from "../../shared/ChipMenu.js";
-import { withStepIds } from "./step-ids.js";
+import { duplicateStep, withStepIds } from "./step-ids.js";
 
 const HARNESSES: CliName[] = ["claude", "codex", "opencode"];
 
@@ -367,6 +367,12 @@ export function StepsEditor(props: {
               {props.note?.(i) ? <div class="bean-routines-step-missing">{props.note(i)}</div> : null}
               <div class="bean-routines-step-actions">
                 <span class="bean-skills-spacer" />
+                <button
+                  type="button"
+                  class="bean-routines-todo-link"
+                  title="Copy this step below"
+                  onClick={() => props.onSteps(duplicateStep(steps, i))}
+                >Duplicate</button>
                 <button
                   type="button"
                   class="bean-skills-delete-link"

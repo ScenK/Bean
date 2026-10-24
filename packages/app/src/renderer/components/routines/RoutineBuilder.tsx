@@ -6,7 +6,7 @@ import type { RoutineStateView, SinkRecipients } from "../../../ipc.js";
 import type { RoutineBuildView } from "../../../routine-builder.js";
 import { ROUTINE_EXAMPLES, exampleRoutine } from "@bean/core/routine-examples";
 import { StepsEditor } from "./StepsEditor.js";
-import { stepProblemsText } from "./step-ids.js";
+import { remapStepMissing, stepProblemsText, withStepIds } from "./step-ids.js";
 import { intervalText, WATCH_MINUTES } from "./watch-status.js";
 
 // The describe-it builder: 2a (sentence → editable brief), 2b (building, cancellable), 2c
@@ -32,6 +32,10 @@ interface CatalogProps {
   clis: CliName[];
   models: AvailableModel[];
 }
+
+// Ids up front, wherever a brief enters: the step questions follow ids, and ids assigned lazily on
+// the first edit would be numbered by the post-edit positions.
+const withIds = (brief: RoutineBrief): RoutineBrief => ({ ...brief, steps: withStepIds(brief.steps) });
 
 const isUrl = (s: string): boolean => /^https?:\/\//i.test(s.trim());
 
@@ -61,7 +65,7 @@ export function DescribePane(props: CatalogProps & {
   onDrafting: (drafting: boolean) => void;
 }) {
   const [sentence, setSentence] = useState("");
-  const [brief, setBrief] = useState<RoutineBrief | undefined>(props.initial);
+  const [brief, setBrief] = useState<RoutineBrief | undefined>(props.initial && withIds(props.initial));
   const [tools, setTools] = useState<string[]>([]);
   const [drafting, setDrafting] = useState(false);
   const [building, setBuilding] = useState(false);
@@ -75,7 +79,7 @@ export function DescribePane(props: CatalogProps & {
     setError("");
     try {
       const res = await window.bean.routinesDraftBrief(text, brief);
-      setBrief(res.brief);
+      setBrief(withIds(res.brief));
       setTools(res.tools);
     } catch (e) {
       setError(ipcErrorMessage(e) ?? "couldn't draft a brief");
@@ -283,10 +287,7 @@ export function DescribePane(props: CatalogProps & {
                 <div class="bean-rb-steps">
                   <StepsEditor
                     steps={brief.steps}
-                    onSteps={(steps: RoutineStep[]) => {
-                      const changed = steps.flatMap((s, i) => (JSON.stringify(s) !== JSON.stringify(brief.steps[i]) ? [`steps.${i}`] : []));
-                      patch({ steps }, changed);
-                    }}
+                    onSteps={(steps: RoutineStep[]) => setBrief({ ...brief, steps, missing: remapStepMissing(brief.missing, brief.steps, steps) })}
                     skills={props.skills}
                     projects={props.projects}
                     clis={props.clis}

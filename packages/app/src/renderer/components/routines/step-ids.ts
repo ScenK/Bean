@@ -18,6 +18,32 @@ export function withStepIds(steps: RoutineStep[]): RoutineStep[] {
   });
 }
 
+/** Inserts an exact copy of step `i` (every field, `gate`/`next` included) directly below it,
+ * with a fresh id. Below keeps every edge's direction, so the copy never raises an edge problem. */
+export function duplicateStep(steps: RoutineStep[], i: number): RoutineStep[] {
+  const withIds = withStepIds(steps);
+  const original = withIds[i];
+  if (!original) return withIds;
+  const { id: _id, ...copy } = structuredClone(original);
+  return withStepIds([...withIds.slice(0, i + 1), copy as RoutineStep, ...withIds.slice(i + 1)]);
+}
+
+/** Moves the builder's `steps.<i>…` questions with their step (matched by id) across an
+ * insert/remove/reorder. A question is dropped once its step is gone or its step changed
+ * (editing a step answers it); non-step fields pass through. */
+export function remapStepMissing<M extends { field: string }>(missing: M[], before: RoutineStep[], after: RoutineStep[]): M[] {
+  const index = new Map<string, number>();
+  after.forEach((s, i) => { if (s.id && !index.has(s.id)) index.set(s.id, i); });
+  return missing.flatMap((m) => {
+    const match = /^steps\.(\d+)(\..*)?$/.exec(m.field);
+    if (!match) return [m];
+    const old = before[Number(match[1])];
+    const to = old?.id === undefined ? undefined : index.get(old.id);
+    if (to === undefined || JSON.stringify(after[to]) !== JSON.stringify(old)) return [];
+    return [{ ...m, field: `steps.${to}${match[2] ?? ""}` }];
+  });
+}
+
 /** Enable-time check: one line per delegate step whose pinned harness/model can't run here,
  * so an unattended 03:00 run isn't the first to find out. */
 export function stepProblemsText(steps: RoutineStep[], clis: CliName[], models: AvailableModel[]): string {
