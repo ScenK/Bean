@@ -82,9 +82,7 @@ function fx(): BotEffects & { posted: string[]; cards: object[]; updates: { id: 
 
 function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: ConverseResult } = {}) {
   const delegateCalls: { req: DelegateRequest; cb: DelegateCallbacks }[] = [];
-  // Fresh tmp dir per makeDeps() call: reserveRun's pid-liveness check would otherwise see a
-  // stale reservation from an earlier test as "still alive" (same vitest worker pid) and
-  // wrongly refuse to start.
+  // Fresh tmp dir per makeDeps() call: keeps each test's run records (run-queue.ts) isolated.
   const runsBeanDir = mkdtempSync(join(tmpdir(), "bean-bot-"));
   const runs = new RunRegistry((req, cb) => {
     delegateCalls.push({ req, cb });
@@ -561,8 +559,8 @@ test("confirm on an expired proposal posts an expiry message", async () => {
   expect(effects.posted.some((p) => p.includes("expired"))).toBe(true);
 });
 
-test("confirm while the project is busy refuses politely", async () => {
-  const { deps } = makeDeps({ converseResult: delegateResult });
+test("a second confirm on a busy project starts a second run alongside the first", async () => {
+  const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
   const effects = fx();
   const id1 = await proposeThenGetId(deps, effects);
   const bot = buildTeamsBot(deps);
@@ -572,7 +570,9 @@ test("confirm while the project is busy refuses politely", async () => {
   const card2 = JSON.stringify(effects.cards[1]);
   const id2 = /"proposalId":"(prop-\d+)"/.exec(card2)?.[1] ?? "";
   await bot.onCardAction({ conversationId: "c1", fromName: "b", value: { beanAction: "confirm", proposalId: id2 } }, effects);
-  expect(effects.posted.some((p) => p.includes("already going"))).toBe(true);
+  expect(delegateCalls).toHaveLength(2);
+  expect(delegateCalls[1]?.req.projectPath).toBe(delegateCalls[0]?.req.projectPath);
+  expect(effects.posted.some((p) => p.includes("already going"))).toBe(false);
 });
 
 test("cancel-proposal updates the card to cancelled", async () => {
@@ -971,7 +971,6 @@ test("the running card's Cancel carries the run id, and a tap cancels that run",
   const runId = (effects.updates.at(-1)?.card as { runId?: string }).runId;
   expect(runId).toBeTruthy();
   await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "cancel-run", runId } }, effects);
-  expect(deps.runs.isRunning("/p/bean")).toBe(false);
   await vi.waitFor(() => expect(effects.posted).toContain("Run cancelled."));
 });
 
@@ -1154,14 +1153,6 @@ test("start-live refused because the channel is bound keeps the channel wording"
   vi.spyOn(deps.liveSessions, "start").mockReturnValue("channel");
   await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) } }, effects);
   expect(effects.posted.at(-1)).toBe("A live session is already running in this channel — say `stop` to end it first.");
-});
-
-test("start-live refused because another run holds the project names the project", async () => {
-  const { bot, fx: effects, deps } = makeBotWithLiveSessionProposal();
-  await bot.onMessage({ conversationId: "c1", text: "start live session", fromId: "u", fromName: "sam" }, effects);
-  vi.spyOn(deps.liveSessions, "start").mockReturnValue("project");
-  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) } }, effects);
-  expect(effects.posted.at(-1)).toBe("Another run is using bean — wait for it to finish.");
 });
 
 test("start-live ignores a whitespace-only edited instruction", async () => {
@@ -1910,12 +1901,12 @@ test("an admin can't cancel another conversation's run, or every run; the owner 
   await bot.onCardAction({ conversationId: "c2", scopeId: "s1", fromId: "ana", fromName: "Ana", value: { beanAction: "cancel-run", runId } }, effects);
   expect(effects.posted).toContain("That run wasn't started from this conversation, or it already finished.");
   await bot.onMessage({ ...admin, conversationId: "c2", text: "cancel" }, effects);
-  expect(deps.runs.isRunning("/p/bean")).toBe(true);
+  expect(effects.posted).not.toContain("Run cancelled.");
   expect(effects.posted).toContain("Nothing is running.");
   await bot.onMessage({ ...guest, text: "cancel" }, effects);
-  expect(deps.runs.isRunning("/p/bean")).toBe(true);
+  expect(effects.posted).not.toContain("Run cancelled.");
   await bot.onMessage({ ...admin, text: "cancel" }, effects); // same conversation: allowed
-  expect(deps.runs.isRunning("/p/bean")).toBe(false);
+  await vi.waitFor(() => expect(effects.posted).toContain("Run cancelled."));
 });
 
 test("whoami/admins work for guests; the DM gate answers once with no model call", async () => {

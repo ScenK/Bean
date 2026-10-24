@@ -22,9 +22,8 @@ Decisions worth keeping:
   poll pass so one long run can't stall other watches. `lastPoll`/`pollError` persist;
   the consecutive-failure count is in memory (alarm = one desktop notification at 3; the panel
   status line is the guarantee, the Dashboard shows the error only after 3).
-- Watch-fired todo runs: project-less delegate steps get `scratchDir/<todo id>` (removed after);
-  project steps must win `reserveRun`, else `RunBusyError` ⇒ todo back to pending, run
-  `deferred` (nothing recorded).
+- Watch-fired todo runs: project-less delegate steps get `scratchDir/<todo id>` (removed after).
+  Project steps never wait on a busy project (#385 removed the lock and the deferral).
 - **Builder** (desktop only): brief = plain `/v1/responses` call with no tools (not a
   `propose_*` — converse's tool list stays byte-stable); command watches are built by a headless
   delegate with the hidden `build-routine` skill, which never writes `~/.bean` — Bean parses the
@@ -35,8 +34,6 @@ Decisions worth keeping:
 - **Hand-off is at-least-once**: an item is marked seen only after its todo insert / digest
   delivery succeeded; a failed hand-off counts as a poll failure (status line + alarm) and the
   item is re-offered next poll. Results of a poll whose source was edited mid-flight are dropped.
-- Busy project (`RunBusyError`) defers the todo to pending **only if none of its steps ran yet**;
-  after an earlier step (possible side effects) it fails the todo instead of replaying it.
 - **Accepted trust model (review round 1, not fixed):** the build agent runs on the same
   bypass-permissions delegate path as every other delegate, so the skill's "never write
   `~/.bean`" is a prompt rule, and Bean re-running the agent's command before review adds no

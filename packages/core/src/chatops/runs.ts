@@ -5,7 +5,7 @@ import type { DelegateCallbacks, DelegateHandle, DelegateRequest } from "../dele
 import { dbFile, outboxDir } from "../config.js";
 import { delegateRunProject, isValidSessionId, recordDelegateSession } from "../delegate-runs.js";
 import { enqueueOutbox } from "../outbox.js";
-import { reserveRun, releaseRun, updateReservationPid, interruptedRunNotice } from "../run-queue.js";
+import { recordRun, releaseRun, updateRunPid, interruptedRunNotice } from "../run-queue.js";
 
 export type RunDelegateFn = (req: DelegateRequest, callbacks: DelegateCallbacks) => DelegateHandle;
 
@@ -26,7 +26,7 @@ export interface RunMeta {
 }
 
 export interface RunRegistryOptions {
-  /** ~/.bean, for the cross-process project-path reservation (run-queue.ts) and outbox. */
+  /** ~/.bean, for the cross-process run record (run-queue.ts) and outbox. */
   dir: string;
   botKind: "discord" | "teams";
   newId?: () => string;
@@ -43,17 +43,15 @@ interface ActiveRun {
   timer: ReturnType<typeof setInterval>;
   events: RunEvents;
   /** Set once this run has settled (done/error) or been cancelled. Stale delegate
-   * callbacks that fire afterwards become no-ops instead of clobbering a newer
-   * run on the same project path. */
+   * callbacks that fire afterwards become no-ops. */
   released: boolean;
   meta: RunMeta;
   sessionId?: string;
 }
 
-/** Active delegate runs keyed by run id (what a card's Cancel carries), still one per project
- * path; tail output throttled to one card edit per interval (Teams rate-limits message edits).
- * The in-memory map is this process's own guard; `reserveRun`/`releaseRun` (run-queue.ts) extend
- * that same single-run-per-project invariant across processes (desktop chat + the other bot). */
+/** Active delegate runs keyed by run id (what a card's Cancel carries); any number may share a
+ * project. Tail output throttled to one card edit per interval (Teams rate-limits message edits).
+ * Each run is recorded in run-queue.ts for crash cleanup. */
 export class RunRegistry {
   private byId = new Map<string, ActiveRun>();
   /** Cancelled runs whose child hasn't confirmed it stopped — still driving their session. */
@@ -67,19 +65,14 @@ export class RunRegistry {
     private opts: RunRegistryOptions,
   ) {}
 
-  isRunning(projectPath: string): boolean {
-    return [...this.byId.values()].some((r) => r.projectPath === projectPath);
-  }
-
   private newId(): string {
     return this.opts.newId?.() ?? randomUUID();
   }
 
   // A run that fails to spawn settles synchronously: onError fires (and free() runs)
   // before start() ever reaches its map insert — `run.released` guards that hole.
-  /** Resolves to the new run's id (for cancel()), or undefined when the project is busy. */
-  async start(req: DelegateRequest, callerEvents: RunEvents, meta: RunMeta): Promise<string | undefined> {
-    if (this.isRunning(req.projectPath)) return undefined;
+  /** Resolves to the new run's id (for cancel()). */
+  async start(req: DelegateRequest, callerEvents: RunEvents, meta: RunMeta): Promise<string> {
     // opencode resuming a session from another folder emits nothing and never exits (claude
     // rejects it, codex adopts the new cwd), so a thread follow-up on another project starts fresh.
     if (req.cli === "opencode" && req.resume && delegateRunProject(dbFile(this.opts.dir), req.resume) !== req.projectPath) {
@@ -94,17 +87,9 @@ export class RunRegistry {
       req = fresh;
       notice = RunRegistry.BUSY_THREAD_NOTICE;
     }
-    const reservation = reserveRun(this.opts.dir, req.projectPath, process.pid, () => this.newId());
-    if (!reservation) return undefined;
-    // Lost an in-process race — release the now-redundant reservation and defer to whichever
-    // call already won the in-memory map. (isRunning was already checked above; this second
-    // check exists for symmetry if start() is ever made to await something before here.)
-    if (this.isRunning(req.projectPath)) {
-      releaseRun(this.opts.dir, req.projectPath);
-      return undefined;
-    }
     const act = this.opts.onActivity;
     const runId = this.newId();
+    recordRun(this.opts.dir, runId, req.projectPath, process.pid);
     const name = basename(req.projectPath) || "delegate";
     // Every settle path goes through `events` except interruptAll(): that one runs as the bot
     // process dies, and the app clears a dead bot's bubbles itself.
@@ -126,7 +111,7 @@ export class RunRegistry {
       events.onTail(line);
     }, throttleMs);
     const run: ActiveRun = { projectPath: req.projectPath, cli: req.cli, handle: undefined, timer, events, released: false, meta };
-    // Release this run only: mark it stale, stop its timer, release its reservation, and remove
+    // Release this run only: mark it stale, stop its timer, release its record, and remove
     // it from the registry. Only called
     // once the delegate's own close event has actually fired (onDone/onError) — i.e. once the
     // child process is *confirmed* dead, not just asked to stop (see cancel()/interruptAll()
@@ -135,7 +120,7 @@ export class RunRegistry {
       run.released = true;
       clearInterval(timer);
       this.byId.delete(runId);
-      releaseRun(this.opts.dir, req.projectPath);
+      releaseRun(this.opts.dir, runId);
     };
     run.handle = this.runDelegate(req, {
       onOutput: (line) => {
@@ -152,11 +137,11 @@ export class RunRegistry {
         events.onError(err.message, run.sessionId);
       },
       // A resumed run may re-spawn fresh if the CLI rejects the id; the first child is dead by
-      // then, so a reservation on its pid would be reclaimable mid-run. Keep this (live) process's
-      // pid until the session has started and no retry can happen.
-      // ponytail: a bot killed in that ~1s window leaves the reservation on its own dead pid.
+      // then, so a record on its pid would miss the live retry. Keep this (live) process's pid
+      // until the session has started and no retry can happen.
+      // ponytail: a bot killed in that ~1s window leaves the record on its own dead pid.
       onSessionStart: (pid, sessionId) => {
-        if (req.resume && !run.released && pid !== undefined) updateReservationPid(this.opts.dir, req.projectPath, pid);
+        if (req.resume && !run.released && pid !== undefined) updateRunPid(this.opts.dir, runId, pid);
         // Every started run is recorded (not just resumes), so failed/cancelled ones can be reopened.
         if (isValidSessionId(sessionId)) run.sessionId = sessionId;
         recordDelegateSession(dbFile(this.opts.dir), {
@@ -164,12 +149,12 @@ export class RunRegistry {
         });
       },
     });
-    // The reservation was created against this process's own pid (nothing else to track before
-    // the child exists); switch it to the child's real pid now so a later interruptAll() can
-    // leave the reservation in place and have the next reserveRun() correctly track *that
-    // child*, not this (possibly about-to-exit) process. See run-queue.ts's doc comment.
+    // The record was created against this process's own pid (nothing else to track before the
+    // child exists); switch it to the child's real pid now so a later interruptAll() can leave
+    // it in place and boot cleanup tracks *that child*, not this (possibly about-to-exit)
+    // process. See run-queue.ts's doc comment.
     if (!req.resume && !run.released && run.handle.pid !== undefined) {
-      updateReservationPid(this.opts.dir, req.projectPath, run.handle.pid);
+      updateRunPid(this.opts.dir, runId, run.handle.pid);
     }
     if (!run.released) this.byId.set(runId, run);
     return runId;
@@ -184,12 +169,11 @@ export class RunRegistry {
     this.byId.delete(runId);
     this.stopping.add(run);
     // Release only once the handle confirms the child has actually stopped (onCancelled fires
-    // from the delegate's own close event) — releasing eagerly here would let a new run start
-    // on this project while the old child (sent SIGTERM, possibly still shutting down or
-    // ignoring it) is still alive.
+    // from the delegate's own close event) — the record must outlive a child that's still
+    // shutting down (or ignoring SIGTERM) so crash cleanup can still find it.
     run.handle?.cancel(() => {
       this.stopping.delete(run);
-      releaseRun(this.opts.dir, run.projectPath);
+      releaseRun(this.opts.dir, runId);
       run.events.onCancelled(run.sessionId);
     });
     return true;
@@ -208,13 +192,10 @@ export class RunRegistry {
    * wait for confirmation or emit onCancelled — nothing is listening — and instead durably
    * notifies the requesting conversation via the outbox so it survives the restart.
    *
-   * Deliberately does NOT release the reservation: this process is exiting right after, with no
-   * way to know whether the delegate child (sent SIGTERM below) has actually stopped by then —
-   * releasing blind would let a relaunch start a second run on the same project while the old
-   * child is still alive. The reservation already tracks the child's own pid (see start()), so
-   * it's left in place and the *next* reserveRun() for this project will correctly report busy
-   * until that child is verifiably gone (or reclaim it once it's not — same crash-recovery path
-   * as an ungraceful exit).
+   * Deliberately does NOT release the run record: this process is exiting right after, with no
+   * way to know whether the delegate child (sent SIGTERM below) has actually stopped by then.
+   * The record already tracks the child's own pid (see start()), so it's left for boot cleanup
+   * (desktop sweeps it once the child is dead; a headless boot kills it).
    *
    * Also deliberately synchronous (releaseRun/enqueueOutbox are sync-internally, see their doc
    * comments): a SIGTERM handler racing the process's own exit can't reliably wait on real

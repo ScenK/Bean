@@ -37,9 +37,7 @@ gate keys on NULL vs non-NULL, no routine host needs an owner id — don't stamp
 Chatops `list_todos`/`cancel_todo` filter by creator in SQL; todo proposal taps are bound to the
 requester + conversation, checked before `claim()`.
 
-Deferral (#380) is watch-only: only watch todos reserve their project (`reserve: Boolean(routine.watch)`
-in `routine-runner.ts`), so only they can hit `RunBusyError` before a step ran → todo back to
-pending, `deferred: true`, scheduler records nothing, next 30s tick retries. The desktop host emits
-a `drop` status (bubble dismissed) instead of a fake "Done". Enabling reservation for cron todo
-routines would make a deferral consume the cron slot (`lastRun` is stamped at start) — needs its own
-retry design.
+No busy deferral (#385): a todo's delegate step never waits on its project — the one-run-per-project
+lock, `RunBusyError`, `deferred` results and the host's `drop` status are gone (#380 closed as
+obsolete). Every step's run is recorded for crash cleanup only (project-durable-run-queue). Watch
+todos still get their own scratch subdir (`scratch: Boolean(routine.watch)` → `todoId`).

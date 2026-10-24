@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,8 +22,7 @@ vi.mock("node:child_process", async (orig) => ({
   },
 }));
 
-// Fresh temp dir per call — reserveRun's file lock is per-`dir`, so this keeps each test's
-// project-path reservation isolated from every other test (matches chatops-runs.test.ts).
+// Fresh temp dir per call — keeps each test's run records (run-queue.ts) isolated.
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), "bean-live-sessions-"));
 }
@@ -149,34 +148,26 @@ describe("LiveSessionRegistry", () => {
     expect(reg.isStarter("noowner", "")).toBe(false);
   });
 
-  it("start refuses a second channel targeting the same project (cross-process reservation)", () => {
+  it("two channels run sessions on one project at once, each with its own run record", () => {
     const dir = tmp();
-    // pid: process.pid (this test process — always live and self-signalable), not fakeStart's
-    // hardcoded pid 1 (a reserved system pid `isLive()`'s liveness probe can't signal).
-    const aliveStart = (): LiveSessionHandle => ({ pid: process.pid, send: () => {}, stop: () => {} });
+    const aliveStart = (): LiveSessionHandle => ({ pid: process.pid, send: () => true, stop: () => {} });
     const regA = new LiveSessionRegistry(aliveStart as never, { dir });
     const regB = new LiveSessionRegistry(aliveStart as never, { dir });
     const { sink } = fakeSink();
     expect(regA.start({ channelId: "a", projectPath: "/p", instruction: "go", sink })).toBe("started");
-    // Different channel, different registry instance, same project — refused.
-    expect(regB.start({ channelId: "b", projectPath: "/p", instruction: "go", sink })).toBe("project");
-    expect(regB.has("b")).toBe(false);
-    // A different project on the same registry sharing the same dir is unaffected.
-    expect(regB.start({ channelId: "b", projectPath: "/other", instruction: "go", sink })).toBe("started");
+    expect(regB.start({ channelId: "b", projectPath: "/p", instruction: "go", sink })).toBe("started");
+    expect(regA.start({ channelId: "a", projectPath: "/q", instruction: "go", sink })).toBe("channel"); // still one per channel
+    expect(readdirSync(join(dir, "runs"))).toHaveLength(2);
   });
 
-  it("releases the project reservation once the session ends, allowing a new one on it", async () => {
+  it("releases the session's run record once it ends", async () => {
     const dir = tmp();
     const f = fakeStart();
     const reg = new LiveSessionRegistry(f.startFn as never, { dir });
     const { sink } = fakeSink();
     reg.start({ channelId: "a", projectPath: "/p", instruction: "go", sink });
     f.cbs().onExit(undefined);
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-
-    const f2 = fakeStart();
-    const reg2 = new LiveSessionRegistry(f2.startFn as never, { dir });
-    expect(reg2.start({ channelId: "b", projectPath: "/p", instruction: "go", sink })).toBe("started");
+    expect(readdirSync(join(dir, "runs"))).toEqual([]);
   });
 
   it("posts buffered output on the throttle tick, then edits the same message", async () => {
@@ -465,15 +456,14 @@ describe("LiveSessionRegistry", () => {
     expect(spawned[0]!.args.slice(0, 4)).toEqual(["run", "--auto", "--format", "json"]);
   });
 
-  it("per-turn CLIs keep the reservation on the bot pid; claude moves it to the child", () => {
-    // A dead child pid: if the registry tracked it, a second start would reclaim the project.
-    const deadChild = (): LiveSessionHandle => ({ pid: 2 ** 22 + 12345, send: () => true, stop: () => {} });
-    for (const [cli, second] of [["codex", "project"], ["opencode", "project"], ["claude", "started"]] as const) {
+  it("per-turn CLIs keep the run record on the bot pid; claude moves it to the child", () => {
+    const child = (): LiveSessionHandle => ({ pid: 4242, send: () => true, stop: () => {} });
+    for (const [cli, pid] of [["codex", process.pid], ["opencode", process.pid], ["claude", 4242]] as const) {
       const dir = tmp();
-      const regA = new LiveSessionRegistry(deadChild as never, { dir });
-      const regB = new LiveSessionRegistry(deadChild as never, { dir });
-      expect(regA.start({ channelId: "a", projectPath: "/p", instruction: "go", cli, sink: fakeSink().sink })).toBe("started");
-      expect(regB.start({ channelId: "b", projectPath: "/p", instruction: "go", sink: fakeSink().sink })).toBe(second);
+      const reg = new LiveSessionRegistry(child as never, { dir });
+      expect(reg.start({ channelId: "a", projectPath: "/p", instruction: "go", cli, sink: fakeSink().sink })).toBe("started");
+      const [file] = readdirSync(join(dir, "runs"));
+      expect(JSON.parse(readFileSync(join(dir, "runs", file!), "utf8")).pid).toBe(pid);
     }
   });
 

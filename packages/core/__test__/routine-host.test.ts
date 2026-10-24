@@ -5,13 +5,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoutineHost, type RoutineHostDeps, type RoutineHostStatus } from "../src/routine-host.js";
 import type { Routine, RoutineStep } from "../src/routine-store.js";
-import { RunBusyError, type DelegateStepRequest } from "../src/routine-runner.js";
+import type { DelegateStepRequest } from "../src/routine-runner.js";
 import type { ToolSpec } from "../src/converse.js";
 import { dbFile, outboxDir } from "../src/config.js";
 import { claimOutbox } from "../src/outbox.js";
 import { loadNotes } from "../src/note-store.js";
-import { reserveRun } from "../src/run-queue.js";
-import { addTodo, listTodos } from "../src/todo-store.js";
 import { listStepAttempts } from "../src/step-attempts.js";
 import { saveSkillProposals } from "../src/retro.js";
 
@@ -75,28 +73,10 @@ describe("createRoutineHost", () => {
   });
 
   // The Dashboard keys a run by its record's startedAt; with no record there's nothing to name.
-  it("finish carries no startedAt when the run threw or was deferred", async () => {
+  it("finish carries no startedAt when the run threw", async () => {
     const threw = host({ getModel: () => { throw new Error("no model"); } });
     await expect(threw.runOneRoutine(routine([{ kind: "chat", instruction: "hi" }]))).rejects.toThrow("no model");
     expect(threw.status.at(-1)).toEqual({ type: "finish", id: "routine:r", state: "failed", line: "Run failed" });
-
-    await addTodo(dbFile(dir), "r", "PR 1");
-    const busy = host({ delegateStep: async () => { throw new RunBusyError("busy"); } });
-    const res = await busy.runOneRoutine(routine([{ kind: "delegate", instruction: "review" }], { todoDriven: true }));
-    expect(res.deferred).toBe(true);
-    expect(busy.status.at(-1)).not.toHaveProperty("startedAt");
-  });
-
-  it("a deferred run (project busy) drops its bubble instead of finishing with a fake Done", async () => {
-    const h = host({ delegateStep: async () => { throw new RunBusyError("proj is busy with another run"); } });
-    const watch = routine([{ kind: "delegate", project: "/work/proj", instruction: "review" }],
-      { cron: undefined, watch: { kind: "command", command: "c" }, todoDriven: true });
-    await addTodo(dbFile(dir), "r", "PR 1");
-    const res = await h.runOneRoutine(watch);
-    expect(res.deferred).toBe(true);
-    expect(h.status.at(-1)).toEqual({ type: "drop", id: "routine:r" });
-    expect(h.status.some((e) => e.type === "finish")).toBe(false);
-    expect((await listTodos(dbFile(dir), "r")).map((t) => t.status)).toEqual(["pending"]);
   });
 
   it("gives chat steps the host tools plus save_note", async () => {
@@ -106,14 +86,13 @@ describe("createRoutineHost", () => {
     expect(h.toolNames[0]).toEqual(["fetch_url", "save_note"]);
   });
 
-  it("gated run: holds reservations/scratch across rounds, releases them at the end, labels rounds", async () => {
+  it("gated run: holds scratch across rounds, removes it at the end, labels rounds", async () => {
     const project = join(dir, "proj");
     const scratch = join(dir, "scratch-todo");
     const holds: unknown[] = [];
     let reviews = 0;
     const delegateStep = vi.fn(async (req: DelegateStepRequest, onSession, hold) => {
       holds.push(hold);
-      if (hold && !hold.reserved.has(project)) { expect(reserveRun(dir, project, process.pid, () => "x")).toBeTruthy(); hold.reserved.add(project); }
       if (hold) { mkdirSync(scratch, { recursive: true }); hold.scratch.add(scratch); }
       onSession?.("claude", `s${holds.length}`, project);
       const isReview = req.instruction.startsWith("review");
@@ -127,7 +106,6 @@ describe("createRoutineHost", () => {
     expect(res.record.status).toBe("ok");
     expect(holds.every((x) => x && x === holds[0])).toBe(true);
     expect(existsSync(scratch)).toBe(false);
-    expect(reserveRun(dir, project, process.pid, () => "y")).toBeTruthy(); // released
     expect(res.digest).toContain("step 1 (proj) — claude --resume s1\nstep 2 (proj) — claude --resume s2\nstep 1 round 2 (proj) — claude --resume s3\nstep 2 round 2 (proj) — claude --resume s4");
     expect(h.status.some((e) => e.type === "step" && e.line.includes("round 2/3"))).toBe(true);
   });
