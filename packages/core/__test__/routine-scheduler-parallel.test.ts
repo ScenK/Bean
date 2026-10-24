@@ -140,6 +140,57 @@ describe("maxParallel workers", () => {
     expect(pruneAttempts.mock.calls[0]?.[1]).toEqual(["run-2", "run-1"]);
   });
 
+  it("two siblings finishing at once: the last one still prunes", async () => {
+    const runs = gatedRuns();
+    const pruneAttempts = vi.fn();
+    const t = setup(cronQueue({ maxParallel: 2 }), [todo("1"), todo("2")], { runRoutine: runs.runRoutine, pruneAttempts });
+    const tick = t.sched.tick();
+    await vi.waitFor(() => expect(runs.openIds()).toHaveLength(2));
+    runs.releaseAll();
+    await tick;
+    expect(pruneAttempts).toHaveBeenCalledOnce();
+    expect(pruneAttempts.mock.calls[0]?.[1]).toHaveLength(2);
+  });
+
+  it("a Run now started while a tick is still deciding isn't run a second time by that tick", async () => {
+    let releasePoll!: () => void;
+    const watch: Routine = { name: "w", enabled: true, watch: { kind: "command", command: "x" }, steps: [], sinks: {} };
+    const r = cronQueue({ maxParallel: undefined, todoDriven: false });
+    const runRoutineFn = vi.fn(async (): Promise<RoutineRunResult> => ({ record: { startedAt: "a", finishedAt: "b", status: "ok", digest: "d", steps: [] }, digest: "d", results: [] }));
+    const t = setup(r, [], {
+      runRoutine: runRoutineFn,
+      loadRoutines: async () => [r, watch],
+      pollWatch: vi.fn(() => new Promise((res) => { releasePoll = () => res([]); })),
+      watchSeen: { isSeeded: () => true, seed: () => {}, unseen: () => [], markNew: () => [] },
+    });
+    const tick = t.sched.tick(); // q is due; the slow watch poll holds the tick
+    await vi.waitFor(() => expect(t.deps.pollWatch).toHaveBeenCalled());
+    expect(await t.sched.runNow("q")).toEqual({ started: true });
+    releasePoll();
+    await tick;
+    expect(runRoutineFn).toHaveBeenCalledOnce();
+  });
+
+  it("no post-run poll for a watch disabled mid-run", async () => {
+    const runs = gatedRuns();
+    let enabled = true;
+    const watch = (): Routine => ({ ...cronQueue({ maxParallel: 2 }), cron: undefined, enabled, watch: { kind: "command", command: "x", everyMinutes: 5 } });
+    const t = setup(watch(), [todo("1")], {
+      runRoutine: runs.runRoutine,
+      loadRoutines: async () => [watch()],
+      loadStates: async () => ({ q: { history: [], lastPoll: d(6, 30).toISOString() } }),
+      pollWatch: vi.fn(async () => []),
+      watchSeen: { isSeeded: () => true, seed: () => {}, unseen: () => [], markNew: () => [] },
+    });
+    const tick = t.sched.tick();
+    await vi.waitFor(() => expect(runs.openIds()).toHaveLength(1));
+    enabled = false;
+    runs.release("1");
+    await tick;
+    await new Promise((res) => setTimeout(res, 5));
+    expect(t.deps.pollWatch).not.toHaveBeenCalled();
+  });
+
   it("maxParallel 1 (or absent) is today's single drain run: one runRoutine call, no todo, one digest", async () => {
     const runRoutineFn = vi.fn(async (): Promise<RoutineRunResult> => ({ record: { startedAt: "a", finishedAt: "b", status: "ok", digest: "d", steps: [] }, digest: "d", results: [] }));
     const claimTodo = vi.fn(async () => undefined);
