@@ -513,7 +513,9 @@ export function RoutinesPanel() {
   const slots = savedRoutine?.todoDriven ? savedRoutine.maxParallel ?? 1 : 1;
   const runningCount = selectedState?.runningCount ?? 0;
   // Parallel sprouts take Run now until every slot is busy; one-at-a-time ones while anything runs.
-  const isRunningSelected = triggering || (slots > 1 ? runningCount >= slots : Boolean(selectedState?.running));
+  // Not `triggering` for parallel: routinesRunNow resolves only when its drain ends, and a click
+  // at full just comes back "N/N running".
+  const isRunningSelected = slots > 1 ? runningCount >= slots : triggering || Boolean(selectedState?.running);
   const slotsText = `${runningCount}/${slots} running`;
   const pendingCount = todos.filter((t) => t.status === "pending").length;
   const emptyTodoQueue = Boolean(draft.todoDriven) && pendingCount === 0;
