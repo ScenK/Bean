@@ -28,6 +28,18 @@ export function duplicateStep(steps: RoutineStep[], i: number): RoutineStep[] {
   return withStepIds([...withIds.slice(0, i + 1), copy as RoutineStep, ...withIds.slice(i + 1)]);
 }
 
+/** Points step `i`'s success edge at step `target` (by its id), at `"end"`, or clears it
+ * (`undefined` = run the following step). Ids are assigned first so the edge has a target. */
+export function setStepNext(steps: RoutineStep[], i: number, target: number | "end" | undefined): RoutineStep[] {
+  const withIds = withStepIds(steps);
+  const next = target === "end" ? "end" : target === undefined ? undefined : withIds[target]?.id;
+  return withIds.map((s, j) => {
+    if (j !== i) return s;
+    const { next: _old, ...rest } = s;
+    return (next ? { ...rest, next } : rest) as RoutineStep;
+  });
+}
+
 /** Moves the builder's `steps.<i>…` questions with their step (matched by id) across an
  * insert/remove/reorder. A question is dropped once its step is gone or its step changed
  * (editing a step answers it); non-step fields pass through. */

@@ -3,7 +3,7 @@ import type { AvailableModel, CliName, Project, RoutineStep, Skill, StepGate } f
 import { stepAvailabilityProblem } from "@bean/core/models";
 import { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, stepEdgeProblems } from "@bean/core/routine-graph";
 import { ChipMenu } from "../../shared/ChipMenu.js";
-import { duplicateStep, withStepIds } from "./step-ids.js";
+import { duplicateStep, setStepNext, withStepIds } from "./step-ids.js";
 
 const HARNESSES: CliName[] = ["claude", "codex", "opencode"];
 
@@ -36,10 +36,7 @@ export function StepsEditor(props: {
       return (gate ? { ...rest, gate } : rest) as RoutineStep;
     }));
   };
-  const toggleEnd = (i: number, step: RoutineStep): void => {
-    const { next: _old, ...rest } = step;
-    setStep(i, (step.next ? rest : { ...rest, next: "end" }) as RoutineStep);
-  };
+  const setNext = (i: number, target: number | "end" | undefined): void => onSteps(setStepNext(steps, i, target));
   const indexOf = (id: string): number => steps.findIndex((s) => s.id === id);
   // Re-checked on every render, so a reorder or delete that breaks an edge shows up here, not at save.
   const edgeProblems = stepEdgeProblems(steps);
@@ -325,17 +322,48 @@ export function StepsEditor(props: {
                 ) : null}
 
                 {i < steps.length - 1 || step.next ? (
-                  <button
-                    type="button"
-                    class={`bean-chip-menu-trigger${step.next ? "" : " bean-chip-menu-trigger--dashed"}`}
-                    aria-pressed={step.next === "end"}
-                    title={step.next && step.next !== "end" ? "Clear this step's next edge" : "On success, end the run after this step"}
-                    onClick={() => toggleEnd(i, step)}
+                  <ChipMenu
+                    chipClass={step.next ? undefined : "bean-chip-menu-trigger--dashed"}
+                    chipLabel={
+                      <span class="bean-routines-chip-label">
+                        {step.next === "end" ? "✓ end run here" : step.next ? `then · step ${nextIndex >= 0 ? nextIndex + 1 : "?"}` : "then · following step"}
+                      </span>
+                    }
+                    menuWidth={300}
                   >
-                    <span class="bean-routines-chip-label">
-                      {step.next === "end" ? "✓ end run here" : step.next ? `then · step ${nextIndex >= 0 ? nextIndex + 1 : "?"}` : "end run here"}
-                    </span>
-                  </button>
+                    {(close) => (
+                      <div class="bean-chip-menu-list">
+                        <button
+                          type="button"
+                          class={`bean-chip-menu-row${step.next ? "" : " bean-chip-menu-row--on"}`}
+                          onClick={() => { setNext(i, undefined); close(); }}
+                        >
+                          <span class="bean-chip-menu-row-title">{step.next ? "" : "✓ "}following step</span>
+                          <span class="bean-chip-menu-caption">on success, run the step below</span>
+                        </button>
+                        <button
+                          type="button"
+                          class={`bean-chip-menu-row${step.next === "end" ? " bean-chip-menu-row--on" : ""}`}
+                          onClick={() => { setNext(i, "end"); close(); }}
+                        >
+                          <span class="bean-chip-menu-row-title">{step.next === "end" ? "✓ " : ""}end run here</span>
+                          <span class="bean-chip-menu-caption">on success, the run ends after this step</span>
+                        </button>
+                        {i < steps.length - 1 ? <div class="bean-chip-menu-divider" /> : null}
+                        {steps.map((t, j) => j <= i ? null : (
+                          <button
+                            key={j}
+                            type="button"
+                            class={`bean-chip-menu-row${nextIndex === j ? " bean-chip-menu-row--on" : ""}`}
+                            onClick={() => { setNext(i, j); close(); }}
+                          >
+                            <span class="bean-chip-menu-row-title">{nextIndex === j ? "✓ " : ""}→ step {j + 1}</span>
+                            <span class="bean-chip-menu-caption">skip ahead · {t.skill || t.kind}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </ChipMenu>
                 ) : null}
 
                 <span class="bean-skills-spacer" />
