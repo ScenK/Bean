@@ -74,6 +74,29 @@ export const ROUTINE_EXAMPLES: RoutineExample[] = [
     },
   },
   {
+    key: "triage",
+    label: "Triage an incoming item",
+    blurb: "triage (chat) → bug: implement → PR · question: draft an answer · otherwise: end",
+    routine: {
+      name: "triage",
+      description: "Sort a queued issue into a bug fix, a question to answer, or nothing to do",
+      enabled: false,
+      watch: issueWatch,
+      todoDriven: true,
+      steps: [
+        {
+          kind: "chat", id: "triage",
+          instruction: "Triage the queued issue. bug = it reports something broken that code can fix; question = it asks how something works or what to do. Anything else needs no action.",
+          route: { paths: [{ when: "bug", goto: "implement" }, { when: "question", goto: "answer" }], otherwise: "end" },
+        },
+        { kind: "delegate", id: "implement", skill: "implement", cli: "claude", instruction: "Fix the bug in the queued issue." },
+        { kind: "delegate", id: "pr", skill: "pr", cli: "claude", instruction: "Open a pull request for this branch.", next: "end" },
+        { kind: "chat", id: "answer", instruction: "Draft a short, plain answer to the question in the queued issue.", next: "end" },
+      ],
+      sinks: { notify: true },
+    },
+  },
+  {
     key: "sdlc-retro",
     label: "SDLC retro",
     blurb: "weekly: read dev-loop's recent runs → draft skill fixes for you to review",

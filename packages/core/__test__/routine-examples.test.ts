@@ -74,6 +74,17 @@ describe("example flows run as described", () => {
     expect(r.status).toBe("ok");
   });
 
+  it("triage: a bug runs implement → pr and skips answer", async () => {
+    const r = await run("triage", { chat: ["Broken login.\nROUTE: bug"] });
+    expect(r.ran).toEqual(["implement", "pr"]);
+    expect(r.status).toBe("ok");
+  });
+
+  it("triage: a question skips implement and pr; anything else ends after triage", async () => {
+    expect((await run("triage", { chat: ["How do I log in?\nROUTE: question"] })).ran).toEqual([]);
+    expect((await run("triage", { chat: ["Spam.\nROUTE: nothing"] })).status).toBe("ok");
+  });
+
   it("review only: a FAIL review stops before notify", async () => {
     const r = await run("review-only", { delegate: { review: "[P1] a.ts:1 — bug\nVERDICT: FAIL" } });
     expect(r.ran).toEqual(["review"]);

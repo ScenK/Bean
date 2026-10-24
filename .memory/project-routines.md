@@ -66,6 +66,9 @@ deliverable) but kept in `routine_step_attempts`; the prior block header says `c
 Editor (#401): `stepEdgeWarnings` (fall-through into a sibling path's entry) and
 `stepPathCaptions` live beside `stepEdgeProblems` in `routine-graph.ts` but are render-only —
 never fold a warning into `stepEdgeProblems`: `parseBrief` drops flagged edges and save blocks.
+Builder (#402): `cleanEdges` shape-filters `route`; `parseBrief` validates each edge kind alone
+(gate / next / route) — a bad route is dropped whole, never the step, and a valid route wins over
+a gate/next the model put beside it.
 
 **Command steps (#265).** `kind: "command"` runs `command` via `/bin/sh -c` (core `runShellCommand`,
 own process group, timeout SIGKILLs the group) in `project`, else the same scratch dir a delegate

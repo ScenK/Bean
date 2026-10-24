@@ -155,3 +155,49 @@ describe("parseBrief keeps gates and next edges", () => {
     ]);
   });
 });
+
+describe("parseBrief keeps routes", () => {
+  const route = { paths: [{ when: "bug", goto: "fix" }, { when: "question", goto: "end" }], otherwise: "end" };
+  const steps = [
+    { kind: "chat", id: "triage", instruction: "bug if broken, question if asking", route },
+    { kind: "chat", id: "fix", instruction: "fix it", next: "end" },
+  ];
+
+  it("keeps a valid route (goto end included), dropping a gate or next beside it", () => {
+    const brief = parseBrief(JSON.stringify({
+      name: "triage", trigger: "schedule", cron: "0 6 * * *",
+      steps: [{ ...steps[0], gate: { onFail: "stop" }, next: "fix" }, steps[1]],
+    }), ctx);
+    expect(brief.steps).toEqual(steps);
+  });
+
+  it("drops an invalid route whole but keeps the step and its valid edges", () => {
+    const bad = [
+      { paths: [{ when: "bug", goto: "fix" }] }, // one path
+      { paths: [{ when: "bug", goto: "fix" }, { when: "pass", goto: "end" }] }, // gate word
+      { paths: [{ when: "bug", goto: "fix" }, { when: "q", goto: "nowhere" }] }, // missing target
+      { paths: [{ when: "bug", goto: "fix" }, { when: "Bug!", goto: "end" }] }, // bad label
+      { paths: [{ when: "bug", goto: "fix" }, { when: "q" }] }, // shape: path without goto
+      { paths: [{ when: "bug", goto: "fix" }, { when: "q", goto: "end" }, { when: "x" }] }, // one malformed of three
+      { paths: [{ when: "bug", goto: "fix" }, { when: "q", goto: "end" }], otherwise: 3 },
+      { paths: "bug" },
+    ];
+    for (const r of bad) {
+      const brief = parseBrief(JSON.stringify({
+        name: "triage", trigger: "schedule", cron: "0 6 * * *",
+        steps: [{ ...steps[0], route: r, next: "fix" }, steps[1]],
+      }), ctx);
+      expect(brief.steps, JSON.stringify(r)).toEqual([{ kind: "chat", id: "triage", instruction: "bug if broken, question if asking", next: "fix" }, steps[1]]);
+    }
+  });
+
+  it("keeps the route when refining a sprout that has one", () => {
+    const previous = parseBrief(JSON.stringify({ name: "triage", trigger: "schedule", cron: "0 6 * * *", steps }), ctx);
+    const msgs = briefMessages("send it to Discord too", ctx, previous);
+    expect(msgs[0]!.content).toContain('"route"');
+    expect(msgs[1]!.content).toContain(JSON.stringify(route));
+    // The model echoes the current brief back with the change applied.
+    const refined = parseBrief(JSON.stringify({ ...previous, sinks: { chatops: [{ transport: "discord" }] } }), ctx);
+    expect(refined.steps).toEqual(steps);
+  });
+});
