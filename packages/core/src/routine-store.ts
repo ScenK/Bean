@@ -20,9 +20,14 @@ export interface RoutineSinks { chatops?: RoutineChatopsSink[]; note?: boolean; 
 export interface StepGate { onFail: "stop" | { goto: string; maxRounds?: number } }
 export { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS } from "./routine-graph.js";
 
+/** A step that ends its output with `ROUTE: <label>` picks the next step: the path whose `when`
+ * is that label, else `otherwise`, else the run stops needs-attention. Each `goto`/`otherwise` is
+ * a later step's id or "end". Exclusive with `gate` and `next`. */
+export interface StepRoute { paths: { when: string; goto: string }[]; otherwise?: string }
+
 /** Graph fields shared by every step kind. `next`: a later step's id or "end"; absent = the
- * following step. Routines with neither field anywhere run exactly as before (legacy). */
-interface StepEdges { gate?: StepGate; next?: string }
+ * following step. Routines with none of these fields anywhere run exactly as before (legacy). */
+interface StepEdges { gate?: StepGate; next?: string; route?: StepRoute }
 
 /** `id` is a stable handle other steps (gates, graph edges) can point at — unique within the
  * routine, `[a-z0-9-]`, assigned by the editor, never typed. Absent on legacy routines. */
@@ -40,8 +45,9 @@ export type RoutineStep = StepEdges & (
 
 export type StepKind = RoutineStep["kind"];
 
-/** True when any step has a gate or a `next` edge — the runner then walks the step graph. */
-export const usesGates = (steps: RoutineStep[]): boolean => steps.some((s) => s.gate !== undefined || s.next !== undefined);
+/** True when any step has a gate, a `next` edge, or a route — the runner then walks the step graph. */
+export const usesGates = (steps: RoutineStep[]): boolean =>
+  steps.some((s) => s.gate !== undefined || s.next !== undefined || s.route !== undefined);
 
 export const STEP_ID_RE = /^[a-z0-9-]+$/;
 

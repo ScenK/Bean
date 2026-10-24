@@ -7,9 +7,41 @@ export const MAX_GATE_ROUNDS = 5;
 
 const str = (v: unknown): v is string => typeof v === "string";
 
-/** Gate/next checks. Only a gated backward goto can make a cycle: `next` is forward-only. */
+export const ROUTE_LABEL_RE = /^[a-z0-9-]+$/;
+
+/** Route checks: ≥2 paths, unique labels, every target a later step or "end". */
+function describeRouteError(route: unknown, at: string, i: number, ids: Map<string, number>): string | null {
+  const { paths, otherwise } = (typeof route === "object" && route !== null ? route : {}) as { paths?: unknown; otherwise?: unknown };
+  if (!Array.isArray(paths) || paths.length < 2) return `${at}: a route needs at least 2 paths`;
+  const forward = (v: unknown, what: string): string | null => {
+    if (v === "end") return null;
+    if (!str(v)) return `${at}: ${what} needs a step id or "end"`;
+    const target = ids.get(v);
+    if (target === undefined) return `${at}: ${what} step "${v}" doesn't exist`;
+    return target <= i ? `${at}: ${what} must point to a later step (or "end")` : null;
+  };
+  const seen = new Set<string>();
+  for (const p of paths) {
+    const { when, goto } = (typeof p === "object" && p !== null ? p : {}) as { when?: unknown; goto?: unknown };
+    if (!str(when) || !ROUTE_LABEL_RE.test(when)) return `${at}: each route label must use a-z, 0-9, "-"`;
+    // A gate's words would read as a verdict, not a choice.
+    if (when === "pass" || when === "fail") return `${at}: "${when}" can't be a route label — use a gate for pass/fail`;
+    if (seen.has(when)) return `${at}: route label "${when}" is used twice`;
+    seen.add(when);
+    const err = forward(goto, `route "${when}"`);
+    if (err) return err;
+  }
+  return otherwise === undefined ? null : forward(otherwise, "route otherwise");
+}
+
+/** Gate/next/route checks. Only a gated backward goto can make a cycle: `next` and routes are
+ * forward-only. */
 export function describeEdgeError(s: Record<string, unknown>, i: number, ids: Map<string, number>): string | null {
   const at = `step ${i + 1}`;
+  if (s.route !== undefined) {
+    if (s.gate !== undefined || s.next !== undefined) return `${at}: a route can't be combined with a gate or next`;
+    return describeRouteError(s.route, at, i, ids);
+  }
   if (s.next !== undefined && s.next !== "end") {
     if (!str(s.next)) return `${at} has an invalid next step`;
     const target = ids.get(s.next);
