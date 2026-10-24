@@ -14,7 +14,7 @@ decision: there's no Stop/Pause button, and a routine has no pause state to back
   expand: one click dismisses and opens that run in the Dashboard (`openComponent("dashboard",
   { routine, startedAt })`). `TaskJob.runStartedAt` is the run record's `startedAt`, carried on core's
   `finish` event; the bubble id is reused per routine, so `start` and `finish` set it explicitly
-  (never inherit the previous run's). Absent = the run wasn't recorded (threw/deferred).
+  (never inherit the previous run's). Absent = the run wasn't recorded (threw).
 - **Failures are sticky; done lingers 10s.** `finish(..., "failed")` keeps the bubble until the
   user clicks it open then clicks again (`bean:dismiss-task` → `dismiss()`); a user Stop passes
   `sticky=false`. Standalone errors go through `error(id, …)` with a stable id (`bot:discord`,

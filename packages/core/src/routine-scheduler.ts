@@ -106,7 +106,6 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       // run (success or failure) counts as "handled," so a throw below can't leave tick() stuck
       // skipping this routine forever while disk already says not-missed.
       const result = await deps.runRoutine(routine);
-      if (result.deferred) return; // a todo's project was busy — nothing ran, retry next tick
       await appendAndPrune(routine.name, result.record);
       await deps.deliverDigest(routine, result);
     } catch (err) {

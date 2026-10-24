@@ -6,6 +6,7 @@ import type { DelegateCallbacks, DelegateRequest } from "../src/index.js";
 import { RunRegistry } from "../src/chatops/runs.js";
 import { dbFile } from "../src/config.js";
 import { closeDb, openDb } from "../src/db.js";
+import { sweepDeadRuns } from "../src/run-queue.js";
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -27,20 +28,29 @@ function fakeRun() {
   return { fn, calls, cancelled };
 }
 
+const runFiles = (dir: string): string[] => { try { return readdirSync(join(dir, "runs")); } catch { return []; } };
+
 function events() {
   return { onTail: vi.fn(), onDone: vi.fn(), onError: vi.fn(), onCancelled: vi.fn() };
 }
 
-test("second start on the same project is rejected while the first runs", async () => {
+test("two runs on one project overlap, each recorded and settled on its own", async () => {
   const { fn, calls } = fakeRun();
-  const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord" });
-  const ev = events();
-  expect(await reg.start(req, ev, meta)).toBeDefined();
-  expect(await reg.start(req, ev, meta)).toBeUndefined();
+  const dir = tmp();
+  const reg = new RunRegistry(fn, { dir, botKind: "discord" });
+  const evA = events();
+  const evB = events();
+  const a = await reg.start(req, evA, meta);
+  const b = await reg.start(req, evB, meta);
+  expect(a).not.toBe(b);
+  expect(calls).toHaveLength(2);
+  expect(runFiles(dir).sort()).toEqual([`${a}.json`, `${b}.json`].sort());
   calls[0]?.cb.onSessionStart?.(123, "sess-1");
   calls[0]?.cb.onDone("result", "sess-1");
-  expect(ev.onDone).toHaveBeenCalledWith("result", "sess-1");
-  expect(await reg.start(req, ev, meta)).toBeDefined(); // freed after completion
+  expect(evA.onDone).toHaveBeenCalledWith("result", "sess-1");
+  expect(evB.onDone).not.toHaveBeenCalled();
+  expect(runFiles(dir)).toEqual([`${b}.json`]);
+  closeDb(dbFile(dir));
 });
 
 test("tail lines are throttled: only the latest line flushes per interval", async () => {
@@ -58,14 +68,15 @@ test("tail lines are throttled: only the latest line flushes per interval", asyn
   expect(ev.onTail).toHaveBeenCalledTimes(1);
 });
 
-test("error frees the project and reports the message", async () => {
+test("error releases the run's record and reports the message", async () => {
   const { fn, calls } = fakeRun();
-  const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord" });
+  const dir = tmp();
+  const reg = new RunRegistry(fn, { dir, botKind: "discord" });
   const ev = events();
   await reg.start(req, ev, meta);
   calls[0]?.cb.onError(new Error("boom"));
   expect(ev.onError).toHaveBeenCalledWith("boom", undefined);
-  expect(reg.isRunning("/p")).toBe(false);
+  expect(runFiles(dir)).toEqual([]);
 });
 
 test("cancelAll cancels every active run and returns the count", async () => {
@@ -78,30 +89,32 @@ test("cancelAll cancels every active run and returns the count", async () => {
   expect(reg.cancelAll()).toBe(0);
 });
 
-test("a run that settles synchronously (spawn failure) leaves the project free", async () => {
+test("a run that settles synchronously (spawn failure) leaves no record behind", async () => {
+  const dir = tmp();
   const reg = new RunRegistry((_r, cb) => {
     cb.onError(new Error("spawn failed"));
     return { cancel: () => {} };
-  }, { dir: tmp(), botKind: "discord" });
+  }, { dir, botKind: "discord" });
   const ev = events();
-  expect(await reg.start(req, ev, meta)).toBeDefined();
+  const id = await reg.start(req, ev, meta);
   expect(ev.onError).toHaveBeenCalledWith("spawn failed", undefined);
-  expect(reg.isRunning("/p")).toBe(false);
-  expect(await reg.start(req, events(), meta)).toBeDefined(); // path not stuck busy
+  expect(runFiles(dir)).toEqual([]);
+  expect(reg.cancel(id)).toBe(false); // never registered
 });
 
 test("stale callbacks from a cancelled run cannot corrupt a newer run", async () => {
   const { fn, calls } = fakeRun();
-  const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord", throttleMs: 5000 });
+  const dir = tmp();
+  const reg = new RunRegistry(fn, { dir, botKind: "discord", throttleMs: 5000 });
   const evA = events();
-  const id = (await reg.start(req, evA, meta))!;
+  const id = await reg.start(req, evA, meta);
   reg.cancel(id);
   const evB = events();
-  expect(await reg.start(req, evB, meta)).toBeDefined();
+  const b = await reg.start(req, evB, meta);
   // Run A's delegate misbehaves and fires onDone after cancel.
   calls[0]?.cb.onDone("late");
   expect(evA.onDone).not.toHaveBeenCalled();
-  expect(reg.isRunning("/p")).toBe(true); // B still registered
+  expect(runFiles(dir)).toEqual([`${b}.json`]); // B's record untouched
   // B's throttle timer must still be alive.
   calls[1]?.cb.onOutput("b line");
   vi.advanceTimersByTime(5000);
@@ -110,17 +123,18 @@ test("stale callbacks from a cancelled run cannot corrupt a newer run", async ()
 
 test("cancel cancels the underlying handle and fires onCancelled", async () => {
   const { fn, cancelled } = fakeRun();
-  const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord" });
+  const dir = tmp();
+  const reg = new RunRegistry(fn, { dir, botKind: "discord" });
   const ev = events();
-  const id = (await reg.start(req, ev, meta))!;
+  const id = await reg.start(req, ev, meta);
   expect(reg.cancel(id)).toBe(true);
   expect(cancelled).toHaveLength(1);
   expect(ev.onCancelled).toHaveBeenCalled();
-  expect(reg.isRunning("/p")).toBe(false);
+  expect(runFiles(dir)).toEqual([]);
   expect(reg.cancel(id)).toBe(false);
 });
 
-test("cancel does not release the reservation until the handle confirms the child actually stopped", async () => {
+test("cancel does not release the run record until the handle confirms the child actually stopped", async () => {
   const dir = tmp();
   let confirm: (() => void) | undefined;
   const fn = () => ({ cancel: (done?: () => void) => { confirm = done; } });
@@ -128,8 +142,7 @@ test("cancel does not release the reservation until the handle confirms the chil
   const ev = events();
   const id = (await reg.start(req, ev, meta))!;
   expect(reg.cancel(id)).toBe(true);
-  // SIGTERM sent, but the child hasn't confirmed it stopped yet — the project must still read
-  // as busy, or a relaunch/other surface could start a second run on it right now.
+  // SIGTERM sent, but the child hasn't confirmed it stopped yet — crash cleanup must still see it.
   expect(readdirSync(join(dir, "runs"))).toHaveLength(1);
   expect(ev.onCancelled).not.toHaveBeenCalled();
   confirm?.();
@@ -137,17 +150,19 @@ test("cancel does not release the reservation until the handle confirms the chil
   expect(readdirSync(join(dir, "runs"))).toEqual([]); // released only now
 });
 
-test("start reserves the project cross-process (a second RunRegistry sharing the same dir is refused)", async () => {
+test("two registries sharing a dir (Discord + Teams) both run on one project", async () => {
   const dir = tmp();
-  const { fn: fnA } = fakeRun();
-  const { fn: fnB } = fakeRun();
+  const { fn: fnA, calls: a } = fakeRun();
+  const { fn: fnB, calls: b } = fakeRun();
   const regA = new RunRegistry(fnA, { dir, botKind: "discord" });
   const regB = new RunRegistry(fnB, { dir, botKind: "teams" });
-  expect(await regA.start(req, events(), meta)).toBeDefined();
-  expect(await regB.start(req, events(), meta)).toBeUndefined(); // same projectPath, different process (simulated)
+  await regA.start(req, events(), meta);
+  await regB.start(req, events(), meta);
+  expect([a.length, b.length]).toEqual([1, 1]);
+  expect(runFiles(dir)).toHaveLength(2);
 });
 
-test("interruptAll leaves the reservation in place (doesn't free the project) and leaves an outbox notice per run", async () => {
+test("interruptAll leaves the run record in place and leaves an outbox notice per run", async () => {
   const dir = tmp();
   const { fn, cancelled } = fakeRun();
   const reg = new RunRegistry(fn, { dir, botKind: "discord" });
@@ -155,32 +170,24 @@ test("interruptAll leaves the reservation in place (doesn't free the project) an
   const n = reg.interruptAll();
   expect(n).toBe(1);
   expect(cancelled).toHaveLength(1);
-  expect(reg.isRunning("/p")).toBe(false); // no longer tracked in this process's memory
-  // The reservation is NOT released: this process is exiting with no confirmation the delegate
-  // child actually stopped, so releasing blind would let a relaunch double-run the same
-  // project. It stays busy (under the reservation's already-live pid) until reclaimed.
-  expect(readdirSync(join(dir, "runs"))).toHaveLength(1);
+  // The record is NOT released: this process is exiting with no confirmation the delegate child
+  // actually stopped, so boot cleanup must still find it.
+  expect(runFiles(dir)).toHaveLength(1);
   const outboxFiles = readdirSync(join(dir, "outbox"));
   expect(outboxFiles).toHaveLength(1);
   expect(outboxFiles[0]).toMatch(/^discord-/);
-  // A second RunRegistry (simulating a relaunch) sharing the same dir still sees it as busy.
-  const { fn: fn2 } = fakeRun();
-  const reg2 = new RunRegistry(fn2, { dir, botKind: "discord" });
-  expect(await reg2.start(req, events(), meta)).toBeUndefined();
 });
 
-test("start() tracks the delegate child's own pid, so a relaunch reclaims once that child is actually dead", async () => {
+test("start() records the delegate child's own pid, so the boot sweep drops it once that child is dead", async () => {
   const dir = tmp();
-  // Simulates a delegate handle exposing a pid that's already gone by the time anyone checks —
-  // if the reservation stayed keyed to the *calling* process's pid (always alive here) instead
-  // of this, it would incorrectly stay "busy" forever after interruptAll().
-  const deadChildPid = 999_999;
-  const fn = () => ({ cancel: () => {}, pid: deadChildPid });
+  // If the record stayed keyed to the *calling* process's pid (always alive here), the sweep
+  // would keep it forever after interruptAll().
+  const fn = () => ({ cancel: () => {}, pid: 999_999 });
   const reg = new RunRegistry(fn, { dir, botKind: "discord" });
   await reg.start(req, events(), meta);
   reg.interruptAll();
-  const reg2 = new RunRegistry(fn, { dir, botKind: "discord" });
-  expect(await reg2.start(req, events(), meta)).toBeDefined();
+  expect(sweepDeadRuns(dir)).toBe(1);
+  expect(runFiles(dir)).toEqual([]);
 });
 
 test("onActivity reports the run lifecycle under one id, named after the project, without output", async () => {
@@ -209,14 +216,14 @@ test("onActivity reports a cancel as cancelled", async () => {
   expect(seen.map((e) => e.phase)).toEqual(["start", "cancelled"]);
 });
 
-test("a resumed run keeps the reservation on this live process until the session starts", async () => {
+test("a resumed run keeps the record on this live process until the session starts", async () => {
   const dir = tmp();
   const { fn, calls } = fakeRun();
   const pids = [111];
   const reg = new RunRegistry((r, cb) => ({ ...fn(r, cb), pid: pids[0] }), { dir, botKind: "discord" });
   await reg.start({ ...req, resume: "s-1" }, events(), meta);
   const file = join(dir, "runs", readdirSync(join(dir, "runs"))[0]!);
-  // Not the first child's pid: it may die on a rejected resume and make the project reclaimable.
+  // Not the first child's pid: it may die on a rejected resume and get swept mid-run.
   expect(JSON.parse(readFileSync(file, "utf8")).pid).toBe(process.pid);
   calls[0]!.cb.onSessionStart?.(4242, "s-1");
   expect(JSON.parse(readFileSync(file, "utf8")).pid).toBe(4242);
@@ -275,7 +282,6 @@ test("cancel resolves by run id; a conversation scope cancels only that conversa
   expect(reg.cancel("/p")).toBe(false); // a path is not a run id
   expect(reg.cancel(b, "c1")).toBe(false); // c2's run, c1's scope
   expect(reg.cancel(b, "c2")).toBe(true);
-  expect(reg.isRunning("/p")).toBe(true);
   expect(reg.cancel(a)).toBe(true); // unscoped (owner)
   expect(cancelled).toHaveLength(2);
 });

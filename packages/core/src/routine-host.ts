@@ -10,7 +10,6 @@ import type { Skill } from "./types.js";
 import { dbFile, outboxDir, routinesDir, routineStateFile } from "./config.js";
 import { enqueueOutbox } from "./outbox.js";
 import { saveNote } from "./note-store.js";
-import { releaseRun } from "./run-queue.js";
 import { listSkillProposals, RETRO_SKILL, saveSkillProposals, withProposalFooter } from "./retro.js";
 import { listStepAttempts, recordStepAttempt } from "./step-attempts.js";
 import { listTodos, updateTodoStatus, type TodoStatus } from "./todo-store.js";
@@ -21,10 +20,9 @@ import {
   type CommandStepRequest, type DelegateStepRequest, type DelegateStepResult, type RoutineRunnerDeps, type RoutineRunResult, type StepInfo,
 } from "./routine-runner.js";
 
-/** Gated routines only: a todo's run reservations and per-todo scratch dirs outlive each step (so a
- * gate loop re-entering a step never hits RunBusyError against itself, and a resumed session keeps
- * its workspace); the host releases them when the run ends. */
-export interface RoutineHold { reserved: Set<string>; scratch: Set<string> }
+/** Gated routines only: a todo's per-todo scratch dirs outlive each step (so a resumed session
+ * keeps its workspace); the host removes them when the run ends. */
+export interface RoutineHold { scratch: Set<string> }
 
 /** Status bubble events — the desktop maps them onto its task-status registry. */
 export type RoutineHostStatus =
@@ -32,12 +30,10 @@ export type RoutineHostStatus =
   | { type: "step"; id: string; step: number; line: string }
   /** `startedAt` is the run record's — what the Dashboard keys a run by. Absent when nothing was
    * recorded (the run threw). */
-  | { type: "finish"; id: string; state: "done" | "failed"; line: string; startedAt?: string }
-  /** The run deferred (its project was busy): nothing ran, so clear the bubble — no "Done". */
-  | { type: "drop"; id: string };
+  | { type: "finish"; id: string; state: "done" | "failed"; line: string; startedAt?: string };
 
 export interface RoutineHostDeps {
-  /** ~/.bean — bean.db, outbox, routines and run reservations all derive from it. */
+  /** ~/.bean — bean.db, outbox, routines and run records all derive from it. */
   dir: string;
   converse: RoutineRunnerDeps["chat"];
   /** Read per run, so a Settings change applies to the next run. */
@@ -112,7 +108,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     // the model never sees or retypes an id.
     const receipts: string[] = [];
     let at: StepInfo = { index: 0 };
-    const hold: RoutineHold | undefined = usesGates(routine.steps) ? { reserved: new Set(), scratch: new Set() } : undefined;
+    const hold: RoutineHold | undefined = usesGates(routine.steps) ? { scratch: new Set() } : undefined;
     try {
       result = await runRoutine(routine, {
         onStep: (info) => {
@@ -159,13 +155,9 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       }
       return result;
     } finally {
-      for (const p of hold?.reserved ?? []) releaseRun(dir, p);
       for (const p of hold?.scratch ?? []) rmSync(p, { recursive: true, force: true });
       const status = result?.record.status;
-      // ponytail: the `start` bubble still shows for the moment before the reservation fails;
-      // move `start` after the first step's reservation if that flash proves visible each tick.
-      if (result?.deferred) deps.onStatus?.({ type: "drop", id });
-      else deps.onStatus?.({
+      deps.onStatus?.({
         type: "finish", id, state: status === "ok" ? "done" : "failed",
         ...(result ? { startedAt: result.record.startedAt } : {}),
         line: !status ? "Run failed"

@@ -25,7 +25,7 @@ export interface DelegateStepRequest {
    * prompt and must never record it (delegate_runs, receipts, logs) — it isn't in `instruction`. */
   memories?: string;
   /** Watch-fired todo runs: the queued todo's id. A project-less step runs in its own scratch
-   * subdir (removed afterwards) and a project step must win the cross-process run reservation. */
+   * subdir (removed afterwards). */
   todoId?: string;
   /** Re-entering this step on a gate loop: its own previous session this run/todo. The adapter
    * resumes it only on the same CLI; a rejected resume starts fresh (runDelegate's notice). */
@@ -44,10 +44,6 @@ export interface CommandStepRequest {
   env: Record<string, string>;
   todoId?: string;
 }
-
-/** Thrown by a delegate adapter when the step's project is already claimed by another run.
- * The todo goes back to pending and the drain stops — the next tick retries it. */
-export class RunBusyError extends Error {}
 
 export interface RoutineRunnerDeps {
   chat: ConverseDeps["chat"];
@@ -96,8 +92,7 @@ export interface StepResult {
   index: number; kind: StepKind; ok: boolean; output: string;
   stepId?: string; cli?: CliName; verdict?: string; round?: number;
 }
-/** `deferred`: nothing ran (a todo's project was busy) — record and deliver nothing. */
-export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[]; deferred?: boolean }
+export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[] }
 
 export const ROUTINE_STEP_TIMEOUT_MS = 15 * 60_000;
 const MAX_TOOL_ROUNDS = 5;
@@ -262,7 +257,7 @@ async function runSteps(
   instructionSuffix: string,
   labelPrefix: string,
   runId: string,
-  todo?: { id: string; text: string; reserve: boolean },
+  todo?: { id: string; text: string; scratch: boolean },
 ): Promise<PassOutcome> {
   const now = deps.now ?? (() => new Date());
   const steps = routine.steps;
@@ -310,7 +305,7 @@ async function runSteps(
           ...(effective.project ? { projectPath: effective.project } : {}),
           ...(effective.timeoutMinutes ? { timeoutMinutes: effective.timeoutMinutes } : {}),
           env: todo ? { BEAN_TODO_ID: todo.id, BEAN_TODO_TEXT: todo.text } : {},
-          ...(todo?.reserve ? { todoId: todo.id } : {}),
+          ...(todo?.scratch ? { todoId: todo.id } : {}),
         });
         exitCode = res.exitCode;
         output = `${res.output.trimEnd()}\n(exit ${exitCode})`.trimStart();
@@ -334,7 +329,7 @@ async function runSteps(
             ...(effective.timeoutMinutes ? { timeoutMinutes: effective.timeoutMinutes } : {}),
             priorOutputs: prior,
             ...(memories ? { memories } : {}),
-            ...(todo?.reserve ? { todoId: todo.id } : {}),
+            ...(todo?.scratch ? { todoId: todo.id } : {}),
             ...(resume ? { resume } : {}),
           });
           ({ output, ...ran } = typeof res === "string" ? { output: res } : res);
@@ -349,7 +344,6 @@ async function runSteps(
         }
       }
     } catch (err) {
-      if (err instanceof RunBusyError) throw err;
       ok = false;
       output = err instanceof Error ? err.message : String(err);
     }
@@ -447,34 +441,14 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
       }
       await deps.todos.setStatus(item.id, "running");
       const scoped: StepResult[] = []; // prior-outputs chain is per-todo, never cross-todo
-      let outcome: PassOutcome;
-      try {
-        outcome = await runSteps(
-          routine, deps, timeoutMs, scoped,
-          `\n\nQueued task:\n${item.text}`,
-          labelPrefix,
-          id,
-          { id: item.id, text: item.text, reserve: Boolean(routine.watch) },
-        );
-      } catch (err) {
-        if (!(err instanceof RunBusyError)) throw err;
-        if (scoped.length === 0) {
-          // Busy before anything ran: back to pending untouched, stop draining — the next tick retries.
-          // Watch-only: only watch todos reserve (`reserve` above), and a watch routine is due
-          // every tick while its queue has pending work. Reserving for cron todo routines would
-          // make a deferral consume the cron slot (lastRun is stamped at start) — needs its own retry design.
-          await deps.todos.setStatus(item.id, "pending");
-          break;
-        }
-        // Busy after earlier steps already ran (and may have had side effects): replaying the
-        // todo would repeat them, so it fails like any step — visible and manually retryable.
-        const busy: StepResult = { index: scoped.length, kind: "delegate", ok: false, output: labelPrefix + err.message };
-        results.push(...scoped, busy);
-        await deps.todos.setStatus(item.id, "failed", err.message.slice(0, SUMMARY_CAP));
-        worst("failed");
-        soleLabelPrefix = labelPrefix;
-        continue;
-      }
+      // Watch todos get their own scratch subdir (see DelegateStepRequest.todoId).
+      const outcome = await runSteps(
+        routine, deps, timeoutMs, scoped,
+        `\n\nQueued task:\n${item.text}`,
+        labelPrefix,
+        id,
+        { id: item.id, text: item.text, scratch: Boolean(routine.watch) },
+      );
       soleLabelPrefix = labelPrefix;
       results.push(...scoped);
       const last = scoped[scoped.length - 1];
@@ -485,10 +459,6 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps): Pro
       await deps.todos.setStatus(item.id, outcome.status === "ok" ? "done" : "failed", summary);
       worst(outcome.status);
       if (outcome.attention) attention.push(`${labelPrefix}${outcome.attention}`);
-    }
-    if (results.length === 0) {
-      const digest = `Sprout "${routine.name}" deferred — its project is busy.`;
-      return { record: { id, startedAt, finishedAt: now().toISOString(), status: "ok", digest, steps: [] }, digest, results: [], deferred: true };
     }
   } else {
     const outcome = await runSteps(routine, deps, timeoutMs, results, "", "", id);

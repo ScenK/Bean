@@ -78,6 +78,6 @@ On a bot-only install (e.g. a Linux container) the bot can run your scheduled sp
 - [ ] "summarize the bean repo" → proposal embed with CLI/model selects + Run/Cancel.
 - [ ] Changing a select then Run → run starts with the chosen cli/model.
 - [ ] Running embed updates with tail lines; result posts when done (chunked if >2000 chars).
-- [ ] Second confirm while the project is busy → polite refusal.
+- [ ] Second confirm on a project that already has a run → both runs go at once.
 - [ ] Cancel run → embed flips to cancelled. Text "cancel" also cancels.
 - [ ] Proposal older than 10 min → "expired" on Run.
