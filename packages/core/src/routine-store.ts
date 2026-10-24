@@ -68,6 +68,10 @@ export interface Routine {
   /** true = the steps are a pipeline run once per queued todo; the scheduled run is
    * skipped entirely while the routine's queue has no pending items. */
   todoDriven?: boolean;
+  /** Todo-driven only (ignored otherwise): how many queued todos may run at once (integer 1–4).
+   * Absent = 1 — one run drains the queue in order. Above 1, each todo is its own run (bubble,
+   * record, digest). Hand-edited JSON; no panel control. */
+  maxParallel?: number;
   /** Opt-in: this routine's chat steps may search the public web. Off by default — report
    * routines don't need it and each search is billed. No panel toggle; set it in the JSON. */
   webSearch?: boolean;
@@ -98,6 +102,7 @@ export interface RoutineState {
 }
 
 const HISTORY_CAP = 20;
+export const MAX_PARALLEL = 4;
 const badName = /[/\\]|\.\.|^$/;
 const str = (v: unknown): v is string => typeof v === "string";
 
@@ -180,6 +185,11 @@ export function describeRoutineError(v: unknown, cliModels?: CliModels[]): strin
   }
   if (r.todoDriven !== undefined && typeof r.todoDriven !== "boolean") return "todoDriven must be true or false";
   if (r.webSearch !== undefined && typeof r.webSearch !== "boolean") return "webSearch must be true or false";
+  // Ignored (not rejected) on a plain sprout: the panel's type toggle keeps the field, and a
+  // switch back to plain must still save.
+  if (r.maxParallel !== undefined && (typeof r.maxParallel !== "number" || !Number.isInteger(r.maxParallel) || r.maxParallel < 1 || r.maxParallel > MAX_PARALLEL)) {
+    return `maxParallel must be a whole number from 1 to ${MAX_PARALLEL}`;
+  }
   if (!Array.isArray(r.steps)) return "steps must be a list";
   if (r.steps.length === 0 && r.watch === undefined) return "add at least one step";
   if (r.watch !== undefined && r.steps.length > 0 && r.todoDriven !== true) {
@@ -264,6 +274,9 @@ const privilegedStep = (r: Routine): RoutineStep | undefined =>
 
 /** Whether a non-owner's todo may run on `r`: todo-driven with no delegate or command steps.
  * Checked at catalog, confirm, and again at drain against the routine's current definition. */
+/** How many of the routine's todos may run at once — 1 unless it's todo-driven with maxParallel. */
+export const parallelSlots = (r: Routine): number => (r.todoDriven ? r.maxParallel ?? 1 : 1);
+
 export const memberTodoEligible = (r: Routine): boolean => r.todoDriven === true && !privilegedStep(r);
 
 export const MEMBER_TODO_REFUSAL = "runs delegate or command steps — only the owner can queue on it";
@@ -379,11 +392,12 @@ export async function saveRoutineStates(file: string, states: Record<string, Rou
   await writeAtomic(file, JSON.stringify(states, null, 2) + "\n");
 }
 
-/** Newest-first history, capped; a completed run clears any missed flag. */
+/** Newest-first history, capped; a completed run clears any missed flag. lastRun never moves
+ * back: parallel todo runs finish out of start order. */
 export function appendRunRecord(state: RoutineState | undefined, record: RunRecord): RoutineState {
   return {
     ...state,
-    lastRun: record.startedAt,
+    lastRun: state?.lastRun && state.lastRun > record.startedAt ? state.lastRun : record.startedAt,
     missed: false,
     history: [record, ...(state?.history ?? [])].slice(0, HISTORY_CAP),
   };

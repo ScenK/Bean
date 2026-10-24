@@ -6,6 +6,9 @@ import { gateVerdict } from "../src/step-attempts.js";
 import { stepEdgeProblems } from "../src/routine-graph.js";
 import type { StepAttempt, TodoItem, TodoStatus } from "../src/index.js";
 
+/** A claim() fake: hands out a copy of `items` front to back. */
+const claimFrom = (items: TodoItem[]) => { const q = [...items]; return async () => q.shift(); };
+
 const routine = (steps: RoutineStep[], over: Partial<Routine> = {}): Routine =>
   ({ name: "r", enabled: true, cron: "0 6 * * *", steps, sinks: {}, ...over });
 
@@ -72,6 +75,19 @@ describe("gate validation", () => {
 });
 
 describe("gated runs", () => {
+  it("maxParallel: a gated sprout runs one claimed todo per call — its own scratch dir, loop and status, no claiming", async () => {
+    const statuses: [string, TodoStatus][] = [];
+    const f = fakeDelegate({ review: [FAIL, PASS] });
+    const one = { id: "t9", routine: "r", text: "only me", status: "running", createdAt: "x" } as TodoItem;
+    const res = await runRoutine(routine(loop(3), { todoDriven: true, maxParallel: 3 }), deps(f.delegate, {
+      todos: { claim: async () => { throw new Error("must not claim"); }, setStatus: async (id, s) => { statuses.push([id, s]); } },
+    }), one);
+    expect(f.ids).toEqual(["impl", "review", "impl", "review", "pr"]);
+    expect(f.calls.every((c) => c.todoId === "t9" && c.instruction.includes("only me"))).toBe(true);
+    expect(statuses).toEqual([["t9", "done"]]);
+    expect(res.record.status).toBe("ok");
+  });
+
   it('onFail "stop" ends the run needs-attention; later steps never run', async () => {
     const f = fakeDelegate({ lint: [FAIL] });
     const res = await runRoutine(routine([step("lint", { gate: { onFail: "stop" } }), step("impl")]), deps(f.delegate));
@@ -183,7 +199,7 @@ describe("gated runs", () => {
     const f = fakeDelegate({ review: [FAIL, FAIL, FAIL, PASS] });
     const res = await runRoutine(routine(loop(3), { todoDriven: true }), deps(f.delegate, {
       todos: {
-        listPending: async () => pending,
+        claim: claimFrom(pending),
         setStatus: async (id, s, sum) => { statuses.push([id, s, sum]); },
       },
     }));

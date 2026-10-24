@@ -240,8 +240,9 @@ describe("watch triggers", () => {
       const t = setup([windowed()]);
       t.pending.push("by hand");
       await t.sched.tick();
-      expect(t.deps.pollWatch).not.toHaveBeenCalled();
       expect(t.deps.runRoutine).toHaveBeenCalledOnce();
+      // The tick itself didn't poll; only the post-run poll did (it ignores the window, like checkNow).
+      expect(t.deps.pollWatch).toHaveBeenCalledOnce();
     });
 
     it("checks the window against now() at poll time, after a slow earlier poll", async () => {

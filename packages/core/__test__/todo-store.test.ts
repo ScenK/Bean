@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   addTodo, listTodos, listAllTodos, updateTodoStatus, editTodoText, reorderTodo,
   deleteTodo, clearFinishedTodos, retryTodo, recoverInterruptedTodos,
-  renameTodosRoutine, deleteTodosForRoutine, listOpenTodos, cancelPendingTodo,
+  renameTodosRoutine, deleteTodosForRoutine, listOpenTodos, cancelPendingTodo, claimTodo,
 } from "../src/index.js";
 import { closeDb } from "../src/db.js";
 
@@ -21,6 +21,32 @@ afterEach(async () => {
 });
 
 describe("todo-store", () => {
+  it("claimTodo takes pending todos in queue order, each once — concurrent claims never collide", async () => {
+    const a = await addTodo(file, "q", "a");
+    const b = await addTodo(file, "q", "b");
+    await addTodo(file, "other", "not mine");
+    await reorderTodo(file, b.id, 0); // b now first in the queue
+    const claims = await Promise.all([claimTodo(file, "q"), claimTodo(file, "q"), claimTodo(file, "q")]);
+    expect(claims.map((c) => c?.id)).toEqual([b.id, a.id, undefined]);
+    expect(claims[0]).toMatchObject({ text: "b", status: "running" });
+    expect((await listTodos(file, "q")).map((t) => t.status)).toEqual(["running", "running"]);
+    expect((await listTodos(file, "other"))[0]?.status).toBe("pending");
+  });
+
+  it("claim vs edit/delete: a claimed todo can't be edited or cancelled; a cancelled one is never claimed", async () => {
+    const a = await addTodo(file, "q", "a");
+    const b = await addTodo(file, "q", "b");
+    expect((await claimTodo(file, "q"))?.id).toBe(a.id);
+    await expect(editTodoText(file, a.id, "changed")).rejects.toThrow(/only pending/);
+    expect(await cancelPendingTodo(file, a.id)).toBe(false);
+    expect(await cancelPendingTodo(file, b.id)).toBe(true);
+    expect(await claimTodo(file, "q")).toBeUndefined();
+    // Deleted mid-run: the finishing status write lands on nothing, and nothing is re-claimed.
+    await deleteTodo(file, a.id);
+    await updateTodoStatus(file, a.id, "done");
+    expect(await listTodos(file, "q")).toEqual([]);
+  });
+
   it("member todos: stamped creator, own-only list and cancel in SQL; unstamped rows are the owner's", async () => {
     const a = await addTodo(file, "inbox", "A's", undefined, undefined, "user-a");
     const b = await addTodo(file, "inbox", "B's", undefined, undefined, "user-b");
