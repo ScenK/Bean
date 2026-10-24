@@ -32,10 +32,10 @@ import {
 import type { RouteSuggestion, ActionTool, Transport, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
-  registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore,
+  registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens,
   buildRoutineHandlers, buildSkillProposalHandlers, buildTodoHandlers, buildPendingUpdateStore, type ChatPromptPayload,
 } from "./ipc.js";
-import { IPC, type Theme, type ComponentKind } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import {
   hasRequestedNotificationPermission, markNotificationPermissionRequested, notificationPermissionFile,
@@ -316,10 +316,21 @@ app.whenReady().then(async () => {
   // the push. droppedUrlStore.get() is stashed alongside every push so the renderer can pull it
   // on mount instead.
   const droppedUrlStore = buildDroppedUrlStore();
-  const openComponent = (kind: ComponentKind, droppedUrl?: string): void => {
+  // A run to open in the Dashboard: pulled on mount by a fresh (or still-loading) window, pushed to
+  // an open one. A mounted window never stores it — that would make a later reopen jump to an old run.
+  let pendingDashboardTarget: DashboardTarget | undefined;
+  const openComponent = (kind: ComponentKind, payload?: string | DashboardTarget): void => {
+    const droppedUrl = typeof payload === "string" ? payload : undefined;
+    const target = typeof payload === "object" && kind === "dashboard" ? payload : undefined;
     const existing = componentWindows.get(kind);
     if (existing && !existing.isDestroyed()) {
+      if (existing.isMinimized()) existing.restore();
       existing.focus();
+      if (target) {
+        // Still loading (opened a moment ago): it may not have subscribed yet, so it pulls too.
+        if (existing.webContents.isLoading()) pendingDashboardTarget = target;
+        sendToWindow(existing, IPC.dashboardTarget, target);
+      }
       if (droppedUrl && kind === "chat") {
         droppedUrlStore.set(droppedUrl);
         sendToWindow(existing, IPC.componentDroppedUrl, droppedUrl);
@@ -353,6 +364,7 @@ app.whenReady().then(async () => {
       droppedUrlStore.set(droppedUrl);
       sendToWindow(win, IPC.componentDroppedUrl, droppedUrl);
     }
+    if (target) pendingDashboardTarget = target;
   };
   // "Run skill" (Skills panel) is the only caller of window.bean.proposeRun() — it opens the
   // single-purpose Plan popup (just the proposal card), not the multi-turn Chat window.
@@ -416,12 +428,21 @@ app.whenReady().then(async () => {
   const remindersPath = remindersFile(dir);
   // Message fanout: deliver() sends to every available() transport. Only Notification is
   // real today; the rest are honest stubs the routine feature will implement.
+  const shownNotifications = new Set<Notification>();
   const notificationTransport: Transport = {
     name: "notification",
     available: () => Notification.isSupported(),
     send: (msg) => {
       const n = new Notification({ title: msg.title ?? "Bean", body: msg.body });
-      n.on("click", () => openComponent("chat"));
+      const opens = notificationOpens(msg.meta);
+      const release = (): void => { shownNotifications.delete(n); };
+      n.on("click", () => { release(); openComponent(opens.kind, opens.target); });
+      n.on("close", release);
+      // Electron drops a garbage-collected Notification's click handler, so a click hours later
+      // would do nothing. ponytail: keep the newest 20 (`close` isn't guaranteed to fire); an
+      // older one's click just activates Bean.
+      shownNotifications.add(n);
+      if (shownNotifications.size > 20) shownNotifications.delete(shownNotifications.values().next().value!);
       n.show();
     },
   };
@@ -662,12 +683,14 @@ app.whenReady().then(async () => {
       memories: () => loadMemories(dbFile(dir), null),
       getRoutineDigestContext: () => runtime.getRoutineDigestContext(),
       onStatus: (e) => {
-        if (e.type === "start") taskStatus.upsert(e.id, { kind: "routine", name: e.name, line: e.steps[0] ?? "", detail: e.detail, steps: e.steps, step: 0, startedAt: e.startedAt, state: "running" });
+        if (e.type === "start") taskStatus.upsert(e.id, { kind: "routine", name: e.name, line: e.steps[0] ?? "", detail: e.detail, steps: e.steps, step: 0, startedAt: e.startedAt, state: "running", runStartedAt: undefined });
         else if (e.type === "step") taskStatus.upsert(e.id, { step: e.step, line: e.line });
         else if (e.type === "drop") taskStatus.dismiss(e.id);
-        else taskStatus.finish(e.id, e.state, e.line);
+        else taskStatus.finish(e.id, e.state, e.line, undefined, { runStartedAt: e.startedAt });
       },
-      notify: async (msg) => { if (notificationTransport.available()) await notificationTransport.send(msg); },
+      notify: async ({ target, ...msg }) => {
+        if (notificationTransport.available()) await notificationTransport.send({ ...msg, ...(target ? { meta: { open: "dashboard", target } } : {}) });
+      },
     });
 
     const watchPoll = { fetchText, exec: execWatchCommand(resolvedPath) };
@@ -690,7 +713,7 @@ app.whenReady().then(async () => {
       saveRoutine: (r) => saveRoutine(routinesPath, r),
       alarm: (routine, error) => {
         if (notificationTransport.available()) {
-          void notificationTransport.send({ title: `Sprout: ${routine.name}`, body: `Can't check for new items — ${error}` });
+          void notificationTransport.send({ title: `Sprout: ${routine.name}`, body: `Can't check for new items — ${error}`, meta: { open: "routines" } });
         }
       },
     });
@@ -861,6 +884,7 @@ app.whenReady().then(async () => {
       getCurrentTheme, setCurrentTheme, broadcast, openComponent, proposeRun, planFromDrop,
       getPendingPlan: planStore.get,
       getPendingDroppedUrl: droppedUrlStore.get,
+      getPendingDashboardTarget: () => { const t = pendingDashboardTarget; pendingDashboardTarget = undefined; return t; },
       runInChat,
       getPendingChatPrompt: chatPromptStore.get,
       getPendingInterruptedRunNotices: interruptedRunStore.get,

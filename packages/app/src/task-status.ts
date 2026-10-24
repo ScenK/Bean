@@ -16,6 +16,9 @@ export interface TaskJob {
   state: "running" | "done" | "failed";
   /** Repeats merged into one error bubble (see `error()`); absent means 1. */
   count?: number;
+  /** A finished routine's run record `startedAt` — what its click opens in the Dashboard. The id is
+   * reused per routine, so `start` and `finish` always set it rather than inheriting the last run's. */
+  runStartedAt?: string;
 }
 
 // How long a finished (or user-stopped) bubble stays before it clears (the design said a minute;
@@ -42,11 +45,12 @@ export function createTaskStatus(
       jobs.set(id, { line: "", detail: "", startedAt: Date.now(), state: "running", ...cur, ...patch, id } as TaskJob);
       push();
     },
-    /** `sticky` (default: failed) keeps the bubble until dismiss(); otherwise it lingers briefly. */
-    finish(id: string, state: "done" | "failed", line: string, sticky = state === "failed"): void {
+    /** `sticky` (default: failed) keeps the bubble until dismiss(); otherwise it lingers briefly.
+     * `patch` lands with the state change (one push). */
+    finish(id: string, state: "done" | "failed", line: string, sticky = state === "failed", patch: Partial<Omit<TaskJob, "id">> = {}): void {
       const cur = jobs.get(id);
       if (!cur) return;
-      jobs.set(id, { ...cur, state, line });
+      jobs.set(id, { ...cur, ...patch, state, line });
       push();
       const prev = lingers.get(id);
       if (prev !== undefined) { timers.clear(prev); lingers.delete(id); }

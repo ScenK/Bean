@@ -90,6 +90,7 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
   const taskBubbles = createTaskBubbles(
     bubbles, (h) => window.bean.setAvatarStatusHeight(h), (id) => window.bean.dismissTask(id),
     () => void window.bean.openComponent("persona"),
+    (target) => void window.bean.openComponent("dashboard", target),
   );
   // When the last job ends the orb rests in "done" for a beat before going back to listening.
   let wasRunning = false;

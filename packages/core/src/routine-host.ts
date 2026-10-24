@@ -30,7 +30,9 @@ export interface RoutineHold { reserved: Set<string>; scratch: Set<string> }
 export type RoutineHostStatus =
   | { type: "start"; id: string; name: string; detail: string; steps: string[]; startedAt: number }
   | { type: "step"; id: string; step: number; line: string }
-  | { type: "finish"; id: string; state: "done" | "failed"; line: string }
+  /** `startedAt` is the run record's — what the Dashboard keys a run by. Absent when nothing was
+   * recorded (the run threw). */
+  | { type: "finish"; id: string; state: "done" | "failed"; line: string; startedAt?: string }
   /** The run deferred (its project was busy): nothing ran, so clear the bubble — no "Done". */
   | { type: "drop"; id: string };
 
@@ -56,8 +58,9 @@ export interface RoutineHostDeps {
   /** Read live per digest: the Settings toggle applies to the next run without restarting bots. */
   getRoutineDigestContext: () => boolean;
   onStatus?: (e: RoutineHostStatus) => void;
-  /** Desktop notification sink; absent = `sinks.notify` is skipped. */
-  notify?: (msg: { title: string; body: string }) => Promise<void>;
+  /** Desktop notification sink; absent = `sinks.notify` is skipped. `target` names the run, so a
+   * click can open it (other hosts ignore it). */
+  notify?: (msg: { title: string; body: string; target?: { routine: string; startedAt: string } }) => Promise<void>;
   newId?: () => string;
 }
 
@@ -164,6 +167,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       if (result?.deferred) deps.onStatus?.({ type: "drop", id });
       else deps.onStatus?.({
         type: "finish", id, state: status === "ok" ? "done" : "failed",
+        ...(result ? { startedAt: result.record.startedAt } : {}),
         line: !status ? "Run failed"
           : status === "failed" ? "Finished with a failed step"
           : status === "needs-attention" ? "Needs attention — a gate stopped it"
@@ -191,7 +195,10 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       }, newId);
     }
     if (routine.sinks.notify && deps.notify) {
-      await deps.notify({ title: `Sprout: ${routine.name}`, body: result.digest });
+      await deps.notify({
+        title: `Sprout: ${routine.name}`, body: result.digest,
+        target: { routine: routine.name, startedAt: result.record.startedAt },
+      });
     }
   };
 
