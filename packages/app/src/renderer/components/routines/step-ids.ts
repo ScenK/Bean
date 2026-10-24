@@ -1,4 +1,4 @@
-import type { AvailableModel, CliName, RoutineStep } from "@bean/core";
+import type { AvailableModel, CliName, RoutineStep, StepRoute } from "@bean/core";
 import { stepAvailabilityProblem } from "@bean/core/models";
 
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "step";
@@ -63,4 +63,16 @@ export function stepProblemsText(steps: RoutineStep[], clis: CliName[], models: 
     const problem = s.kind === "delegate" ? stepAvailabilityProblem(s, clis, models) : undefined;
     return problem ? [`step ${i + 1}: ${problem}`] : [];
   }).join("; ");
+}
+
+/** Sets step `i`'s route (or clears it), dropping its gate and `next` — a route replaces both.
+ * Ids are assigned first so path targets picked by index have an id to point at. */
+export function setStepRoute(steps: RoutineStep[], i: number, route: StepRoute | undefined): RoutineStep[] {
+  return withStepIds(steps).map((s, j) => {
+    if (j !== i) return s;
+    const { route: _route, ...rest } = s;
+    if (!route) return rest as RoutineStep;
+    const { gate: _gate, next: _next, ...plain } = rest;
+    return { ...plain, route } as RoutineStep;
+  });
 }

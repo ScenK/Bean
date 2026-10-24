@@ -88,3 +88,54 @@ test("routines: duplicate a step, save, copy has a unique id", async () => {
     await Promise.allSettled([stub.close(), home.cleanup()]);
   }
 });
+
+/** A multi-way decision built entirely in the editor: "Choose a path…", two labeled paths
+ * (one to a step, one ending the run), save, reload — the ⑂ badge and captions come back. */
+test("routines: build a route in the editor, save, reload, paths intact", async () => {
+  const home = await makeBeanHome();
+  const stub = await startStubOpenAI();
+  const file = join(home.homeDir, ".bean", "routines", "triage.json");
+  await writeFile(file, JSON.stringify({
+    name: "triage", enabled: false, cron: "0 6 * * *", sinks: {},
+    steps: [{ kind: "chat", instruction: "classify" }, { kind: "chat", instruction: "fix the bug" }, { kind: "chat", instruction: "report" }],
+  }), "utf8");
+
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  try {
+    const avatar = await app.firstWindow();
+    const [win] = await Promise.all([
+      app.waitForEvent("window"),
+      avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("routines")),
+    ]);
+    await win.locator(".bean-routines-row", { hasText: "triage" }).click();
+    const first = win.locator(".bean-routines-step").first();
+    await first.getByRole("button", { name: /if it fails · keep going/ }).click();
+    await win.getByRole("button", { name: /Choose a path/ }).click();
+    await expect(first.getByRole("button", { name: /decides · 2 paths/ })).toBeVisible();
+
+    await first.getByLabel("Path 1 label").fill("bug");
+    await first.locator(".bean-routines-route-row").nth(0).getByRole("button", { name: /choose/ }).click();
+    await win.getByRole("button", { name: /→ step 2/ }).click();
+    await first.getByLabel("Path 2 label").fill("question");
+    await first.locator(".bean-routines-route-row").nth(1).getByRole("button", { name: /choose/ }).click();
+    await win.getByRole("button", { name: /end run/ }).click();
+    await expect(first.locator(".bean-routines-step-edge")).toHaveText("⑂2");
+    await expect(win.locator(".bean-routines-step").nth(1).locator(".bean-routines-step-path")).toHaveText("on path · bug");
+    await expect(win.locator(".bean-routines-step-edge-problem")).toHaveCount(0);
+    await win.getByRole("button", { name: "Save sprout" }).click();
+
+    await expect.poll(async () => {
+      const saved = JSON.parse(await readFile(file, "utf8")) as { steps: { id?: string; route?: { paths: { when: string; goto: string }[] } }[] };
+      const paths = saved.steps[0]?.route?.paths;
+      return paths?.[0]?.when === "bug" && paths[0].goto === saved.steps[1]?.id && paths[1]?.when === "question" && paths[1].goto === "end";
+    }).toBe(true);
+
+    await win.reload();
+    await win.locator(".bean-routines-row", { hasText: "triage" }).click();
+    await expect(win.locator(".bean-routines-step").first().locator(".bean-routines-step-edge")).toHaveText("⑂2");
+    await expect(win.locator(".bean-routines-step").nth(1).locator(".bean-routines-step-path")).toHaveText("on path · bug");
+  } finally {
+    await app.close();
+    await Promise.allSettled([stub.close(), home.cleanup()]);
+  }
+});

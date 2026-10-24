@@ -1,9 +1,9 @@
 import { useState } from "preact/hooks";
-import type { AvailableModel, CliName, Project, RoutineStep, Skill, StepGate } from "@bean/core";
+import type { AvailableModel, CliName, Project, RoutineStep, Skill, StepGate, StepRoute } from "@bean/core";
 import { stepAvailabilityProblem } from "@bean/core/models";
-import { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, stepEdgeProblems } from "@bean/core/routine-graph";
+import { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, stepEdgeProblems, stepEdgeWarnings, stepPathCaptions } from "@bean/core/routine-graph";
 import { ChipMenu } from "../../shared/ChipMenu.js";
-import { duplicateStep, setStepNext, withStepIds } from "./step-ids.js";
+import { duplicateStep, setStepNext, setStepRoute, withStepIds } from "./step-ids.js";
 
 const HARNESSES: CliName[] = ["claude", "codex", "opencode"];
 
@@ -32,14 +32,54 @@ export function StepsEditor(props: {
     const withIds = withStepIds(steps);
     onSteps(withIds.map((s, j) => {
       if (j !== i) return s;
-      const { gate: _old, ...rest } = s;
+      // A gate choice replaces a route (the two can't combine).
+      const { gate: _old, route: _route, ...rest } = s;
       return (gate ? { ...rest, gate } : rest) as RoutineStep;
     }));
   };
   const setNext = (i: number, target: number | "end" | undefined): void => onSteps(setStepNext(steps, i, target));
+  const setRoute = (i: number, route: StepRoute | undefined): void => onSteps(setStepRoute(steps, i, route));
   const indexOf = (id: string): number => steps.findIndex((s) => s.id === id);
+  const idAt = (j: number): string => withStepIds(steps)[j]!.id!;
   // Re-checked on every render, so a reorder or delete that breaks an edge shows up here, not at save.
   const edgeProblems = stepEdgeProblems(steps);
+  // Non-blocking: a path falling into a sibling path is legal, just rarely meant.
+  const edgeWarnings = stepEdgeWarnings(steps);
+  const pathCaptions = stepPathCaptions(steps);
+  const hasRoute = steps.some((s) => s.route);
+  const targetName = (goto: string | undefined, none: string): string =>
+    goto === undefined ? none : goto === "end" ? "end run" : indexOf(goto) >= 0 ? `step ${indexOf(goto) + 1}` : goto ? "step ?" : "choose…";
+
+  // A route target picker: later steps only, "end run", and (for `otherwise`) "stop".
+  const targetMenu = (i: number, goto: string | undefined, pick: (goto: string | undefined) => void, stop?: boolean) => (
+    <ChipMenu
+      chipClass={goto ? undefined : "bean-chip-menu-trigger--dashed"}
+      chipLabel={<span class="bean-routines-chip-label">{targetName(goto, "stop")}</span>}
+      menuWidth={260}
+    >
+      {(close) => (
+        <div class="bean-chip-menu-list">
+          {stop ? (
+            <button type="button" class={`bean-chip-menu-row${goto === undefined ? " bean-chip-menu-row--on" : ""}`} onClick={() => { pick(undefined); close(); }}>
+              <span class="bean-chip-menu-row-title">{goto === undefined ? "✓ " : ""}stop</span>
+              <span class="bean-chip-menu-caption">the run ends here and asks for you</span>
+            </button>
+          ) : null}
+          <button type="button" class={`bean-chip-menu-row${goto === "end" ? " bean-chip-menu-row--on" : ""}`} onClick={() => { pick("end"); close(); }}>
+            <span class="bean-chip-menu-row-title">{goto === "end" ? "✓ " : ""}end run</span>
+            <span class="bean-chip-menu-caption">the run ends ok after this step</span>
+          </button>
+          {i < steps.length - 1 ? <div class="bean-chip-menu-divider" /> : null}
+          {steps.map((t, j) => j <= i ? null : (
+            <button key={j} type="button" class={`bean-chip-menu-row${goto && indexOf(goto) === j ? " bean-chip-menu-row--on" : ""}`} onClick={() => { pick(idAt(j)); close(); }}>
+              <span class="bean-chip-menu-row-title">{goto && indexOf(goto) === j ? "✓ " : ""}→ step {j + 1}</span>
+              <span class="bean-chip-menu-caption">{t.skill || t.kind}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </ChipMenu>
+  );
 
   // Reorder by drag (the ⠿ handle is the drag source, each step card a drop target).
   const reorderStep = (from: number, to: number): void => {
@@ -61,10 +101,10 @@ export function StepsEditor(props: {
     const keepModel = !cli || !step.model || models.some((m) => m.id === step.model && m.availableOn.includes(cli));
     setStep(i, { ...step, cli, model: keepModel ? step.model : undefined });
   };
-  // `id` and the gate/next edges ride along so a kind change never re-keys or re-wires the
+  // `id` and the gate/next/route edges ride along so a kind change never re-keys or re-wires the
   // step; `cli` is delegate-only; the text carries over as instruction ⇄ command.
   const switchKind = (i: number, step: RoutineStep, kind: RoutineStep["kind"]): void => {
-    const edges = { ...(step.gate ? { gate: step.gate } : {}), ...(step.next ? { next: step.next } : {}) };
+    const edges = { ...(step.gate ? { gate: step.gate } : {}), ...(step.next ? { next: step.next } : {}), ...(step.route ? { route: step.route } : {}) };
     const text = step.kind === "command" ? step.command : step.instruction;
     setStep(i, kind === "delegate"
       ? { kind: "delegate", id: step.id, skill: step.skill ?? "", model: step.model, instruction: text, ...edges }
@@ -84,7 +124,15 @@ export function StepsEditor(props: {
         const onFail = step.gate?.onFail;
         const gotoIndex = typeof onFail === "object" ? indexOf(onFail.goto) : -1;
         const loops = gotoIndex >= 0 && gotoIndex < i;
-        const gateLabel = !onFail ? "if it fails · keep going"
+        const route = step.route;
+        const last = i === steps.length - 1;
+        const routeTitle = route ? [
+          ...route.paths.map((p) => `${p.when || "?"} → ${p.goto === "end" ? "end" : indexOf(p.goto) >= 0 ? indexOf(p.goto) + 1 : "?"}`),
+          `otherwise → ${route.otherwise === undefined ? "stop" : route.otherwise === "end" ? "end" : indexOf(route.otherwise) >= 0 ? indexOf(route.otherwise) + 1 : "?"}`,
+        ].join(", ") : "";
+        const setPaths = (paths: StepRoute["paths"]): void => { if (route) setRoute(i, { ...route, paths }); };
+        const gateLabel = route ? `decides · ${route.paths.length} paths`
+          : !onFail ? "if it fails · keep going"
           : onFail === "stop" ? "if it fails · stop"
           : `if it fails · go to ${gotoIndex >= 0 ? gotoIndex + 1 : "?"}`;
         const nextIndex = step.next && step.next !== "end" ? indexOf(step.next) : -1;
@@ -104,6 +152,7 @@ export function StepsEditor(props: {
                   {loops ? "↩" : "↪"}{gotoIndex >= 0 ? gotoIndex + 1 : "?"}
                 </span>
               ) : null}
+              {route ? <span class="bean-routines-step-edge" title={routeTitle}>⑂{route.paths.length}</span> : null}
               {step.next ? (
                 <span class="bean-routines-step-edge" title={step.next === "end" ? "Ends the run here on success" : `Then goes to step ${nextIndex + 1}`}>
                   {step.next === "end" ? "end" : `→${nextIndex >= 0 ? nextIndex + 1 : "?"}`}
@@ -256,9 +305,9 @@ export function StepsEditor(props: {
                 </ChipMenu>
                 ) : null}
 
-                {steps.length > 1 || onFail ? (
+                {steps.length > 1 || onFail || route ? (
                   <ChipMenu
-                    chipClass={onFail ? "bean-routines-gate-chip" : "bean-chip-menu-trigger--dashed"}
+                    chipClass={onFail || route ? "bean-routines-gate-chip" : "bean-chip-menu-trigger--dashed"}
                     chipLabel={<span class="bean-routines-chip-label">{gateLabel}</span>}
                     menuWidth={300}
                   >
@@ -266,10 +315,10 @@ export function StepsEditor(props: {
                       <div class="bean-chip-menu-list">
                         <button
                           type="button"
-                          class={`bean-chip-menu-row${onFail ? "" : " bean-chip-menu-row--on"}`}
+                          class={`bean-chip-menu-row${onFail || route ? "" : " bean-chip-menu-row--on"}`}
                           onClick={() => { setGate(i, undefined); close(); }}
                         >
-                          <span class="bean-chip-menu-row-title">{onFail ? "" : "✓ "}Keep going</span>
+                          <span class="bean-chip-menu-row-title">{onFail || route ? "" : "✓ "}Keep going</span>
                           <span class="bean-chip-menu-caption">no gate — a failure is reported, the next step still runs</span>
                         </button>
                         <button
@@ -299,6 +348,15 @@ export function StepsEditor(props: {
                             </span>
                           </button>
                         ))}
+                        <div class="bean-chip-menu-divider" />
+                        <button
+                          type="button"
+                          class={`bean-chip-menu-row${route ? " bean-chip-menu-row--on" : ""}`}
+                          onClick={() => { if (!route) setRoute(i, { paths: [{ when: "", goto: "" }, { when: "", goto: "" }] }); close(); }}
+                        >
+                          <span class="bean-chip-menu-row-title">{route ? "✓ " : ""}Choose a path…</span>
+                          <span class="bean-chip-menu-caption">this step picks which step runs next, by label</span>
+                        </button>
                       </div>
                     )}
                   </ChipMenu>
@@ -321,12 +379,12 @@ export function StepsEditor(props: {
                   </ChipMenu>
                 ) : null}
 
-                {i < steps.length - 1 || step.next ? (
+                {!route && (!last || step.next || hasRoute) ? (
                   <ChipMenu
                     chipClass={step.next ? undefined : "bean-chip-menu-trigger--dashed"}
                     chipLabel={
                       <span class="bean-routines-chip-label">
-                        {step.next === "end" ? "✓ end run here" : step.next ? `then · step ${nextIndex >= 0 ? nextIndex + 1 : "?"}` : "then · following step"}
+                        {step.next === "end" ? "✓ end run here" : step.next ? `then · step ${nextIndex >= 0 ? nextIndex + 1 : "?"}` : last ? "then" : "then · following step"}
                       </span>
                     }
                     menuWidth={300}
@@ -338,8 +396,8 @@ export function StepsEditor(props: {
                           class={`bean-chip-menu-row${step.next ? "" : " bean-chip-menu-row--on"}`}
                           onClick={() => { setNext(i, undefined); close(); }}
                         >
-                          <span class="bean-chip-menu-row-title">{step.next ? "" : "✓ "}following step</span>
-                          <span class="bean-chip-menu-caption">on success, run the step below</span>
+                          <span class="bean-chip-menu-row-title">{step.next ? "" : "✓ "}{last ? "nothing set" : "following step"}</span>
+                          <span class="bean-chip-menu-caption">{last ? "the last step ends the run" : "on success, run the step below"}</span>
                         </button>
                         <button
                           type="button"
@@ -349,7 +407,7 @@ export function StepsEditor(props: {
                           <span class="bean-chip-menu-row-title">{step.next === "end" ? "✓ " : ""}end run here</span>
                           <span class="bean-chip-menu-caption">on success, the run ends after this step</span>
                         </button>
-                        {i < steps.length - 1 ? <div class="bean-chip-menu-divider" /> : null}
+                        {!last ? <div class="bean-chip-menu-divider" /> : null}
                         {steps.map((t, j) => j <= i ? null : (
                           <button
                             key={j}
@@ -365,6 +423,7 @@ export function StepsEditor(props: {
                     )}
                   </ChipMenu>
                 ) : null}
+                {!route && last && hasRoute && !step.next ? <span class="bean-routines-step-path">ends run</span> : null}
 
                 <span class="bean-skills-spacer" />
                 <span
@@ -390,6 +449,44 @@ export function StepsEditor(props: {
                   onInput={(e) => setStep(i, { ...step, instruction: (e.target as HTMLTextAreaElement).value })}
                 />
               )}
+              {route ? (
+                <div class="bean-routines-route">
+                  {route.paths.map((p, k) => (
+                    <div key={k} class="bean-routines-route-row">
+                      <input
+                        class="bean-input bean-input--boxed bean-routines-route-label"
+                        placeholder="label, e.g. bug"
+                        aria-label={`Path ${k + 1} label`}
+                        value={p.when}
+                        onInput={(e) => setPaths(route.paths.map((q, m) => m === k
+                          ? { ...q, when: (e.target as HTMLInputElement).value.toLowerCase().replace(/[^a-z0-9-]+/g, "-") } : q))}
+                      />
+                      <span class="bean-routines-route-arrow">→</span>
+                      {targetMenu(i, p.goto, (goto) => setPaths(route.paths.map((q, m) => m === k ? { ...q, goto: goto ?? "" } : q)))}
+                      <button
+                        type="button"
+                        class="bean-skills-delete-link"
+                        aria-label={`Remove path ${k + 1}`}
+                        title="Remove this path"
+                        disabled={route.paths.length <= 2}
+                        onClick={() => setPaths(route.paths.filter((_, m) => m !== k))}
+                      >×</button>
+                    </div>
+                  ))}
+                  <div class="bean-routines-route-row">
+                    <button type="button" class="bean-routines-todo-link" onClick={() => setPaths([...route.paths, { when: "", goto: "" }])}>+ add path</button>
+                  </div>
+                  <div class="bean-routines-route-row">
+                    <span class="bean-routines-route-arrow">if none matches →</span>
+                    {targetMenu(i, route.otherwise, (otherwise) => {
+                      const { otherwise: _old, ...rest } = route;
+                      setRoute(i, otherwise === undefined ? rest : { ...rest, otherwise });
+                    }, true)}
+                  </div>
+                </div>
+              ) : null}
+              {pathCaptions[i] ? <div class="bean-routines-step-path">{pathCaptions[i]}</div> : null}
+              {edgeWarnings[i] ? <div class="bean-routines-step-warning">{edgeWarnings[i]}</div> : null}
               {edgeProblems[i] ? <div class="bean-routines-step-missing bean-routines-step-edge-problem" role="alert">{edgeProblems[i]}</div> : null}
               {problem ? <div class="bean-routines-step-missing" role="alert">{problem}{cli ? " — this step will refuse to run" : " — Bean will pick another"}</div> : null}
               {props.note?.(i) ? <div class="bean-routines-step-missing">{props.note(i)}</div> : null}

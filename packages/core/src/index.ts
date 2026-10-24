@@ -73,7 +73,7 @@ export {
   loadRoutineStates, memberTodoEligible, resolveTodoRoutine, saveRoutine, todoRunHint, saveRoutineStates, usesGates,
 } from "./routine-store.js";
 export type {
-  Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord, RunStatus, StepGate, StepKind,
+  Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord, RunStatus, StepGate, StepKind, StepRoute,
 } from "./routine-store.js";
 export * from "./command-step.js";
 export * from "./routine-graph.js";
