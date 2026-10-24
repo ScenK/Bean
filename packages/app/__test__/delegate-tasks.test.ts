@@ -158,17 +158,21 @@ describe("createDelegateTasks", () => {
     expect(h.sent.length).toBe(before);
   });
 
-  it("a second start on the same project path is rejected while the first runs", async () => {
-    const h = harness();
-    await h.tasks.start({ projectPath: "/p", prompt: "one", instruction: "do it" });
+  it("two starts on one project run at once, each recorded and settled on its own", async () => {
+    const dir = tmp();
+    const h = harness({ dir });
+    const idA = await h.tasks.start({ projectPath: "/p", prompt: "one", instruction: "do it" });
     const idB = await h.tasks.start({ projectPath: "/p", prompt: "two", instruction: "do it again" });
-    expect(h.reqs).toHaveLength(1); // second start never spawned
-    await new Promise((resolve) => setImmediate(resolve)); // the rejection is a deferred send, like the no-CLI case
-    expect(h.sent).toContainEqual({ taskId: idB, type: "failed", message: "A run is already going in that project — wait for it or cancel it first." });
-    h.cbs().onDone("done");
-    // freed after completion
-    const idC = await h.tasks.start({ projectPath: "/p", prompt: "three", instruction: "again" });
-    expect(h.sent).toContainEqual({ taskId: idC, type: "started", projectPath: "/p", instruction: "again" });
+    expect(h.reqs.map((r) => r.prompt)).toEqual(["one", "two"]);
+    expect(h.sent).toContainEqual({ taskId: idB, type: "started", projectPath: "/p", instruction: "do it again" });
+    expect(readdirSync(join(dir, "runs")).sort()).toEqual([`${idA}.json`, `${idB}.json`]);
+    h.captured[0]!.onDone("first");
+    expect(h.sent).toContainEqual({ taskId: idA, type: "done", result: "first" });
+    expect(readdirSync(join(dir, "runs"))).toEqual([`${idB}.json`]);
+    // Another process sharing ~/.bean (a bot, or a relaunch) isn't refused either.
+    const h2 = harness({ dir });
+    await h2.tasks.start({ projectPath: "/p", prompt: "three", instruction: "again" });
+    expect(h2.reqs).toHaveLength(1);
   });
 
   it("cancelAll cancels every running task and emits cancelled for each", async () => {
@@ -192,34 +196,28 @@ describe("createDelegateTasks", () => {
     expect(h.sent.filter((e) => e.type === "cancelled")).toEqual([]);
   });
 
-  it("interruptAll leaves reservations in place, leaves a chat outbox notice per task, and clears in-memory state", async () => {
+  it("interruptAll leaves run records in place, leaves a chat outbox notice per task, and clears in-memory state", async () => {
     const dir = tmp();
     const h = harness({ dir });
     await h.tasks.start({ projectPath: "/p", prompt: "one", instruction: "fix the bug" });
     await h.tasks.start({ projectPath: "/q", prompt: "two", instruction: "add the feature" });
     h.tasks.interruptAll();
     expect(h.cancels).toEqual(["one", "two"]);
-    // The reservations are NOT released: this process is exiting with no confirmation the
-    // delegate children actually stopped, so releasing blind would let a relaunch double-run
-    // the same project. They stay busy (under each reservation's already-live pid) until reclaimed.
+    // The records are NOT released: this process is exiting with no confirmation the delegate
+    // children actually stopped, so boot cleanup must still find them.
     expect(readdirSync(join(dir, "runs"))).toHaveLength(2);
     const outboxFiles = readdirSync(join(dir, "outbox"));
     expect(outboxFiles).toHaveLength(2);
     expect(outboxFiles.every((f) => f.startsWith("chat-"))).toBe(true);
-    // A relaunch (simulated by a second harness sharing the same dir) still sees both as busy.
-    const h2 = harness({ dir });
-    const idAgain = await h2.tasks.start({ projectPath: "/p", prompt: "again", instruction: "retry" });
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(h2.sent).toContainEqual({ taskId: idAgain, type: "failed", message: "A run is already going in that project — wait for it or cancel it first." });
   });
 
-  it("cancel does not release the reservation until the handle confirms the child actually stopped", async () => {
+  it("cancel does not release the run record until the handle confirms the child actually stopped", async () => {
     const dir = tmp();
     const h = harness({ dir });
     await h.tasks.start({ projectPath: "/p", prompt: "one", instruction: "do it" });
     h.tasks.cancel("task-1");
-    // SIGTERM sent (via h.cancels), but the confirmation callback hasn't fired yet — the
-    // project must still read as busy.
+    // SIGTERM sent (via h.cancels), but the confirmation callback hasn't fired yet — crash
+    // cleanup must still see the run.
     expect(readdirSync(join(dir, "runs"))).toHaveLength(1);
     expect(h.sent.filter((e) => e.type === "cancelled")).toEqual([]);
     h.cancelCallbacks[0]!();

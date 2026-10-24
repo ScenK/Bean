@@ -1,18 +1,18 @@
-import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { runsDir } from "./config.js";
 
-/** Cross-process "is this project already claimed?" reservation (~/.bean/runs/<hash>.json), one
- * deterministically-named file per project path — mirrors outbox.ts's file-per-message
- * convention so writes never race a shared file. Deliberately NOT a full run record: reporting
- * (what happened, to whom) is handled by the outbox instead — see
- * .memory/project-durable-run-queue.md.
+/** Cross-process record of every tracked delegate run (~/.bean/runs/<runId>.json), one file per
+ * run keyed by a server-generated run id — mirrors outbox.ts's file-per-message convention so
+ * writes never race a shared file. Not a lock: runs on one project overlap freely (each agent
+ * isolates itself in its own worktree). The records exist for crash cleanup — the headless boot
+ * kills what they name, the desktop boot sweeps the dead ones. Deliberately NOT a full run record:
+ * reporting is handled by the outbox instead — see .memory/project-durable-run-queue.md.
  *
  * Fully synchronous (node:fs, not fs/promises): called from settle callbacks and Electron's
  * before-quit / a bare process.on("SIGTERM") — none of which reliably support awaiting real
  * async work — so every write here must be guaranteed done by the time the call returns. */
-export interface RunReservation {
+export interface TrackedRun {
   id: string;
   projectPath: string;
   pid: number;
@@ -29,26 +29,22 @@ function isLive(pid: number): boolean {
   }
 }
 
-// Deterministic, filesystem-safe name derived from the project path itself: every process
-// asking about the same project computes the same filename, so the file's own existence (via
-// an atomic O_EXCL create below) *is* the cross-process lock. A directory-scan-then-write-a-
-// new-unique-file scheme has a TOCTOU window — two processes can both see "no reservation yet"
-// and both write, defeating the whole point of this module.
-function reservationFile(dir: string, projectPath: string): string {
-  const hash = createHash("sha256").update(projectPath).digest("hex").slice(0, 32);
-  return join(runsDir(dir), `${hash}.json`);
+// Run ids are server-generated (randomUUID / a surface's newId), never user text; basename()
+// still keeps a malformed one inside runs/.
+function runFile(dir: string, runId: string): string {
+  return join(runsDir(dir), `${basename(runId)}.json`);
 }
 
-function readReservation(path: string): RunReservation | undefined {
+function readRun(path: string): TrackedRun | undefined {
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<RunReservation>;
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<TrackedRun>;
     if (
       typeof parsed.id === "string" &&
       typeof parsed.projectPath === "string" &&
       typeof parsed.pid === "number" &&
       typeof parsed.createdAt === "string"
     ) {
-      return parsed as RunReservation;
+      return parsed as TrackedRun;
     }
   } catch {
     // malformed — treated as absent below
@@ -56,63 +52,59 @@ function readReservation(path: string): RunReservation | undefined {
   return undefined;
 }
 
-// `"wx"` = O_CREAT | O_EXCL: atomically fails with EEXIST if the file already exists, at the
-// kernel level — no separate check-then-write race at the JS level, unlike a plain existsSync
-// check would have.
-function writeReservation(path: string, reservation: RunReservation, flag: "wx" | "w"): boolean {
-  try {
-    writeFileSync(path, JSON.stringify(reservation, null, 2) + "\n", { encoding: "utf8", flag });
-    return true;
-  } catch (err) {
-    if (flag === "wx" && (err as NodeJS.ErrnoException).code === "EEXIST") return false;
-    throw err;
-  }
+function writeRun(path: string, run: TrackedRun): void {
+  writeFileSync(path, JSON.stringify(run, null, 2) + "\n", "utf8");
 }
 
-/** Reserve `projectPath` for the calling process, or return undefined if another live process
- * already holds it. A reservation left by a process that has since died (crash/kill -9/OOM —
- * none of which run our graceful-shutdown cleanup — or a graceful interrupt that deliberately
- * leaves the reservation in place, see updateReservationPid below) is detected via pid liveness
- * and reclaimed: this is the whole crash-recovery story, no heartbeats/TTLs needed. */
-export function reserveRun(dir: string, projectPath: string, pid: number, newId: () => string): RunReservation | undefined {
+/** Record a run against `pid` (the owning process until its child spawns — see updateRunPid).
+ * Never refuses: any number of runs may share a project. */
+export function recordRun(dir: string, runId: string, projectPath: string, pid: number): void {
   mkdirSync(runsDir(dir), { recursive: true });
-  const path = reservationFile(dir, projectPath);
-  const reservation: RunReservation = { id: newId(), projectPath, pid, createdAt: new Date().toISOString() };
-  if (writeReservation(path, reservation, "wx")) return reservation;
-
-  // Already reserved. Busy only if verifiably alive — malformed/unreadable is treated the same
-  // as "can't confirm it's live", same policy as any other malformed-file sweep in this codebase.
-  const existing = readReservation(path);
-  if (existing && isLive(existing.pid)) return undefined;
-  rmSync(path, { force: true });
-  return writeReservation(path, reservation, "wx") ? reservation : undefined;
+  writeRun(runFile(dir, runId), { id: runId, projectPath, pid, createdAt: new Date().toISOString() });
 }
 
-/** Update a live reservation's tracked pid — called once a delegate's actual child process has
- * spawned. The reservation is created against the *owning* process's pid before the child
- * exists (nothing else to track yet); switching it to the child's own pid means an interrupt
- * (see releaseRun's caller doc comments in RunRegistry/delegate-tasks) can leave the reservation
- * in place instead of releasing it blind, and the next reserveRun's liveness check will
- * correctly track whether *that child* — not the about-to-exit parent — is still running. No-op
- * if the reservation is already gone (settled faster than this update landed). */
-export function updateReservationPid(dir: string, projectPath: string, pid: number): void {
-  const path = reservationFile(dir, projectPath);
-  const existing = readReservation(path);
+/** Point a run's record at its delegate CHILD once spawned, so an interrupt can leave the record
+ * in place (the child may outlive this process) and boot cleanup targets *that child*, not the
+ * exited owner. No-op if the record is already gone (settled faster than this update landed). */
+export function updateRunPid(dir: string, runId: string, pid: number): void {
+  const path = runFile(dir, runId);
+  const existing = readRun(path);
   if (!existing) return;
-  writeReservation(path, { ...existing, pid }, "w");
+  writeRun(path, { ...existing, pid });
 }
 
-/** Headless boot only (the bot owns ~/.bean alone): kill each recorded reservation's process
- * group, then delete every reservation. After a container restart pids start low again, so a
- * stale reservation's pid can match an unrelated live process and block its project forever.
- * Returns the cleared project paths. Skips this process and pid ≤ 1. */
-export function clearReservations(dir: string, kill: (pid: number) => void = (pid) => process.kill(-pid, "SIGKILL")): string[] {
-  let files: string[];
-  try { files = readdirSync(runsDir(dir)).filter((f) => f.endsWith(".json")); } catch { return []; }
-  const cleared: string[] = [];
-  for (const f of files) {
+export function releaseRun(dir: string, runId: string): void {
+  rmSync(runFile(dir, runId), { force: true });
+}
+
+function runFiles(dir: string): string[] {
+  try { return readdirSync(runsDir(dir)).filter((f) => f.endsWith(".json")); } catch { return []; }
+}
+
+/** Desktop boot: delete records whose pid is dead or that don't parse. Legacy per-project hash
+ * files share the record shape, so they go the same way. Never kills: the bots share runs/, and a
+ * live record may be their running child. Returns how many were deleted. */
+export function sweepDeadRuns(dir: string): number {
+  let swept = 0;
+  for (const f of runFiles(dir)) {
     const path = join(runsDir(dir), f);
-    const r = readReservation(path);
+    const r = readRun(path);
+    if (r && isLive(r.pid)) continue;
+    rmSync(path, { force: true });
+    swept++;
+  }
+  return swept;
+}
+
+/** Headless boot only (the bot owns ~/.bean alone): kill each recorded run's process group, then
+ * delete every record (legacy per-project hash files included). After a container restart pids
+ * start low again, so a stale record's pid can match an unrelated live process. Returns the
+ * cleared project paths. Skips this process and pid ≤ 1. */
+export function clearReservations(dir: string, kill: (pid: number) => void = (pid) => process.kill(-pid, "SIGKILL")): string[] {
+  const cleared: string[] = [];
+  for (const f of runFiles(dir)) {
+    const path = join(runsDir(dir), f);
+    const r = readRun(path);
     if (r && r.pid > 1 && r.pid !== process.pid) {
       try { kill(r.pid); } catch { /* already gone, or not a group leader */ }
     }
@@ -120,10 +112,6 @@ export function clearReservations(dir: string, kill: (pid: number) => void = (pi
     cleared.push(r?.projectPath ?? f);
   }
   return cleared;
-}
-
-export function releaseRun(dir: string, projectPath: string): void {
-  rmSync(reservationFile(dir, projectPath), { force: true });
 }
 
 const MAX_DISPLAY_INSTRUCTION = 140;

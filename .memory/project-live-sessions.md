@@ -86,20 +86,14 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   there's no later tick left to catch a transient Discord failure on the very last flush.
   Gives up gracefully (notice says output "may be incomplete") rather than retrying forever,
   since a genuinely broken sink (revoked token, deleted channel) must not hang teardown.
-- `LiveSessionRegistry` now reserves the **project path**, not just the channel — the same
-  cross-process file lock (`run-queue.ts`'s `reserveRun`/`releaseRun`/`updateReservationPid`,
-  `~/.bean/runs/<hash>.json`) delegate runs (`RunRegistry`) already use. Before this fix, two
-  different Discord channels (or a channel + a delegate run) targeting the same project could
-  each spawn their own permissions-bypassed `claude` process into the same working directory
-  concurrently. `LiveSessionRegistry`'s constructor now REQUIRES `{ dir }` (no default) —
-  every test construction needs a temp `dir` (`mkdtempSync`, fresh per test/call, same
-  convention as `chatops-runs.test.ts`), and both server.ts files pass their real `beanDir()`.
-  Reservation is released in `teardown()` (only ever reached once the child is confirmed
-  dead) — NOT in `forceKillAll()`, which deliberately leaves it in place, mirroring
-  `RunRegistry.interruptAll()`'s exact reasoning (can't confirm the SIGKILL landed before the
-  bot process exits; a future `reserveRun` pid-liveness-reclaims it once verifiably gone).
-  `start()` returns the refusal reason (`"channel"` vs `"project"`) so the bot words them
-  differently — saying "say `stop`" for a project another run holds is wrong advice.
+- One live session per **channel**; sessions and delegate runs share a project freely (#385
+  removed the per-project reservation — each agent works in its own worktree). Each session
+  writes a run record (`run-queue.ts`'s `recordRun`/`releaseRun`/`updateRunPid`,
+  `~/.bean/runs/<runId>.json`) for crash cleanup. `LiveSessionRegistry`'s constructor REQUIRES
+  `{ dir }` (no default) — every test construction needs a temp `dir` (`mkdtempSync`, fresh per
+  test/call), and both server.ts files pass their real `beanDir()`. The record is released in
+  `teardown()` (only reached once the child is confirmed dead) — NOT in `forceKillAll()`, which
+  leaves it for boot cleanup, mirroring `RunRegistry.interruptAll()`.
   Live proposal ids are sequential (`live-<n>`): every claim (bot Start/Cancel) and every
   Discord picker/edit/mode mutation checks `conversationId` against the acting channel first,
   same as delegate cards.
@@ -151,10 +145,10 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   - Stop = **SIGINT** (then SIGKILL after 5s), not SIGTERM: codex runs tool commands in their own
     process group and only SIGINT stops them (#237). `stopping` is checked first on close because
     a SIGINT exit is code 1. `forceKillAll` SIGKILLs each child's whole process tree (`killTree`, #246), not just its group.
-  - **Reservation stays on the bot pid** for the whole codex session (registry skips
-    `updateReservationPid`); per-turn pid swapping races the single-pid liveness check. Accepted
-    ceiling: a bot hard-crash mid-turn frees the project while that turn finishes. `pid` is a getter
-    for the current turn's child so `forceKillAll` reaches it.
+  - **The run record stays on the bot pid** for the whole codex session (registry skips
+    `updateRunPid`); a dead between-turns child's pid would get swept. Accepted ceiling: boot
+    cleanup misses a turn still running after a bot hard-crash. `pid` is a getter for the current
+    turn's child so `forceKillAll` reaches it.
   - **Codex resume ids must be UUIDs**: codex treats a non-UUID as a thread *name* and silently
     starts a new thread. Checked in `findDelegateRun`, the receipt button, and before spawn; the
     emitted `thread.started.thread_id` is compared too (mismatch → stopped, `CODEX_THREAD_MISMATCH`).

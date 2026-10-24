@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import {
-  runDelegate, reserveRun, releaseRun, updateReservationPid, enqueueOutbox, outboxDir, dbFile,
+  runDelegate, recordRun, releaseRun, updateRunPid, enqueueOutbox, outboxDir, dbFile,
   interruptedRunNotice, BEAN_GIT_IDENTITY,
   isValidSessionId, recordDelegateSession, resumeCommand, shQuote, spawnEnv,
 } from "@bean/core";
@@ -40,7 +40,7 @@ export interface DelegateTasksDeps {
   // login shell's real PATH for CLI detection — reuse that same string here so the actual
   // spawn can find claude/opencode/codex too (see .memory/safety-packaged-app-path-detection.md).
   resolvedPath?: string;
-  // ~/.bean — for the cross-process project-path reservation (run-queue.ts) and the outbox
+  // ~/.bean — for the cross-process run record (run-queue.ts) and the outbox
   // notice an interrupted run leaves for the chat window to pick up after a restart.
   dir: string;
   /** Whether this skill's frontmatter says `browser: true` (re-read from disk at launch). */
@@ -49,7 +49,6 @@ export interface DelegateTasksDeps {
 }
 
 const isTerminal = (e: DelegateEvent): boolean => e.type === "done" || e.type === "failed" || e.type === "cancelled";
-const ALREADY_RUNNING = "A run is already going in that project — wait for it or cancel it first.";
 
 // Finder-launched Electron gets launchd's minimal PATH; pass the login shell's resolved PATH
 // (see .memory/safety-packaged-app-path-detection.md) so a spawned claude/opencode/codex can find
@@ -94,7 +93,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     // the only terminal event this run will ever get.
     if (task?.cancelling && !isTerminal(event)) return;
     if (isTerminal(event)) {
-      if (task) releaseRun(deps.dir, task.projectPath);
+      if (task) releaseRun(deps.dir, event.taskId);
       tasks.delete(event.taskId);
     }
     deps.send(event);
@@ -103,24 +102,14 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
   return {
     async start(req: DelegateStartRequest): Promise<string> {
       const taskId = deps.newId();
-      // Awaited before every sync guard below, so the guard-then-reserve sequence stays atomic.
+      // Runs on one project overlap freely: each agent isolates itself in its own worktree.
       const browser = req.skillName && deps.skillBrowser ? await deps.skillBrowser(req.skillName) : false;
-      // Same-project guard: this process's own instant check, same role as RunRegistry's
-      // byProject map — reserveRun below extends the same invariant across processes.
-      if ([...tasks.values()].some((t) => t.projectPath === req.projectPath)) {
-        setImmediate(() => deps.send({ taskId, type: "failed", message: ALREADY_RUNNING }));
-        return taskId;
-      }
       const choice = deps.resolveCli(req.model);
       if (!choice) {
         setImmediate(() => deps.send({ taskId, type: "failed", message: "No enabled delegate CLI found — enable one in Settings." }));
         return taskId;
       }
-      const reservation = reserveRun(deps.dir, req.projectPath, process.pid, () => taskId);
-      if (!reservation) {
-        setImmediate(() => deps.send({ taskId, type: "failed", message: ALREADY_RUNNING }));
-        return taskId;
-      }
+      recordRun(deps.dir, taskId, req.projectPath, process.pid);
       // Set by onDone/onError if the delegate settles synchronously during spawn (e.g. an
       // immediate failure) — before `tasks.set` below has run, so emit()'s terminal-release
       // above finds no task yet and releases nothing; handled explicitly after `run()` returns.
@@ -154,14 +143,14 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
         spawnFn,
       );
       if (settled) {
-        releaseRun(deps.dir, req.projectPath);
+        releaseRun(deps.dir, taskId);
         return taskId;
       }
-      // The reservation was created against this process's own pid (nothing else to track
-      // before the child existed); switch it to the child's real pid so a later interruptAll()
-      // can leave the reservation in place and have the next reserveRun() correctly track *that
-      // child*, not this (possibly about-to-exit) process. See run-queue.ts's doc comment.
-      if (handle.pid !== undefined) updateReservationPid(deps.dir, req.projectPath, handle.pid);
+      // The record was created against this process's own pid (nothing else to track before
+      // the child existed); switch it to the child's real pid so a later interruptAll() can
+      // leave it in place and boot cleanup tracks *that child*, not this (possibly
+      // about-to-exit) process. See run-queue.ts's doc comment.
+      if (handle.pid !== undefined) updateRunPid(deps.dir, taskId, handle.pid);
       tasks.set(taskId, {
         cancel: handle.cancel,
         cancelling: false, projectPath: req.projectPath, instruction: req.instruction,
@@ -192,13 +181,10 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
     // along with it); instead leaves a durable outbox notice so the chat window can report the
     // interruption next launch (see main.ts's startup claimOutbox("chat")).
     //
-    // Deliberately does NOT release the reservation: this process is about to exit, with no way
-    // to know whether the delegate child (sent SIGTERM below) has actually stopped by then —
-    // releasing blind would let a relaunch start a second run on the same project while the old
-    // child is still alive. The reservation already tracks the child's own pid (see start()), so
-    // it's left in place and the *next* reserveRun() for this project correctly reports busy
-    // until that child is verifiably gone (or reclaims it once it's not — same crash-recovery
-    // path as an ungraceful exit).
+    // Deliberately does NOT release the run record: this process is about to exit, with no way
+    // to know whether the delegate child (sent SIGTERM below) has actually stopped by then. The
+    // record already tracks the child's own pid (see start()), so the next desktop boot sweeps it
+    // once that child is verifiably gone, and a headless boot kills it.
     //
     // Also deliberately synchronous (releaseRun/enqueueOutbox are sync-internally, see their doc
     // comments): main.ts calls this directly from a plain `before-quit` listener with no

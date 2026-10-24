@@ -191,7 +191,7 @@ export interface DelegateHandle {
   // The first spawned child's pid, once known (undefined only if spawnFn's process object never got
   // one — practically always defined). Lets a caller track *this specific process*, not just
   // "whoever was calling runDelegate", for cross-restart liveness checks (see run-queue.ts's
-  // updateReservationPid / .memory/project-durable-run-queue.md).
+  // updateRunPid / .memory/project-durable-run-queue.md).
   pid: number | undefined;
 }
 

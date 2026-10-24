@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { dbFile, scratchDir } from "./config.js";
 import { runDelegate, type DelegateSpawnFn } from "./delegate.js";
 import { isValidSessionId, recordDelegateSession } from "./delegate-runs.js";
@@ -10,14 +10,14 @@ import type { CliModelSelection } from "./models.js";
 import { composePrompt } from "./prompt.js";
 import type { RoutineHostDeps } from "./routine-host.js";
 import {
-  ROUTINE_STEP_TIMEOUT_MS, RunBusyError,
+  ROUTINE_STEP_TIMEOUT_MS,
   type CommandStepRequest, type DelegateStepRequest, type DelegateStepResult,
 } from "./routine-runner.js";
-import { releaseRun, reserveRun, updateReservationPid } from "./run-queue.js";
+import { recordRun, releaseRun, updateRunPid } from "./run-queue.js";
 import { spawnEnv } from "./spawn-env.js";
 
 export interface RoutineStepDeps {
-  /** ~/.bean — scratch workspace, run reservations and the delegate_runs log. */
+  /** ~/.bean — scratch workspace, run records and the delegate_runs log. */
   dir: string;
   /** The step's CLI/model: a pinned `cli` must throw (never swap harness); undefined = no CLI. */
   selectCli: (req: { cli?: CliName; model?: string }) => CliModelSelection | undefined;
@@ -32,12 +32,12 @@ export interface RoutineStepDeps {
  * Delegate: runDelegate's callback shape → a promise, prior outputs folded into the prompt,
  * scratch workspace when the step has no project, 15-minute routine step timeout (runDelegate's
  * own default is the interactive 30). Watch-fired todo runs (req.todoId set): a project-less step
- * gets its own scratch subdir (removed afterwards) so it neither collides with the shared
- * workspace reservation nor piles up clones; a project step must win the cross-process run
- * reservation, else RunBusyError puts the todo back to pending. `hold` (gated routines): the
- * reservation and scratch subdir outlive the step; the host releases them when the run ends.
+ * gets its own scratch subdir (removed afterwards) so concurrent todos don't share a workspace or
+ * pile up clones. Every step's child is recorded in run-queue.ts for crash cleanup — never a lock.
+ * `hold` (gated routines): the scratch subdir outlives the step; the host removes it when the run
+ * ends.
  *
- * Command: same cwd rules, no reservation (a check reads the tree, it doesn't edit it). */
+ * Command: same cwd rules, no run record (a check is short-lived and reads the tree). */
 export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "delegateStep" | "commandStep"> {
   const { dir } = deps;
   const delegateStep: RoutineHostDeps["delegateStep"] = (req: DelegateStepRequest, onSession, hold) =>
@@ -55,23 +55,14 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
         (req.priorOutputs ? `\n\nOutput of this sprout's earlier steps:\n${req.priorOutputs}` : "");
       const perTodo = req.todoId && !req.projectPath ? join(scratchDir(dir), req.todoId) : undefined;
       const projectPath = req.projectPath ?? perTodo ?? scratchDir(dir);
-      const reserved = Boolean(req.todoId && req.projectPath) && !hold?.reserved.has(projectPath);
-      if (reserved && !reserveRun(dir, projectPath, process.pid, randomUUID)) {
-        reject(new RunBusyError(`${basename(projectPath)} is busy with another run`));
-        return;
-      }
-      if (reserved) hold?.reserved.add(projectPath);
-      // This step's child carries the reservation (held across a gated run's later steps too).
-      const owns = reserved || Boolean(hold?.reserved.has(projectPath));
+      const runId = randomUUID();
+      recordRun(dir, runId, projectPath, process.pid);
       if (perTodo) { mkdirSync(perTodo, { recursive: true }); hold?.scratch.add(perTodo); }
       // The shared scratch workspace must exist for the spawn's cwd.
       if (!req.projectPath && !perTodo) mkdirSync(projectPath, { recursive: true });
       const cleanup = (): void => {
-        // Held across a gated run: the child is gone, so the (live) host holds the project until
-        // the run ends — a dead child's pid would let another run reclaim it between steps.
-        if (hold) { if (owns) updateReservationPid(dir, projectPath, process.pid); return; }
-        if (reserved) releaseRun(dir, projectPath);
-        if (perTodo) rmSync(perTodo, { recursive: true, force: true });
+        releaseRun(dir, runId);
+        if (perTodo && !hold) rmSync(perTodo, { recursive: true, force: true });
       };
       const handle = runDelegate(
         {
@@ -95,7 +86,7 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
           },
           onError: (err) => { cleanup(); reject(err); },
           onSessionStart: (pid, sessionId) => {
-            if (owns && pid) updateReservationPid(dir, projectPath, pid); // a resume fallback is a new child
+            if (pid) updateRunPid(dir, runId, pid); // a resume fallback is a new child
             recordDelegateSession(dbFile(dir), { surface: "routine", cli, sessionId, projectPath, instruction: req.instruction });
             if (isValidSessionId(sessionId)) onSession?.(cli, sessionId, projectPath);
           },
@@ -104,8 +95,8 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
         req.timeoutMinutes ? req.timeoutMinutes * 60_000 : ROUTINE_STEP_TIMEOUT_MS,
       );
       // Track the detached child, not this host: a crashed host's boot cleanup must kill the
-      // delegate, and a live delegate must keep its project reserved (run-queue.ts).
-      if (owns && handle.pid) updateReservationPid(dir, projectPath, handle.pid);
+      // delegate (run-queue.ts).
+      if (handle.pid) updateRunPid(dir, runId, handle.pid);
     });
 
   const commandStep: RoutineHostDeps["commandStep"] = async (req: CommandStepRequest, hold) => {

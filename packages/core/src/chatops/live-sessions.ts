@@ -8,7 +8,7 @@ import {
 import { codexTurnAdapter } from "../codex-live-session.js";
 import { opencodeTurnAdapter } from "../opencode-live-session.js";
 import { startTurnLiveSession } from "../turn-live-session.js";
-import { reserveRun, releaseRun, updateReservationPid } from "../run-queue.js";
+import { recordRun, releaseRun, updateRunPid } from "../run-queue.js";
 import { killPendingGroups, killTree } from "../kill-tree.js";
 
 /** Surface-agnostic "post or edit a plain text message". Chatops builds this on top of
@@ -84,6 +84,8 @@ function turnFooter(s: TurnSummary): string {
 
 interface ActiveSession {
   handle: LiveSessionHandle;
+  /** This session's run record (run-queue.ts), for crash cleanup. */
+  runId: string;
   projectPath: string;
   starterId: string;
   steering: SteeringMode;
@@ -108,9 +110,7 @@ interface ActiveSession {
 }
 
 export interface LiveSessionRegistryOptions {
-  /** ~/.bean, for the cross-process/cross-surface project-path reservation (run-queue.ts) —
-   * the same one delegate runs (RunRegistry) use, so a live session can't spawn a second
-   * permissions-bypassed agent in a project another channel or a delegate run already holds. */
+  /** ~/.bean, for the cross-process run record (run-queue.ts) delegate runs also write. */
   dir: string;
   throttleMs?: number;
   idleTimeoutMs?: number;
@@ -120,8 +120,8 @@ export interface LiveSessionRegistryOptions {
 }
 
 /** channelId → active live session. One session per channel; while bound, the bot routes
- * that channel's messages to the session instead of converse(). Also enforces one session
- * per *project*, cross-process, via the same reservation delegate runs use. */
+ * that channel's messages to the session instead of converse(). Sessions and delegate runs may
+ * share a project. */
 export class LiveSessionRegistry {
   private byChannel = new Map<string, ActiveSession>();
 
@@ -171,17 +171,14 @@ export class LiveSessionRegistry {
     return [...(this.byChannel.get(channelId)?.coDrivers ?? [])];
   }
 
-  /** Starts a session, or returns why it was refused: `"channel"` (this channel already has one)
-   * or `"project"` (another run — any surface/process — holds the project). */
-  start(input: LiveSessionStart): "started" | "channel" | "project" {
+  /** Starts a session, or returns `"channel"` when this channel already has one. */
+  start(input: LiveSessionStart): "started" | "channel" {
     if (this.byChannel.has(input.channelId)) return "channel";
-    // Cross-process/cross-surface guard: the same reservation delegate runs use, so a second
-    // channel (or an existing delegate run) targeting the same project is refused rather than
-    // spawning a second permissions-bypassed agent into the same working directory.
-    const reservation = reserveRun(this.opts.dir, input.projectPath, process.pid, () => this.newId());
-    if (!reservation) return "project";
+    const runId = this.newId();
+    recordRun(this.opts.dir, runId, input.projectPath, process.pid);
     const s: ActiveSession = {
       handle: undefined as unknown as LiveSessionHandle,
+      runId,
       projectPath: input.projectPath,
       starterId: input.starterId ?? "",
       // A restricted session with no owner would lock everyone out (no id can match ""), so
@@ -216,16 +213,15 @@ export class LiveSessionRegistry {
       undefined,
       this.opts.idleTimeoutMs,
     );
-    // The reservation was created against this process's own pid (nothing else to track before
-    // the child exists); switch it to the child's real pid so pid-liveness crash recovery
-    // tracks *that child*, not this process — same reasoning as RunRegistry.start().
-    // Per-turn CLIs (codex, opencode) spawn one child per turn, so their reservation stays on
-    // this (bot) process for the whole session: swapping per turn races the single-pid liveness
-    // check between turns.
-    // ponytail: if the bot hard-crashes mid-turn, the project is reclaimable while that one
-    // detached turn finishes; per-turn pid tracking would need a multi-pid reservation.
+    // The record was created against this process's own pid (nothing else to track before the
+    // child exists); switch it to the child's real pid so crash cleanup tracks *that child*, not
+    // this process — same reasoning as RunRegistry.start().
+    // Per-turn CLIs (codex, opencode) spawn one child per turn, so their record stays on this
+    // (bot) process for the whole session: a dead between-turns child's pid would get swept.
+    // ponytail: if the bot hard-crashes mid-turn, boot cleanup misses that one detached turn;
+    // per-turn pid tracking would need a multi-pid record.
     if ((input.cli ?? "claude") === "claude" && typeof s.handle.pid === "number") {
-      updateReservationPid(this.opts.dir, input.projectPath, s.handle.pid);
+      updateRunPid(this.opts.dir, runId, s.handle.pid);
     }
     this.startTyping(s); // the opening instruction is already in flight
     return "started";
@@ -271,11 +267,9 @@ export class LiveSessionRegistry {
    * setTimeout it schedules for the SIGKILL fallback would never get to fire before this
    * process itself exits, leaving the child permissions-bypassed and orphaned).
    *
-   * Deliberately does NOT release the project reservation: this process is exiting right
-   * after, with no way to confirm the SIGKILL above has actually landed by then — releasing
-   * blind would let a relaunch start a second session on the project while the old child is
-   * still alive. The next reserveRun() for it will pid-liveness-reclaim it once the killed
-   * process is verifiably gone — same crash-recovery path RunRegistry.interruptAll() uses. */
+   * Deliberately does NOT release the run record: this process is exiting right after, with no
+   * way to confirm the SIGKILL above has actually landed by then. Boot cleanup handles it once
+   * the killed process is verifiably gone — same path RunRegistry.interruptAll() uses. */
   forceKillAll(): void {
     for (const [, s] of this.byChannel) {
       if (typeof s.handle.pid === "number") killTree(s.handle.pid, "SIGKILL");
@@ -292,7 +286,7 @@ export class LiveSessionRegistry {
     // Safe to release here (not in forceKillAll — see its doc comment): teardown only ever
     // runs from onExit, i.e. once the child has actually confirmed dead, same as
     // RunRegistry's free()/cancel() reasoning.
-    releaseRun(this.opts.dir, s.projectPath);
+    releaseRun(this.opts.dir, s.runId);
     this.opts.onActivity?.({ type: "live", phase: err ? "failed" : "end", id: channelId, name: basename(s.projectPath) || "live session" });
     // Wait for any flush already in flight before the final flush — otherwise flushSession's
     // own rendering guard makes this a no-op and content buffered during that window is lost.
