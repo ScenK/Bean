@@ -5,12 +5,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoutineHost, type RoutineHostDeps, type RoutineHostStatus } from "../src/routine-host.js";
 import type { Routine, RoutineStep } from "../src/routine-store.js";
-import type { DelegateStepRequest } from "../src/routine-runner.js";
+import { RunBusyError, type DelegateStepRequest } from "../src/routine-runner.js";
 import type { ToolSpec } from "../src/converse.js";
 import { dbFile, outboxDir } from "../src/config.js";
 import { claimOutbox } from "../src/outbox.js";
 import { loadNotes } from "../src/note-store.js";
 import { reserveRun } from "../src/run-queue.js";
+import { addTodo } from "../src/todo-store.js";
 import { listStepAttempts } from "../src/step-attempts.js";
 import { saveSkillProposals } from "../src/retro.js";
 
@@ -55,7 +56,7 @@ describe("createRoutineHost", () => {
     expect(h.status).toEqual([
       { type: "start", id: "routine:r", name: "r", detail: "", steps: ["check the build please"], startedAt: expect.any(Number) },
       { type: "step", id: "routine:r", step: 0, line: "check the build please" },
-      { type: "finish", id: "routine:r", state: "done", line: "Done · 1 step" },
+      { type: "finish", id: "routine:r", state: "done", line: "Done · 1 step", startedAt: res.record.startedAt },
     ]);
     expect(listStepAttempts(dbFile(dir), res.record.id!)).toHaveLength(1);
   });
@@ -70,7 +71,20 @@ describe("createRoutineHost", () => {
     const res = await h.runOneRoutine(routine([{ kind: "delegate", project: "/work/proj", instruction: "x" }]));
     expect(res.record.status).toBe("failed");
     expect(res.digest).toContain("step 1 (proj) — codex resume abc");
-    expect(h.status.at(-1)).toEqual({ type: "finish", id: "routine:r", state: "failed", line: "Finished with a failed step" });
+    expect(h.status.at(-1)).toEqual({ type: "finish", id: "routine:r", state: "failed", line: "Finished with a failed step", startedAt: res.record.startedAt });
+  });
+
+  // The Dashboard keys a run by its record's startedAt; with no record there's nothing to name.
+  it("finish carries no startedAt when the run threw or was deferred", async () => {
+    const threw = host({ getModel: () => { throw new Error("no model"); } });
+    await expect(threw.runOneRoutine(routine([{ kind: "chat", instruction: "hi" }]))).rejects.toThrow("no model");
+    expect(threw.status.at(-1)).toEqual({ type: "finish", id: "routine:r", state: "failed", line: "Run failed" });
+
+    await addTodo(dbFile(dir), "r", "PR 1");
+    const busy = host({ delegateStep: async () => { throw new RunBusyError("busy"); } });
+    const res = await busy.runOneRoutine(routine([{ kind: "delegate", instruction: "review" }], { todoDriven: true }));
+    expect(res.deferred).toBe(true);
+    expect(busy.status.at(-1)).not.toHaveProperty("startedAt");
   });
 
   it("gives chat steps the host tools plus save_note", async () => {
@@ -120,18 +134,20 @@ describe("createRoutineHost", () => {
     const notify = vi.fn(async () => {});
     const h = host({ notify });
     const r = routine([], { sinks: { note: true, notify: true, chatops: [{ transport: "discord", channel: "c1" }] } });
-    await h.deliverDigest(r, { digest: "hello", results: [], record: {} as never });
+    await h.deliverDigest(r, { digest: "hello", results: [], record: { startedAt: "2026-10-23T06:00:00.000Z" } as never });
     const notes = await loadNotes(dbFile(dir));
     expect(notes.map((n) => [n.slug, n.title, n.body])).toEqual([["routine-r", "sprout: r", "hello"]]);
     const out = await claimOutbox(outboxDir(dir), "discord");
     expect(out).toEqual([expect.objectContaining({ id: "id-1", transport: "discord", channel: "c1", title: "Sprout: r", body: "hello", context: true })]);
-    expect(notify).toHaveBeenCalledWith({ title: "Sprout: r", body: "hello" });
+    expect(notify).toHaveBeenCalledWith({
+      title: "Sprout: r", body: "hello", target: { routine: "r", startedAt: "2026-10-23T06:00:00.000Z" },
+    });
   });
 
   it("maps a user sink to outbox userId with a whose-routine footer", async () => {
     const h = host();
     const r = routine([], { sinks: { chatops: [{ transport: "discord", user: "u1" }] } });
-    await h.deliverDigest(r, { digest: "hello", results: [], record: {} as never });
+    await h.deliverDigest(r, { digest: "hello", results: [], record: { startedAt: "2026-10-23T06:00:00.000Z" } as never });
     const [msg] = await claimOutbox(outboxDir(dir), "discord");
     expect(msg).toMatchObject({ userId: "u1", body: 'hello\n\n_Sent by Bean\'s owner\'s sprout "r"._' });
     expect(msg?.channel).toBeUndefined();

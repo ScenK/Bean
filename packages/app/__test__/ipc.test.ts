@@ -7,6 +7,7 @@ import {
   buildDroppedUrlStore, buildChatPromptStore, buildNotesHandlers,
   buildModelsHandler, buildModelMemoryHandlers, buildRoutineHandlers,
   buildPendingUpdateStore, buildUpdateHandlers, buildTodoHandlers,
+  parseDashboardTarget, openComponentPayload, notificationOpens,
 } from "../src/ipc.js";
 import type { ConfigView, ConfigUpdate } from "../src/channels.js";
 import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate, Routine, ChatTurn } from "@bean/core";
@@ -989,5 +990,36 @@ describe("buildTodoHandlers", () => {
     const h = buildTodoHandlers(deps);
     await expect(h.add("ghost", "x")).rejects.toThrow();
     await expect(h.add("plain", "x")).rejects.toThrow();
+  });
+});
+
+// Dashboard deep links cross renderer → main (bubble click) and ride notification `meta`: both are
+// validated before main acts on them.
+describe("dashboard targets", () => {
+  const at = "2026-10-23T06:00:00.000Z";
+  test("keeps only a non-empty routine and an ISO startedAt; an invalid date rejects the target", () => {
+    expect(parseDashboardTarget({ routine: "nightly", startedAt: at, extra: "x" })).toEqual({ routine: "nightly", startedAt: at });
+    expect(parseDashboardTarget({ routine: "nightly" })).toEqual({ routine: "nightly" });
+    expect(parseDashboardTarget({ routine: "nightly", startedAt: "yesterday" })).toBeUndefined();
+    expect(parseDashboardTarget({ routine: "nightly", startedAt: "2026-13-45T99:99" })).toBeUndefined();
+    expect(parseDashboardTarget({ routine: "nightly", startedAt: 0 })).toBeUndefined();
+    expect(parseDashboardTarget({ routine: "" })).toBeUndefined();
+    expect(parseDashboardTarget("nightly")).toBeUndefined();
+    expect(parseDashboardTarget(null)).toBeUndefined();
+  });
+
+  test("openComponent payload pairs by kind: URL for chat, target for dashboard, else dropped", () => {
+    expect(openComponentPayload("chat", "https://x.test")).toBe("https://x.test");
+    expect(openComponentPayload("chat", { routine: "r" })).toBeUndefined();
+    expect(openComponentPayload("dashboard", { routine: "r", startedAt: at })).toEqual({ routine: "r", startedAt: at });
+    expect(openComponentPayload("dashboard", "https://x.test")).toBeUndefined();
+    expect(openComponentPayload("routines", { routine: "r" })).toBeUndefined();
+  });
+
+  test("a notification click opens the run, the Routines panel, or Chat", () => {
+    expect(notificationOpens({ open: "dashboard", target: { routine: "r", startedAt: at } })).toEqual({ kind: "dashboard", target: { routine: "r", startedAt: at } });
+    expect(notificationOpens({ open: "dashboard", target: { routine: 1 } })).toEqual({ kind: "dashboard" });
+    expect(notificationOpens({ open: "routines" })).toEqual({ kind: "routines" });
+    expect(notificationOpens(undefined)).toEqual({ kind: "chat" });
   });
 });

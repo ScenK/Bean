@@ -3,7 +3,7 @@ import type {
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
-import type { Theme, ComponentKind, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
+import type { Theme, ComponentKind, DashboardTarget, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
 import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
@@ -32,9 +32,11 @@ declare global {
       getTheme(): Promise<Theme>;
       setTheme(t: Theme): Promise<void>;
       onThemeChanged(cb: (t: Theme) => void): void;
-      openComponent(kind: ComponentKind, droppedUrl?: string): Promise<void>;
+      openComponent(kind: ComponentKind, payload?: string | DashboardTarget): Promise<void>;
       onComponentDroppedUrl(cb: (url: string) => void): void;
       getPendingDroppedUrl(): Promise<string | undefined>;
+      onDashboardTarget(cb: (t: DashboardTarget) => void): void;
+      getPendingDashboardTarget(): Promise<DashboardTarget | undefined>;
       proposeRun(suggestion: RouteSuggestion): void;
       getPendingPlan(): Promise<RouteSuggestion | undefined>;
       onProposeRun(cb: (suggestion: RouteSuggestion) => void): void;

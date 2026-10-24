@@ -57,6 +57,15 @@ Mapping decisions worth keeping:
   RUN 1 rather than the top row claiming to be the day's first. Fold state is a single localStorage list of day headers
   *flipped away from their default* — newest day open, older days shut — not separate
   collapsed/expanded sets.
+- **Deep links (#379).** Routine digest notifications and finished routine bubbles open the
+  Dashboard with a `DashboardTarget` (`routine` + run `startedAt`), validated in main
+  (`parseDashboardTarget`/`openComponentPayload`). Main stores it for a fresh window (pulled on
+  mount) and pushes it to an open one — never stores for an open window, or a later reopen jumps to
+  an old run. The panel holds it as `pending` until `bucketKeyFor()` matches (the bubble finishes
+  before the scheduler persists the record), suppressing the `buckets[0]` fallback meanwhile; a rail
+  click cancels it; ~2 misses → "isn't in the history" notice. Notification clicks route on `meta`
+  (`notificationOpens`): digest → Dashboard, watch alarm → Routines, else Chat. Shown
+  `Notification`s are retained (cap 20) or Electron drops their click handler.
 - `runs.ts` is pure and unit-tested (`__test__/dashboard-runs.test.ts`); the panel holds the JSX.
 
 **Adding any new component window touches five places** — miss one and it fails at a different

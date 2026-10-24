@@ -1,6 +1,9 @@
 export type Theme = "hearth" | "graphite";
 export type ComponentKind = "chat" | "skills" | "persona" | "projects" | "notes" | "plan" | "settings" | "about" | "routines" | "dashboard";
 export type AvatarMode = "normal" | "hover" | "menu" | "drag";
+/** A run to open in the Dashboard: routine + its run record's `startedAt` (absent = the routine's
+ * latest recorded run — the run itself wasn't recorded). */
+export interface DashboardTarget { routine: string; startedAt?: string }
 
 export interface ConfigView {
   openaiApiKey: string;
@@ -75,6 +78,8 @@ export const IPC = {
   openComponent: "bean:open-component",
   componentDroppedUrl: "bean:component-dropped-url",
   getPendingDroppedUrl: "bean:get-pending-dropped-url",
+  dashboardTarget: "bean:dashboard-target",
+  getPendingDashboardTarget: "bean:get-pending-dashboard-target",
   proposeRun: "bean:propose-run",
   getPendingPlan: "bean:get-pending-plan",
   moveWindowBy: "bean:move-window-by",

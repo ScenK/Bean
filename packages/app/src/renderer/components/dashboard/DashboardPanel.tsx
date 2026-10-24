@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { Routine } from "@bean/core";
 import { nextRun } from "@bean/core/cron";
@@ -6,10 +6,11 @@ import { Markdown } from "../../shared/Markdown.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import {
-  attentionOf, executedPath, flattenRuns, groupRuns, pathName, reviewRuns, splitSteps, stepLabel, stepPassed, unreadRuns,
+  attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, pathName, reviewRuns, splitSteps, stepLabel, stepPassed, unreadRuns,
   type DashRun, type DashStep, type RunBucket,
 } from "./runs.js";
 import type { RoutineStateView, StepAttemptView } from "../../../ipc.js";
+import type { DashboardTarget } from "../../../channels.js";
 import { watchDashboardText } from "../routines/watch-status.js";
 
 // Renderer-only view prefs (see .memory/convention-renderer-view-prefs-in-localstorage.md):
@@ -97,14 +98,33 @@ export function DashboardPanel() {
   // Full step outputs live in bean.db, not the run record — fetched when a run's steps are opened.
   const [attempts, setAttempts] = useState<Record<string, StepAttemptView[]>>({});
   const [copied, setCopied] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  // A run Bean was asked to open (notification / avatar bubble click), held until it shows up in
+  // the history: the bubble finishes before the scheduler writes the record, so a fast click can
+  // arrive first. Its notice is separate from `notice`, which every selection change clears.
+  const [pending, setPending] = useState<DashboardTarget | undefined>(undefined);
+  const misses = useRef(0);
+  const [deepNotice, setDeepNotice] = useState("");
 
   const refresh = async (): Promise<void> => {
     const [list, st] = await Promise.all([window.bean.routinesList(), window.bean.routinesState()]);
     setRoutines(list);
     setStates(st);
+    setLoaded(true);
+  };
+
+  const openTarget = (target: DashboardTarget): void => {
+    misses.current = 0;
+    setDeepNotice("");
+    setPending(target);
+    void refresh();
   };
 
   useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    window.bean.onDashboardTarget(openTarget);
+    void window.bean.getPendingDashboardTarget().then((t) => { if (t) openTarget(t); });
+  }, []);
   useEffect(() => {
     // Same 5s cadence as the Routines panel — a run that lands while the dashboard is open
     // should show up without a reopen.
@@ -125,9 +145,40 @@ export function DashboardPanel() {
   // last night". History is capped, so the selection can also roll out from under us on a poll;
   // fall back to the newest rather than leaving the detail pane blank.
   useEffect(() => {
-    if (buckets[0] && !buckets.some((b) => b.key === selectedKey)) setSelectedKey(buckets[0].key);
-  }, [buckets, selectedKey]);
+    if (!pending && buckets[0] && !buckets.some((b) => b.key === selectedKey)) setSelectedKey(buckets[0].key);
+  }, [buckets, selectedKey, pending]);
   useEffect(() => { setOpenResolved([]); setFlippedDigests([]); setNotice(""); setAttempts({}); }, [selectedKey]);
+
+  // Bucket-level landing: the target's day for that routine, whose newest run reads on top with its
+  // digest open. No startedAt means the run itself wasn't recorded — show the routine's latest.
+  useEffect(() => {
+    if (!pending || !loaded) return;
+    const key = pending.startedAt
+      ? bucketKeyFor(pending.routine, pending.startedAt)
+      : buckets.find((b) => b.routine === pending.routine)?.key;
+    const hit = buckets.find((b) => b.key === key);
+    if (hit) {
+      setPending(undefined);
+      setSelectedKey(hit.key);
+      const i = days.findIndex((d) => d.date === hit.date);
+      if (i >= 0 && dayOpenByDefault(i) === flipped.includes(hit.date)) toggleDay(hit.date); // folded: unfold
+      if (!pending.startedAt) setDeepNotice("That run wasn't recorded — showing the latest recorded one.");
+      return;
+    }
+    // Each refresh is a look: the immediate one plus a couple of polls covers the record landing.
+    misses.current += 1;
+    if (misses.current > 2) {
+      setPending(undefined);
+      setDeepNotice("That run isn't in the history anymore.");
+    }
+  }, [buckets, pending, loaded]);
+
+  // A click in the rail is the user taking over: drop any target still waiting.
+  const pick = (key: string): void => {
+    setPending(undefined);
+    setDeepNotice("");
+    setSelectedKey(key);
+  };
 
   const bucket: RunBucket | undefined = buckets.find((b) => b.key === selectedKey);
   const routine = routines.find((r) => r.name === bucket?.routine);
@@ -209,11 +260,11 @@ export function DashboardPanel() {
         tabIndex={0}
         aria-pressed={selectedKey === b.key}
         class={`bean-skills-row bean-dash-row bean-dash-row--nested${selectedKey === b.key ? " bean-skills-row--selected" : ""}`}
-        onClick={() => setSelectedKey(b.key)}
+        onClick={() => pick(b.key)}
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " ") return;
           e.preventDefault();
-          setSelectedKey(b.key);
+          pick(b.key);
         }}
       >
         <span class={`bean-dash-dot bean-dash-dot--${b.needs > 0 ? "failed" : b.attention > 0 ? "needs-attention" : "ok"}`} />
@@ -448,6 +499,7 @@ export function DashboardPanel() {
       </div>
 
       <div class="bean-skills-detail">
+        {deepNotice ? <div class="bean-dash-meta" role="status">{deepNotice}</div> : null}
         {!bucket ? (
           <PanelEmptyState message="Pick a day to read what Bean did while you were away." />
         ) : (

@@ -101,3 +101,42 @@ test("status bubbles grow the avatar around a fixed bean and collapse when jobs 
     await expect.poll(async () => (await page.locator(".bean-bubble").boundingBox())!.x).toBeGreaterThanOrEqual(0);
   } finally { await app.close(); await home.cleanup(); }
 });
+
+// #379: a finished routine bubble is one click to that run in the Dashboard — it dismisses itself,
+// opens the Dashboard on the run's (folded, older) day, and an already-open Dashboard follows the
+// next click instead of keeping its old selection.
+test("a finished routine bubble opens its run in the Dashboard", async () => {
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"] });
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const page = await app.firstWindow();
+    await expect(page.locator(".bean-orb-body")).toBeAttached();
+    const push = (jobs: unknown[]) => app.evaluate(({ BrowserWindow }, jobs) => {
+      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("avatar.html"))!
+        .webContents.send("bean:task-status", jobs);
+    }, jobs);
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.on("bean:dismiss-task", (_e, id) => { (globalThis as { dismissed?: string }).dismissed = id; });
+    });
+    const finished = (name: string, runStartedAt?: string) => ({
+      id: `routine:${name}`, kind: "routine", name, line: "Done · 2 steps", detail: "", steps: ["a", "b"],
+      startedAt: Date.now(), state: "done", ...(runStartedAt ? { runStartedAt } : {}),
+    });
+
+    await push([finished("nightly", "2026-01-01T14:00:00.000Z")]);
+    const bubble = page.locator('.bean-bubble[data-id="routine:nightly"]');
+    await expect(bubble).toHaveAttribute("title", "Open in Dashboard");
+    await expect(bubble).not.toHaveAttribute("aria-expanded", /.*/);
+    const [dash] = await Promise.all([app.waitForEvent("window"), bubble.click()]);
+    await dash.waitForLoadState("domcontentloaded");
+    await expect.poll(() => app.evaluate(() => (globalThis as { dismissed?: string }).dismissed)).toBe("routine:nightly");
+    await expect(dash.locator(".bean-dash-title")).toContainText("nightly"); // not the newest bucket (weekly)
+    await expect(dash.locator(".bean-skills-row--selected")).toContainText("nightly");
+
+    // Dashboard already open: the push moves it; an unrecorded run lands on the latest one + a notice.
+    await push([finished("weekly")]);
+    await page.locator('.bean-bubble[data-id="routine:weekly"]').click();
+    await expect(dash.locator(".bean-dash-title")).toContainText("weekly");
+    await expect(dash.getByRole("status")).toHaveText("That run wasn't recorded — showing the latest recorded one.");
+  } finally { await app.close(); await home.cleanup(); }
+});
