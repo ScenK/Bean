@@ -53,3 +53,38 @@ test("routines: add a loop gate in the editor, save, reload, edges intact", asyn
     await Promise.allSettled([stub.close(), home.cleanup()]);
   }
 });
+
+/** Duplicate inserts an exact copy below with a fresh id: no edge problem, and it saves. */
+test("routines: duplicate a step, save, copy has a unique id", async () => {
+  const home = await makeBeanHome();
+  const stub = await startStubOpenAI();
+  const file = join(home.homeDir, ".bean", "routines", "dup.json");
+  await writeFile(file, JSON.stringify({
+    name: "dup", enabled: false, cron: "0 6 * * *", sinks: {},
+    steps: [{ kind: "chat", instruction: "implement" }, { kind: "chat", instruction: "review it" }],
+  }), "utf8");
+
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  try {
+    const avatar = await app.firstWindow();
+    const [win] = await Promise.all([
+      app.waitForEvent("window"),
+      avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("routines")),
+    ]);
+    await win.locator(".bean-routines-row", { hasText: "dup" }).click();
+    await expect(win.locator(".bean-routines-step")).toHaveCount(2);
+    await win.locator(".bean-routines-step").first().getByRole("button", { name: "Duplicate" }).click();
+    await expect(win.locator(".bean-routines-step")).toHaveCount(3);
+    await expect(win.locator(".bean-routines-step-edge-problem")).toHaveCount(0);
+    await win.getByRole("button", { name: "Save sprout" }).click();
+
+    await expect.poll(async () => {
+      const saved = JSON.parse(await readFile(file, "utf8")) as { steps: { id?: string; instruction?: string }[] };
+      const ids = saved.steps.map((s) => s.id);
+      return saved.steps.length === 3 && saved.steps[1]?.instruction === "implement" && new Set(ids).size === 3 && !ids.includes(undefined);
+    }).toBe(true);
+  } finally {
+    await app.close();
+    await Promise.allSettled([stub.close(), home.cleanup()]);
+  }
+});
