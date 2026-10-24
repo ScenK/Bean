@@ -902,6 +902,11 @@ app.whenReady().then(async () => {
         deleteRoutine: (name) => deleteRoutine(routinesPath, name),
         loadStates: () => loadRoutineStates(routineStatePath),
         isRunning: (name) => routineScheduler.isRunning(name),
+        runningCount: (name) => routineScheduler.runningCount(name),
+        queueCounts: async (name) => {
+          const todos = await listTodos(dbFile(dir), name);
+          return { pending: todos.filter((t) => t.status === "pending").length, running: todos.filter((t) => t.status === "running").length };
+        },
         runNow: (name) => routineScheduler.runNow(name),
         onRoutineDeleted: async (name) => {
           await deleteTodosForRoutine(dbFile(dir), name);
@@ -916,10 +921,6 @@ app.whenReady().then(async () => {
         })),
         watch: {
           isSeeded: (r) => (r.watch ? isWatchSeeded(dbFile(dir), r.name, watchSourceKey(r.watch)) : true),
-          queueCounts: async (name) => {
-            const todos = await listTodos(dbFile(dir), name);
-            return { pending: todos.filter((t) => t.status === "pending").length, running: todos.filter((t) => t.status === "running").length };
-          },
           pollFailures: (name) => routineScheduler.pollFailures(name),
           checkNow: (name) => routineScheduler.checkNow(name),
           previewWatch: (w) => pollWatch(w, watchPoll),

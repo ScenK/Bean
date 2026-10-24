@@ -325,10 +325,13 @@ export function RoutinesPanel() {
     }
   };
 
+  // maxParallel only means something on a todo-driven sprout — it goes when todo-driven does.
+  const dropParallel = ({ maxParallel: _mp, ...rest }: Routine): Routine => rest;
+
   // Trigger: Schedule XOR Watch (cron and watch are mutually exclusive in the saved JSON).
   const setTrigger = (kind: "schedule" | "watch"): void => {
     if (kind === "watch" && !draft.watch) {
-      const { cron: _cron, ...rest } = draft;
+      const { cron: _cron, ...rest } = draft.steps.length > 0 ? draft : dropParallel(draft);
       setDraft({ ...rest, watch: { kind: "command", command: "", everyMinutes: 15 }, todoDriven: rest.steps.length > 0 ? true : undefined });
     } else if (kind === "schedule" && draft.watch) {
       const { watch: _watch, ...rest } = draft;
@@ -351,7 +354,7 @@ export function RoutinesPanel() {
   // switching to steps needs an instruction before it can validate, so it saves with the rest.
   const setWatchNotifyOnly = (notifyOnly: boolean): void =>
     setDraft(notifyOnly
-      ? { ...draft, steps: [], todoDriven: undefined }
+      ? { ...dropParallel(draft), steps: [], todoDriven: undefined }
       : { ...draft, steps: draft.steps.length > 0 ? draft.steps : [{ kind: "chat", instruction: "" }], todoDriven: true });
 
   const toggleEnabled = async (r: Routine): Promise<void> => {
@@ -377,7 +380,7 @@ export function RoutinesPanel() {
   // on-disk routine — so without this, the queue appears to work but every action against it
   // fails silently until "Save routine" is clicked.
   const setTodoDriven = async (on: boolean): Promise<void> => {
-    const next = { ...draft, todoDriven: on || undefined };
+    const next = on ? { ...draft, todoDriven: true } : { ...dropParallel(draft), todoDriven: undefined };
     setDraft(next);
     if (selected) {
       try {
@@ -506,7 +509,12 @@ export function RoutinesPanel() {
   // Enable warns: a pinned harness/model this Mac can't run fails the unattended run.
   const stepProblems = stepProblemsText(draft.steps, clis, models);
   const status = draft.watch ? watchStatusLine(savedRoutine?.watch ? savedRoutine : draft, selectedState, new Date()) : undefined;
-  const isRunningSelected = triggering || Boolean(selectedState?.running);
+  // Slots come from the saved definition — that's what the scheduler runs.
+  const slots = savedRoutine?.todoDriven ? savedRoutine.maxParallel ?? 1 : 1;
+  const runningCount = selectedState?.runningCount ?? 0;
+  // Parallel sprouts take Run now until every slot is busy; one-at-a-time ones while anything runs.
+  const isRunningSelected = triggering || (slots > 1 ? runningCount >= slots : Boolean(selectedState?.running));
+  const slotsText = `${runningCount}/${slots} running`;
   const pendingCount = todos.filter((t) => t.status === "pending").length;
   const emptyTodoQueue = Boolean(draft.todoDriven) && pendingCount === 0;
   // A saved watch with steps and nothing queued: Run now checks the watch instead (ignoring
@@ -514,7 +522,8 @@ export function RoutinesPanel() {
   // Keyed on the saved definition: Check now runs against it, not the unsaved draft.
   const checkInsteadOfRun = emptyTodoQueue && Boolean(savedRoutine?.watch && savedRoutine.todoDriven && savedRoutine.steps.length > 0);
   const savedWindow = savedRoutine?.watch?.window;
-  const runNowNote = !emptyTodoQueue ? undefined
+  const runNowNote = slots > 1 && runningCount >= slots ? slotsText
+    : !emptyTodoQueue ? undefined
     : !checkInsteadOfRun ? (draft.watch ? "nothing queued yet" : "queue a todo first")
     : !savedRoutine?.enabled ? "enable to check now"
     : notice || `checks the watch now${savedWindow ? `, even outside ${watchWindowText(savedWindow)}` : ""}`;
@@ -836,6 +845,28 @@ export function RoutinesPanel() {
             </span>
           </div>
           )}
+          {draft.todoDriven ? (
+            <div class="bean-routines-type-row">
+              <div class="bean-routines-sentence">
+                Run up to{" "}
+                <select
+                  class="bean-routines-chip-select"
+                  value={String(draft.maxParallel ?? 1)}
+                  onChange={(e) => {
+                    const n = Number((e.target as HTMLSelectElement).value);
+                    setDraft(n > 1 ? { ...draft, maxParallel: n } : dropParallel(draft));
+                  }}
+                >
+                  {/* 1–4 = core's MAX_PARALLEL */}
+                  {[1, 2, 3, 4].map((n) => <option key={n} value={String(n)}>{n}</option>)}
+                </select>{" "}
+                at once
+              </div>
+              <span class="bean-routines-section-note">
+                Each queued item runs and reports on its own. The skill must work in its own worktree. 2–3 keeps CLI usage limits in reach.
+              </span>
+            </div>
+          ) : null}
         </div>
 
         {draft.todoDriven && !selected ? (
@@ -861,7 +892,7 @@ export function RoutinesPanel() {
               </span>
             </div>
             <div class="bean-routines-queue-meta">
-              {pendingCount} pending{draft.watch ? "" : " · gates this sprout"}
+              {pendingCount} pending{runningCount > 0 ? ` · ${slotsText}` : ""}{draft.watch ? "" : " · gates this sprout"}
             </div>
             {(() => {
               // Reorder targets: pending items already arrive order-ASC from todosList, so this
@@ -989,7 +1020,8 @@ export function RoutinesPanel() {
             <div class="bean-field-label">WHAT BEAN DOES</div>
             <span class="bean-routines-section-note">
               {draft.steps.length} step{draft.steps.length === 1 ? "" : "s"}
-              {draft.watch ? " · run in order on each new item" : draft.todoDriven ? " · run in order on each queued todo · one digest at the end" : " · run in order · one digest at the end"}
+              {draft.watch ? " · run in order on each new item" : (draft.maxParallel ?? 1) > 1 ? ` · run on up to ${draft.maxParallel} queued todos at once · one digest each`
+                : draft.todoDriven ? " · run in order on each queued todo · one digest at the end" : " · run in order · one digest at the end"}
             </span>
           </div>
           <StepsEditor
