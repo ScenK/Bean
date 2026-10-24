@@ -73,8 +73,17 @@ describe("StepFlow", () => {
     const svg = root.querySelector("svg")!;
     expect(svg.getAttribute("role")).toBe("img");
     expect(svg.getAttribute("aria-label")).toContain("5 on fail loops back to step 1");
-    const texts = [...root.querySelectorAll("text")].map((t) => t.textContent);
+    // The drawn text, without the <title> that keeps a long label's full text.
+    const texts = [...root.querySelectorAll("text")].map((t) => [...t.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent).join(""));
     expect(texts).toEqual(expect.arrayContaining(["1 · chat", "bug", "otherwise", "fail · ≤2×", "■ stop", "● end"]));
+    expect([...root.querySelectorAll("text > title")].map((t) => t.textContent)).toContain("otherwise");
+  });
+
+  it("clips a long route label but keeps its full text in a title", () => {
+    const long = "needs-a-much-longer-look";
+    const root = mount([s("r", { route: { paths: [{ when: long, goto: "end" }, { when: "b", goto: "end" }] } })]);
+    const label = [...root.querySelectorAll("text.bean-flow-label")].find((t) => t.querySelector("title")?.textContent === long)!;
+    expect(label.lastChild!.textContent).toBe("needs-a-muc…");
   });
 
   it("gives each diagram its own arrowhead ids", () => {

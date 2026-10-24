@@ -58,15 +58,16 @@ export function layoutStepFlow(flow: { nodes: FlowNode[]; edges: FlowEdge[] }): 
     outs.forEach((edge, k) => {
       const sx = b.x + (NODE_W * (k + 1)) / (outs.length + 1);
       const sy = b.y + NODE_H;
+      // Neighbouring port labels alternate height so long ones (otherwise) don't overprint.
+      const ly = sy + 12 + (k % 2) * 10;
       if (typeof edge.to !== "number") {
-        edges.push({ edge, d: `M${sx},${sy} V${sy + STUB}`, x: sx, y: sy + 13, cap: { x: sx, y: sy + STUB + 12 } });
+        edges.push({ edge, d: `M${sx},${sy} V${sy + STUB}`, x: sx, y: ly, cap: { x: sx, y: sy + STUB + 12 } });
         return;
       }
       const t = boxes[edge.to]!;
       const tx = t.x + NODE_W / 2;
       const mid = (sy + t.y) / 2;
-      // Neighbouring port labels alternate height so long ones (otherwise) don't overprint.
-      edges.push({ edge, d: `M${sx},${sy} C${sx},${mid} ${tx},${mid} ${tx},${t.y}`, x: sx, y: sy + 12 + (k % 2) * 11 });
+      edges.push({ edge, d: `M${sx},${sy} C${sx},${mid} ${tx},${mid} ${tx},${t.y}`, x: sx, y: ly });
     });
   }
   loops.forEach((edge, k) => {
