@@ -1,5 +1,5 @@
 import {
-  addTodo, clearReservations, killAllCommands, killAllDelegates, createRoutineHost, createRoutineScheduler, dbFile, enqueueOutbox, execWatchCommand, fetchText,
+  addTodo, claimTodo, clearReservations, killAllCommands, killAllDelegates, createRoutineHost, createRoutineScheduler, dbFile, enqueueOutbox, execWatchCommand, fetchText,
   isWatchSeeded, listTodos, loadLayeredSkills, loadMemories, loadRoutines, loadRoutineStates, makeRoutineSteps, markNewItems,
   outboxDir, fireDueReminders, remindersFile, pinnedStepSelection, pollWatch, pruneStepAttempts, recoverInterruptedTodos, resolveDelegateSelection,
   retrieveNoteTool, routinesDir, routineStateFile, availableModels, saveRoutine, saveRoutineStates, searchNotes, seedWatch,
@@ -91,6 +91,7 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
     deliverDigest: host.deliverDigest,
     pruneAttempts: (r, keep) => pruneStepAttempts(dbFile(dir), r, keep),
     hasPendingTodos: async (r) => (await listTodos(dbFile(dir), r)).some((t) => t.status === "pending"),
+    claimTodo: (r) => claimTodo(dbFile(dir), r),
     pollWatch: (w) => pollWatch(w, watchPoll),
     watchSeen: {
       isSeeded: (r, source) => isWatchSeeded(dbFile(dir), r, source),

@@ -12,7 +12,7 @@ import { enqueueOutbox } from "./outbox.js";
 import { saveNote } from "./note-store.js";
 import { listSkillProposals, RETRO_SKILL, saveSkillProposals, withProposalFooter } from "./retro.js";
 import { listStepAttempts, recordStepAttempt } from "./step-attempts.js";
-import { listTodos, updateTodoStatus, type TodoStatus } from "./todo-store.js";
+import { claimTodo, updateTodoStatus, type TodoItem, type TodoStatus } from "./todo-store.js";
 import { DEFAULT_GATE_ROUNDS, loadRoutines, loadRoutineStates, usesGates, type Routine } from "./routine-store.js";
 import { resumeCommand } from "./delegate-runs.js";
 import {
@@ -61,7 +61,8 @@ export interface RoutineHostDeps {
 }
 
 export interface RoutineHost {
-  runOneRoutine: (routine: Routine) => Promise<RoutineRunResult>;
+  /** `todo` (already claimed): run just that todo, as its own bubble/record/digest. */
+  runOneRoutine: (routine: Routine, todo?: TodoItem) => Promise<RoutineRunResult>;
   deliverDigest: (routine: Routine, result: RoutineRunResult) => Promise<void>;
 }
 
@@ -95,21 +96,24 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     },
   };
 
-  const runOneRoutine = async (routine: Routine): Promise<RoutineRunResult> => {
-    const skills = await deps.loadSkills();
-    const id = `routine:${routine.name}`;
+  const runOneRoutine = async (routine: Routine, todo?: TodoItem): Promise<RoutineRunResult> => {
+    const id = todo ? `routine:${routine.name}:${todo.id}` : `routine:${routine.name}`;
     const steps = routine.steps.map((st) => {
       const text = st.kind === "command" ? st.command : st.instruction;
       return st.skill || (text.length > 60 ? `${text.slice(0, 59)}…` : text);
     });
-    deps.onStatus?.({ type: "start", id, name: routine.name, detail: routine.description ?? "", steps, startedAt: Date.now() });
+    deps.onStatus?.({ type: "start", id, name: todo?.text ?? routine.name, detail: todo ? `Sprout: ${routine.name}` : routine.description ?? "", steps, startedAt: Date.now() });
     let result: RoutineRunResult | undefined;
     // Run-scoped, so concurrent routines never mix receipts. Bean writes the footer itself —
     // the model never sees or retypes an id.
     const receipts: string[] = [];
     let at: StepInfo = { index: 0 };
     const hold: RoutineHold | undefined = usesGates(routine.steps) ? { scratch: new Set() } : undefined;
+    const setStatus = (todoId: string, status: TodoStatus, resultSummary?: string): Promise<void> =>
+      updateTodoStatus(dbFile(dir), todoId, status, resultSummary);
     try {
+      // Inside the try: a claimed todo must end done/failed even when the skills can't load.
+      const skills = await deps.loadSkills();
       result = await runRoutine(routine, {
         onStep: (info) => {
           at = info;
@@ -142,18 +146,19 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
           },
           save: (proposals) => saveSkillProposals(dbFile(dir), proposals),
         },
-        todos: {
-          listPending: async (r) => (await listTodos(dbFile(dir), r)).filter((t) => t.status === "pending"),
-          setStatus: (todoId, status: TodoStatus, resultSummary?: string) =>
-            updateTodoStatus(dbFile(dir), todoId, status, resultSummary),
-        },
-      });
+        todos: { claim: (r) => claimTodo(dbFile(dir), r), setStatus },
+      }, todo);
       // Before the scheduler saves the record and delivers it to sinks.
       result = withResumeFooter(result, receipts);
       if (routine.steps.some((st) => st.kind === "chat" && st.skill === RETRO_SKILL)) {
         result = withProposalFooter(result, listSkillProposals(dbFile(dir)).length);
       }
       return result;
+    } catch (err) {
+      if (todo && !result) {
+        await setStatus(todo.id, "failed", (err instanceof Error ? err.message : String(err)).slice(0, 200)).catch(() => {});
+      }
+      throw err;
     } finally {
       for (const p of hold?.scratch ?? []) rmSync(p, { recursive: true, force: true });
       const status = result?.record.status;

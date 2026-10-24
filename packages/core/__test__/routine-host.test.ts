@@ -12,6 +12,7 @@ import { claimOutbox } from "../src/outbox.js";
 import { loadNotes } from "../src/note-store.js";
 import { listStepAttempts } from "../src/step-attempts.js";
 import { saveSkillProposals } from "../src/retro.js";
+import { addTodo, claimTodo, listTodos } from "../src/todo-store.js";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bean-host-")); });
@@ -44,6 +45,28 @@ function host(over: Partial<RoutineHostDeps> = {}) {
 }
 
 describe("createRoutineHost", () => {
+  it("a claimed todo runs as its own bubble (routine:<name>:<todoId>, todo text label) in its own scratch dir", async () => {
+    const reqs: DelegateStepRequest[] = [];
+    const h = host({ delegateStep: async (req) => { reqs.push(req); return { output: "fixed", cli: "claude" }; } });
+    await addTodo(dbFile(dir), "r", "fix the login bug");
+    const todo = (await claimTodo(dbFile(dir), "r"))!;
+    const res = await h.runOneRoutine(routine([{ kind: "delegate", instruction: "work" }], { todoDriven: true, maxParallel: 2 }), todo);
+    expect(res.record.status).toBe("ok");
+    expect(h.status[0]).toMatchObject({ type: "start", id: `routine:r:${todo.id}`, name: "fix the login bug", detail: "Sprout: r" });
+    expect(h.status.at(-1)).toMatchObject({ type: "finish", id: `routine:r:${todo.id}`, state: "done" });
+    expect(reqs[0]?.todoId).toBe(todo.id);
+    expect((await listTodos(dbFile(dir), "r"))[0]?.status).toBe("done");
+  });
+
+  it("a claimed todo ends failed when the skills can't load", async () => {
+    const h = host({ loadSkills: async () => { throw new Error("skills dir unreadable"); } });
+    await addTodo(dbFile(dir), "r", "t");
+    const todo = (await claimTodo(dbFile(dir), "r"))!;
+    await expect(h.runOneRoutine(routine([{ kind: "chat", instruction: "x" }], { todoDriven: true, maxParallel: 2 }), todo)).rejects.toThrow("unreadable");
+    expect((await listTodos(dbFile(dir), "r"))[0]).toMatchObject({ status: "failed", resultSummary: "skills dir unreadable" });
+    expect(h.status.at(-1)).toMatchObject({ type: "finish", state: "failed" });
+  });
+
   it("runs a lone delegate step: verbatim digest + resume footer, status start/step/finish, attempt recorded", async () => {
     const h = host();
     const res = await h.runOneRoutine(routine([{ kind: "delegate", instruction: "check the build please" }]));
