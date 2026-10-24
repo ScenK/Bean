@@ -5,8 +5,9 @@ import { nextRun } from "@bean/core/cron";
 import { Markdown } from "../../shared/Markdown.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
+import { StepFlow } from "../../shared/StepFlow.js";
 import {
-  attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, pathName, reviewRuns, splitSteps, stepLabel, stepPassed, unreadRuns,
+  attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, pathName, reviewRuns, runFlowOverlay, splitSteps, stepLabel, stepPassed, unreadRuns,
   type DashRun, type DashStep, type RunBucket,
 } from "./runs.js";
 import type { RoutineStateView, StepAttemptView } from "../../../ipc.js";
@@ -91,6 +92,8 @@ export function DashboardPanel() {
   // shut; this list holds the runs flipped away from that default. Runs are newest-first, so
   // that's index 0.
   const [flippedDigests, setFlippedDigests] = useState<string[]>([]);
+  // Same default for each run's flow diagram: the latest open, the rest behind "Show flow ▾".
+  const [flippedFlows, setFlippedFlows] = useState<string[]>([]);
   const [reviewed, setReviewed] = useState<string[]>(() => readList(REVIEWED_KEY));
   const [flipped, setFlipped] = useState<string[]>(() => readList(FLIPPED_KEY));
   const [rerunning, setRerunning] = useState(false);
@@ -307,6 +310,8 @@ export function DashboardPanel() {
     const ordinal = runViews.length - index;
     const resolvedOpen = openResolved.includes(run.id);
     const digestOpen = (index === 0) !== flippedDigests.includes(run.id);
+    const flowOpen = (index === 0) !== flippedFlows.includes(run.id);
+    const overlay = flowOpen && routine ? runFlowOverlay(run, routine.steps) : undefined;
     return [
       spineRow(`${run.id}-head`, `run ${ordinal}`, "run", (
         <div class="bean-dash-run-head">
@@ -317,6 +322,25 @@ export function DashboardPanel() {
           {run.steps.length > 0 ? <span class="bean-dash-path">{executedPath(run)}</span> : null}
         </div>
       )),
+
+      // The executed path above stays the text equivalent; the diagram adds what didn't run.
+      ...(routine && routine.steps.length > 0 && run.steps.length > 0
+        ? [spineRow(`${run.id}-flow`, "", "plain", (
+            <div class="bean-dash-digest bean-dash-flow">
+              <button
+                type="button"
+                class="bean-dash-digest-head"
+                aria-expanded={flowOpen}
+                onClick={() => toggle(flippedFlows, setFlippedFlows, run.id)}
+              >
+                <span class="bean-field-label">FLOW · RUN {ordinal}</span>
+                <span class="bean-dash-resolved-toggle">{flowOpen ? "Hide ▴" : "Show flow ▾"}</span>
+              </button>
+              {overlay === "drift" ? <div class="bean-dash-flow-note">This sprout changed since this run</div> : null}
+              {flowOpen ? <StepFlow steps={routine.steps} overlay={overlay === "drift" ? undefined : overlay} /> : null}
+            </div>
+          ))]
+        : []),
 
       ...(attention
         ? [spineRow(`${run.id}-attention`, "gate", "call", (

@@ -2524,6 +2524,15 @@ button, input, textarea, select, a {
 .bean-flow-label, .bean-flow-cap { color: var(--bean-text-dim); font-size: 10px; paint-order: stroke; stroke: var(--bean-surface); stroke-width: 3px; stroke-linejoin: round; }
 .bean-flow-cap { font-weight: 600; color: var(--bean-text); }
 .bean-flow-cap--stop { color: var(--bean-error); }
+/* Dashboard run overlay: the accent is the path taken; unreached nodes dashed with dim titles
+   (no opacity — see convention-theme-contrast). */
+.bean-flow-edge--lit { stroke-width: 2.5; }
+.bean-flow-node--ran { stroke: var(--bean-accent-text); stroke-width: 2; }
+.bean-flow-dim .bean-flow-node { fill: var(--bean-surface); stroke-dasharray: 3 3; }
+.bean-flow-dim .bean-flow-title { color: var(--bean-text-dim); font-weight: 400; }
+.bean-flow-cap--dim { color: var(--bean-text-dim); font-weight: 400; }
+.bean-dash-flow .bean-flow { margin-left: 0; max-width: 100%; }
+.bean-dash-flow-note { font-size: 12px; color: var(--bean-text-dim); margin-bottom: 4px; }
 
 /* Dashboard: executed path, needs-attention tone, per-attempt output. */
 .bean-dash-dot--needs-attention,
