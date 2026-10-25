@@ -2521,6 +2521,7 @@ button, input, textarea, select, a {
 .bean-flow-svg marker path { fill: currentColor; }
 .bean-flow-edge { fill: none; stroke: currentColor; stroke-width: 1.5; }
 .bean-flow-edge--loop { stroke-dasharray: 4 3; }
+.bean-flow-bar { stroke: currentColor; stroke-width: 4; stroke-linecap: round; }
 .bean-flow-node { fill: var(--bean-surface-2); stroke: var(--bean-control-border); stroke-width: 1; }
 .bean-flow-node--flagged { stroke: var(--bean-error); stroke-width: 2; }
 .bean-flow-svg text { fill: currentColor; }

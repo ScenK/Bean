@@ -84,6 +84,15 @@ Editor (#418): the `⫴ alongside step N` chip toggles a step into the group abo
 an edge — a gate/next/route the group can't carry shows as that step's problem. Remove/reorder go
 through `removeStep`/`moveStep` (`step-ids.ts`): a step keeps `alongside` only while the step above
 is still from its own group, so nothing silently joins one; a duplicated member's copy joins.
+Members share the step's scratch folder (per run, or per todo for watch/parallel todos) — best
+read-only; nothing stops two members writing the same file. Children multiply: up to 16 at once
+(`maxParallel` 4 todos × a 4-wide group). The chat builder (`cleanEdges`) drops `alongside` — groups
+are editor/JSON-only.
+Dashboard (#419): a step's status is its **latest attempt** — `splitSteps` needs you only when the
+run isn't `ok` and no later record of the same id (same todo) passed; `runFlowOverlay` reads a group
+as one block (all members, step order, else drift), lights every fork + join, failed members ✗, and
+an error a later round of the same pass got past isn't ✗. `executedPath(run, steps)` brackets a
+group: `[lint ✓ | test ✗ | review ✓]`. Diagram: forks/joins meet a bar above/below the members.
 
 **Command steps (#265).** `kind: "command"` runs `command` via `/bin/sh -c` (core `runShellCommand`,
 own process group, timeout SIGKILLs the group) in `project`, else the same scratch dir a delegate
