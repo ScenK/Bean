@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { describeRoutineError, usesGates, type RoutineStep } from "../src/routine-store.js";
-import { stepEdgeProblems, stepEdgeWarnings, stepFlow, stepGroups, stepPathCaptions } from "../src/routine-graph.js";
+import { stepEdgeProblems, stepEdgeWarnings, stepFlow, stepGroupCaptions, stepGroups, stepPathCaptions } from "../src/routine-graph.js";
 
 const s = (id: string, extra: Partial<RoutineStep> = {}): RoutineStep => ({ kind: "chat", id, instruction: "x", ...extra } as RoutineStep);
 const route = (bug: string, spec: string, reply: string, otherwise?: string): Partial<RoutineStep> =>
@@ -47,6 +47,21 @@ describe("stepEdgeWarnings", () => {
   it("is empty without routes and survives a dangling target", () => {
     expect(stepEdgeWarnings([s("a"), s("b")])).toEqual([null, null]);
     expect(stepEdgeWarnings([s("d", route("gone", "b", "end")), s("b")])).toEqual([null, null]);
+  });
+});
+
+describe("stepGroupCaptions", () => {
+  it("captions the first member, the other members and the join", () => {
+    const steps = [s("a"), s("b"), s("c", { alongside: true }), s("d", { alongside: true }), s("e")];
+    expect(stepGroupCaptions(steps)).toEqual([
+      null, "starts a group of 3 · joins at 5", "runs alongside 2", "runs alongside 2", "waits for steps 2–4",
+    ]);
+  });
+
+  it("says joins at end for a closing group, and stacks both captions between back-to-back groups", () => {
+    expect(stepGroupCaptions([s("a"), s("b", { alongside: true })])).toEqual(["starts a group of 2 · joins at end", "runs alongside 1"]);
+    const steps = [s("a"), s("b", { alongside: true }), s("c"), s("d", { alongside: true })];
+    expect(stepGroupCaptions(steps)[2]).toBe("waits for steps 1–2 · starts a group of 2 · joins at end");
   });
 });
 

@@ -57,6 +57,27 @@ export const ROUTINE_EXAMPLES: RoutineExample[] = [
     },
   },
   {
+    key: "parallel-checks",
+    label: "Parallel checks",
+    blurb: "implement → lint ‖ test ‖ review at once → triage reads every result ⟲ → PR",
+    routine: {
+      name: "parallel-checks",
+      description: "Implement a queued issue, run lint, tests and a review at the same time, then loop or open a PR",
+      enabled: false,
+      watch: issueWatch,
+      todoDriven: true,
+      steps: [
+        { kind: "delegate", id: "implement", skill: "implement", cli: "claude", instruction: "Implement the queued issue." },
+        { kind: "command", id: "lint", command: "npm run lint" },
+        { kind: "command", id: "test", command: "npm test", alongside: true },
+        { kind: "delegate", id: "review", skill: "review", cli: "codex", instruction: "Review the uncommitted and committed changes on this branch.", alongside: true },
+        { kind: "chat", id: "triage", instruction: "Read the lint, test and review results. Pass only when all three are clean; otherwise list what to fix.", gate: { onFail: { goto: "implement", maxRounds: 3 } } },
+        { kind: "delegate", id: "pr", skill: "pr", cli: "claude", instruction: "Open a pull request for this branch." },
+      ],
+      sinks: { notify: true },
+    },
+  },
+  {
     key: "review-only",
     label: "Review only",
     blurb: "review PRs waiting on you · stop on FAIL → notify",

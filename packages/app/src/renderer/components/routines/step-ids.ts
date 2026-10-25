@@ -1,5 +1,6 @@
 import type { AvailableModel, CliName, RoutineStep, StepRoute } from "@bean/core";
 import { stepAvailabilityProblem } from "@bean/core/models";
+import { stepGroups } from "@bean/core/routine-graph";
 
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "step";
 
@@ -19,13 +20,58 @@ export function withStepIds(steps: RoutineStep[]): RoutineStep[] {
 }
 
 /** Inserts an exact copy of step `i` (every field, `gate`/`next` included) directly below it,
- * with a fresh id. Below keeps every edge's direction, so the copy never raises an edge problem. */
+ * with a fresh id. Below keeps every edge's direction, so the copy never raises an edge problem.
+ * The copy of a parallel group's member joins that group (`alongside`), so it never splits it. */
 export function duplicateStep(steps: RoutineStep[], i: number): RoutineStep[] {
   const withIds = withStepIds(steps);
   const original = withIds[i];
   if (!original) return withIds;
   const { id: _id, ...copy } = structuredClone(original);
-  return withStepIds([...withIds.slice(0, i + 1), copy as RoutineStep, ...withIds.slice(i + 1)]);
+  const member = stepGroups(withIds).some((g) => i >= g.first && i <= g.last);
+  const placed = (member ? { ...copy, alongside: true } : copy) as RoutineStep;
+  return withStepIds([...withIds.slice(0, i + 1), placed, ...withIds.slice(i + 1)]);
+}
+
+/** After a remove or a reorder, a step keeps `alongside` only while the step above it is still
+ * from its own group — so whatever ends up above a group never silently joins it, and a member
+ * that becomes its group's first stops pointing up. `before` and `after` carry the same ids. */
+function keepGroups(before: RoutineStep[], after: RoutineStep[]): RoutineStep[] {
+  const groupOf = new Map<string, number>();
+  stepGroups(before).forEach((g, n) => { for (let k = g.first; k <= g.last; k++) groupOf.set(before[k]!.id!, n); });
+  return after.map((s, k) => {
+    if (s.alongside !== true) return s;
+    const group = groupOf.get(s.id!);
+    const above = after[k - 1];
+    if (group !== undefined && above && groupOf.get(above.id!) === group) return s;
+    const { alongside: _alongside, ...rest } = s;
+    return rest as RoutineStep;
+  });
+}
+
+/** Deletes step `i` without reshaping any parallel group around it. */
+export function removeStep(steps: RoutineStep[], i: number): RoutineStep[] {
+  const withIds = withStepIds(steps);
+  return keepGroups(withIds, withIds.filter((_, j) => j !== i));
+}
+
+/** Moves step `from` to index `to` without reshaping any parallel group around it. */
+export function moveStep(steps: RoutineStep[], from: number, to: number): RoutineStep[] {
+  const withIds = withStepIds(steps);
+  const next = [...withIds];
+  const [moved] = next.splice(from, 1);
+  if (!moved) return withIds;
+  next.splice(to, 0, moved);
+  return keepGroups(withIds, next);
+}
+
+/** Turns step `i`'s `alongside` on (it joins the group above, or starts one with the step above)
+ * or off. Edges stay as they are: one a group can't carry shows as that step's problem. */
+export function setStepAlongside(steps: RoutineStep[], i: number, on: boolean): RoutineStep[] {
+  return withStepIds(steps).map((s, j) => {
+    if (j !== i) return s;
+    const { alongside: _alongside, ...rest } = s;
+    return (on ? { ...rest, alongside: true } : rest) as RoutineStep;
+  });
 }
 
 /** Points step `i`'s success edge at step `target` (by its id), at `"end"`, or clears it
