@@ -34,7 +34,7 @@ export function StepFlow(props: { steps: RoutineStep[]; overlay?: FlowOverlay })
   const layout = layoutStepFlow(flow);
   const marker = (accent: boolean): string => `url(#${markerId}-${accent ? "a" : "l"})`;
   return (
-    <div class="bean-flow">
+    <div class="bean-flow" tabindex={0}>
       <svg class="bean-flow-svg" width={layout.width} height={layout.height} viewBox={layout.viewBox} role="img" aria-label={summary(flow.edges, overlay)}>
         <defs>
           {[false, true].map((accent) => (
