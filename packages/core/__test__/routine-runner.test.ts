@@ -174,6 +174,26 @@ describe("runRoutine", () => {
     expect(res.results[0]!.output).toContain("timed out");
   });
 
+  it("a timed-out chat step runs no tool whose call arrives after the deadline", async () => {
+    vi.useFakeTimers();
+    const ran: unknown[] = [];
+    const saveNote: ActionTool = {
+      spec: { name: "save_note", description: "", parameters: {} } as ToolSpec,
+      run: async (args) => { ran.push(args); return "saved"; },
+    };
+    // The step's model call answers with a tool call only after the 1s step timeout.
+    const slow: RoutineRunnerDeps["chat"] = (a) =>
+      a.messages.some((m) => m.role === "system" && m.content.includes("Compose one digest"))
+        ? Promise.resolve({ content: "digest", toolCalls: [] })
+        : new Promise((r) => setTimeout(() => r({ content: "", toolCalls: [{ id: "c1", name: "save_note", args: { x: 1 } }] }), 2000));
+    const p = runRoutine(routine([{ kind: "chat", instruction: "slow" }]), baseDeps(slow, { stepTimeoutMs: 1000, tools: [saveNote] }));
+    await vi.advanceTimersByTimeAsync(3000);
+    const res = await p;
+    vi.useRealTimers();
+    expect(res.results[0]!.output).toContain("timed out");
+    expect(ran).toEqual([]);
+  });
+
   it("times out a hung digest chat call and still returns the plain-text fallback", async () => {
     vi.useFakeTimers();
     const hungDigest: RoutineRunnerDeps["chat"] = (a) =>

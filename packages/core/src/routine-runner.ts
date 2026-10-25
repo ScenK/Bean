@@ -164,9 +164,12 @@ export function unfence(text: string): string {
   return m?.[1] ?? text;
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+function withTimeout<T>(p: Promise<T>, ms: number, label: string, onTimeout?: () => void): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 60_000)} minutes`)), ms);
+    const t = setTimeout(() => {
+      onTimeout?.();
+      reject(new Error(`${label} timed out after ${Math.round(ms / 60_000)} minutes`));
+    }, ms);
     p.then((v) => { clearTimeout(t); resolve(v); }, (e: unknown) => { clearTimeout(t); reject(e as Error); });
   });
 }
@@ -182,6 +185,8 @@ async function runChatStep(
   /** The step's whole tool list, every round. A retro step passes exactly [run_history]. */
   pool: ActionTool[],
   webSearch: boolean,
+  /** Aborted when the step times out: no model call or tool runs after the deadline. */
+  signal: AbortSignal,
 ): Promise<string> {
   const systemParts = [
     `You are Bean executing step ${index + 1} of the scheduled sprout "${routine.name}" unattended. ` +
@@ -201,12 +206,14 @@ async function runChatStep(
   const byName = new Map(pool.map((t) => [t.spec.name, t]));
   let content = "";
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    signal.throwIfAborted();
     const res = await deps.chat({ model: step.model ?? deps.model, messages, tools, webSearch });
     content = res.content;
     const actionCalls = res.toolCalls.filter((c: ToolCall) => byName.has(c.name));
     if (actionCalls.length === 0) return content;
     messages.push({ role: "assistant", content: res.content, toolCalls: actionCalls });
     for (const call of actionCalls) {
+      signal.throwIfAborted();
       const result = await byName.get(call.name)!.run(call.args);
       messages.push({ role: "tool", content: result, toolCallId: call.id ?? call.name });
     }
@@ -351,9 +358,10 @@ async function runSteps(
           ({ output, ...ran } = typeof res === "string" ? { output: res } : res);
         } else {
           const session = retro ? retroSession(deps.retro!, routine.name, deps.findSkill, now) : undefined;
+          const expiry = new AbortController();
           output = await withTimeout(
-            runChatStep(routine, effective, index, prior, deps, skill, memories, session ? [session.tool] : deps.tools, !session && routine.webSearch === true),
-            timeoutMs, `step ${index + 1}`,
+            runChatStep(routine, effective, index, prior, deps, skill, memories, session ? [session.tool] : deps.tools, !session && routine.webSearch === true, expiry.signal),
+            timeoutMs, `step ${index + 1}`, () => expiry.abort(),
           );
           // Only after the step finished in time: a failed or timed-out retro publishes nothing.
           if (session) output = session.finish(output);
