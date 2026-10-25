@@ -70,6 +70,17 @@ Builder (#402): `cleanEdges` shape-filters `route`; `parseBrief` validates each 
 (gate / next / route) — a bad route is dropped whole, never the step, and a valid route wins over
 a gate/next the model put beside it.
 
+**Parallel groups (#416/#417).** `alongside: true` joins a step to the one above (group ≤4, rules in
+`describeGroupErrors`; turns on graph mode). The runner starts every member at once on ONE frozen
+prior block (the group's own earlier attempts left out) and one feedback string, awaits all, and
+commits results/`latest`/`recordAttempt`/`RunRecord.steps` in step order (attempts are read
+`ORDER BY id`). The whole group must fit the 50-execution budget or none starts. Policy "wait for
+all, the join decides": a member's hard error/timeout/non-zero exit doesn't stop the pass; at the
+end a gated pass is `failed` when any step's latest attempt failed, outranking needs-attention
+(text kept). Host labels receipts from `DelegateStepRequest.stepIndex/round` — never from the last
+`onStep` (members interleave) — and shows one `⫴ a · b (n of k left)` bubble line counted down in
+its `recordAttempt` wrapper.
+
 **Command steps (#265).** `kind: "command"` runs `command` via `/bin/sh -c` (core `runShellCommand`,
 own process group, timeout SIGKILLs the group) in `project`, else the same scratch dir a delegate
 step would use, with the app's resolved login-shell PATH. No model/memories/skill — the validator
