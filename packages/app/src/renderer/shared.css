@@ -2509,13 +2509,19 @@ button, input, textarea, select, a {
 
 /* Sprout editor: read-only flow diagram (StepFlow). SVG text paints with currentColor so the
    contrast scan reads its CSS color; lines use the 3:1 control border. */
-.bean-flow { margin-left: 36px; width: fit-content; max-width: calc(100% - 36px); box-sizing: border-box; overflow-x: auto; background: var(--bean-surface); border: 1px solid var(--bean-border); border-radius: 14px; padding: 6px; }
-.bean-flow-svg { display: block; }
+/* Full panel width, capped height; the chart stays at 1× and centred, the box scrolls. No
+   overscroll-behavior: the wheel chains to the page at the box's end. Focusable (tabindex) so
+   keyboard users can scroll it; the global [tabindex]:focus-visible rule draws the ring.
+   ponytail: a 4-wide parallel group with a loop lane scrolls sideways in the 1040px sprouts
+   window; upgrade to scale-to-fit with a 0.85× floor if that bites. */
+.bean-flow { width: 100%; max-height: clamp(320px, 65vh, 720px); overflow: auto; box-sizing: border-box; background: var(--bean-surface); border: 1px solid var(--bean-border); border-radius: 14px; padding: 6px; }
+.bean-flow-svg { display: block; margin: 0 auto; }
 .bean-flow-line { color: var(--bean-control-border); }
 .bean-flow-accent { color: var(--bean-accent-text); }
 .bean-flow-svg marker path { fill: currentColor; }
 .bean-flow-edge { fill: none; stroke: currentColor; stroke-width: 1.5; }
 .bean-flow-edge--loop { stroke-dasharray: 4 3; }
+.bean-flow-bar { stroke: currentColor; stroke-width: 4; stroke-linecap: round; }
 .bean-flow-node { fill: var(--bean-surface-2); stroke: var(--bean-control-border); stroke-width: 1; }
 .bean-flow-node--flagged { stroke: var(--bean-error); stroke-width: 2; }
 .bean-flow-svg text { fill: currentColor; }
@@ -2532,7 +2538,6 @@ button, input, textarea, select, a {
 .bean-flow-dim .bean-flow-node { fill: var(--bean-surface); stroke-dasharray: 3 3; }
 .bean-flow-dim .bean-flow-title { color: var(--bean-text-dim); font-weight: 400; }
 .bean-flow-cap--dim { color: var(--bean-text-dim); font-weight: 400; }
-.bean-dash-flow .bean-flow { margin-left: 0; max-width: 100%; }
 .bean-dash-flow-note { font-size: 12px; color: var(--bean-text-dim); margin-bottom: 4px; }
 
 /* Dashboard: executed path, needs-attention tone, per-attempt output. */

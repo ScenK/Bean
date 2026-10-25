@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RoutineStep } from "@bean/core";
 import { stepEdgeProblems } from "@bean/core/routine-graph";
-import { duplicateStep, remapStepMissing, setStepNext, setStepRoute, stepProblemsText, withStepIds } from "../src/renderer/components/routines/step-ids.js";
+import { duplicateStep, moveStep, remapStepMissing, removeStep, setStepAlongside, setStepNext, setStepRoute, stepProblemsText, withStepIds } from "../src/renderer/components/routines/step-ids.js";
 
 describe("withStepIds", () => {
   it("assigns <skill>-<n>/<kind>-<n> to id-less steps and keeps existing ids through reorder/delete", () => {
@@ -57,6 +57,59 @@ describe("duplicateStep", () => {
     expect(once.map((s) => s.id)).toEqual(["chat-1", "chat-3", "chat-2"]);
     const twice = duplicateStep(once, 0);
     expect(twice.map((s) => s.id)).toEqual(["chat-1", "chat-4", "chat-3", "chat-2"]);
+  });
+});
+
+describe("group-safe edits", () => {
+  // x | a ‖ b ‖ c | y ‖ z — a three-step group then a back-to-back two-step group.
+  const steps: RoutineStep[] = [
+    { id: "x", kind: "chat", instruction: "x" },
+    { id: "a", kind: "chat", instruction: "a" },
+    { id: "b", kind: "chat", instruction: "b", alongside: true },
+    { id: "c", kind: "chat", instruction: "c", alongside: true },
+    { id: "y", kind: "chat", instruction: "y" },
+    { id: "z", kind: "chat", instruction: "z", alongside: true },
+  ];
+  const shape = (out: RoutineStep[]): string => out.map((s) => (s.alongside ? `‖${s.id}` : ` ${s.id}`)).join("").trim();
+
+  it("removeStep keeps the rest of the group together and never pulls the step above in", () => {
+    expect(shape(removeStep(steps, 1))).toBe("x b‖c y‖z"); // first member: b becomes the first
+    expect(shape(removeStep(steps, 2))).toBe("x a‖c y‖z"); // middle
+    expect(shape(removeStep(steps, 3))).toBe("x a‖b y‖z"); // last
+    expect(shape(removeStep(steps, 4))).toBe("x a‖b‖c z"); // the next group's first: z doesn't join a‖b‖c
+    expect(shape(removeStep(steps, 0))).toBe("a‖b‖c y‖z");
+    expect(stepEdgeProblems(removeStep(steps, 4))).toEqual([null, null, null, null, null]);
+  });
+
+  it("moveStep moves a member out cleanly and never lets a newcomer join", () => {
+    expect(shape(moveStep(steps, 1, 0))).toBe("a x b‖c y‖z"); // first member out: b leads the rest
+    expect(shape(moveStep(steps, 2, 0))).toBe("b x a‖c y‖z"); // middle out
+    expect(shape(moveStep(steps, 3, 5))).toBe("x a‖b y‖z c"); // last out, past the next group
+    expect(shape(moveStep(steps, 3, 2))).toBe("x a‖c‖b y‖z"); // reordered inside its group
+    expect(shape(moveStep(steps, 0, 2))).toBe("a‖b x c y‖z"); // a newcomer splits, it doesn't join
+    expect(shape(moveStep(steps, 4, 2))).toBe("x a y b‖c z"); // y lands mid-group: splits it; z stays out
+  });
+
+  it("duplicateStep's copy of any member joins the group", () => {
+    for (const i of [1, 2, 3]) {
+      const out = duplicateStep(steps, i);
+      expect(out[i + 1]!.alongside).toBe(true);
+      expect(shape(out).split(" ")).toHaveLength(3); // x, one four-step group, y‖z
+    }
+    expect(duplicateStep(steps, 4)[5]!.alongside).toBe(true);
+    expect(duplicateStep(steps, 0)[1]!.alongside).toBeUndefined();
+  });
+
+  it("setStepAlongside never strips the step above's edge — the problem shows on it", () => {
+    const gated: RoutineStep[] = [
+      { id: "a", kind: "chat", instruction: "a", gate: { onFail: "stop" } },
+      { kind: "chat", instruction: "b" },
+    ];
+    const out = setStepAlongside(gated, 1, true);
+    expect(out[0]!.gate).toEqual({ onFail: "stop" });
+    expect(out[1]).toMatchObject({ alongside: true, id: "chat-1" });
+    expect(stepEdgeProblems(out)[0]).toMatch(/runs alongside it, so it can't have a gate/);
+    expect(setStepAlongside(out, 1, false)[1]!.alongside).toBeUndefined();
   });
 });
 

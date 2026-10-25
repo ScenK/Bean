@@ -8,13 +8,17 @@ const clip = (text: string, max: number): string => {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 };
 
-const edgeLabel = (e: FlowEdge): string | undefined =>
-  e.kind === "path" ? e.label : e.kind === "otherwise" ? "otherwise" : e.kind === "fail" ? "fail"
+// A fork bundle keeps the label of the edge it replaced (a route path into a group), once.
+const edgeLabel = (e: FlowEdge): string | undefined => {
+  const kind = e.kind === "fork" ? e.via : e.kind;
+  return kind === "path" ? e.label : kind === "otherwise" ? "otherwise" : kind === "fail" ? "fail"
     : e.kind === "loop" ? `fail · ≤${e.maxRounds}×` : undefined;
+};
 
 // The screen-reader summary: numbers and fixed words only, never step or label text.
 const VERB: Record<FlowEdge["kind"], string> = {
   flow: "then", next: "then", pass: "on pass", fail: "on fail", loop: "on fail loops back to", path: "may go to", otherwise: "otherwise",
+  fork: "starts", join: "joins at",
 };
 const summary = (edges: FlowEdge[], overlay?: FlowOverlay): string =>
   `Step flow: ${edges.map((e) => `${e.from + 1} ${VERB[e.kind]} ${typeof e.to === "number" ? `step ${e.to + 1}` : e.to}`).join("; ")}` +
@@ -24,7 +28,7 @@ const summary = (edges: FlowEdge[], overlay?: FlowOverlay): string =>
  * nodes, and the indexes into `stepFlow(steps).edges` it took. */
 export interface FlowOverlay { counts: number[]; failed: boolean[]; edges: Set<number> }
 
-/** A read-only picture of the sprout's whole shape (gates, loops, routes, rejoins, ends) as
+/** A read-only picture of the sprout's whole shape (gates, loops, routes, rejoins, parallel groups, ends) as
  * inline SVG. All user text is JSX text — no markup, URLs, or user-controlled attributes. With an
  * `overlay` the accent marks the path a run took instead of the fail edges. */
 export function StepFlow(props: { steps: RoutineStep[]; overlay?: FlowOverlay }) {
@@ -34,7 +38,7 @@ export function StepFlow(props: { steps: RoutineStep[]; overlay?: FlowOverlay })
   const layout = layoutStepFlow(flow);
   const marker = (accent: boolean): string => `url(#${markerId}-${accent ? "a" : "l"})`;
   return (
-    <div class="bean-flow">
+    <div class="bean-flow" tabindex={0}>
       <svg class="bean-flow-svg" width={layout.width} height={layout.height} viewBox={layout.viewBox} role="img" aria-label={summary(flow.edges, overlay)}>
         <defs>
           {[false, true].map((accent) => (
@@ -43,17 +47,17 @@ export function StepFlow(props: { steps: RoutineStep[]; overlay?: FlowOverlay })
             </marker>
           ))}
         </defs>
-        {layout.edges.map(({ edge, d, x, y, cap }, k) => {
+        {layout.edges.map(({ edge, d, x, y, cap, repeat }, k) => {
           // Overlay edges index `flow.edges`; the layout orders them differently.
           const lit = overlay?.edges.has(flow.edges.indexOf(edge));
-          const accent = overlay ? Boolean(lit) : edge.kind === "fail" || edge.kind === "loop";
-          const label = edgeLabel(edge);
+          const accent = overlay ? Boolean(lit) : edge.kind === "fail" || edge.kind === "loop" || edge.via === "fail";
+          const label = repeat ? undefined : edgeLabel(edge);
           return (
             <g key={k}>
               <path
                 d={d}
                 class={`bean-flow-edge ${accent ? "bean-flow-accent" : "bean-flow-line"}${edge.kind === "loop" ? " bean-flow-edge--loop" : ""}${lit ? " bean-flow-edge--lit" : ""}`}
-                marker-end={cap ? undefined : marker(accent)}
+                marker-end={cap || typeof edge.to !== "number" ? undefined : marker(accent)}
               />
               {label ? (
                 <text class="bean-flow-label" x={x} y={y} text-anchor={edge.kind === "loop" ? "start" : "middle"}>
@@ -64,6 +68,9 @@ export function StepFlow(props: { steps: RoutineStep[]; overlay?: FlowOverlay })
             </g>
           );
         })}
+        {layout.bars.map((b, k) => (
+          <line key={k} class={`bean-flow-bar ${overlay && b.edges.some((e) => overlay.edges.has(flow.edges.indexOf(e))) ? "bean-flow-accent" : "bean-flow-line"}`} x1={b.x1 - 10} y1={b.y} x2={b.x2 + 10} y2={b.y} />
+        ))}
         {layout.boxes.map((b) => {
           const step = props.steps[b.index]!;
           const node = flow.nodes[b.index]!;

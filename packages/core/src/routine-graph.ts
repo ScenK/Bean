@@ -64,12 +64,81 @@ export function describeEdgeError(s: Record<string, unknown>, i: number, ids: Ma
   return null;
 }
 
+/** A parallel group's size cap. `MAX_PARALLEL` (same value) lives in the Node-only store. */
+export const MAX_GROUP = 4;
+
+export interface StepGroup { first: number; last: number }
+
+/** Each parallel group's first..last step index: a step plus the run of `alongside: true` steps
+ * right below it. Step 1's own `alongside` starts nothing (it's rejected). */
+export function stepGroups(steps: readonly { alongside?: unknown }[]): StepGroup[] {
+  const groups: StepGroup[] = [];
+  steps.forEach((s, i) => {
+    if (i === 0 || s.alongside !== true) return;
+    const g = groups[groups.length - 1];
+    if (g && g.last === i - 1) g.last = i;
+    else groups.push({ first: i - 1, last: i });
+  });
+  return groups;
+}
+
+/** The parallel-group rules per step (null = fine). They need the whole list — membership, group
+ * size, edges into a group — so they sit beside `describeEdgeError`, which sees one step. */
+export function describeGroupErrors(steps: readonly Record<string, unknown>[], ids: Map<string, number>): (string | null)[] {
+  const out: (string | null)[] = steps.map((s, i) =>
+    s.alongside === undefined || s.alongside === true ? null : `step ${i + 1}: alongside must be true when present`);
+  if (steps[0]?.alongside === true) out[0] = "step 1 can't run alongside — there's no step above it";
+  const groups = stepGroups(steps);
+  const groupOf = new Map<number, StepGroup>();
+  for (const g of groups) {
+    for (let k = g.first; k <= g.last; k++) groupOf.set(k, g);
+    if (g.last - g.first >= MAX_GROUP) {
+      out[g.first + MAX_GROUP] ??= `step ${g.first + MAX_GROUP + 1}: a group runs at most ${MAX_GROUP} steps — steps ${g.first + 1}–${g.first + MAX_GROUP} already run together`;
+    }
+  }
+  steps.forEach((s, i) => {
+    const g = groupOf.get(i);
+    if (g && (s.gate !== undefined || s.next !== undefined || s.route !== undefined)) {
+      out[i] ??= i === g.first
+        ? `step ${i + 1}: step ${i + 2} runs alongside it, so it can't have a gate, next or route`
+        : `step ${i + 1} runs alongside step ${g.first + 1}, so it can't have a gate, next or route`;
+    }
+    // Only a group's first member may be a target: entering mid-group would skip its siblings.
+    const into = (v: unknown, what: string): void => {
+      const t = str(v) && v !== "end" ? ids.get(v) : undefined;
+      const tg = t === undefined ? undefined : groupOf.get(t);
+      if (tg && t !== tg.first) out[i] ??= `step ${i + 1}: ${what} can't point into a group — point it at step ${tg.first + 1}, where the group starts`;
+    };
+    into(s.next, "next");
+    const onFail = (s.gate as { onFail?: unknown } | null | undefined)?.onFail;
+    if (typeof onFail === "object" && onFail !== null) into((onFail as { goto?: unknown }).goto, "gate goto");
+    const route = (typeof s.route === "object" && s.route !== null ? s.route : {}) as { paths?: unknown; otherwise?: unknown };
+    if (Array.isArray(route.paths)) {
+      for (const p of route.paths) {
+        const { when, goto } = (typeof p === "object" && p !== null ? p : {}) as { when?: unknown; goto?: unknown };
+        into(goto, `route "${String(when)}"`);
+      }
+    }
+    into(route.otherwise, "route otherwise");
+  });
+  // Members can't carry `next`, so a group ending a route path would run on into a sibling path.
+  walkRoutePaths(steps as unknown as RoutineStep[], (path, cur, from) => {
+    const g = groupOf.get(from);
+    const sibling = path.entries.get(cur);
+    if (!g || from !== g.last || cur !== g.last + 1 || cur === path.entry || sibling === undefined) return;
+    out[from] ??= `step ${from + 1}: path '${path.label}' ends in a group that runs on into path '${sibling}' — add a step after the group with next: end`;
+  });
+  return out;
+}
+
 /** Each step's edge problem (or null) against the steps' current order — what a reorder or a
  * delete broke, before save. */
 export function stepEdgeProblems(steps: RoutineStep[]): (string | null)[] {
   const ids = new Map<string, number>();
   steps.forEach((s, i) => { if (s.id && !ids.has(s.id)) ids.set(s.id, i); });
-  return steps.map((s, i) => describeEdgeError(s as unknown as Record<string, unknown>, i, ids));
+  const raw = steps as unknown as Record<string, unknown>[];
+  const groups = describeGroupErrors(raw, ids);
+  return raw.map((s, i) => describeEdgeError(s, i, ids) ?? groups[i] ?? null);
 }
 
 /** Walks every route path forward from its entry the way the runner would on success: `next`
@@ -84,7 +153,8 @@ function walkRoutePaths(
   steps.forEach((s, i) => { if (s.id && !ids.has(s.id)) ids.set(s.id, i); });
   steps.forEach((s, r) => {
     if (!s.route || !Array.isArray(s.route.paths)) return;
-    const targets = [...s.route.paths.map((p) => [p.when || "…", p.goto] as const), ...(s.route.otherwise ? [["otherwise", s.route.otherwise] as const] : [])]
+    // `?.`: the save check walks hand-edited JSON before any route shape is checked.
+    const targets = [...s.route.paths.map((p) => [p?.when || "…", p?.goto] as const), ...(s.route.otherwise ? [["otherwise", s.route.otherwise] as const] : [])]
       // "end" is the sentinel even if a step happens to have that id; the key tells a path labeled
       // "otherwise" apart from the fallback.
       .flatMap(([label, goto], k) => { const entry = goto === "end" ? undefined : ids.get(goto); return entry !== undefined && entry > r ? [{ key: `${r}:${k}`, label, entry }] : []; });
@@ -109,12 +179,15 @@ function walkRoutePaths(
 }
 
 /** Non-blocking hints per step (never in `stepEdgeProblems`, which drops/blocks edges): a path's
- * tail with no `next` that falls through into a sibling path's entry step. */
+ * tail with no `next` that falls through into a sibling path's entry step. A group member can't
+ * set `next` — `describeGroupErrors` blocks that case instead. */
 export function stepEdgeWarnings(steps: RoutineStep[]): (string | null)[] {
   const out: (string | null)[] = steps.map(() => null);
+  const groups = stepGroups(steps);
   walkRoutePaths(steps, (path, cur, from, viaNext) => {
     const into = path.entries.get(cur);
     if (viaNext || cur === path.entry || into === undefined || out[from]) return;
+    if (groups.some((g) => from >= g.first && from <= g.last)) return;
     out[from] = `path '${path.label}' runs on into path '${into}' — set then → … or end`;
   });
   return out;
@@ -135,47 +208,81 @@ export function stepPathCaptions(steps: RoutineStep[]): (string | null)[] {
   });
 }
 
+/** The editor's caption per step for parallel groups (null = not in or after one): the first
+ * member says how big the group is and where it joins, other members name it, the join step says
+ * what it waits for. A step that both joins one group and starts the next gets both. */
+export function stepGroupCaptions(steps: readonly { alongside?: unknown }[]): (string | null)[] {
+  const out: (string | null)[] = steps.map(() => null);
+  const add = (i: number, text: string): void => { out[i] = out[i] ? `${out[i]} · ${text}` : text; };
+  for (const g of stepGroups(steps)) {
+    const join = g.last + 1 < steps.length ? `joins at ${g.last + 2}` : "joins at end";
+    add(g.first, `starts a group of ${g.last - g.first + 1} · ${join}`);
+    for (let k = g.first + 1; k <= g.last; k++) add(k, `runs alongside ${g.first + 1}`);
+    if (g.last + 1 < steps.length) add(g.last + 1, `waits for steps ${g.first + 1}–${g.last + 1}`);
+  }
+  return out;
+}
+
 /** One edge of the read-only flow picture. `to` is a step index, or the run ending ok (`end`) /
  * asking for you (`stop`). `fail` goes forward, `loop` back (with its round cap); a route's
- * no-match is `otherwise` → `stop`. */
+ * no-match is `otherwise` → `stop`. A forward edge into a parallel group becomes one `fork` per
+ * member (`via` keeps the incoming kind, `label` its label); each member has one `join` edge to
+ * the step after the group (or `end`). */
 export interface FlowEdge {
   from: number;
   to: number | "end" | "stop";
-  kind: "flow" | "next" | "pass" | "fail" | "loop" | "path" | "otherwise";
+  kind: "flow" | "next" | "pass" | "fail" | "loop" | "path" | "otherwise" | "fork" | "join";
+  via?: Exclude<FlowEdge["kind"], "fork" | "join" | "loop">;
   label?: string;
   maxRounds?: number;
 }
 export interface FlowNode { key: string; index: number; id?: string; kind: RoutineStep["kind"]; flagged: boolean }
 
 /** The steps as a graph for the editor's diagram — the same edges the runner follows. Never
- * assigns ids and never throws on a half-edited draft: an edge `describeEdgeError` rejects is
+ * assigns ids and never throws on a half-edited draft: an edge `stepEdgeProblems` rejects is
  * left out and its step flagged, so the picture never contradicts the card's alert. Render-only. */
 export function stepFlow(steps: RoutineStep[]): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const ids = new Map<string, number>();
   steps.forEach((s, i) => { if (s.id && !ids.has(s.id)) ids.set(s.id, i); });
   const at = (goto: string): number | "end" => (goto === "end" ? "end" : ids.get(goto)!);
   const broken = (s: unknown, i: number): boolean => describeEdgeError(s as Record<string, unknown>, i, ids) !== null;
+  const problems = stepEdgeProblems(steps);
+  const groupOf = new Map<number, StepGroup>();
+  for (const g of stepGroups(steps)) for (let k = g.first; k <= g.last; k++) groupOf.set(k, g);
   const edges: FlowEdge[] = [];
+  const push = (e: FlowEdge): void => {
+    const g = typeof e.to === "number" ? groupOf.get(e.to) : undefined;
+    // An edge into a member past the first is rejected (its step is flagged); a loop stays one lane.
+    if (g && e.to !== g.first) return;
+    if (!g || e.kind === "loop") { edges.push(e); return; }
+    for (let m = g.first; m <= g.last; m++) {
+      edges.push(e.kind === "join" ? { ...e, to: m } : { ...e, to: m, kind: "fork", via: e.kind as NonNullable<FlowEdge["via"]> });
+    }
+  };
   const nodes = steps.map((s, i): FlowNode => {
-    const flagged = broken(s, i);
-    if (s.route) {
+    const flagged = problems[i] !== null;
+    const group = groupOf.get(i);
+    if (group) {
+      // A member's own gate/next/route is rejected, so it only joins.
+      push({ from: i, to: group.last + 1 < steps.length ? group.last + 1 : "end", kind: "join" });
+    } else if (s.route) {
       // A route with any bad path (or a gate/next beside it) is dropped whole, like at save.
       if (!flagged) {
         // By index, not label: a path may be labelled "otherwise".
-        for (const p of s.route.paths) edges.push({ from: i, to: at(p.goto), kind: "path", label: p.when });
-        edges.push({ from: i, to: s.route.otherwise === undefined ? "stop" : at(s.route.otherwise), kind: "otherwise" });
+        for (const p of s.route.paths) push({ from: i, to: at(p.goto), kind: "path", label: p.when });
+        push({ from: i, to: s.route.otherwise === undefined ? "stop" : at(s.route.otherwise), kind: "otherwise" });
       }
     } else {
       if (!broken({ next: s.next }, i)) {
         const to = s.next !== undefined ? at(s.next) : i + 1 < steps.length ? i + 1 : "end";
-        edges.push({ from: i, to, kind: s.gate ? "pass" : s.next !== undefined ? "next" : "flow" });
+        push({ from: i, to, kind: s.gate ? "pass" : s.next !== undefined ? "next" : "flow" });
       }
       const onFail = s.gate?.onFail;
       if (onFail !== undefined && !broken({ gate: s.gate }, i)) {
-        if (onFail === "stop") edges.push({ from: i, to: "stop", kind: "fail" });
+        if (onFail === "stop") push({ from: i, to: "stop", kind: "fail" });
         else {
           const to = ids.get(onFail.goto)!;
-          edges.push(to > i ? { from: i, to, kind: "fail" } : { from: i, to, kind: "loop", maxRounds: onFail.maxRounds ?? DEFAULT_GATE_ROUNDS });
+          push(to > i ? { from: i, to, kind: "fail" } : { from: i, to, kind: "loop", maxRounds: onFail.maxRounds ?? DEFAULT_GATE_ROUNDS });
         }
       }
     }

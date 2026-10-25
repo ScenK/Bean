@@ -10,6 +10,7 @@ import { MEMORY_CONFLICT_CLAUSE, memoriesBlock, type Memory } from "./memory/mem
 import { selectRelevantMemories } from "./memory/store.js";
 import { dropRouteLine, gateVerdict, lastLine, parseVerdict, routeLabel, type StepAttempt } from "./step-attempts.js";
 import { RETRO_SKILL, retroSession, type RetroDeps } from "./retro.js";
+import { stepGroups } from "./routine-graph.js";
 
 export interface DelegateStepRequest {
   skill?: Skill;
@@ -30,6 +31,10 @@ export interface DelegateStepRequest {
   /** Re-entering this step on a gate loop: its own previous session this run/todo. The adapter
    * resumes it only on the same CLI; a rejected resume starts fresh (runDelegate's notice). */
   resume?: { cli: CliName; sessionId: string };
+  /** Which step and round this is — a parallel group's members run at once, so the host labels
+   * receipts from the request, never from the latest `onStep`. */
+  stepIndex?: number;
+  round?: number;
 }
 
 /** What a delegate step ran on. A bare string (output only) is still accepted. */
@@ -258,6 +263,15 @@ async function composeDigest(
   }
 }
 
+/** One finished step attempt, not yet committed to the pass's state. */
+interface Ran {
+  index: number; round: number; ok: boolean;
+  /** Full output (recordAttempt keeps it raw); `said` = a command's raw stdout or the output. */
+  output: string; said: string; verdict?: string; chose?: string;
+  result: StepResult; attempt: StepAttempt;
+  session?: { cli: CliName; sessionId: string };
+}
+
 /** Runs one pass of `routine.steps`, appending to `results` (also the priorOutputs scope for
  * later steps in this pass). `instructionSuffix` is folded into every step's instruction (""
  * for plain routines; the todo block for todo runs); `labelPrefix` is prepended to each step's
@@ -266,7 +280,10 @@ async function composeDigest(
  * todo pipeline abandons the rest of that todo's steps on its first failure.
  * Gated: walks the step graph — a gate's FAIL stops the pass or jumps (backward = bounded
  * loop), `next` skips ahead, a route jumps to its chosen path, any hard step error stops the
- * pass `failed`. */
+ * pass `failed`. A parallel group's members start together on one frozen prior block, all
+ * settle, and commit in step order; a member's failure reaches the join instead of stopping the
+ * pass, and the pass ends `failed` if any step's latest attempt failed (which outranks
+ * needs-attention, keeping its text). */
 async function runSteps(
   routine: Routine,
   deps: RoutineRunnerDeps,
@@ -281,6 +298,7 @@ async function runSteps(
   const steps = routine.steps;
   const graph = usesGates(steps);
   const byId = new Map(steps.flatMap((st, i) => (st.id ? [[st.id, i] as const] : [])));
+  const groups = new Map(stepGroups(steps).map((g) => [g.first, g] as const));
   const name = (i: number): string => steps[i]?.id ?? `step ${i + 1}`;
   const rounds = new Map<number, number>(); // executions per step, this pass
   const latest = new Map<number, StepResult>(); // gated prior block: latest attempt per step
@@ -290,23 +308,24 @@ async function runSteps(
   let allOk = true;
   let executed = 0;
   let pc = 0;
-  while (pc < steps.length) {
-    const index = pc;
-    const step = steps[index]!;
-    if (graph && ++executed > MAX_RUN_EXECUTIONS) {
-      return { status: "needs-attention", attention: `stopped at ${name(index)} — the run hit its ${MAX_RUN_EXECUTIONS}-step limit` };
-    }
+
+  const nextRound = (index: number): number => {
     const round = (rounds.get(index) ?? 0) + 1;
     rounds.set(index, round);
-    const prior = priorOutputsBlock(graph ? [...latest.values()] : results);
+    return round;
+  };
+
+  /** Starts step `index`. Everything up to its first await (onStep included) runs synchronously,
+   * so a group's members all start, in order, before any of them finishes. */
+  const run = async (index: number, round: number, prior: string, fb: string): Promise<Ran> => {
+    const step = steps[index]!;
     // A command step takes no prompt: the todo reaches it as env vars, gate feedback is dropped.
     const labels = step.route?.paths.map((p) => p.when) ?? [];
     const effective = step.kind === "command" ? step : {
       ...step,
-      instruction: step.instruction + instructionSuffix + feedback + (step.gate ? VERDICT_CONTRACT : "") +
+      instruction: step.instruction + instructionSuffix + fb + (step.gate ? VERDICT_CONTRACT : "") +
         (step.route ? routeContract(labels) : ""),
     } as RoutineStep;
-    feedback = "";
     const resume = sessions.get(index);
     deps.onStep?.({
       index, ...(step.id ? { id: step.id } : {}), ...(graph ? { round } : {}),
@@ -354,6 +373,7 @@ async function runSteps(
             ...(memories ? { memories } : {}),
             ...(todo?.scratch ? { todoId: todo.id } : {}),
             ...(resume ? { resume } : {}),
+            stepIndex: index, round,
           });
           ({ output, ...ran } = typeof res === "string" ? { output: res } : res);
         } else {
@@ -386,24 +406,91 @@ async function runSteps(
     const cli = ran.cli ?? (effective.kind === "delegate" ? effective.cli : undefined);
     const model = ran.model ?? (effective.kind === "delegate" ? effective.model
       : effective.kind === "chat" ? effective.model ?? deps.model : undefined);
-    if (cli && ran.sessionId) sessions.set(index, { cli, sessionId: ran.sessionId });
-    const result: StepResult = {
-      index, kind: step.kind, ok, output: labelPrefix + shown,
-      ...(step.id ? { stepId: step.id } : {}), ...(cli ? { cli } : {}), ...(verdict ? { verdict } : {}),
-      ...(graph ? { round } : {}), ...(chose ? { chose } : {}),
+    return {
+      index, round, ok, output, said, ...(verdict ? { verdict } : {}), ...(chose ? { chose } : {}),
+      ...(cli && ran.sessionId ? { session: { cli, sessionId: ran.sessionId } } : {}),
+      result: {
+        index, kind: step.kind, ok, output: labelPrefix + shown,
+        ...(step.id ? { stepId: step.id } : {}), ...(cli ? { cli } : {}), ...(verdict ? { verdict } : {}),
+        ...(graph ? { round } : {}), ...(chose ? { chose } : {}),
+      },
+      attempt: {
+        runId, routine: routine.name, stepIndex: index, round, kind: step.kind, ok, output, startedAt,
+        finishedAt: now().toISOString(),
+        ...(todo ? { todoId: todo.id } : {}), ...(step.id ? { stepId: step.id } : {}), ...(cli ? { cli } : {}),
+        ...(model ? { model } : {}), ...(ran.sessionId ? { sessionId: ran.sessionId } : {}),
+        ...(verdict ? { verdict } : {}), ...(skillHash ? { skillHash } : {}),
+      },
     };
-    results.push(result);
-    latest.delete(index);
-    latest.set(index, result);
-    deps.recordAttempt?.({
-      runId, routine: routine.name, stepIndex: index, round, kind: step.kind, ok, output, startedAt,
-      finishedAt: now().toISOString(),
-      ...(todo ? { todoId: todo.id } : {}), ...(step.id ? { stepId: step.id } : {}), ...(cli ? { cli } : {}),
-      ...(model ? { model } : {}), ...(ran.sessionId ? { sessionId: ran.sessionId } : {}),
-      ...(verdict ? { verdict } : {}), ...(skillHash ? { skillHash } : {}),
-    });
-    if (!ok) {
-      allOk = false;
+  };
+
+  /** A member whose run rejected outside its own try (it shouldn't) still settles as FAILED. */
+  const rejected = (index: number, round: number, err: unknown): Ran => {
+    const step = steps[index]!;
+    const output = err instanceof Error ? err.message : String(err);
+    const at = now().toISOString();
+    return {
+      index, round, ok: false, output, said: output,
+      result: { index, kind: step.kind, ok: false, output: labelPrefix + output, ...(step.id ? { stepId: step.id } : {}), round },
+      attempt: {
+        runId, routine: routine.name, stepIndex: index, round, kind: step.kind, ok: false, output, startedAt: at, finishedAt: at,
+        ...(todo ? { todoId: todo.id } : {}), ...(step.id ? { stepId: step.id } : {}),
+      },
+    };
+  };
+
+  const commit = (r: Ran): void => {
+    if (r.session) sessions.set(r.index, r.session);
+    results.push(r.result);
+    latest.delete(r.index);
+    latest.set(r.index, r.result);
+    deps.recordAttempt?.(r.attempt);
+    if (!r.ok) allOk = false;
+  };
+
+  /** Gated: failed when any step's latest attempt failed — only a group member's failure gets
+   * this far — and that outranks needs-attention. */
+  const end = (attention?: string): PassOutcome => {
+    const failed = graph ? [...latest.values()].some((r) => !r.ok) : !allOk;
+    if (failed) return { status: "failed", ...(attention ? { attention } : {}) };
+    return attention ? { status: "needs-attention", attention } : { status: "ok" };
+  };
+
+  while (pc < steps.length) {
+    const index = pc;
+    const step = steps[index]!;
+    const group = groups.get(index);
+    if (group) {
+      const members = steps.slice(group.first, group.last + 1).map((_, k) => group.first + k);
+      // The whole group fits the budget or none of it starts.
+      if ((executed += members.length) > MAX_RUN_EXECUTIONS) {
+        return end(`stopped at ${name(index)} — the run hit its ${MAX_RUN_EXECUTIONS}-step limit`);
+      }
+      // One frozen prior block (without the group's own earlier attempts) and one feedback for
+      // every member: siblings never see each other.
+      const prior = priorOutputsBlock([...latest.values()].filter((r) => r.index < group.first || r.index > group.last));
+      const fb = feedback;
+      feedback = "";
+      const pending = members.map((i) => {
+        const round = nextRound(i);
+        return run(i, round, prior, fb).catch((err: unknown) => rejected(i, round, err));
+      });
+      // Awaiting in step order commits in step order (a later member finishing first waits);
+      // the loop ends only once every member has settled.
+      for (const p of pending) commit(await p);
+      pc = group.last + 1;
+      continue;
+    }
+    if (graph && ++executed > MAX_RUN_EXECUTIONS) {
+      return end(`stopped at ${name(index)} — the run hit its ${MAX_RUN_EXECUTIONS}-step limit`);
+    }
+    const prior = priorOutputsBlock(graph ? [...latest.values()] : results);
+    const fb = feedback;
+    feedback = "";
+    const r = await run(index, nextRound(index), prior, fb);
+    commit(r);
+    const { round, output, said, verdict, chose } = r;
+    if (!r.ok) {
       // Gated: a hard error stops the run. Legacy todo pipeline: a failed step abandons this todo.
       if (graph || instructionSuffix) return { status: "failed" };
       pc++;
@@ -415,9 +502,9 @@ async function runSteps(
         lastFail = `stopped at ${name(index)} — ${gist(output)}`;
         const onFail = step.gate.onFail;
         const target = onFail === "stop" ? undefined : byId.get(onFail.goto);
-        if (onFail === "stop" || target === undefined) return { status: "needs-attention", attention: lastFail };
+        if (onFail === "stop" || target === undefined) return end(lastFail);
         if (target < index && round >= (onFail.maxRounds ?? DEFAULT_GATE_ROUNDS)) {
-          return { status: "needs-attention", attention: `${lastFail} (still failing after ${round} rounds)` };
+          return end(`${lastFail} (still failing after ${round} rounds)`);
         }
         feedback = feedbackBlock(name(index), output);
         pc = target;
@@ -428,15 +515,14 @@ async function runSteps(
       // Never touches lastFail: a route is a choice, not a check.
       const goto = step.route.paths.find((p) => p.when === chose)?.goto ?? step.route.otherwise;
       if (goto === undefined) {
-        return { status: "needs-attention", attention: `no path matched at ${name(index)} (said: '${lastLine(said).slice(0, 120)}')` };
+        return end(`no path matched at ${name(index)} (said: '${lastLine(said).slice(0, 120)}')`);
       }
       pc = goto === "end" ? steps.length : byId.get(goto) ?? steps.length;
       continue;
     }
     pc = step.next === "end" ? steps.length : step.next !== undefined ? byId.get(step.next) ?? steps.length : index + 1;
   }
-  if (lastFail) return { status: "needs-attention", attention: lastFail };
-  return { status: allOk ? "ok" : "failed" };
+  return end(lastFail);
 }
 
 /** Executes a routine's steps sequentially, then composes the digest. Pure and DI'd: no
