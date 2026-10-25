@@ -10,7 +10,7 @@ import type { CliModelSelection } from "./models.js";
 import { composePrompt } from "./prompt.js";
 import type { RoutineHostDeps } from "./routine-host.js";
 import {
-  ROUTINE_STEP_TIMEOUT_MS,
+  ROUTINE_STEP_TIMEOUT_MS, priorOutputsData,
   type CommandStepRequest, type DelegateStepRequest, type DelegateStepResult,
 } from "./routine-runner.js";
 import { recordRun, releaseRun, updateRunPid } from "./run-queue.js";
@@ -52,7 +52,7 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
       const prompt =
         (req.skill ? composePrompt(req.skill, req.instruction) : req.instruction) +
         (req.memories ? `\n\n${req.memories}` : "") +
-        (req.priorOutputs ? `\n\nOutput of this sprout's earlier steps:\n${req.priorOutputs}` : "");
+        (req.priorOutputs ? `\n\n${priorOutputsData(req.priorOutputs)}` : "");
       const perTodo = req.todoId && !req.projectPath ? join(scratchDir(dir), req.todoId) : undefined;
       const projectPath = req.projectPath ?? perTodo ?? scratchDir(dir);
       const runId = randomUUID();

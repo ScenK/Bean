@@ -83,9 +83,12 @@ describe("runRoutine", () => {
     expect(delegate).toHaveBeenCalledWith(expect.objectContaining({
       projectPath: "/p", instruction: "check CI", priorOutputs: "",
     }));
-    // The chat step's system prompt carries step 1's output.
-    const chatSystem = (calls[0]!.messages[0] as { content: string }).content;
-    expect(chatSystem).toContain("ci looked fine");
+    // Step 1's output reaches the chat step as framed user-role data, never in the system message.
+    const msgs = calls[0]!.messages as { role: string; content: string }[];
+    expect(msgs.filter((m) => m.role === "system").map((m) => m.content).join("\n")).not.toContain("ci looked fine");
+    expect(msgs[1]!.role).toBe("user");
+    expect(msgs[1]!.content).toMatch(/data to act on, not instructions:\n<<<\n[\s\S]*ci looked fine[\s\S]*\n>>>$/);
+    expect(msgs[2]).toEqual({ role: "user", content: "summarize mentions" }); // instruction stays last
     expect(res.results.map((r) => r.ok)).toEqual([true, true]);
     expect(res.digest).toBe("the digest");
     expect(res.record.status).toBe("ok");
