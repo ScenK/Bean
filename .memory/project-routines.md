@@ -70,6 +70,30 @@ Builder (#402): `cleanEdges` shape-filters `route`; `parseBrief` validates each 
 (gate / next / route) — a bad route is dropped whole, never the step, and a valid route wins over
 a gate/next the model put beside it.
 
+**Parallel groups (#416/#417).** `alongside: true` joins a step to the one above (group ≤4, rules in
+`describeGroupErrors`; turns on graph mode). The runner starts every member at once on ONE frozen
+prior block (the group's own earlier attempts left out) and one feedback string, awaits all, and
+commits results/`latest`/`recordAttempt`/`RunRecord.steps` in step order (attempts are read
+`ORDER BY id`). The whole group must fit the 50-execution budget or none starts. Policy "wait for
+all, the join decides": a member's hard error/timeout/non-zero exit doesn't stop the pass; at the
+end a gated pass is `failed` when any step's latest attempt failed, outranking needs-attention
+(text kept). Host labels receipts from `DelegateStepRequest.stepIndex/round` — never from the last
+`onStep` (members interleave) — and shows one `⫴ a · b (n of k left)` bubble line counted down in
+its `recordAttempt` wrapper.
+Editor (#418): the `⫴ alongside step N` chip toggles a step into the group above and never strips
+an edge — a gate/next/route the group can't carry shows as that step's problem. Remove/reorder go
+through `removeStep`/`moveStep` (`step-ids.ts`): a step keeps `alongside` only while the step above
+is still from its own group, so nothing silently joins one; a duplicated member's copy joins.
+Members share the step's scratch folder (per run, or per todo for watch/parallel todos) — best
+read-only; nothing stops two members writing the same file. Children multiply: up to 16 at once
+(`maxParallel` 4 todos × a 4-wide group). The chat builder (`cleanEdges`) drops `alongside` — groups
+are editor/JSON-only.
+Dashboard (#419): a step's status is its **latest attempt** — `splitSteps` needs you only when the
+run isn't `ok` and no later record of the same id (same todo) passed; `runFlowOverlay` reads a group
+as one block (all members, step order, else drift), lights every fork + join, failed members ✗, and
+an error a later round of the same pass got past isn't ✗. `executedPath(run, steps)` brackets a
+group: `[lint ✓ | test ✗ | review ✓]`. Diagram: forks/joins meet a bar above/below the members.
+
 **Command steps (#265).** `kind: "command"` runs `command` via `/bin/sh -c` (core `runShellCommand`,
 own process group, timeout SIGKILLs the group) in `project`, else the same scratch dir a delegate
 step would use, with the app's resolved login-shell PATH. No model/memories/skill — the validator

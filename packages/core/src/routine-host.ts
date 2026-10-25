@@ -15,9 +15,10 @@ import { listStepAttempts, recordStepAttempt } from "./step-attempts.js";
 import { claimTodo, updateTodoStatus, type TodoItem, type TodoStatus } from "./todo-store.js";
 import { DEFAULT_GATE_ROUNDS, loadRoutines, loadRoutineStates, usesGates, type Routine } from "./routine-store.js";
 import { resumeCommand } from "./delegate-runs.js";
+import { stepGroups } from "./routine-graph.js";
 import {
   runRoutine, withResumeFooter,
-  type CommandStepRequest, type DelegateStepRequest, type DelegateStepResult, type RoutineRunnerDeps, type RoutineRunResult, type StepInfo,
+  type CommandStepRequest, type DelegateStepRequest, type DelegateStepResult, type RoutineRunnerDeps, type RoutineRunResult,
 } from "./routine-runner.js";
 
 /** Gated routines only: a todo's per-todo scratch dirs outlive each step (so a resumed session
@@ -107,7 +108,22 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     // Run-scoped, so concurrent routines never mix receipts. Bean writes the footer itself —
     // the model never sees or retypes an id.
     const receipts: string[] = [];
-    let at: StepInfo = { index: 0 };
+    const groups = stepGroups(routine.steps);
+    const groupOf = (i: number) => groups.find((g) => i >= g.first && i <= g.last);
+    // The running parallel group's bubble: one line for all members, counting down as each lands.
+    // `⫴ lint · test · review (1 of 3 left) · round 2`.
+    let live: { first: number; last: number; round?: number; left: number } | undefined;
+    const showGroup = (g: NonNullable<typeof live>): void => {
+      const size = g.last - g.first + 1;
+      const tags = [`⫴ ${steps.slice(g.first, g.last + 1).join(" · ")} (${g.left} of ${size} left)`, ...(g.round && g.round > 1 ? [`round ${g.round}`] : [])];
+      deps.onStatus?.({ type: "step", id, step: g.first, line: tags.join(" · ") });
+    };
+    /** ` — test, review failed`: group members whose latest attempt failed ("" when none). */
+    const failedMembers = (r: RoutineRunResult): string => {
+      const okAt = new Map(r.results.map((x) => [x.index, x.ok])); // the latest attempt wins
+      const names = [...okAt].filter(([i, ok]) => !ok && groupOf(i)).map(([i]) => steps[i] || `step ${i + 1}`);
+      return names.length ? ` — ${names.join(", ")} failed` : "";
+    };
     const hold: RoutineHold | undefined = usesGates(routine.steps) ? { scratch: new Set() } : undefined;
     const setStatus = (todoId: string, status: TodoStatus, resultSummary?: string): Promise<void> =>
       updateTodoStatus(dbFile(dir), todoId, status, resultSummary);
@@ -116,7 +132,15 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       const skills = await deps.loadSkills();
       result = await runRoutine(routine, {
         onStep: (info) => {
-          at = info;
+          const g = groupOf(info.index);
+          if (g) {
+            // Every member reports its start; the first one draws the group's line.
+            if (info.index !== g.first) return;
+            live = { ...g, ...(info.round ? { round: info.round } : {}), left: g.last - g.first + 1 };
+            showGroup(live);
+            return;
+          }
+          live = undefined;
           // A looping gate shows its cap: `review · round 2/3 · codex`.
           const onFail = routine.steps[info.index]?.gate?.onFail;
           const loopTarget = typeof onFail === "object" ? routine.steps.findIndex((s) => s.id === onFail.goto) : -1;
@@ -127,7 +151,8 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         chat: deps.converse,
         model: deps.getModel(),
         delegate: (req) => {
-          const step = `step ${at.index + 1}${at.round && at.round > 1 ? ` round ${at.round}` : ""}`;
+          // From the request: a group's members run at once, so the last onStep isn't this step.
+          const step = `step ${(req.stepIndex ?? 0) + 1}${req.round && req.round > 1 ? ` round ${req.round}` : ""}`;
           return deps.delegateStep(req, (cli, sessionId, projectPath) => {
             receipts.push(`${step} (${req.projectPath ? basename(projectPath) : "workspace"}) — ${resumeCommand(cli, sessionId)}`);
           }, hold);
@@ -136,7 +161,10 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         tools: [...deps.tools, saveNoteTool],
         findSkill: (name) => skills.find((s) => s.name === name),
         memories: deps.memories,
-        recordAttempt: (a) => recordStepAttempt(dbFile(dir), a),
+        recordAttempt: (a) => {
+          recordStepAttempt(dbFile(dir), a);
+          if (live && a.stepIndex >= live.first && a.stepIndex <= live.last) { live.left--; showGroup(live); }
+        },
         retro: {
           history: async (name) => {
             const analyzed = (await loadRoutines(routinesDir(dir))).find((r) => r.name === name);
@@ -166,7 +194,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         type: "finish", id, state: status === "ok" ? "done" : "failed",
         ...(result ? { startedAt: result.record.startedAt } : {}),
         line: !status ? "Run failed"
-          : status === "failed" ? "Finished with a failed step"
+          : status === "failed" ? `Finished with a failed step${failedMembers(result!)}`
           : status === "needs-attention" ? "Needs attention — a gate stopped it"
           : `Done · ${steps.length} step${steps.length === 1 ? "" : "s"}`,
       });

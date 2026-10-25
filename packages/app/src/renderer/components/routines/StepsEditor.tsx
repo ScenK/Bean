@@ -1,10 +1,10 @@
 import { useState } from "preact/hooks";
 import type { AvailableModel, CliName, Project, RoutineStep, Skill, StepGate, StepRoute } from "@bean/core";
 import { stepAvailabilityProblem } from "@bean/core/models";
-import { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, stepEdgeProblems, stepEdgeWarnings, stepPathCaptions } from "@bean/core/routine-graph";
+import { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, stepEdgeProblems, stepEdgeWarnings, stepGroupCaptions, stepGroups, stepPathCaptions, type StepGroup } from "@bean/core/routine-graph";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { StepFlow } from "../../shared/StepFlow.js";
-import { duplicateStep, setStepNext, setStepRoute, withStepIds } from "./step-ids.js";
+import { duplicateStep, moveStep, removeStep, setStepAlongside, setStepNext, setStepRoute, withStepIds } from "./step-ids.js";
 
 const HARNESSES: CliName[] = ["claude", "codex", "opencode"];
 
@@ -47,6 +47,12 @@ export function StepsEditor(props: {
   // Non-blocking: a path falling into a sibling path is legal, just rarely meant.
   const edgeWarnings = stepEdgeWarnings(steps);
   const pathCaptions = stepPathCaptions(steps);
+  const groupCaptions = stepGroupCaptions(steps);
+  const groupOf = new Map<number, StepGroup>();
+  for (const g of stepGroups(steps)) for (let k = g.first; k <= g.last; k++) groupOf.set(k, g);
+  // Only a group's first step is a valid target — entering mid-group would skip its siblings.
+  const midGroup = (j: number): StepGroup | undefined => { const g = groupOf.get(j); return g && j !== g.first ? g : undefined; };
+  const midGroupCaption = (g: StepGroup): string => `runs alongside step ${g.first + 1} — go to step ${g.first + 1} to run the group`;
   const hasRoute = steps.some((s) => s.route);
   const targetName = (goto: string | undefined, none: string): string =>
     goto === undefined ? none : goto === "end" ? "end run" : indexOf(goto) >= 0 ? `step ${indexOf(goto) + 1}` : goto ? "step ?" : "choose…";
@@ -71,12 +77,16 @@ export function StepsEditor(props: {
             <span class="bean-chip-menu-caption">the run ends ok after this step</span>
           </button>
           {i < steps.length - 1 ? <div class="bean-chip-menu-divider" /> : null}
-          {steps.map((t, j) => j <= i ? null : (
-            <button key={j} type="button" class={`bean-chip-menu-row${goto && indexOf(goto) === j ? " bean-chip-menu-row--on" : ""}`} onClick={() => { pick(idAt(j)); close(); }}>
-              <span class="bean-chip-menu-row-title">{goto && indexOf(goto) === j ? "✓ " : ""}→ step {j + 1}</span>
-              <span class="bean-chip-menu-caption">{t.skill || t.kind}</span>
-            </button>
-          ))}
+          {steps.map((t, j) => {
+            if (j <= i) return null;
+            const mid = midGroup(j);
+            return (
+              <button key={j} type="button" disabled={!!mid} class={`bean-chip-menu-row${goto && indexOf(goto) === j ? " bean-chip-menu-row--on" : ""}${mid ? " bean-chip-menu-row--dimmed" : ""}`} onClick={() => { pick(idAt(j)); close(); }}>
+                <span class="bean-chip-menu-row-title">{goto && indexOf(goto) === j ? "✓ " : ""}→ step {j + 1}</span>
+                <span class="bean-chip-menu-caption">{mid ? midGroupCaption(mid) : t.skill || t.kind}</span>
+              </button>
+            );
+          })}
         </div>
       )}
     </ChipMenu>
@@ -84,11 +94,7 @@ export function StepsEditor(props: {
 
   // Reorder by drag (the ⠿ handle is the drag source, each step card a drop target).
   const reorderStep = (from: number, to: number): void => {
-    if (from === to) return;
-    const next = [...steps];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved!);
-    onSteps(next);
+    if (from !== to) onSteps(moveStep(steps, from, to));
   };
 
   // skill/model live on delegate and chat steps; project on delegate and command. Cast keeps the
@@ -102,10 +108,10 @@ export function StepsEditor(props: {
     const keepModel = !cli || !step.model || models.some((m) => m.id === step.model && m.availableOn.includes(cli));
     setStep(i, { ...step, cli, model: keepModel ? step.model : undefined });
   };
-  // `id` and the gate/next/route edges ride along so a kind change never re-keys or re-wires the
+  // `id` and the gate/next/route/alongside edges ride along so a kind change never re-keys or re-wires the
   // step; `cli` is delegate-only; the text carries over as instruction ⇄ command.
   const switchKind = (i: number, step: RoutineStep, kind: RoutineStep["kind"]): void => {
-    const edges = { ...(step.gate ? { gate: step.gate } : {}), ...(step.next ? { next: step.next } : {}), ...(step.route ? { route: step.route } : {}) };
+    const edges = { ...(step.gate ? { gate: step.gate } : {}), ...(step.next ? { next: step.next } : {}), ...(step.route ? { route: step.route } : {}), ...(step.alongside ? { alongside: step.alongside } : {}) };
     const text = step.kind === "command" ? step.command : step.instruction;
     setStep(i, kind === "delegate"
       ? { kind: "delegate", id: step.id, skill: step.skill ?? "", model: step.model, instruction: text, ...edges }
@@ -137,6 +143,10 @@ export function StepsEditor(props: {
           : onFail === "stop" ? "if it fails · stop"
           : `if it fails · go to ${gotoIndex >= 0 ? gotoIndex + 1 : "?"}`;
         const nextIndex = step.next && step.next !== "end" ? indexOf(step.next) : -1;
+        const group = groupOf.get(i);
+        // The group the toggle joins (or would join): the one the step above is in, else that step.
+        const joins = (groupOf.get(i - 1)?.first ?? i - 1) + 1;
+        const caption = [pathCaptions[i], groupCaptions[i]].filter(Boolean).join(" · ");
         return (
           <div
             key={i}
@@ -154,6 +164,9 @@ export function StepsEditor(props: {
                 </span>
               ) : null}
               {route ? <span class="bean-routines-step-edge" title={routeTitle}>⑂{route.paths.length}</span> : null}
+              {group?.first === i ? (
+                <span class="bean-routines-step-edge" title={`Starts a group: steps ${i + 1}–${group.last + 1} run at the same time`}>⫴{group.last - i + 1}</span>
+              ) : null}
               {step.next ? (
                 <span class="bean-routines-step-edge" title={step.next === "end" ? "Ends the run here on success" : `Then goes to step ${nextIndex + 1}`}>
                   {step.next === "end" ? "end" : `→${nextIndex >= 0 ? nextIndex + 1 : "?"}`}
@@ -306,7 +319,20 @@ export function StepsEditor(props: {
                 </ChipMenu>
                 ) : null}
 
-                {steps.length > 1 || onFail || route ? (
+                {i > 0 ? (
+                  <button
+                    type="button"
+                    class={`bean-chip-menu-trigger${step.alongside ? "" : " bean-chip-menu-trigger--dashed"}`}
+                    aria-pressed={!!step.alongside}
+                    title="Runs at the same time as the step above; the next step reads every result — best for checks that read, not write."
+                    onClick={() => onSteps(setStepAlongside(steps, i, !step.alongside))}
+                  >
+                    <span class="bean-routines-chip-label">⫴ alongside step {joins}</span>
+                  </button>
+                ) : null}
+
+                {/* A group's steps can't carry a gate or route — the chip stays only to clear one. */}
+                {(steps.length > 1 || onFail || route) && (!group || onFail || route) ? (
                   <ChipMenu
                     chipClass={onFail || route ? "bean-routines-gate-chip" : "bean-chip-menu-trigger--dashed"}
                     chipLabel={<span class="bean-routines-chip-label">{gateLabel}</span>}
@@ -335,7 +361,8 @@ export function StepsEditor(props: {
                           <button
                             key={j}
                             type="button"
-                            class={`bean-chip-menu-row${gotoIndex === j ? " bean-chip-menu-row--on" : ""}`}
+                            disabled={!!midGroup(j)}
+                            class={`bean-chip-menu-row${gotoIndex === j ? " bean-chip-menu-row--on" : ""}${midGroup(j) ? " bean-chip-menu-row--dimmed" : ""}`}
                             onClick={() => {
                               const goto = withStepIds(steps)[j]!.id!;
                               const keep = typeof onFail === "object" && onFail.maxRounds !== undefined && j < i ? { maxRounds: onFail.maxRounds } : {};
@@ -345,7 +372,7 @@ export function StepsEditor(props: {
                           >
                             <span class="bean-chip-menu-row-title">{gotoIndex === j ? "✓ " : ""}Go to → step {j + 1}</span>
                             <span class="bean-chip-menu-caption">
-                              {j < i ? "loop back, then run this step again" : "branch forward"} · {t.skill || t.kind}
+                              {midGroup(j) ? midGroupCaption(midGroup(j)!) : `${j < i ? "loop back, then run this step again" : "branch forward"} · ${t.skill || t.kind}`}
                             </span>
                           </button>
                         ))}
@@ -380,7 +407,7 @@ export function StepsEditor(props: {
                   </ChipMenu>
                 ) : null}
 
-                {!route && (!last || step.next || hasRoute) ? (
+                {!route && (!last || step.next || hasRoute) && (!group || step.next) ? (
                   <ChipMenu
                     chipClass={step.next ? undefined : "bean-chip-menu-trigger--dashed"}
                     chipLabel={
@@ -413,11 +440,12 @@ export function StepsEditor(props: {
                           <button
                             key={j}
                             type="button"
-                            class={`bean-chip-menu-row${nextIndex === j ? " bean-chip-menu-row--on" : ""}`}
+                            disabled={!!midGroup(j)}
+                            class={`bean-chip-menu-row${nextIndex === j ? " bean-chip-menu-row--on" : ""}${midGroup(j) ? " bean-chip-menu-row--dimmed" : ""}`}
                             onClick={() => { setNext(i, j); close(); }}
                           >
                             <span class="bean-chip-menu-row-title">{nextIndex === j ? "✓ " : ""}→ step {j + 1}</span>
-                            <span class="bean-chip-menu-caption">skip ahead · {t.skill || t.kind}</span>
+                            <span class="bean-chip-menu-caption">{midGroup(j) ? midGroupCaption(midGroup(j)!) : `skip ahead · ${t.skill || t.kind}`}</span>
                           </button>
                         ))}
                       </div>
@@ -486,7 +514,7 @@ export function StepsEditor(props: {
                   </div>
                 </div>
               ) : null}
-              {pathCaptions[i] ? <div class="bean-routines-step-path">{pathCaptions[i]}</div> : null}
+              {caption ? <div class="bean-routines-step-path">{caption}</div> : null}
               {edgeWarnings[i] ? <div class="bean-routines-step-warning">{edgeWarnings[i]}</div> : null}
               {edgeProblems[i] ? <div class="bean-routines-step-missing bean-routines-step-edge-problem" role="alert">{edgeProblems[i]}</div> : null}
               {problem ? <div class="bean-routines-step-missing" role="alert">{problem}{cli ? " — this step will refuse to run" : " — Bean will pick another"}</div> : null}
@@ -503,7 +531,7 @@ export function StepsEditor(props: {
                   type="button"
                   class="bean-skills-delete-link"
                   disabled={steps.length === 1}
-                  onClick={() => onSteps(steps.filter((_, j) => j !== i))}
+                  onClick={() => onSteps(removeStep(steps, i))}
                 >Remove</button>
               </div>
             </div>

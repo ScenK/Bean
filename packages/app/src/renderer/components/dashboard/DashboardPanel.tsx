@@ -319,7 +319,7 @@ export function DashboardPanel() {
           <span class="bean-dash-meta">
             {plural(run.steps.length, "step")} · {run.status === "ok" ? "healthy" : run.status === "needs-attention" ? "needs attention" : "failed"}
           </span>
-          {run.steps.length > 0 ? <span class="bean-dash-path">{executedPath(run)}</span> : null}
+          {run.steps.length > 0 ? <span class="bean-dash-path">{executedPath(run, routine?.steps)}</span> : null}
         </div>
       )),
 
