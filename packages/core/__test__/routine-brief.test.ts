@@ -156,6 +156,16 @@ describe("parseBrief keeps gates and next edges", () => {
   });
 });
 
+describe("parseBrief drops alongside", () => {
+  it("drafts a parallel group as plain steps, so it runs in sequence", () => {
+    const brief = parseBrief(JSON.stringify({
+      name: "checks", trigger: "schedule", cron: "0 6 * * *",
+      steps: [{ kind: "chat", id: "lint", instruction: "lint" }, { kind: "chat", id: "test", instruction: "test", alongside: true }],
+    }), ctx);
+    expect(brief.steps).toEqual([{ kind: "chat", id: "lint", instruction: "lint" }, { kind: "chat", id: "test", instruction: "test" }]);
+  });
+});
+
 describe("parseBrief keeps routes", () => {
   const route = { paths: [{ when: "bug", goto: "fix" }, { when: "question", goto: "end" }], otherwise: "end" };
   const steps = [

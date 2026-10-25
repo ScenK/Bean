@@ -15,6 +15,7 @@ const edgeLabel = (e: FlowEdge): string | undefined =>
 // The screen-reader summary: numbers and fixed words only, never step or label text.
 const VERB: Record<FlowEdge["kind"], string> = {
   flow: "then", next: "then", pass: "on pass", fail: "on fail", loop: "on fail loops back to", path: "may go to", otherwise: "otherwise",
+  fork: "starts", join: "joins at",
 };
 const summary = (edges: FlowEdge[], overlay?: FlowOverlay): string =>
   `Step flow: ${edges.map((e) => `${e.from + 1} ${VERB[e.kind]} ${typeof e.to === "number" ? `step ${e.to + 1}` : e.to}`).join("; ")}` +
