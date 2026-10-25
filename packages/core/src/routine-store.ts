@@ -6,7 +6,7 @@ import { isValidCron, nextRun } from "./cron.js";
 import { describeWatchWindowError, type WatchWindow } from "./watch-window.js";
 import { CLI_NAMES, type CliName } from "./launcher.js";
 import type { CliModels } from "./cli-models.js";
-import { describeEdgeError } from "./routine-graph.js";
+import { describeEdgeError, describeGroupErrors } from "./routine-graph.js";
 
 // Absent/empty channel = DM the user directly (the default); a non-empty channel targets a
 // specific discord channel id or teams conversation id instead.
@@ -26,8 +26,10 @@ export { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS } from "./routine-graph.js";
 export interface StepRoute { paths: { when: string; goto: string }[]; otherwise?: string }
 
 /** Graph fields shared by every step kind. `next`: a later step's id or "end"; absent = the
- * following step. Routines with none of these fields anywhere run exactly as before (legacy). */
-interface StepEdges { gate?: StepGate; next?: string; route?: StepRoute }
+ * following step. `alongside`: starts at the same time as the step above — that step plus the run
+ * of `alongside` steps below it is one parallel group (rules: `describeGroupErrors`). Routines
+ * with none of these fields anywhere run exactly as before (legacy). */
+interface StepEdges { gate?: StepGate; next?: string; route?: StepRoute; alongside?: true }
 
 /** `id` is a stable handle other steps (gates, graph edges) can point at — unique within the
  * routine, `[a-z0-9-]`, assigned by the editor, never typed. Absent on legacy routines. */
@@ -45,9 +47,9 @@ export type RoutineStep = StepEdges & (
 
 export type StepKind = RoutineStep["kind"];
 
-/** True when any step has a gate, a `next` edge, or a route — the runner then walks the step graph. */
+/** True when any step has a gate, a `next` edge, a route, or `alongside` — the runner then walks the step graph. */
 export const usesGates = (steps: RoutineStep[]): boolean =>
-  steps.some((s) => s.gate !== undefined || s.next !== undefined || s.route !== undefined);
+  steps.some((s) => s.gate !== undefined || s.next !== undefined || s.route !== undefined || s.alongside !== undefined);
 
 export const STEP_ID_RE = /^[a-z0-9-]+$/;
 
@@ -213,8 +215,9 @@ export function describeRoutineError(v: unknown, cliModels?: CliModels[]): strin
       ids.set(id, i);
     }
   }
+  const groupErrors = describeGroupErrors(r.steps as Record<string, unknown>[], ids);
   for (let i = 0; i < r.steps.length; i++) {
-    const edgeError = describeEdgeError(r.steps[i] as Record<string, unknown>, i, ids);
+    const edgeError = describeEdgeError(r.steps[i] as Record<string, unknown>, i, ids) ?? groupErrors[i];
     if (edgeError) return edgeError;
   }
   if (typeof r.sinks !== "object" || r.sinks === null) return "sinks must be an object";

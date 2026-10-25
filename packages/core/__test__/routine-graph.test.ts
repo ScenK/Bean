@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { RoutineStep } from "../src/routine-store.js";
-import { stepEdgeProblems, stepEdgeWarnings, stepFlow, stepPathCaptions } from "../src/routine-graph.js";
+import { describeRoutineError, usesGates, type RoutineStep } from "../src/routine-store.js";
+import { stepEdgeProblems, stepEdgeWarnings, stepFlow, stepGroups, stepPathCaptions } from "../src/routine-graph.js";
 
 const s = (id: string, extra: Partial<RoutineStep> = {}): RoutineStep => ({ kind: "chat", id, instruction: "x", ...extra } as RoutineStep);
 const route = (bug: string, spec: string, reply: string, otherwise?: string): Partial<RoutineStep> =>
@@ -162,5 +162,113 @@ describe("stepFlow", () => {
     expect(flow.nodes.map((n) => [n.key, n.id, n.kind])).toEqual([["0:", undefined, "chat"], ["1:", undefined, "command"]]);
     expect(flow.edges).toEqual([{ from: 0, to: 1, kind: "flow" }, { from: 1, to: "end", kind: "flow" }]);
     expect(legacy.every((st) => st.id === undefined)).toBe(true);
+  });
+});
+
+describe("parallel groups", () => {
+  const al = { alongside: true } as const;
+  const save = (steps: RoutineStep[]) => describeRoutineError({ name: "x", enabled: true, cron: "0 6 * * *", steps, sinks: {} });
+  // Each rule shows the same text in the editor and blocks the save.
+  const rejects = (steps: RoutineStep[], i: number, text: string) => {
+    const problems = stepEdgeProblems(steps);
+    expect(problems[i]).toBe(text);
+    expect(problems.filter((p) => p !== null)).toHaveLength(1);
+    expect(save(steps)).toBe(text);
+  };
+  const ok = (steps: RoutineStep[]) => {
+    expect(stepEdgeProblems(steps).every((p) => p === null)).toBe(true);
+    expect(save(steps)).toBeNull();
+  };
+
+  it("groups a step with the run of alongside steps below it: step-1 groups, back-to-back groups, end-of-run joins", () => {
+    expect(stepGroups([s("a"), s("b", al), s("c", al), s("d")])).toEqual([{ first: 0, last: 2 }]);
+    expect(stepGroups([s("a"), s("b", al), s("c"), s("d", al)])).toEqual([{ first: 0, last: 1 }, { first: 2, last: 3 }]);
+    expect(stepGroups([s("a"), s("b")])).toEqual([]);
+    ok([s("a"), s("b", al), s("c", al), s("d")]);
+    ok([s("a"), s("b", al), s("c"), s("d", al)]);
+    ok([s("a"), s("b"), s("c", al)]);
+  });
+
+  it("turns on graph mode only with alongside (or another edge)", () => {
+    expect(usesGates([s("a"), s("b", al)])).toBe(true);
+    expect(usesGates([s("a"), s("b")])).toBe(false);
+  });
+
+  it("alongside must be true; step 1 can't be alongside", () => {
+    rejects([s("a"), s("b", { alongside: false } as unknown as Partial<RoutineStep>)], 1, "step 2: alongside must be true when present");
+    rejects([s("a", al), s("b")], 0, "step 1 can't run alongside — there's no step above it");
+  });
+
+  it("caps a group at 4 steps", () => {
+    ok([s("a"), s("b", al), s("c", al), s("d", al)]);
+    rejects([s("z"), s("a"), s("b", al), s("c", al), s("d", al), s("e", al)], 5,
+      "step 6: a group runs at most 4 steps — steps 2–5 already run together");
+  });
+
+  it("rejects a gate, next or route on any member, naming the step whose toggle made it one", () => {
+    rejects([s("a", { gate: { onFail: "stop" } }), s("b", al)], 0, "step 1: step 2 runs alongside it, so it can't have a gate, next or route");
+    rejects([s("a"), s("b", { ...al, next: "end" })], 1, "step 2 runs alongside step 1, so it can't have a gate, next or route");
+    rejects([s("a"), s("b", al), s("c", { ...al, ...route("end", "end", "end") })], 2, "step 3 runs alongside step 1, so it can't have a gate, next or route");
+  });
+
+  it("edges may target only a group's first member", () => {
+    rejects([s("a", { next: "c" }), s("b"), s("c", al)], 0, "step 1: next can't point into a group — point it at step 2, where the group starts");
+    rejects([s("a"), s("b", al), s("c", { gate: { onFail: { goto: "b" } } })], 2, "step 3: gate goto can't point into a group — point it at step 1, where the group starts");
+    rejects([s("r", route("b", "end", "end")), s("a"), s("b", al)], 0, 'step 1: route "bug" can\'t point into a group — point it at step 2, where the group starts');
+    rejects([s("r", route("end", "end", "end", "b")), s("a"), s("b", al)], 0, "step 1: route otherwise can't point into a group — point it at step 2, where the group starts");
+    ok([s("a", { next: "b" }), s("x"), s("b"), s("c", al), s("d", { gate: { onFail: { goto: "b" } } })]);
+  });
+
+  it("a group ending a route path needs a join step after it", () => {
+    const into = [s("r", route("a", "b", "end")), s("a"), s("a2", al), s("b")];
+    rejects(into, 2, "step 3: path 'bug' ends in a group that runs on into path 'spec' — add a step after the group with next: end");
+    expect(stepEdgeWarnings(into)).toEqual([null, null, null, null]);
+    ok([s("r", route("a", "b", "end")), s("a"), s("a2", al), s("j", { next: "end" }), s("b")]);
+    // At the run's end the join is the end itself.
+    ok([s("r", route("b", "a", "end")), s("b", { next: "end" }), s("a"), s("a2", al)]);
+  });
+
+  it("stepFlow forks into each member and joins each member to the next step, with no member-to-member edge", () => {
+    const { edges } = stepFlow([s("a"), s("b"), s("c", al), s("d")]);
+    expect(edges).toEqual([
+      { from: 0, to: 1, kind: "fork", via: "flow" },
+      { from: 0, to: 2, kind: "fork", via: "flow" },
+      { from: 1, to: 3, kind: "join" },
+      { from: 2, to: 3, kind: "join" },
+      { from: 3, to: "end", kind: "flow" },
+    ]);
+  });
+
+  it("stepFlow keeps an entry's kind and label, keeps a loop as one lane, and joins at end", () => {
+    expect(stepFlow([s("r", route("a", "end", "end")), s("a"), s("a2", al)]).edges.filter((e) => e.from === 0).slice(0, 2)).toEqual([
+      { from: 0, to: 1, kind: "fork", via: "path", label: "bug" },
+      { from: 0, to: 2, kind: "fork", via: "path", label: "bug" },
+    ]);
+    expect(stepFlow([s("a"), s("b", al), s("c", { gate: { onFail: { goto: "a" } } })]).edges).toEqual([
+      { from: 0, to: 2, kind: "join" },
+      { from: 1, to: 2, kind: "join" },
+      { from: 2, to: "end", kind: "pass" },
+      { from: 2, to: 0, kind: "loop", maxRounds: 3 },
+    ]);
+    expect(stepFlow([s("a"), s("b", al)]).edges).toEqual([{ from: 0, to: "end", kind: "join" }, { from: 1, to: "end", kind: "join" }]);
+  });
+
+  it("stepFlow joins back-to-back groups member to member", () => {
+    expect(stepFlow([s("a"), s("b", al), s("c"), s("d", al)]).edges).toEqual([
+      { from: 0, to: 2, kind: "join" },
+      { from: 0, to: 3, kind: "join" },
+      { from: 1, to: 2, kind: "join" },
+      { from: 1, to: 3, kind: "join" },
+      { from: 2, to: "end", kind: "join" },
+      { from: 3, to: "end", kind: "join" },
+    ]);
+  });
+
+  it("stepFlow drops a rejected edge into a group and flags its step", () => {
+    const steps = [s("a", { next: "c" }), s("b"), s("c", al), s("d", { gate: { onFail: { goto: "c" } } })];
+    const flow = stepFlow(steps);
+    expect(flow.nodes.map((n) => n.flagged)).toEqual(stepEdgeProblems(steps).map((p) => p !== null));
+    expect(flow.nodes.map((n) => n.flagged)).toEqual([true, false, false, true]);
+    expect(flow.edges.filter((e) => e.to === 2 && e.kind !== "fork")).toEqual([]);
   });
 });
