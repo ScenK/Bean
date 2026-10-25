@@ -139,3 +139,65 @@ test("routines: build a route in the editor, save, reload, paths intact", async 
     await Promise.allSettled([stub.close(), home.cleanup()]);
   }
 });
+
+/** A parallel group built keyboard-only: toggling under a gated step flags that step (its gate is
+ * kept), later members are disabled targets, and once the gate is cleared the group saves. */
+test("routines: build a parallel group from the keyboard, save, alongside intact", async () => {
+  const home = await makeBeanHome();
+  const stub = await startStubOpenAI();
+  const file = join(home.homeDir, ".bean", "routines", "checks.json");
+  await writeFile(file, JSON.stringify({
+    name: "checks", enabled: false, cron: "0 6 * * *", sinks: {},
+    steps: [
+      { kind: "chat", id: "lint", instruction: "lint", gate: { onFail: "stop" } },
+      { kind: "chat", instruction: "test" },
+      { kind: "chat", instruction: "review" },
+      { kind: "chat", instruction: "triage" },
+    ],
+  }), "utf8");
+
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  try {
+    const avatar = await app.firstWindow();
+    const [win] = await Promise.all([
+      app.waitForEvent("window"),
+      avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("routines")),
+    ]);
+    await win.locator(".bean-routines-row", { hasText: "checks" }).click();
+    const step = (n: number) => win.locator(".bean-routines-step").nth(n);
+    await expect(step(0).getByRole("button", { name: /alongside/ })).toHaveCount(0);
+
+    await step(1).getByRole("button", { name: "⫴ alongside step 1" }).focus();
+    await win.keyboard.press("Space");
+    await expect(step(1).getByRole("button", { name: "⫴ alongside step 1" })).toHaveAttribute("aria-pressed", "true");
+    await expect(step(0).locator(".bean-routines-step-edge-problem")).toContainText("runs alongside it, so it can't have a gate");
+    await expect(step(0).getByRole("button", { name: /if it fails · stop/ })).toBeVisible();
+
+    await step(2).getByRole("button", { name: "⫴ alongside step 1" }).focus();
+    await win.keyboard.press("Enter");
+    await expect(step(0).locator(".bean-routines-step-edge", { hasText: "⫴" })).toHaveText("⫴3");
+    await expect(step(0)).toContainText("starts a group of 3 · joins at 4");
+    await expect(step(2)).toContainText("runs alongside 1");
+    await expect(step(3)).toContainText("waits for steps 1–3");
+    await expect(step(1).getByRole("button", { name: /if it fails|then/ })).toHaveCount(0);
+
+    await step(3).getByRole("button", { name: /if it fails · keep going/ }).click();
+    await expect(win.getByRole("button", { name: /Go to → step 2/ })).toBeDisabled();
+    await expect(win.getByRole("button", { name: /Go to → step 2/ })).toContainText("runs alongside step 1 — go to step 1 to run the group");
+    await expect(win.getByRole("button", { name: /Go to → step 1/ })).toBeEnabled();
+
+    await step(0).getByRole("button", { name: /if it fails · stop/ }).click();
+    await win.getByRole("button", { name: /Keep going/ }).click();
+    await expect(win.locator(".bean-routines-step-edge-problem")).toHaveCount(0);
+    await expect(step(0).getByRole("button", { name: /if it fails/ })).toHaveCount(0);
+    await win.getByRole("button", { name: "Save sprout" }).click();
+
+    await expect.poll(async () => {
+      const saved = JSON.parse(await readFile(file, "utf8")) as { steps: { alongside?: boolean; gate?: unknown }[] };
+      return saved.steps.map((s) => `${s.alongside ?? "-"}${s.gate ? "g" : ""}`).join(" ");
+    }).toBe("- true true -");
+  } finally {
+    await app.close();
+    await Promise.allSettled([stub.close(), home.cleanup()]);
+  }
+});

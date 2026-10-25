@@ -80,6 +80,10 @@ end a gated pass is `failed` when any step's latest attempt failed, outranking n
 (text kept). Host labels receipts from `DelegateStepRequest.stepIndex/round` — never from the last
 `onStep` (members interleave) — and shows one `⫴ a · b (n of k left)` bubble line counted down in
 its `recordAttempt` wrapper.
+Editor (#418): the `⫴ alongside step N` chip toggles a step into the group above and never strips
+an edge — a gate/next/route the group can't carry shows as that step's problem. Remove/reorder go
+through `removeStep`/`moveStep` (`step-ids.ts`): a step keeps `alongside` only while the step above
+is still from its own group, so nothing silently joins one; a duplicated member's copy joins.
 
 **Command steps (#265).** `kind: "command"` runs `command` via `/bin/sh -c` (core `runShellCommand`,
 own process group, timeout SIGKILLs the group) in `project`, else the same scratch dir a delegate

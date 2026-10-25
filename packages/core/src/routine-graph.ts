@@ -208,6 +208,21 @@ export function stepPathCaptions(steps: RoutineStep[]): (string | null)[] {
   });
 }
 
+/** The editor's caption per step for parallel groups (null = not in or after one): the first
+ * member says how big the group is and where it joins, other members name it, the join step says
+ * what it waits for. A step that both joins one group and starts the next gets both. */
+export function stepGroupCaptions(steps: readonly { alongside?: unknown }[]): (string | null)[] {
+  const out: (string | null)[] = steps.map(() => null);
+  const add = (i: number, text: string): void => { out[i] = out[i] ? `${out[i]} · ${text}` : text; };
+  for (const g of stepGroups(steps)) {
+    const join = g.last + 1 < steps.length ? `joins at ${g.last + 2}` : "joins at end";
+    add(g.first, `starts a group of ${g.last - g.first + 1} · ${join}`);
+    for (let k = g.first + 1; k <= g.last; k++) add(k, `runs alongside ${g.first + 1}`);
+    if (g.last + 1 < steps.length) add(g.last + 1, `waits for steps ${g.first + 1}–${g.last + 1}`);
+  }
+  return out;
+}
+
 /** One edge of the read-only flow picture. `to` is a step index, or the run ending ok (`end`) /
  * asking for you (`stop`). `fail` goes forward, `loop` back (with its round cap); a route's
  * no-match is `otherwise` → `stop`. A forward edge into a parallel group becomes one `fork` per

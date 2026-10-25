@@ -85,6 +85,18 @@ describe("example flows run as described", () => {
     expect((await run("triage", { chat: ["Spam.\nROUTE: nothing"] })).status).toBe("ok");
   });
 
+  it("parallel checks: lint, test and review all run before triage; a FAIL triage loops to implement", async () => {
+    const pass = await run("parallel-checks", { chat: ["all clean\nVERDICT: PASS"] });
+    expect([...pass.ran].sort()).toEqual(["implement", "pr", "review", "test", "test"]);
+    expect(pass.ran[0]).toBe("implement");
+    expect(pass.ran.at(-1)).toBe("pr");
+    expect(pass.status).toBe("ok");
+    const loop = await run("parallel-checks", { chat: ["lint errors\nVERDICT: FAIL", "all clean\nVERDICT: PASS"] });
+    expect(loop.ran.filter((id) => id === "implement")).toHaveLength(2);
+    expect(loop.ran.filter((id) => id === "test")).toHaveLength(4);
+    expect(loop.status).toBe("ok");
+  });
+
   it("review only: a FAIL review stops before notify", async () => {
     const r = await run("review-only", { delegate: { review: "[P1] a.ts:1 — bug\nVERDICT: FAIL" } });
     expect(r.ran).toEqual(["review"]);
