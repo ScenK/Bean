@@ -45,6 +45,33 @@ describe("layoutStepFlow", () => {
   });
 });
 
+describe("parallel groups", () => {
+  // A 4-wide group that starts the sprout, then a join; a router forks into the group too.
+  const wide = [s("a"), s("b", { alongside: true }), s("c", { alongside: true }), s("d", { alongside: true }), s("join")];
+  it("puts a group's members on one row, even one that starts the sprout, with a bar above and below", () => {
+    const steps = [s("start"), ...wide];
+    const layout = layoutStepFlow(stepFlow(steps));
+    expect(new Set(layout.boxes.slice(1, 5).map((b) => b.row)).size).toBe(1);
+    expect(layout.boxes[5]!.row).toBe(layout.boxes[1]!.row + 1);
+    expect(layout.bars.map((b) => [b.y < layout.boxes[1]!.y, b.edges.map((e) => e.kind)[0], b.edges.length])).toEqual([[true, "fork", 4], [false, "join", 4]]);
+    const first = layoutStepFlow(stepFlow(wide));
+    expect(new Set(first.boxes.slice(0, 4).map((b) => b.row))).toEqual(new Set([0]));
+    expect(first.bars.map((b) => b.edges[0]!.kind)).toEqual(["join"]);
+  });
+
+  it("draws forks and joins unlabeled, one fork port, one end cap; a route path into a group keeps its label once", () => {
+    const steps = [s("r", { route: { paths: [{ when: "go", goto: "a" }, { when: "skip", goto: "end" }] } }), s("a"), s("b", { alongside: true })];
+    const root = document.createElement("div");
+    document.body.append(root);
+    act(() => { render(h(StepFlow, { steps }), root); });
+    expect([...root.querySelectorAll(".bean-flow-label title")].map((t) => t.textContent)).toEqual(["go", "skip", "otherwise"]);
+    expect([...root.querySelectorAll(".bean-flow-cap")].map((t) => t.textContent)).toEqual(["● end", "■ stop", "● end"]);
+    expect(root.querySelectorAll(".bean-flow-bar")).toHaveLength(2);
+    const forks = layoutStepFlow(stepFlow(steps)).edges.filter((l) => l.edge.kind === "fork");
+    expect(new Set(forks.map((l) => l.d.split(" ")[0])).size).toBe(1);
+  });
+});
+
 describe("StepFlow", () => {
   const mount = (steps: RoutineStep[]): HTMLElement => {
     const root = document.createElement("div");

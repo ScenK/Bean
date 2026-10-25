@@ -43,6 +43,22 @@ describe("dashboard runs", () => {
     expect(resolved.map((s) => s.index)).toEqual([0, 2]);
   });
 
+  test("a step needs you only if its latest attempt failed in a run that isn't ok", () => {
+    const run = (status: "ok" | "failed", steps: RunRecord["steps"]) =>
+      ({ routine: "r", id: "r@x", startedAt: "x", finishedAt: "y", status, digest: "", steps });
+    const retried: RunRecord["steps"] = [
+      { kind: "chat", id: "lint", round: 1, ok: false, summary: "boom" },
+      { kind: "chat", id: "check", round: 1, ok: true, verdict: "FAIL", summary: "" },
+      { kind: "chat", id: "lint", round: 2, ok: true, summary: "fine" },
+      { kind: "chat", id: "check", round: 2, ok: true, verdict: "PASS", summary: "" },
+    ];
+    expect(splitSteps(run("ok", retried)).needs).toEqual([]);
+    expect(splitSteps(run("ok", retried)).resolved).toHaveLength(4);
+    expect(splitSteps(run("failed", retried)).needs).toEqual([]);
+    expect(splitSteps(run("failed", retried.slice(0, 2))).needs.map((s) => s.id)).toEqual(["lint"]);
+    expect(groupRuns(flattenRuns({ r: { running: false, history: [run("ok", retried)] } }))[0]!.needs).toBe(0);
+  });
+
   test("no selected run means nothing needs you", () => {
     expect(splitSteps(undefined)).toEqual({ needs: [], resolved: [] });
   });
@@ -265,6 +281,39 @@ describe("runFlowOverlay", () => {
     // A plain run has one pass: more records than steps means steps were removed since.
     expect(runFlowOverlay({ steps: [...recs, ...recs] }, legacy)).toBe("drift");
     expect(runFlowOverlay({ steps: [{ kind: "chat", ok: true, summary: "" }] }, gated)).toBe("drift");
+  });
+
+  const grouped = [s("plan"), s("lint"), s("test", { alongside: true }), s("review", { alongside: true }), s("merge")];
+  test("a group run lights every fork and join, failed members included, with no drift", () => {
+    const recs = [r("plan"), r("lint"), r("test", { ok: false }), r("review"), r("merge")];
+    expect(lit(grouped, recs)).toEqual(["0>1:fork", "0>2:fork", "0>3:fork", "1>4:join", "2>4:join", "3>4:join", "4>end:flow"]);
+    expect(overlay(grouped, recs)).toMatchObject({ counts: [1, 1, 1, 1, 1], failed: [false, false, true, false, false] });
+    // A group that ends the run lights its joins to ● end.
+    expect(lit(grouped.slice(0, 4), recs.slice(0, 4))).toContain("3>end:join");
+    // Not the whole group, or out of step order: the record doesn't fit.
+    expect(runFlowOverlay({ steps: [r("plan"), r("lint"), r("review"), r("test"), r("merge")] }, grouped)).toBe("drift");
+    expect(runFlowOverlay({ steps: [r("plan"), r("lint"), r("test"), r("merge")] }, grouped)).toBe("drift");
+  });
+
+  test("a looped group counts rounds, and a member that errored then passed isn't ✗", () => {
+    const looped = [s("lint"), s("test", { alongside: true }), s("check", { gate: { onFail: { goto: "lint", maxRounds: 3 } } }), s("ship")];
+    const recs = [
+      r("lint"), r("test", { ok: false }), r("check", { verdict: "FAIL" }),
+      r("lint", { round: 2 }), r("test", { round: 2 }), r("check", { round: 2, verdict: "PASS" }), r("ship"),
+    ];
+    expect(overlay(looped, recs)).toMatchObject({ counts: [2, 2, 2, 1], failed: [false, false, false, false] });
+    expect(lit(looped, recs)).toEqual(["0>2:join", "1>2:join", "2>3:pass", "2>0:loop", "3>end:flow"]);
+  });
+
+  test("a legacy record without ids drifts when the definition has a group", () => {
+    const legacy: RoutineStep[] = [{ kind: "chat", instruction: "x" }, { kind: "chat", instruction: "y", alongside: true }];
+    expect(runFlowOverlay({ steps: [{ kind: "chat", ok: true, summary: "" }, { kind: "chat", ok: true, summary: "" }] }, legacy)).toBe("drift");
+  });
+
+  test("executedPath brackets a group the definition shows", () => {
+    const recs = [r("plan"), r("lint"), r("test", { ok: false }), r("review"), r("merge")];
+    expect(executedPath({ steps: recs }, grouped)).toBe("plan ✓ → [lint ✓ | test ✗ | review ✓] → merge ✓");
+    expect(executedPath({ steps: recs })).toBe("plan ✓ → lint ✓ → test ✗ → review ✓ → merge ✓");
   });
 
   test("drift: a deleted step or a re-pointed edge draws no highlight", () => {
