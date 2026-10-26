@@ -1,7 +1,7 @@
 import type { FlowEdge, RoutineStep, RunRecord, StepKind } from "@bean/core";
 import { stepFlow, stepGroups } from "@bean/core/routine-graph";
 import type { FlowOverlay } from "../../shared/StepFlow.js";
-import type { RoutineStateView } from "../../../ipc.js";
+import type { RoutineStateView, StepAttemptView } from "../../../ipc.js";
 
 /** One routine run, tagged with the routine it came from — the dashboard reads every
  * routine's history as a single newest-first stream, not one routine at a time. */
@@ -187,6 +187,71 @@ export function runFlowOverlay(run: Pick<RunRecord, "steps">, steps: RoutineStep
     }
   }
   return { counts, failed, edges: lit };
+}
+
+/** Where one step attempt sits among a run's agent sessions (see attemptSessions). */
+export interface AttemptSession {
+  /** Step number of the session's first attempt — set only on a session more than one attempt shares. */
+  session?: number;
+  /** The session's latest attempt; also any attempt whose session is unknown or its own. */
+  last: boolean;
+  /** Index of the session's next attempt, on every attempt but its last. */
+  next?: number;
+  /** It was meant to continue another step's session but started a new one. */
+  fresh?: true;
+}
+
+type SessionAttempt = Pick<StepAttemptView, "stepIndex" | "resume" | "output">;
+
+/** The runner's note on a step whose `continues` target left no session (routine-runner.ts). */
+const FRESH_NOTE = "(No earlier session from ";
+
+/** Which attempts of one run were one agent session. `resume` is built only from the session id,
+ * so equal strings are the same session; that is all grouping reads, so editing the sprout later
+ * can't regroup a past run. An attempt with no `resume` is never grouped. `fresh` is the runner's
+ * own note when it's still there (outputs are tail-capped), else what `steps` says: the step
+ * continues another, yet its session starts here. Pure. */
+export function attemptSessions(attempts: readonly SessionAttempt[], steps: readonly RoutineStep[] = []): AttemptSession[] {
+  return attempts.map((a, i) => {
+    const same = (b: SessionAttempt): boolean => a.resume !== undefined && b.resume === a.resume;
+    const first = attempts.findIndex(same);
+    const next = attempts.findIndex((b, j) => j > i && same(b));
+    const shared = first >= 0 && (first !== i || next >= 0);
+    const fresh = a.output.startsWith(FRESH_NOTE) || (first === i && steps[a.stepIndex]?.continues !== undefined);
+    return {
+      ...(shared ? { session: attempts[first]!.stepIndex + 1 } : {}),
+      last: next < 0, ...(next >= 0 ? { next } : {}), ...(fresh ? { fresh: true as const } : {}),
+    };
+  });
+}
+
+/** One line over a run's full output when any session was shared:
+ * `2 agent sessions · ↻2 steps 2→4→6 (opencode) · ↻3 steps 3→5 (claude)`. */
+export function sessionSummary(attempts: readonly (SessionAttempt & { cli?: string })[]): string | undefined {
+  const sessions = new Map<string, number[]>();
+  attempts.forEach((a, i) => { if (a.resume !== undefined) sessions.set(a.resume, [...(sessions.get(a.resume) ?? []), i]); });
+  const shared = [...sessions.values()].filter((l) => l.length > 1);
+  if (shared.length === 0) return undefined;
+  const lane = (l: number[]): string => {
+    const nums = l.map((i) => attempts[i]!.stepIndex + 1).filter((n, k, all) => n !== all[k - 1]);
+    const cli = attempts[l[0]!]!.cli;
+    return `↻${nums[0]} steps ${nums.join("→")}${cli ? ` (${cli})` : ""}`;
+  };
+  return [`${sessions.size} agent session${sessions.size === 1 ? "" : "s"}`, ...shared.map(lane)].join(" · ");
+}
+
+/** StepFlow's `lanes` for a past run, from what its attempts actually shared rather than today's
+ * `continues`: each step → the first step of the session its first shared attempt was in. */
+export function observedLanes(attempts: readonly SessionAttempt[], stepCount: number): number[] {
+  const lanes = Array.from({ length: stepCount }, (_, k) => k);
+  const done = new Set<number>();
+  attemptSessions(attempts).forEach(({ session }, i) => {
+    const k = attempts[i]!.stepIndex;
+    if (session === undefined || k >= stepCount || done.has(k)) return;
+    lanes[k] = session - 1;
+    done.add(k);
+  });
+  return lanes;
 }
 
 /** A gate stopped (or exhausted) this run: where it stopped and the verdict it stopped on — the
