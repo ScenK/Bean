@@ -79,3 +79,54 @@ test("flow canvas: full panel width, capped height that scrolls", async () => {
     await Promise.allSettled([stub.close(), home.cleanup()]);
   }
 });
+
+/** A parallel group draws as one labelled frame around its members — in the editor, and lit on a
+ * Dashboard run that went through it. */
+test("flow canvas: a parallel group is a labelled frame", async () => {
+  const home = await makeBeanHome();
+  const stub = await startStubOpenAI();
+  const routines = join(home.homeDir, ".bean", "routines");
+  const steps = [
+    { kind: "chat", id: "a", instruction: "do a" },
+    { kind: "chat", id: "b", instruction: "do b" },
+    { kind: "chat", id: "c", instruction: "do c", alongside: true },
+    { kind: "chat", id: "d", instruction: "do d" },
+  ];
+  await writeFile(join(routines, "fan.json"), JSON.stringify({ name: "fan", enabled: false, cron: "0 6 * * *", sinks: {}, steps }), "utf8");
+  const stateFile = join(routines, ".state.json");
+  const state = JSON.parse(await readFile(stateFile, "utf8")) as Record<string, unknown>;
+  state.fan = {
+    lastRun: "2026-01-05T14:00:00.000Z",
+    history: [{
+      id: "aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff",
+      startedAt: "2026-01-05T14:00:00.000Z", finishedAt: "2026-01-05T14:30:00.000Z", status: "ok", digest: "done",
+      steps: steps.map(({ kind, id }) => ({ kind, id, ok: true, summary: id })),
+    }],
+  };
+  await writeFile(stateFile, JSON.stringify(state), "utf8");
+
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  try {
+    const avatar = await app.firstWindow();
+    const open = async (kind: string): Promise<Page> => {
+      const [win] = await Promise.all([
+        app.waitForEvent("window"),
+        avatar.evaluate((k) => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent(k), kind),
+      ]);
+      return win;
+    };
+    const editor = await open("routines");
+    await editor.locator(".bean-routines-row", { hasText: "fan" }).click();
+    await expect(editor.locator(".bean-flow .bean-flow-group")).toHaveCount(1);
+    await expect(editor.locator(".bean-flow .bean-flow-group-label")).toHaveText("⫴ together · 2");
+
+    const dashboard = await open("dashboard");
+    const flow = dashboard.locator(".bean-dash-flow .bean-flow");
+    await expect(flow.locator(".bean-flow-group")).toHaveClass(/bean-flow-accent/);
+    // The fork bundle, the join and the ● end.
+    await expect(flow.locator(".bean-flow-edge--lit")).toHaveCount(3);
+  } finally {
+    await app.close();
+    await Promise.allSettled([stub.close(), home.cleanup()]);
+  }
+});
