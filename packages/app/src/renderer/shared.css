@@ -2528,6 +2528,8 @@ button, input, textarea, select, a {
 .bean-flow-title { display: flex; white-space: pre; color: var(--bean-text); font-size: 12px; font-weight: 600; line-height: 17px; }
 .bean-flow-snippet { color: var(--bean-text-dim); font-size: 10px; line-height: 15px; }
 .bean-flow-clip { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* Shared-session badge: never shrinks, so a long skill name clips before the lane does. */
+.bean-flow-lane { flex-shrink: 0; color: var(--bean-text-dim); }
 .bean-flow-label, .bean-flow-cap { color: var(--bean-text-dim); font-size: 10px; paint-order: stroke; stroke: var(--bean-surface); stroke-width: 3px; stroke-linejoin: round; }
 .bean-flow-cap { font-weight: 600; color: var(--bean-text); }
 /* Sits on its frame's top edge: a wider halo than an edge label's so the line can't show between glyphs. */
