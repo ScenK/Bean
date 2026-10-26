@@ -23,3 +23,9 @@ rejected `continues`, never the step.
 Host: any `continues` holds the per-todo scratch for the whole run (like gates). Receipts are
 collected per session id and formatted by `formatReceipts`: one footer line per session
 (`steps 2→4→6 (kubernetes) — opencode -s <id>`), a gate loop's repeated id included.
+
+Editor (#435): the `↻` chip (`StepsEditor.tsx`) lists earlier delegate steps from `continueTargets`,
+ineligible ones disabled with the validator's wording; `setStepContinues` never repairs a dangling
+id (a delete/reorder shows it as `step ?` + the alert). `duplicateStep` drops `continues` on a copy
+that joins a group. The canvas badge (`StepFlow` `lanes` prop) uses raw `stepLanes`, so a rejected
+`continues` still draws its lane — the card's alert says why.

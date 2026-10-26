@@ -21,14 +21,16 @@ export function withStepIds(steps: RoutineStep[]): RoutineStep[] {
 
 /** Inserts an exact copy of step `i` (every field, `gate`/`next` included) directly below it,
  * with a fresh id. Below keeps every edge's direction, so the copy never raises an edge problem.
- * The copy of a parallel group's member joins that group (`alongside`), so it never splits it. */
+ * The copy of a parallel group's member joins that group (`alongside`), so it never splits it —
+ * and starts a new session, since two members can't resume one session at once. */
 export function duplicateStep(steps: RoutineStep[], i: number): RoutineStep[] {
   const withIds = withStepIds(steps);
   const original = withIds[i];
   if (!original) return withIds;
   const { id: _id, ...copy } = structuredClone(original);
   const member = stepGroups(withIds).some((g) => i >= g.first && i <= g.last);
-  const placed = (member ? { ...copy, alongside: true } : copy) as RoutineStep;
+  const { continues: _continues, ...fresh } = copy;
+  const placed = (member ? { ...fresh, alongside: true } : copy) as RoutineStep;
   return withStepIds([...withIds.slice(0, i + 1), placed, ...withIds.slice(i + 1)]);
 }
 
@@ -84,6 +86,32 @@ export function setStepNext(steps: RoutineStep[], i: number, target: number | "e
     const { next: _old, ...rest } = s;
     return (next ? { ...rest, next } : rest) as RoutineStep;
   });
+}
+
+/** Points step `i`'s `continues` at step `target` (by its id), or clears it (`undefined` = a new
+ * session). Ids are assigned first so the target has one. Validity is the editor's alert's job. */
+export function setStepContinues(steps: RoutineStep[], i: number, target: number | undefined): RoutineStep[] {
+  const withIds = withStepIds(steps);
+  const continues = target === undefined ? undefined : withIds[target]?.id;
+  return withIds.map((s, j) => {
+    if (j !== i) return s;
+    const { continues: _old, ...rest } = s;
+    return (continues ? { ...rest, continues } : rest) as RoutineStep;
+  });
+}
+
+/** Step `step` as a `kind` step. `id` and the gate/next/route/alongside edges ride along so a kind
+ * change never re-keys or re-wires it; `cli` and `continues` are delegate-only; the text carries
+ * over as instruction ⇄ command. Picking the kind it already is changes nothing. */
+export function switchStepKind(step: RoutineStep, kind: RoutineStep["kind"]): RoutineStep {
+  if (kind === step.kind) return step;
+  const edges = { ...(step.gate ? { gate: step.gate } : {}), ...(step.next ? { next: step.next } : {}), ...(step.route ? { route: step.route } : {}), ...(step.alongside ? { alongside: step.alongside } : {}) };
+  const text = step.kind === "command" ? step.command : step.instruction;
+  return kind === "delegate"
+    ? { kind: "delegate", id: step.id, skill: step.skill ?? "", model: step.model, instruction: text, ...edges }
+    : kind === "chat"
+      ? { kind: "chat", id: step.id, skill: step.skill || undefined, model: step.model, instruction: text, ...edges }
+      : { kind: "command", id: step.id, command: text, ...(step.kind !== "chat" && step.project ? { project: step.project } : {}), ...edges };
 }
 
 /** Moves the builder's `steps.<i>…` questions with their step (matched by id) across an

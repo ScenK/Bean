@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { RoutineStep } from "@bean/core";
-import { stepFlow } from "@bean/core/routine-graph";
+import { stepFlow, stepLanes } from "@bean/core/routine-graph";
 import { layoutStepFlow, NODE_H, NODE_W, type FlowBox, type FlowGroup } from "../src/renderer/shared/step-flow-layout.js";
 import { StepFlow, type FlowOverlay } from "../src/renderer/shared/StepFlow.js";
 
@@ -204,5 +204,31 @@ describe("StepFlow overlay", () => {
     expect(lit.some((p) => p.classList.contains("bean-flow-edge--loop"))).toBe(true);
     expect(root.querySelectorAll(".bean-flow-dim")).toHaveLength(1);
     expect(root.querySelector(".bean-flow-title")!.textContent).toContain("×2");
+  });
+});
+
+describe("StepFlow shared sessions", () => {
+  // 1 chat · 2,4,6 one session · 3,5 another · 7 alone.
+  const d = (id: string, continues?: string): RoutineStep => ({ kind: "delegate", id, skill: "", cli: "claude", instruction: "x", ...(continues ? { continues } : {}) });
+  const steps = [s("a"), d("b"), d("c"), d("d", "b"), d("e", "c"), d("f", "d"), d("g")];
+  const mount = (lanes?: number[]): HTMLElement => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    act(() => render(h(StepFlow, { steps, ...(lanes ? { lanes } : {}) }), root));
+    return root;
+  };
+  const badges = (root: HTMLElement): (string | null)[] =>
+    [...root.querySelectorAll(".bean-flow-title")].map((t) => t.querySelector(".bean-flow-lane")?.textContent?.trim() ?? null);
+
+  it("badges every step of a lane with its first step, and no lane of one step", () => {
+    const root = mount(stepLanes(steps));
+    expect(badges(root)).toEqual([null, "↻2", "↻3", "↻2", "↻3", "↻2", null]);
+    expect(root.querySelector("svg")!.getAttribute("aria-label")).toContain(". Shared sessions: steps 2, 4, 6; steps 3, 5");
+  });
+
+  it("draws no badge and no summary without lanes", () => {
+    const root = mount();
+    expect(badges(root)).toEqual(steps.map(() => null));
+    expect(root.querySelector("svg")!.getAttribute("aria-label")).not.toContain("Shared sessions");
   });
 });

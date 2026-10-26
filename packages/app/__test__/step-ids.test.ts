@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RoutineStep } from "@bean/core";
 import { stepEdgeProblems } from "@bean/core/routine-graph";
-import { duplicateStep, moveStep, remapStepMissing, removeStep, setStepAlongside, setStepNext, setStepRoute, stepProblemsText, withStepIds } from "../src/renderer/components/routines/step-ids.js";
+import { duplicateStep, moveStep, remapStepMissing, removeStep, setStepAlongside, setStepContinues, setStepNext, setStepRoute, stepProblemsText, switchStepKind, withStepIds } from "../src/renderer/components/routines/step-ids.js";
 
 describe("withStepIds", () => {
   it("assigns <skill>-<n>/<kind>-<n> to id-less steps and keeps existing ids through reorder/delete", () => {
@@ -183,5 +183,34 @@ describe("setStepRoute", () => {
   it("a duplicate keeps the route", () => {
     const routed = setStepRoute(steps, 0, { paths: [{ when: "x", goto: "chat-3" }, { when: "y", goto: "end" }] });
     expect(duplicateStep(routed, 0)[1]!.route).toEqual(routed[0]!.route);
+  });
+});
+
+describe("continues", () => {
+  const d = (extra: Partial<RoutineStep> = {}): RoutineStep => ({ kind: "delegate", skill: "code", cli: "claude", instruction: "x", ...extra } as RoutineStep);
+
+  it("setStepContinues assigns ids first, then sets and clears the target", () => {
+    const set = setStepContinues([d(), d()], 1, 0);
+    expect(set.map((s) => s.id)).toEqual(["code-1", "code-2"]);
+    expect(set[1]).toMatchObject({ continues: "code-1" });
+    expect(stepEdgeProblems(set)).toEqual([null, null]);
+    expect("continues" in setStepContinues(set, 1, undefined)[1]!).toBe(false);
+  });
+
+  it("duplicating into a group drops continues; a plain copy keeps it", () => {
+    const steps = [d({ id: "a" }), d({ id: "b", continues: "a" }), d({ id: "c", continues: "a", alongside: true })];
+    const grouped = duplicateStep(steps, 1);
+    expect(grouped[2]).toMatchObject({ alongside: true });
+    expect("continues" in grouped[2]!).toBe(false);
+    expect(stepEdgeProblems(grouped)[2]).toBeNull();
+    const plain = duplicateStep([d({ id: "a" }), d({ id: "b", continues: "a" })], 1);
+    expect(plain[2]).toMatchObject({ continues: "a" });
+  });
+
+  it("switching to a non-delegate kind drops it; picking the same kind keeps the step", () => {
+    const step = d({ id: "b", continues: "a" });
+    expect("continues" in switchStepKind(step, "chat")).toBe(false);
+    expect("continues" in switchStepKind(step, "command")).toBe(false);
+    expect(switchStepKind(step, "delegate")).toBe(step);
   });
 });

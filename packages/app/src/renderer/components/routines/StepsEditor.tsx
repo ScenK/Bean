@@ -1,10 +1,10 @@
 import { useState } from "preact/hooks";
 import type { AvailableModel, CliName, Project, RoutineStep, Skill, StepGate, StepRoute } from "@bean/core";
 import { stepAvailabilityProblem } from "@bean/core/models";
-import { DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, stepEdgeProblems, stepEdgeWarnings, stepGroupCaptions, stepGroups, stepPathCaptions, type StepGroup } from "@bean/core/routine-graph";
+import { continueTargets, DEFAULT_GATE_ROUNDS, MAX_GATE_ROUNDS, stepContinueCaptions, stepEdgeProblems, stepEdgeWarnings, stepGroupCaptions, stepGroups, stepLanes, stepPathCaptions, type StepGroup } from "@bean/core/routine-graph";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { StepFlow } from "../../shared/StepFlow.js";
-import { duplicateStep, moveStep, removeStep, setStepAlongside, setStepNext, setStepRoute, withStepIds } from "./step-ids.js";
+import { duplicateStep, moveStep, removeStep, setStepAlongside, setStepContinues, setStepNext, setStepRoute, switchStepKind, withStepIds } from "./step-ids.js";
 
 const HARNESSES: CliName[] = ["claude", "codex", "opencode"];
 
@@ -48,6 +48,7 @@ export function StepsEditor(props: {
   const edgeWarnings = stepEdgeWarnings(steps);
   const pathCaptions = stepPathCaptions(steps);
   const groupCaptions = stepGroupCaptions(steps);
+  const continueCaptions = stepContinueCaptions(steps);
   const groupOf = new Map<number, StepGroup>();
   for (const g of stepGroups(steps)) for (let k = g.first; k <= g.last; k++) groupOf.set(k, g);
   // Only a group's first step is a valid target — entering mid-group would skip its siblings.
@@ -108,17 +109,7 @@ export function StepsEditor(props: {
     const keepModel = !cli || !step.model || models.some((m) => m.id === step.model && m.availableOn.includes(cli));
     setStep(i, { ...step, cli, model: keepModel ? step.model : undefined });
   };
-  // `id` and the gate/next/route/alongside edges ride along so a kind change never re-keys or re-wires the
-  // step; `cli` is delegate-only; the text carries over as instruction ⇄ command.
-  const switchKind = (i: number, step: RoutineStep, kind: RoutineStep["kind"]): void => {
-    const edges = { ...(step.gate ? { gate: step.gate } : {}), ...(step.next ? { next: step.next } : {}), ...(step.route ? { route: step.route } : {}), ...(step.alongside ? { alongside: step.alongside } : {}) };
-    const text = step.kind === "command" ? step.command : step.instruction;
-    setStep(i, kind === "delegate"
-      ? { kind: "delegate", id: step.id, skill: step.skill ?? "", model: step.model, instruction: text, ...edges }
-      : kind === "chat"
-        ? { kind: "chat", id: step.id, skill: step.skill || undefined, model: step.model, instruction: text, ...edges }
-        : { kind: "command", id: step.id, command: text, ...(step.kind !== "chat" && step.project ? { project: step.project } : {}), ...edges });
-  };
+  const switchKind = (i: number, step: RoutineStep, kind: RoutineStep["kind"]): void => setStep(i, switchStepKind(step, kind));
 
   return (
     <div class="bean-routines-steps">
@@ -146,7 +137,11 @@ export function StepsEditor(props: {
         const group = groupOf.get(i);
         // The group the toggle joins (or would join): the one the step above is in, else that step.
         const joins = (groupOf.get(i - 1)?.first ?? i - 1) + 1;
-        const caption = [pathCaptions[i], groupCaptions[i]].filter(Boolean).join(" · ");
+        const caption = [pathCaptions[i], groupCaptions[i], continueCaptions[i]].filter(Boolean).join(" · ");
+        // Delegate-only by type, but hand-edited JSON may put one anywhere: the chip stays to clear it.
+        const continues = (step as { continues?: string }).continues;
+        const continueIndex = continues === undefined ? -1 : indexOf(continues);
+        const sessions = step.kind === "delegate" || continues !== undefined ? continueTargets(steps, i) : [];
         return (
           <div
             key={i}
@@ -278,6 +273,46 @@ export function StepsEditor(props: {
                             {clis.includes(h) ? null : <span class="bean-chip-menu-caption">not enabled on this Mac</span>}
                           </button>
                         ))}
+                      </div>
+                    )}
+                  </ChipMenu>
+                ) : null}
+
+                {sessions.length || continues !== undefined ? (
+                  <ChipMenu
+                    chipClass={continues === undefined ? "bean-chip-menu-trigger--dashed" : undefined}
+                    chipLabel={<span class="bean-routines-chip-label">{continues === undefined ? "↻ new session" : `↻ continues step ${continueIndex >= 0 ? continueIndex + 1 : "?"}`}</span>}
+                    menuWidth={320}
+                  >
+                    {(close) => (
+                      <div class="bean-chip-menu-list">
+                        <button
+                          type="button"
+                          class={`bean-chip-menu-row${continues === undefined ? " bean-chip-menu-row--on" : ""}`}
+                          onClick={() => { onSteps(setStepContinues(steps, i, undefined)); close(); }}
+                        >
+                          <span class="bean-chip-menu-row-title">{continues === undefined ? "✓ " : ""}new session</span>
+                          <span class="bean-chip-menu-caption">the agent starts fresh on this step</span>
+                        </button>
+                        {sessions.length ? <div class="bean-chip-menu-divider" /> : null}
+                        {sessions.map(({ index: j, problem: why }) => {
+                          const t = steps[j]!;
+                          const on = continueIndex === j;
+                          const where = t.kind === "delegate" ? [t.skill || "no skill", `agent · ${t.cli ?? "auto"}`, t.project ? (projects.find((p) => p.path === t.project)?.name ?? t.project) : "no project"].join(" · ") : t.kind;
+                          return (
+                            <button
+                              key={j}
+                              type="button"
+                              disabled={!!why}
+                              class={`bean-chip-menu-row${on ? " bean-chip-menu-row--on" : ""}${why ? " bean-chip-menu-row--dimmed" : ""}`}
+                              onClick={() => { onSteps(setStepContinues(steps, i, j)); close(); }}
+                            >
+                              <span class="bean-chip-menu-row-title">{on ? "✓ " : ""}↻ continue step {j + 1}</span>
+                              <span class="bean-chip-menu-caption">{where}</span>
+                              {why ? <span class="bean-chip-menu-caption">{why}</span> : null}
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </ChipMenu>
@@ -548,7 +583,7 @@ export function StepsEditor(props: {
         <span class="bean-routines-add-hint">{props.addHint ?? "— another delegate under this cadence"}</span>
       </button>
       {/* The whole shape at a glance; recomputed from the draft every render. */}
-      <StepFlow steps={steps} />
+      <StepFlow steps={steps} lanes={stepLanes(steps)} />
     </div>
   );
 }
