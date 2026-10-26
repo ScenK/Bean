@@ -6,7 +6,7 @@ import { isValidCron, nextRun } from "./cron.js";
 import { describeWatchWindowError, type WatchWindow } from "./watch-window.js";
 import { CLI_NAMES, type CliName } from "./launcher.js";
 import type { CliModels } from "./cli-models.js";
-import { describeEdgeError, describeGroupErrors } from "./routine-graph.js";
+import { describeContinueErrors, describeEdgeError, describeGroupErrors } from "./routine-graph.js";
 
 // Absent/empty channel = DM the user directly (the default); a non-empty channel targets a
 // specific discord channel id or teams conversation id instead.
@@ -37,13 +37,15 @@ export type RoutineStep = StepEdges & (
   /** `timeoutMinutes` overrides the default delegate step timeout (ROUTINE_STEP_TIMEOUT_MS)
    * for long unattended runs, e.g. implement + review loops. No panel field; set it in the JSON.
    * `cli` pins the coding-agent harness: unavailable = the step refuses before spawning (no
-   * fallback); absent = today's inference from `model` + the Settings preference. */
-  | { kind: "delegate"; id?: string; skill: string; project?: string; cli?: CliName; model?: string; timeoutMinutes?: number; instruction: string }
-  | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string }
+   * fallback); absent = today's inference from `model` + the Settings preference.
+   * `continues`: an earlier delegate step's id — this step resumes the newest session of that
+   * step's lane (same `cli` and `project` required; rules: `describeContinueErrors`). */
+  | { kind: "delegate"; id?: string; skill: string; project?: string; cli?: CliName; model?: string; timeoutMinutes?: number; instruction: string; continues?: string }
+  | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string; continues?: never }
   /** A deterministic check: runs `command` in a shell (in `project`, else the run's scratch dir)
    * — no model, memories, or skill (the `never`s keep `step.skill`/`.model` readable on the
    * union; the validator rejects them). Exit 0 = PASS, non-zero = FAIL, timeout = step error. */
-  | { kind: "command"; id?: string; command: string; project?: string; timeoutMinutes?: number; skill?: never; model?: never; cli?: never });
+  | { kind: "command"; id?: string; command: string; project?: string; timeoutMinutes?: number; skill?: never; model?: never; cli?: never; continues?: never });
 
 export type StepKind = RoutineStep["kind"];
 
@@ -123,6 +125,10 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
   if (s.id !== undefined && (!str(s.id) || !STEP_ID_RE.test(s.id))) return `${at} has an invalid id (use a-z, 0-9, "-")`;
   if (s.timeoutMinutes !== undefined && (!Number.isInteger(s.timeoutMinutes) || (s.timeoutMinutes as number) < 1)) {
     return `${at} timeout must be a whole number of minutes, at least 1`;
+  }
+  if (s.continues !== undefined) {
+    if (s.kind !== "delegate") return `${at}: only a delegate step can continue another step's session`;
+    if (!str(s.continues) || !STEP_ID_RE.test(s.continues)) return `${at} has an invalid continues id (use a-z, 0-9, "-")`;
   }
   if (s.kind === "command") {
     if (!str(s.command) || !s.command.trim()) return `${at} (command) needs a command to run`;
@@ -216,8 +222,9 @@ export function describeRoutineError(v: unknown, cliModels?: CliModels[]): strin
     }
   }
   const groupErrors = describeGroupErrors(r.steps as Record<string, unknown>[], ids);
+  const continueErrors = describeContinueErrors(r.steps as Record<string, unknown>[], ids);
   for (let i = 0; i < r.steps.length; i++) {
-    const edgeError = describeEdgeError(r.steps[i] as Record<string, unknown>, i, ids) ?? groupErrors[i];
+    const edgeError = describeEdgeError(r.steps[i] as Record<string, unknown>, i, ids) ?? groupErrors[i] ?? continueErrors[i];
     if (edgeError) return edgeError;
   }
   if (typeof r.sinks !== "object" || r.sinks === null) return "sinks must be an object";

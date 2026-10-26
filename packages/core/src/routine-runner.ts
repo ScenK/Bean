@@ -10,7 +10,7 @@ import { MEMORY_CONFLICT_CLAUSE, memoriesBlock, type Memory } from "./memory/mem
 import { selectRelevantMemories } from "./memory/store.js";
 import { dropRouteLine, gateVerdict, lastLine, parseVerdict, routeLabel, type StepAttempt } from "./step-attempts.js";
 import { RETRO_SKILL, retroSession, type RetroDeps } from "./retro.js";
-import { stepGroups } from "./routine-graph.js";
+import { stepGroups, stepLanes } from "./routine-graph.js";
 
 export interface DelegateStepRequest {
   skill?: Skill;
@@ -28,8 +28,9 @@ export interface DelegateStepRequest {
   /** Watch-fired todo runs: the queued todo's id. A project-less step runs in its own scratch
    * subdir (removed afterwards). */
   todoId?: string;
-  /** Re-entering this step on a gate loop: its own previous session this run/todo. The adapter
-   * resumes it only on the same CLI; a rejected resume starts fresh (runDelegate's notice). */
+  /** The newest session of this step's lane this run/todo — its own previous round on a gate
+   * loop, or the step it `continues`. The adapter resumes it only on the same CLI; a rejected
+   * resume starts fresh (runDelegate's notice). */
   resume?: { cli: CliName; sessionId: string };
   /** Which step and round this is — a parallel group's members run at once, so the host labels
    * receipts from the request, never from the latest `onStep`. */
@@ -308,6 +309,9 @@ async function runSteps(
   const name = (i: number): string => steps[i]?.id ?? `step ${i + 1}`;
   const rounds = new Map<number, number>(); // executions per step, this pass
   const latest = new Map<number, StepResult>(); // gated prior block: latest attempt per step
+  // Keyed by lane root: a step resumes the newest session of its lane (its own earlier round, or
+  // the step it `continues` and whatever continued that since).
+  const lanes = stepLanes(steps);
   const sessions = new Map<number, { cli: CliName; sessionId: string }>();
   let feedback = "";
   let lastFail: string | undefined; // set while the pass's last gate decision is FAIL
@@ -332,7 +336,7 @@ async function runSteps(
       instruction: step.instruction + instructionSuffix + fb + (step.gate ? VERDICT_CONTRACT : "") +
         (step.route ? routeContract(labels) : ""),
     } as RoutineStep;
-    const resume = sessions.get(index);
+    const resume = sessions.get(lanes[index]!);
     deps.onStep?.({
       index, ...(step.id ? { id: step.id } : {}), ...(graph ? { round } : {}),
       ...(step.kind === "delegate" && step.cli ? { cli: step.cli } : {}),
@@ -382,6 +386,8 @@ async function runSteps(
             stepIndex: index, round,
           });
           ({ output, ...ran } = typeof res === "string" ? { output: res } : res);
+          // Its target was skipped by a route or failed: say so rather than pass it off as resumed.
+          if (effective.continues && !resume) output = `(No earlier session from ${effective.continues} to continue — started fresh.)\n${output}`;
         } else {
           const session = retro ? retroSession(deps.retro!, routine.name, deps.findSkill, now) : undefined;
           const expiry = new AbortController();
@@ -446,7 +452,7 @@ async function runSteps(
   };
 
   const commit = (r: Ran): void => {
-    if (r.session) sessions.set(r.index, r.session);
+    if (r.session) sessions.set(lanes[r.index]!, r.session);
     results.push(r.result);
     latest.delete(r.index);
     latest.set(r.index, r.result);
@@ -629,9 +635,9 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
   return { record, digest, results };
 }
 
-/** Appends Bean's own resume footer (one `step N (<project>) — <resume command>` line per
- * delegate session, so one per round of a looped step) to both the delivered and the stored digest. Last, so a truncated
- * notification loses the footer, not the summary. */
+/** Appends Bean's own resume footer (one line per delegate session — see `formatReceipts`) to
+ * both the delivered and the stored digest. Last, so a truncated notification loses the footer,
+ * not the summary. */
 export function withResumeFooter(result: RoutineRunResult, receipts: string[]): RoutineRunResult {
   if (receipts.length === 0) return result;
   const footer = `\n\nResume a delegate session:\n${receipts.join("\n")}`;

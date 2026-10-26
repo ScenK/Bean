@@ -131,14 +131,94 @@ export function describeGroupErrors(steps: readonly Record<string, unknown>[], i
   return out;
 }
 
+/** First index per step id. */
+const stepIds = (steps: readonly { id?: string }[]): Map<string, number> => {
+  const ids = new Map<string, number>();
+  steps.forEach((s, i) => { if (s.id && !ids.has(s.id)) ids.set(s.id, i); });
+  return ids;
+};
+
+/** Each step's session lane: the index of the step whose session it ultimately continues
+ * (itself when it continues nothing). A `continues` that names no earlier step starts its own
+ * lane — the validator reports it. */
+export function stepLanes(steps: readonly { id?: unknown; continues?: unknown }[]): number[] {
+  const ids = new Map<unknown, number>();
+  const lanes: number[] = [];
+  steps.forEach((s, i) => {
+    const t = s.continues === undefined ? undefined : ids.get(s.continues);
+    lanes.push(t === undefined ? i : lanes[t]!);
+    if (s.id !== undefined && !ids.has(s.id)) ids.set(s.id, i);
+  });
+  return lanes;
+}
+
+/** Why step `i` can't continue step `t`'s session (null = it can). One wording for the save
+ * check, the editor's alert and its target picker. */
+function continueProblem(steps: readonly Record<string, unknown>[], i: number, t: number, lanes: number[], groups: StepGroup[]): string | null {
+  const at = `step ${i + 1}`;
+  const s = steps[i]!, target = steps[t]!;
+  if (t === i) return `${at} can't continue its own session — a gate loop already resumes it`;
+  if (t > i) return `${at}: continues must point to an earlier step`;
+  if (target.kind !== "delegate") return `${at}: step ${t + 1} is a ${String(target.kind)} step — only a delegate step's session can be continued`;
+  if (s.cli === undefined || target.cli === undefined) return `${at}: pin the same coding agent on this step and step ${t + 1} to continue its session`;
+  if (s.cli !== target.cli) return `${at}: step ${t + 1} runs on ${String(target.cli)}, this step on ${String(s.cli)} — a session only continues on the same coding agent`;
+  if ((s.project ?? "") !== (target.project ?? "")) return `${at}: step ${t + 1} works in a different project — a session only continues in the same project`;
+  const g = groups.find((x) => i >= x.first && i <= x.last);
+  if (g && t >= g.first) return `${at} runs alongside step ${t + 1}, so it can't continue its session`;
+  // Members run at once: two of them on one lane would resume the same session concurrently.
+  for (let k = g?.first ?? i; k < i; k++) {
+    if (lanes[k] === lanes[t]) return `${at}: step ${k + 1} runs alongside it in the same session — a group's steps can't share one`;
+  }
+  return null;
+}
+
+/** The `continues` rules per step (null = fine): an earlier delegate target on the same `cli`
+ * and `project`, not a sibling in its group, and no two group members on one lane. */
+export function describeContinueErrors(steps: readonly Record<string, unknown>[], ids: Map<string, number>): (string | null)[] {
+  const lanes = stepLanes(steps);
+  const groups = stepGroups(steps);
+  return steps.map((s, i) => {
+    if (!str(s.continues)) return null;
+    const t = ids.get(s.continues);
+    if (t === undefined) return `step ${i + 1}: continues step "${s.continues}" doesn't exist`;
+    return continueProblem(steps, i, t, lanes, groups);
+  });
+}
+
+/** Every earlier delegate step step `i` could continue, each with the problem continuing it
+ * would have (null = fine) — the editor's target picker. Render-only. */
+export function continueTargets(steps: RoutineStep[], i: number): { index: number; id?: string; problem: string | null }[] {
+  const raw = steps as unknown as Record<string, unknown>[];
+  const lanes = stepLanes(steps);
+  const groups = stepGroups(steps);
+  return steps.slice(0, i).flatMap((s, t) => s.kind !== "delegate" ? [] : [{
+    index: t, ...(s.id ? { id: s.id } : {}), problem: continueProblem(raw, i, t, lanes, groups),
+  }]);
+}
+
+/** Render-only captions per step: a lane's first step says where its session continues
+ * ("its session continues in steps 4, 6"), a continuing step names the step it resumes. A
+ * rejected `continues` gets no caption — its problem shows instead. */
+export function stepContinueCaptions(steps: RoutineStep[]): (string | null)[] {
+  const ids = stepIds(steps);
+  const problems = describeContinueErrors(steps as unknown as Record<string, unknown>[], ids);
+  const valid = steps.map((s, i) => (problems[i] ? { ...s, continues: undefined } : s));
+  const lanes = stepLanes(valid);
+  return valid.map((s, i) => {
+    if (s.continues !== undefined) return `continues step ${ids.get(s.continues)! + 1}'s session`;
+    const later = lanes.flatMap((root, k) => (root === i && k !== i ? [k + 1] : []));
+    return later.length ? `its session continues in step${later.length > 1 ? "s" : ""} ${later.join(", ")}` : null;
+  });
+}
+
 /** Each step's edge problem (or null) against the steps' current order — what a reorder or a
  * delete broke, before save. */
 export function stepEdgeProblems(steps: RoutineStep[]): (string | null)[] {
-  const ids = new Map<string, number>();
-  steps.forEach((s, i) => { if (s.id && !ids.has(s.id)) ids.set(s.id, i); });
+  const ids = stepIds(steps);
   const raw = steps as unknown as Record<string, unknown>[];
   const groups = describeGroupErrors(raw, ids);
-  return raw.map((s, i) => describeEdgeError(s, i, ids) ?? groups[i] ?? null);
+  const continues = describeContinueErrors(raw, ids);
+  return raw.map((s, i) => describeEdgeError(s, i, ids) ?? groups[i] ?? continues[i] ?? null);
 }
 
 /** Walks every route path forward from its entry the way the runner would on success: `next`
