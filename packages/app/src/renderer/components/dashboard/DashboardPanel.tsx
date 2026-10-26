@@ -7,7 +7,8 @@ import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import { StepFlow } from "../../shared/StepFlow.js";
 import {
-  attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, pathName, reviewRuns, runFlowOverlay, splitSteps, stepLabel, stepPassed, unreadRuns,
+  attemptSessions, attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, observedLanes, pathName, reviewRuns, runFlowOverlay, sessionSummary,
+  splitSteps, stepLabel, stepPassed, unreadRuns,
   type DashRun, type DashStep, type RunBucket,
 } from "./runs.js";
 import type { RoutineStateView, StepAttemptView } from "../../../ipc.js";
@@ -60,6 +61,8 @@ const dayOpenByDefault = (dayIndex: number): boolean => dayIndex === 0;
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+const attemptName = (a: StepAttemptView): string => pathName({ kind: a.kind, id: a.stepId ?? `step-${a.stepIndex + 1}`, round: a.round });
+
 const stepTitle = (step: DashStep): string => {
   if (step.todo === undefined) return `Step ${step.index + 1} failed`;
   return step.todo ? `Failed on todo: ${step.todo}` : "Failed on a queued todo";
@@ -98,8 +101,11 @@ export function DashboardPanel() {
   const [flipped, setFlipped] = useState<string[]>(() => readList(FLIPPED_KEY));
   const [rerunning, setRerunning] = useState(false);
   const [notice, setNotice] = useState("");
-  // Full step outputs live in bean.db, not the run record — fetched when a run's steps are opened.
+  // Full step outputs live in bean.db, not the run record — fetched when a run's steps are opened,
+  // or its flow is (for the shared-session badges). Keyed by recordId; `openOutputs` is which show.
   const [attempts, setAttempts] = useState<Record<string, StepAttemptView[]>>({});
+  const [openOutputs, setOpenOutputs] = useState<string[]>([]);
+  const loading = useRef(new Set<string>());
   const [copied, setCopied] = useState("");
   const [loaded, setLoaded] = useState(false);
   // A run Bean was asked to open (notification / avatar bubble click), held until it shows up in
@@ -150,7 +156,7 @@ export function DashboardPanel() {
   useEffect(() => {
     if (!pending && buckets[0] && !buckets.some((b) => b.key === selectedKey)) setSelectedKey(buckets[0].key);
   }, [buckets, selectedKey, pending]);
-  useEffect(() => { setOpenResolved([]); setFlippedDigests([]); setNotice(""); setAttempts({}); }, [selectedKey]);
+  useEffect(() => { setOpenResolved([]); setFlippedDigests([]); setNotice(""); setAttempts({}); setOpenOutputs([]); }, [selectedKey]);
 
   // Bucket-level landing: the target's day for that routine, whose newest run reads on top with its
   // digest open. No startedAt means the run itself wasn't recorded — show the routine's latest.
@@ -194,6 +200,12 @@ export function DashboardPanel() {
     () => (bucket?.runs ?? []).map((run) => ({ run, ...splitSteps(run) })),
     [bucket],
   );
+  const flowOpenAt = (run: DashRun, index: number): boolean => (index === 0) !== flippedFlows.includes(run.id);
+  // An open flow badges the sessions its run's attempts shared — only delegate steps have one.
+  useEffect(() => {
+    if (!routine?.steps.some((s) => s.kind === "delegate")) return;
+    runViews.forEach(({ run }, i) => { if (run.recordId && flowOpenAt(run, i)) void loadAttempts(run.recordId); });
+  }, [runViews, flippedFlows, routine]);
   const unreadHere = (bucket?.runs ?? []).filter((r) => unreadIds.has(r.id)).length;
   const needsTotal = runViews.reduce((n, v) => n + v.needs.length, 0);
   const attentionTotal = runViews.filter((v) => v.run.status === "needs-attention").length;
@@ -228,13 +240,17 @@ export function DashboardPanel() {
     );
   };
 
-  const toggleAttempts = async (runId: string): Promise<void> => {
-    if (attempts[runId]) {
-      setAttempts(({ [runId]: _drop, ...rest }) => rest);
-      return;
-    }
+  const loadAttempts = async (runId: string): Promise<void> => {
+    if (attempts[runId] || loading.current.has(runId)) return;
+    loading.current.add(runId);
     const list = await window.bean.routinesAttempts(runId).catch(() => []);
+    loading.current.delete(runId);
     setAttempts((prev) => ({ ...prev, [runId]: list }));
+  };
+
+  const toggleAttempts = (runId: string): void => {
+    setOpenOutputs((open) => (open.includes(runId) ? open.filter((id) => id !== runId) : [...open, runId]));
+    void loadAttempts(runId);
   };
 
   const copyResume = (command: string): void => {
@@ -306,12 +322,17 @@ export function DashboardPanel() {
   const runSection = (view: (typeof runViews)[number], index: number, firstNeed: number) => {
     const { run, needs, resolved } = view;
     const attention = attentionOf(run);
-    const runAttempts = run.recordId ? attempts[run.recordId] : undefined;
+    const loaded = run.recordId ? attempts[run.recordId] : undefined;
+    const runAttempts = run.recordId && openOutputs.includes(run.recordId) ? loaded : undefined;
+    const sessions = runAttempts ? attemptSessions(runAttempts, routine?.steps) : [];
+    const sessionLine = runAttempts ? sessionSummary(runAttempts) : undefined;
     const ordinal = runViews.length - index;
     const resolvedOpen = openResolved.includes(run.id);
     const digestOpen = (index === 0) !== flippedDigests.includes(run.id);
-    const flowOpen = (index === 0) !== flippedFlows.includes(run.id);
+    const flowOpen = flowOpenAt(run, index);
     const overlay = flowOpen && routine ? runFlowOverlay(run, routine.steps) : undefined;
+    // Lanes from what this run's attempts shared, never today's `continues` — and none on a drifted run.
+    const lanes = routine && loaded && overlay && overlay !== "drift" ? observedLanes(loaded, routine.steps.length) : undefined;
     return [
       spineRow(`${run.id}-head`, `run ${ordinal}`, "run", (
         <div class="bean-dash-run-head">
@@ -337,7 +358,7 @@ export function DashboardPanel() {
                 <span class="bean-dash-resolved-toggle">{flowOpen ? "Hide ▴" : "Show flow ▾"}</span>
               </button>
               {overlay === "drift" ? <div class="bean-dash-flow-note">This sprout changed since this run</div> : null}
-              {flowOpen ? <StepFlow steps={routine.steps} overlay={overlay === "drift" ? undefined : overlay} /> : null}
+              {flowOpen ? <StepFlow steps={routine.steps} overlay={overlay === "drift" ? undefined : overlay} {...(lanes ? { lanes } : {})} /> : null}
             </div>
           ))]
         : []),
@@ -432,23 +453,36 @@ export function DashboardPanel() {
               </button>
               {runAttempts ? (
                 runAttempts.length === 0 ? <div class="bean-dash-meta">No step output was kept for this run.</div>
-                : runAttempts.map((a, k) => (
-                  <div key={k} class="bean-dash-attempt">
-                    <span class="bean-dash-meta">
-                      {pathName({ kind: a.kind, id: a.stepId ?? `step-${a.stepIndex + 1}`, round: a.round })} · {a.kind}
-                      {a.cli ? ` · ${a.cli}` : ""} · {stepPassed(a) ? "✓" : "✗"}{a.verdict ? ` ${a.verdict}` : ""}
-                    </span>
-                    <pre class="bean-dash-attempt-out">{a.output}</pre>
-                    {a.resume ? (
-                      <div class="bean-dash-resume">
-                        <code>{a.resume}</code>
-                        <button type="button" class="bean-btn bean-btn--ghost" onClick={() => copyResume(a.resume!)}>
-                          {copied === a.resume ? "Copied" : "Copy"}
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ))
+                : (
+                  <>
+                    {sessionLine ? <div class="bean-dash-meta bean-dash-sessions">{sessionLine}</div> : null}
+                    {runAttempts.map((a, k) => {
+                      const { session, last, next, fresh } = sessions[k]!;
+                      const following = next === undefined ? undefined : runAttempts[next];
+                      const marks = [session === undefined ? "" : `session ${session}`, fresh ? "started fresh" : ""].filter(Boolean);
+                      return (
+                        <div key={k} class="bean-dash-attempt">
+                          <span class="bean-dash-meta">
+                            {attemptName(a)} · {a.kind}
+                            {a.cli ? ` · ${a.cli}` : ""} · {stepPassed(a) ? "✓" : "✗"}{a.verdict ? ` ${a.verdict}` : ""}
+                            {marks.length ? ` · ↻ ${marks.join(", ")}` : ""}
+                          </span>
+                          <pre class="bean-dash-attempt-out">{a.output}</pre>
+                          {following ? <div class="bean-dash-meta">↻ continued in {attemptName(following)}</div> : null}
+                          {/* One resume block per session: on its last attempt, where it carries on from. */}
+                          {a.resume && last ? (
+                            <div class="bean-dash-resume">
+                              <code>{a.resume}</code>
+                              <button type="button" class="bean-btn bean-btn--ghost" onClick={() => copyResume(a.resume!)}>
+                                {copied === a.resume ? "Copied" : "Copy"}
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </>
+                )
               ) : null}
             </div>
           ))]

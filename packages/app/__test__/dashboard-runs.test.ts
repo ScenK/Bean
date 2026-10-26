@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, reviewRuns, runFlowOverlay, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
+import { attemptSessions, attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, observedLanes, reviewRuns, runFlowOverlay, sessionSummary, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
 import type { RoutineStep, RunRecord } from "@bean/core";
 import { stepFlow } from "@bean/core/routine-graph";
 import type { RoutineStateView } from "../src/ipc.js";
@@ -323,5 +323,65 @@ describe("runFlowOverlay", () => {
     // The last step's chosen label no longer exists.
     const relabeled = [s("triage", { route: { paths: [{ when: "bug", goto: "end" }, { when: "chore", goto: "end" }] } })];
     expect(runFlowOverlay({ steps: [r("triage", { chose: "spec" })] }, relabeled)).toBe("drift");
+  });
+});
+
+describe("attempt sessions", () => {
+  // 1 chat · 2,4,6 continue one opencode session · 3,5 one claude session.
+  const d = (id: string, cli: "opencode" | "claude", continues?: string): RoutineStep =>
+    ({ kind: "delegate", id, skill: "", cli, instruction: "x", ...(continues ? { continues } : {}) });
+  const steps: RoutineStep[] = [
+    { kind: "chat", id: "a", instruction: "x" }, d("b", "opencode"), d("c", "claude"),
+    d("d", "opencode", "b"), d("e", "claude", "c"), d("f", "opencode", "d"),
+  ];
+  const at = (stepIndex: number, resume?: string, output = "done") =>
+    ({ stepIndex, output, ...(resume ? { resume, cli: resume.split(" ")[0] } : {}) });
+  const run = [at(0), at(1, "opencode -s A"), at(2, "claude --resume B"), at(3, "opencode -s A"), at(4, "claude --resume B"), at(5, "opencode -s A")];
+
+  test("groups attempts by resume string across steps, numbered by the session's first step", () => {
+    expect(attemptSessions(run, steps)).toEqual([
+      { last: true },
+      { session: 2, last: false, next: 3 }, { session: 3, last: false, next: 4 },
+      { session: 2, last: false, next: 5 }, { session: 3, last: true }, { session: 2, last: true },
+    ]);
+    expect(sessionSummary(run)).toBe("2 agent sessions · ↻2 steps 2→4→6 (opencode) · ↻3 steps 3→5 (claude)");
+    expect(observedLanes(run, steps.length)).toEqual([0, 1, 2, 1, 2, 1]);
+  });
+
+  test("a gate loop's rounds share their session", () => {
+    const loop = [at(1, "claude --resume X"), at(2), at(1, "claude --resume X"), at(2)];
+    expect(attemptSessions(loop).map((s) => s.session)).toEqual([2, undefined, 2, undefined]);
+    expect(sessionSummary(loop)).toBe("1 agent session · ↻2 steps 2 (claude)");
+  });
+
+  test("two todos in one run are separate sessions", () => {
+    const two = [at(1, "opencode -s A"), at(3, "opencode -s A"), at(1, "opencode -s C"), at(3, "opencode -s C")];
+    expect(attemptSessions(two, steps)).toEqual([
+      { session: 2, last: false, next: 1 }, { session: 2, last: true },
+      { session: 2, last: false, next: 3 }, { session: 2, last: true },
+    ]);
+    expect(sessionSummary(two)).toBe("2 agent sessions · ↻2 steps 2→4 (opencode) · ↻2 steps 2→4 (opencode)");
+  });
+
+  test("a step that fell back to a new session is marked fresh", () => {
+    // Step 2 failed with no session, so step 4 started its own.
+    const fallback = [at(1), at(3, "opencode -s D"), at(5, "opencode -s D")];
+    expect(attemptSessions(fallback, steps)).toEqual([{ last: true }, { session: 4, last: false, next: 2, fresh: true }, { session: 4, last: true }]);
+    // The runner's own note says so even without the definition.
+    const noted = [at(3, "opencode -s D", "(No earlier session from b to continue — started fresh.)\nok")];
+    expect(attemptSessions(noted)).toEqual([{ last: true, fresh: true }]);
+  });
+
+  test("an attempt with no resume is never grouped", () => {
+    expect(attemptSessions([at(1), at(3)], steps.map((s) => ({ ...s, continues: undefined }) as RoutineStep))).toEqual([{ last: true }, { last: true }]);
+    expect(sessionSummary([at(1), at(3)])).toBeUndefined();
+    expect(observedLanes([at(1), at(3)], 6)).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  test("a definition edited after the run doesn't regroup it", () => {
+    const edited = steps.map((s) => (s.kind === "delegate" ? { ...s, continues: undefined } : s)) as RoutineStep[];
+    const strip = (xs: ReturnType<typeof attemptSessions>) => xs.map(({ fresh: _f, ...rest }) => rest);
+    expect(strip(attemptSessions(run, edited))).toEqual(strip(attemptSessions(run, steps)));
+    expect(attemptSessions(run, edited).some((s) => s.fresh)).toBe(false);
   });
 });
