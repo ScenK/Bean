@@ -2,24 +2,22 @@
 
 <div align="center">
   <img src="docs/icon.png" alt="Bean app icon" width="128" height="128" />
-  <blockquote>My agent. Knows me, works for me, and only acts when I say go.</blockquote>
+  <blockquote>Gets to know you, gets things done, and always asks before it acts.</blockquote>
 </div>
 
-**Bean is my personal agent — a tiny pet that lives on my desktop and gets things done.**
+**Bean is a personal agent that lives on your desktop as a tiny pet.**
 
-It isn't a harness I drive; it's an agent that works for me. Bean knows who I am,
-where my projects live, and how I like things done. It answers what it can on its
-own, runs my errands on a schedule, and when a job needs real hands it picks up a
-coding agent (`claude`, `codex`, `opencode`) as a tool — always with my
-confirmation. No dashboards, no setup files, no ceremony. Just a bean.
-
-Bean is built for one person. Install it and it becomes *your* agent.
+It's not another harness to drive — it's an agent that works for you. Bean learns
+who you are, where your projects live, and how you like things done. It answers what
+it can on its own, runs errands on a schedule, and when a job needs real hands it
+brings in a coding agent (`claude`, `codex`, `opencode`) — always with your OK.
+No dashboards, no setup files, no ceremony. Just a bean.
 
 > **macOS only, for now.**
 
 ---
 
-## What my agent does
+## What Bean does
 
 🫘 **It's just a chat — until it isn't.**
 Ask it anything. Bean answers right there. When something needs actual work, the
@@ -59,15 +57,15 @@ Bean doesn't have to be in front of you to work for you.
 Ask Bean to turn the volume down, mute, skip a track, or launch and quit apps. Opt-in
 in Settings, and every action maps to a fixed, validated command — no free-form scripts.
 
-🔌 **Your agent, your key.**
+🔌 **Your key, your machine.**
 Bean thinks with your own OpenAI key and works through the coding CLIs you already
-use. Your key, your models, your machine — nothing runs through someone else's service.
+use. Nothing runs through someone else's service.
 
 ---
 
-## One agent, home and work
+## One bean, home and work
 
-The same bean covers both halves of my day:
+The same bean covers both halves of your day:
 
 - **Personal & family** — a morning brief, reminders, a sprout that tidies photos or
   drafts the grocery list, music and volume by voice, notes that remember birthdays and
