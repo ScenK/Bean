@@ -41,7 +41,7 @@
   <rect class="bg" width="1200" height="760"/>
 
   <text x="60" y="58" class="title">How Bean is built</text>
-  <text x="60" y="86" class="subtitle">Three surfaces, one pure core. Every way you reach Bean — the desktop pet, a Discord bot, a Teams bot, the scheduler that runs your routines — </text>
+  <text x="60" y="86" class="subtitle">Three surfaces, one pure core. Every way you reach Bean — the desktop pet, a Discord bot, a Teams bot, the scheduler that runs your sprouts — </text>
   <text x="60" y="107" class="subtitle">funnels into the same Electron-free brain.</text>
 
   <!-- column captions -->
@@ -71,9 +71,9 @@
   <text x="84" y="451" class="box-text">Message Bean from your work chat.</text>
 
   <text x="84" y="552" class="box-title">Scheduler</text>
-  <text x="340" y="552" class="pkg" text-anchor="end">cron + routine-runner</text>
-  <text x="84" y="576" class="box-text">Fires routines on a cron schedule and</text>
-  <text x="84" y="595" class="box-text">drains to-do queues — no human needed.</text>
+  <text x="340" y="552" class="pkg" text-anchor="end">routine-scheduler</text>
+  <text x="84" y="576" class="box-text">Fires sprouts on a schedule or a watched</text>
+  <text x="84" y="595" class="box-text">feed and drains to-do queues — hands-free.</text>
 
   <!-- CORE -->
   <g class="shadow">
@@ -92,7 +92,7 @@
   </g>
   <text x="600" y="287" class="chip" text-anchor="middle">converse() — chat, propose a run</text>
   <text x="600" y="337" class="chip" text-anchor="middle">launcher + delegate — hand off tasks</text>
-  <text x="600" y="387" class="chip" text-anchor="middle">routines — schedule &amp; pipeline steps</text>
+  <text x="600" y="387" class="chip" text-anchor="middle">sprouts — scheduled &amp; watched pipelines</text>
   <text x="600" y="437" class="chip" text-anchor="middle">memory · notes · todos</text>
   <text x="600" y="487" class="chip" text-anchor="middle">system-control — drive the Mac</text>
   <text x="600" y="537" class="chip" text-anchor="middle">skills · projects · persona loaders</text>
@@ -111,7 +111,7 @@
   <text x="864" y="229" class="box-text">Your key, your model (BYOK).</text>
 
   <text x="864" y="308" class="box-title">Coding agents</text>
-  <text x="864" y="335" class="box-text">opencode / claude, in Terminal or headless.</text>
+  <text x="864" y="335" class="box-text">claude / codex / opencode, headed or not.</text>
 
   <text x="864" y="414" class="box-title">Your Mac</text>
   <text x="864" y="441" class="box-text">Volume, media, launch/quit apps (opt-in).</text>
