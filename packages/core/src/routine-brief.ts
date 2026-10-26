@@ -60,7 +60,7 @@ export function briefMessages(sentence: string, ctx: BriefContext, previous?: Ro
     "- For a YouTube handle like @name use source \"https://www.youtube.com/@name\" and sourceKind \"feed\".",
     "- notifyOnly = true when the user only wants to be told (\"ping me\", \"let me know\"); then steps is []. Otherwise one step per thing Bean should do to each new item; delegate for code/repo/review work, chat for summarising/writing.",
     "- everyMinutes: 5 for work queues (PRs, tickets), 15 for feeds, unless the user says otherwise.",
-    "- Keep each existing step's \"id\", \"cli\", \"model\" and \"route\" exactly as in the current brief unless the user changes them; never invent a model, and set cli only when the user names that coding agent.",
+    "- Keep each existing step's \"id\", \"cli\", \"model\", \"route\" and \"continues\" exactly as in the current brief unless the user changes them; never invent a model, and set cli only when the user names that coding agent.",
     "- command steps: a deterministic shell check (tests, lint, build) — exit 0 passes. Use one only when the user describes a check a command can run.",
     "- Gates: when the user says to stop, loop back, or branch on a step's result, give that step a gate. \"stop if it fails\" = {\"onFail\": \"stop\"}; \"loop back to X up to N times\" = {\"onFail\": {\"goto\": \"<X's id>\", \"maxRounds\": N}} (an earlier step); a goto to a later step is a branch. \"next\": \"end\" ends the run after that step on success. Give a step an id only when an edge points at it, and point edges only at ids in this brief. No gates unless the user asked for that control flow.",
     "- Routes: when the user picks between paths by what a step finds (\"if it's X do A, if it's Y do B, otherwise …\"), give that deciding step a route — at least 2 paths, one per case, each \"when\" a short kebab-case label (never pass/fail) and \"goto\" the id of that path's first step; \"otherwise\" covers everything else (\"end\" to stop). Write the criteria for each label into the deciding step's instruction. Lay each path's steps out after the deciding step; a path that rejoins a shared later step sets \"next\" on its last step to that step's id. Every path that doesn't rejoin, including the last one, ends explicitly: \"goto\": \"end\", or \"next\": \"end\" on its last step. A route step has no gate or next. No routes unless the user described choices.",
@@ -105,7 +105,9 @@ function cleanStep(v: unknown, ctx: BriefContext): RoutineStep | undefined {
   if (s.kind === "delegate") {
     const cli = CLI_NAMES.find((c) => c === s.cli);
     const pinned = cli ? { cli, ...(str(s.model) && s.model ? { model: s.model } : {}) } : {};
-    return { kind: "delegate", ...id, skill: skill ?? "", ...(project ? { project } : {}), ...pinned, instruction, ...edges };
+    // Shape-only, like an edge: parseBrief drops it when the continues rules reject it.
+    const continues = str(s.continues) && STEP_ID_RE.test(s.continues) ? { continues: s.continues } : {};
+    return { kind: "delegate", ...id, skill: skill ?? "", ...(project ? { project } : {}), ...pinned, instruction, ...continues, ...edges };
   }
   return { kind: "chat", ...id, ...(skill ? { skill } : {}), instruction, ...edges };
 }
@@ -174,19 +176,21 @@ export function parseBrief(raw: string, ctx: BriefContext): RoutineBrief {
       const { id: _dup, ...rest } = s; // a repeated id would fail validation — the editor re-assigns one
       return rest as RoutineStep;
     });
-  // A bad edge (missing target, backward next, rounds on a branch, a malformed route) is dropped,
+  // A bad edge (missing target, backward next, rounds on a branch, a malformed route) or a
+  // rejected `continues` is dropped,
   // never the step — each edge on its own, so a bad `next` can't take a valid stop gate with it,
   // and a route is kept or dropped whole.
-  const only = (key: "gate" | "next" | "route") => stepEdgeProblems(steps.map((s) => {
-    const { gate: _g, next: _n, route: _r, ...rest } = s;
+  const only = (key: "gate" | "next" | "route" | "continues") => stepEdgeProblems(steps.map((s) => {
+    const { gate: _g, next: _n, route: _r, continues: _c, ...rest } = s;
     return (s[key] === undefined ? rest : { ...rest, [key]: s[key] }) as RoutineStep;
   }));
-  const bad = { gate: only("gate"), next: only("next"), route: only("route") };
+  const bad = { gate: only("gate"), next: only("next"), route: only("route"), continues: only("continues") };
   steps.forEach((s, i) => {
-    const { gate, next, route, ...rest } = s;
+    const { gate, next, route, continues, ...rest } = s;
+    const kept = { ...rest, ...(continues && !bad.continues[i] ? { continues } : {}) };
     // A valid route wins: it can't share a step with a gate or next.
-    steps[i] = (route && !bad.route[i] ? { ...rest, route }
-      : { ...rest, ...(gate && !bad.gate[i] ? { gate } : {}), ...(next && !bad.next[i] ? { next } : {}) }) as RoutineStep;
+    steps[i] = (route && !bad.route[i] ? { ...kept, route }
+      : { ...kept, ...(gate && !bad.gate[i] ? { gate } : {}), ...(next && !bad.next[i] ? { next } : {}) }) as RoutineStep;
   });
   const minutes = typeof b.everyMinutes === "number" && Number.isInteger(b.everyMinutes) && b.everyMinutes >= 1 ? b.everyMinutes : undefined;
   const source = str(b.source) && b.source.trim() ? b.source.trim() : undefined;
