@@ -2,24 +2,28 @@
 
 <div align="center">
   <img src="docs/icon.png" alt="Bean app icon" width="128" height="128" />
-  <blockquote>I'll do whatever I can suggest; if not, the task is delegated to an external agent.</blockquote>
+  <blockquote>My agent. Knows me, works for me, and only acts when I say go.</blockquote>
 </div>
 
-**Bean is a tiny pet that lives on your desktop and gets things done.**
+**Bean is my personal agent — a tiny pet that lives on my desktop and gets things done.**
 
-Talk to it like any chat app — it remembers you. When a message turns into real
-work, Bean grows into a launcher and hands the task off to a coding agent, always
-with your confirmation. No dashboards, no setup files, no ceremony. Just a bean.
+It isn't a harness I drive; it's an agent that works for me. Bean knows who I am,
+where my projects live, and how I like things done. It answers what it can on its
+own, runs my errands on a schedule, and when a job needs real hands it picks up a
+coding agent (`claude`, `codex`, `opencode`) as a tool — always with my
+confirmation. No dashboards, no setup files, no ceremony. Just a bean.
+
+Bean is built for one person. Install it and it becomes *your* agent.
 
 > **macOS only, for now.**
 
 ---
 
-## Why you'll like it
+## What my agent does
 
 🫘 **It's just a chat — until it isn't.**
 Ask it anything. Bean answers right there. When something needs actual work, the
-same conversation offers to *run* it — and you decide.
+same conversation offers to *do* it — and you decide.
 
 🧠 **It remembers you.**
 Bean keeps notes as you talk, and on close it offers to save the durable stuff —
@@ -30,7 +34,7 @@ within one.
 Nothing runs without a confirmation card: what skill, which project, the exact
 prompt — all editable. Hit **Confirm & run** or don't.
 
-🎯 **Drop a link, get the right tool.**
+🎯 **Drop a link, get the right skill.**
 Drag a URL onto the avatar and Bean blooms open its skills, so you drop the link
 straight onto the one that should handle it.
 
@@ -38,12 +42,13 @@ straight onto the one that should handle it.
 Skills are just markdown files. Adding a new ability is writing a note, not code.
 Point Bean at your project folders and it learns where your work lives.
 
-⏰ **Runs on a schedule.**
-Turn any task into a *sprout* — a recurring pipeline on a cron schedule. The morning
-digest, the weekly cleanup, the "check this and tell me" job. Sprouts can chain
-steps and drain a to-do queue, then drop the result wherever you want it. Steps can
-gate on a PASS/FAIL verdict to stop, branch, or loop — start from an example flow (dev
-loop, ticket lint first, review only) in the Sprouts panel and reshape it.
+⏰ **Works while you're away.**
+Turn any task into a *sprout* — a recurring pipeline on a cron schedule or a watched
+feed. The morning digest, the weekly cleanup, the "check this and tell me" job.
+Sprouts can chain steps and drain a to-do queue, then drop the result wherever you
+want it. Steps can gate on a PASS/FAIL verdict to stop, branch, or loop — start from
+an example flow (dev loop, ticket lint first, review only) in the Sprouts panel and
+reshape it.
 
 💬 **Reach it from anywhere.**
 Wire Bean up to Discord or Teams and message it from your phone or your work chat.
@@ -54,20 +59,20 @@ Bean doesn't have to be in front of you to work for you.
 Ask Bean to turn the volume down, mute, skip a track, or launch and quit apps. Opt-in
 in Settings, and every action maps to a fixed, validated command — no free-form scripts.
 
-🔌 **Bring your own key.**
-Bean makes no model calls of its own — you plug in your OpenAI key in Settings and
-you're off. Your key, your models, your machine.
+🔌 **Your agent, your key.**
+Bean thinks with your own OpenAI key and works through the coding CLIs you already
+use. Your key, your models, your machine — nothing runs through someone else's service.
 
 ---
 
-## One bean, home and work
+## One agent, home and work
 
-The same pet fits both halves of your day:
+The same bean covers both halves of my day:
 
 - **Personal & family** — a morning brief, reminders, a sprout that tidies photos or
   drafts the grocery list, music and volume by voice, notes that remember birthdays and
   preferences.
-- **On the job** — hand a coding task to `opencode`/`claude`/`codex`, schedule the standup
+- **On the job** — let it put `opencode`/`claude`/`codex` to work on a coding task, schedule the standup
   summary, trigger a build from Teams, queue up to-dos and let a sprout work them down.
 
 Set it up once; it quietly covers everything from the family calendar to the sprint.
