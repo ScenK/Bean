@@ -48,10 +48,11 @@ export function StepFlow(props: { steps: RoutineStep[]; overlay?: FlowOverlay })
           ))}
         </defs>
         {layout.edges.map(({ edge, d, x, y, cap, repeat }, k) => {
+          if (repeat) return null;
           // Overlay edges index `flow.edges`; the layout orders them differently.
           const lit = overlay?.edges.has(flow.edges.indexOf(edge));
           const accent = overlay ? Boolean(lit) : edge.kind === "fail" || edge.kind === "loop" || edge.via === "fail";
-          const label = repeat ? undefined : edgeLabel(edge);
+          const label = edgeLabel(edge);
           return (
             <g key={k}>
               <path
@@ -68,8 +69,11 @@ export function StepFlow(props: { steps: RoutineStep[]; overlay?: FlowOverlay })
             </g>
           );
         })}
-        {layout.bars.map((b, k) => (
-          <line key={k} class={`bean-flow-bar ${overlay && b.edges.some((e) => overlay.edges.has(flow.edges.indexOf(e))) ? "bean-flow-accent" : "bean-flow-line"}`} x1={b.x1 - 10} y1={b.y} x2={b.x2 + 10} y2={b.y} />
+        {layout.groups.map((g) => (
+          <g key={g.first}>
+            <rect class={`bean-flow-group ${overlay?.counts.slice(g.first, g.first + g.n).some((c) => c > 0) ? "bean-flow-accent" : "bean-flow-line"}`} x={g.x} y={g.y} width={g.w} height={g.h} rx="14" />
+            <text class="bean-flow-label bean-flow-group-label" x={g.x + 10} y={g.y + 3.5}>{`⫴ together · ${g.n}`}</text>
+          </g>
         ))}
         {layout.boxes.map((b) => {
           const step = props.steps[b.index]!;

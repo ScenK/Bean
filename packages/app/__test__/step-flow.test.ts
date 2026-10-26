@@ -4,8 +4,8 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { RoutineStep } from "@bean/core";
 import { stepFlow } from "@bean/core/routine-graph";
-import { layoutStepFlow } from "../src/renderer/shared/step-flow-layout.js";
-import { StepFlow } from "../src/renderer/shared/StepFlow.js";
+import { layoutStepFlow, NODE_H, NODE_W, type FlowBox, type FlowGroup } from "../src/renderer/shared/step-flow-layout.js";
+import { StepFlow, type FlowOverlay } from "../src/renderer/shared/StepFlow.js";
 
 const s = (id: string, extra: Partial<RoutineStep> = {}): RoutineStep => ({ kind: "chat", id, instruction: "x", ...extra } as RoutineStep);
 // classify → bug | spec | reply, rejoining at report; report loops back to classify on fail.
@@ -48,27 +48,96 @@ describe("layoutStepFlow", () => {
 describe("parallel groups", () => {
   // A 4-wide group that starts the sprout, then a join; a router forks into the group too.
   const wide = [s("a"), s("b", { alongside: true }), s("c", { alongside: true }), s("d", { alongside: true }), s("join")];
-  it("puts a group's members on one row, even one that starts the sprout, with a bar above and below", () => {
-    const steps = [s("start"), ...wide];
-    const layout = layoutStepFlow(stepFlow(steps));
-    expect(new Set(layout.boxes.slice(1, 5).map((b) => b.row)).size).toBe(1);
-    expect(layout.boxes[5]!.row).toBe(layout.boxes[1]!.row + 1);
-    expect(layout.bars.map((b) => [b.y < layout.boxes[1]!.y, b.edges.map((e) => e.kind)[0], b.edges.length])).toEqual([[true, "fork", 4], [false, "join", 4]]);
-    const first = layoutStepFlow(stepFlow(wide));
-    expect(new Set(first.boxes.slice(0, 4).map((b) => b.row))).toEqual(new Set([0]));
-    expect(first.bars.map((b) => b.edges[0]!.kind)).toEqual(["join"]);
-  });
-
-  it("draws forks and joins unlabeled, one fork port, one end cap; a route path into a group keeps its label once", () => {
-    const steps = [s("r", { route: { paths: [{ when: "go", goto: "a" }, { when: "skip", goto: "end" }] } }), s("a"), s("b", { alongside: true })];
+  const encloses = (g: FlowGroup, b: FlowBox): boolean => b.x >= g.x && b.x + NODE_W <= g.x + g.w && b.y >= g.y && b.y + NODE_H <= g.y + g.h;
+  const ends = (d: string): [number, number] => d.split(/[ ,]/).slice(-2).map(Number) as [number, number];
+  const starts = (d: string): [number, number] => d.slice(1).split(/[ ,]/).slice(0, 2).map(Number) as [number, number];
+  const mount = (steps: RoutineStep[], overlay?: FlowOverlay): HTMLElement => {
     const root = document.createElement("div");
     document.body.append(root);
-    act(() => { render(h(StepFlow, { steps }), root); });
+    act(() => { render(h(StepFlow, { steps, ...(overlay ? { overlay } : {}) }), root); });
+    return root;
+  };
+
+  it("puts a group's members on one row in one frame, even a group that starts the sprout", () => {
+    const layout = layoutStepFlow(stepFlow([s("start"), ...wide]));
+    expect(new Set(layout.boxes.slice(1, 5).map((b) => b.row)).size).toBe(1);
+    expect(layout.boxes[5]!.row).toBe(layout.boxes[1]!.row + 1);
+    expect(layout.groups.map(({ first, n }) => [first, n])).toEqual([[1, 4]]);
+    const [g] = layout.groups;
+    expect(layout.boxes.map((b) => encloses(g!, b))).toEqual([false, true, true, true, true, false]);
+    // Inside the gap the old bar used: the layout doesn't grow.
+    expect(g!.y).toBe(layout.boxes[1]!.y - 8);
+    expect(g!.h).toBe(NODE_H + 16);
+    const first = layoutStepFlow(stepFlow(wide));
+    expect(new Set(first.boxes.slice(0, 4).map((b) => b.row))).toEqual(new Set([0]));
+    expect(first.groups.map(({ first, n }) => [first, n])).toEqual([[0, 4]]);
+  });
+
+  it("encloses exactly its members when a route sibling lands in the same row", () => {
+    const steps = [s("r", { route: { paths: [{ when: "go", goto: "a" }, { when: "other", goto: "x" }] } }), s("x", { next: "end" }), s("a"), s("b", { alongside: true })];
+    const layout = layoutStepFlow(stepFlow(steps));
+    expect(new Set(layout.boxes.slice(1).map((b) => b.row)).size).toBe(1);
+    expect(layout.boxes.map((b) => encloses(layout.groups[0]!, b))).toEqual([false, false, true, true]);
+  });
+
+  it("forks a bundle as one curve into the frame's top centre and joins as one from its bottom", () => {
+    const layout = layoutStepFlow(stepFlow([s("start"), ...wide]));
+    const g = layout.groups[0]!;
+    const forks = layout.edges.filter((l) => l.edge.kind === "fork");
+    const joins = layout.edges.filter((l) => l.edge.kind === "join");
+    expect([forks.length, joins.length]).toEqual([4, 4]);
+    expect(forks.map((l) => Boolean(l.repeat))).toEqual([false, true, true, true]);
+    expect(joins.map((l) => Boolean(l.repeat))).toEqual([false, true, true, true]);
+    expect(ends(forks[0]!.d)).toEqual([g.x + g.w / 2, g.y]);
+    expect(starts(joins[0]!.d)).toEqual([g.x + g.w / 2, g.y + g.h]);
+    expect(ends(joins[0]!.d)).toEqual([layout.boxes[5]!.x + NODE_W / 2, layout.boxes[5]!.y]);
+  });
+
+  it("joins a group straight into the next group's frame", () => {
+    const steps = [s("a"), s("b", { alongside: true }), s("c"), s("d", { alongside: true })];
+    const layout = layoutStepFlow(stepFlow(steps));
+    const [g1, g2] = layout.groups;
+    const drawn = layout.edges.filter((l) => !l.repeat);
+    expect(drawn.map((l) => l.edge.kind)).toEqual(["join", "join"]);
+    expect(starts(drawn[0]!.d)).toEqual([g1!.x + g1!.w / 2, g1!.y + g1!.h]);
+    expect(ends(drawn[0]!.d)).toEqual([g2!.x + g2!.w / 2, g2!.y]);
+    expect(drawn[1]!.cap).toEqual({ x: g2!.x + g2!.w / 2, y: g2!.y + g2!.h + 24 + 12 });
+  });
+
+  it("enters a route path into a group's frame, labelled once; one end cap under a group that ends the run", () => {
+    const steps = [s("r", { route: { paths: [{ when: "go", goto: "a" }, { when: "skip", goto: "end" }] } }), s("a"), s("b", { alongside: true })];
+    const root = mount(steps);
     expect([...root.querySelectorAll(".bean-flow-label title")].map((t) => t.textContent)).toEqual(["go", "skip", "otherwise"]);
     expect([...root.querySelectorAll(".bean-flow-cap")].map((t) => t.textContent)).toEqual(["● end", "■ stop", "● end"]);
-    expect(root.querySelectorAll(".bean-flow-bar")).toHaveLength(2);
-    const forks = layoutStepFlow(stepFlow(steps)).edges.filter((l) => l.edge.kind === "fork");
-    expect(new Set(forks.map((l) => l.d.split(" ")[0])).size).toBe(1);
+    expect(root.querySelectorAll(".bean-flow-group")).toHaveLength(1);
+    expect(root.querySelector(".bean-flow-group-label")!.textContent).toBe("⫴ together · 2");
+    // go, skip, otherwise, and the group's one join to its ● end.
+    expect(root.querySelectorAll(".bean-flow-edge")).toHaveLength(4);
+    const g = layoutStepFlow(stepFlow(steps)).groups[0]!;
+    const into = [...root.querySelectorAll(".bean-flow-edge")].find((p) => p.getAttribute("d")!.endsWith(`${g.x + g.w / 2},${g.y}`))!;
+    expect(into.getAttribute("marker-end")).toMatch(/^url\(#/);
+  });
+
+  it("ends a loop back into a group at its frame's left edge", () => {
+    const steps = [s("a"), s("b"), s("c", { alongside: true }), s("gate", { gate: { onFail: { goto: "b", maxRounds: 2 } } })];
+    const layout = layoutStepFlow(stepFlow(steps));
+    const loop = layout.edges.find((l) => l.edge.kind === "loop")!;
+    expect(loop.d.endsWith(`H${layout.groups[0]!.x}`)).toBe(true);
+  });
+
+  it("lights the frame when a member ran, and the edges the run took", () => {
+    const steps = [s("a"), s("b"), s("c", { alongside: true }), s("d")];
+    const edges = stepFlow(steps).edges;
+    const all = new Set(edges.map((_, k) => k).filter((k) => edges[k]!.kind === "fork" || edges[k]!.kind === "join"));
+    const root = mount(steps, { counts: [1, 1, 1, 0], failed: [false, false, true, false], edges: all });
+    expect(root.querySelector(".bean-flow-group")!.classList.contains("bean-flow-accent")).toBe(true);
+    expect(root.querySelectorAll(".bean-flow-edge--lit")).toHaveLength(2);
+    expect([...root.querySelectorAll(".bean-flow-title")].map((t) => t.textContent)).toContain("3 · chat ✗");
+    document.body.innerHTML = "";
+    const unrun = mount(steps, { counts: [1, 0, 0, 0], failed: [true, false, false, false], edges: new Set() });
+    expect(unrun.querySelector(".bean-flow-group")!.classList.contains("bean-flow-line")).toBe(true);
+    // The old fork/join bar was the diagram's only <line>.
+    expect(unrun.querySelectorAll("line")).toHaveLength(0);
   });
 });
 

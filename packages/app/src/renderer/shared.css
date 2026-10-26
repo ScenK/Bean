@@ -2521,7 +2521,7 @@ button, input, textarea, select, a {
 .bean-flow-svg marker path { fill: currentColor; }
 .bean-flow-edge { fill: none; stroke: currentColor; stroke-width: 1.5; }
 .bean-flow-edge--loop { stroke-dasharray: 4 3; }
-.bean-flow-bar { stroke: currentColor; stroke-width: 4; stroke-linecap: round; }
+.bean-flow-group { fill: none; stroke: currentColor; stroke-width: 1.5; }
 .bean-flow-node { fill: var(--bean-surface-2); stroke: var(--bean-control-border); stroke-width: 1; }
 .bean-flow-node--flagged { stroke: var(--bean-error); stroke-width: 2; }
 .bean-flow-svg text { fill: currentColor; }
@@ -2530,6 +2530,8 @@ button, input, textarea, select, a {
 .bean-flow-clip { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .bean-flow-label, .bean-flow-cap { color: var(--bean-text-dim); font-size: 10px; paint-order: stroke; stroke: var(--bean-surface); stroke-width: 3px; stroke-linejoin: round; }
 .bean-flow-cap { font-weight: 600; color: var(--bean-text); }
+/* Sits on its frame's top edge: a wider halo than an edge label's so the line can't show between glyphs. */
+.bean-flow-group-label { stroke-width: 6px; }
 .bean-flow-cap--stop { color: var(--bean-error); }
 /* Dashboard run overlay: the accent is the path taken; unreached nodes dashed with dim titles
    (no opacity — see convention-theme-contrast). */
