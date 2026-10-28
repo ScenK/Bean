@@ -11,6 +11,9 @@ Group channels (Discord/Teams) balance "natural" against "predictable" with one 
   and every state change (mute/unmute/chatty included). A silent decision persists nothing and
   leaves the cutoff alone; a spoken one persists the window + reply and advances the cutoff
   (never backwards). Any addressed message cancels the conversation's pending/in-flight chime-in.
+  Discord (#446) feeds it from the not-addressed branch of `messageCreate` (channel or user-made
+  thread; DMs/Bean threads are addressed, capturing channels never reach it) and posts in that same
+  channel with `allowedMentions: { parse: [] }` — never `startThread`, never a ping.
 
 - **Only an explicit address gets a turn**: DM, platform @mention, reply-to-Bean, or (Discord) any
   message in a thread Bean opened (`isBeanThread` — `ownerId` is the bot, so it survives restarts;
