@@ -351,7 +351,25 @@ app.post("/api/messages", (req, res) => {
     const capturing = liveSessions.has(a.conversation.id);
     if (!addressedToBot(a, `28:${teamsConfig.botAppId}`) && !capturing) {
       // Not for Bean — remember it as context for a later mention, but don't reply.
-      if (text) ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
+      if (!text) return;
+      ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
+      // Channel/group chatter may earn a text-only chime-in (if `chatty on` in its scope); personal
+      // chats have no scope and never chime in. The turn context is revoked by the time the lull
+      // timer fires, so the post is proactive: the full conversation id keeps it in this thread,
+      // and activityId is dropped (it would become replyToId).
+      const scopeId = scopeOf(a);
+      if (scopeId) {
+        const conv = a.conversation.id;
+        const ref: Partial<ConversationReference> = { ...TurnContext.getConversationReference(a), activityId: undefined };
+        bot.onAmbient(conv, scopeId, {
+          fetchRecent: async (sinceMs) => ambient.since(conv, sinceMs),
+          post: async (reply) => {
+            await adapter.continueConversationAsync(teamsConfig.botAppId, ref, async (ctx) => {
+              await ctx.sendActivity({ type: ActivityTypes.Message, text: teamsText(reply) });
+            });
+          },
+        });
+      }
       return;
     }
     const direct = a.conversation.conversationType === "personal";

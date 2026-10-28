@@ -98,6 +98,11 @@ Adaptive Card and execute on THIS machine.
    RSC granted, Teams delivers *every* channel message to the bot; Bean stores the
    non-mention ones in memory (last ~200 per conversation, lost on restart) and never replies
    to them. Without RSC, everything else still works — Bean just can't see ambient chatter.
+   **Chatty mode needs RSC too**: `@Bean chatty on` (admin) in a channel or group chat lets Bean
+   chime in now and then after a lull, as a reply in the thread the chatter came from (two
+   threads in one channel share its cooldown and daily budget). Without RSC no un-addressed
+   message arrives, so Bean never chimes in. Personal chats never chime in. `@Bean quiet 30m` /
+   `@Bean unmute` / `@Bean chatty off` stop it.
 
 ## Slash commands
 
@@ -217,6 +222,9 @@ silently with the same generic Teams error and guessing wastes a round trip:
 - [ ] (RSC granted) chat without mentioning Bean, then "@Bean summarize the last 10 minutes"
       → summary references the ambient messages; the non-mention messages got no reply.
 - [ ] (RSC granted) an untagged message naming Bean ("bean is slow today") → no reply at all.
+- [ ] (RSC granted, `@Bean chatty on` in the channel) chat a question in a thread without
+      mentioning Bean, then pause → any chime-in lands as a reply in that thread, not a new post;
+      the same in a group chat; never in a 1:1.
 - [ ] "@Bean /new" → "Fresh start"; a follow-up shows no memory of the prior chat or ambient.
 - [ ] (owner) "@Bean every weekday at 9 post a standup reminder here" in a channel → sprout
       card; Save → `sprouts` lists it; its digest lands as a new channel post.
