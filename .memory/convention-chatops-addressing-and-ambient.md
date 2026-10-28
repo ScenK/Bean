@@ -3,6 +3,15 @@
 Group channels (Discord/Teams) balance "natural" against "predictable" with one rule:
 **ambient awareness may only improve what Bean says once invoked — never whether Bean acts.**
 
+- **Chatty channels (#443) are the one exception to "only an address gets a turn", and it is
+  text-only.** In a channel an admin opted in (`chatty on`), ambient chatter can trigger a
+  chime-in (`chatops/chatter.ts` `makeChimeIn`): after a lull, one `deps.chat` call with
+  `tools: []`, `webSearch: false`, that replies in ≤2 sentences or outputs `<silent>`. It never
+  goes through `converse()`, so it can't act. An address still governs every turn that can act
+  and every state change (mute/unmute/chatty included). A silent decision persists nothing and
+  leaves the cutoff alone; a spoken one persists the window + reply and advances the cutoff
+  (never backwards). Any addressed message cancels the conversation's pending/in-flight chime-in.
+
 - **Only an explicit address gets a turn**: DM, platform @mention, reply-to-Bean, or (Discord) any
   message in a thread Bean opened (`isBeanThread` — `ownerId` is the bot, so it survives restarts;
   those threads skip ambient `fetchRecent` entirely). Everything
