@@ -302,7 +302,19 @@ client.on("messageCreate", async (message) => {
       isBeanThread(message.channel) ||
       message.mentions.users.has(client.user?.id ?? "") ||
       message.mentions.repliedUser?.id === client.user?.id;
-    if (!addressed && !capturing) return;
+    if (!addressed && !capturing) {
+      // Chatter in a channel or user-made thread may earn a text-only chime-in (if `chatty on` in
+      // its channel). DMs and Bean threads are always addressed, and capturing never gets here.
+      const channel = message.channel;
+      if (message.content && "send" in channel) {
+        bot.onAmbient(channel.id, scopeId, {
+          fetchRecent: effectsFor(channel).fetchRecent!,
+          // Same channel/thread, never a new thread; nothing in it pings anyone.
+          post: async (text) => { await channel.send({ content: text, allowedMentions: { parse: [] } }); },
+        });
+      }
+      return;
+    }
     let text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
     // A forward arrives with empty content; its snapshot is the thing to talk about.
     const forward = message.reference?.type === MessageReferenceType.Forward ? message.messageSnapshots.first() : undefined;
