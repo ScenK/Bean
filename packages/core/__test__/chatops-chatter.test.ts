@@ -17,7 +17,7 @@ test("parser: chatty on/off/status, unmute, and whole-message mutes with clamped
   expect(parseChatterCommand("Stay quiet for 2 hours.")).toEqual({ kind: "mute", minutes: 120 });
   expect(parseChatterCommand("mute 0m")).toEqual({ kind: "mute", minutes: 1 });
   expect(parseChatterCommand("mute 48h")).toEqual({ kind: "mute", minutes: 1440 });
-  for (const t of ["be quiet about X and do Y", "quiet please", "mute the mac 5m", "chatty maybe", "hush 5 days"]) {
+  for (const t of ["be quiet about X and do Y", "quiet please", "mute the mac 5m", "chatty maybe", "hush 5 days", `mute${"!".repeat(30_000)}x`]) {
     expect(parseChatterCommand(t), t).toBeUndefined();
   }
 });

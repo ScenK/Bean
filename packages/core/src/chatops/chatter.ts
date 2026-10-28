@@ -51,6 +51,8 @@ export type ChatterCommand =
  * `quiet|hush|mute|be quiet|stay quiet [for] <n><unit>` (no duration = 30 min, clamped to
  * 1 min–24 h), and `unmute`. Anything longer ("be quiet about X and do Y") is a normal turn. */
 export function parseChatterCommand(text: string): ChatterCommand | undefined {
+  // Every command is short; capping length also bounds the trailing-punctuation regex (CodeQL js/polynomial-redos).
+  if (text.length > 64) return undefined;
   const t = text.trim().toLowerCase().replace(/^\/+/, "").replace(/[.!]+$/, "").trim();
   const chatty = /^chatty(?:\s+(on|off|status))?$/.exec(t);
   if (chatty) return { kind: "chatty", arg: (chatty[1] ?? "status") as "on" | "off" | "status" };
