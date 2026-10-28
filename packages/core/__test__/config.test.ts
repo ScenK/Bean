@@ -1,9 +1,9 @@
 import { expect, test, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm, mkdir, chmod, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, saveConfig, skillsDir, projectsFile, configFile, personaFile, projectBeanDir, imagesDir } from "../src/config.js";
+import { ensurePrivateBeanDir, loadConfig, saveConfig, skillsDir, projectsFile, configFile, personaFile, projectBeanDir, imagesDir } from "../src/config.js";
 
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "bean-cfg-")); });
@@ -198,4 +198,22 @@ test("reasoningEffort defaults to \"\" and is preserved by a save that omits it"
 
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
   expect((await loadConfig(file, dir)).reasoningEffort).toBe("high");
+});
+
+test("ensurePrivateBeanDir creates 0700, tightens 0755, keeps contents, is idempotent", async () => {
+  const mode = async (p: string) => (await stat(p)).mode & 0o777;
+  const fresh = join(dir, "fresh", ".bean");
+  ensurePrivateBeanDir(fresh);
+  expect(await mode(fresh)).toBe(0o700);
+
+  const existing = join(dir, ".bean");
+  await mkdir(existing);
+  await chmod(existing, 0o755);
+  await writeFile(join(existing, "config.json"), "{}");
+  ensurePrivateBeanDir(existing);
+  expect(await mode(existing)).toBe(0o700);
+  expect(await readFile(join(existing, "config.json"), "utf8")).toBe("{}");
+
+  ensurePrivateBeanDir(existing);
+  expect(await mode(existing)).toBe(0o700);
 });

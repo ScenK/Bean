@@ -1,5 +1,5 @@
 import {
-  beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
+  beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine, createRoutine,
@@ -24,6 +24,7 @@ import { headlessRoutinesOn, startHeadlessRoutines, tzProblem } from "./headless
 import { answerSlash, slashCommands, slashMessage } from "./slash.js";
 
 const dir = beanDir();
+ensurePrivateBeanDir(dir);
 const builtinDir = process.env.BEAN_BUILTIN_DIR || projectBeanDir();
 const discordConfig = await loadDiscordConfig(discordConfigFile(dir));
 const beanConfig = await loadConfig(configFile(dir), dir);
