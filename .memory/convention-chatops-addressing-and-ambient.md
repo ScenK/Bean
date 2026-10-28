@@ -14,6 +14,10 @@ Group channels (Discord/Teams) balance "natural" against "predictable" with one 
   Discord (#446) feeds it from the not-addressed branch of `messageCreate` (channel or user-made
   thread; DMs/Bean threads are addressed, capturing channels never reach it) and posts in that same
   channel with `allowedMentions: { parse: [] }` — never `startThread`, never a ping.
+  Teams (#447) feeds it from the not-addressed branch of `/api/messages` (needs RSC; personal
+  chats have no `scopeOf` and never chime in) and posts proactively via `continueConversationAsync`
+  with a ref built from that activity: full `;messageid=` conversation id (replies in the thread,
+  unlike the bare-id stored refs that make new posts) and `activityId` dropped.
 
 - **Only an explicit address gets a turn**: DM, platform @mention, reply-to-Bean, or (Discord) any
   message in a thread Bean opened (`isBeanThread` — `ownerId` is the bot, so it survives restarts;
