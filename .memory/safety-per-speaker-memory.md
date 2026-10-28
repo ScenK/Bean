@@ -8,6 +8,8 @@ pre-#281 row and every desktop/auto-memory save is shared.
   (desktop + Persona: the owner's own machine, unchanged), `null` = shared only (channels and
   **both** routine hosts: `main.ts` and Discord's `headless-routines.ts`), an id = shared + that
   speaker's (their DMs). Never rank first and filter after: the top-K cut would leak or starve.
+  Chime-ins (`chatops/chatter.ts`) load `null` too, re-filter `subjectId` defensively, and strip
+  `projectPath` — nobody addressed Bean there, so the recall is for whoever reads the channel.
 - **Write scope** — `saveScope(typed, direct)` in `memory/tools.ts`: DM → private, channel →
   shared; "just for me" / "for everyone" override. The id is `msg.fromId` only (never a name).
 - **Delete** — `deleteMemories(file, ids, subject)`: non-owners pass their own id and the SQL

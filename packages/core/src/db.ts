@@ -140,6 +140,8 @@ CREATE TABLE IF NOT EXISTS chatops_chatty (
   day           TEXT,
   spoken        INTEGER NOT NULL DEFAULT 0,
   attempts      INTEGER NOT NULL DEFAULT 0,
+  -- epoch ms a chime-in attempt's claim expires (a crashed attempt can't wedge the scope).
+  inflight_until INTEGER,
   PRIMARY KEY (surface, scope_id)
 );
 
@@ -293,6 +295,8 @@ export function openDb(file: string): DatabaseSync {
     // Member todos (#283): the non-owner chatops speaker who queued it; NULL = the owner's (desktop,
     // watch-created, legacy rows, or the owner on chat) — only NULL rows may reach delegate/command steps.
     ["todos", "created_by", "TEXT"],
+    // Chime-in claim (#445), after #444's chatops_chatty.
+    ["chatops_chatty", "inflight_until", "INTEGER"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");

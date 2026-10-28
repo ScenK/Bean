@@ -44,7 +44,7 @@ import {
   routineAdminRefusal, routineDraftRefusal,
   type Capability, type Role, type Roles,
 } from "./roles.js";
-import { NOT_CHATTY, formatMuteEnd, parseChatterCommand, type Chatter, type ChatterCommand } from "./chatter.js";
+import { NOT_CHATTY, formatMuteEnd, makeChimeIn, parseChatterCommand, type Chatter, type ChatterCommand, type ChimeInFx } from "./chatter.js";
 
 /** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
  * onMessage — surfaces keep untagged channel chatter as ambient context instead. */
@@ -247,7 +247,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     args: { conversationId: string; instruction: string; proposedBy: string },
     fx: BotEffects,
   ) => Promise<string>;
+  /** An un-addressed human message in a channel conversation (scope = its channel): may lead to
+   * a text-only chime-in after a lull, if `chatty on` there. No-op without `deps.chatter`. */
+  onAmbient: (conversationId: string, scopeId: string, fx: ChimeInFx) => void;
 } {
+  const chimeIn = deps.chatter && makeChimeIn({
+    chatter: deps.chatter, chat: deps.chat, model: deps.model,
+    loadPersona: deps.loadPersona, loadMemories: deps.loadMemories, conversations: deps.conversations,
+    liveSession: (conv) => deps.liveSessions.has(conv),
+    onError: (err) => console.error(`[chatter] chime-in failed: ${err instanceof Error ? err.message : String(err)}`),
+  });
   const noteTool = retrieveNoteTool(deps.searchNotes);
   const systemTool = systemControlTool(deps.systemControlsEnabled);
 
@@ -1017,6 +1026,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   return {
     onCommand,
 
+    onAmbient(conversationId, scopeId, fx) {
+      chimeIn?.onAmbient(conversationId, scopeId, fx);
+    },
+
     proposeLiveSession(args, fx): Promise<string> {
       return proposeLiveSessionFrom(args.conversationId, args.instruction, args.proposedBy, fx);
     },
@@ -1025,6 +1038,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       // Set once the message reaches converse(); the finally reports the turn's end.
       let turnId: string | undefined;
       let turnFailed = false;
+      // Any addressed message ends the lull wait and drops an in-flight chime-in here.
+      chimeIn?.cancel(msg.conversationId);
       try {
         const cmd = commandWord(msg.text);
         if (deps.liveSessions.has(msg.conversationId)) {
