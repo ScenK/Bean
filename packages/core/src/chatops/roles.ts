@@ -16,6 +16,8 @@ const NEEDS = {
   delegate: "admin", runSkills: "admin", images: "admin", cancelRuns: "admin",
   // Drafting saves a routine switched off; turning it on, replacing one, or listing them is routineWrites (#322).
   routineDrafts: "admin",
+  // Turning chime-ins on/off in a channel (#444); `chatty status`, mute and unmute are open to anyone.
+  chatty: "admin",
   systemControl: "owner", liveSession: "owner", skillWrites: "owner", routineWrites: "owner", manageAdmins: "owner",
 } as const satisfies Record<string, Role>;
 export type Capability = keyof typeof NEEDS;

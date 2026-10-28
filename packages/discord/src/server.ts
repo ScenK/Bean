@@ -6,7 +6,7 @@ import {
   buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
-  makeRoles, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, RoutineProposalStore, type Role,
+  makeRoles, makeChatter, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, parseChatterCommand, RoutineProposalStore, type Role,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, MessageReferenceType, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -122,6 +122,7 @@ const bot = buildTeamsBot({
   webSearchEnabled: () => beanConfig.webSearch,
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
   roles,
+  chatter: makeChatter({ dbPath: dbFile(dir), surface: "discord" }),
   routines: {
     transport: "discord",
     load: () => loadRoutines(routinesDir(dir)),
@@ -158,8 +159,9 @@ const scopeOf = (channel: TextBasedChannel): string =>
   channel.isThread() ? channel.parentId ?? channel.id : channel.id;
 
 // bot.ts's keyword commands (same optional leading slash). They act on the channel and answer
-// in one line, so they never open a session thread.
-const KEYWORD_COMMAND = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins|usage|sprouts|routines)$|live-session\b|(?:add|remove)-admin\b|(?:enable|disable)\s)/i;
+// in one line, so they never open a session thread. Chatty/mute/unmute reuse core's parser.
+const KEYWORD_RE = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins|usage|sprouts|routines)$|live-session\b|(?:add|remove)-admin\b|(?:enable|disable)\s)/i;
+const isKeywordCommand = (text: string): boolean => KEYWORD_RE.test(text) || parseChatterCommand(text) !== undefined;
 
 // A thread Bean opened is a session: every message in it is addressed to Bean. The Discord
 // API's ownerId survives restarts, so no local record of owned threads is needed.
@@ -322,8 +324,11 @@ client.on("messageCreate", async (message) => {
     // Typed `stop` is absent on purpose: with no live session (capturing turns never count) it stays a model turn.
     const cmd = text.toLowerCase().replace(/^\/+/, "");
     const hasAudio = message.attachments.some((a) => a.contentType?.startsWith("audio/") === true && a.size <= 25 * 1024 * 1024);
+    const chatterCmd = parseChatterCommand(text);
     const coreCommand = !hasAudio &&
       (cmd === "cancel" || cmd === "new" || cmd === "drivers" || parseRoleCommand(text) !== undefined || parseRoutineCommand(text) !== undefined ||
+        // A DM mute/unmute is a model turn in bot.ts (the Mac's volume), so it counts there.
+        (chatterCmd !== undefined && (!isDm || chatterCmd.kind === "chatty")) ||
         /^\/?live-session\b/i.test(text));
     const usable = text !== "" || hasAudio || forward !== undefined || message.attachments.some((a) => {
       const mime = a.contentType?.split(";")[0]?.trim() ?? "";
@@ -414,7 +419,7 @@ client.on("messageCreate", async (message) => {
     // swallow the answer, while skipping it falls back to answering in the channel.
     if (
       !capturing && message.channel.type === ChannelType.GuildText && client.user &&
-      !KEYWORD_COMMAND.test(text.trim()) &&
+      !isKeywordCommand(text.trim()) &&
       message.channel.permissionsFor(client.user)?.has([
         PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.SendMessagesInThreads,
       ])
