@@ -44,6 +44,7 @@ import {
   routineAdminRefusal, routineDraftRefusal,
   type Capability, type Role, type Roles,
 } from "./roles.js";
+import { NOT_CHATTY, formatMuteEnd, parseChatterCommand, type Chatter, type ChatterCommand } from "./chatter.js";
 
 /** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
  * onMessage — surfaces keep untagged channel chatter as ambient context instead. */
@@ -200,6 +201,9 @@ export interface TeamsBotDeps {
    * drafts (throws `EEXIST` on a clash); `notifyOwner` DMs the owner (no channel);
    * `recipients` = the owner and household members a routine may DM; `transport` = this
    * surface, the only chatops sink transport a draft may use. */
+  /** Per-channel chime-in setting and mute (`chatty on|off|status`, `quiet 30m`, `unmute`).
+   * Absent = those words are ordinary turns. */
+  chatter?: Chatter;
   routines?: {
     transport: "discord" | "teams";
     load: () => Promise<Routine[]>;
@@ -864,6 +868,48 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     deps.liveSessions.canSteer(msg.conversationId, msg.fromId) &&
     deps.roles.roleOf({ fromId: msg.fromId, fromAltId: msg.fromAltId, scopeId: msg.direct ? undefined : msg.scopeId }) !== "member";
 
+  // Chatty on/off need admin; status, mute and unmute are open to anyone addressed. Never a model call.
+  async function runChatterCommand(chatter: Chatter, c: ChatterCommand, msg: IncomingMessage, fx: BotEffects): Promise<void> {
+    const { role, scopeId } = speakerRole(msg);
+    if (await dmBlocked(msg, role, fx)) return;
+    if (!scopeId) {
+      await fx.reply("Chatty mode is per channel — run this in a channel, not a DM.");
+      return;
+    }
+    const state = chatter.get(scopeId);
+    const now = Date.now();
+    const muted = state.mutedUntil !== undefined && state.mutedUntil > now;
+    if (c.kind === "chatty") {
+      if (c.arg === "status") {
+        await fx.reply(!state.enabled ? "Chatty mode is off here — I only answer when addressed."
+          : muted ? `Chatty mode is on here, but I'm muted until ${formatMuteEnd(state.mutedUntil!)}.`
+          : "Chatty mode is on here — I may chime in when I can help.");
+        return;
+      }
+      if (!(await permittedFor(role, scopeId, fx)("chatty", "turn chatty mode on or off"))) return;
+      chatter.setEnabled(scopeId, c.arg === "on");
+      if (c.arg === "on") {
+        await (fx.announce ?? fx.reply)(`Chatty mode is on${msg.channelName ? ` in ${msg.channelName}` : ""} — ` +
+          "I may chime in when I can help. Mention me with `quiet 30m` to mute me for a while, or `unmute`.");
+      } else {
+        await fx.reply("Chatty mode is off — I'll only answer when addressed.");
+      }
+      return;
+    }
+    if (!state.enabled) {
+      await fx.reply(NOT_CHATTY);
+      return;
+    }
+    if (c.kind === "unmute") {
+      chatter.setMutedUntil(scopeId, undefined);
+      await fx.reply(muted ? "Unmuted — I may chime in again." : "I wasn't muted.");
+      return;
+    }
+    const until = now + c.minutes * 60_000;
+    chatter.setMutedUntil(scopeId, until);
+    await fx.reply(`Okay, I'll stay quiet until ${formatMuteEnd(until)} unless addressed.`);
+  }
+
   // The CHATOPS_COMMANDS keyword commands, without text-parsing side paths: never calls the model
   // and never forwards to a live CLI. Returns false for anything else (the caller's turn).
   async function onCommand(msg: IncomingMessage, fx: BotEffects): Promise<boolean> {
@@ -881,6 +927,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       } else {
         deps.liveSessions.stop(conv); // the registry's onEnded posts the end notice
       }
+      return true;
+    }
+    const chatterCmd = deps.chatter ? parseChatterCommand(msg.text) : undefined;
+    // In a DM, mute/unmute stay model turns (the owner may mean the Mac's volume).
+    if (deps.chatter && chatterCmd && (chatterCmd.kind === "chatty" || !msg.direct)) {
+      await runChatterCommand(deps.chatter, chatterCmd, msg, fx);
       return true;
     }
     const roleCmd = parseRoleCommand(msg.text);

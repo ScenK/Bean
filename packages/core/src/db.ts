@@ -128,6 +128,21 @@ CREATE TABLE IF NOT EXISTS chatops_admins (
   PRIMARY KEY (surface, scope_id, user_id)
 );
 
+-- Per-channel chime-in setting (chatops/chatter.ts). scope_id is the admin scope (channel /
+-- group chat, never a thread); a missing row means off. muted_until / last_spoke_at are epoch ms;
+-- day/spoken/attempts are the local-day chime-in budget counters.
+CREATE TABLE IF NOT EXISTS chatops_chatty (
+  surface       TEXT NOT NULL,
+  scope_id      TEXT NOT NULL,
+  enabled       INTEGER NOT NULL DEFAULT 0,
+  muted_until   INTEGER,
+  last_spoke_at INTEGER,
+  day           TEXT,
+  spoken        INTEGER NOT NULL DEFAULT 0,
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (surface, scope_id)
+);
+
 -- One row per admitted chatops turn (chatops/turn-cap.ts), for the per-member daily cap. The
 -- platform message/interaction id is the key, so a redelivered message never counts twice.
 -- day is the calendar date in the process's TZ; older days are pruned on insert.

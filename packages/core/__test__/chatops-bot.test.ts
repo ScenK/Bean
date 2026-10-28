@@ -15,6 +15,7 @@ import { NoteArchiveProposalStore } from "../src/chatops/note-archive-proposals.
 import { TodoProposalStore } from "../src/chatops/todo-proposals.js";
 import { RunRegistry } from "../src/chatops/runs.js";
 import { makeRoles } from "../src/chatops/roles.js";
+import { NOT_CHATTY, formatMuteEnd, makeChatter } from "../src/chatops/chatter.js";
 import type { CardBuilders } from "../src/chatops/cards-api.js";
 import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index.js";
 import { SkillProposalStore } from "../src/chatops/skill-proposals.js";
@@ -2703,4 +2704,70 @@ test("the command catalog names exactly the Teams manifest's commandLists, no du
   const names = CHATOPS_COMMANDS.map((c) => c.name);
   expect(new Set(names).size).toBe(names.length);
   expect([...names].sort()).toEqual([...teams].sort());
+});
+
+// ---- Chatty setting + addressed mute (#444) ----
+
+function withChatter() {
+  const made = withRoles({ chat: async () => { throw new Error("model called"); } });
+  const chatter = makeChatter({ dbPath: mkdtempSync(join(tmpdir(), "bean-chatty-")) + "/bean.db", surface: "discord" });
+  made.deps.chatter = chatter;
+  return { ...made, chatter, bot: buildTeamsBot(made.deps) };
+}
+
+test("chatty on/off: guests and members refused, admins and the owner allowed; status for anyone", async () => {
+  const { bot, chatter } = withChatter();
+  for (const who of [guest, member]) {
+    const e = fx();
+    expect(await bot.onCommand({ ...who, text: "chatty on" }, e)).toBe(true);
+    expect(chatter.get("s1").enabled).toBe(false);
+    expect(e.posted).toHaveLength(1);
+  }
+  const announced: string[] = [];
+  await bot.onCommand({ ...admin, text: "chatty on" }, { ...fx(), announce: async (t) => { announced.push(t); } });
+  expect(chatter.get("s1").enabled).toBe(true);
+  expect(announced[0]).toContain("Chatty mode is on");
+  await bot.onCommand({ ...owner, text: "chatty off" }, fx());
+  expect(chatter.get("s1").enabled).toBe(false);
+  const e = fx();
+  await bot.onMessage({ ...guest, text: "chatty status" }, e);
+  expect(e.posted).toEqual(["Chatty mode is off here — I only answer when addressed."]);
+});
+
+test("chatty commands are refused in DMs; a DM mute stays a model turn", async () => {
+  const { bot, chatter } = withChatter();
+  const dm = { ...owner, direct: true, scopeId: undefined };
+  const e = fx();
+  expect(await bot.onCommand({ ...dm, text: "chatty on" }, e)).toBe(true);
+  expect(e.posted[0]).toContain("not a DM");
+  expect(await bot.onCommand({ ...dm, text: "mute" }, fx())).toBe(false);
+  expect(chatter.get("s1").enabled).toBe(false);
+});
+
+test("mute: fixed line without a model call when not opted in; sets muted_until with the clamped end time when on", async () => {
+  const { bot, chatter } = withChatter();
+  const off = fx();
+  await bot.onMessage({ ...guest, text: "quiet 5m" }, off);
+  expect(off.posted).toEqual([NOT_CHATTY]);
+  chatter.setEnabled("s1", true);
+  const before = Date.now();
+  const on = fx();
+  await bot.onMessage({ ...guest, text: "hush 48h" }, on);
+  const until = chatter.get("s1").mutedUntil!;
+  expect(until - before).toBeGreaterThanOrEqual(1440 * 60_000);
+  expect(until - before).toBeLessThan(1441 * 60_000);
+  expect(on.posted[0]).toContain(formatMuteEnd(until));
+  await bot.onMessage({ ...guest, text: "unmute" }, on);
+  expect(chatter.get("s1").mutedUntil).toBeUndefined();
+  expect(on.posted.at(-1)).toBe("Unmuted — I may chime in again.");
+  // `chatty on` also clears a mute.
+  chatter.setMutedUntil("s1", Date.now() + 60_000);
+  await bot.onCommand({ ...owner, text: "chatty on" }, fx());
+  expect(chatter.get("s1").mutedUntil).toBeUndefined();
+});
+
+test("a longer message that starts like a mute is a normal turn", async () => {
+  const { deps } = withRoles();
+  deps.chatter = makeChatter({ dbPath: mkdtempSync(join(tmpdir(), "bean-chatty-")) + "/bean.db", surface: "discord" });
+  expect(await buildTeamsBot(deps).onCommand({ ...owner, text: "be quiet about X and do Y" }, fx())).toBe(false);
 });

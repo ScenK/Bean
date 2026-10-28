@@ -49,3 +49,9 @@ per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_ad
   to the proposer (`proposedById`, checked before `claim()`); a non-owner Save forces `enabled:false`
   and uses create-only `createRoutine` (`link`, `EEXIST`) after a case-insensitive name check;
   the owner gets an outbox DM (`notifyOwner`). The admin reply never claims the owner was notified.
+- **Chatty setting (#444)**: `chatops/chatter.ts`, `chatops_chatty` (missing row = off), scoped like
+  admins (channel, never a thread). `chatty on|off` = `NEEDS.chatty` (admin); `chatty status`,
+  addressed mute (`quiet|hush|mute|be quiet|stay quiet [for] <n><unit>`, whole message only, 30 min
+  default, clamped 1 min–24 h) and `unmute` are open to anyone. In a DM, chatty is refused and
+  mute/unmute stay model turns (Mac volume). Not in `CHATOPS_COMMANDS` (no Teams manifest change);
+  Discord's thread/turn-cap exemptions reuse `parseChatterCommand`.
