@@ -333,30 +333,6 @@ button, input, textarea, select, a {
 }
 .bean-send:disabled { opacity: 0.5; cursor: default; }
 
-.bean-cmd {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 15px 17px;
-}
-.bean-cmd-chip {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font: 12px ui-monospace, monospace;
-  color: var(--bean-text-dim);
-  background: var(--bean-surface-2);
-  border: 1px solid var(--bean-border);
-  border-radius: 999px;
-  padding: 5px 11px;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 @keyframes bean-blink { 50% { opacity: 0.25; } }
 
 /* --- skills (SP4) --- */

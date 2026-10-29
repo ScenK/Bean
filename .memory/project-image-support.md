@@ -21,7 +21,7 @@
   keeps copies in `chat-types.ts` (it can't import core values). A bare `image/*` check lets
   HEIC/SVG through and fails the turn at the API.
 - **Model comes from config.** `~/.bean/config.json` `imageModel`, default `gpt-image-2`,
-  no Settings UI — `saveConfig` must keep preserving it (same pattern as `liveSessions`).
+  no Settings UI — `saveConfig` must keep preserving it (same pattern as `reasoningEffort`).
 - **Slow-gen feedback**: the tool's `onStart` drives the desktop 🎨 working bubble
   (`IPC.chatImageProgress`) and the bots' "🎨 Working on your image…" post.
 - **Teams attachment downloads need the bot's bearer token** — inline-image `contentUrl`s sit

@@ -184,7 +184,7 @@ export interface TeamsBotDeps {
   /** Active chat-bridged agent sessions; while a channel is bound, its messages bypass converse. */
   liveSessions: LiveSessionRegistry;
   liveSessionProposals: LiveSessionProposalStore;
-  /** Gates the propose_live_session tool (config liveSessions flag + surface support). */
+  /** Gates the propose_live_session tool (surface support, e.g. a live-capable CLI is present). */
   liveSessionsEnabled: () => boolean;
   /** delegate_runs lookup behind Continue live (server injects the db path). Omit = no record. */
   findDelegateRun?: (sessionId: string) => ResumableRun;

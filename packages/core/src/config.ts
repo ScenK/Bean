@@ -72,7 +72,6 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
     systemControls: parsed.systemControls ?? false,
     reasoningEffort: parsed.reasoningEffort ?? "",
     imageModel: parsed.imageModel ?? "gpt-image-2",
-    liveSessions: parsed.liveSessions ?? false,
     routineDigestContext: parsed.routineDigestContext ?? false,
     disabledClis: Array.isArray(parsed.disabledClis)
       ? parsed.disabledClis.filter((c): c is CliName => (CLI_NAMES as readonly string[]).includes(c as string))
@@ -85,12 +84,12 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
 
 export async function saveConfig(
   file: string,
-  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; reasoningEffort?: string; imageModel?: string; liveSessions?: boolean; routineDigestContext?: boolean; disabledClis?: string[]; webSearch?: boolean; autoMemory?: boolean },
+  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; reasoningEffort?: string; imageModel?: string; routineDigestContext?: boolean; disabledClis?: string[]; webSearch?: boolean; autoMemory?: boolean },
 ): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
-  // No Settings UI toggle exists for liveSessions, so a desktop Settings save calls this with
-  // that field omitted entirely. Preserve either optional field when a caller does not know
-  // about it; only a brand-new file falls back to defaults. (Current Settings does send
+  // Settings has no toggle for some fields (e.g. reasoningEffort, imageModel), so a desktop
+  // Settings save omits them. Preserve any optional field a caller does not know about; only
+  // a brand-new file falls back to defaults. (Current Settings does send
   // disabledClis, while older callers and first-launch bootstrap may omit it.)
   let existing: Partial<BeanConfig> = {};
   try {
@@ -104,7 +103,6 @@ export async function saveConfig(
     systemControls: config.systemControls ?? false,
     reasoningEffort: config.reasoningEffort ?? existing.reasoningEffort ?? "",
     imageModel: config.imageModel ?? existing.imageModel ?? "gpt-image-2",
-    liveSessions: config.liveSessions ?? existing.liveSessions ?? false,
     routineDigestContext: config.routineDigestContext ?? existing.routineDigestContext ?? false,
     disabledClis: config.disabledClis ?? existing.disabledClis ?? [],
     webSearch: config.webSearch ?? existing.webSearch ?? false,

@@ -54,11 +54,8 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   exported `discordCards: CardBuilders`). Don't assume one pattern when touching the other
   surface's card file — this exact mismatch caused a broken typecheck mid-build (see git
   history around commit range `482d173..c7c0050`).
-- Gating differs by surface. **Desktop** is invisible unless `~/.bean/config.json` has
-  `"liveSessions": true` AND `claude` is on PATH (`liveSessionsEnabled` checks both).
-  `saveConfig` preserves the on-disk `liveSessions` value when a caller omits the field (the
-  desktop Settings save has no toggle for it and would otherwise silently reset it to `false`
-  on every save — a real, PR-review-caught bug). **Discord** deliberately dropped the config
+- Gating differs by surface. **Desktop** has no live-session entry point today (its old
+  `config.json` opt-in flag was dead and was deleted in #473). **Discord** has no config
   opt-in: `liveSessionsEnabled: () => clis.includes("claude")` — always on when claude is
   present, since the allowlist + the confirm-first card are the authorization boundary there.
   Launch is always confirm-first via a card even though the session itself runs with
