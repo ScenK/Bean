@@ -288,4 +288,22 @@ describe("ChatWindow agent mode", () => {
     await send("back to you");
     expect(chatCalls().at(-1)).toMatchObject({ message: "back to you", source: "typed" });
   });
+
+  it("type-ahead: the composer stays editable while Bean answers, and Enter keeps the draft until the turn ends", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    let answer!: (v: { reply: string; model: string }) => void;
+    bean.chat!.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    await send("first");
+    const ta = root.querySelector("textarea.bean-input--composer") as HTMLTextAreaElement;
+    expect(ta.disabled).toBe(false);
+    await send("second");
+    expect(bean.chat).toHaveBeenCalledTimes(1);
+    expect(ta.value).toBe("second");
+    await act(async () => { answer({ reply: "ok", model: "m" }); });
+    await flush();
+    await send("second");
+    expect(chatCalls().map((c) => c.message)).toEqual(["first", "second"]);
+    expect(ta.value).toBe("");
+  });
 });

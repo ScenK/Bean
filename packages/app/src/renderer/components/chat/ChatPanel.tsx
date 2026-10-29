@@ -233,14 +233,20 @@ export function ChatPanel({
     else setShowJump(true);
   }, [items]);
 
-  // Grow/shrink the composer with its content (Shift+Enter adds lines), capped so a long
-  // paste doesn't swallow the transcript.
+  // Grow/shrink the composer with its content (Shift+Enter adds lines). The cap is the CSS
+  // `max-height` on .bean-input--composer alone — past it the textarea scrolls.
   const resizeInput = (): void => {
     const el = inputRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+    el.style.height = `${el.scrollHeight}px`;
   };
+
+  // Keep the slash menu's current pick in view once the list outgrows its max-height.
+  const slashMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    slashMenuRef.current?.querySelector(".bean-chip-menu-row--on")?.scrollIntoView?.({ block: "nearest" });
+  }, [slashOptions]);
 
   useEffect(() => {
     const el = inputRef.current;
@@ -254,7 +260,8 @@ export function ChatPanel({
 
   const submit = (): void => {
     const el = inputRef.current;
-    if (!el || imageReadsInFlight > 0) return;
+    // Type-ahead: while Bean answers the draft and images stay put — return before clearing.
+    if (!el || busy || imageReadsInFlight > 0) return;
     // Image-only sends are allowed; converse still needs some text on the turn.
     const text = el.value.trim() || (pendingImages.length > 0 ? "(image)" : "");
     if (!text) return;
@@ -502,12 +509,12 @@ export function ChatPanel({
           );
         })}
       </div>
-      {showJump ? (
-        <button type="button" class="bean-jump-down" aria-label="Jump to latest" onClick={scrollToBottom}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></svg>
-        </button>
-      ) : null}
       <div class="bean-chat-input">
+        {showJump ? (
+          <button type="button" class="bean-jump-down" aria-label="Jump to latest" onClick={scrollToBottom}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></svg>
+          </button>
+        ) : null}
         {live ? (
           <div class="bean-agent-banner">
             <span class="bean-agent-banner-dot" aria-hidden="true">●</span>
@@ -520,8 +527,9 @@ export function ChatPanel({
         {agentMode && incognito ? (
           <div class="bean-status bean-status--info">Off the record covers Bean only — {agentName} keeps its own transcript.</div>
         ) : null}
-        {slashOptions.length > 0 ? (
-          <div class="bean-chip-menu-list bean-slash-menu" role="listbox" aria-label="Switch who answers">
+        {/* Hidden while Bean answers, like the chip — switching mid-turn isn't allowed. */}
+        {slashOptions.length > 0 && !busy ? (
+          <div ref={slashMenuRef} class="bean-chip-menu-list bean-slash-menu" role="listbox" aria-label="Switch who answers">
             {slashOptions.map((a) => (
               <button
                 type="button"
@@ -555,40 +563,6 @@ export function ChatPanel({
           </div>
         ) : null}
         <div class="bean-chat-input-shell">
-          <ChipMenu
-            disabled={busy}
-            chipClass="bean-agent-chip"
-            chipLabel={<><AgentAvatar agent={mode} size={16} /> {agentName}{agentMode ? ` · ${projectName(live?.projectPath ?? agentProject)}` : ""}</>}
-          >
-            {(close) => (
-              <div class="bean-chip-menu-list">
-                {(["bean", ...liveAgents] as AgentId[]).map((a) => (
-                  <button
-                    type="button"
-                    class={`bean-chip-menu-row${a === mode ? " bean-chip-menu-row--on" : ""}`}
-                    onClick={() => { onPickAgent(a); close(); }}
-                  >
-                    <span class="bean-chip-menu-row-title"><AgentAvatar agent={a} size={16} /> {AGENT_NAMES[a]}</span>
-                  </button>
-                ))}
-                {liveAgents.length > 0 ? (
-                  <>
-                    <div class="bean-chip-menu-divider" />
-                    <div class="bean-chip-menu-hint">Agents work in</div>
-                    {[{ path: "", name: "No project — scratch workspace" }, ...projects].map((p) => (
-                      <button
-                        type="button"
-                        class={`bean-chip-menu-row${p.path === agentProject ? " bean-chip-menu-row--on" : ""}${p.path ? "" : " bean-chip-menu-row--no-project"}`}
-                        onClick={() => { onPickProject(p.path); close(); }}
-                      >
-                        {p.name}
-                      </button>
-                    ))}
-                  </>
-                ) : null}
-              </div>
-            )}
-          </ChipMenu>
           <textarea
             ref={inputRef}
             class="bean-input bean-input--composer"
@@ -596,7 +570,6 @@ export function ChatPanel({
             placeholder={!agentMode ? "Message Bean…" : live
               ? `Message ${agentName}…`
               : `Message ${agentName}… (Bean will hand over up to ${Math.min(handoffItems(items).filter((h) => h.text.trim()).length, HANDOFF_ITEMS)} messages)`}
-            disabled={busy}
             onInput={(e) => { resizeInput(); setSlashOptions(slashMatches((e.target as HTMLTextAreaElement).value, liveAgents)); }}
             onPaste={pasteImages}
             onDragOver={(e) => { if (droppedPath(e)) e.preventDefault(); }}
@@ -605,16 +578,52 @@ export function ChatPanel({
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
             }}
           />
-          <button
-            type="button"
-            class="bean-save-notes"
-            title="Ask Bean to draft a note from this conversation"
-            disabled={busy || !items.some((it) => it.kind === "reply")}
-            onClick={onSaveToNotes}
-          >📝 Save to notes</button>
-          <button type="button" class="bean-send" aria-label="Send" disabled={busy || imageReadsInFlight > 0} onClick={submit}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg>
-          </button>
+          <div class="bean-chat-composer-bar">
+            <ChipMenu
+              disabled={busy}
+              chipClass="bean-agent-chip"
+              chipLabel={<><AgentAvatar agent={mode} size={16} /> {agentName}{agentMode ? ` · ${projectName(live?.projectPath ?? agentProject)}` : ""}</>}
+            >
+              {(close) => (
+                <div class="bean-chip-menu-list">
+                  {(["bean", ...liveAgents] as AgentId[]).map((a) => (
+                    <button
+                      type="button"
+                      class={`bean-chip-menu-row${a === mode ? " bean-chip-menu-row--on" : ""}`}
+                      onClick={() => { onPickAgent(a); close(); }}
+                    >
+                      <span class="bean-chip-menu-row-title"><AgentAvatar agent={a} size={16} /> {AGENT_NAMES[a]}</span>
+                    </button>
+                  ))}
+                  {liveAgents.length > 0 ? (
+                    <>
+                      <div class="bean-chip-menu-divider" />
+                      <div class="bean-chip-menu-hint">Agents work in</div>
+                      {[{ path: "", name: "No project — scratch workspace" }, ...projects].map((p) => (
+                        <button
+                          type="button"
+                          class={`bean-chip-menu-row${p.path === agentProject ? " bean-chip-menu-row--on" : ""}${p.path ? "" : " bean-chip-menu-row--no-project"}`}
+                          onClick={() => { onPickProject(p.path); close(); }}
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </>
+                  ) : null}
+                </div>
+              )}
+            </ChipMenu>
+            <button
+              type="button"
+              class="bean-save-notes"
+              title="Ask Bean to draft a note from this conversation"
+              disabled={busy || !items.some((it) => it.kind === "reply")}
+              onClick={onSaveToNotes}
+            >📝 Save to notes</button>
+            <button type="button" class="bean-send" aria-label="Send" disabled={busy || imageReadsInFlight > 0} onClick={submit}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg>
+            </button>
+          </div>
         </div>
       </div>
       {preview ? <ImagePreview image={preview} onClose={() => setPreview(null)} /> : null}
