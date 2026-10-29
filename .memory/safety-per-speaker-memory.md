@@ -3,7 +3,9 @@
 `memories.subject_id` (nullable, added via [convention-bean-db-column-additions](convention-bean-db-column-additions.md))
 is the chatops speaker's platform id a fact is private to; NULL = household-shared, so every
 pre-#281 row and every desktop save (auto or Persona) is shared. Chatops DM auto-capture (#462)
-is always private to the speaker.
+is always private to the speaker; channel capture (#463) is always shared, with a non-owner
+speaker's fact labelled `Name: fact` so recall ("about the household") never reads a coworker's
+preference as the owner's. The platform id gates capture (role); the name is only a label.
 
 - **Recall is filtered in SQL before ranking** — `loadMemories(file, subject)`: absent = all rows
   (desktop + Persona: the owner's own machine, unchanged), `null` = shared only (channels and
@@ -21,6 +23,8 @@ is always private to the speaker.
   AND subject_id = ?`, so only the row's author can share it — **the owner included** (no bypass;
   forgetting is where the owner has power). Text, project and `created_at` stay, so the recall
   date still reflects when it was said. Once shared, only the owner can forget it.
+- **Dream never merges across `Name:` prefixes** (`planDream`, `speakerPrefix`; capture caps the label to the same 40 chars via `speakerLabel`): a merge's members and its merged
+  text must share one prefix (none = the owner's), so one speaker's fact never absorbs another's.
 - **Dream never sees private rows**: `maybeDream` loads `null` and `countMemoriesSince` counts
   shared only. `memories_history` has no `subject_id`, so a private row merged/undone by dream
   would come back shared — don't widen dream without adding the column there. Dream stays off on

@@ -314,6 +314,11 @@ client.on("messageCreate", async (message) => {
           fetchRecent: effectsFor(channel).fetchRecent!,
           // Same channel/thread, never a new thread; nothing in it pings anyone.
           post: async (text) => { await channel.send({ content: text, allowedMentions: { parse: [] } }); },
+        }, {
+          // Household memory capture (#463): the id gates (role), the name only labels a saved fact.
+          fromId: message.author.id, name: message.member?.displayName ?? message.author.displayName,
+          text: message.content, at: message.createdTimestamp,
+          react: async () => { await message.react("🧠"); },
         });
       }
       return;
@@ -343,7 +348,7 @@ client.on("messageCreate", async (message) => {
     const coreCommand = !hasAudio &&
       (cmd === "cancel" || cmd === "new" || cmd === "drivers" || parseRoleCommand(text) !== undefined || parseRoutineCommand(text) !== undefined ||
         // A DM mute/unmute is a model turn in bot.ts (the Mac's volume), so it counts there.
-        (chatterCmd !== undefined && (!isDm || chatterCmd.kind === "chatty")) ||
+        (chatterCmd !== undefined && (!isDm || chatterCmd.kind === "chatty" || chatterCmd.kind === "memory")) ||
         /^\/?live-session\b/i.test(text));
     const usable = text !== "" || hasAudio || forward !== undefined || message.attachments.some((a) => {
       const mime = a.contentType?.split(";")[0]?.trim() ?? "";

@@ -11,6 +11,9 @@ test("parser: chatty on/off/status, unmute, and whole-message mutes with clamped
   expect(parseChatterCommand("/Chatty OFF")).toEqual({ kind: "chatty", arg: "off" });
   expect(parseChatterCommand("chatty")).toEqual({ kind: "chatty", arg: "status" });
   expect(parseChatterCommand("unmute!")).toEqual({ kind: "unmute" });
+  expect(parseChatterCommand("memory off")).toEqual({ kind: "memory", arg: "off" });
+  expect(parseChatterCommand("/Memory status.")).toEqual({ kind: "memory", arg: "status" });
+  expect(parseChatterCommand("memory")).toBeUndefined();
   expect(parseChatterCommand("quiet 5m")).toEqual({ kind: "mute", minutes: 5 });
   expect(parseChatterCommand("hush 30m")).toEqual({ kind: "mute", minutes: 30 });
   expect(parseChatterCommand("be quiet")).toEqual({ kind: "mute", minutes: 30 });

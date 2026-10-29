@@ -25,6 +25,11 @@ export interface Chatter {
   claim(scopeId: string, now: number): boolean;
   /** Ends a claimed attempt; `spoke` counts a chime-in and restarts the cooldown. */
   release(scopeId: string, spoke: boolean, now: number): void;
+  /** Channel memory capture (#463): on unless `memory off` here — a missing row means on. */
+  memoryOn(scopeId: string): boolean;
+  setMemoryOn(scopeId: string, on: boolean): void;
+  /** True exactly once per scope: the first household save posts its one-time notice. */
+  claimMemoryNotice(scopeId: string): boolean;
 }
 
 export const CHIME_COOLDOWN_MS = 10 * 60_000;
@@ -77,6 +82,24 @@ export function makeChatter(opts: { dbPath: string; surface: "discord" | "teams"
          WHERE surface = ? AND scope_id = ?`,
       ).run(spoke ? 1 : 0, spoke ? 1 : 0, now, surface, scopeId);
     },
+    memoryOn(scopeId) {
+      const row = db.prepare("SELECT memory_off FROM chatops_chatty WHERE surface = ? AND scope_id = ?")
+        .get(surface, scopeId) as { memory_off: number } | undefined;
+      return row?.memory_off !== 1;
+    },
+    setMemoryOn(scopeId, on) {
+      db.prepare(
+        `INSERT INTO chatops_chatty (surface, scope_id, memory_off) VALUES (?, ?, ?)
+         ON CONFLICT (surface, scope_id) DO UPDATE SET memory_off = excluded.memory_off`,
+      ).run(surface, scopeId, on ? 0 : 1);
+    },
+    claimMemoryNotice(scopeId) {
+      // One statement: an insert, or an update only while unset — so two savers can't both post it.
+      return db.prepare(
+        `INSERT INTO chatops_chatty (surface, scope_id, memory_noticed) VALUES (?, ?, 1)
+         ON CONFLICT (surface, scope_id) DO UPDATE SET memory_noticed = 1 WHERE memory_noticed = 0`,
+      ).run(surface, scopeId).changes === 1;
+    },
   };
 }
 
@@ -85,10 +108,12 @@ export const MUTE_MAX_MIN = 24 * 60;
 
 export type ChatterCommand =
   | { kind: "chatty"; arg: "on" | "off" | "status" }
+  | { kind: "memory"; arg: "on" | "off" | "status" }
   | { kind: "mute"; minutes: number }
   | { kind: "unmute" };
 
 /** Whole-message parser for the addressed, de-mentioned typed text: `chatty on|off|status`,
+ * `memory on|off|status` (channel memory capture),
  * `quiet|hush|mute|be quiet|stay quiet [for] <n><unit>` (no duration = 30 min, clamped to
  * 1 min–24 h), and `unmute`. Anything longer ("be quiet about X and do Y") is a normal turn. */
 export function parseChatterCommand(text: string): ChatterCommand | undefined {
@@ -97,6 +122,8 @@ export function parseChatterCommand(text: string): ChatterCommand | undefined {
   const t = text.trim().toLowerCase().replace(/^\/+/, "").replace(/[.!]+$/, "").trim();
   const chatty = /^chatty(?:\s+(on|off|status))?$/.exec(t);
   if (chatty) return { kind: "chatty", arg: (chatty[1] ?? "status") as "on" | "off" | "status" };
+  const memory = /^memory\s+(on|off|status)$/.exec(t);
+  if (memory) return { kind: "memory", arg: memory[1] as "on" | "off" | "status" };
   if (t === "unmute") return { kind: "unmute" };
   const mute = /^(?:be quiet|stay quiet|quiet|hush|mute)(?:\s+(?:for\s+)?(\d{1,6})\s*(m|mins?|minutes?|h|hrs?|hours?))?$/.exec(t);
   if (!mute) return undefined;

@@ -371,6 +371,11 @@ app.post("/api/messages", (req, res) => {
               await ctx.sendActivity({ type: ActivityTypes.Message, text: teamsText(reply) });
             });
           },
+        }, {
+          // Household memory capture (#463): the id gates (role), the name only labels a saved fact.
+          // `text` already has any quote-reply split out (parseQuote). No receipt on Teams.
+          fromId: a.from.id, fromAltId: a.from.aadObjectId, name: a.from.name ?? "someone",
+          text, at: Date.now(), bot: a.from.role === "bot",
         });
       }
       return;

@@ -18,6 +18,8 @@ const NEEDS = {
   routineDrafts: "admin",
   // Turning chime-ins on/off in a channel (#444); `chatty status`, mute and unmute are open to anyone.
   chatty: "admin",
+  // Turning channel memory capture on/off (#463); `memory status` is open to anyone.
+  channelMemory: "admin",
   systemControl: "owner", liveSession: "owner", skillWrites: "owner", routineWrites: "owner", manageAdmins: "owner",
 } as const satisfies Record<string, Role>;
 export type Capability = keyof typeof NEEDS;

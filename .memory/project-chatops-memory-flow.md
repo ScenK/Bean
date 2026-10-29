@@ -1,7 +1,19 @@
 # chatops memory
 
-Teams/Discord bots remember on an explicit ask anywhere, and automatically in DMs only (#462).
-Channels never auto-capture — they mix several people's words.
+Teams/Discord bots remember on an explicit ask anywhere, automatically in DMs (#462, private),
+and from un-addressed channel/thread chatter (#463, household-shared).
+
+- **Channel capture** (`chatops/ambient-capture.ts`, fed by `bot.onAmbient`'s `AmbientLine` at both
+  surfaces' ambient call sites — independent of `chatty`): buffers per conversation, extracts after a
+  30 s lull / 2 min max (an addressed turn flushes it). Citable = member+ (`can(role, "memory")` on
+  the platform id), not a bot, not quoted (a `>` line, or anything after a `>>>` line); a guest-only batch makes no model call. Each
+  fact's quote must match **exactly one** eligible line (ambiguous or cross-speaker quotes are
+  dropped); that line's speaker is bound: owner → plain text, anyone else → `Name: fact`. Saved
+  shared (`subject_id` NULL). `memory on|off|status` (`chatops_chatty.memory_off`, missing row = on;
+  on/off = `channelMemory`, admin; channel scope) and `autoMemory` are re-checked right before the
+  insert, so a queued batch obeys them. Receipt: Discord 🧠 reaction (best-effort), Teams silent;
+  the first save per scope posts `MEMORY_NOTICE` once (`memory_noticed`, atomic upsert). Daily cap
+  48 calls / 20 saves per scope is in-process (a restart resets it).
 
 - **DM auto-capture** (`captureDm` in `bot.ts`): after a DM reply, core's per-turn
   `extractMemories(..., { latestTurn: true })` runs on the speaker's `typedText` only (the audio

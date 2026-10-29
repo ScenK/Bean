@@ -27,6 +27,16 @@ export function isValidMemory(v: unknown): v is Memory {
 }
 
 /** When two recalled facts conflict, the later-saved one is current — shared by every recall header. */
+/** A channel-captured fact is "Name: fact" (#463). The label is capped so `speakerPrefix` (dream's
+ * no-cross-speaker-merge rule) always parses what capture wrote. */
+const SPEAKER_LABEL_MAX = 40;
+export const speakerLabel = (name: string): string =>
+  name.replace(/[[\]\r\n:]/g, "").trim().slice(0, SPEAKER_LABEL_MAX).trim() || "someone";
+// ponytail: any short "Label: " lead counts as a speaker prefix, so an owner fact like "Deploy
+// day: Tue" only refuses merges with differently-led rows — a missed merge, never a wrong one.
+export const speakerPrefix = (text: string): string =>
+  new RegExp(`^([^:\\n]{1,${SPEAKER_LABEL_MAX}}):\\s`).exec(text)?.[1]?.trim().toLowerCase() ?? "";
+
 export const MEMORY_CONFLICT_CLAUSE = "when two facts conflict, the later-saved one is current";
 
 /** `(saved 2026-07-03 14:05 UTC)` from a stored createdAt; `(saved unknown)` if it doesn't parse. */

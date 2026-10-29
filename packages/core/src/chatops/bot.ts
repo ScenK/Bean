@@ -45,6 +45,7 @@ import {
   routineAdminRefusal, routineDraftRefusal,
   type Capability, type Role, type Roles,
 } from "./roles.js";
+import { makeAmbientCapture, type AmbientLine } from "./ambient-capture.js";
 import { NOT_CHATTY, formatMuteEnd, makeChimeIn, parseChatterCommand, type Chatter, type ChatterCommand, type ChimeInFx } from "./chatter.js";
 
 /** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
@@ -251,15 +252,21 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     args: { conversationId: string; instruction: string; proposedBy: string },
     fx: BotEffects,
   ) => Promise<string>;
-  /** An un-addressed human message in a channel conversation (scope = its channel): may lead to
-   * a text-only chime-in after a lull, if `chatty on` there. No-op without `deps.chatter`. */
-  onAmbient: (conversationId: string, scopeId: string, fx: ChimeInFx) => void;
+  /** An un-addressed message in a channel conversation (scope = its channel): may lead to a
+   * text-only chime-in after a lull, if `chatty on` there, and feeds household memory capture
+   * (#463, unless `memory off` there or config `autoMemory` is off). No-op without `deps.chatter`. */
+  onAmbient: (conversationId: string, scopeId: string, fx: ChimeInFx, line: AmbientLine) => void;
 } {
   const chimeIn = deps.chatter && makeChimeIn({
     chatter: deps.chatter, chat: deps.chat, model: deps.model,
     loadPersona: deps.loadPersona, loadMemories: deps.loadMemories, conversations: deps.conversations,
     liveSession: (conv) => deps.liveSessions.has(conv),
     onError: (err) => console.error(`[chatter] chime-in failed: ${err instanceof Error ? err.message : String(err)}`),
+  });
+  const channelCapture = deps.chatter && makeAmbientCapture({
+    chatter: deps.chatter, chat: deps.chat, model: deps.model, roleOf: (s) => deps.roles.roleOf(s),
+    loadMemories: deps.loadMemories, appendMemories: deps.appendMemories, autoMemoryEnabled: deps.autoMemoryEnabled,
+    onError: (err) => console.error(`[memory] channel capture failed: ${err instanceof Error ? err.message : String(err)}`),
   });
   const noteTool = retrieveNoteTool(deps.searchNotes);
 
@@ -913,7 +920,21 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const { role, scopeId } = speakerRole(msg);
     if (await dmBlocked(msg, role, fx)) return;
     if (!scopeId) {
-      await fx.reply("Chatty mode is per channel — run this in a channel, not a DM.");
+      await fx.reply(c.kind === "memory" ? "Channel memory is per channel — run this in a channel, not a DM."
+        : "Chatty mode is per channel — run this in a channel, not a DM.");
+      return;
+    }
+    if (c.kind === "memory") {
+      if (c.arg === "status") {
+        await fx.reply(chatter.memoryOn(scopeId) ? "Channel memory is on here — I remember household facts people share. `memory off` to stop."
+          : "Channel memory is off here — I only remember what someone explicitly asks me to.");
+        return;
+      }
+      if (!(await permittedFor(role, scopeId, fx)("channelMemory", "turn channel memory on or off"))) return;
+      chatter.setMemoryOn(scopeId, c.arg === "on");
+      await (fx.announce ?? fx.reply)(c.arg === "on"
+        ? `Channel memory is on${msg.channelName ? ` in ${msg.channelName}` : ""} — I'll remember household facts people share here.`
+        : "Channel memory is off — I'll only remember what someone explicitly asks me to.");
       return;
     }
     const state = chatter.get(scopeId);
@@ -971,7 +992,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     const chatterCmd = deps.chatter ? parseChatterCommand(msg.text) : undefined;
     // In a DM, mute/unmute stay model turns (the owner may mean the Mac's volume).
-    if (deps.chatter && chatterCmd && (chatterCmd.kind === "chatty" || !msg.direct)) {
+    if (deps.chatter && chatterCmd && (chatterCmd.kind === "chatty" || chatterCmd.kind === "memory" || !msg.direct)) {
       await runChatterCommand(deps.chatter, chatterCmd, msg, fx);
       return true;
     }
@@ -1057,8 +1078,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   return {
     onCommand,
 
-    onAmbient(conversationId, scopeId, fx) {
+    onAmbient(conversationId, scopeId, fx, line) {
       chimeIn?.onAmbient(conversationId, scopeId, fx);
+      channelCapture?.onLine(conversationId, scopeId, line, fx);
     },
 
     proposeLiveSession(args, fx): Promise<string> {
@@ -1074,6 +1096,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       let capture: Promise<void> | undefined;
       // Any addressed message ends the lull wait and drops an in-flight chime-in here.
       chimeIn?.cancel(msg.conversationId);
+      // ...but buffered chatter is still worth remembering: extract it now instead of dropping it.
+      channelCapture?.flush(msg.conversationId);
       try {
         const cmd = commandWord(msg.text);
         if (deps.liveSessions.has(msg.conversationId)) {

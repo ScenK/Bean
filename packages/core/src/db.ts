@@ -142,6 +142,9 @@ CREATE TABLE IF NOT EXISTS chatops_chatty (
   attempts      INTEGER NOT NULL DEFAULT 0,
   -- epoch ms a chime-in attempt's claim expires (a crashed attempt can't wedge the scope).
   inflight_until INTEGER,
+  -- Channel memory capture (#463): 1 = "memory off"; memory_noticed = the one-time notice posted.
+  memory_off     INTEGER NOT NULL DEFAULT 0,
+  memory_noticed INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (surface, scope_id)
 );
 
@@ -297,6 +300,9 @@ export function openDb(file: string): DatabaseSync {
     ["todos", "created_by", "TEXT"],
     // Chime-in claim (#445), after #444's chatops_chatty.
     ["chatops_chatty", "inflight_until", "INTEGER"],
+    // Channel memory capture (#463).
+    ["chatops_chatty", "memory_off", "INTEGER NOT NULL DEFAULT 0"],
+    ["chatops_chatty", "memory_noticed", "INTEGER NOT NULL DEFAULT 0"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");
