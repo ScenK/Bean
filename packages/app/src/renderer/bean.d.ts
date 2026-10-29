@@ -7,7 +7,7 @@ import type { Theme, ComponentKind, DashboardTarget, AvatarMode, ConfigView, Con
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
 import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
-import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch } from "../ipc.js";
+import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn } from "../ipc.js";
 import type { RoutineBuildView } from "../routine-builder.js";
 import type { WatchCheckResult } from "@bean/core";
 
@@ -116,7 +116,8 @@ declare global {
       updateMemory(id: string, text: string): Promise<void>;
       deleteMemories(ids: string[]): Promise<number>;
       /** Fire-and-forget at chat close: main extracts + saves in the background. */
-      rememberOnClose(transcript: ChatTurn[], opts: { incognito: boolean }): void;
+      rememberOnClose(transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[] }): void;
+      onMemoryUpdated(cb: (saved: Array<{ id: string; text: string }>) => void): void;
       getMemoryBatch(): Promise<MemoryBatch | undefined>;
       undoMemoryBatch(): Promise<number>;
       getLastDream(): Promise<DreamDigest | undefined>;

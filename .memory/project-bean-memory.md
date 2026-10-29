@@ -19,6 +19,16 @@ see `db.ts`'s `migrateFromFiles`.
   A broken save (`failed`, or any load/store rejection) raises a sticky `memory:error` bubble
   ("Couldn't update memory") via `onMemoryFailure`; nothing worth saving shows no bubble. Logs
   carry the rejected *count* only, never fact text.
+- **Per-turn capture (#461):** after each typed, non-incognito chat reply (autoMemory on, no
+  explicit `remember` that turn, no converse error), `registerIpc`'s chat handler fires
+  `captureTurn` off the reply path: `extractMemories(…, { latestTurn: true })` cites only the
+  latest turn (≤6 prior turns ride as context), appends, and sends `memoryUpdated` to that chat
+  window → a `🧠 Memory updated — … · Undo` row (Undo = `deleteMemories` on exactly those ids). No
+  avatar bubble; a per-turn failure only logs (close retries it). Main tracks, per window
+  (webContents id), the turn ids captured/in flight and the saved ids; the ids count as pending
+  for dream until the window closes. **Close is a catch-up:** turns carry their renderer id,
+  already-captured ones are downgraded to non-citable context, and facts undone in the window ride
+  along as `rejected` (shown to extraction as already remembered) so close won't re-save them.
   Config `autoMemory` (default true; Settings → Memory) off = explicit remember/forget only.
   The per-window `🕶` chip (incognito) makes a chat write nothing.
 - **Trust boundary:** `ChatTurn.source` is recorded when a turn arrives; only `role: "user"` +
@@ -44,7 +54,7 @@ see `db.ts`'s `migrateFromFiles`.
 - **Edit surface:** Persona's MEMORY section, per-row `updateMemory`/`deleteMemories`/
   `appendMemories` only — see [[safety-memory-append-vs-replace]].
 - **Dream (background consolidation, #177 PR 2):** `memory/dream.ts` `maybeDream()` is checked
-  after each desktop auto-save (chat close = idle point; no timer, no boot cost). Due when ≥24h
+  after each desktop auto-save (close batch or per-turn capture; no timer, no boot cost). Due when ≥24h
   since `lastDreamAt` **and** ≥5 memories created since (a `created_at` count — no counter). A
   `dreamLease` row in `memory_meta` is claimed with one `INSERT … ON CONFLICT DO UPDATE … WHERE
   expired` statement (10-min expiry, stale taken over) and the due-check is repeated under it; no

@@ -208,3 +208,38 @@ test("extraction reports how many proposals failed validation", async () => {
     candidates: [{ text: "Uses pnpm", projectPath: undefined }], rejected: 1, failed: false,
   });
 });
+
+test("latestTurn: only the final typed turn is citable; earlier typed turns are context only", async () => {
+  const convo: ChatTurn[] = [
+    { role: "user", content: "I always use pnpm.", source: "typed" },
+    { role: "assistant", content: "Noted." },
+    { role: "user", content: "I live in Seattle.", source: "typed" },
+  ];
+  let prompt = "";
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages }) => {
+      prompt = String(messages[1]?.content);
+      return { content: "", toolCalls: [
+        { name: "remember", args: { text: "Uses pnpm", quote: "I always use pnpm" } },
+        { name: "remember", args: { text: "Lives in Seattle", quote: "I live in Seattle" } },
+      ] };
+    },
+  };
+  const res = await extractMemories(convo, [], projects, deps, { latestTurn: true });
+  expect(res.candidates).toEqual([{ text: "Lives in Seattle", projectPath: undefined }]);
+  expect(res.rejected).toBe(1);
+  expect(prompt).toContain("user (not citable): I always use pnpm.");
+  expect(prompt).toContain("user (typed): I live in Seattle.");
+});
+
+test("latestTurn: a final turn that isn't typed (loopback/skill) never calls the model", async () => {
+  let called = false;
+  const deps: ConverseDeps = { model: "m", chat: async () => { called = true; return { content: "", toolCalls: [] }; } };
+  const convo: ChatTurn[] = [
+    { role: "user", content: "I live in Seattle.", source: "typed" },
+    { role: "user", content: "[delegate result]: done", source: "loopback" },
+  ];
+  expect((await extractMemories(convo, [], projects, deps, { latestTurn: true })).candidates).toEqual([]);
+  expect(called).toBe(false);
+});

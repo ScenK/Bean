@@ -39,7 +39,10 @@ export type ChatItem =
   | { kind: "skill"; id: string; skill: ProposedSkill; state: "pending" | "saved" | "dismissed" }
   // A propose_todo draft awaiting confirmation — todos are never queued silently.
   | { kind: "todo"; id: string; todo: ProposedTodo; state: "pending" | "queued" | "dismissed" }
-  | { kind: "status"; id: string; text: string; tone: "info" | "done" | "error" };
+  | { kind: "status"; id: string; text: string; tone: "info" | "done" | "error" }
+  // A per-turn memory capture's receipt: "🧠 Memory updated — … · Undo". Undo deletes exactly
+  // `saved`'s ids; an undone row stays as a quiet record.
+  | { kind: "memory"; id: string; saved: Array<{ id: string; text: string }>; state: "saved" | "undoing" | "undone" };
 
 let counter = 0;
 export function newId(): string {

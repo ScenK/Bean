@@ -8,7 +8,7 @@ import type {
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
 import type { TaskJob } from "./task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
-import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch } from "./ipc.js";
+import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn } from "./ipc.js";
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { WatchCheckResult } from "@bean/core";
 
@@ -132,8 +132,10 @@ contextBridge.exposeInMainWorld("bean", {
   appendMemories: (additions: Memory[]): Promise<void> => ipcRenderer.invoke(IPC.appendMemories, additions),
   updateMemory: (id: string, text: string): Promise<void> => ipcRenderer.invoke(IPC.updateMemory, id, text),
   deleteMemories: (ids: string[]): Promise<number> => ipcRenderer.invoke(IPC.deleteMemories, ids),
-  rememberOnClose: (transcript: ChatTurn[], opts: { incognito: boolean }): void =>
+  rememberOnClose: (transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[] }): void =>
     ipcRenderer.send(IPC.rememberOnClose, transcript, opts),
+  onMemoryUpdated: (cb: (saved: Array<{ id: string; text: string }>) => void) =>
+    ipcRenderer.on(IPC.memoryUpdated, (_e, saved: Array<{ id: string; text: string }>) => cb(saved)),
   getMemoryBatch: (): Promise<MemoryBatch | undefined> => ipcRenderer.invoke(IPC.getMemoryBatch),
   undoMemoryBatch: (): Promise<number> => ipcRenderer.invoke(IPC.undoMemoryBatch),
   getLastDream: (): Promise<DreamDigest | undefined> => ipcRenderer.invoke(IPC.getLastDream),

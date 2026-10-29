@@ -90,6 +90,7 @@ export function ChatPanel({
   onUnlink,
   incognito,
   onToggleIncognito,
+  onMemoryUndo,
 }: {
   items: ChatItem[];
   busy: boolean;
@@ -131,6 +132,7 @@ export function ChatPanel({
   // Off the record: nothing from this chat is remembered at close.
   incognito: boolean;
   onToggleIncognito: () => void;
+  onMemoryUndo: (id: string) => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -327,6 +329,17 @@ export function ChatPanel({
           }
           if (it.kind === "working") return <div key={it.id} class="bean-bubble bean-bubble--bean bean-bubble--working">{it.text}<span class="bean-dots"><span /><span /><span /></span></div>;
           if (it.kind === "status") return <div key={it.id} class={`bean-status bean-status--${it.tone}`}>{it.text}</div>;
+          if (it.kind === "memory") {
+            const facts = it.saved.map((m) => m.text).join("; ");
+            return (
+              <div key={it.id} class={`bean-status bean-status--${it.state === "undone" ? "info" : "done"}`}>
+                {it.state === "undone" ? `Forgot — ${facts}` : `🧠 Memory updated — ${facts} · `}
+                {it.state === "undone" ? null : (
+                  <button type="button" class="bean-status-action" disabled={it.state === "undoing"} onClick={() => onMemoryUndo(it.id)}>Undo</button>
+                )}
+              </div>
+            );
+          }
           if (it.kind === "note") {
             return (
               <NoteCard

@@ -607,6 +607,69 @@ test("a store failure raises exactly one failure bubble and leaves no Undo batch
   expect(handlers.batch()).toBeUndefined();
 });
 
+const turnReq = { history: [], message: "I live in Seattle", source: "typed" as const, turnId: "item-1" };
+const reply = { reply: "Nice!" };
+
+test("captureTurn saves only the latest typed turn, after the reply, and close catch-up skips it", async () => {
+  const calls: { transcript: ChatTurn[]; opts?: { latestTurn?: boolean } }[] = [];
+  const turnBatches: string[][] = [];
+  const { handlers, appended, batches } = memoryHandlersFor({
+    extractMemories: async (transcript, _ex, _p, _d, opts) => {
+      calls.push({ transcript, opts });
+      return { candidates: transcript.some((t) => t.source === "typed") ? [{ text: "Lives in Seattle" }] : [], rejected: 0, failed: false };
+    },
+    onTurnBatch: (pendingIds) => { turnBatches.push(pendingIds()); },
+  });
+  const saved = await handlers.captureTurn(7, turnReq, reply);
+  expect(saved.map((m) => m.text)).toEqual(["Lives in Seattle"]);
+  expect(calls[0]).toEqual({ transcript: [{ role: "user", content: "I live in Seattle", source: "typed" }], opts: { latestTurn: true } });
+  expect(appended).toEqual([saved]);
+  // Dream sees the still-undoable per-turn ids as pending.
+  expect(turnBatches).toEqual([saved.map((m) => m.id)]);
+  expect(batches).toEqual([]); // no avatar bubble — the chat row is the receipt
+
+  // Close: the captured turn is context only, so nothing is citable and nothing is re-saved.
+  expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { windowId: 7 })).toEqual([]);
+  expect(calls[1]?.transcript).toEqual([{ role: "user", content: "I live in Seattle", source: undefined }]);
+  // An uncaptured turn (another id) is still caught up.
+  expect(await handlers.rememberOnClose([{ role: "user", content: "I use vim", source: "typed", id: "item-9" }], { windowId: 7 })).toHaveLength(1);
+});
+
+test("captureTurn skips incognito, autoMemory off, non-typed, errored, and explicit-remember turns", async () => {
+  let extracted = 0;
+  const count = { extractMemories: async () => { extracted++; return { candidates: [], rejected: 0, failed: false }; } };
+  const { handlers } = memoryHandlersFor(count);
+  expect(await handlers.captureTurn(1, { ...turnReq, incognito: true }, reply)).toEqual([]);
+  expect(await handlers.captureTurn(1, { ...turnReq, source: "loopback" }, reply)).toEqual([]);
+  expect(await handlers.captureTurn(1, turnReq, { reply: "", error: "boom" })).toEqual([]);
+  expect(await handlers.captureTurn(1, turnReq, { reply: "ok", remembered: [{ id: "x", text: "Lives in Seattle", createdAt: "" }] })).toEqual([]);
+  const off = memoryHandlersFor({ ...count, autoMemory: () => false });
+  expect(await off.handlers.captureTurn(1, turnReq, reply)).toEqual([]);
+  expect(extracted).toBe(0);
+});
+
+test("a failed per-turn capture is retried by close catch-up and raises no bubble itself", async () => {
+  let fail = true;
+  const { handlers, failures } = memoryHandlersFor({
+    extractMemories: async (transcript) => (fail
+      ? { candidates: [], rejected: 0, failed: true }
+      : { candidates: transcript.some((t) => t.source === "typed") ? [{ text: "Lives in Seattle" }] : [], rejected: 0, failed: false }),
+  });
+  await expect(handlers.captureTurn(3, turnReq, reply)).rejects.toThrow(/extraction/);
+  expect(failures()).toBe(0);
+  fail = false;
+  expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { windowId: 3 })).toHaveLength(1);
+});
+
+test("facts undone in the window reach close catch-up as already remembered", async () => {
+  let seen: Memory[] = [];
+  const { handlers, existing } = memoryHandlersFor({
+    extractMemories: async (_t, ex) => { seen = ex; return { candidates: [], rejected: 0, failed: false }; },
+  });
+  await handlers.rememberOnClose(typed, { rejected: ["Lives in Seattle"] });
+  expect(seen.map((m) => m.text)).toEqual([...existing.map((m) => m.text), "Lives in Seattle"]);
+});
+
 test("config save handler forwards the update to applyConfig", async () => {
   const applied: ConfigUpdate[] = [];
   const notifications: string[] = [];

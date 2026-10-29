@@ -473,7 +473,7 @@ export interface MemoryHandlerDeps {
   updateMemory: (file: string, id: string, text: string) => Promise<void>;
   deleteMemories: (file: string, ids: string[]) => Promise<number>;
   extractMemories: (
-    transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps,
+    transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps, opts?: { latestTurn?: boolean },
   ) => Promise<ExtractResult>;
   loadProjects: (file: string) => Promise<Project[]>;
   converse: ConverseDeps["chat"];
@@ -486,6 +486,9 @@ export interface MemoryHandlerDeps {
   /** A close-time save broke (model call or store) — main shows a sticky failure bubble, so
    * "broken" no longer looks like "nothing worth saving". */
   onMemoryFailure?: () => void;
+  /** A per-turn capture saved something — main checks dream (no bubble: the chat's
+   * "Memory updated" row is the receipt). */
+  onTurnBatch?: (pendingIds: () => string[]) => void;
   getLastDream: (file: string) => Promise<DreamDigest | undefined>;
   restoreDreamRun: (file: string, runId: string) => Promise<{ restored: number; skipped: number }>;
   dreamDetails: (file: string, runId: string) => Promise<{ before: string[]; after?: string }[]>;
@@ -497,20 +500,36 @@ export interface MemoryHandlerDeps {
  * only: the Undo window lasts until the next batch (or an app restart). */
 export interface MemoryBatch { ids: string[]; at: string }
 
+/** A close-time transcript turn; `id` = the renderer's turn id (typed turns), matched against
+ * the turns per-turn capture already handled. */
+export type CloseTurn = ChatTurn & { id?: string };
+
 export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
   let lastBatch: MemoryBatch | undefined;
-  const remember = async (transcript: ChatTurn[]): Promise<Memory[]> => {
+  // Per chat window (webContents id), dropped at its close: typed turns whose per-turn capture
+  // is in flight or done (close catch-up won't re-cite them), and the ids those captures saved —
+  // still undoable from the window's "Memory updated" rows, so dream leaves them alone.
+  const windows = new Map<number, { turns: Set<string>; ids: string[] }>();
+  const pendingIds = (): string[] => [...(lastBatch?.ids ?? []), ...[...windows.values()].flatMap((w) => w.ids)];
+  const extract = async (transcript: ChatTurn[], extra: Memory[], latestTurn: boolean): Promise<Memory[]> => {
     const [existing, projects] = await Promise.all([
       deps.loadMemories(deps.dbFile),
       deps.loadProjects(deps.projectsFile),
     ]);
-    const { candidates, rejected, failed } = await deps.extractMemories(transcript, existing, projects, { chat: deps.converse, model: deps.getModel() });
+    const { candidates, rejected, failed } = await deps.extractMemories(
+      transcript, extra.length ? [...existing, ...extra] : existing, projects,
+      { chat: deps.converse, model: deps.getModel() }, latestTurn ? { latestTurn } : undefined,
+    );
     // Counts only — a rejected candidate's text may be exactly what validation refused to keep.
     if (rejected > 0) console.warn(`auto-remember: rejected ${rejected} candidate(s)`);
     if (failed) throw new Error("auto-remember: extraction model call failed");
-    if (candidates.length === 0) return [];
     const at = new Date().toISOString();
-    const batch: Memory[] = candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at }));
+    return candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at }));
+  };
+  const remember = async (transcript: ChatTurn[], extra: Memory[]): Promise<Memory[]> => {
+    const batch = await extract(transcript, extra, false);
+    if (batch.length === 0) return [];
+    const at = batch[0]!.createdAt;
     // Pending before the insert lands, so a dream snapshot can never see these rows without
     // also seeing them as the live Undo batch it must leave alone.
     const prevBatch = lastBatch;
@@ -521,7 +540,7 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       lastBatch = prevBatch;
       throw err;
     }
-    deps.onMemoryBatch?.(batch, () => lastBatch?.ids ?? []);
+    deps.onMemoryBatch?.(batch, pendingIds);
     return batch;
   };
   return {
@@ -529,11 +548,39 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     append: (additions: Memory[]): Promise<void> => deps.appendMemories(deps.dbFile, additions),
     update: (id: string, text: string): Promise<void> => deps.updateMemory(deps.dbFile, id, text),
     delete: (ids: string[]): Promise<number> => deps.deleteMemories(deps.dbFile, ids),
-    /** Chat-window close: extract → validate → append in the background, no review card. */
-    rememberOnClose: async (transcript: ChatTurn[], opts: { incognito?: boolean }): Promise<Memory[]> => {
-      if (opts.incognito || !deps.autoMemory()) return [];
+    /** After a chat reply: capture this typed turn's facts (only it is citable; a few prior
+     * turns are context). Skipped when the turn used the explicit remember tool or errored. */
+    captureTurn: async (windowId: number, req: ChatRequest, result: ConverseResult): Promise<Memory[]> => {
+      if (req.source !== "typed" || req.incognito || !deps.autoMemory() || result.error || result.remembered?.length) return [];
+      let w = windows.get(windowId);
+      if (!w) windows.set(windowId, w = { turns: new Set(), ids: [] });
+      if (req.turnId) w.turns.add(req.turnId);
       try {
-        return await remember(transcript);
+        const batch = await extract([...req.history, { role: "user", content: req.message, source: "typed" }], [], true);
+        if (batch.length === 0) return [];
+        w.ids.push(...batch.map((m) => m.id)); // pending before the insert, same as the close batch
+        await deps.appendMemories(deps.dbFile, batch);
+        deps.onTurnBatch?.(pendingIds);
+        return batch;
+      } catch (err) {
+        // Not captured after all — close catch-up gets to retry it.
+        if (req.turnId) w.turns.delete(req.turnId);
+        throw err;
+      }
+    },
+    /** Chat-window close: a catch-up — extract → validate → append in the background, no review
+     * card. Turns per-turn capture handled stay as context only; `rejected` = facts the user
+     * undid in this window, shown to extraction as already remembered so they aren't re-saved. */
+    rememberOnClose: async (
+      transcript: CloseTurn[], opts: { incognito?: boolean; rejected?: string[]; windowId?: number },
+    ): Promise<Memory[]> => {
+      const w = opts.windowId === undefined ? undefined : windows.get(opts.windowId);
+      if (opts.windowId !== undefined) windows.delete(opts.windowId);
+      if (opts.incognito || !deps.autoMemory()) return [];
+      const turns = transcript.map(({ id, ...t }): ChatTurn => (id && w?.turns.has(id) ? { ...t, source: undefined } : t));
+      const rejected = (opts.rejected ?? []).map((text): Memory => ({ id: "", text, createdAt: "" }));
+      try {
+        return await remember(turns, rejected);
       } catch (err) {
         deps.onMemoryFailure?.();
         throw err;
@@ -561,13 +608,15 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
 }
 
 // Renderer payloads are erased types by the time they cross IPC — keep only well-formed turns.
-function toTranscript(v: unknown): ChatTurn[] {
+function toTranscript(v: unknown): CloseTurn[] {
   if (!Array.isArray(v)) return [];
   const sources = new Set(["typed", "loopback", "ambient", "skill", "summary"]);
-  return v.flatMap((t): ChatTurn[] => {
-    const o = t as Partial<ChatTurn> | null;
+  return v.flatMap((t): CloseTurn[] => {
+    const o = t as Partial<CloseTurn> | null;
     if (!o || (o.role !== "user" && o.role !== "assistant") || typeof o.content !== "string") return [];
-    return [{ role: o.role, content: o.content, source: sources.has(o.source as string) ? o.source : undefined }];
+    const turn: CloseTurn = { role: o.role, content: o.content, source: sources.has(o.source as string) ? o.source : undefined };
+    if (typeof o.id === "string") turn.id = o.id;
+    return [turn];
   });
 }
 
@@ -823,6 +872,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   autoMemory: MemoryHandlerDeps["autoMemory"];
   onMemoryBatch?: MemoryHandlerDeps["onMemoryBatch"];
   onMemoryFailure?: MemoryHandlerDeps["onMemoryFailure"];
+  onTurnBatch?: MemoryHandlerDeps["onTurnBatch"];
   getLastDream: MemoryHandlerDeps["getLastDream"];
   restoreDreamRun: MemoryHandlerDeps["restoreDreamRun"];
   dreamDetails: MemoryHandlerDeps["dreamDetails"];
@@ -879,11 +929,19 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.route, (_e, input: RouteInput) => routeHandler(input));
 
   const chatHandler = buildChatHandler(deps);
-  ipcMain.handle(IPC.chat, async (_e, req: ChatRequest) => {
+  const memoryHandlers = buildMemoryHandlers(deps);
+  ipcMain.handle(IPC.chat, async (e, req: ChatRequest) => {
     const end = deps.onChatTurn?.();
     try {
       const result = await chatHandler(req);
       end?.(result.error);
+      // Fire-and-forget, off the reply path: the reply returns now, the receipt row follows.
+      const sender = e.sender;
+      memoryHandlers.captureTurn(sender.id, req, result).then((batch) => {
+        if (batch.length > 0 && !sender.isDestroyed()) {
+          sender.send(IPC.memoryUpdated, batch.map(({ id, text }) => ({ id, text })));
+        }
+      }).catch((err) => console.error("per-turn memory capture failed:", err));
       return result;
     } catch (err) {
       end?.(err instanceof Error ? err.message : String(err));
@@ -964,16 +1022,17 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.getPersona, () => personaHandlers.get());
   ipcMain.handle(IPC.savePersona, (_e, p: Persona) => personaHandlers.save(p));
 
-  const memoryHandlers = buildMemoryHandlers(deps);
   ipcMain.handle(IPC.listMemories, () => memoryHandlers.list());
   ipcMain.handle(IPC.appendMemories, (_e, additions: Memory[]) => memoryHandlers.append(additions));
   ipcMain.handle(IPC.updateMemory, (_e, id: string, text: string) => memoryHandlers.update(id, text));
   ipcMain.handle(IPC.deleteMemories, (_e, ids: string[]) => memoryHandlers.delete(ids));
   // Fire-and-forget: the chat window is already closing. A failure already raised its bubble
   // (onMemoryFailure); this only logs it.
-  ipcMain.on(IPC.rememberOnClose, (_e, transcript: unknown, opts: unknown) => {
-    const incognito = (opts as { incognito?: unknown } | null)?.incognito === true;
-    memoryHandlers.rememberOnClose(toTranscript(transcript), { incognito }).catch((err) => {
+  ipcMain.on(IPC.rememberOnClose, (e, transcript: unknown, opts: unknown) => {
+    const o = opts as { incognito?: unknown; rejected?: unknown } | null;
+    const incognito = o?.incognito === true;
+    const rejected = Array.isArray(o?.rejected) ? o.rejected.filter((t): t is string => typeof t === "string") : [];
+    memoryHandlers.rememberOnClose(toTranscript(transcript), { incognito, rejected, windowId: e.sender.id }).catch((err) => {
       console.error("auto-remember failed:", err);
     });
   });
