@@ -604,6 +604,7 @@ app.whenReady().then(async () => {
     const delegateTasks = createDelegateTasks({
       resolvedPath,
       dir,
+      scratchPath: scratchDir(dir),
       resolveCli: resolveDelegateCli,
       skillBrowser: async (name) =>
         (await loadLayeredSkills(skillsDir(projectDir), skillsDir(dir))).find((s) => s.name === name)?.browser === true,

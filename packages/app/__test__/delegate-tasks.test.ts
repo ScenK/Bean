@@ -62,6 +62,23 @@ describe("resolveDelegateSelection", () => {
 });
 
 describe("createDelegateTasks", () => {
+  it("runs a no-project (\"\") request in the scratch workspace, a real path", async () => {
+    const reqs: DelegateRequest[] = [];
+    const sent: DelegateEvent[] = [];
+    const tasks = createDelegateTasks({
+      resolveCli: () => ({ cli: "claude" }),
+      send: (e) => { sent.push(e); },
+      newId: () => "task-scratch",
+      dir: tmp(),
+      scratchPath: "/home/.bean/workspace",
+      run: (req) => { reqs.push(req); return { cancel: () => {} } satisfies DelegateHandle; },
+    });
+    await tasks.start({ projectPath: "", prompt: "go", instruction: "do it" });
+    await tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });
+    expect(reqs.map((r) => r.projectPath)).toEqual(["/home/.bean/workspace", "/p"]);
+    expect(sent[0]).toMatchObject({ type: "started", projectPath: "/home/.bean/workspace" });
+  });
+
   it("uses one resolved compatible CLI/model pair for a delegate request", async () => {
     const reqs: DelegateRequest[] = [];
     const tasks = createDelegateTasks({
