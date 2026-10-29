@@ -483,6 +483,9 @@ export interface MemoryHandlerDeps {
   /** A non-empty auto-remember batch landed — main shows the avatar bubble (and checks dream).
    * `pendingIds` reads the batch whose Undo is live *now* (a later close may have replaced it). */
   onMemoryBatch?: (batch: Memory[], pendingIds: () => string[]) => void;
+  /** A close-time save broke (model call or store) — main shows a sticky failure bubble, so
+   * "broken" no longer looks like "nothing worth saving". */
+  onMemoryFailure?: () => void;
   getLastDream: (file: string) => Promise<DreamDigest | undefined>;
   restoreDreamRun: (file: string, runId: string) => Promise<{ restored: number; skipped: number }>;
   dreamDetails: (file: string, runId: string) => Promise<{ before: string[]; after?: string }[]>;
@@ -496,6 +499,31 @@ export interface MemoryBatch { ids: string[]; at: string }
 
 export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
   let lastBatch: MemoryBatch | undefined;
+  const remember = async (transcript: ChatTurn[]): Promise<Memory[]> => {
+    const [existing, projects] = await Promise.all([
+      deps.loadMemories(deps.dbFile),
+      deps.loadProjects(deps.projectsFile),
+    ]);
+    const { candidates, rejected, failed } = await deps.extractMemories(transcript, existing, projects, { chat: deps.converse, model: deps.getModel() });
+    // Counts only — a rejected candidate's text may be exactly what validation refused to keep.
+    if (rejected > 0) console.warn(`auto-remember: rejected ${rejected} candidate(s)`);
+    if (failed) throw new Error("auto-remember: extraction model call failed");
+    if (candidates.length === 0) return [];
+    const at = new Date().toISOString();
+    const batch: Memory[] = candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at }));
+    // Pending before the insert lands, so a dream snapshot can never see these rows without
+    // also seeing them as the live Undo batch it must leave alone.
+    const prevBatch = lastBatch;
+    lastBatch = { ids: batch.map((m) => m.id), at };
+    try {
+      await deps.appendMemories(deps.dbFile, batch);
+    } catch (err) {
+      lastBatch = prevBatch;
+      throw err;
+    }
+    deps.onMemoryBatch?.(batch, () => lastBatch?.ids ?? []);
+    return batch;
+  };
   return {
     list: (): Promise<Memory[]> => deps.loadMemories(deps.dbFile),
     append: (additions: Memory[]): Promise<void> => deps.appendMemories(deps.dbFile, additions),
@@ -504,26 +532,12 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     /** Chat-window close: extract → validate → append in the background, no review card. */
     rememberOnClose: async (transcript: ChatTurn[], opts: { incognito?: boolean }): Promise<Memory[]> => {
       if (opts.incognito || !deps.autoMemory()) return [];
-      const [existing, projects] = await Promise.all([
-        deps.loadMemories(deps.dbFile),
-        deps.loadProjects(deps.projectsFile),
-      ]);
-      const { candidates } = await deps.extractMemories(transcript, existing, projects, { chat: deps.converse, model: deps.getModel() });
-      if (candidates.length === 0) return [];
-      const at = new Date().toISOString();
-      const batch: Memory[] = candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at }));
-      // Pending before the insert lands, so a dream snapshot can never see these rows without
-      // also seeing them as the live Undo batch it must leave alone.
-      const prevBatch = lastBatch;
-      lastBatch = { ids: batch.map((m) => m.id), at };
       try {
-        await deps.appendMemories(deps.dbFile, batch);
+        return await remember(transcript);
       } catch (err) {
-        lastBatch = prevBatch;
+        deps.onMemoryFailure?.();
         throw err;
       }
-      deps.onMemoryBatch?.(batch, () => lastBatch?.ids ?? []);
-      return batch;
     },
     batch: (): MemoryBatch | undefined => lastBatch,
     lastDream: (): Promise<DreamDigest | undefined> => deps.getLastDream(deps.dbFile),
@@ -808,6 +822,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   extractMemories: MemoryHandlerDeps["extractMemories"];
   autoMemory: MemoryHandlerDeps["autoMemory"];
   onMemoryBatch?: MemoryHandlerDeps["onMemoryBatch"];
+  onMemoryFailure?: MemoryHandlerDeps["onMemoryFailure"];
   getLastDream: MemoryHandlerDeps["getLastDream"];
   restoreDreamRun: MemoryHandlerDeps["restoreDreamRun"];
   dreamDetails: MemoryHandlerDeps["dreamDetails"];
@@ -954,7 +969,8 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.appendMemories, (_e, additions: Memory[]) => memoryHandlers.append(additions));
   ipcMain.handle(IPC.updateMemory, (_e, id: string, text: string) => memoryHandlers.update(id, text));
   ipcMain.handle(IPC.deleteMemories, (_e, ids: string[]) => memoryHandlers.delete(ids));
-  // Fire-and-forget: the chat window is already closing. Failures just mean nothing was saved.
+  // Fire-and-forget: the chat window is already closing. A failure already raised its bubble
+  // (onMemoryFailure); this only logs it.
   ipcMain.on(IPC.rememberOnClose, (_e, transcript: unknown, opts: unknown) => {
     const incognito = (opts as { incognito?: unknown } | null)?.incognito === true;
     memoryHandlers.rememberOnClose(toTranscript(transcript), { incognito }).catch((err) => {
