@@ -84,3 +84,42 @@ test("persona: a long memory list scrolls within the panel", async () => {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });
+
+// #492: chat opens at 600×760, can't shrink below 440×520, and a resize survives close + reopen.
+test("chat window: default size, minimum size, remembered size", async () => {
+  const home = await makeBeanHome();
+  const stub = await startStubOpenAI();
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  try {
+    const avatar = await app.firstWindow();
+    const openChat = () =>
+      Promise.all([
+        app.waitForEvent("window"),
+        avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
+      ]).then(([win]) => win);
+    const chatSize = () => app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("chat"))?.getSize());
+    const resizeChat = (w: number, h: number) => app.evaluate(({ BrowserWindow }, [w, h]) =>
+      BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().includes("chat"))!.setSize(w!, h!), [w, h]);
+
+    const chat = await openChat();
+    // Wait for the mount: the close hand-off listener only exists once React has rendered.
+    await expect(chat.locator(".bean-input--composer")).toBeVisible();
+    expect(await chatSize()).toEqual([600, 760]);
+
+    await resizeChat(100, 100);
+    expect(await chatSize()).toEqual([440, 520]);
+
+    await resizeChat(700, 820);
+    await Promise.all([
+      chat.waitForEvent("close"),
+      app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("chat"))!.close()),
+    ]);
+
+    const reopened = await openChat();
+    await expect(reopened.locator(".bean-input--composer")).toBeVisible();
+    expect(await chatSize()).toEqual([700, 820]);
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
+  }
+});

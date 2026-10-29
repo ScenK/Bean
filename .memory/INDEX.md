@@ -12,7 +12,7 @@
 ## safety — things that broke before, don't undo
 
 - [safety-preload-must-be-cjs.md](safety-preload-must-be-cjs.md) — why the Electron preload is built as `.cjs` and guarded against ESM syntax.
-- [safety-window-behavior.md](safety-window-behavior.md) — avatar/intake share one window; the no-drag click target, console respawn, and don't-quit-on-avatar-close rules.
+- [safety-window-behavior.md](safety-window-behavior.md) — avatar/intake share one window; the no-drag click target, console respawn, don't-quit-on-avatar-close rules, and chat's main-side remembered size.
 - [safety-dev-children-not-detached.md](safety-dev-children-not-detached.md) — `pnpm dev`'s watch/Electron children must stay in the orchestrator's process group (no `detached`) so Ctrl+C reaches them; detaching orphans the Electron app on quit.
 - [safety-single-instance-lock-and-dev-relaunch.md](safety-single-instance-lock-and-dev-relaunch.md) — dev relaunch must wait for the old Electron's exit (single-instance lock race), main.ts handles SIGINT/SIGTERM itself, and lock failure uses `app.exit` not `app.quit`.
 - [safety-bot-fire-and-forget-sends.md](safety-bot-fire-and-forget-sends.md) — un-awaited bot sends must `.catch`; an unhandled rejection kills the bot and wipes pending proposals (Teams revoked-proxy crash).
