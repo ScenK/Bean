@@ -4,7 +4,7 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { ChatTurn } from "@bean/core";
 import {
-  AGENT_FINAL_CHARS, applyLiveEvent, chatTurns, handoffLines, offerAgent, parseSlash, slashMatches, turnFooter,
+  AGENT_FINAL_CHARS, applyLiveEvent, canContinueLive, chatTurns, handoffLines, offerAgent, parseSlash, slashMatches, turnFooter,
 } from "../src/renderer/components/chat/agent-mode.js";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
 import type { ChatItem } from "../src/renderer/shared/chat-types.js";
@@ -79,6 +79,21 @@ describe("agent-mode helpers", () => {
 });
 
 // ChatWindow end to end against a fake window.bean.
+describe("canContinueLive", () => {
+  const card = (receipt?: { label: string; command: string; sessionId?: string; agent?: "claude" | "codex" }): ChatItem => ({
+    kind: "delegate", id: "d", proposal: { projectPath: "/p", instruction: "i", composedPrompt: "i" }, state: "done", tail: [],
+    ...(receipt ? { receipt } : {}),
+  });
+  it("needs a live receipt, an enabled CLI and no live session in the window", () => {
+    const live = { label: "l", command: "c", sessionId: "s", agent: "claude" as const };
+    expect(canContinueLive(card(live), ["claude"], false)).toBe(true);
+    expect(canContinueLive(card(live), ["claude"], true)).toBe(false);
+    expect(canContinueLive(card(live), ["codex"], false)).toBe(false);
+    expect(canContinueLive(card({ label: "l", command: "c" }), ["claude"], false)).toBe(false);
+    expect(canContinueLive(card(), ["claude"], false)).toBe(false);
+  });
+});
+
 describe("ChatWindow agent mode", () => {
   const listeners: Record<string, (arg: unknown) => void> = {};
   let bean: Record<string, ReturnType<typeof vi.fn>>;
@@ -200,6 +215,49 @@ describe("ChatWindow agent mode", () => {
     await live({ type: "started", projectPath: "/scratch", handedOver: 6 });
     await send("use GitHub as the provider");
     expect(bean.liveSend).toHaveBeenCalledWith("s1", "use GitHub as the provider");
+  });
+
+  it("Continue live on a finished delegate: one session on a double click, sends only the id, next message continues it", async () => {
+    bean.liveResume = vi.fn(async () => ({ sessionId: "s1", agent: "claude", projectPath: "/p" }));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    bean.chat!.mockResolvedValueOnce({ reply: "on it", model: "m", proposedDelegate: { projectPath: "/p", instruction: "audit", composedPrompt: "audit" } });
+    await send("hi bean");
+    await click("Delegate");
+    const receipt = { label: "claude · sess…", command: "cd '/p' && claude --resume sess-1", sessionId: "sess-1", agent: "claude" as const };
+    await act(async () => { listeners.onDelegateEvent!({ taskId: "task1", type: "done", result: "audit ok", receipt } satisfies DelegateEvent); });
+    await flush();
+
+    const btn = [...root.querySelectorAll("button")].find((b) => b.textContent?.includes("Continue live"))!;
+    await act(async () => { btn.click(); btn.click(); });
+    await flush();
+    expect(bean.liveResume).toHaveBeenCalledTimes(1);
+    expect(bean.liveResume).toHaveBeenCalledWith("sess-1");
+    expect(bean.liveStart).not.toHaveBeenCalled();
+    expect(root.querySelector(".bean-agent-banner")?.textContent).toContain("Continuing");
+    // Hidden while the session is live.
+    expect([...root.querySelectorAll("button")].some((b) => b.textContent?.includes("Continue live"))).toBe(false);
+
+    await send("now fix what you found");
+    expect(bean.liveSend).toHaveBeenCalledWith("s1", "now fix what you found");
+  });
+
+  it("a refused Continue live reports why and leaves Bean in charge", async () => {
+    bean.liveResume = vi.fn(async () => ({ error: "I have no record of that run." }));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    bean.chat!.mockResolvedValueOnce({ reply: "on it", model: "m", proposedDelegate: { projectPath: "/p", instruction: "audit", composedPrompt: "audit" } });
+    await send("hi bean");
+    await click("Delegate");
+    await act(async () => { listeners.onDelegateEvent!({ taskId: "task1", type: "failed", message: "x", receipt: { label: "l", command: "c", sessionId: "sess-1", agent: "claude" } } satisfies DelegateEvent); });
+    await flush();
+    const btn = [...root.querySelectorAll("button")].find((b) => b.textContent?.includes("Continue live"))!;
+    await act(async () => { btn.click(); });
+    await flush();
+    expect(root.textContent).toContain("I have no record of that run.");
+    expect(root.querySelector(".bean-agent-banner")).toBeNull();
+    await send("ok");
+    expect(chatCalls().at(-1)).toMatchObject({ message: "ok", source: "typed" });
   });
 
   it("closing mid-session asks first, then ends the session and closes", async () => {

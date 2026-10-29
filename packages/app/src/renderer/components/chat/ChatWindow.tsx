@@ -20,8 +20,12 @@ type CloseFlow = { stage: "delegates" } | null;
 export const closeTranscript = (items: ChatItem[]): CloseTurn[] => chatTurns(items, { memory: true });
 
 /** The window's agent session. `key` tells a start apart from a later one; `sessionId` arrives with
- * the `started` event (or liveStart's result); texts typed before it are `queued`. */
-interface LiveState { key: string; agent: LiveCli; projectPath: string; sessionId?: string; turns: number; busy: boolean; queued: string[] }
+ * the `started` event (or liveStart's result); texts typed before it are `queued`. `continuing` =
+ * resumed from a delegate card (Continue live). */
+interface LiveState {
+  key: string; agent: LiveCli; projectPath: string; sessionId?: string; turns: number; busy: boolean; queued: string[];
+  continuing?: boolean;
+}
 
 type QueuedSend = { text: string; display?: string; source?: TurnSource };
 
@@ -399,6 +403,33 @@ export function ChatWindow() {
     void startSession(agent, item.offer.instruction);
   };
 
+  // Continue live on a finished delegate card: only the receipt's session id goes to main, which
+  // reads the CLI and project from the recorded run. No handoff — the agent has its context. The
+  // button is hidden while a session is live, and liveRef is set before the await, so a double
+  // click starts one session.
+  const hasLive = (): boolean => liveRef.current !== undefined; // a function, so TS keeps liveRef unnarrowed
+  const continueLive = async (id: string): Promise<void> => {
+    const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id);
+    const sessionId = item?.receipt?.sessionId;
+    const agent = item?.receipt?.agent;
+    if (!sessionId || !agent || hasLive()) return;
+    const l: LiveState = { key: newId(), agent, projectPath: item.proposal.projectPath, turns: 0, busy: true, queued: [], continuing: true };
+    const prevMode = modeRef.current;
+    setLive(l);
+    setMode(agent);
+    const res = await window.bean.liveResume(sessionId).catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
+    if ("error" in res) {
+      if (liveRef.current?.key === l.key) { setLive(undefined); setMode(prevMode); addStatus(res.error, "error"); }
+      return;
+    }
+    knownSessionsRef.current.add(res.sessionId);
+    const cur = liveRef.current;
+    if (cur?.key !== l.key) { window.bean.liveStop(res.sessionId); return; } // ended while starting
+    setLive({ ...cur, sessionId: res.sessionId, projectPath: res.projectPath, queued: [] });
+    if (projects.some((p) => p.path === res.projectPath)) rememberProject(res.projectPath);
+    for (const q of cur.queued) await deliver(res.sessionId, agent, q);
+  };
+
   const dismissOffer = (id: string): void => {
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "offer" && it.state === "pending" ? { ...it, state: "dismissed" as const } : it)));
   };
@@ -680,7 +711,7 @@ export function ChatWindow() {
         onSend={onComposerSend}
         mode={mode}
         agentProject={agentProject}
-        live={live ? { agent: live.agent, projectPath: live.projectPath, busy: live.busy } : undefined}
+        live={live ? { agent: live.agent, projectPath: live.projectPath, busy: live.busy, continuing: live.continuing } : undefined}
         onPickAgent={switchMode}
         onPickProject={pickProject}
         onEndAgent={() => { endSession("Bean"); setMode("bean"); }}
@@ -697,6 +728,7 @@ export function ChatWindow() {
         onDelegateConfirm={(id, edited, model) => void confirmDelegate(id, edited, model)}
         onDelegateDismiss={dismissDelegate}
         onDelegateCancelTask={cancelDelegateTask}
+        onContinueLive={(id) => void continueLive(id)}
         onSaveToNotes={saveToNotes}
         onUnlink={() => setLinkedNote(undefined)}
         incognito={incognito}

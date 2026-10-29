@@ -5,7 +5,7 @@ import type {
 } from "@bean/core";
 import type { Theme, ComponentKind, DashboardTarget, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
-import type { LiveEvent, LiveStartRequest, LiveStartResult } from "../live-tasks.js";
+import type { LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult } from "../live-tasks.js";
 import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn } from "../ipc.js";
@@ -25,6 +25,8 @@ declare global {
       /** Undefined = sent; otherwise why it wasn't (e.g. the next-turn queue is full). */
       liveSend(sessionId: string, text: string): Promise<string | undefined>;
       liveStop(sessionId: string): void;
+      /** Continue live from a finished delegate card: only the receipt's session id goes over. */
+      liveResume(sessionId: string): Promise<LiveResumeResult>;
       onLiveEvent(cb: (e: LiveEvent) => void): void;
       availableClis(): Promise<CliName[]>;
       detectedClis(): Promise<CliName[]>;

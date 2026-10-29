@@ -2,13 +2,15 @@ import { spawn } from "node:child_process";
 import {
   runDelegate, recordRun, releaseRun, updateRunPid, enqueueOutbox, outboxDir, dbFile,
   interruptedRunNotice, BEAN_GIT_IDENTITY,
-  isValidSessionId, recordDelegateSession, resumeCommand, shQuote, spawnEnv,
+  isValidSessionId, isLiveSessionId, isLiveCli, recordDelegateSession, resumeCommand, shQuote, spawnEnv,
 } from "@bean/core";
-import type { CliModelSelection, CliName, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
+import type { CliModelSelection, CliName, LiveCli, DelegateCallbacks, DelegateHandle, DelegateRequest, DelegateSpawnFn } from "@bean/core";
 
 /** The started CLI session, for the delegate card's Copy chip: `label` is `claude · 3f2a…`,
- * `command` is `cd '<projectPath>' && claude --resume <id>`. Never put into chat text. */
-export interface DelegateReceipt { label: string; command: string }
+ * `command` is `cd '<projectPath>' && claude --resume <id>`. Never put into chat text.
+ * `sessionId` + `agent` are set only when the card may offer Continue live (a live CLI with its id
+ * shape); the id is opaque to the renderer, which hands it back and main re-checks everything. */
+export interface DelegateReceipt { label: string; command: string; sessionId?: string; agent?: LiveCli }
 
 export type DelegateEvent =
   // projectPath/instruction label the avatar's status bubble (task-status.ts); chat ignores them.
@@ -136,6 +138,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
               receipt = { receipt: {
                 label: `${choice.cli} · ${sessionId.slice(0, 4)}…`,
                 command: `cd ${shQuote(req.projectPath)} && ${resumeCommand(choice.cli, sessionId)}`,
+                ...(isLiveCli(choice.cli) && isLiveSessionId(choice.cli, sessionId) ? { sessionId, agent: choice.cli } : {}),
               } };
             }
           },

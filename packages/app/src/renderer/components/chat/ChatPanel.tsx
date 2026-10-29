@@ -10,7 +10,7 @@ import { DelegateCard } from "./DelegateCard.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { imageFileGuard, insertDroppedPath, itemAgent, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
-import { HANDOFF_ITEMS, handoffItems, isLiveAgent, offerAgent, slashMatches } from "./agent-mode.js";
+import { HANDOFF_ITEMS, canContinueLive, handoffItems, isLiveAgent, offerAgent, slashMatches } from "./agent-mode.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 
 /** Read a picked image into an attachment + full data URL for its composer thumbnail. */
@@ -93,6 +93,7 @@ export function ChatPanel({
   onDelegateConfirm,
   onDelegateDismiss,
   onDelegateCancelTask,
+  onContinueLive,
   onSaveToNotes,
   onUnlink,
   incognito,
@@ -142,6 +143,7 @@ export function ChatPanel({
   onDelegateConfirm: (id: string, editedPrompt: string, model?: string) => void;
   onDelegateDismiss: (id: string) => void;
   onDelegateCancelTask: (id: string) => void;
+  onContinueLive: (id: string) => void;
   onSaveToNotes: () => void;
   onUnlink: () => void;
   // Off the record: nothing from this chat is remembered at close.
@@ -152,7 +154,7 @@ export function ChatPanel({
   // the window's running session (busy = a turn is in flight; the composer stays usable).
   mode: AgentId;
   agentProject: string;
-  live?: { agent: LiveCli; projectPath: string; busy: boolean };
+  live?: { agent: LiveCli; projectPath: string; busy: boolean; continuing?: boolean };
   onPickAgent: (agent: AgentId) => void;
   onPickProject: (path: string) => void;
   onEndAgent: () => void;
@@ -479,6 +481,7 @@ export function ChatPanel({
                 onConfirm={(edited, model) => onDelegateConfirm(it.id, edited, model)}
                 onDismiss={() => onDelegateDismiss(it.id)}
                 onCancelTask={() => onDelegateCancelTask(it.id)}
+                onContinueLive={canContinueLive(it, clis, !!live) ? () => onContinueLive(it.id) : undefined}
               />
             );
           }
@@ -508,6 +511,7 @@ export function ChatPanel({
         {live ? (
           <div class="bean-agent-banner">
             <span class="bean-agent-banner-dot" aria-hidden="true">●</span>
+            {live.continuing ? <span>Continuing</span> : null}
             <AgentAvatar agent={live.agent} size={16} />
             <span>{AGENT_NAMES[live.agent]} · {projectName(live.projectPath)}</span>
             <button type="button" class="bean-status-action" onClick={onEndAgent}>End</button>

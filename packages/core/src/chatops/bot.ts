@@ -19,7 +19,7 @@ import type { CliName } from "../launcher.js";
 import type { CliModels } from "../cli-models.js";
 import { OPENCODE_BROWSER_REFUSAL, type DelegateRequest } from "../delegate.js";
 import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type ResumableRun } from "../delegate-runs.js";
-import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
+import { LIVE_CLIS, RESUME_OPENING, isLiveCli, type LiveCli } from "../live-session.js";
 import { TURN_QUEUE_FULL } from "../turn-live-session.js";
 import type { CardBuilders } from "./cards-api.js";
 import { formatAmbientBlock, formatRepliedBlock, REPLIED_UNAVAILABLE, type AmbientMessage, type RepliedMessage } from "./ambient.js";
@@ -225,7 +225,6 @@ const nameTaken = (name: string): string => `a sprout named "${name}" already ex
 const DESKTOP_ONLY =
   "That needs the Bean desktop app — from here I can only chat and run background delegate tasks. Ask me again and I'll run it as one.";
 const NO_CLI = "I can't run delegate tasks: no supported CLI (`claude`, `opencode`, or `codex`) is available on this machine.";
-const RESUME_OPENING = "Continue where you left off — first, one line on where things stand.";
 
 /** The session id in `/live-session resume <rest>`. Pasted `claude --resume <id>`,
  * `codex resume <id>` and `opencode -s <id>` / `--session <id>` spans win (also inside a routine

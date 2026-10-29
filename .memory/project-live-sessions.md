@@ -228,3 +228,10 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   `/claude <ask>` with the model's instruction as the ask, engine = `offerAgent(clis)` (claude
   first), claimed once via `offersClaimedRef`; an unknown project path (core's scratch) maps to
   `""`. Wording edits: re-run `converse-live-offer.live.test.ts`.
+- Continue live (#479): a desktop `DelegateReceipt` carries `sessionId` + `agent` only when the CLI
+  is live-capable with its id shape (`isLiveSessionId`). The card's button (`canContinueLive`:
+  receipt + CLI enabled + no live session in the window) sends **only the id** over
+  `bean:live-resume`; `liveTasks.resume` reads CLI + project from the newest row via
+  `findDelegateRun(…, "desktop")` (desktop rows only; chatops' default still refuses them), opens
+  with `RESUME_OPENING`, no handoff, and refuses an id already live in any window (claim lasts
+  while the session lives). The CLI is frozen; a rejected id ends `RESUME_REJECTED`, never fresh.

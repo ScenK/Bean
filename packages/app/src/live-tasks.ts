@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import {
   startLiveEngine, isLiveCli, recordRun, releaseRun, updateRunPid, killTree, killPendingGroups,
-  spawnEnv, BEAN_GIT_IDENTITY, TURN_QUEUE_FULL,
+  spawnEnv, BEAN_GIT_IDENTITY, TURN_QUEUE_FULL, RESUME_OPENING,
 } from "@bean/core";
-import type { CliName, LiveCli, LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest, LiveSessionSpawnFn } from "@bean/core";
+import type { CliName, LiveCli, LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest, LiveSessionSpawnFn, ResumableRun } from "@bean/core";
 
 // Desktop live agent sessions: Claude Code / Codex / opencode streaming into the chat window.
 // The desktop sibling of chatops' LiveSessionRegistry, without its Discord-shaped parts
@@ -31,6 +31,8 @@ export interface LiveStartRequest {
 }
 
 export type LiveStartResult = { sessionId: string; handedOver: number } | { error: string };
+/** Continue live: the project comes from the recorded run, so the renderer learns it here. */
+export type LiveResumeResult = { sessionId: string; agent: LiveCli; projectPath: string } | { error: string };
 
 export const HANDOFF_ITEMS = 20;
 export const HANDOFF_CHARS = 8000;
@@ -100,6 +102,8 @@ export interface LiveTasksDeps {
   enabledClis: () => CliName[];
   /** A configured project's path, or Bean's scratch workspace. */
   projectAllowed: (path: string) => Promise<boolean>;
+  /** The newest desktop `delegate_runs` row for a session id (findDelegateRun, surface "desktop"). */
+  findResumable?: (sessionId: string) => ResumableRun;
   /** Where a "" (no project) request runs — the renderer doesn't know Bean's scratch path. */
   scratchPath?: string;
   /** Push to the owning window (and the pet's status). */
@@ -119,6 +123,8 @@ interface Session {
   /** Unset while startup awaits its checks — a stop then means "never spawn". */
   handle?: LiveSessionHandle;
   stopping: boolean;
+  /** The delegate session this one continues (Continue live) — claimed while it lives. */
+  resumeId?: string;
 }
 
 // Distributive, so each event variant keeps its own fields.
@@ -154,6 +160,43 @@ export function createLiveTasks(deps: LiveTasksDeps) {
     s.handle?.stop(); // ended() fires from onExit once the process is gone
   };
 
+  /** Spawns a registered session; returns the reason it couldn't. */
+  const launch = (sessionId: string, s: Session, projectPath: string, prompt: string, handedOver: number): string | undefined => {
+    const agent = s.agent;
+    recordRun(deps.dir, sessionId, projectPath, process.pid);
+    emit(sessionId, s, { type: "started", projectPath, handedOver });
+    try {
+      s.handle = engine(
+        { cli: agent, projectPath, prompt, ...(s.resumeId ? { resume: s.resumeId } : {}) },
+        {
+          onOutput: (line) => { if (sessions.get(sessionId) === s && !s.stopping) emit(sessionId, s, { type: "output", line }); },
+          onTurnComplete: (t) => {
+            if (sessions.get(sessionId) !== s) return;
+            emit(sessionId, s, {
+              type: "turn", result: t.result,
+              ...(t.durationMs !== undefined ? { durationMs: t.durationMs } : {}),
+              ...(t.costUsd !== undefined ? { costUsd: t.costUsd } : {}),
+              ...(t.failed !== undefined ? { failed: t.failed } : {}),
+            });
+          },
+          onExit: (err) => ended(sessionId, err),
+        },
+        liveSpawnFn(agent, deps.resolvedPath),
+        deps.idleTimeoutMs,
+      );
+    } catch (err) {
+      ended(sessionId, err instanceof Error ? err : new Error(String(err)));
+      return `${LIVE_AGENT_NAMES[agent]} couldn't start.`;
+    }
+    // Copied from the chatops registry: claude is one long-lived child, so the record moves to
+    // its pid; codex/opencode spawn per turn, so it stays on this process (a dead between-turns
+    // child's pid would get swept).
+    if (agent === "claude" && sessions.get(sessionId) === s && typeof s.handle.pid === "number") {
+      updateRunPid(deps.dir, sessionId, s.handle.pid);
+    }
+    return undefined;
+  };
+
   return {
     /** Whether this window already has an agent session (Bean then doesn't offer another). */
     hasSession,
@@ -186,38 +229,34 @@ export function createLiveTasks(deps: LiveTasksDeps) {
         return { error: allowed ? "Stopped before it started." : "That project isn't configured in Bean." };
       }
 
-      recordRun(deps.dir, sessionId, projectPath, process.pid);
-      emit(sessionId, s, { type: "started", projectPath, handedOver: handoff.count });
-      try {
-        s.handle = engine(
-          { cli: agent, projectPath, prompt: handoff.prompt },
-          {
-            onOutput: (line) => { if (sessions.get(sessionId) === s && !s.stopping) emit(sessionId, s, { type: "output", line }); },
-            onTurnComplete: (t) => {
-              if (sessions.get(sessionId) !== s) return;
-              emit(sessionId, s, {
-                type: "turn", result: t.result,
-                ...(t.durationMs !== undefined ? { durationMs: t.durationMs } : {}),
-                ...(t.costUsd !== undefined ? { costUsd: t.costUsd } : {}),
-                ...(t.failed !== undefined ? { failed: t.failed } : {}),
-              });
-            },
-            onExit: (err) => ended(sessionId, err),
-          },
-          liveSpawnFn(agent, deps.resolvedPath),
-          deps.idleTimeoutMs,
-        );
-      } catch (err) {
-        ended(sessionId, err instanceof Error ? err : new Error(String(err)));
-        return { error: `${LIVE_AGENT_NAMES[agent]} couldn't start.` };
-      }
-      // Copied from the chatops registry: claude is one long-lived child, so the record moves to
-      // its pid; codex/opencode spawn per turn, so it stays on this process (a dead between-turns
-      // child's pid would get swept).
-      if (agent === "claude" && sessions.get(sessionId) === s && typeof s.handle.pid === "number") {
-        updateRunPid(deps.dir, sessionId, s.handle.pid);
-      }
+      const err = launch(sessionId, s, projectPath, handoff.prompt, handoff.count);
+      if (err) return { error: err };
       return { sessionId, handedOver: handoff.count };
+    },
+
+    /** Continue live from a finished desktop delegate card. Only the session id comes from the
+     * renderer: the CLI and project are the recorded run's (the CLI is frozen — no substitute, and a
+     * rejected id ends with RESUME_REJECTED, never a fresh session). No handoff: the agent already
+     * has its context. Claimed while it lives, so a double click can't put two writers on it. */
+    resume(ownerId: number, rawId: unknown): LiveResumeResult {
+      if (typeof rawId !== "string") return { error: "Invalid live session request." };
+      let found: ResumableRun;
+      try {
+        found = deps.findResumable?.(rawId) ?? { refusal: "I have no record of that run." };
+      } catch {
+        found = { refusal: "I have no record of that run." };
+      }
+      if ("refusal" in found) return { error: found.refusal };
+      const { cli, projectPath } = found.run;
+      if (!isLiveCli(cli)) return { error: "That run can't continue live." };
+      if (!deps.enabledClis().includes(cli)) return { error: `${LIVE_AGENT_NAMES[cli]} isn't installed or is turned off in Settings.` };
+      if (hasSession(ownerId)) return { error: "This chat already has an agent session — end it first." };
+      if ([...sessions.values()].some((x) => x.resumeId === found.run.sessionId)) return { error: "That session is already live." };
+      const sessionId = deps.newId();
+      const s: Session = { ownerId, agent: cli, seq: 0, stopping: false, resumeId: found.run.sessionId };
+      sessions.set(sessionId, s);
+      const err = launch(sessionId, s, projectPath, RESUME_OPENING, 0);
+      return err ? { error: err } : { sessionId, agent: cli, projectPath };
     },
 
     /** Undefined = sent; otherwise the reason it wasn't. */

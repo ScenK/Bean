@@ -6,7 +6,7 @@ import type {
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
-import type { LiveEvent, LiveStartRequest, LiveStartResult } from "./live-tasks.js";
+import type { LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult } from "./live-tasks.js";
 import type { TaskJob } from "./task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn } from "./ipc.js";
@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("bean", {
   liveStart: (req: LiveStartRequest): Promise<LiveStartResult> => ipcRenderer.invoke(IPC.liveStart, req),
   liveSend: (sessionId: string, text: string): Promise<string | undefined> => ipcRenderer.invoke(IPC.liveSend, sessionId, text),
   liveStop: (sessionId: string): void => ipcRenderer.send(IPC.liveStop, sessionId),
+  liveResume: (sessionId: string): Promise<LiveResumeResult> => ipcRenderer.invoke(IPC.liveResume, sessionId),
   onLiveEvent: (cb: (e: LiveEvent) => void) =>
     ipcRenderer.on(IPC.liveEvent, (_e, ev: LiveEvent) => cb(ev)),
   availableClis: (): Promise<CliName[]> => ipcRenderer.invoke(IPC.availableClis),

@@ -3,7 +3,10 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { TURN_QUEUE_FULL, type CliName, type LiveSessionCallbacks, type LiveSessionRequest } from "@bean/core";
+import {
+  RESUME_OPENING, TURN_QUEUE_FULL, findDelegateRun, recordDelegateSession,
+  type CliName, type LiveSessionCallbacks, type LiveSessionRequest, type ResumableRun,
+} from "@bean/core";
 import {
   ASK_LIMIT, HANDOFF_CHARS, HANDOFF_ITEMS, buildHandoff, createLiveTasks, liveSpawnFn,
   type HandoffItem, type LiveEvent,
@@ -17,7 +20,10 @@ const record = (dir: string, id: string): { pid: number } | undefined => {
   return existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) as { pid: number } : undefined;
 };
 
-function harness(opts: { clis?: CliName[]; allowed?: (p: string) => Promise<boolean>; pid?: number; sendOk?: boolean } = {}) {
+function harness(opts: {
+  clis?: CliName[]; allowed?: (p: string) => Promise<boolean>; pid?: number; sendOk?: boolean;
+  findResumable?: (id: string) => ResumableRun;
+} = {}) {
   const dir = tmp();
   const events: Array<{ owner: number; e: LiveEvent }> = [];
   const reqs: LiveSessionRequest[] = [];
@@ -30,6 +36,7 @@ function harness(opts: { clis?: CliName[]; allowed?: (p: string) => Promise<bool
     enabledClis: () => opts.clis ?? ["claude", "codex", "opencode"],
     projectAllowed: opts.allowed ?? (async (p) => p === "/proj" || p === "/scratch"),
     scratchPath: "/scratch",
+    ...(opts.findResumable ? { findResumable: opts.findResumable } : {}),
     send: (owner, e) => { events.push({ owner, e }); },
     newId: () => `s${++n}`,
     engine: (req, c) => {
@@ -141,6 +148,52 @@ describe("createLiveTasks", () => {
     const res = await h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "go", history });
     expect(res).toMatchObject({ handedOver: 2 });
     expect(h.reqs[0]!.prompt).toContain("> User: hi\n>\n> Bean: hello\n\ngo");
+  });
+});
+
+describe("createLiveTasks resume (Continue live)", () => {
+  // A real bean.db and the same lookup main wires: findDelegateRun(…, "desktop").
+  function resumable() {
+    const file = join(tmp(), "bean.db");
+    const proj = tmp();
+    const row = { surface: "desktop" as const, cli: "claude" as const, sessionId: "sess-1", projectPath: proj, instruction: "fix it" };
+    recordDelegateSession(file, row);
+    recordDelegateSession(file, { ...row, sessionId: "cx-not-uuid", cli: "codex" });
+    recordDelegateSession(file, { ...row, sessionId: "chatops-1", surface: "discord" });
+    return { file, proj, find: (id: string) => findDelegateRun(file, id, undefined, "desktop") };
+  }
+
+  it("resumes the recorded CLI in the recorded project with no handoff", () => {
+    const r = resumable();
+    const h = harness({ findResumable: r.find });
+    expect(h.live.resume(1, "sess-1")).toEqual({ sessionId: "s1", agent: "claude", projectPath: r.proj });
+    expect(h.reqs[0]).toEqual({ cli: "claude", projectPath: r.proj, prompt: RESUME_OPENING, resume: "sess-1" });
+    expect(h.events[0]!.e).toMatchObject({ type: "started", projectPath: r.proj, handedOver: 0 });
+  });
+
+  it("refuses forged, mismatched and chatops ids, a disabled CLI, and a missing lookup", () => {
+    const r = resumable();
+    const h = harness({ findResumable: r.find });
+    expect(h.live.resume(1, "forged")).toEqual({ error: "I have no record of that run." });
+    expect(h.live.resume(1, "--help")).toEqual({ error: expect.stringMatching(/session id/) });
+    expect(h.live.resume(1, "cx-not-uuid")).toEqual({ error: expect.stringMatching(/session id/) }); // codex needs a UUID
+    expect(h.live.resume(1, "chatops-1")).toEqual({ error: "I have no record of that run." });
+    expect(h.live.resume(1, 42)).toEqual({ error: "Invalid live session request." });
+    expect(harness({ findResumable: r.find, clis: ["codex"] }).live.resume(1, "sess-1")).toEqual({ error: expect.stringMatching(/turned off/) });
+    expect(harness().live.resume(1, "sess-1")).toEqual({ error: "I have no record of that run." });
+    expect(h.reqs).toEqual([]);
+  });
+
+  it("a double click starts one session, and one id can't run live in two windows", () => {
+    const r = resumable();
+    const h = harness({ findResumable: r.find });
+    h.live.resume(1, "sess-1");
+    expect(h.live.resume(1, "sess-1")).toEqual({ error: expect.stringMatching(/already has an agent/) });
+    expect(h.live.resume(2, "sess-1")).toEqual({ error: "That session is already live." });
+    expect(h.reqs).toHaveLength(1);
+    // Once it has exited, the id is free again.
+    h.cbs[0]!.onExit();
+    expect(h.live.resume(2, "sess-1")).toMatchObject({ sessionId: "s2" });
   });
 });
 

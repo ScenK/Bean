@@ -22,6 +22,13 @@ export function offerAgent(enabled: readonly CliName[]): LiveCli | undefined {
   return enabled.includes("claude") ? "claude" : LIVE_AGENTS.find((a) => enabled.includes(a));
 }
 
+/** Whether a delegate card offers Continue live: its receipt carries a live session id (main set it
+ * only for a live CLI's id shape), that CLI is enabled, and the window has no live session. */
+export function canContinueLive(item: ChatItem, enabled: readonly CliName[], liveInWindow: boolean): boolean {
+  return item.kind === "delegate" && !liveInWindow && !!item.receipt?.sessionId
+    && !!item.receipt.agent && enabled.includes(item.receipt.agent);
+}
+
 /** `/claude fix X` → { agent: "claude", rest: "fix X" }; a bare alias has rest "". Only the four
  * aliases parse — any other `/text` stays a normal message. Installed-ness is the caller's check. */
 export function parseSlash(text: string): { agent: AgentId; rest: string } | undefined {
