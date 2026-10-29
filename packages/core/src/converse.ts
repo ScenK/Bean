@@ -123,7 +123,9 @@ export interface ConverseResult {
 }
 /** `source` is the latest message's provenance: the memory tools are offered only for "typed".
  * `incognito` (the chat's off-the-record chip) withholds them too — an incognito chat writes nothing. */
-export interface ChatRequest { history: ChatTurn[]; message: string; source?: TurnSource; incognito?: boolean; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; }
+/** `turnId` = the desktop renderer's id for this user turn, so close-time catch-up can skip
+ * turns whose per-turn memory capture already ran (app ipc.ts buildMemoryHandlers). */
+export interface ChatRequest { history: ChatTurn[]; message: string; source?: TurnSource; incognito?: boolean; droppedUrl?: string; linkedNote?: LinkedNote; images?: ImageAttachment[]; turnId?: string; }
 
 // runAvailable=false (chatops: Discord/Teams) — no terminal exists there, so propose_run
 // is only offered for `target: chat` skills (which run on Bean's own model, no agent

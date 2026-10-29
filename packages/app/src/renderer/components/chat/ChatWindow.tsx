@@ -7,19 +7,20 @@ import type {
   ChatTurn, CliName, ImageAttachment, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
-import type { InterruptedRunNotice } from "../../../ipc.js";
+import type { CloseTurn, InterruptedRunNotice } from "../../../ipc.js";
 
 // Closing with a delegate still running asks Keep/Stop first; everything else closes at once
 // (memory is extracted in main after the window is gone). `null` = no card.
 type CloseFlow = { stage: "delegates" } | null;
 
 // Transcript handed to rememberOnClose: user turns keep their provenance (only "typed" ones are
-// fact sources); replies are assistant turns.
-export function closeTranscript(items: ChatItem[]): ChatTurn[] {
+// fact sources) and their turn id (main skips turns per-turn capture already handled); replies
+// are assistant turns.
+export function closeTranscript(items: ChatItem[]): CloseTurn[] {
   return items
     .filter((it): it is Extract<ChatItem, { kind: "user" | "reply" }> => it.kind === "user" || it.kind === "reply")
     .map((it) => (it.kind === "user"
-      ? { role: "user" as const, content: it.text, source: it.source }
+      ? { role: "user" as const, content: it.text, source: it.source, id: it.id }
       : { role: "assistant" as const, content: it.text }));
 }
 
@@ -89,11 +90,21 @@ export function ChatWindow() {
   const [model, setModel] = useState("model");
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
   const [closeFlow, setCloseFlow] = useState<CloseFlow>(null);
-  // Off the record: this chat is never remembered. Per window (a new chat starts off), read at
-  // close — so switching it on mid-chat still covers the whole chat.
+  // Off the record: per window (a new chat starts off). Read at close, and mirrored to main so it
+  // also stops per-turn captures still in flight. Facts captured before it was switched on stay
+  // saved — their "Memory updated" rows keep Undo.
   const [incognito, setIncognito] = useState(false);
   const incognitoRef = useRef(false);
   incognitoRef.current = incognito;
+  // Sent from the toggle itself, not an effect: a close right after the click must not beat it.
+  const toggleIncognito = (): void => {
+    const on = !incognitoRef.current;
+    incognitoRef.current = on;
+    window.bean.setChatIncognito(on);
+    setIncognito(on);
+  };
+  // Facts undone from a "Memory updated" row — handed to close catch-up so it won't re-save them.
+  const rejectedMemoriesRef = useRef<string[]>([]);
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
   // Settings invalidates this catalog, so an already-open card immediately stops offering a
   // CLI the user just disabled.
@@ -165,6 +176,9 @@ export function ChatWindow() {
     window.bean.getPendingInterruptedRunNotices().then((notices) => { if (notices?.length) showInterruptedRunNotices(notices); });
     window.bean.onInterruptedRunNotice(showInterruptedRunNotices);
     window.bean.onDelegateEvent(applyDelegateEvent);
+    window.bean.onMemoryUpdated((saved) => {
+      setItems((prev) => [...prev, { kind: "memory", id: newId(), saved, state: "saved" }]);
+    });
     // generate_image started inside the current turn — flip the working bubble so the
     // (up to a minute) wait reads as painting, not a hang.
     window.bean.onChatImageProgress(() => {
@@ -201,8 +215,9 @@ export function ChatWindow() {
     setBusy(true);
     setStatus("working");
     const workingId = newId();
+    const turnId = newId();
     setItems((prev) => [...prev, {
-      kind: "user", id: newId(), text: message, display, source,
+      kind: "user", id: turnId, text: message, display, source,
       images: images?.map((i) => `data:${i.mimeType};base64,${i.data}`),
     }, { kind: "working", id: workingId, text: "Spinning up" }]);
 
@@ -217,7 +232,7 @@ export function ChatWindow() {
       }));
 
     try {
-      const res = await window.bean.chat({ history, message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images });
+      const res = await window.bean.chat({ history, message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, turnId });
       if (res.model) setModel(res.model);
 
       setItems((prev) => {
@@ -411,6 +426,22 @@ export function ChatWindow() {
     void sendMessage("Save this conversation as a note (use the propose_note tool).", "📝 Save to notes", false, undefined, "skill");
   };
 
+  const undoMemory = async (id: string): Promise<void> => {
+    const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "memory" }> => it.kind === "memory" && it.id === id);
+    if (!item || item.state !== "saved") return;
+    const setState = (state: "saved" | "undoing" | "undone"): void =>
+      setItems((prev) => prev.map((it) => (it.id === id && it.kind === "memory" ? { ...it, state } : it)));
+    setState("undoing");
+    try {
+      await window.bean.deleteMemories(item.saved.map((m) => m.id));
+      rejectedMemoriesRef.current.push(...item.saved.map((m) => m.text));
+      setState("undone");
+    } catch (err) {
+      setState("saved");
+      setItems((prev) => [...prev, { kind: "status", id: newId(), text: `Couldn't undo: ${err instanceof Error ? err.message : String(err)}`, tone: "error" }]);
+    }
+  };
+
   const applyDelegateEvent = (e: DelegateEvent): void => {
     const { loopback } = applyDelegateEventToItems(itemsRef.current, e);
     if (!itemsRef.current.some((it) => it.kind === "delegate" && it.taskId === e.taskId)) {
@@ -432,7 +463,9 @@ export function ChatWindow() {
   const closeNow = (): void => {
     setCloseFlow(null);
     const transcript = closeTranscript(itemsRef.current);
-    if (transcript.length > 0) window.bean.rememberOnClose(transcript, { incognito: incognitoRef.current });
+    if (transcript.length > 0) {
+      window.bean.rememberOnClose(transcript, { incognito: incognitoRef.current, rejected: rejectedMemoriesRef.current });
+    }
     window.bean.allowChatClose();
   };
 
@@ -496,7 +529,8 @@ export function ChatWindow() {
         onSaveToNotes={saveToNotes}
         onUnlink={() => setLinkedNote(undefined)}
         incognito={incognito}
-        onToggleIncognito={() => setIncognito((v) => !v)}
+        onToggleIncognito={toggleIncognito}
+        onMemoryUndo={(id) => void undoMemory(id)}
       />
     </div>
   );

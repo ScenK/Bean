@@ -5,13 +5,13 @@ import { startStubOpenAI } from "./fixtures/stub-openai.js";
 import { appendMemories, dbFile } from "@bean/core";
 import { join } from "node:path";
 
-// #177: closing a chat is instant (no review card), extraction runs in main, a memory bubble
-// appears, and clicking it opens Persona where Undo deletes exactly that batch.
-test("auto memory: close without a card, bubble shown, Undo works", async () => {
+// #177 + per-turn capture: a typed turn's facts are saved right after the reply, with a
+// "Memory updated" row in the chat whose Undo forgets them; closing stays instant (no card).
+test("auto memory: a typed turn is captured with an Undo row, close is instant", async () => {
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
   stub.queue({ content: "Noted!" }); // the chat turn
-  stub.queue({ toolCall: { name: "remember", args: { text: "Prefers pnpm over npm", quote: "I prefer pnpm" } } }); // close-time extraction
+  stub.queue({ toolCall: { name: "remember", args: { text: "Prefers pnpm over npm", quote: "I prefer pnpm" } } }); // per-turn capture
   const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
   try {
     const avatar = await app.firstWindow();
@@ -24,6 +24,11 @@ test("auto memory: close without a card, bubble shown, Undo works", async () => 
     await chat.locator(".bean-send").click();
     await expect(chat.locator(".bean-bubble--bean")).toContainText("Noted!");
 
+    const row = chat.locator(".bean-status", { hasText: "Memory updated" });
+    await expect(row).toContainText("Prefers pnpm over npm");
+    await row.getByRole("button", { name: "Undo" }).click();
+    await expect(chat.locator(".bean-status", { hasText: "Forgot" })).toContainText("Prefers pnpm over npm");
+
     const started = Date.now();
     const closed = chat.waitForEvent("close");
     await app.evaluate(({ BrowserWindow }) => {
@@ -32,17 +37,6 @@ test("auto memory: close without a card, bubble shown, Undo works", async () => 
     await closed;
     // ponytail: 200ms is the product bar; e2e allows CI jitter on top.
     expect(Date.now() - started).toBeLessThan(1500);
-
-    const bubble = avatar.locator('.bean-bubble[data-id="memory:batch"]');
-    await expect(bubble).toContainText("I remember things automatically now"); // fresh userData: first-run notice
-
-    const [persona] = await Promise.all([app.waitForEvent("window"), bubble.click()]);
-    await persona.waitForLoadState("domcontentloaded");
-    const just = persona.locator(".bean-memory-just");
-    await expect(just.locator("input")).toHaveValue("Prefers pnpm over npm");
-    await just.getByRole("button", { name: "Undo" }).click();
-    await expect(just).toHaveCount(0);
-    await expect(persona.locator(".bean-memory-empty")).toBeVisible();
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }

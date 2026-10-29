@@ -754,11 +754,30 @@ app.whenReady().then(async () => {
     routineScheduler.start();
     app.on("before-quit", () => routineScheduler.stop());
 
+    // Checked after each auto-save (close batch or per-turn capture) — no timer, no boot cost.
+    // The digest goes to a bubble + Persona only, never into a transcript (it would be
+    // re-extracted as a "fact").
+    const checkDream = async (pendingIds: () => string[]): Promise<void> => {
+      const dream = await maybeDream({
+        dbFile: dbFile(dir), chat: runtime.converse, model: runtime.getModel(), exclude: pendingIds,
+      });
+      if (!dream) return;
+      const parts = [
+        dream.merged ? `merged ${dream.merged}` : "", dream.rewritten ? `rewrote ${dream.rewritten}` : "",
+        dream.removed ? `removed ${dream.removed}` : "",
+      ].filter(Boolean).join(", ");
+      taskStatus.upsert("memory:dream", { kind: "memory", name: "Memory", startedAt: Date.now(), state: "running" });
+      taskStatus.finish("memory:dream", "done", `🌙 Tidied memory: ${parts} · click to review`);
+    };
+
     registerIpc(ipcMain, {
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
       loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories, restoreDreamRun, dreamDetails,
       getLastDream: async (file) => (await getMemoryMeta(file, "lastDream")) as DreamDigest | undefined,
       autoMemory: () => runtime.getAutoMemory(),
+      onTurnBatch: (pendingIds) => {
+        checkDream(pendingIds).catch((err) => console.error("memory dream failed:", err));
+      },
       onMemoryBatch: (batch, pendingIds) => {
         void (async () => {
           // One-time heads-up the first time memory saves itself (same one-shot flag-file shape
@@ -770,20 +789,7 @@ app.whenReady().then(async () => {
           taskStatus.finish(id, "done", first
             ? "I remember things automatically now · click to review or turn off"
             : `🧠 Remembered ${batch.length} · click to review`);
-          // Chat close is the idle point, so it's also where dream is checked — no timer, no
-          // boot cost. The digest goes to a bubble + Persona only, never into a transcript
-          // (it would be re-extracted as a "fact").
-          const dream = await maybeDream({
-            dbFile: dbFile(dir), chat: runtime.converse, model: runtime.getModel(), exclude: pendingIds,
-          });
-          if (dream) {
-            const parts = [
-              dream.merged ? `merged ${dream.merged}` : "", dream.rewritten ? `rewrote ${dream.rewritten}` : "",
-              dream.removed ? `removed ${dream.removed}` : "",
-            ].filter(Boolean).join(", ");
-            taskStatus.upsert("memory:dream", { kind: "memory", name: "Memory", startedAt: Date.now(), state: "running" });
-            taskStatus.finish("memory:dream", "done", `🌙 Tidied memory: ${parts} · click to review`);
-          }
+          await checkDream(pendingIds);
         })().catch((err) => console.error("memory bubble/dream failed:", err));
       },
       onMemoryFailure: () => taskStatus.error("memory:error", { kind: "memory", name: "Memory", line: "Couldn't update memory" }),

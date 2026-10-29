@@ -607,6 +607,147 @@ test("a store failure raises exactly one failure bubble and leaves no Undo batch
   expect(handlers.batch()).toBeUndefined();
 });
 
+const turnReq = { history: [], message: "I live in Seattle", source: "typed" as const, turnId: "item-1" };
+const reply = { reply: "Nice!" };
+
+test("captureTurn saves only the latest typed turn, after the reply, and close catch-up skips it", async () => {
+  const calls: { transcript: ChatTurn[]; opts?: { latestTurn?: boolean } }[] = [];
+  const turnBatches: string[][] = [];
+  const { handlers, appended, batches } = memoryHandlersFor({
+    extractMemories: async (transcript, _ex, _p, _d, opts) => {
+      calls.push({ transcript, opts });
+      return { candidates: transcript.some((t) => t.source === "typed") ? [{ text: "Lives in Seattle" }] : [], rejected: 0, failed: false };
+    },
+    onTurnBatch: (pendingIds) => { turnBatches.push(pendingIds()); },
+  });
+  const saved = await handlers.captureTurn(7, turnReq, reply);
+  expect(saved.map((m) => m.text)).toEqual(["Lives in Seattle"]);
+  expect(calls[0]).toEqual({ transcript: [{ role: "user", content: "I live in Seattle", source: "typed" }], opts: { latestTurn: true } });
+  expect(appended).toEqual([saved]);
+  // Dream sees the still-undoable per-turn ids as pending.
+  expect(turnBatches).toEqual([saved.map((m) => m.id)]);
+  expect(batches).toEqual([]); // no avatar bubble — the chat row is the receipt
+
+  // Close: the captured turn is context only, so nothing is citable and nothing is re-saved.
+  expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { windowId: 7 })).toEqual([]);
+  expect(calls[1]?.transcript).toEqual([{ role: "user", content: "I live in Seattle", source: undefined }]);
+  // An uncaptured turn (another id) is still caught up.
+  expect(await handlers.rememberOnClose([{ role: "user", content: "I use vim", source: "typed", id: "item-9" }], { windowId: 7 })).toHaveLength(1);
+});
+
+test("captureTurn skips incognito, autoMemory off, non-typed, errored, and explicit-remember turns", async () => {
+  let extracted = 0;
+  const count = { extractMemories: async () => { extracted++; return { candidates: [], rejected: 0, failed: false }; } };
+  const { handlers } = memoryHandlersFor(count);
+  expect(await handlers.captureTurn(1, { ...turnReq, incognito: true }, reply)).toEqual([]);
+  expect(await handlers.captureTurn(1, { ...turnReq, source: "loopback" }, reply)).toEqual([]);
+  expect(await handlers.captureTurn(1, turnReq, { reply: "", error: "boom" })).toEqual([]);
+  expect(await handlers.captureTurn(1, turnReq, { reply: "ok", remembered: [{ id: "x", text: "Lives in Seattle", createdAt: "" }] })).toEqual([]);
+  const off = memoryHandlersFor({ ...count, autoMemory: () => false });
+  expect(await off.handlers.captureTurn(1, turnReq, reply)).toEqual([]);
+  expect(extracted).toBe(0);
+});
+
+test("a failed per-turn capture is retried by close catch-up and raises no bubble itself", async () => {
+  let fail = true;
+  const { handlers, failures } = memoryHandlersFor({
+    extractMemories: async (transcript) => (fail
+      ? { candidates: [], rejected: 0, failed: true }
+      : { candidates: transcript.some((t) => t.source === "typed") ? [{ text: "Lives in Seattle" }] : [], rejected: 0, failed: false }),
+  });
+  await expect(handlers.captureTurn(3, turnReq, reply)).rejects.toThrow(/extraction/);
+  expect(failures()).toBe(0);
+  fail = false;
+  expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { windowId: 3 })).toHaveLength(1);
+});
+
+function deferredExtract() {
+  const pending: Array<{ text: string; resolve: () => void }> = [];
+  const extractMemories = (_t: ChatTurn[]) => new Promise<{ candidates: { text: string }[]; rejected: number; failed: boolean }>((resolve) => {
+    const text = _t[_t.length - 1]!.content;
+    pending.push({ text, resolve: () => resolve({ candidates: [{ text }], rejected: 0, failed: false }) });
+  });
+  return { pending, extractMemories };
+}
+
+test("switching the chip on while a capture is in flight saves nothing", async () => {
+  const d = deferredExtract();
+  const { handlers, appended } = memoryHandlersFor({ extractMemories: d.extractMemories });
+  const capture = handlers.captureTurn(4, turnReq, reply);
+  await new Promise((r) => setTimeout(r, 0));
+  handlers.setIncognito(4, true);
+  d.pending[0]!.resolve();
+  expect(await capture).toEqual([]);
+  expect(appended).toEqual([]);
+  // And later turns in that window are never sent to the model.
+  expect(await handlers.captureTurn(4, { ...turnReq, turnId: "item-3" }, reply)).toEqual([]);
+  expect(d.pending).toHaveLength(1);
+});
+
+test("a reply that settles after its window closed is never captured (close already covered it)", async () => {
+  let extracted = 0;
+  const { handlers, appended } = memoryHandlersFor({
+    extractMemories: async () => { extracted++; return { candidates: [], rejected: 0, failed: false }; },
+  });
+  handlers.setIncognito(8, true);
+  // Closed incognito: catch-up writes nothing...
+  expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { windowId: 8, incognito: true })).toEqual([]);
+  // ...and the late capture (request flag snapshotted before the chip) doesn't revive the window.
+  expect(await handlers.captureTurn(8, turnReq, reply)).toEqual([]);
+  expect(extracted).toBe(0);
+  expect(appended).toEqual([]);
+});
+
+test("closing incognito stops a capture already in flight, even if the chip IPC never arrived", async () => {
+  const d = deferredExtract();
+  const { handlers, appended } = memoryHandlersFor({ extractMemories: d.extractMemories });
+  const capture = handlers.captureTurn(9, turnReq, reply);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { windowId: 9, incognito: true })).toEqual([]);
+  d.pending[0]!.resolve();
+  expect(await capture).toEqual([]);
+  expect(appended).toEqual([]);
+});
+
+test("captures in one window run in turn order, so a later fact is saved later", async () => {
+  const d = deferredExtract();
+  const { handlers, appended } = memoryHandlersFor({ extractMemories: d.extractMemories });
+  const first = handlers.captureTurn(5, turnReq, reply);
+  const second = handlers.captureTurn(5, { ...turnReq, message: "I live in Portland now", turnId: "item-3" }, reply);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(d.pending.map((p) => p.text)).toEqual(["I live in Seattle"]); // second waits its turn
+  d.pending[0]!.resolve();
+  await first;
+  await new Promise((r) => setTimeout(r, 0));
+  d.pending[1]!.resolve();
+  await second;
+  expect(appended.map((b) => b[0]!.text)).toEqual(["I live in Seattle", "I live in Portland now"]);
+});
+
+test("a capture that fails after its window closed raises the failure bubble (catch-up skipped it)", async () => {
+  let fail!: () => void;
+  const { handlers, failures } = memoryHandlersFor({
+    extractMemories: (transcript) => (transcript.some((t) => t.source === "typed") && transcript.length === 1
+      ? new Promise((resolve) => { fail = () => resolve({ candidates: [], rejected: 0, failed: true }); })
+      : Promise.resolve({ candidates: [], rejected: 0, failed: false })),
+  });
+  const capture = handlers.captureTurn(6, turnReq, reply);
+  await new Promise((r) => setTimeout(r, 0));
+  await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }, { role: "assistant", content: "Nice!" }], { windowId: 6 });
+  fail();
+  await expect(capture).rejects.toThrow(/extraction/);
+  expect(failures()).toBe(1);
+});
+
+test("facts undone in the window reach close catch-up as already remembered", async () => {
+  let seen: Memory[] = [];
+  const { handlers, existing } = memoryHandlersFor({
+    extractMemories: async (_t, ex) => { seen = ex; return { candidates: [], rejected: 0, failed: false }; },
+  });
+  await handlers.rememberOnClose(typed, { rejected: ["Lives in Seattle"] });
+  expect(seen.map((m) => m.text)).toEqual([...existing.map((m) => m.text), "Lives in Seattle"]);
+});
+
 test("config save handler forwards the update to applyConfig", async () => {
   const applied: ConfigUpdate[] = [];
   const notifications: string[] = [];

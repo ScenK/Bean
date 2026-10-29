@@ -178,16 +178,25 @@ function existingBlock(existing: Memory[]): string {
  * `failed` means the model call itself errored — so "nothing saved" is distinguishable from both. */
 export interface ExtractResult { candidates: MemoryCandidate[]; rejected: number; failed: boolean }
 
+/** Prior turns that ride along as context in per-turn mode. */
+const TURN_CONTEXT = 6;
+
+/** `latestTurn` = per-turn capture during a chat: only the transcript's final turn is citable;
+ * up to TURN_CONTEXT turns before it are background, so an earlier turn's fact (already captured
+ * on its own turn) is never re-cited. */
 export async function extractMemories(
   transcript: ChatTurn[],
   existing: Memory[],
   projects: Project[],
   deps: ConverseDeps,
+  opts: { latestTurn?: boolean } = {},
 ): Promise<ExtractResult> {
-  const citable = transcript.filter(isCitable).map((t) => t.content);
+  const turns = opts.latestTurn ? transcript.slice(-(TURN_CONTEXT + 1)) : transcript;
+  const citableAt = (t: ChatTurn, i: number): boolean => isCitable(t) && (!opts.latestTurn || i === turns.length - 1);
+  const citable = turns.filter(citableAt).map((t) => t.content);
   if (citable.length === 0) return { candidates: [], rejected: 0, failed: false };
 
-  const lines = transcript.map((t) => `${isCitable(t) ? "user (typed)" : `${t.role} (not citable)`}: ${t.content}`);
+  const lines = turns.map((t, i) => `${citableAt(t, i) ? "user (typed)" : `${t.role} (not citable)`}: ${t.content}`);
   const messages: ConvoMsg[] = [
     { role: "system", content: `${EXTRACT_INSTRUCTIONS}\n\n${existingBlock(existing)}` },
     { role: "user", content: `Conversation:\n${lines.join("\n")}` },

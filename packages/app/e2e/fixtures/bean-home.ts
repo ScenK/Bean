@@ -10,6 +10,8 @@ export interface BeanHome {
 
 interface BeanHomeOptions {
   disabledClis?: string[];
+  /** Off for tests not about memory: per-turn capture would consume a queued stub reply. */
+  autoMemory?: boolean;
 }
 
 /**
@@ -29,6 +31,7 @@ export async function makeBeanHome(options: BeanHomeOptions = {}): Promise<BeanH
       openaiApiKey: "sk-test-fixture",
       model: "gpt-4o-mini",
       disabledClis: options.disabledClis ?? [],
+      autoMemory: options.autoMemory ?? true,
     }, null, 2),
     "utf8",
   );

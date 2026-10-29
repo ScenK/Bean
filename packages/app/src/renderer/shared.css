@@ -214,6 +214,15 @@ button, input, textarea, select, a {
 .bean-status--info { color: var(--bean-text-dim); }
 .bean-status--done { color: var(--bean-orb-check-ink); border-color: var(--bean-orb-check-ink); }
 .bean-status--error { color: var(--bean-error); border-color: var(--bean-error); }
+.bean-status-action {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
 
 .bean-card {
   align-self: stretch;
