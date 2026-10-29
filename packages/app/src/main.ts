@@ -12,7 +12,7 @@ import { installAvatarControls } from "./avatar-window.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import {
-  beanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
+  beanDir, ensurePrivateBeanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
   isValidSessionId, resumeCommand, listSkillProposals, pruneStepAttempts, listStepAttempts, CLI_NAMES,
   modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
@@ -78,6 +78,7 @@ app.on("web-contents-created", (_e, contents) => {
 
 app.whenReady().then(async () => {
   const dir = beanDir();
+  ensurePrivateBeanDir(dir); // before anything below creates ~/.bean world-readable
   // Chat delegates with no project (and project-less routine steps) run here; spawn needs the cwd.
   mkdirSync(scratchDir(dir), { recursive: true });
   // Packaged builds don't contain the monorepo root, so projectBeanDir()'s "../../../.bean"

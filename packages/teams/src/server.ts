@@ -1,5 +1,5 @@
 import {
-  beanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
+  beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, saveRoutine, createRoutine, RoutineProposalStore, memberTodoEligible, resolveTodoRoutine,
@@ -29,6 +29,7 @@ import { deliveredAppend, loadTeamsConfig, ownerDmRefs, teamsConfigFile } from "
 import { teamsText } from "./teams-text.js";
 
 const dir = beanDir();
+ensurePrivateBeanDir(dir);
 const builtinDir = process.env.BEAN_BUILTIN_DIR || projectBeanDir();
 const teamsConfig = await loadTeamsConfig(teamsConfigFile(dir));
 const beanConfig = await loadConfig(configFile(dir), dir);

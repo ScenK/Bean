@@ -33,6 +33,7 @@
 - [safety-chatops-roles.md](safety-chatops-roles.md) — owner/admin/member/guest on Teams+Discord (capabilities via `can()`; members are household-wide, DMs included): role-built tool list **and** runtime checks (converse refuses un-offered tools, bot re-checks proposals, card taps checked before claim), channel-not-thread admin scope, fail closed, role before paid pre-work.
 - [safety-per-speaker-memory.md](safety-per-speaker-memory.md) — `memories.subject_id` (NULL = household-shared): DM saves private, channel shared; recall filtered in SQL before ranking (routines + channels shared only, desktop all); non-owners forget only their own rows (SQL-enforced); only the author shares a private row (owner too, no bypass); dream skips private rows.
 - [safety-spawn-env-allowlist.md](safety-spawn-env-allowlist.md) — spawned delegates/commands get `spawnEnv()` (allowlist), never `...process.env` (a test enforces it); URL fetches steered by untrusted text use `safeFetch()` (private-address block after DNS + on each redirect, pinned lookup, time/byte caps).
+- [safety-bean-dir-private.md](safety-bean-dir-private.md) — `~/.bean` (API key, private memories) is forced to 0700 by `ensurePrivateBeanDir()` at startup in app, Discord and Teams — macOS accounts share `staff`, so a 0755 dir leaks it to other accounts. New entry points need the call; the chmod (not mkdir mode) is what fixes old installs.
 
 ## convention — how we do things here
 

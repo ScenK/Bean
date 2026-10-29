@@ -1,3 +1,4 @@
+import { chmodSync, mkdirSync } from "node:fs";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,6 +9,13 @@ import type { BeanConfig } from "./types.js";
 
 export function beanDir(): string {
   return join(homedir(), ".bean");
+}
+// ~/.bean holds the OpenAI key and every private memory, and macOS accounts share the `staff`
+// group, so the directory itself must be owner-only (see .memory/safety-bean-dir-private.md).
+// chmod after mkdir: mkdir's mode is masked by umask and ignored for an existing directory.
+export function ensurePrivateBeanDir(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
 }
 // The repo-shipped counterpart to beanDir(): built-in skills/persona that ~/.bean extends.
 // This file compiles flat to packages/core/{src,dist}/config.{ts,js} (rootDir: src, outDir:
