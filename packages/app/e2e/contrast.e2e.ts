@@ -102,12 +102,16 @@ test("every component window clears WCAG AA text contrast in both themes", async
       await win.waitForLoadState("domcontentloaded");
       // Seed the chat transcript with a Bean reply so its mascot row is measured too. The CLI
       // agents' mascots have no producer until Agent mode (#477) — seed them there.
+      // The renderer subscribes in a mount effect, after domcontentloaded, and a push sent before
+      // that is dropped — so re-send until the row shows (a duplicate row is harmless here).
       if (kind === "chat") {
-        await app.evaluate(({ BrowserWindow }) => {
-          BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))!
-            .webContents.send("bean:interrupted-run-notice", [{ text: "Seeded reply", display: "Seeded reply" }]);
-        });
-        await win.locator(".bean-chat-row .bean-agent-avatar--bean").waitFor();
+        await expect(async () => {
+          await app.evaluate(({ BrowserWindow }) => {
+            BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))!
+              .webContents.send("bean:interrupted-run-notice", [{ text: "Seeded reply", display: "Seeded reply" }]);
+          });
+          await win.locator(".bean-chat-row .bean-agent-avatar--bean").first().waitFor({ timeout: 1000 });
+        }).toPass({ timeout: 10_000 });
       }
       await win.waitForTimeout(600);
       for (const theme of ["hearth", "graphite"]) {
