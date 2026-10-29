@@ -2,8 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import type { Routine, Skill } from "@bean/core";
-import { resolveSlash, slashEntries, slashMenu, slugify, type SlashCatalogs } from "../src/renderer/components/chat/slash-commands.js";
+import { availableModels, resolveDelegateSelection, type CliModels, type CliName, type Project, type Routine, type Skill } from "@bean/core";
+import {
+  resolveSlash, slashEntries, slashMenu, slugify, terminalDestination, type SlashCatalogs, type SlashDelegate,
+} from "../src/renderer/components/chat/slash-commands.js";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
 
 const skill = (name: string, extra: Partial<Skill> = {}): Skill => ({ name, description: `${name} desc`, body: `# ${name}\nDo it.`, target: "chat", ...extra });
@@ -70,15 +72,42 @@ describe("slash commands", () => {
     expect(slashMenu("/skill:", "claude", catalogs).entries).toEqual([]);
   });
 
-  it("filters hidden/disabled skills and notify-only watches; terminal skills show disabled", () => {
+  it("filters hidden/disabled skills and notify-only watches", () => {
     const names = slashEntries("bean", catalogs).map((e) => e.name);
     expect(names).toContain("quiet");
     expect(names).not.toContain("secret");
     expect(names).not.toContain("off");
     expect(names).not.toContain("pings");
     expect(resolveSlash("/secret", "bean", catalogs)).toBeUndefined();
-    const deploy = slashEntries("bean", catalogs).find((e) => e.name === "deploy");
-    expect(deploy).toMatchObject({ caption: "terminal", disabled: "coming next" });
+    expect(resolveSlash("/deploy fix it", "bean", catalogs)).toEqual({ kind: "skill", name: "deploy", rest: "fix it" });
+  });
+
+  it("terminal destination: assigned project > default skill > first project > scratch; CLI = main's pick", () => {
+    const p = (name: string, extra: Partial<Project> = {}): Project => ({ name, path: `/p/${name}`, ...extra });
+    const projects = [p("first"), p("dflt", { defaultSkill: "deploy" }), p("mine", { skills: ["deploy"] })];
+    const d: SlashDelegate = { projects, clis: ["claude"], models: [], delegateCli: "", lastUsedModels: {} };
+    expect(terminalDestination("deploy", d)).toEqual({ projectPath: "/p/mine", projectName: "mine", cli: "claude" });
+    expect(terminalDestination("deploy", { ...d, projects: projects.slice(0, 2) })).toMatchObject({ projectPath: "/p/dflt" });
+    expect(terminalDestination("other", d)).toMatchObject({ projectPath: "/p/first" });
+    expect(terminalDestination("deploy", { ...d, projects: [] })).toMatchObject({ projectPath: "", projectName: "scratch" });
+    expect(terminalDestination("deploy", { ...d, clis: [] }).cli).toBeUndefined();
+    expect(slashEntries("bean", { ...catalogs, delegate: d }).find((e) => e.name === "deploy")?.caption).toBe("claude · mine");
+    expect(slashEntries("bean", { ...catalogs, delegate: { ...d, clis: [], projects: [] } }).find((e) => e.name === "deploy")?.caption)
+      .toBe("no coding agent · scratch");
+
+    // The caption's CLI is the one main's resolveDelegateSelection starts, for the remembered model.
+    const cliModels: CliModels[] = [{ provider: "claude", models: ["sonnet"] }, { provider: "codex", models: ["gpt-5.6-sol"] }];
+    const cases: Array<[CliName[], string, string | undefined]> = [
+      [["claude", "codex"], "", undefined], [["claude", "codex"], "codex", undefined], [["codex", "claude"], "codex", "sonnet"],
+      [["codex"], "claude", "sonnet"], [["claude", "codex"], "", "gone"],
+    ];
+    for (const [clis, delegateCli, model] of cases) {
+      const dest = terminalDestination("deploy", {
+        ...d, clis, delegateCli, models: availableModels(cliModels, clis), lastUsedModels: model ? { deploy: model } : {},
+      });
+      expect(dest.cli).toBe(resolveDelegateSelection(cliModels, clis, delegateCli, model)?.cli);
+      expect(dest.model).toBe(model);
+    }
   });
 
   it("menu: sections in order, prefix before description matches, captions, capped with +N more", () => {
@@ -168,20 +197,67 @@ describe("ChatWindow slash commands", () => {
     expect(bean.chat).not.toHaveBeenCalled();
   });
 
-  it("unknown bare goes to Bean; unknown qualified, ambiguous and terminal skills are error rows with no model work", async () => {
+  it("unknown bare goes to Bean; unknown qualified and ambiguous are error rows with no model work", async () => {
     bean.listSkills!.mockResolvedValue([...catalogs.skills, skill("Foo Bar"), skill("foo-bar")]);
     await mount();
     await send("/skill:nope");
     await send("/foo-bar");
-    await send("/deploy");
     expect(bean.chat).not.toHaveBeenCalled();
     expect(statuses()).toEqual([
       'No skill "nope" — check the / menu.',
       '/foo-bar matches more than one skill: "Foo Bar", "foo-bar" — rename one in Skills.',
-      "\"deploy\" runs in the terminal — that's coming next from chat.",
     ]);
     await send("/nope hi");
     expect(bean.chat!.mock.calls[0]![0]).toMatchObject({ message: "/nope hi", source: "typed" });
+  });
+
+  it("a terminal skill starts a tracked delegate at its caption's destination; a second Enter can't duplicate it", async () => {
+    bean.listProjects!.mockResolvedValue([{ name: "Bean", path: "/p/bean", skills: ["deploy"] }]);
+    bean.getModelMemory = vi.fn(async (name: string) => (name === "deploy" ? "sonnet" : undefined));
+    bean.availableModels!.mockResolvedValue([{ id: "sonnet", label: "Sonnet", availableOn: ["claude"] }]);
+    bean.getConfig = vi.fn(async () => ({ delegateCli: "claude" }));
+    let started!: (taskId: string) => void;
+    bean.delegateStart = vi.fn(() => new Promise<string>((r) => { started = r; }));
+    await mount();
+    await type("/dep");
+    expect(root.querySelector(".bean-slash-menu")?.textContent).toContain("/deploy claude · Bean");
+    await key("Escape");
+
+    await send("/deploy fix X");
+    await key("Enter"); // the composer is already empty
+    expect(bean.delegateStart).toHaveBeenCalledTimes(1);
+    const req = bean.delegateStart!.mock.calls[0]![0];
+    expect(req).toMatchObject({ projectPath: "/p/bean", skillName: "deploy", model: "sonnet", instruction: "deploy — fix X" });
+    expect(req.prompt).toContain("## Task\nfix X");
+    expect(Object.keys(req).sort()).toEqual(["instruction", "model", "projectPath", "prompt", "skillName"]); // no browser flag
+    expect(bean.chat).not.toHaveBeenCalled();
+    expect(root.textContent).toContain("project · Bean");
+    expect(root.textContent).toContain("Starting...");
+    const buttons = (): HTMLButtonElement[] => [...root.querySelectorAll<HTMLButtonElement>(".bean-card .bean-card-actions button")];
+    expect(buttons()[0]!.disabled).toBe(true); // Enter was the confirm — nothing left to re-click
+
+    await act(async () => { started("t1"); });
+    await flush();
+    bean.delegateCancel = vi.fn();
+    await act(async () => { buttons().find((b) => b.textContent === "Cancel")!.click(); });
+    expect(bean.delegateCancel).toHaveBeenCalledWith("t1");
+    await act(async () => { listeners.onDelegateEvent!({ taskId: "t1", type: "done", result: "fixed" }); });
+    await flush();
+    expect(bean.chat!.mock.calls[0]![0]).toMatchObject({ source: "loopback" });
+
+    await send("/deploy x");
+    expect(bean.delegateStart).toHaveBeenCalledTimes(2); // each Enter is its own run
+  });
+
+  it("a terminal skill with no project runs in scratch and shows main's no-CLI failure on the card", async () => {
+    bean.delegateStart = vi.fn(async () => "t9");
+    await mount();
+    await send("/deploy");
+    expect(bean.delegateStart!.mock.calls[0]![0]).toMatchObject({ projectPath: "", skillName: "deploy" }); // scratch: main maps ""
+    await act(async () => { listeners.onDelegateEvent!({ taskId: "t9", type: "failed", message: "No enabled delegate CLI found — enable one in Settings." }); });
+    await flush();
+    expect(root.textContent).toContain("No enabled delegate CLI found — enable one in Settings.");
+    expect(root.textContent).toContain("project · scratch");
   });
 
   it("commands parse only from the composer — a pushed chat prompt is sent as is", async () => {

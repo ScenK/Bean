@@ -1,4 +1,6 @@
-import type { LiveCli, Routine, Skill } from "@bean/core";
+import type { AvailableModel, CliName, LiveCli, Project, Routine, Skill } from "@bean/core";
+import { resolveCliModelSelection } from "@bean/core/models";
+import { bestProjectForSkill } from "@bean/core/project-select";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import type { AgentId } from "../../shared/chat-types.js";
 import { parseSlash } from "./agent-mode.js";
@@ -16,13 +18,34 @@ export interface SlashEntry {
   slug: string;
   caption: string;
   description: string;
-  /** Why the row can't run yet (shown greyed). */
-  disabled?: string;
   /** What Tab puts in the composer (no trailing space) — qualified when a higher kind shadows the slug. */
   command: string;
 }
 
-export interface SlashCatalogs { agents: readonly LiveCli[]; skills: readonly Skill[]; sprouts: readonly Routine[] }
+/** What a terminal skill's caption needs to name its destination before Enter. */
+export interface SlashDelegate {
+  projects: Project[]; clis: CliName[]; models: AvailableModel[];
+  /** Settings' delegate CLI preference ("" = auto). */
+  delegateCli: string;
+  /** getModelMemory per skill name. */
+  lastUsedModels: Record<string, string>;
+}
+
+export interface SlashCatalogs { agents: readonly LiveCli[]; skills: readonly Skill[]; sprouts: readonly Routine[]; delegate?: SlashDelegate }
+
+export interface SlashDestination { projectPath: string; projectName: string; model?: string; cli?: CliName }
+
+/** Where a `/` terminal skill runs as a delegate: the skill's project (bestProjectForSkill), else
+ * the scratch workspace ("" — main maps it to the real path), on the skill's remembered model.
+ * `cli` mirrors main's resolveDelegateSelection so the caption names the CLI that will run;
+ * undefined = no enabled CLI (main reports that failure on the card). */
+export function terminalDestination(skillName: string, d: SlashDelegate): SlashDestination {
+  const project = bestProjectForSkill(skillName, d.projects);
+  const model = d.lastUsedModels[skillName];
+  const preferred = d.clis.includes(d.delegateCli as CliName) ? d.delegateCli as CliName : d.clis[0];
+  const cli = resolveCliModelSelection(d.models, d.clis, { ...(preferred ? { cli: preferred } : {}), ...(model ? { model } : {}) })?.cli;
+  return { projectPath: project?.path ?? "", projectName: project?.name ?? "scratch", ...(model ? { model } : {}), ...(cli ? { cli } : {}) };
+}
 
 export type SlashResolution =
   | { kind: SlashKind; name: string; rest: string }
@@ -42,18 +65,17 @@ const sinkNames = (r: Routine): string => [
 ].join(", ") || "Dashboard";
 
 /** Every runnable entry for the mode. Agent mode lists agents only. Hidden/disabled skills and
- * notify-only watches (nothing to run) are left out; terminal skills show but can't run yet. */
+ * notify-only watches (nothing to run) are left out. A terminal skill's caption is its delegate
+ * destination, `<CLI> · <project>`. */
 export function slashEntries(mode: AgentId, c: SlashCatalogs): SlashEntry[] {
   const agents: AgentId[] = ["bean", ...c.agents];
   const raw: Omit<SlashEntry, "command">[] = agents.map((a) => ({ kind: "agent", name: a, slug: a, caption: AGENT_NAMES[a], description: "" }));
   if (mode === "bean") {
     for (const s of c.skills) {
       if (s.hidden || s.enabled === false) continue;
-      const chat = s.target === "chat";
-      raw.push({
-        kind: "skill", name: s.name, slug: slugify(s.name), caption: chat ? "chat" : "terminal", description: s.description,
-        ...(chat ? {} : { disabled: "coming next" }),
-      });
+      const dest = s.target === "chat" || !c.delegate ? undefined : terminalDestination(s.name, c.delegate);
+      const caption = s.target === "chat" ? "chat" : dest ? `${dest.cli ?? "no coding agent"} · ${dest.projectName}` : "terminal";
+      raw.push({ kind: "skill", name: s.name, slug: slugify(s.name), caption, description: s.description });
     }
     for (const r of c.sprouts) {
       if (r.watch && r.steps.length === 0) continue;

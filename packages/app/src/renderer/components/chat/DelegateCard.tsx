@@ -72,7 +72,7 @@ export function DelegateCard({
   const selection = resolveCliModelSelection(models, cliOptions ?? [], { model: modelChoice });
   const explicitLabel = modelChoice ? (models.find((m) => m.id === modelChoice)?.label ?? modelChoice) : undefined;
   const projectName =
-    projectOptions?.find((p) => p.path === item.proposal.projectPath)?.name ?? item.proposal.projectPath;
+    projectOptions?.find((p) => p.path === item.proposal.projectPath)?.name ?? (item.proposal.projectPath || "scratch");
 
   useEffect(() => {
     if (item.state !== "running" && item.state !== "starting") return;

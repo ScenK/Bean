@@ -81,6 +81,7 @@ export function ChatPanel({
   lastUsedModels,
   skills,
   sprouts,
+  delegateCli,
   onSlashOpen,
   onSend,
   onConfirm,
@@ -129,6 +130,8 @@ export function ChatPanel({
   skills: Skill[];
   // The `/` menu's sprouts; onSlashOpen refreshes both catalogs each time the menu opens.
   sprouts: Routine[];
+  /** Settings' delegate CLI preference — a terminal skill's `/` caption names the CLI main picks. */
+  delegateCli: string;
   onSlashOpen: () => void;
   onSend: (text: string, images?: ImageAttachment[]) => void;
   onConfirm: (
@@ -189,8 +192,10 @@ export function ChatPanel({
   const [slashText, setSlashText] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
   // Hidden while Bean answers, like the chip — switching mid-turn isn't allowed.
-  const menu = slashText && !busy ? slashMenu(slashText, mode, { agents: liveAgents, skills, sprouts }) : undefined;
-  const pickable = menu?.entries.filter((e) => !e.disabled) ?? [];
+  const menu = slashText && !busy
+    ? slashMenu(slashText, mode, { agents: liveAgents, skills, sprouts, delegate: { projects, clis, models: runModels, delegateCli, lastUsedModels } })
+    : undefined;
+  const pickable = menu?.entries ?? [];
   const activeEntry = pickable.length ? pickable[((slashIndex % pickable.length) + pickable.length) % pickable.length] : undefined;
   const onComposerInput = (value: string): void => {
     const next = /^\/\S*$/.test(value) ? value : "";
@@ -561,7 +566,6 @@ export function ChatPanel({
                   type="button"
                   role="option"
                   aria-selected={e === activeEntry}
-                  disabled={!!e.disabled}
                   class={`bean-chip-menu-row${e === activeEntry ? " bean-chip-menu-row--on" : ""}`}
                   // Keep focus in the composer so Enter/Tab still reach it after a hover-click.
                   onMouseDown={(ev) => ev.preventDefault()}
@@ -569,7 +573,7 @@ export function ChatPanel({
                 >
                   <span class="bean-chip-menu-row-title">
                     {e.kind === "agent" ? <AgentAvatar agent={e.name as AgentId} size={16} /> : null} {e.command}{" "}
-                    <span class="bean-chip-menu-caption">{e.disabled ? `${e.caption} · ${e.disabled}` : e.caption}</span>
+                    <span class="bean-chip-menu-caption">{e.caption}</span>
                   </span>
                 </button>
               </>

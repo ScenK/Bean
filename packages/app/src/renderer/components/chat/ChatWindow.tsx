@@ -3,7 +3,7 @@ import { ChatPanel } from "./ChatPanel.js";
 import { newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent } from "./agent-mode.js";
-import { resolveSlash } from "./slash-commands.js";
+import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import { composePrompt } from "@bean/core/prompt";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { dataUrlToAttachment } from "../../shared/note-images.js";
@@ -120,10 +120,20 @@ export function ChatWindow() {
   // the user's live-edited name against real skills, not a stale server-computed flag.
   const [skills, setSkills] = useState<Skill[]>([]);
   const [sprouts, setSprouts] = useState<Routine[]>([]);
-  // The `/` menu's catalogs — refreshed each time the menu opens.
+  const [delegateCli, setDelegateCli] = useState("");
+  // The `/` menu's catalogs — refreshed each time the menu opens. A terminal skill's caption names
+  // its delegate destination, so its remembered model and the Settings CLI preference come too.
   const refreshCatalogs = (): void => {
-    window.bean.listSkills().then((s) => setSkills(s ?? []), () => {});
+    window.bean.listSkills().then((s) => {
+      setSkills(s ?? []);
+      // ponytail: one IPC per terminal skill; add a bulk model-memory getter if skill lists grow large.
+      for (const k of s ?? []) {
+        if (k.target === "chat") continue;
+        void window.bean.getModelMemory(k.name).then((m) => { if (m) setLastUsedModels((prev) => ({ ...prev, [k.name]: m })); }, () => {});
+      }
+    }, () => {});
     window.bean.routinesList().then((r) => setSprouts(r ?? []), () => {});
+    window.bean.getConfig().then((c) => setDelegateCli(c?.delegateCli ?? ""), () => {});
   };
   const itemsRef = useRef<ChatItem[]>([]);
   itemsRef.current = items;
@@ -409,7 +419,11 @@ export function ChatWindow() {
     }
     if (slash?.kind === "skill") {
       const skill = skills.find((s) => s.name === slash.name)!;
-      if (skill.target !== "chat") { addStatus(`"${skill.name}" runs in the terminal — that's coming next from chat.`, "error"); return; }
+      if (skill.target !== "chat") {
+        if (images?.length) { addStatus(`"${skill.name}" runs as a background agent — it takes text only.`, "error"); return; }
+        runTerminalSkill(skill, slash.rest);
+        return;
+      }
       void sendMessage(composePrompt(skill, slash.rest), `▶ ${skill.name}${slash.rest ? ` — ${slash.rest}` : ""}`, false, images, "skill");
       return;
     }
@@ -556,6 +570,23 @@ export function ChatWindow() {
     );
     if (!item || (item.state !== "pending" && item.state !== "starting")) return;
     return startDelegate(id, item.proposal.projectPath, editedPrompt, item.proposal.instruction, model, item.proposal.skillName);
+  };
+
+  // `/` terminal skill: Enter is the confirm, so it starts a tracked delegate at once, at the
+  // destination its menu caption named. Everything is captured before the first await, and the
+  // card id is fresh per send — a second Enter can't restart this run (startDelegate claims by id).
+  // Browser access is main's call from skillName alone (delegate-tasks.ts), never this text.
+  const runTerminalSkill = (skill: Skill, rest: string): void => {
+    const dest = terminalDestination(skill.name, { projects, clis, models: runModels, delegateCli, lastUsedModels });
+    const id = newId();
+    const prompt = composePrompt(skill, rest);
+    const instruction = `${skill.name}${rest ? ` — ${rest}` : ""}`;
+    const proposal = { projectPath: dest.projectPath, instruction, skillName: skill.name, composedPrompt: prompt };
+    setItems((prev) => addDelegateProposal(prev, proposal, id));
+    // startDelegate attaches the task id to itemsRef after its await — mirror the card in now, or a
+    // start that resolves before the next render would attach to (and overwrite) a list without it.
+    itemsRef.current = addDelegateProposal(itemsRef.current, proposal, id);
+    void startDelegate(id, dest.projectPath, prompt, instruction, dest.model, skill.name);
   };
 
   const dismissDelegate = (id: string): void => {
@@ -754,6 +785,7 @@ export function ChatWindow() {
         lastUsedModels={lastUsedModels}
         skills={skills}
         sprouts={sprouts}
+        delegateCli={delegateCli}
         onSlashOpen={refreshCatalogs}
         onSend={onComposerSend}
         mode={mode}

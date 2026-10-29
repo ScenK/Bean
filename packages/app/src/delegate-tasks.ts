@@ -45,6 +45,8 @@ export interface DelegateTasksDeps {
   // ~/.bean — for the cross-process run record (run-queue.ts) and the outbox
   // notice an interrupted run leaves for the chat window to pick up after a restart.
   dir: string;
+  /** Where a "" (no project) request runs — the renderer doesn't know Bean's scratch path. */
+  scratchPath?: string;
   /** Whether this skill's frontmatter says `browser: true` (re-read from disk at launch). */
   skillBrowser?: (skillName: string) => Promise<boolean>;
   run?: (req: DelegateRequest, cbs: DelegateCallbacks, spawnFn?: DelegateSpawnFn, timeoutMs?: number) => DelegateHandle;
@@ -102,8 +104,10 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
   };
 
   return {
-    async start(req: DelegateStartRequest): Promise<string> {
+    async start(asked: DelegateStartRequest): Promise<string> {
       const taskId = deps.newId();
+      // "" = no project (a `/` terminal skill with none configured): run in Bean's scratch workspace.
+      const req = { ...asked, projectPath: asked.projectPath || deps.scratchPath || "" };
       // Runs on one project overlap freely: each agent isolates itself in its own worktree.
       const browser = req.skillName && deps.skillBrowser ? await deps.skillBrowser(req.skillName) : false;
       const choice = deps.resolveCli(req.model);

@@ -13,3 +13,8 @@ are easy to break:
   error rows and no model work runs. Agent mode resolves agent aliases only.
 - A chat skill run keeps `source: "skill"` (no memory tools, `ipc.ts`). A sprout run gets one
   status row per invocation (`updateStatus` by id) so parallel runs don't cross.
+- A terminal skill (#495) runs as a tracked delegate straight from Enter (no confirm card step).
+  Its menu caption `<CLI> · <project>` comes from `terminalDestination()`, which must mirror
+  main's `resolveDelegateSelection` (a test pins the parity). No project → `""`, which
+  `delegate-tasks.ts` maps to the real scratch path. Browser access stays main's re-derivation
+  from `skillName`; never send a flag from the renderer.
