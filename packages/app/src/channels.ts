@@ -55,6 +55,7 @@ export const IPC = {
   liveStart: "bean:live-start",
   liveSend: "bean:live-send",
   liveStop: "bean:live-stop",
+  liveResume: "bean:live-resume",
   liveEvent: "bean:live-event",
   availableClis: "bean:available-clis",
   detectedClis: "bean:detected-clis",

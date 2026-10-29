@@ -74,5 +74,9 @@ test("findDelegateRun returns the newest row and refuses ids that can't continue
   expect(findDelegateRun(file, "ses_Ab12", exists)).toEqual({ run: { ...row, sessionId: "ses_Ab12", cli: "opencode", surface: "teams" } });
   expect(findDelegateRun(file, "desk", exists)).toEqual({ refusal: "That run started in Bean's desktop chat — continue it there." });
   expect(findDelegateRun(file, "gone", exists)).toEqual({ refusal: "That project folder no longer exists on this Mac." });
+  // The desktop card asks for desktop rows only: its own run resumes, a chatops/routine id is unknown to it.
+  expect(findDelegateRun(file, "desk", exists, "desktop")).toEqual({ run: { ...row, sessionId: "desk" } });
+  expect(findDelegateRun(file, "3f2a-uuid", exists, "desktop")).toEqual({ refusal: "I have no record of that run." });
+  expect(findDelegateRun(file, "nope", exists, "desktop")).toEqual({ refusal: "I have no record of that run." });
   closeDb(file);
 });

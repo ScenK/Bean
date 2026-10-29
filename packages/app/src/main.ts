@@ -26,7 +26,7 @@ import {
   addTodo, claimTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   recoverInterruptedTodos, deleteTodosForRoutine, sweepDeadRuns,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  availableModels, pinnedStepSelection, isLiveCli,
+  availableModels, pinnedStepSelection, isLiveCli, findDelegateRun,
   createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, CliName } from "@bean/core";
@@ -632,6 +632,7 @@ app.whenReady().then(async () => {
       dir,
       enabledClis,
       scratchPath: scratchDir(dir),
+      findResumable: (sessionId) => findDelegateRun(dbFile(dir), sessionId, undefined, "desktop"),
       projectAllowed: async (path) =>
         path === scratchDir(dir) || (await loadProjects(projectsFile(dir))).some((p) => p.path === path),
       newId: () => randomUUID(),

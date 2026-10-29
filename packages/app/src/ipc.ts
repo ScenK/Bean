@@ -951,7 +951,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
     start: (req: DelegateStartRequest) => Promise<string>;
     cancel: (taskId: string) => void;
   };
-  liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop">;
+  liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "resume">;
   /** Whether an IPC sender is the chat window — the only window that may drive an agent session. */
   isChatSender: (sender: WebContents) => boolean;
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
@@ -1051,6 +1051,8 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.liveSend, (e, sessionId: unknown, text: unknown) =>
     deps.isChatSender(e.sender) ? deps.liveTasks.send(e.sender.id, sessionId, text) : "Agent sessions run from the chat window.");
   ipcMain.on(IPC.liveStop, (e, sessionId: unknown) => { if (deps.isChatSender(e.sender)) deps.liveTasks.stop(e.sender.id, sessionId); });
+  ipcMain.handle(IPC.liveResume, (e, sessionId: unknown) =>
+    deps.isChatSender(e.sender) ? deps.liveTasks.resume(e.sender.id, sessionId) : { error: "Agent sessions run from the chat window." });
   ipcMain.handle(IPC.availableClis, () => deps.getAvailableClis());
   ipcMain.handle(IPC.detectedClis, () => deps.getDetectedClis());
 

@@ -87,16 +87,25 @@ export function delegateRunProject(file: string, sessionId: string): string | un
 export type ResumableRun = { run: DelegateRunRow } | { refusal: string };
 
 /** Looks up the newest `delegate_runs` row for `sessionId` and checks it can continue live: a
- * session (with its CLI's id shape, isLiveSessionId) Bean recorded outside the desktop chat whose project folder
- * still exists. The project path and CLI always come from this row, never from the caller. */
-export function findDelegateRun(file: string, sessionId: string, exists: (path: string) => boolean = existsSync): ResumableRun {
+ * session (with its CLI's id shape, isLiveSessionId) whose project folder still exists. The
+ * project path and CLI always come from this row, never from the caller. By default (chatops)
+ * desktop rows are refused; `surface: "desktop"` (the desktop card's Continue live) accepts only
+ * desktop rows, so neither surface can pick up the other's sessions. */
+export function findDelegateRun(
+  file: string,
+  sessionId: string,
+  exists: (path: string) => boolean = existsSync,
+  surface?: "desktop",
+): ResumableRun {
   if (!isValidSessionId(sessionId)) return { refusal: BAD_SESSION_ID };
   const row = openDb(file)
     .prepare("SELECT surface, cli, session_id, project_path, instruction FROM delegate_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1")
     .get(sessionId) as { surface: DelegateRunRow["surface"]; cli: CliName; session_id: string; project_path: string; instruction: string } | undefined;
   if (!row) return { refusal: "I have no record of that run." };
   if (!isLiveSessionId(row.cli, row.session_id)) return { refusal: BAD_SESSION_ID };
-  if (row.surface === "desktop") return { refusal: "That run started in Bean's desktop chat — continue it there." };
+  if (surface === "desktop") {
+    if (row.surface !== "desktop") return { refusal: "I have no record of that run." };
+  } else if (row.surface === "desktop") return { refusal: "That run started in Bean's desktop chat — continue it there." };
   if (!exists(row.project_path)) return { refusal: "That project folder no longer exists on this Mac." };
   return { run: { surface: row.surface, cli: row.cli, sessionId: row.session_id, projectPath: row.project_path, instruction: row.instruction } };
 }

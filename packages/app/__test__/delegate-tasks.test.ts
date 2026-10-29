@@ -274,7 +274,7 @@ describe("delegate session receipts", () => {
     captured!.onError(new Error("boom"));
     expect(sent.at(-1)).toEqual({
       taskId: "t1", type: "failed", message: "boom",
-      receipt: { label: "claude · sess…", command: "cd '/it'\\''s/p' && claude --resume sess-1" },
+      receipt: { label: "claude · sess…", command: "cd '/it'\\''s/p' && claude --resume sess-1", sessionId: "sess-1", agent: "claude" },
     });
     const db = new DatabaseSync(join(dir, "bean.db"));
     const rows = db.prepare("SELECT surface, instruction FROM delegate_runs").all();

@@ -29,6 +29,10 @@ export interface LiveSessionRequest {
 
 /** A resumed session that exited before claude's `system/init` event: the host rejected the
  * id (expired or removed), so no session ever ran. */
+/** The opening turn of a continued session (chatops card, desktop Continue live): the agent
+ * already has its context, so no handoff — just ask where things stand. */
+export const RESUME_OPENING = "Continue where you left off — first, one line on where things stand.";
+
 export const RESUME_REJECTED = "Couldn't reopen that session (expired or removed on the host). Nothing was started.";
 
 export function liveSessionCommand(req: LiveSessionRequest): { command: string; args: string[] } {

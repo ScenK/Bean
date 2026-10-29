@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { ChatItem } from "../../shared/chat-types.js";
 import type { PickableModel } from "../../shared/ProposalCard.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
+import { AgentAvatar } from "../../shared/AgentAvatar.js";
 import type { CliName, Project } from "@bean/core";
 import { resolveCliModelSelection } from "@bean/core/models";
 
@@ -40,6 +41,7 @@ export function DelegateCard({
   modelOptions,
   projectOptions,
   browser,
+  onContinueLive,
 }: {
   item: DelegateItem;
   onConfirm: (editedPrompt: string, model?: string) => void;
@@ -55,6 +57,8 @@ export function DelegateCard({
   projectOptions?: Project[];
   /** Display only — main re-resolves the skill's `browser:` frontmatter at launch. */
   browser?: boolean;
+  /** Set only when Continue live is offered (eligible receipt, CLI enabled, no live session). */
+  onContinueLive?: () => void;
 }) {
   const [prompt, setPrompt] = useState(item.proposal.composedPrompt);
   const [showDetail, setShowDetail] = useState(false);
@@ -155,6 +159,11 @@ export function DelegateCard({
         </button>
         {pending ? <button type="button" class="bean-btn bean-btn--ghost" onClick={onDismiss}>Dismiss</button> : null}
         {running ? <button type="button" class="bean-btn bean-btn--ghost" onClick={onCancelTask}>Cancel</button> : null}
+        {onContinueLive && item.receipt?.agent ? (
+          <button type="button" class="bean-btn bean-btn--ghost" onClick={onContinueLive}>
+            <AgentAvatar agent={item.receipt.agent} size={16} /> Continue live
+          </button>
+        ) : null}
       </div>
     </div>
   );

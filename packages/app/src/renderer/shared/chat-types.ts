@@ -1,4 +1,4 @@
-import type { CliName, ProposedDelegate, ProposedLiveSession, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, TurnSource } from "@bean/core";
+import type { CliName, LiveCli, ProposedDelegate, ProposedLiveSession, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, TurnSource } from "@bean/core";
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 // Renderer copies of core's SUPPORTED_IMAGE_MIMES / MAX_IMAGES_PER_MESSAGE (converse.ts) —
@@ -37,7 +37,8 @@ export type ChatItem =
       state: "pending" | "starting" | "running" | "done" | "failed" | "cancelled" | "dismissed";
       taskId?: string; tail: string[]; result?: string; error?: string;
       // The started CLI session's Copy chip (terminal states only) — never chat/loopback text.
-      receipt?: { label: string; command: string } }
+      // sessionId + agent: set when the card may offer Continue live (DelegateReceipt).
+      receipt?: { label: string; command: string; sessionId?: string; agent?: LiveCli } }
   // A propose_note draft awaiting confirmation — notes are never saved silently.
   // `images` = the latest chat turn's attached images (data URLs), offered for the saved note.
   | { kind: "note"; id: string; note: ProposedNote; state: "pending" | "saved" | "dismissed"; images?: string[] }
