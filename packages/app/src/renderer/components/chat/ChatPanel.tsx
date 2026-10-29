@@ -10,8 +10,9 @@ import { DelegateCard } from "./DelegateCard.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { imageFileGuard, insertDroppedPath, itemAgent, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
-import { HANDOFF_ITEMS, canContinueLive, handoffItems, isLiveAgent, offerAgent, slashMatches } from "./agent-mode.js";
-import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
+import { HANDOFF_ITEMS, canContinueLive, handoffItems, isLiveAgent, offerAgent } from "./agent-mode.js";
+import { SECTION_TITLES, slashMenu, type SlashEntry } from "./slash-commands.js";
+import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, Routine, RouteSuggestion, Skill } from "@bean/core";
 
 /** Read a picked image into an attachment + full data URL for its composer thumbnail. */
 function readImageFile(file: File): Promise<{ attachment: ImageAttachment; dataUrl: string }> {
@@ -79,6 +80,8 @@ export function ChatPanel({
   runModels,
   lastUsedModels,
   skills,
+  sprouts,
+  onSlashOpen,
   onSend,
   onConfirm,
   onCancel,
@@ -124,6 +127,9 @@ export function ChatPanel({
   // Full current skill list — SkillCard uses it to live-recompute "replaces existing"
   // against the user's edited name, not just the model's originally-proposed one.
   skills: Skill[];
+  // The `/` menu's sprouts; onSlashOpen refreshes both catalogs each time the menu opens.
+  sprouts: Routine[];
+  onSlashOpen: () => void;
   onSend: (text: string, images?: ImageAttachment[]) => void;
   onConfirm: (
     id: string,
@@ -179,8 +185,19 @@ export function ChatPanel({
   const liveAgents = clis.filter(isLiveAgent);
   const agentName = AGENT_NAMES[mode];
   const projectName = (path: string): string => projects.find((p) => p.path === path)?.name ?? "scratch";
-  // The `/` popover: aliases matching the composer text so far.
-  const [slashOptions, setSlashOptions] = useState<AgentId[]>([]);
+  // The `/` menu: the composer text while it's a lone `/word` ("" = closed), and the picked row.
+  const [slashText, setSlashText] = useState("");
+  const [slashIndex, setSlashIndex] = useState(0);
+  // Hidden while Bean answers, like the chip — switching mid-turn isn't allowed.
+  const menu = slashText && !busy ? slashMenu(slashText, mode, { agents: liveAgents, skills, sprouts }) : undefined;
+  const pickable = menu?.entries.filter((e) => !e.disabled) ?? [];
+  const activeEntry = pickable.length ? pickable[((slashIndex % pickable.length) + pickable.length) % pickable.length] : undefined;
+  const onComposerInput = (value: string): void => {
+    const next = /^\/\S*$/.test(value) ? value : "";
+    if (next && !slashText) onSlashOpen();
+    if (next !== slashText) setSlashIndex(0);
+    setSlashText(next);
+  };
   // Agents take text only — anything pending was meant for Bean.
   useEffect(() => { if (agentMode) setPendingImages([]); }, [agentMode]);
 
@@ -246,7 +263,7 @@ export function ChatPanel({
   const slashMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     slashMenuRef.current?.querySelector(".bean-chip-menu-row--on")?.scrollIntoView?.({ block: "nearest" });
-  }, [slashOptions]);
+  }, [slashText, slashIndex]);
 
   useEffect(() => {
     const el = inputRef.current;
@@ -267,11 +284,19 @@ export function ChatPanel({
     if (!text) return;
     el.value = "";
     resizeInput();
-    setSlashOptions([]);
+    setSlashText("");
     const images = pendingImages.map((p) => p.attachment);
     setPendingImages([]);
     setImageError(null);
     onSend(text, images.length > 0 ? images : undefined);
+  };
+
+  // A menu pick runs its command as if typed: an agent switches, a skill runs with no instruction.
+  const pickEntry = (entry: SlashEntry): void => {
+    if (!inputRef.current) return;
+    inputRef.current.value = entry.command;
+    submit();
+    inputRef.current.focus();
   };
 
   const droppedPath = (e: DragEvent): string | undefined => {
@@ -527,24 +552,29 @@ export function ChatPanel({
         {agentMode && incognito ? (
           <div class="bean-status bean-status--info">Off the record covers Bean only — {agentName} keeps its own transcript.</div>
         ) : null}
-        {/* Hidden while Bean answers, like the chip — switching mid-turn isn't allowed. */}
-        {slashOptions.length > 0 && !busy ? (
-          <div ref={slashMenuRef} class="bean-chip-menu-list bean-slash-menu" role="listbox" aria-label="Switch who answers">
-            {slashOptions.map((a) => (
-              <button
-                type="button"
-                role="option"
-                aria-selected={a === mode}
-                class={`bean-chip-menu-row${a === mode ? " bean-chip-menu-row--on" : ""}`}
-                onClick={() => {
-                  if (inputRef.current) { inputRef.current.value = ""; resizeInput(); inputRef.current.focus(); }
-                  setSlashOptions([]);
-                  onPickAgent(a);
-                }}
-              >
-                <span class="bean-chip-menu-row-title"><AgentAvatar agent={a} size={16} /> /{a} <span class="bean-chip-menu-caption">{AGENT_NAMES[a]}</span></span>
-              </button>
+        {menu && (menu.entries.length > 0 || menu.more > 0) ? (
+          <div ref={slashMenuRef} class="bean-chip-menu-list bean-slash-menu" role="listbox" aria-label="Commands">
+            {menu.entries.map((e, i) => (
+              <>
+                {e.kind !== menu.entries[i - 1]?.kind ? <div class="bean-chip-menu-hint">{SECTION_TITLES[e.kind]}</div> : null}
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={e === activeEntry}
+                  disabled={!!e.disabled}
+                  class={`bean-chip-menu-row${e === activeEntry ? " bean-chip-menu-row--on" : ""}`}
+                  // Keep focus in the composer so Enter/Tab still reach it after a hover-click.
+                  onMouseDown={(ev) => ev.preventDefault()}
+                  onClick={() => pickEntry(e)}
+                >
+                  <span class="bean-chip-menu-row-title">
+                    {e.kind === "agent" ? <AgentAvatar agent={e.name as AgentId} size={16} /> : null} {e.command}{" "}
+                    <span class="bean-chip-menu-caption">{e.disabled ? `${e.caption} · ${e.disabled}` : e.caption}</span>
+                  </span>
+                </button>
+              </>
             ))}
+            {menu.more > 0 ? <div class="bean-chip-menu-hint">+{menu.more} more</div> : null}
           </div>
         ) : null}
         {imageError ? <div class="bean-status bean-status--error">{imageError}</div> : null}
@@ -567,15 +597,35 @@ export function ChatPanel({
             ref={inputRef}
             class="bean-input bean-input--composer"
             rows={1}
-            placeholder={!agentMode ? "Message Bean…" : live
+            placeholder={!agentMode ? "Message Bean… — / for skills & sprouts" : live
               ? `Message ${agentName}…`
               : `Message ${agentName}… (Bean will hand over up to ${Math.min(handoffItems(items).filter((h) => h.text.trim()).length, HANDOFF_ITEMS)} messages)`}
-            onInput={(e) => { resizeInput(); setSlashOptions(slashMatches((e.target as HTMLTextAreaElement).value, liveAgents)); }}
+            onInput={(e) => { resizeInput(); onComposerInput((e.target as HTMLTextAreaElement).value); }}
             onPaste={pasteImages}
             onDragOver={(e) => { if (droppedPath(e)) e.preventDefault(); }}
             onDrop={dropPathIntoComposer}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+              // IME-safe: Enter/arrows while composing belong to the input method.
+              if (e.isComposing || e.keyCode === 229) return;
+              if (menu && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                e.preventDefault();
+                const at = activeEntry ? pickable.indexOf(activeEntry) : 0;
+                setSlashIndex(at + (e.key === "ArrowDown" ? 1 : -1));
+                return;
+              }
+              if (menu && e.key === "Escape") { e.preventDefault(); setSlashText(""); return; }
+              if (activeEntry && e.key === "Tab") {
+                e.preventDefault();
+                const el = e.currentTarget;
+                el.value = `${activeEntry.command} `;
+                onComposerInput(el.value);
+                return;
+              }
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (activeEntry) pickEntry(activeEntry);
+                else submit();
+              }
             }}
           />
           <div class="bean-chat-composer-bar">

@@ -2,10 +2,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import type { ChatTurn } from "@bean/core";
+import type { ChatTurn, LiveCli } from "@bean/core";
 import {
-  AGENT_FINAL_CHARS, applyLiveEvent, canContinueLive, chatTurns, handoffLines, offerAgent, parseSlash, slashMatches, turnFooter,
+  AGENT_FINAL_CHARS, applyLiveEvent, canContinueLive, chatTurns, handoffLines, offerAgent, parseSlash, turnFooter,
 } from "../src/renderer/components/chat/agent-mode.js";
+import { slashMenu } from "../src/renderer/components/chat/slash-commands.js";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
 import type { ChatItem } from "../src/renderer/shared/chat-types.js";
 import type { LiveEvent } from "../src/live-tasks.js";
@@ -31,10 +32,12 @@ describe("agent-mode helpers", () => {
   });
 
   it("lists only installed agents in the / popover", () => {
-    expect(slashMatches("/", ["claude"])).toEqual(["bean", "claude"]);
-    expect(slashMatches("/c", ["claude", "codex"])).toEqual(["claude", "codex"]);
-    expect(slashMatches("/claude fix", ["claude"])).toEqual([]);
-    expect(slashMatches("hi", ["claude"])).toEqual([]);
+    const names = (text: string, agents: LiveCli[]): string[] =>
+      slashMenu(text, "bean", { agents, skills: [], sprouts: [] }).entries.map((e) => e.name);
+    expect(names("/", ["claude"])).toEqual(["bean", "claude"]);
+    expect(names("/c", ["claude", "codex"])).toEqual(["claude", "codex"]);
+    expect(names("/claude fix", ["claude"])).toEqual([]);
+    expect(names("hi", ["claude"])).toEqual([]);
   });
 
   it("maps agent finals into Bean's history as [Agent] <result>, capped; streaming bubbles stay out", () => {
