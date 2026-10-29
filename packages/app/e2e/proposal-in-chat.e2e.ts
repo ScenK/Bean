@@ -4,7 +4,7 @@ import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
 test("proposal (in-chat target): confirming sends the composed prompt in chat", async () => {
-  const home = await makeBeanHome();
+  const home = await makeBeanHome({ autoMemory: false });
   const stub = await startStubOpenAI();
   // First request: the model proposes running the "draft-reply" skill (target: chat).
   // Skill fixture written by makeBeanHome().
