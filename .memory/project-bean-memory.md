@@ -21,9 +21,16 @@ see `db.ts`'s `migrateFromFiles`.
 - **Trust boundary:** `ChatTurn.source` is recorded when a turn arrives; only `role: "user"` +
   `source: "typed"` turns are citable (`isCitable`). A delegate loopback, a composed skill prompt,
   the Save-to-notes command, ambient chatter, and compaction summaries all travel as role "user",
-  so the role can't be trusted. Every candidate must `quote` a span of a typed turn sharing a
-  content word with the fact (`validateCandidate`), and instruction-/secret-shaped facts are
-  rejected in code. The recall block frames memories as data and tags them `[id]`.
+  so the role can't be trusted. Every candidate must `quote` a span of a typed turn
+  (`validateCandidate`), and every fact clause must be carried by one quote clause: Latin content
+  words (4+ chars, minus `FRAMING`) match on a shared prefix of min(len, 5) ≥ 4 chars, where a
+  4-char stem may only gain ≤2 chars ("live"~"lives", never "java"~"javascript"); Han/Kana/Hangul
+  runs need every character bigram present. Polarity is checked on each occurrence of the quote
+  *widened to its clause* in the source, so a cropped quote can't shed a negation. Instruction-
+  (EN + CJK/Korean cues), secret-, Bean-subject, >300-char, and mostly-link/code quotes are
+  rejected in code. `extractMemories` returns `{ candidates, rejected, failed }` (rejected =
+  validation rejects, failed = model call threw); callers read `candidates` only so far.
+  The recall block frames memories as data and tags them `[id]`.
 - **Explicit remember/forget:** `makeMemoryTools()` → direct `remember` + `forget_memory` action
   tools, offered only on a typed turn (`ChatRequest.source === "typed"` on desktop). Desktop
   shows a `🧠 Remembered — …` status line; chatops posts a Forget card

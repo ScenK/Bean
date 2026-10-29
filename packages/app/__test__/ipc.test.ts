@@ -513,7 +513,7 @@ function memoryHandlersFor(over: Partial<Parameters<typeof buildMemoryHandlers>[
     extractMemories: async (transcript, ex, projects) => {
       expect(ex).toEqual(existing);
       expect(projects).toEqual([{ name: "api", path: "/work/api" }]);
-      return transcript.length ? [{ text: "new fact", projectPath: undefined }] : [];
+      return { candidates: transcript.length ? [{ text: "new fact", projectPath: undefined }] : [], rejected: 0, failed: false };
     },
     loadProjects: async () => [{ name: "api", path: "/work/api" }],
     converse: async () => ({ content: "", toolCalls: [] }),
@@ -547,7 +547,7 @@ test("rememberOnClose extracts and appends in the background, then Undo deletes 
 
 test("an incognito chat writes nothing and never calls extraction", async () => {
   let extracted = false;
-  const { handlers, appended, batches } = memoryHandlersFor({ extractMemories: async () => { extracted = true; return []; } });
+  const { handlers, appended, batches } = memoryHandlersFor({ extractMemories: async () => { extracted = true; return { candidates: [], rejected: 0, failed: false }; } });
   expect(await handlers.rememberOnClose(typed, { incognito: true })).toEqual([]);
   expect(extracted).toBe(false);
   expect(appended).toEqual([]);
@@ -556,7 +556,7 @@ test("an incognito chat writes nothing and never calls extraction", async () => 
 
 test("autoMemory off means no background extraction", async () => {
   let extracted = false;
-  const { handlers, appended } = memoryHandlersFor({ autoMemory: () => false, extractMemories: async () => { extracted = true; return []; } });
+  const { handlers, appended } = memoryHandlersFor({ autoMemory: () => false, extractMemories: async () => { extracted = true; return { candidates: [], rejected: 0, failed: false }; } });
   expect(await handlers.rememberOnClose(typed, {})).toEqual([]);
   expect(extracted).toBe(false);
   expect(appended).toEqual([]);
@@ -579,7 +579,7 @@ test("Undo last dream restores the recorded run once; an undone or absent run is
 });
 
 test("no candidates means no batch and no bubble", async () => {
-  const { handlers, batches } = memoryHandlersFor({ extractMemories: async () => [] });
+  const { handlers, batches } = memoryHandlersFor({ extractMemories: async () => ({ candidates: [], rejected: 0, failed: false }) });
   expect(await handlers.rememberOnClose(typed, {})).toEqual([]);
   expect(batches).toEqual([]);
   expect(handlers.batch()).toBeUndefined();
