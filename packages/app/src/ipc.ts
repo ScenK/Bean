@@ -6,7 +6,7 @@ import {
   type SkillProposal, type ProposalOutcome,
   type Project, type RouteInput, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
-  type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type MemoryCandidate, type ChatTurn,
+  type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type ExtractResult, type ChatTurn,
   type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
   type TodoItem, type StepKind, type CliModels, type DreamDigest, type RoutineBrief, type RoutineWatch, type WatchItem,
 } from "@bean/core";
@@ -474,7 +474,7 @@ export interface MemoryHandlerDeps {
   deleteMemories: (file: string, ids: string[]) => Promise<number>;
   extractMemories: (
     transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps,
-  ) => Promise<MemoryCandidate[]>;
+  ) => Promise<ExtractResult>;
   loadProjects: (file: string) => Promise<Project[]>;
   converse: ConverseDeps["chat"];
   getModel: () => string;
@@ -508,7 +508,7 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
         deps.loadMemories(deps.dbFile),
         deps.loadProjects(deps.projectsFile),
       ]);
-      const candidates = await deps.extractMemories(transcript, existing, projects, { chat: deps.converse, model: deps.getModel() });
+      const { candidates } = await deps.extractMemories(transcript, existing, projects, { chat: deps.converse, model: deps.getModel() });
       if (candidates.length === 0) return [];
       const at = new Date().toISOString();
       const batch: Memory[] = candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at }));

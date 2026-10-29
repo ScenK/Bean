@@ -156,6 +156,13 @@ test("memory tools are only offered when the typed message asks to remember or f
   expect(offered("review the delete API docs")).toEqual([]);
   expect(offered("note that the build is slow")).toEqual([]);
   expect(offered("please delete that memory about tabs")).toEqual(["forget_memory"]);
+  expect(offered("Remember, I use zed")).toEqual(["remember"]);
+  expect(offered("please remember: the wifi is bean")).toEqual(["remember"]);
+  expect(offered("don't forget that I use zed")).toEqual(["remember"]);
+  expect(offered("记住，我喜欢用pnpm")).toEqual(["remember"]);
+  expect(offered("기억해: 저는 서울에 살아요")).toEqual(["remember"]);
+  expect(offered("覚えて、私はVimを使っています")).toEqual(["remember"]);
+  expect(offered("I can't remember, sorry")).toEqual([]);
 });
 
 test("a pre-scoping bean.db gains subject_id on open; old rows read as shared everywhere", async () => {
