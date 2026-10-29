@@ -90,11 +90,13 @@ export function ChatWindow() {
   const [model, setModel] = useState("model");
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
   const [closeFlow, setCloseFlow] = useState<CloseFlow>(null);
-  // Off the record: this chat is never remembered. Per window (a new chat starts off), read at
-  // close — so switching it on mid-chat still covers the whole chat.
+  // Off the record: per window (a new chat starts off). Read at close, and mirrored to main so it
+  // also stops per-turn captures still in flight. Facts captured before it was switched on stay
+  // saved — their "Memory updated" rows keep Undo.
   const [incognito, setIncognito] = useState(false);
   const incognitoRef = useRef(false);
   incognitoRef.current = incognito;
+  useEffect(() => { window.bean.setChatIncognito(incognito); }, [incognito]);
   // Facts undone from a "Memory updated" row — handed to close catch-up so it won't re-save them.
   const rejectedMemoriesRef = useRef<string[]>([]);
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);

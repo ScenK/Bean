@@ -24,9 +24,12 @@ see `db.ts`'s `migrateFromFiles`.
   `captureTurn` off the reply path: `extractMemories(…, { latestTurn: true })` cites only the
   latest turn (≤6 prior turns ride as context), appends, and sends `memoryUpdated` to that chat
   window → a `🧠 Memory updated — … · Undo` row (Undo = `deleteMemories` on exactly those ids). No
-  avatar bubble; a per-turn failure only logs (close retries it). Main tracks, per window
-  (webContents id), the turn ids captured/in flight and the saved ids; the ids count as pending
-  for dream until the window closes. **Close is a catch-up:** turns carry their renderer id,
+  avatar bubble; a per-turn failure only logs (close retries it) — unless the window already
+  closed, then it raises the `memory:error` bubble. Main tracks, per window (webContents id), the
+  turn ids captured/in flight, the saved ids (pending for dream until the window closes), the live
+  🕶 chip (`chatIncognito` channel — a request's `incognito` is a send-time snapshot, so it's
+  re-checked before the model call and the insert), and a queue: captures run one at a time so
+  facts are saved in turn order (later-saved-wins stays right). **Close is a catch-up:** turns carry their renderer id,
   already-captured ones are downgraded to non-citable context, and facts undone in the window ride
   along as `rejected` (shown to extraction as already remembered) so close won't re-save them.
   Config `autoMemory` (default true; Settings → Memory) off = explicit remember/forget only.

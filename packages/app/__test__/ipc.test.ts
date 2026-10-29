@@ -661,6 +661,59 @@ test("a failed per-turn capture is retried by close catch-up and raises no bubbl
   expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { windowId: 3 })).toHaveLength(1);
 });
 
+function deferredExtract() {
+  const pending: Array<{ text: string; resolve: () => void }> = [];
+  const extractMemories = (_t: ChatTurn[]) => new Promise<{ candidates: { text: string }[]; rejected: number; failed: boolean }>((resolve) => {
+    const text = _t[_t.length - 1]!.content;
+    pending.push({ text, resolve: () => resolve({ candidates: [{ text }], rejected: 0, failed: false }) });
+  });
+  return { pending, extractMemories };
+}
+
+test("switching the chip on while a capture is in flight saves nothing", async () => {
+  const d = deferredExtract();
+  const { handlers, appended } = memoryHandlersFor({ extractMemories: d.extractMemories });
+  const capture = handlers.captureTurn(4, turnReq, reply);
+  await new Promise((r) => setTimeout(r, 0));
+  handlers.setIncognito(4, true);
+  d.pending[0]!.resolve();
+  expect(await capture).toEqual([]);
+  expect(appended).toEqual([]);
+  // And later turns in that window are never sent to the model.
+  expect(await handlers.captureTurn(4, { ...turnReq, turnId: "item-3" }, reply)).toEqual([]);
+  expect(d.pending).toHaveLength(1);
+});
+
+test("captures in one window run in turn order, so a later fact is saved later", async () => {
+  const d = deferredExtract();
+  const { handlers, appended } = memoryHandlersFor({ extractMemories: d.extractMemories });
+  const first = handlers.captureTurn(5, turnReq, reply);
+  const second = handlers.captureTurn(5, { ...turnReq, message: "I live in Portland now", turnId: "item-3" }, reply);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(d.pending.map((p) => p.text)).toEqual(["I live in Seattle"]); // second waits its turn
+  d.pending[0]!.resolve();
+  await first;
+  await new Promise((r) => setTimeout(r, 0));
+  d.pending[1]!.resolve();
+  await second;
+  expect(appended.map((b) => b[0]!.text)).toEqual(["I live in Seattle", "I live in Portland now"]);
+});
+
+test("a capture that fails after its window closed raises the failure bubble (catch-up skipped it)", async () => {
+  let fail!: () => void;
+  const { handlers, failures } = memoryHandlersFor({
+    extractMemories: (transcript) => (transcript.some((t) => t.source === "typed") && transcript.length === 1
+      ? new Promise((resolve) => { fail = () => resolve({ candidates: [], rejected: 0, failed: true }); })
+      : Promise.resolve({ candidates: [], rejected: 0, failed: false })),
+  });
+  const capture = handlers.captureTurn(6, turnReq, reply);
+  await new Promise((r) => setTimeout(r, 0));
+  await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }, { role: "assistant", content: "Nice!" }], { windowId: 6 });
+  fail();
+  await expect(capture).rejects.toThrow(/extraction/);
+  expect(failures()).toBe(1);
+});
+
 test("facts undone in the window reach close catch-up as already remembered", async () => {
   let seen: Memory[] = [];
   const { handlers, existing } = memoryHandlersFor({

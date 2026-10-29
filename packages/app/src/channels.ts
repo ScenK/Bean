@@ -117,6 +117,8 @@ export const IPC = {
   rememberOnClose: "bean:remember-on-close",
   // main → chat window: a per-turn capture saved these facts (the Undo receipt row).
   memoryUpdated: "bean:memory-updated",
+  // chat window → main: its 🕶 chip changed (gates per-turn capture already in flight).
+  chatIncognito: "bean:chat-incognito",
   getMemoryBatch: "bean:get-memory-batch",
   undoMemoryBatch: "bean:undo-memory-batch",
   getLastDream: "bean:get-last-dream",

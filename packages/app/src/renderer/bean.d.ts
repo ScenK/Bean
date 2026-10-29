@@ -117,6 +117,7 @@ declare global {
       deleteMemories(ids: string[]): Promise<number>;
       /** Fire-and-forget at chat close: main extracts + saves in the background. */
       rememberOnClose(transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[] }): void;
+      setChatIncognito(on: boolean): void;
       onMemoryUpdated(cb: (saved: Array<{ id: string; text: string }>) => void): void;
       getMemoryBatch(): Promise<MemoryBatch | undefined>;
       undoMemoryBatch(): Promise<number>;

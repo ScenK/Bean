@@ -509,7 +509,15 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
   // Per chat window (webContents id), dropped at its close: typed turns whose per-turn capture
   // is in flight or done (close catch-up won't re-cite them), and the ids those captures saved —
   // still undoable from the window's "Memory updated" rows, so dream leaves them alone.
-  const windows = new Map<number, { turns: Set<string>; ids: string[] }>();
+  // `incognito` = the window's live 🕶 chip (a request's flag is a send-time snapshot); `queue`
+  // runs captures one at a time so facts are saved — and timestamped — in turn order.
+  type ChatWindowState = { turns: Set<string>; ids: string[]; incognito: boolean; queue: Promise<unknown> };
+  const windows = new Map<number, ChatWindowState>();
+  const windowState = (windowId: number): ChatWindowState => {
+    let w = windows.get(windowId);
+    if (!w) windows.set(windowId, w = { turns: new Set(), ids: [], incognito: false, queue: Promise.resolve() });
+    return w;
+  };
   const pendingIds = (): string[] => [...(lastBatch?.ids ?? []), ...[...windows.values()].flatMap((w) => w.ids)];
   const extract = async (transcript: ChatTurn[], extra: Memory[], latestTurn: boolean): Promise<Memory[]> => {
     const [existing, projects] = await Promise.all([
@@ -552,22 +560,32 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
      * turns are context). Skipped when the turn used the explicit remember tool or errored. */
     captureTurn: async (windowId: number, req: ChatRequest, result: ConverseResult): Promise<Memory[]> => {
       if (req.source !== "typed" || req.incognito || !deps.autoMemory() || result.error || result.remembered?.length) return [];
-      let w = windows.get(windowId);
-      if (!w) windows.set(windowId, w = { turns: new Set(), ids: [] });
+      const w = windowState(windowId);
+      if (w.incognito) return [];
       if (req.turnId) w.turns.add(req.turnId);
-      try {
+      // Re-checked before the model call and again before the insert: the chip can be switched
+      // on while this turn waits or extracts.
+      const offRecord = (): boolean => w.incognito || !deps.autoMemory();
+      const run = w.queue.then(async (): Promise<Memory[]> => {
+        if (offRecord()) return [];
         const batch = await extract([...req.history, { role: "user", content: req.message, source: "typed" }], [], true);
-        if (batch.length === 0) return [];
+        if (batch.length === 0 || offRecord()) return [];
         w.ids.push(...batch.map((m) => m.id)); // pending before the insert, same as the close batch
         await deps.appendMemories(deps.dbFile, batch);
         deps.onTurnBatch?.(pendingIds);
         return batch;
-      } catch (err) {
-        // Not captured after all — close catch-up gets to retry it.
+      }).catch((err: unknown) => {
         if (req.turnId) w.turns.delete(req.turnId);
+        // Window still open: close catch-up retries this turn. Already closed: catch-up skipped
+        // it as in flight, so nothing will — surface it like a failed close save.
+        if (windows.get(windowId) !== w) deps.onMemoryFailure?.();
         throw err;
-      }
+      });
+      w.queue = run.catch(() => {});
+      return run;
     },
+    /** The chat window's 🕶 chip changed — gates its per-turn captures from now on. */
+    setIncognito: (windowId: number, on: boolean): void => { windowState(windowId).incognito = on; },
     /** Chat-window close: a catch-up — extract → validate → append in the background, no review
      * card. Turns per-turn capture handled stay as context only; `rejected` = facts the user
      * undid in this window, shown to extraction as already remembered so they aren't re-saved. */
@@ -1028,6 +1046,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.deleteMemories, (_e, ids: string[]) => memoryHandlers.delete(ids));
   // Fire-and-forget: the chat window is already closing. A failure already raised its bubble
   // (onMemoryFailure); this only logs it.
+  ipcMain.on(IPC.chatIncognito, (e, on: unknown) => memoryHandlers.setIncognito(e.sender.id, on === true));
   ipcMain.on(IPC.rememberOnClose, (e, transcript: unknown, opts: unknown) => {
     const o = opts as { incognito?: unknown; rejected?: unknown } | null;
     const incognito = o?.incognito === true;
