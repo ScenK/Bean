@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
 import { newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
-import { chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent, parseSlash } from "./agent-mode.js";
+import { chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent } from "./agent-mode.js";
+import { resolveSlash } from "./slash-commands.js";
+import { composePrompt } from "@bean/core/prompt";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { dataUrlToAttachment } from "../../shared/note-images.js";
 import type {
-  CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
+  CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, Routine, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
 import type { LiveEvent, LiveStartResult } from "../../../live-tasks.js";
@@ -117,6 +119,12 @@ export function ChatWindow() {
   // Full current skill list — passed to SkillCard so its "replaces existing" chip tracks
   // the user's live-edited name against real skills, not a stale server-computed flag.
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [sprouts, setSprouts] = useState<Routine[]>([]);
+  // The `/` menu's catalogs — refreshed each time the menu opens.
+  const refreshCatalogs = (): void => {
+    window.bean.listSkills().then((s) => setSkills(s ?? []), () => {});
+    window.bean.routinesList().then((r) => setSprouts(r ?? []), () => {});
+  };
   const itemsRef = useRef<ChatItem[]>([]);
   itemsRef.current = items;
   // Agent mode: who answers typed composer text. A pick only switches; the agent spawns on the
@@ -157,7 +165,7 @@ export function ChatWindow() {
     window.bean.getTheme().then(setTheme);
     window.bean.onThemeChanged(setTheme);
     window.bean.listProjects().then(setProjects);
-    window.bean.listSkills().then(setSkills);
+    refreshCatalogs();
     // Pull any URL dropped before this window's renderer finished mounting — the push below
     // (onComponentDroppedUrl) can arrive first and gets silently dropped, same race
     // getPendingPlan fixes for the Plan window.
@@ -292,8 +300,24 @@ export function ChatWindow() {
   };
   sendRef.current = sendMessage;
 
-  const addStatus = (text: string, tone: "info" | "done" | "error", details?: string[]): void => {
-    setItems((prev) => [...prev, { kind: "status", id: newId(), text, tone, ...(details?.length ? { details } : {}) }]);
+  const addStatus = (text: string, tone: "info" | "done" | "error", details?: string[], id = newId()): void => {
+    setItems((prev) => [...prev, { kind: "status", id, text, tone, ...(details?.length ? { details } : {}) }]);
+  };
+  const updateStatus = (id: string, text: string, tone: "info" | "done" | "error"): void => {
+    setItems((prev) => prev.map((it) => (it.kind === "status" && it.id === id ? { ...it, text, tone } : it)));
+  };
+
+  // `/sprout`: one row per invocation, so parallel runs of the same sprout each update their own.
+  // runNow resolves once the run is over (or refused up front).
+  const runSprout = (name: string): void => {
+    const rowId = newId();
+    addStatus(`🌱 Running ${name}…`, "info", undefined, rowId);
+    window.bean.routinesRunNow(name).then(
+      (r) => r.started
+        ? updateStatus(rowId, `🌱 ${name} — Run finished · see Dashboard`, "done")
+        : updateStatus(rowId, `🌱 ${name} didn't run: ${r.reason ?? "refused"}`, "error"),
+      (err: unknown) => updateStatus(rowId, `🌱 Couldn't run ${name}: ${err instanceof Error ? err.message : String(err)}`, "error"),
+    );
   };
 
   // End the window's session (End, a switch, a project change) and say where the chat goes next.
@@ -371,15 +395,36 @@ export function ChatWindow() {
     else l.queued.push(text);
   };
 
+  // Commands parse here only — replies, streamed agent text, loopbacks and skill prompts never
+  // pass through this path.
   const onComposerSend = (raw: string, images?: ImageAttachment[]): void => {
     let text = raw;
-    const slash = parseSlash(raw);
-    if (slash) {
-      if (slash.agent !== "bean" && !clis.includes(slash.agent)) {
-        addStatus(`${AGENT_NAMES[slash.agent]} isn't installed or is turned off in Settings.`, "error");
+    const slash = resolveSlash(raw, modeRef.current, { agents: clis.filter(isLiveAgent), skills, sprouts });
+    if (slash?.kind === "ambiguous" || slash?.kind === "unknown") {
+      const where = slash.of === "skill" ? "Skills" : "Sprouts";
+      addStatus(slash.kind === "unknown"
+        ? `No ${slash.of} "${slash.slug}" — check the / menu.`
+        : `/${slash.slug} matches more than one ${slash.of}: ${slash.names.map((n) => `"${n}"`).join(", ")} — rename one in ${where}.`, "error");
+      return;
+    }
+    if (slash?.kind === "skill") {
+      const skill = skills.find((s) => s.name === slash.name)!;
+      if (skill.target !== "chat") { addStatus(`"${skill.name}" runs in the terminal — that's coming next from chat.`, "error"); return; }
+      void sendMessage(composePrompt(skill, slash.rest), `▶ ${skill.name}${slash.rest ? ` — ${slash.rest}` : ""}`, false, images, "skill");
+      return;
+    }
+    if (slash?.kind === "sprout") {
+      if (slash.rest || images?.length) { addStatus(`"${slash.name}" is a sprout — it takes no text. Send the command on its own.`, "error"); return; }
+      runSprout(slash.name);
+      return;
+    }
+    if (slash?.kind === "agent") {
+      const agent = slash.name as AgentId;
+      if (agent !== "bean" && !clis.includes(agent)) {
+        addStatus(`${AGENT_NAMES[agent]} isn't installed or is turned off in Settings.`, "error");
         return;
       }
-      switchMode(slash.agent);
+      switchMode(agent);
       if (!slash.rest) return;
       text = slash.rest;
     }
@@ -708,6 +753,8 @@ export function ChatWindow() {
         runModels={runModels}
         lastUsedModels={lastUsedModels}
         skills={skills}
+        sprouts={sprouts}
+        onSlashOpen={refreshCatalogs}
         onSend={onComposerSend}
         mode={mode}
         agentProject={agentProject}

@@ -36,14 +36,6 @@ export function parseSlash(text: string): { agent: AgentId; rest: string } | und
   return m ? { agent: m[1] as AgentId, rest: (m[2] ?? "").trim() } : undefined;
 }
 
-/** The `/` popover: aliases matching what's typed so far (`/`, `/cl`), Bean first, installed agents only. */
-export function slashMatches(text: string, installed: readonly LiveCli[]): AgentId[] {
-  const m = /^\/(\w*)$/.exec(text);
-  if (!m) return [];
-  const prefix = m[1]!;
-  return (["bean", ...LIVE_AGENTS.filter((a) => installed.includes(a))] as AgentId[]).filter((a) => a.startsWith(prefix));
-}
-
 /** The one mapper behind Bean's `history` and `closeTranscript`. An agent's final becomes
  * `[Claude Code] <result>` (capped) so Bean can refer to what the agent did. `memory: true` is the
  * close-time transcript: live steering and agent finals never reach memory extraction, and user
