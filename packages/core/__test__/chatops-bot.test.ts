@@ -2049,6 +2049,36 @@ test("a DM remember is private: recalled in that member's DM only, never another
   expect(await h.loadMemories(h.file, null)).toEqual([]);
 });
 
+test("DM auto-capture: a typed fact is saved private with a receipt; guests, channels, transcripts and autoMemory off save nothing", async () => {
+  const h = await household();
+  let auto = true;
+  h.deps.autoMemoryEnabled = async () => auto;
+  h.deps.roles = { ...h.deps.roles, allowGuestDms: true };
+  const bot = buildTeamsBot(h.deps);
+  const dm = fx();
+  await bot.onMessage(h.say("mia", true, "I prefer oat milk"), dm);
+  expect(await h.loadMemories(h.file)).toMatchObject([{ text: "Prefers oat milk", subjectId: "mia" }]);
+  expect(dm.cards).toMatchObject([{ kind: "remembered", text: "Prefers oat milk", scope: "private" }]);
+
+  await bot.onMessage(h.say("gus", true, "I prefer rooibos"), fx()); // guest DM
+  await bot.onMessage(h.say("max", false, "I prefer rooibos"), fx()); // channel
+  // Discord voice: the transcript rides `text`, but only `typedText` is the speaker's own words.
+  await bot.onMessage({ ...h.say("max", true, "hi\n[voice] I prefer espresso"), typedText: "hi" }, fx());
+  auto = false; // read per turn — no restart
+  await bot.onMessage(h.say("u1", true, "I prefer rooibos"), fx());
+  expect((await h.loadMemories(h.file)).map((m) => m.text)).toEqual(["Prefers oat milk"]);
+});
+
+test("DM auto-capture skips a turn that already used remember", async () => {
+  const h = await household();
+  h.deps.autoMemoryEnabled = async () => true;
+  const dm = fx();
+  await buildTeamsBot(h.deps).onMessage(h.say("mia", true, "remember that I prefer oat milk"), dm);
+  expect(await h.loadMemories(h.file)).toHaveLength(1);
+  expect(dm.cards).toHaveLength(1);
+  expect(h.prompts.some((p) => p.includes("user (typed)"))).toBe(false); // no extraction call
+});
+
 test("a channel remember is shared; explicit wording overrides the default scope", async () => {
   const h = await household();
   const bot = buildTeamsBot(h.deps);

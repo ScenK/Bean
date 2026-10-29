@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
-import { converse, speakerLine, type ConverseDeps, type ImageAttachment, type ProposedLiveSession } from "../converse.js";
+import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ImageAttachment, type ProposedLiveSession } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
+import { extractMemories } from "../memory/extract.js";
 import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
 import { chatRoutineProblem, todoRunHint, type Routine } from "../routine-store.js";
@@ -170,6 +171,9 @@ export interface TeamsBotDeps {
   deleteMemories: (ids: string[], subject?: string) => Promise<number>;
   /** Share button on a private receipt: only the row's author (`actor`) can make it household-shared. */
   shareMemory: (id: string, actor: string) => Promise<number>;
+  /** Config `autoMemory`, read per turn (no restart): gates DM auto-capture only, never the
+   * explicit remember/forget tools. Absent = off. */
+  autoMemoryEnabled?: () => Promise<boolean>;
   conversations: ConversationStore;
   cards: CardBuilders;
   /** Gates the system_control action tool, same as main.ts's desktop wiring. */
@@ -258,6 +262,33 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     onError: (err) => console.error(`[chatter] chime-in failed: ${err instanceof Error ? err.message : String(err)}`),
   });
   const noteTool = retrieveNoteTool(deps.searchNotes);
+
+  // DM auto-capture (#462): after the reply, the latest typed turn's facts are saved private to
+  // the speaker, each with the usual Forget/Share receipt. Captures run one at a time so each
+  // sees what the last one saved; never rejects. ponytail: one chain for every DM; per-speaker
+  // chains if capture latency ever queues up.
+  let captureChain: Promise<void> = Promise.resolve();
+  function captureDm(speakerId: string, transcript: ChatTurn[], projects: Project[], fx: BotEffects): Promise<void> {
+    return captureChain = captureChain.then(async () => {
+      if (!(await deps.autoMemoryEnabled?.())) return;
+      const { candidates, rejected, failed } = await extractMemories(
+        transcript, await deps.loadMemories(speakerId), projects, { chat: deps.chat, model: deps.model }, { latestTurn: true },
+      );
+      // Counts only — a rejected candidate's text may be exactly what validation refused to keep.
+      if (rejected > 0) console.warn(`[memory] DM capture rejected ${rejected} candidate(s)`);
+      if (failed) throw new Error("extraction model call failed");
+      if (candidates.length === 0) return;
+      const at = new Date().toISOString();
+      const batch: Memory[] = candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at, subjectId: speakerId }));
+      await deps.appendMemories(batch);
+      for (const m of batch) {
+        const projectName = m.projectPath ? projects.find((p) => p.path === m.projectPath)?.name : undefined;
+        await fx.postCard(deps.cards.rememberedCard({ memoryId: m.id, text: m.text, projectName, scope: "private" }));
+      }
+    }).catch((err: unknown) => {
+      console.error(`[memory] DM capture failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
   const systemTool = systemControlTool(deps.systemControlsEnabled);
 
   // Refusals sent once per key per process (DM gate per user, card taps per user per card), then
@@ -1038,6 +1069,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       // Set once the message reaches converse(); the finally reports the turn's end.
       let turnId: string | undefined;
       let turnFailed = false;
+      // DM auto-capture runs beside the rest of the turn; the finally awaits it because Teams'
+      // postCard rides this turn's context, which dies when onMessage returns.
+      let capture: Promise<void> | undefined;
       // Any addressed message ends the lull wait and drops an in-flight chime-in here.
       chimeIn?.cancel(msg.conversationId);
       try {
@@ -1236,6 +1270,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             }));
           }
         }
+        // Only the speaker's typed words are citable (never an audio transcript); a turn that
+        // already remembered or forgot something explicitly is left alone.
+        if (msg.direct && canMemory && !turnFailed && typed.trim() && memoryTools.remembered.length === 0 && memoryTools.forgotten.length === 0) {
+          capture = captureDm(msg.fromId, [...history, { role: "user", content: typed, source: "typed" }], projects, fx);
+        }
         for (const r of reminderTools?.set ?? []) {
           if (deps.cards.reminderCard) await fx.postCard(deps.cards.reminderCard({ reminderId: r.id, text: r.text, at: r.at }));
         }
@@ -1383,6 +1422,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         await fx.reply(`Something went wrong: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
         if (turnId) deps.onActivity?.({ type: "turn", phase: "end", id: turnId, who: msg.fromName, where: msg.channelName, failed: turnFailed });
+        await capture;
       }
     },
 
