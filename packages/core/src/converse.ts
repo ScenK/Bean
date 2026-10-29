@@ -33,8 +33,9 @@ export type ConvoMsg =
 /** Where a turn came from, recorded when it arrives: several non-user texts (a delegate
  * loopback, ambient channel chatter, a composed skill prompt, a compaction summary) travel as
  * role "user", so the role alone can't tell memory extraction what the user actually typed.
- * Only "typed" user turns are fact sources (memory/extract.ts isCitable). Absent = not typed. */
-export type TurnSource = "typed" | "loopback" | "ambient" | "skill" | "summary";
+ * "live" is text steering a live agent session. Only "typed" user turns are fact sources
+ * (memory/extract.ts isCitable). Absent = not typed. */
+export type TurnSource = "typed" | "loopback" | "ambient" | "skill" | "summary" | "live";
 export interface ChatTurn { role: "user" | "assistant" | "system"; content: string; source?: TurnSource; }
 export interface ToolSpec { name: string; description: string; parameters: object; }
 export interface ToolCall { id?: string; name: string; args: unknown; }

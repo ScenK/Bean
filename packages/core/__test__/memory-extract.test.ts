@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { extractMemories, validateCandidate } from "../src/memory/extract.js";
+import { extractMemories, isCitable, validateCandidate } from "../src/memory/extract.js";
 import type { ChatTurn, ConverseDeps, ToolSpec } from "../src/converse.js";
 import type { Memory } from "../src/memory/memory.js";
 import type { Project } from "../src/types.js";
@@ -93,6 +93,10 @@ for (const [name, turn] of nonTyped) {
     expect((await extractMemories([{ role: "user", content: "hi there", source: "typed" }, turn], [], projects, deps)).candidates).toEqual([]);
   });
 }
+
+test("a live-session steering turn is never citable", () => {
+  expect(isCitable({ role: "user", source: "live", content: "fix the tests" })).toBe(false);
+});
 
 test("with no typed user turn at all, extraction never calls the model", async () => {
   let called = false;

@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
 import {
   startLiveSession,
-  RESUME_REJECTED, type LiveCli, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type TurnSummary,
+  RESUME_REJECTED, type LiveCli, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type LiveSessionSpawnFn, type TurnSummary,
 } from "../live-session.js";
 import { codexTurnAdapter } from "../codex-live-session.js";
 import { opencodeTurnAdapter } from "../opencode-live-session.js";
@@ -51,18 +51,19 @@ export interface LiveSessionStart {
 type StartFn = (
   req: LiveSessionRequest,
   cbs: LiveSessionCallbacks,
-  spawnFn?: never,
+  spawnFn?: LiveSessionSpawnFn,
   idleTimeoutMs?: number,
 ) => LiveSessionHandle;
 
 const TURN_ADAPTERS = { codex: codexTurnAdapter, opencode: opencodeTurnAdapter };
 
-// Picks the engine by cli: claude's long-lived process, or the shared per-turn engine. Tests
-// inject a single fake StartFn and read req.cli instead.
-const defaultStart: StartFn = (req, cbs, _spawn, idleTimeoutMs) =>
+/** Picks the engine by cli (absent = claude): claude's long-lived process, or the shared
+ * per-turn engine. An injected spawnFn (e.g. the desktop's resolved-PATH spawn) reaches either;
+ * absent = each engine's own default. */
+export const startLiveEngine: StartFn = (req, cbs, spawnFn, idleTimeoutMs) =>
   req.cli === "codex" || req.cli === "opencode"
-    ? startTurnLiveSession(TURN_ADAPTERS[req.cli], req, cbs, undefined, idleTimeoutMs)
-    : startLiveSession(req, cbs, undefined, idleTimeoutMs);
+    ? startTurnLiveSession(TURN_ADAPTERS[req.cli], req, cbs, spawnFn, idleTimeoutMs)
+    : startLiveSession(req, cbs, spawnFn, idleTimeoutMs);
 
 // Ended notices shown as-is, not as "Live session died: …".
 const VERBATIM_END = new Set([RESUME_REJECTED, ...Object.values(TURN_ADAPTERS).flatMap((a) => a.endMessages)]);
@@ -126,7 +127,7 @@ export class LiveSessionRegistry {
   private byChannel = new Map<string, ActiveSession>();
 
   constructor(
-    private startFn: StartFn = defaultStart,
+    private startFn: StartFn = startLiveEngine,
     private opts: LiveSessionRegistryOptions,
   ) {}
 
