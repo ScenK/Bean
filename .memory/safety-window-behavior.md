@@ -74,3 +74,10 @@ the tray's explicit **Bring Bean Back** action resets onto the cursor's display.
 clear renderer collapse/drag state before sending the new idle layout, including invalidating
 pending asynchronous skill-list preparation. Keep the regression tests in avatar-window.test.ts
 and avatar-visibility.e2e.ts.
+
+**Chat remembers its size, not its position.** `windows.ts` reads `userData/chat-size.json`
+synchronously (`chat-size-store.ts`) before building the chat `BrowserWindow`, clamps it to
+440×520 and the anchor display's work area, then `nearAnchor` places it; the size is written
+synchronously on `close`. Don't move this to renderer `localStorage` — the window exists before
+any renderer does, so a renderer-held size makes it visibly jump. Guarded by
+`chat-size-store.test.ts` and the chat-size spec in `component-windows.e2e.ts`.

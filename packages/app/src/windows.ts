@@ -1,7 +1,8 @@
-import { BrowserWindow, screen, type Rectangle } from "electron";
+import { app, BrowserWindow, screen, type Rectangle } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import type { ComponentKind } from "./channels.js";
+import { CHAT_DEFAULT_SIZE, CHAT_MIN_SIZE, chatSizeFile, loadChatSize, saveChatSize } from "./chat-size-store.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const preload = join(here, "preload.cjs");
@@ -11,7 +12,7 @@ const renderer = (name: string) => join(here, "renderer", `${name}.html`);
 // confirm card, not a dashboard, so it gets its own size (roomy enough for a full composed
 // prompt — skill body + instruction + dropped URL — without immediately needing to resize).
 const COMPONENT_WINDOW_SIZE: Record<ComponentKind, { width: number; height: number }> = {
-  chat: { width: 520, height: 640 },
+  chat: CHAT_DEFAULT_SIZE,
   skills: { width: 1040, height: 720 },
   persona: { width: 420, height: 560 },
   projects: { width: 1040, height: 720 },
@@ -84,14 +85,24 @@ function nearAnchor(anchor: Rectangle, size: { width: number; height: number }):
 }
 
 export function createComponentWindow(kind: ComponentKind, anchor?: Rectangle): BrowserWindow {
-  const size = COMPONENT_WINDOW_SIZE[kind];
+  // Chat remembers its size (clamped before nearAnchor places it); every other kind is fixed.
+  const sizeFile = kind === "chat" ? chatSizeFile(app.getPath("userData")) : undefined;
+  const work = (anchor ? screen.getDisplayMatching(anchor) : screen.getPrimaryDisplay()).workArea;
+  const size = sizeFile ? loadChatSize(sizeFile, work) : COMPONENT_WINDOW_SIZE[kind];
   const win = new BrowserWindow({
     ...size,
+    ...(kind === "chat" ? { minWidth: CHAT_MIN_SIZE.width, minHeight: CHAT_MIN_SIZE.height } : {}),
     ...(anchor ? nearAnchor(anchor, size) : {}),
     title: COMPONENT_WINDOW_TITLE[kind],
     titleBarStyle: "hiddenInset",
     webPreferences: { preload },
   });
+  if (sizeFile) {
+    win.on("close", () => {
+      const [width = 0, height = 0] = win.getSize();
+      saveChatSize(sizeFile, { width, height });
+    });
+  }
   void win.loadFile(renderer(kind));
   return win;
 }

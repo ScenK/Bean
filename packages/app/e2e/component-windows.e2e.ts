@@ -84,3 +84,45 @@ test("persona: a long memory list scrolls within the panel", async () => {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });
+
+// #492: chat opens at 600×760 (clamped to the work area — CI's display is shorter), can't shrink
+// below 440×520, and a resize survives close + reopen.
+test("chat window: default size, minimum size, remembered size", async () => {
+  const home = await makeBeanHome();
+  const stub = await startStubOpenAI();
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  try {
+    const avatar = await app.firstWindow();
+    const openChat = () =>
+      Promise.all([
+        app.waitForEvent("window"),
+        avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
+      ]).then(([win]) => win);
+    const chatSize = () => app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("chat"))?.getSize());
+    const resizeChat = (w: number, h: number) => app.evaluate(({ BrowserWindow }, [w, h]) =>
+      BrowserWindow.getAllWindows().find((win) => win.webContents.getURL().includes("chat"))!.setSize(w!, h!), [w, h]);
+
+    const chat = await openChat();
+    // Wait for the mount: the close hand-off listener only exists once React has rendered.
+    await expect(chat.locator(".bean-input--composer")).toBeVisible();
+    const work = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
+    expect(await chatSize()).toEqual([Math.min(600, work.width), Math.min(760, work.height)]);
+
+    await resizeChat(100, 100);
+    expect(await chatSize()).toEqual([440, 520]);
+
+    // Fits any display tall enough for the minimum, so the OS doesn't clamp it.
+    await resizeChat(500, 560);
+    await Promise.all([
+      chat.waitForEvent("close"),
+      app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("chat"))!.close()),
+    ]);
+
+    const reopened = await openChat();
+    await expect(reopened.locator(".bean-input--composer")).toBeVisible();
+    expect(await chatSize()).toEqual([500, 560]);
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
+  }
+});
