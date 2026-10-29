@@ -9,6 +9,7 @@ import {
   updateMemory, type DreamDigest,
 } from "../src/memory/store.js";
 import { maybeDream, planDream } from "../src/memory/dream.js";
+import { speakerLabel } from "../src/memory/memory.js";
 import type { ConverseDeps, ToolCall } from "../src/converse.js";
 import type { Memory } from "../src/memory/memory.js";
 
@@ -117,13 +118,15 @@ test("planDream refuses cross-scope and overlapping merges and caps drops", () =
 });
 
 test("planDream never merges across speaker prefixes, and a merge keeps its prefix", () => {
-  const mems = [m("o", "Prefers tea"), m("a1", "Mia: Prefers tea"), m("a2", "Mia: Drinks oolong"), m("b1", "Gus: Prefers tea")];
+  const long = speakerLabel("A".repeat(60));
+  const mems = [m("l1", `${long}: Prefers coffee`), m("o", "Prefers tea"), m("a1", "Mia: Prefers tea"), m("a2", "Mia: Drinks oolong"), m("b1", "Gus: Prefers tea")];
   const plan = planDream(mems, {
     merges: [
       { ids: ["o", "a1"], mergedText: "Prefers tea" }, // owner + Mia
       { ids: ["a1", "b1"], mergedText: "Mia: Prefers tea" }, // two speakers
       { ids: ["a2"], mergedText: "Drinks oolong" }, // rewrite drops the prefix
       { ids: ["a1", "a2"], mergedText: "Mia: Prefers tea, mostly oolong" },
+      { ids: ["o", "l1"], mergedText: "Prefers coffee" }, // a long name capture capped to the parsed width
     ],
     drops: [],
   }, "run", "2026-09-01T00:00:00.000Z");

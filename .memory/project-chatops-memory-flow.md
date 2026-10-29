@@ -6,7 +6,7 @@ and from un-addressed channel/thread chatter (#463, household-shared).
 - **Channel capture** (`chatops/ambient-capture.ts`, fed by `bot.onAmbient`'s `AmbientLine` at both
   surfaces' ambient call sites — independent of `chatty`): buffers per conversation, extracts after a
   30 s lull / 2 min max (an addressed turn flushes it). Citable = member+ (`can(role, "memory")` on
-  the platform id), not a bot, not a `>` quoted line; a guest-only batch makes no model call. Each
+  the platform id), not a bot, not quoted (a `>` line, or anything after a `>>>` line); a guest-only batch makes no model call. Each
   fact's quote must match **exactly one** eligible line (ambiguous or cross-speaker quotes are
   dropped); that line's speaker is bound: owner → plain text, anyone else → `Name: fact`. Saved
   shared (`subject_id` NULL). `memory on|off|status` (`chatops_chatty.memory_off`, missing row = on;

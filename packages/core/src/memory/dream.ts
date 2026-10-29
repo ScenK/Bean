@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ConverseDeps } from "../converse.js";
-import type { Memory } from "./memory.js";
+import { speakerPrefix, type Memory } from "./memory.js";
 import { proposeMemoryConsolidation, type ConsolidationResult } from "./consolidate.js";
 import {
   applyConsolidation, claimDreamLease, countMemoriesSince, getMemoryMeta, loadMemories, releaseDreamLease,
@@ -13,10 +13,6 @@ export const DREAM_MIN_NEW = 5;
 const LEASE_MS = 10 * 60_000;
 // ponytail: one model call over the oldest 150; chunk the list if memory ever outgrows that.
 const MAX_PER_RUN = 150;
-
-// ponytail: any short "Label: " lead counts as a speaker prefix, so an owner fact like "Deploy
-// day: Tue" only refuses merges with differently-led rows — a missed merge, never a wrong one.
-const speakerPrefix = (text: string): string => /^([^:\n]{1,40}):\s/.exec(text)?.[1]?.trim().toLowerCase() ?? "";
 
 /** Code-side validation of the model's proposal — the model is only trusted to suggest:
  * merge groups must be disjoint and single-scope (a global fact never absorbs a project one, and

@@ -17,6 +17,7 @@ function harness(calls: (prompt: string) => Call[] = () => []) {
   const timers: { at: number; fn: () => void; dead: boolean }[] = [];
   const saved: Memory[] = [];
   let auto = true;
+  let autoFn: (() => Promise<boolean>) | undefined;
   const prompts: string[] = [];
   let during: (() => void) | undefined;
   const chat = vi.fn<ConverseDeps["chat"]>(async ({ messages }) => {
@@ -28,7 +29,7 @@ function harness(calls: (prompt: string) => Call[] = () => []) {
   const capture = makeAmbientCapture({
     chatter, chat, model: "m", roleOf: (s) => ROLES[s.fromId] ?? "guest",
     loadMemories: async () => [...saved], appendMemories: async (m) => { saved.push(...m); },
-    autoMemoryEnabled: async () => auto,
+    autoMemoryEnabled: async () => (autoFn ? autoFn() : auto),
     now: () => clock,
     setTimer: (fn, ms) => { const t = { at: clock + ms, fn, dead: false }; timers.push(t); return () => { t.dead = true; }; },
   });
@@ -45,7 +46,8 @@ function harness(calls: (prompt: string) => Call[] = () => []) {
   };
   return {
     chatter, chat, capture, saved, posts, reacted, prompts, say, advance, settle,
-    setAuto: (v: boolean) => { auto = v; }, onCall: (f: () => void) => { during = f; },
+    setAuto: (v: boolean) => { auto = v; },
+    setAutoFn: (f: (() => Promise<boolean>) | undefined) => { autoFn = f; }, onCall: (f: () => void) => { during = f; },
   };
 }
 
@@ -89,10 +91,12 @@ test("guest-only batches cost no model call; guest, bot and quoted lines are nev
   h.say("gus", "we deploy on Tuesdays");
   h.say("mia", "> we deploy on Tuesdays\nreally?");
   h.say("mia", "we deploy on Tuesdays", { bot: true });
+  h.say("u1", "look:\n>>> Gus said:\nwe deploy on Tuesdays");
   await h.advance(30_000);
   expect(h.chat).toHaveBeenCalledTimes(1);
   expect(h.prompts[0]).toContain("gus (not citable): we deploy on Tuesdays");
   expect(h.prompts[0]).toContain("Mia (citable): really?");
+  expect(h.prompts[0]).toContain("u1 (not citable): we deploy on Tuesdays");
   expect(h.saved).toEqual([]);
 });
 
@@ -121,12 +125,21 @@ test("memory off stops capture — before the call and for a batch already in fl
   await h.advance(30_000);
   expect(h.chat).toHaveBeenCalledTimes(1);
   expect(h.saved).toEqual([]);
+  // memory off lands while the post-call autoMemory read is pending.
+  let reads = 0;
+  h.chatter.setMemoryOn("s", true);
   h.onCall(() => {});
+  h.setAutoFn(async () => { if (++reads === 2) h.chatter.setMemoryOn("s", false); return true; });
+  h.say("mia", "we deploy on Tuesdays");
+  await h.advance(30_000);
+  expect(h.chat).toHaveBeenCalledTimes(2);
+  expect(h.saved).toEqual([]);
+  h.setAutoFn(undefined);
   h.chatter.setMemoryOn("s", true);
   h.setAuto(false);
   h.say("mia", "we deploy on Tuesdays");
   await h.advance(30_000);
-  expect(h.chat).toHaveBeenCalledTimes(1);
+  expect(h.chat).toHaveBeenCalledTimes(2);
   expect(h.saved).toEqual([]);
 });
 

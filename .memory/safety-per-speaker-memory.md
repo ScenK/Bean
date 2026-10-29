@@ -23,7 +23,7 @@ preference as the owner's. The platform id gates capture (role); the name is onl
   AND subject_id = ?`, so only the row's author can share it — **the owner included** (no bypass;
   forgetting is where the owner has power). Text, project and `created_at` stay, so the recall
   date still reflects when it was said. Once shared, only the owner can forget it.
-- **Dream never merges across `Name:` prefixes** (`planDream`): a merge's members and its merged
+- **Dream never merges across `Name:` prefixes** (`planDream`, `speakerPrefix`; capture caps the label to the same 40 chars via `speakerLabel`): a merge's members and its merged
   text must share one prefix (none = the owner's), so one speaker's fact never absorbs another's.
 - **Dream never sees private rows**: `maybeDream` loads `null` and `countMemoriesSince` counts
   shared only. `memories_history` has no `subject_id`, so a private row merged/undone by dream
