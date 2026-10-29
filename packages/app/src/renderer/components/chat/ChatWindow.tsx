@@ -1,28 +1,27 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
-import { newId, type ChatItem } from "../../shared/chat-types.js";
+import { newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
+import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
+import { chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, parseSlash } from "./agent-mode.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { dataUrlToAttachment } from "../../shared/note-images.js";
 import type {
-  ChatTurn, CliName, ImageAttachment, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
+  CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
+import type { LiveEvent, LiveStartResult } from "../../../live-tasks.js";
 import type { CloseTurn, InterruptedRunNotice } from "../../../ipc.js";
 
 // Closing with a delegate still running asks Keep/Stop first; everything else closes at once
 // (memory is extracted in main after the window is gone). `null` = no card.
 type CloseFlow = { stage: "delegates" } | null;
 
-// Transcript handed to rememberOnClose: user turns keep their provenance (only "typed" ones are
-// fact sources) and their turn id (main skips turns per-turn capture already handled); replies
-// are assistant turns.
-export function closeTranscript(items: ChatItem[]): CloseTurn[] {
-  return items
-    .filter((it): it is Extract<ChatItem, { kind: "user" | "reply" }> => it.kind === "user" || it.kind === "reply")
-    .map((it) => (it.kind === "user"
-      ? { role: "user" as const, content: it.text, source: it.source, id: it.id }
-      : { role: "assistant" as const, content: it.text }));
-}
+// Transcript handed to rememberOnClose — see chatTurns (live steering and agent finals stay out).
+export const closeTranscript = (items: ChatItem[]): CloseTurn[] => chatTurns(items, { memory: true });
+
+/** The window's agent session. `key` tells a start apart from a later one; `sessionId` arrives with
+ * the `started` event (or liveStart's result); texts typed before it are `queued`. */
+interface LiveState { key: string; agent: LiveCli; projectPath: string; sessionId?: string; turns: number; busy: boolean; queued: string[] }
 
 type QueuedSend = { text: string; display?: string; source?: TurnSource };
 
@@ -116,6 +115,20 @@ export function ChatWindow() {
   const [skills, setSkills] = useState<Skill[]>([]);
   const itemsRef = useRef<ChatItem[]>([]);
   itemsRef.current = items;
+  // Agent mode: who answers typed composer text. A pick only switches; the agent spawns on the
+  // first typed send. Refs mirror state for the once-mounted live-event listener.
+  const [mode, setModeState] = useState<AgentId>("bean");
+  const modeRef = useRef<AgentId>("bean");
+  const setMode = (m: AgentId): void => { modeRef.current = m; setModeState(m); };
+  // The last project used in this window ("" = Bean's scratch workspace) — never projects[0].
+  const [agentProject, setAgentProjectState] = useState("");
+  const agentProjectRef = useRef("");
+  const rememberProject = (path: string): void => { agentProjectRef.current = path; setAgentProjectState(path); };
+  const [live, setLiveState] = useState<LiveState | undefined>(undefined);
+  const liveRef = useRef<LiveState | undefined>(undefined);
+  const setLive = (l: LiveState | undefined): void => { liveRef.current = l; setLiveState(l); };
+  // Sessions this window adopted — events from any other (a start abandoned mid-startup) are ignored.
+  const knownSessionsRef = useRef(new Set<string>());
   const busyRef = useRef(false);
   const queuedSendsRef = useRef<QueuedSend[]>([]);
   const pendingDelegateStartsRef = useRef(new Map<string, Promise<string>>());
@@ -128,6 +141,7 @@ export function ChatWindow() {
   // The mount effect below runs once, so it must reach sendMessage through a ref — a direct
   // reference would close over the first render's stale `busy`/`items`.
   const sendRef = useRef<(text: string, display?: string, queueIfBusy?: boolean, images?: ImageAttachment[], source?: TurnSource) => Promise<void>>(async () => {});
+  const liveEventRef = useRef<(e: LiveEvent) => void>(() => {});
 
   useEffect(() => {
     const setTheme = (theme: string): void => {
@@ -176,6 +190,7 @@ export function ChatWindow() {
     window.bean.getPendingInterruptedRunNotices().then((notices) => { if (notices?.length) showInterruptedRunNotices(notices); });
     window.bean.onInterruptedRunNotice(showInterruptedRunNotices);
     window.bean.onDelegateEvent(applyDelegateEvent);
+    window.bean.onLiveEvent((e) => liveEventRef.current(e));
     window.bean.onMemoryUpdated((saved) => {
       setItems((prev) => [...prev, { kind: "memory", id: newId(), saved, state: "saved" }]);
     });
@@ -185,7 +200,7 @@ export function ChatWindow() {
       setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it)));
     });
     window.bean.onReviewBeforeClose(() => {
-      if (hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size)) {
+      if (hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size) || liveRef.current) {
         setCloseFlow({ stage: "delegates" });
         return;
       }
@@ -223,13 +238,7 @@ export function ChatWindow() {
 
     // Image bytes ride only on the current turn; older turns keep a text placeholder
     // (mirrors chatops — see core's latestUserImages doc comment).
-    const history: ChatTurn[] = itemsRef.current
-      .filter((it): it is Extract<ChatItem, { kind: "user" | "reply" }> => it.kind === "user" || it.kind === "reply")
-      .map((it) => ({
-        role: it.kind === "user" ? "user" : "assistant",
-        content: it.kind === "user" && it.images?.length ? `${it.text}\n[image attached]` : it.text,
-        source: it.kind === "user" ? it.source : undefined,
-      }));
+    const history = chatTurns(itemsRef.current);
 
     try {
       const res = await window.bean.chat({ history, message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, turnId });
@@ -276,6 +285,124 @@ export function ChatWindow() {
   };
   sendRef.current = sendMessage;
 
+  const addStatus = (text: string, tone: "info" | "done" | "error", details?: string[]): void => {
+    setItems((prev) => [...prev, { kind: "status", id: newId(), text, tone, ...(details?.length ? { details } : {}) }]);
+  };
+
+  // End the window's session (End, a switch, a project change) and say where the chat goes next.
+  // A session still starting is stopped once its id arrives (startSession).
+  const endSession = (next: string): void => {
+    const l = liveRef.current;
+    if (!l) return;
+    setLive(undefined);
+    if (l.sessionId) window.bean.liveStop(l.sessionId);
+    addStatus(`${AGENT_NAMES[l.agent]} ended (${l.turns} turn${l.turns === 1 ? "" : "s"}) → ${next}`, "info");
+  };
+
+  const switchMode = (next: AgentId): void => {
+    if (next === modeRef.current) return;
+    endSession(AGENT_NAMES[next]);
+    setMode(next);
+  };
+
+  const pickProject = (path: string): void => {
+    if (path === agentProjectRef.current) return;
+    rememberProject(path);
+    // A session is bound to its project: changing it means end + a fresh start on the next send.
+    const l = liveRef.current;
+    if (l) endSession(`${AGENT_NAMES[l.agent]} · ${projects.find((p) => p.path === path)?.name ?? "scratch"}`);
+  };
+
+  const deliver = async (sessionId: string, agent: LiveCli, text: string): Promise<void> => {
+    // Undefined = sent; otherwise why not (TURN_QUEUE_FULL, an ended session) — shown inline.
+    const err = await window.bean.liveSend(sessionId, text).catch(() => "Couldn't reach the agent session.");
+    if (err) { addStatus(err, "error"); return; }
+    setItems((prev) => ensureStreaming(prev, sessionId, agent, newId()));
+    const l = liveRef.current;
+    if (l?.sessionId === sessionId) setLive({ ...l, busy: true });
+  };
+
+  // The opening turn: the transcript so far is handed over (main quotes the tail), then the text.
+  const startSession = async (agent: LiveCli, text: string): Promise<void> => {
+    const l: LiveState = { key: newId(), agent, projectPath: agentProjectRef.current, turns: 0, busy: true, queued: [] };
+    setLive(l);
+    const history = handoffItems(itemsRef.current);
+    const userId = newId();
+    setItems((prev) => [...prev, { kind: "user", id: userId, text, source: "live" }]);
+    const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask: text, history })
+      .catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
+    if ("error" in res) {
+      // A crash during startup already reported itself through the ended event.
+      if (liveRef.current?.key === l.key) { setLive(undefined); addStatus(res.error, "error"); }
+      return;
+    }
+    knownSessionsRef.current.add(res.sessionId);
+    const cur = liveRef.current;
+    if (cur?.key !== l.key) { window.bean.liveStop(res.sessionId); return; } // ended while starting
+    setLive({ ...cur, sessionId: res.sessionId, queued: [] });
+    if (res.handedOver > 0) {
+      const row: ChatItem = {
+        kind: "status", id: newId(), tone: "info",
+        text: `Handed over ${res.handedOver} message${res.handedOver === 1 ? "" : "s"}`,
+        details: handoffLines(history, res.handedOver),
+      };
+      setItems((prev) => {
+        const at = prev.findIndex((it) => it.id === userId);
+        return at < 0 ? [...prev, row] : [...prev.slice(0, at + 1), row, ...prev.slice(at + 1)];
+      });
+    }
+    for (const q of cur.queued) await deliver(res.sessionId, agent, q);
+  };
+
+  // Typed composer text in agent mode. Only this path reaches an agent — loopbacks, skill prompts
+  // and Save to notes call sendMessage directly, so they always stay Bean turns.
+  const sendToAgent = (agent: LiveCli, text: string): void => {
+    const l = liveRef.current;
+    if (!l || l.agent !== agent) { void startSession(agent, text); return; }
+    setItems((prev) => [...prev, { kind: "user", id: newId(), text, source: "live" }]);
+    if (l.sessionId) void deliver(l.sessionId, agent, text);
+    else l.queued.push(text);
+  };
+
+  const onComposerSend = (raw: string, images?: ImageAttachment[]): void => {
+    let text = raw;
+    const slash = parseSlash(raw);
+    if (slash) {
+      if (slash.agent !== "bean" && !clis.includes(slash.agent)) {
+        addStatus(`${AGENT_NAMES[slash.agent]} isn't installed or is turned off in Settings.`, "error");
+        return;
+      }
+      switchMode(slash.agent);
+      if (!slash.rest) return;
+      text = slash.rest;
+    }
+    const agent = modeRef.current;
+    if (isLiveAgent(agent)) sendToAgent(agent, text);
+    else void sendMessage(text, undefined, false, images);
+  };
+
+  const onLiveEvent = (e: LiveEvent): void => {
+    const l = liveRef.current;
+    if (e.type === "started" && l && !l.sessionId && l.agent === e.agent) {
+      knownSessionsRef.current.add(e.sessionId);
+      setLive({ ...l, sessionId: e.sessionId });
+    }
+    if (!knownSessionsRef.current.has(e.sessionId)) return;
+    setItems((prev) => applyLiveEvent(prev, e, newId));
+    // Rows and mode changes only for the current session; a late event from an ended one just
+    // closes its bubbles.
+    const cur = liveRef.current;
+    if (!cur || cur.sessionId !== e.sessionId) return;
+    if (e.type === "turn") setLive({ ...cur, turns: cur.turns + 1, busy: false });
+    if (e.type !== "ended") return;
+    setLive(undefined);
+    setMode("bean");
+    const name = AGENT_NAMES[e.agent];
+    if (e.reason === "failed") addStatus(`${name} stopped unexpectedly: ${e.error ?? "no details"}. Back to Bean.`, "error");
+    else if (e.reason === "ended") addStatus(`${name} session ended (idle for 30 min, or it exited). /${e.agent} starts a fresh one with this chat.`, "info");
+  };
+  liveEventRef.current = onLiveEvent;
+
   const confirmProposal = (
     id: string,
     editedPrompt: string,
@@ -289,6 +416,7 @@ export function ChatWindow() {
       { kind: "status", id: newId(), text: inChat ? "Running here…" : "Handed off to Terminal.", tone: "done" },
     ]);
     if (choice.model) void window.bean.setModelMemory(run.skillName, choice.model);
+    if (!inChat) rememberProject(choice.projectPath ?? "");
     if (inChat) {
       void sendMessage(editedPrompt, `▶ ${run.skillName}`, false, undefined, "skill");
       return;
@@ -308,6 +436,7 @@ export function ChatWindow() {
   const startDelegate = async (id: string, projectPath: string, prompt: string, instruction: string, model?: string, skillName?: string): Promise<void> => {
     if (pendingDelegateStartsRef.current.has(id)) return;
     const start = window.bean.delegateStart({ projectPath, prompt, instruction, model, skillName });
+    rememberProject(projectPath);
     pendingDelegateStartsRef.current.set(id, start);
     setItems((prev) => markDelegateStarting(prev, id));
     try {
@@ -486,18 +615,30 @@ export function ChatWindow() {
         window.bean.delegateCancel(taskId);
       }
     }
+    // The session dies with the window anyway (main's stopOwner); stopping now is just sooner.
+    const sessionId = liveRef.current?.sessionId;
+    if (sessionId) window.bean.liveStop(sessionId);
     closeNow();
   };
+
+  const delegatesRunning = closeFlow ? hasActiveDelegates(items, pendingDelegateStartsRef.current.size) : false;
+  const liveName = live ? AGENT_NAMES[live.agent] : undefined;
+  const closeTitle = liveName && delegatesRunning
+    ? `A delegated task and a ${liveName} session are still running — closing stops both.`
+    : liveName ? `${liveName} is still running — closing ends the session.`
+      : "A delegated task is still running — closing will stop it.";
 
   return (
     <div class="bean-dashboard bean-chat-window">
       {closeFlow?.stage === "delegates" ? (
         <div class="bean-memory-review">
           <div class="bean-memory-review-card">
-            <div class="bean-memory-review-title">A delegated task is still running — closing will stop it.</div>
+            <div class="bean-memory-review-title">{closeTitle}</div>
             <div class="bean-card-actions">
               <button type="button" class="bean-btn" onClick={keepWorking}>Keep working</button>
-              <button type="button" class="bean-btn bean-btn--ghost" onClick={stopDelegatesAndClose}>Stop & close</button>
+              <button type="button" class="bean-btn bean-btn--ghost" onClick={stopDelegatesAndClose}>
+                {liveName && !delegatesRunning ? `End ${liveName} session & close` : "Stop & close"}
+              </button>
             </div>
           </div>
         </div>
@@ -514,7 +655,13 @@ export function ChatWindow() {
         runModels={runModels}
         lastUsedModels={lastUsedModels}
         skills={skills}
-        onSend={(text, images) => void sendMessage(text, undefined, false, images)}
+        onSend={onComposerSend}
+        mode={mode}
+        agentProject={agentProject}
+        live={live ? { agent: live.agent, projectPath: live.projectPath, busy: live.busy } : undefined}
+        onPickAgent={switchMode}
+        onPickProject={pickProject}
+        onEndAgent={() => { endSession("Bean"); setMode("bean"); }}
         onConfirm={confirmProposal}
         onCancel={cancelProposal}
         onNoteSave={(id, edited, asNew, images) => void saveNote(id, edited, asNew, images)}

@@ -27,7 +27,10 @@ export type ChatItem =
   // Same `display`/`text` split as above, in the other direction: an interrupted-run notice
   // needs its full instruction in `text` so a later "retry" has context (it drives history the
   // same as any other reply), but shows a short `display` instead of dumping that wall of text.
-  | { kind: "reply"; id: string; text: string; display?: string; images?: Array<{ path: string; dataUrl: string }>; agent?: AgentId }
+  // A live agent's turn (`agent` + `session`) streams in: `tail` = its tool progress, `streaming`
+  // until the turn's result lands in `text`, then `footer` ("— turn done (12.3s, $0.04)").
+  | { kind: "reply"; id: string; text: string; display?: string; images?: Array<{ path: string; dataUrl: string }>; agent?: AgentId;
+      session?: string; tail?: string[]; footer?: string; streaming?: boolean }
   | { kind: "working"; id: string; text: string; agent?: AgentId }
   | { kind: "proposal"; id: string; run: ProposedRun; state: "pending" | "confirmed" | "cancelled" }
   | { kind: "delegate"; id: string; proposal: ProposedDelegate;
@@ -42,7 +45,8 @@ export type ChatItem =
   | { kind: "skill"; id: string; skill: ProposedSkill; state: "pending" | "saved" | "dismissed" }
   // A propose_todo draft awaiting confirmation — todos are never queued silently.
   | { kind: "todo"; id: string; todo: ProposedTodo; state: "pending" | "queued" | "dismissed" }
-  | { kind: "status"; id: string; text: string; tone: "info" | "done" | "error" }
+  // `details` expand under the row (e.g. the messages handed over to an agent).
+  | { kind: "status"; id: string; text: string; tone: "info" | "done" | "error"; details?: string[] }
   // A per-turn memory capture's receipt: "🧠 Memory updated — … · Undo". Undo deletes exactly
   // `saved`'s ids; an undone row stays as a quiet record.
   | { kind: "memory"; id: string; saved: Array<{ id: string; text: string }>; state: "saved" | "undoing" | "undone" };

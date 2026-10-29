@@ -100,6 +100,8 @@ export interface LiveTasksDeps {
   enabledClis: () => CliName[];
   /** A configured project's path, or Bean's scratch workspace. */
   projectAllowed: (path: string) => Promise<boolean>;
+  /** Where a "" (no project) request runs — the renderer doesn't know Bean's scratch path. */
+  scratchPath?: string;
   /** Push to the owning window (and the pet's status). */
   send: (ownerId: number, event: LiveEvent) => void;
   newId: () => string;
@@ -158,14 +160,15 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (!deps.enabledClis().includes(agent)) return { error: `${LIVE_AGENT_NAMES[agent]} isn't installed or is turned off in Settings.` };
       const handoff = buildHandoff(parseHistory(req.history), req.ask);
       if ("error" in handoff) return handoff;
-      if ([...sessions.values()].some((s) => s.ownerId === ownerId)) {
+      // A session that's stopping (End, a switch) is on its way out: the next one may start.
+      if ([...sessions.values()].some((s) => s.ownerId === ownerId && !s.stopping)) {
         return { error: "This chat already has an agent session — end it first." };
       }
       // Registered before any await, so a window close during startup finds it and cancels the spawn.
       const sessionId = deps.newId();
       const s: Session = { ownerId, agent, seq: 0, stopping: false };
       sessions.set(sessionId, s);
-      const projectPath = req.projectPath;
+      const projectPath = req.projectPath || deps.scratchPath || "";
       let allowed = false;
       try {
         allowed = await deps.projectAllowed(projectPath);

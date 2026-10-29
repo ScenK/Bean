@@ -206,3 +206,17 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   menu/drag modes). Chatops sessions stay `kind: "delegate"` (`chatops-activity.ts`) → no badge.
   The `.bean-agent-avatar--*` fill mappings live in `orb.css` because the avatar window doesn't
   load `shared.css`.
+- Agent mode in the chat window (#477): `ChatWindow` holds `mode` (who answers) + one `LiveState`;
+  pure pieces in `components/chat/agent-mode.ts`. Load-bearing rules:
+  - **Routing by construction**: only `onComposerSend` (typed composer text) reaches
+    `liveStart`/`liveSend`; loopbacks, skill prompts and Save to notes call `sendMessage`
+    directly, so they stay Bean turns in agent mode. Don't route `sendMessage` by mode.
+  - `chatTurns` is the one mapper for Bean's `history` and `closeTranscript`: agent finals are
+    `[Claude Code] <result>` (≤4k) for Bean; with `memory: true` live steering (`source: "live"`)
+    and agent finals are dropped entirely.
+  - The renderer adopts a session id from the `started` event (or liveStart's result) only for
+    its current start; events for any other id are ignored. A start ended before its id arrived
+    is stopped once the id lands. `start()` ignores a *stopping* session in the one-per-window
+    check, so a switch doesn't wait for the old process to exit.
+  - Project: `""` = scratch (main maps it via `scratchPath`); the window's last used project
+    (chip pick, confirmed delegate/terminal run) — never `projects[0]`.

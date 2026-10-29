@@ -7,8 +7,10 @@ import { SkillCard } from "./SkillCard.js";
 import { TodoCard } from "./TodoCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
-import { imageFileGuard, insertDroppedPath, itemAgent, startsAgentRun, type ChatItem } from "../../shared/chat-types.js";
-import type { CliName, ImageAttachment, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
+import { ChipMenu } from "../../shared/ChipMenu.js";
+import { imageFileGuard, insertDroppedPath, itemAgent, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
+import { HANDOFF_ITEMS, handoffItems, isLiveAgent, slashMatches } from "./agent-mode.js";
+import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 
 /** Read a picked image into an attachment + full data URL for its composer thumbnail. */
 function readImageFile(file: File): Promise<{ attachment: ImageAttachment; dataUrl: string }> {
@@ -93,6 +95,12 @@ export function ChatPanel({
   incognito,
   onToggleIncognito,
   onMemoryUndo,
+  mode,
+  agentProject,
+  live,
+  onPickAgent,
+  onPickProject,
+  onEndAgent,
 }: {
   items: ChatItem[];
   busy: boolean;
@@ -135,6 +143,14 @@ export function ChatPanel({
   incognito: boolean;
   onToggleIncognito: () => void;
   onMemoryUndo: (id: string) => void;
+  // Agent mode: who answers typed text, the project an agent would start in ("" = scratch), and
+  // the window's running session (busy = a turn is in flight; the composer stays usable).
+  mode: AgentId;
+  agentProject: string;
+  live?: { agent: LiveCli; projectPath: string; busy: boolean };
+  onPickAgent: (agent: AgentId) => void;
+  onPickProject: (path: string) => void;
+  onEndAgent: () => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -152,10 +168,20 @@ export function ChatPanel({
   // synchronously, or the two batches together can exceed the per-message cap.
   const reservedSlotsRef = useRef(0);
 
+  const agentMode = mode !== "bean";
+  const liveAgents = clis.filter(isLiveAgent);
+  const agentName = AGENT_NAMES[mode];
+  const projectName = (path: string): string => projects.find((p) => p.path === path)?.name ?? "scratch";
+  // The `/` popover: aliases matching the composer text so far.
+  const [slashOptions, setSlashOptions] = useState<AgentId[]>([]);
+  // Agents take text only — anything pending was meant for Bean.
+  useEffect(() => { if (agentMode) setPendingImages([]); }, [agentMode]);
+
   const attachImageFiles = (files: File[]): void => {
     // Stale errors clear at the start of a new attempt — never on individual read success,
     // which would wipe a same-batch rejection message before the user can read it.
     setImageError(null);
+    if (agentMode) { setImageError(`${agentName} takes text only — switch to Bean to share an image.`); return; }
     for (const file of files) {
       const problem = imageFileGuard(file.type, file.size, pendingImages.length + reservedSlotsRef.current);
       if (problem) { setImageError(problem); continue; }
@@ -227,6 +253,7 @@ export function ChatPanel({
     if (!text) return;
     el.value = "";
     resizeInput();
+    setSlashOptions([]);
     const images = pendingImages.map((p) => p.attachment);
     setPendingImages([]);
     setImageError(null);
@@ -277,7 +304,7 @@ export function ChatPanel({
     return (
       <div key={it.id} class="bean-chat-row">
         <span class="bean-chat-row-avatar">
-          {startsAgentRun(items, i) ? <AgentAvatar agent={agent} bob={busy && i === lastRunStart} /> : null}
+          {startsAgentRun(items, i) ? <AgentAvatar agent={agent} bob={(busy || live?.busy === true) && i === lastRunStart} /> : null}
         </span>
         {bubble}
       </div>
@@ -334,7 +361,15 @@ export function ChatPanel({
             return agentRow(it, i, (
               <div class="bean-bubble bean-bubble--bean">
                 {speaker(it)}
-                <Markdown text={it.display ?? it.text} />
+                {it.streaming && !it.text ? <span class="bean-bubble--working">Working<span class="bean-dots"><span /><span /><span /></span></span> : null}
+                {it.text || it.display ? <Markdown text={it.display ?? it.text} /> : null}
+                {it.tail?.length ? (
+                  <details class="bean-agent-tail">
+                    <summary>{it.tail.length} step{it.tail.length === 1 ? "" : "s"}</summary>
+                    <pre>{it.tail.join("\n")}</pre>
+                  </details>
+                ) : null}
+                {it.footer ? <div class="bean-agent-footer">{it.footer}</div> : null}
                 {it.images?.map((img) => (
                   <button
                     type="button"
@@ -353,7 +388,15 @@ export function ChatPanel({
               <div class="bean-bubble bean-bubble--bean bean-bubble--working">{speaker(it)}{it.text}<span class="bean-dots"><span /><span /><span /></span></div>
             ));
           }
-          if (it.kind === "status") return <div key={it.id} class={`bean-status bean-status--${it.tone}`}>{it.text}</div>;
+          if (it.kind === "status") {
+            if (!it.details?.length) return <div key={it.id} class={`bean-status bean-status--${it.tone}`}>{it.text}</div>;
+            return (
+              <details key={it.id} class={`bean-status bean-status--${it.tone} bean-status--details`}>
+                <summary>{it.text} ▸</summary>
+                {it.details.map((d) => <div class="bean-status-detail">{d}</div>)}
+              </details>
+            );
+          }
           if (it.kind === "memory") {
             const facts = it.saved.map((m) => m.text).join("; ");
             return (
@@ -444,6 +487,36 @@ export function ChatPanel({
         </button>
       ) : null}
       <div class="bean-chat-input">
+        {live ? (
+          <div class="bean-agent-banner">
+            <span class="bean-agent-banner-dot" aria-hidden="true">●</span>
+            <AgentAvatar agent={live.agent} size={16} />
+            <span>{AGENT_NAMES[live.agent]} · {projectName(live.projectPath)}</span>
+            <button type="button" class="bean-status-action" onClick={onEndAgent}>End</button>
+          </div>
+        ) : null}
+        {agentMode && incognito ? (
+          <div class="bean-status bean-status--info">Off the record covers Bean only — {agentName} keeps its own transcript.</div>
+        ) : null}
+        {slashOptions.length > 0 ? (
+          <div class="bean-chip-menu-list bean-slash-menu" role="listbox" aria-label="Switch who answers">
+            {slashOptions.map((a) => (
+              <button
+                type="button"
+                role="option"
+                aria-selected={a === mode}
+                class={`bean-chip-menu-row${a === mode ? " bean-chip-menu-row--on" : ""}`}
+                onClick={() => {
+                  if (inputRef.current) { inputRef.current.value = ""; resizeInput(); inputRef.current.focus(); }
+                  setSlashOptions([]);
+                  onPickAgent(a);
+                }}
+              >
+                <span class="bean-chip-menu-row-title"><AgentAvatar agent={a} size={16} /> /{a} <span class="bean-chip-menu-caption">{AGENT_NAMES[a]}</span></span>
+              </button>
+            ))}
+          </div>
+        ) : null}
         {imageError ? <div class="bean-status bean-status--error">{imageError}</div> : null}
         {pendingImages.length > 0 ? (
           <div class="bean-chat-pending-images">
@@ -460,13 +533,49 @@ export function ChatPanel({
           </div>
         ) : null}
         <div class="bean-chat-input-shell">
+          <ChipMenu
+            disabled={busy}
+            chipClass="bean-agent-chip"
+            chipLabel={<><AgentAvatar agent={mode} size={16} /> {agentName}{agentMode ? ` · ${projectName(live?.projectPath ?? agentProject)}` : ""}</>}
+          >
+            {(close) => (
+              <div class="bean-chip-menu-list">
+                {(["bean", ...liveAgents] as AgentId[]).map((a) => (
+                  <button
+                    type="button"
+                    class={`bean-chip-menu-row${a === mode ? " bean-chip-menu-row--on" : ""}`}
+                    onClick={() => { onPickAgent(a); close(); }}
+                  >
+                    <span class="bean-chip-menu-row-title"><AgentAvatar agent={a} size={16} /> {AGENT_NAMES[a]}</span>
+                  </button>
+                ))}
+                {liveAgents.length > 0 ? (
+                  <>
+                    <div class="bean-chip-menu-divider" />
+                    <div class="bean-chip-menu-hint">Agents work in</div>
+                    {[{ path: "", name: "No project — scratch workspace" }, ...projects].map((p) => (
+                      <button
+                        type="button"
+                        class={`bean-chip-menu-row${p.path === agentProject ? " bean-chip-menu-row--on" : ""}${p.path ? "" : " bean-chip-menu-row--no-project"}`}
+                        onClick={() => { onPickProject(p.path); close(); }}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                  </>
+                ) : null}
+              </div>
+            )}
+          </ChipMenu>
           <textarea
             ref={inputRef}
             class="bean-input bean-input--composer"
             rows={1}
-            placeholder="Message Bean…"
+            placeholder={!agentMode ? "Message Bean…" : live
+              ? `Message ${agentName}…`
+              : `Message ${agentName}… (Bean will hand over up to ${Math.min(handoffItems(items).filter((h) => h.text.trim()).length, HANDOFF_ITEMS)} messages)`}
             disabled={busy}
-            onInput={resizeInput}
+            onInput={(e) => { resizeInput(); setSlashOptions(slashMatches((e.target as HTMLTextAreaElement).value, liveAgents)); }}
             onPaste={pasteImages}
             onDragOver={(e) => { if (droppedPath(e)) e.preventDefault(); }}
             onDrop={dropPathIntoComposer}

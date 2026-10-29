@@ -1,0 +1,198 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { h, render } from "preact";
+import { act } from "preact/test-utils";
+import type { ChatTurn } from "@bean/core";
+import {
+  AGENT_FINAL_CHARS, applyLiveEvent, chatTurns, handoffLines, parseSlash, slashMatches, turnFooter,
+} from "../src/renderer/components/chat/agent-mode.js";
+import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
+import type { ChatItem } from "../src/renderer/shared/chat-types.js";
+import type { LiveEvent } from "../src/live-tasks.js";
+import type { DelegateEvent } from "../src/delegate-tasks.js";
+
+let n = 0;
+const id = (): string => `t${++n}`;
+
+describe("agent-mode helpers", () => {
+  it("parses only the four aliases, bare or with text", () => {
+    expect(parseSlash("/claude")).toEqual({ agent: "claude", rest: "" });
+    expect(parseSlash("/claude fix X\nplease")).toEqual({ agent: "claude", rest: "fix X\nplease" });
+    expect(parseSlash("/bean hi")).toEqual({ agent: "bean", rest: "hi" });
+    expect(parseSlash("/claudex")).toBeUndefined();
+    expect(parseSlash("/new")).toBeUndefined();
+    expect(parseSlash("see /claude")).toBeUndefined();
+  });
+
+  it("lists only installed agents in the / popover", () => {
+    expect(slashMatches("/", ["claude"])).toEqual(["bean", "claude"]);
+    expect(slashMatches("/c", ["claude", "codex"])).toEqual(["claude", "codex"]);
+    expect(slashMatches("/claude fix", ["claude"])).toEqual([]);
+    expect(slashMatches("hi", ["claude"])).toEqual([]);
+  });
+
+  it("maps agent finals into Bean's history as [Agent] <result>, capped; streaming bubbles stay out", () => {
+    const items: ChatItem[] = [
+      { kind: "user", id: "u1", text: "hi", source: "typed" },
+      { kind: "reply", id: "r1", text: "hello" },
+      { kind: "user", id: "u2", text: "fix X", source: "live" },
+      { kind: "reply", id: "r2", text: "x".repeat(AGENT_FINAL_CHARS + 50), agent: "claude", session: "s1" },
+      { kind: "reply", id: "r3", text: "", agent: "claude", session: "s1", streaming: true, tail: ["Read a.ts"] },
+    ];
+    const turns = chatTurns(items);
+    expect(turns.map((t) => t.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(turns[2]).toMatchObject({ content: "fix X", source: "live" });
+    expect(turns[3]!.content.startsWith("[Claude Code] xxx")).toBe(true);
+    expect(turns[3]!.content.length).toBe("[Claude Code] ".length + AGENT_FINAL_CHARS + 1);
+    // Close-time transcript: no live inputs, no agent finals; user turns keep their id.
+    expect(chatTurns(items, { memory: true })).toEqual([
+      { role: "user", content: "hi", source: "typed", id: "u1" },
+      { role: "assistant", content: "hello" },
+    ]);
+  });
+
+  it("streams output into one bubble per turn and closes it on the turn result", () => {
+    const ev = (e: Partial<LiveEvent> & { type: LiveEvent["type"] }): LiveEvent => ({ sessionId: "s1", agent: "codex", seq: 1, ...e } as LiveEvent);
+    let items = applyLiveEvent([], ev({ type: "started", projectPath: "/p", handedOver: 0 }), id);
+    items = applyLiveEvent(items, ev({ type: "output", line: "Ran ls" }), id);
+    items = applyLiveEvent(items, ev({ type: "turn", result: "Done.", durationMs: 12_300, costUsd: 0.04 }), id);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: "reply", agent: "codex", text: "Done.", tail: ["Ran ls"], streaming: false, footer: "— turn done (12.3s, $0.04)" });
+    // Next turn's output opens a new bubble; ending the session closes it.
+    items = applyLiveEvent(items, ev({ type: "output", line: "more" }), id);
+    items = applyLiveEvent(items, ev({ type: "ended", reason: "stopped" }), id);
+    expect(items[1]).toMatchObject({ streaming: false, footer: "— turn interrupted" });
+    expect(turnFooter({ failed: "boom" })).toBe("— turn failed: boom");
+  });
+
+  it("expands the handoff row to exactly the handed-over tail", () => {
+    const history = [{ role: "user" as const, text: "a" }, { role: "reply" as const, text: " " }, { role: "reply" as const, text: "b", agent: "codex" as const }];
+    expect(handoffLines(history, 1)).toEqual(["Codex: b"]);
+    expect(handoffLines(history, 2)).toEqual(["You: a", "Codex: b"]);
+  });
+});
+
+// ChatWindow end to end against a fake window.bean.
+describe("ChatWindow agent mode", () => {
+  const listeners: Record<string, (arg: unknown) => void> = {};
+  let bean: Record<string, ReturnType<typeof vi.fn>>;
+  let root: HTMLDivElement;
+
+  const flush = async (): Promise<void> => { await act(async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); }); };
+  const send = async (text: string): Promise<void> => {
+    const ta = root.querySelector("textarea.bean-input--composer") as HTMLTextAreaElement;
+    ta.value = text;
+    await act(async () => { ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    await flush();
+  };
+  const click = async (label: string): Promise<void> => {
+    const btn = [...root.querySelectorAll("button")].find((b) => b.textContent?.trim() === label);
+    if (!btn) throw new Error(`no button "${label}"`);
+    await act(async () => { btn.click(); });
+    await flush();
+  };
+  const live = async (e: Omit<LiveEvent, "agent" | "seq" | "sessionId">): Promise<void> => {
+    await act(async () => { listeners.onLiveEvent!({ sessionId: "s1", agent: "claude", seq: 1, ...e }); });
+    await flush();
+  };
+  const chatCalls = (): Array<{ message: string; source: string; history: ChatTurn[] }> => bean.chat!.mock.calls.map((c) => c[0]);
+
+  beforeEach(() => {
+    bean = {
+      getModel: vi.fn(async () => "m"),
+      getTheme: vi.fn(async () => "light"),
+      listProjects: vi.fn(async () => []),
+      listSkills: vi.fn(async () => []),
+      availableClis: vi.fn(async () => ["claude"]),
+      availableModels: vi.fn(async () => []),
+      chat: vi.fn(async () => ({ reply: "ok", model: "m" })),
+      liveStart: vi.fn(async () => ({ sessionId: "s1", handedOver: 2 })),
+      liveSend: vi.fn(async () => undefined),
+      liveStop: vi.fn(),
+      delegateStart: vi.fn(async () => "task1"),
+      rememberOnClose: vi.fn(),
+      allowChatClose: vi.fn(),
+    };
+    (window as unknown as { bean: unknown }).bean = new Proxy(bean, {
+      get: (t, k: string) => t[k] ?? (k.startsWith("on") ? (cb: (a: unknown) => void) => { listeners[k] = cb; } : async () => undefined),
+    });
+    root = document.createElement("div");
+    document.body.appendChild(root);
+  });
+  afterEach(() => { render(null, root); document.body.innerHTML = ""; });
+
+  it("/claude streams the agent, a delegate loopback still goes to Bean, /bean returns with the agent's result in history, and close memory skips live turns", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+
+    // A Bean turn that proposes a delegate, confirmed — its result will loop back later.
+    bean.chat!.mockResolvedValueOnce({ reply: "on it", model: "m", proposedDelegate: { projectPath: "/p", instruction: "audit", composedPrompt: "audit" } });
+    await send("hi bean");
+    await click("Delegate");
+    expect(bean.delegateStart).toHaveBeenCalledTimes(1);
+
+    await send("/claude fix X");
+    // The confirmed delegate's project is this window's last used one.
+    expect(bean.liveStart).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude", projectPath: "/p", ask: "fix X" }));
+    expect(bean.liveStart!.mock.calls[0]![0].history.map((h: { text: string }) => h.text)).toEqual(["hi bean", "on it"]);
+    await live({ type: "started", projectPath: "/scratch", handedOver: 2 });
+    expect(root.textContent).toContain("Handed over 2 messages");
+    await live({ type: "output", line: "Edit x.ts" });
+    await live({ type: "turn", result: "Fixed X in x.ts", durationMs: 1000 });
+    expect(root.textContent).toContain("Fixed X in x.ts");
+
+    // Typed text in agent mode steers the session.
+    await send("also add a test");
+    expect(bean.liveSend).toHaveBeenCalledWith("s1", "also add a test");
+
+    // The delegate finishes while the agent is live: its loopback is a Bean turn, never live-send.
+    await act(async () => { listeners.onDelegateEvent!({ taskId: "task1", type: "done", result: "audit ok" } satisfies DelegateEvent); });
+    await flush();
+    expect(chatCalls().at(-1)).toMatchObject({ source: "loopback" });
+    expect(bean.liveSend).toHaveBeenCalledTimes(1);
+
+    await send("/bean");
+    expect(bean.liveStop).toHaveBeenCalledWith("s1");
+    expect(root.textContent).toContain("Claude Code ended (1 turn) → Bean");
+    await send("what did claude do?");
+    const last = chatCalls().at(-1)!;
+    expect(last).toMatchObject({ message: "what did claude do?", source: "typed" });
+    expect(last.history.some((t) => t.role === "assistant" && t.content === "[Claude Code] Fixed X in x.ts")).toBe(true);
+
+    await act(async () => { listeners.onReviewBeforeClose!(undefined); });
+    await flush();
+    const transcript = bean.rememberOnClose!.mock.calls[0]![0] as ChatTurn[];
+    expect(transcript.some((t) => t.source === "live")).toBe(false);
+    expect(transcript.some((t) => t.content.includes("Fixed X") || t.content.includes("fix X") || t.content.includes("add a test"))).toBe(false);
+    expect(transcript[0]).toMatchObject({ role: "user", content: "hi bean", source: "typed" });
+  });
+
+  it("closing mid-session asks first, then ends the session and closes", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await send("/claude go");
+    await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
+    await act(async () => { listeners.onReviewBeforeClose!(undefined); });
+    await flush();
+    expect(bean.allowChatClose).not.toHaveBeenCalled();
+    expect(root.textContent).toContain("Claude Code is still running");
+    await click("End Claude Code session & close");
+    expect(bean.liveStop).toHaveBeenCalledWith("s1");
+    expect(bean.allowChatClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a crash and returns to Bean; an alias for a missing CLI never starts", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await send("/codex hi");
+    expect(bean.liveStart).not.toHaveBeenCalled();
+    expect(root.textContent).toContain("Codex isn't installed or is turned off in Settings.");
+
+    await send("/claude go");
+    await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
+    await live({ type: "ended", reason: "failed", error: "boom (stderr tail)" });
+    expect(root.textContent).toContain("Claude Code stopped unexpectedly: boom (stderr tail). Back to Bean.");
+    await send("back to you");
+    expect(chatCalls().at(-1)).toMatchObject({ message: "back to you", source: "typed" });
+  });
+});

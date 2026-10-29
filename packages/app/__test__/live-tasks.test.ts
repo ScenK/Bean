@@ -28,7 +28,8 @@ function harness(opts: { clis?: CliName[]; allowed?: (p: string) => Promise<bool
   const live = createLiveTasks({
     dir,
     enabledClis: () => opts.clis ?? ["claude", "codex", "opencode"],
-    projectAllowed: opts.allowed ?? (async (p) => p === "/proj"),
+    projectAllowed: opts.allowed ?? (async (p) => p === "/proj" || p === "/scratch"),
+    scratchPath: "/scratch",
     send: (owner, e) => { events.push({ owner, e }); },
     newId: () => `s${++n}`,
     engine: (req, c) => {
@@ -79,6 +80,14 @@ describe("createLiveTasks", () => {
     expect(await h.live.start(1, { agent: "codex", projectPath: "/proj", ask: "b" })).toEqual({ error: expect.stringMatching(/already has an agent/) });
     expect(await h.live.start(2, { agent: "codex", projectPath: "/proj", ask: "b" })).toMatchObject({ sessionId: "s2" });
     expect(h.reqs).toHaveLength(2);
+  });
+
+  it("a switch can start the next session while the ended one is still exiting; no project = scratch", async () => {
+    const h = harness();
+    await h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "a" });
+    h.live.stop(1, "s1"); // its onExit hasn't fired yet
+    expect(await h.live.start(1, { agent: "codex", projectPath: "", ask: "b" })).toMatchObject({ sessionId: "s2" });
+    expect(h.reqs[1]).toMatchObject({ cli: "codex", projectPath: "/scratch" });
   });
 
   it("a window close during startup leaves no child and no record", async () => {
