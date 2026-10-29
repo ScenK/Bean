@@ -2764,6 +2764,26 @@ test("chatty on/off: guests and members refused, admins and the owner allowed; s
   expect(e.posted).toEqual(["Chatty mode is off here — I only answer when addressed."]);
 });
 
+test("memory on/off: admin+ only, channel scope; status for anyone; refused in DMs", async () => {
+  const { bot, chatter } = withChatter();
+  expect(chatter.memoryOn("s1")).toBe(true); // a missing row means on
+  for (const who of [guest, member]) {
+    expect(await bot.onCommand({ ...who, text: "memory off" }, fx())).toBe(true);
+    expect(chatter.memoryOn("s1")).toBe(true);
+  }
+  await bot.onCommand({ ...admin, text: "memory off" }, fx());
+  expect(chatter.memoryOn("s1")).toBe(false);
+  expect(chatter.get("s1").enabled).toBe(false); // chatty untouched
+  const e = fx();
+  await bot.onMessage({ ...guest, text: "memory status" }, e);
+  expect(e.posted[0]).toContain("Channel memory is off here");
+  await bot.onCommand({ ...owner, text: "memory on" }, fx());
+  expect(chatter.memoryOn("s1")).toBe(true);
+  const dm = fx();
+  expect(await bot.onCommand({ ...owner, direct: true, scopeId: undefined, text: "memory off" }, dm)).toBe(true);
+  expect(dm.posted[0]).toContain("not a DM");
+});
+
 test("chatty commands are refused in DMs; a DM mute stays a model turn", async () => {
   const { bot, chatter } = withChatter();
   const dm = { ...owner, direct: true, scopeId: undefined };

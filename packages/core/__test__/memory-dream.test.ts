@@ -116,6 +116,20 @@ test("planDream refuses cross-scope and overlapping merges and caps drops", () =
   expect(plan.digest.removed).toBe(3); // max(3, 20% of 14 = 2)
 });
 
+test("planDream never merges across speaker prefixes, and a merge keeps its prefix", () => {
+  const mems = [m("o", "Prefers tea"), m("a1", "Mia: Prefers tea"), m("a2", "Mia: Drinks oolong"), m("b1", "Gus: Prefers tea")];
+  const plan = planDream(mems, {
+    merges: [
+      { ids: ["o", "a1"], mergedText: "Prefers tea" }, // owner + Mia
+      { ids: ["a1", "b1"], mergedText: "Mia: Prefers tea" }, // two speakers
+      { ids: ["a2"], mergedText: "Drinks oolong" }, // rewrite drops the prefix
+      { ids: ["a1", "a2"], mergedText: "Mia: Prefers tea, mostly oolong" },
+    ],
+    drops: [],
+  }, "run", "2026-09-01T00:00:00.000Z");
+  expect(plan.groups).toEqual([{ ids: ["a1", "a2"], text: "Mia: Prefers tea, mostly oolong", projectPath: undefined }]);
+});
+
 test("Undo last dream restores the run, skips a group edited since, and keeps FTS in step", async () => {
   await appendMemories(file, [...five(), m("r", "trip is next week")]);
   const chat = chatCalling([
