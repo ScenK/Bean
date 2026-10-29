@@ -1,4 +1,4 @@
-import type { CliName, ProposedDelegate, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, TurnSource } from "@bean/core";
+import type { CliName, ProposedDelegate, ProposedLiveSession, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, TurnSource } from "@bean/core";
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 // Renderer copies of core's SUPPORTED_IMAGE_MIMES / MAX_IMAGES_PER_MESSAGE (converse.ts) —
@@ -43,6 +43,9 @@ export type ChatItem =
   | { kind: "note"; id: string; note: ProposedNote; state: "pending" | "saved" | "dismissed"; images?: string[] }
   // A propose_skill draft awaiting confirmation — skills are never written silently.
   | { kind: "skill"; id: string; skill: ProposedSkill; state: "pending" | "saved" | "dismissed" }
+  // Bean's offer to hand the chat over to a live agent (propose_live_session) — Start runs the
+  // same handoff as /claude; Not now leaves Bean in charge.
+  | { kind: "offer"; id: string; offer: ProposedLiveSession; state: "pending" | "started" | "dismissed" }
   // A propose_todo draft awaiting confirmation — todos are never queued silently.
   | { kind: "todo"; id: string; todo: ProposedTodo; state: "pending" | "queued" | "dismissed" }
   // `details` expand under the row (e.g. the messages handed over to an agent).

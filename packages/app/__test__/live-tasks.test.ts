@@ -85,7 +85,9 @@ describe("createLiveTasks", () => {
   it("a switch can start the next session while the ended one is still exiting; no project = scratch", async () => {
     const h = harness();
     await h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "a" });
+    expect(h.live.hasSession(1)).toBe(true);
     h.live.stop(1, "s1"); // its onExit hasn't fired yet
+    expect(h.live.hasSession(1)).toBe(false); // stopping counts as gone: Bean may offer again
     expect(await h.live.start(1, { agent: "codex", projectPath: "", ask: "b" })).toMatchObject({ sessionId: "s2" });
     expect(h.reqs[1]).toMatchObject({ cli: "codex", projectPath: "/scratch" });
   });

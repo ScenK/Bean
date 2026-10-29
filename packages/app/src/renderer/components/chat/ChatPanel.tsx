@@ -5,11 +5,12 @@ import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
 import { SkillCard } from "./SkillCard.js";
 import { TodoCard } from "./TodoCard.js";
+import { LiveOfferCard } from "./LiveOfferCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { imageFileGuard, insertDroppedPath, itemAgent, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
-import { HANDOFF_ITEMS, handoffItems, isLiveAgent, slashMatches } from "./agent-mode.js";
+import { HANDOFF_ITEMS, handoffItems, isLiveAgent, offerAgent, slashMatches } from "./agent-mode.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 
 /** Read a picked image into an attachment + full data URL for its composer thumbnail. */
@@ -87,6 +88,8 @@ export function ChatPanel({
   onSkillDismiss,
   onTodoQueue,
   onTodoDismiss,
+  onOfferStart,
+  onOfferDismiss,
   onDelegateConfirm,
   onDelegateDismiss,
   onDelegateCancelTask,
@@ -134,6 +137,8 @@ export function ChatPanel({
   onSkillDismiss: (id: string) => void;
   onTodoQueue: (id: string) => void;
   onTodoDismiss: (id: string) => void;
+  onOfferStart: (id: string) => void;
+  onOfferDismiss: (id: string) => void;
   onDelegateConfirm: (id: string, editedPrompt: string, model?: string) => void;
   onDelegateDismiss: (id: string) => void;
   onDelegateCancelTask: (id: string) => void;
@@ -441,6 +446,19 @@ export function ChatPanel({
                 state={it.state}
                 onQueue={() => onTodoQueue(it.id)}
                 onDismiss={() => onTodoDismiss(it.id)}
+              />
+            );
+          }
+          if (it.kind === "offer") {
+            return (
+              <LiveOfferCard
+                key={it.id}
+                offer={it.offer}
+                agent={offerAgent(clis)}
+                projectName={projectName(it.offer.projectPath)}
+                state={it.state}
+                onStart={() => onOfferStart(it.id)}
+                onDismiss={() => onOfferDismiss(it.id)}
               />
             );
           }

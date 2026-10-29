@@ -946,3 +946,32 @@ describe("propose_note_archive", () => {
     expect(on.proposedNoteArchive).toEqual({ query: "groceries" });
   });
 });
+
+test("desktop propose_live_session is an offer to hand the chat over: no cli/model, scratch when no project fits", async () => {
+  let seenTools: ToolSpec[] = [];
+  const spy: ConverseDeps = { model: "m", chat: async ({ tools }) => { seenTools = tools; return { content: "ok", toolCalls: [] }; } };
+  const tool = async (input: Partial<ConverseInput>) => {
+    await conv({ latestUserText: "hi", deps: spy, liveSessionAvailable: true, availableClis: ["claude", "codex"], models: availableModels(TEST_CLI_MODELS, ["claude"]), ...input });
+    return seenTools.find((t) => t.name === "propose_live_session");
+  };
+  // The channel default keeps its wording; the desktop variant drops it.
+  expect((await tool({}))?.description).toContain("bound to THIS channel");
+  const desktop = await tool({ liveSessionHost: "desktop", scratchPath: "/scratch" });
+  expect(desktop?.description).toContain("hand this chat over");
+  expect(desktop?.description).not.toContain("channel");
+  const params = desktop?.parameters as { properties: Record<string, unknown>; required: string[] };
+  expect(Object.keys(params.properties).sort()).toEqual(["instruction", "project"]);
+  expect(params.required).toEqual(["instruction"]);
+  // No projects: offered on desktop only when a scratch workspace exists.
+  expect(await tool({ liveSessionHost: "desktop", scratchPath: "/scratch", projects: [] })).toBeDefined();
+  expect(await tool({ liveSessionHost: "desktop", projects: [] })).toBeUndefined();
+
+  const offer = async (args: object) => (await conv({
+    latestUserText: "build it", liveSessionHost: "desktop", scratchPath: "/scratch", liveSessionAvailable: true,
+    deps: depsReturning("This looks like a job for Claude Code.", [{ name: "propose_live_session", args }]),
+  })).proposedLiveSession;
+  expect(await offer({ project: "/work/api", instruction: " add OAuth login ", cli: "codex", model: "sonnet" }))
+    .toEqual({ projectPath: "/work/api", instruction: "add OAuth login" });
+  expect(await offer({ instruction: "spike a CLI" })).toEqual({ projectPath: "/scratch", instruction: "spike a CLI" });
+  expect(await offer({ project: "/nope", instruction: "x" })).toBeUndefined();
+});
