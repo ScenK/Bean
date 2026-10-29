@@ -74,6 +74,15 @@ const SCAN = `(() => {
     const got = ratio(fg, bg);
     if (got < need) fails.push(\`\${el.className || el.tagName} "\${(el.textContent || "").trim().slice(0, 30)}" \${got.toFixed(2)}:1 < \${need}:1\`);
   }
+  // Agent mascots are graphics (WCAG 1.4.11): the body fill holds 3:1 against what it sits on.
+  for (const svg of document.querySelectorAll(".bean-agent-avatar")) {
+    const body = svg.firstElementChild;
+    const fill = body && parse(getComputedStyle(body).fill);
+    if (!fill) { fails.push(\`\${svg.getAttribute("class")} has no resolvable fill\`); continue; }
+    const rows = chain(svg.parentElement);
+    const got = ratio(fold(rows, fill), fold(rows, [0, 0, 0, 0]));
+    if (got < 3) fails.push(\`\${svg.getAttribute("class")} \${got.toFixed(2)}:1 < 3:1\`);
+  }
   return fails;
 })()`;
 
@@ -91,6 +100,15 @@ test("every component window clears WCAG AA text contrast in both themes", async
         avatar.evaluate((k) => (window as unknown as { bean: { openComponent: (kind: string) => void } }).bean.openComponent(k), kind),
       ]);
       await win.waitForLoadState("domcontentloaded");
+      // Seed the chat transcript with a Bean reply so its mascot row is measured too. The CLI
+      // agents' mascots have no producer until Agent mode (#477) — seed them there.
+      if (kind === "chat") {
+        await app.evaluate(({ BrowserWindow }) => {
+          BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))!
+            .webContents.send("bean:interrupted-run-notice", [{ text: "Seeded reply", display: "Seeded reply" }]);
+        });
+        await win.locator(".bean-chat-row .bean-agent-avatar--bean").waitFor();
+      }
       await win.waitForTimeout(600);
       for (const theme of ["hearth", "graphite"]) {
         await win.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);

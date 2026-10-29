@@ -60,7 +60,12 @@ const SURFACES = ["--bean-bg", "--bean-surface", "--bean-surface-2"] as const;
 // `--bean-accent` is a *fill* tone and is deliberately not in this list — accent used as ink or
 // as a line on a surface is `--bean-accent-text`, which is what has to clear 4.5:1.
 const TEXT_ON_SURFACE = ["--bean-text", "--bean-text-dim", "--bean-accent-text", "--bean-link", "--bean-error", "--bean-orb-check-ink"];
-const GRAPHIC_ON_SURFACE = ["--bean-star", "--bean-control-border"];
+// The agent mascots' fills (AgentAvatar) are graphics too; their features are painted in
+// --bean-surface, so this same check keeps them 3:1 against the body.
+const GRAPHIC_ON_SURFACE = [
+  "--bean-star", "--bean-control-border",
+  "--bean-agent-bean", "--bean-agent-claude", "--bean-agent-codex", "--bean-agent-opencode",
+];
 
 describe.each(["hearth", "graphite"])("%s theme contrast", (theme) => {
   const t = tokens(theme);

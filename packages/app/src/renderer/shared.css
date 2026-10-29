@@ -173,6 +173,48 @@ button, input, textarea, select, a {
   border-radius: 4px 14px 14px 14px;
   color: var(--bean-text);
 }
+/* Reply/working bubbles behind their agent's avatar slot. The row spans the transcript, so
+   the bubble's 82% cap is unchanged and the 24px slot + gap fits beside it at 520px. */
+.bean-chat-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.bean-chat-row-avatar {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+.bean-agent-avatar { display: block; overflow: visible; }
+.bean-agent-avatar--bean { --bean-agent-fill: var(--bean-agent-bean); }
+.bean-agent-avatar--claude { --bean-agent-fill: var(--bean-agent-claude); }
+.bean-agent-avatar--codex { --bean-agent-fill: var(--bean-agent-codex); }
+.bean-agent-avatar--opencode { --bean-agent-fill: var(--bean-agent-opencode); }
+.bean-chat-row-avatar .bean-agent-avatar { animation: bean-agent-pop 0.28s cubic-bezier(0.3, 1.5, 0.6, 1); }
+.bean-chat-row-avatar .bean-agent-avatar--bob { animation: bean-agent-pop 0.28s cubic-bezier(0.3, 1.5, 0.6, 1), bean-agent-bob 1.4s ease-in-out 0.28s infinite; }
+@keyframes bean-agent-pop {
+  from { transform: scale(0.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+@keyframes bean-agent-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bean-chat-row-avatar .bean-agent-avatar { animation: none; }
+}
+/* Screen-reader-only text (the bubble's speaker name). */
+.bean-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
 .bean-bubble--user {
   align-self: flex-end;
   background: var(--bean-accent);

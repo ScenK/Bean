@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import { ProposalCard, type PickableModel } from "../../shared/ProposalCard.js";
 import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
 import { SkillCard } from "./SkillCard.js";
 import { TodoCard } from "./TodoCard.js";
 import { DelegateCard } from "./DelegateCard.js";
-import { imageFileGuard, insertDroppedPath, type ChatItem } from "../../shared/chat-types.js";
+import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
+import { imageFileGuard, insertDroppedPath, itemAgent, startsAgentRun, type ChatItem } from "../../shared/chat-types.js";
 import type { CliName, ImageAttachment, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 
 /** Read a picked image into an attachment + full data URL for its composer thumbnail. */
@@ -266,6 +268,23 @@ export function ChatPanel({
     attachImageFiles(files);
   };
 
+  // The newest run's avatar bobs while a turn is in flight — toggled on turn start/stop, not per chunk.
+  const lastRunStart = items.findLastIndex((_, i) => startsAgentRun(items, i));
+  // Reply/working bubbles sit in a row behind their agent's avatar, shown once per run of
+  // consecutive same-agent bubbles (later ones keep the empty slot so they stay aligned).
+  const agentRow = (it: ChatItem, i: number, bubble: ComponentChildren) => {
+    const agent = itemAgent(it) ?? "bean";
+    return (
+      <div key={it.id} class="bean-chat-row">
+        <span class="bean-chat-row-avatar">
+          {startsAgentRun(items, i) ? <AgentAvatar agent={agent} bob={busy && i === lastRunStart} /> : null}
+        </span>
+        {bubble}
+      </div>
+    );
+  };
+  const speaker = (it: ChatItem) => <span class="bean-sr-only">{AGENT_NAMES[itemAgent(it) ?? "bean"]}: </span>;
+
   return (
     <div class="bean-chat">
       <div class="bean-chat-scroll" ref={scrollRef} onScroll={onScroll}>
@@ -297,10 +316,11 @@ export function ChatPanel({
         {items.length === 0 ? (
           <div class="bean-panel-empty">Ask Bean to do something, or just say hi.</div>
         ) : null}
-        {items.map((it) => {
+        {items.map((it, i) => {
           if (it.kind === "user") {
             return (
               <div key={it.id} class="bean-bubble bean-bubble--user">
+                <span class="bean-sr-only">You: </span>
                 {it.display ?? it.text}
                 {it.images?.map((src) => (
                   <button type="button" class="bean-chat-thumb" title="Preview" onClick={() => setPreview({ dataUrl: src })}>
@@ -311,8 +331,9 @@ export function ChatPanel({
             );
           }
           if (it.kind === "reply") {
-            return (
-              <div key={it.id} class="bean-bubble bean-bubble--bean">
+            return agentRow(it, i, (
+              <div class="bean-bubble bean-bubble--bean">
+                {speaker(it)}
                 <Markdown text={it.display ?? it.text} />
                 {it.images?.map((img) => (
                   <button
@@ -325,9 +346,13 @@ export function ChatPanel({
                   </button>
                 ))}
               </div>
-            );
+            ));
           }
-          if (it.kind === "working") return <div key={it.id} class="bean-bubble bean-bubble--bean bean-bubble--working">{it.text}<span class="bean-dots"><span /><span /><span /></span></div>;
+          if (it.kind === "working") {
+            return agentRow(it, i, (
+              <div class="bean-bubble bean-bubble--bean bean-bubble--working">{speaker(it)}{it.text}<span class="bean-dots"><span /><span /><span /></span></div>
+            ));
+          }
           if (it.kind === "status") return <div key={it.id} class={`bean-status bean-status--${it.tone}`}>{it.text}</div>;
           if (it.kind === "memory") {
             const facts = it.saved.map((m) => m.text).join("; ");
