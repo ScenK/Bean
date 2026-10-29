@@ -684,6 +684,20 @@ test("switching the chip on while a capture is in flight saves nothing", async (
   expect(d.pending).toHaveLength(1);
 });
 
+test("a reply that settles after its window closed is never captured (close already covered it)", async () => {
+  let extracted = 0;
+  const { handlers, appended } = memoryHandlersFor({
+    extractMemories: async () => { extracted++; return { candidates: [], rejected: 0, failed: false }; },
+  });
+  handlers.setIncognito(8, true);
+  // Closed incognito: catch-up writes nothing...
+  expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { windowId: 8, incognito: true })).toEqual([]);
+  // ...and the late capture (request flag snapshotted before the chip) doesn't revive the window.
+  expect(await handlers.captureTurn(8, turnReq, reply)).toEqual([]);
+  expect(extracted).toBe(0);
+  expect(appended).toEqual([]);
+});
+
 test("captures in one window run in turn order, so a later fact is saved later", async () => {
   const d = deferredExtract();
   const { handlers, appended } = memoryHandlersFor({ extractMemories: d.extractMemories });

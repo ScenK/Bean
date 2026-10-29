@@ -513,6 +513,10 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
   // runs captures one at a time so facts are saved — and timestamped — in turn order.
   type ChatWindowState = { turns: Set<string>; ids: string[]; incognito: boolean; queue: Promise<unknown> };
   const windows = new Map<number, ChatWindowState>();
+  // Windows already closed: a reply that settles after close must not recreate their state (and
+  // lose the chip) — close catch-up already covered that turn under the close-time flag.
+  // ponytail: one int per chat window per app run; webContents ids are never reused.
+  const closed = new Set<number>();
   const windowState = (windowId: number): ChatWindowState => {
     let w = windows.get(windowId);
     if (!w) windows.set(windowId, w = { turns: new Set(), ids: [], incognito: false, queue: Promise.resolve() });
@@ -560,6 +564,7 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
      * turns are context). Skipped when the turn used the explicit remember tool or errored. */
     captureTurn: async (windowId: number, req: ChatRequest, result: ConverseResult): Promise<Memory[]> => {
       if (req.source !== "typed" || req.incognito || !deps.autoMemory() || result.error || result.remembered?.length) return [];
+      if (closed.has(windowId)) return [];
       const w = windowState(windowId);
       if (w.incognito) return [];
       if (req.turnId) w.turns.add(req.turnId);
@@ -585,7 +590,9 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       return run;
     },
     /** The chat window's 🕶 chip changed — gates its per-turn captures from now on. */
-    setIncognito: (windowId: number, on: boolean): void => { windowState(windowId).incognito = on; },
+    setIncognito: (windowId: number, on: boolean): void => {
+      if (!closed.has(windowId)) windowState(windowId).incognito = on;
+    },
     /** Chat-window close: a catch-up — extract → validate → append in the background, no review
      * card. Turns per-turn capture handled stay as context only; `rejected` = facts the user
      * undid in this window, shown to extraction as already remembered so they aren't re-saved. */
@@ -593,7 +600,10 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       transcript: CloseTurn[], opts: { incognito?: boolean; rejected?: string[]; windowId?: number },
     ): Promise<Memory[]> => {
       const w = opts.windowId === undefined ? undefined : windows.get(opts.windowId);
-      if (opts.windowId !== undefined) windows.delete(opts.windowId);
+      if (opts.windowId !== undefined) {
+        windows.delete(opts.windowId);
+        closed.add(opts.windowId);
+      }
       if (opts.incognito || !deps.autoMemory()) return [];
       const turns = transcript.map(({ id, ...t }): ChatTurn => (id && w?.turns.has(id) ? { ...t, source: undefined } : t));
       const rejected = (opts.rejected ?? []).map((text): Memory => ({ id: "", text, createdAt: "" }));

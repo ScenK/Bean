@@ -28,7 +28,8 @@ see `db.ts`'s `migrateFromFiles`.
   closed, then it raises the `memory:error` bubble. Main tracks, per window (webContents id), the
   turn ids captured/in flight, the saved ids (pending for dream until the window closes), the live
   🕶 chip (`chatIncognito` channel — a request's `incognito` is a send-time snapshot, so it's
-  re-checked before the model call and the insert), and a queue: captures run one at a time so
+  re-checked before the model call and the insert; a closed window's id is remembered so a reply
+  settling after close can't recreate its state and skip the chip), and a queue: captures run one at a time so
   facts are saved in turn order (later-saved-wins stays right). **Close is a catch-up:** turns carry their renderer id,
   already-captured ones are downgraded to non-citable context, and facts undone in the window ride
   along as `rejected` (shown to extraction as already remembered) so close won't re-save them.
