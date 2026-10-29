@@ -80,8 +80,6 @@ export interface BeanConfig {
   reasoningEffort: string;
   imageModel: string; // Images API model for generate_image; no Settings UI — edit config.json
 
-  /** Opt-in for chat-launched live coding-agent sessions (spec: live-sessions). */
-  liveSessions: boolean;
   /** Opt-in: a routine digest delivered to a chatops conversation is also appended to that
    * conversation's history, so a follow-up question about it has the digest as context.
    * Off by default — every digest otherwise costs tokens in conversations nobody asks about. */
