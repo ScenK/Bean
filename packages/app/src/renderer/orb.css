@@ -83,3 +83,5 @@
 /* Agent avatars (shared/AgentAvatar.tsx). Here, not shared.css, because the avatar window loads
    orb.css but not shared.css, and it wears the live-session badge. */
 .bean-agent-avatar { display: block; overflow: visible; }
+/* The pet's orb body is a fill on art; in chat it sits on a surface and must hold 3:1. */
+.bean-agent-avatar--bean .bean-orb-body { fill: var(--bean-agent-bean); }
