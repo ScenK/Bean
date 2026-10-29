@@ -198,7 +198,8 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   quoted context labeled non-instructions, then the ask; an oversized ask is rejected, never
   truncated; `count` is exactly what was sent. Memories/persona never go in.
 - Lifecycle: chat window `closed` → `stopOwner`; `before-quit` → `forceKillAll()` (SIGKILL trees +
-  `killPendingGroups`) beside `killAllDelegates()`. No outbox notice: records stay for the next
+  `killPendingGroups`) beside `killAllDelegates()`, and the update install's `relaunch` hook too
+  (`app.exit()` skips before-quit; a source test in `live-tasks.test.ts` guards both). No outbox notice: records stay for the next
   boot's silent `sweepDeadRuns`. Record pid moves to the child for claude only (chatops rule).
 - Pet badge: desktop sessions are `TaskJob` `kind: "live"` + `agent`; `liveBadgeAgent` picks the
   newest running one and avatar.ts renders a 16px `AgentAvatar` in the orb slot's corner (visible in

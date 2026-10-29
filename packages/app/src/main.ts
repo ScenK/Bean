@@ -916,10 +916,12 @@ app.whenReady().then(async () => {
       // reaches relaunch() only after the bundle swap has succeeded (every failure path rolls
       // back and throws first — see updater.test.ts), and exit() is the very next statement. A
       // failed install therefore leaves the bots running and untouched, instead of killing them
-      // for an update that never happened and leaving the toggles showing Stop.
+      // for an update that never happened and leaving the toggles showing Stop. Live agent
+      // sessions likewise: their permissions-bypassed trees must not outlive their chat window.
       installUpdate: (extractedAppPath: string) => installAndRelaunch(extractedAppPath, {
         relaunch: () => {
           chatopsServers?.stopAll();
+          forceKillLive();
           app.relaunch();
         },
       }),

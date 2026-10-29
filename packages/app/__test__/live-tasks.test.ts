@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -197,5 +198,17 @@ describe("liveBadgeAgent", () => {
 
   it("ignores chatops live sessions (reported as delegate jobs)", () => {
     expect(liveBadgeAgent([job({ kind: "delegate", name: "proj · live" })])).toBeUndefined();
+  });
+});
+
+describe("main.ts live-session teardown", () => {
+  // main.ts isn't unit-testable; guard the two exits that must SIGKILL live trees. The update
+  // install ends in app.relaunch() + app.exit(), which skips before-quit.
+  const main = readFileSync(fileURLToPath(new URL("../src/main.ts", import.meta.url)), "utf8");
+  const block = (start: string): string => main.slice(main.indexOf(start), main.indexOf("});", main.indexOf(start)));
+
+  it("force-kills live sessions on quit and on the update relaunch", () => {
+    expect(block('app.on("before-quit", () => {\n    interruptAllDelegates();')).toContain("forceKillLive();");
+    expect(block("relaunch: () => {")).toContain("forceKillLive();");
   });
 });
