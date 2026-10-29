@@ -29,7 +29,9 @@ see `db.ts`'s `migrateFromFiles`.
   turn ids captured/in flight, the saved ids (pending for dream until the window closes), the live
   🕶 chip (`chatIncognito` channel — a request's `incognito` is a send-time snapshot, so it's
   re-checked before the model call and the insert; a closed window's id is remembered so a reply
-  settling after close can't recreate its state and skip the chip), and a queue: captures run one at a time so
+  settling after close can't recreate its state and skip the chip; an incognito close also flips the
+  retained state an in-flight capture holds; the renderer sends the chip from the click handler,
+  never an effect, so a close right after the click can't beat it), and a queue: captures run one at a time so
   facts are saved in turn order (later-saved-wins stays right). **Close is a catch-up:** turns carry their renderer id,
   already-captured ones are downgraded to non-citable context, and facts undone in the window ride
   along as `rejected` (shown to extraction as already remembered) so close won't re-save them.

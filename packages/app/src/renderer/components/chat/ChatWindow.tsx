@@ -96,7 +96,13 @@ export function ChatWindow() {
   const [incognito, setIncognito] = useState(false);
   const incognitoRef = useRef(false);
   incognitoRef.current = incognito;
-  useEffect(() => { window.bean.setChatIncognito(incognito); }, [incognito]);
+  // Sent from the toggle itself, not an effect: a close right after the click must not beat it.
+  const toggleIncognito = (): void => {
+    const on = !incognitoRef.current;
+    incognitoRef.current = on;
+    window.bean.setChatIncognito(on);
+    setIncognito(on);
+  };
   // Facts undone from a "Memory updated" row — handed to close catch-up so it won't re-save them.
   const rejectedMemoriesRef = useRef<string[]>([]);
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
@@ -523,7 +529,7 @@ export function ChatWindow() {
         onSaveToNotes={saveToNotes}
         onUnlink={() => setLinkedNote(undefined)}
         incognito={incognito}
-        onToggleIncognito={() => setIncognito((v) => !v)}
+        onToggleIncognito={toggleIncognito}
         onMemoryUndo={(id) => void undoMemory(id)}
       />
     </div>

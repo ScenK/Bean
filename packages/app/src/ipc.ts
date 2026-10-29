@@ -600,6 +600,8 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       transcript: CloseTurn[], opts: { incognito?: boolean; rejected?: string[]; windowId?: number },
     ): Promise<Memory[]> => {
       const w = opts.windowId === undefined ? undefined : windows.get(opts.windowId);
+      // An in-flight capture keeps its own reference to `w` — the close-time chip must reach it.
+      if (w && opts.incognito) w.incognito = true;
       if (opts.windowId !== undefined) {
         windows.delete(opts.windowId);
         closed.add(opts.windowId);

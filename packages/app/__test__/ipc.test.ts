@@ -698,6 +698,17 @@ test("a reply that settles after its window closed is never captured (close alre
   expect(appended).toEqual([]);
 });
 
+test("closing incognito stops a capture already in flight, even if the chip IPC never arrived", async () => {
+  const d = deferredExtract();
+  const { handlers, appended } = memoryHandlersFor({ extractMemories: d.extractMemories });
+  const capture = handlers.captureTurn(9, turnReq, reply);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { windowId: 9, incognito: true })).toEqual([]);
+  d.pending[0]!.resolve();
+  expect(await capture).toEqual([]);
+  expect(appended).toEqual([]);
+});
+
 test("captures in one window run in turn order, so a later fact is saved later", async () => {
   const d = deferredExtract();
   const { handlers, appended } = memoryHandlersFor({ extractMemories: d.extractMemories });
