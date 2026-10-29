@@ -79,3 +79,11 @@
 .bean-orb[data-state="listening"] .bean-orb-mark-wrap { animation-duration: 2.4s; }
 .bean-orb[data-state="working"] .bean-orb-glow { animation-duration: 2s; }
 .bean-orb[data-state="done"] .bean-orb-ring { animation-play-state: paused; }
+
+/* Agent mascots (shared/AgentAvatar.tsx). Here, not shared.css, because the avatar window loads
+   orb.css but not shared.css, and it wears the live-session badge. */
+.bean-agent-avatar { display: block; overflow: visible; }
+.bean-agent-avatar--bean { --bean-agent-fill: var(--bean-agent-bean); }
+.bean-agent-avatar--claude { --bean-agent-fill: var(--bean-agent-claude); }
+.bean-agent-avatar--codex { --bean-agent-fill: var(--bean-agent-codex); }
+.bean-agent-avatar--opencode { --bean-agent-fill: var(--bean-agent-opencode); }

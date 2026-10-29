@@ -185,11 +185,6 @@ button, input, textarea, select, a {
   width: 24px;
   height: 24px;
 }
-.bean-agent-avatar { display: block; overflow: visible; }
-.bean-agent-avatar--bean { --bean-agent-fill: var(--bean-agent-bean); }
-.bean-agent-avatar--claude { --bean-agent-fill: var(--bean-agent-claude); }
-.bean-agent-avatar--codex { --bean-agent-fill: var(--bean-agent-codex); }
-.bean-agent-avatar--opencode { --bean-agent-fill: var(--bean-agent-opencode); }
 .bean-chat-row-avatar .bean-agent-avatar { animation: bean-agent-pop 0.28s cubic-bezier(0.3, 1.5, 0.6, 1); }
 .bean-chat-row-avatar .bean-agent-avatar--bob { animation: bean-agent-pop 0.28s cubic-bezier(0.3, 1.5, 0.6, 1), bean-agent-bob 1.4s ease-in-out 0.28s infinite; }
 @keyframes bean-agent-pop {

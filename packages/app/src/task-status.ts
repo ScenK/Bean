@@ -1,9 +1,13 @@
 // What the avatar's status bubbles show: one entry per thing Bean is working on (design 2a) —
 // delegate tasks, routine runs, chat turns — plus failures, so a glance says Bean is alive or
 // broken. Main owns the list and pushes the whole thing on every change.
+import type { LiveCli } from "@bean/core";
+
 export interface TaskJob {
   id: string;
-  kind: "delegate" | "routine" | "chat" | "bot" | "reminder" | "memory";
+  kind: "delegate" | "routine" | "chat" | "bot" | "reminder" | "memory" | "live";
+  /** A desktop live session's agent — the pet wears its badge while the job runs. */
+  agent?: LiveCli;
   name: string;
   /** One-line status: latest delegate output line, or the routine's current step label. */
   line: string;

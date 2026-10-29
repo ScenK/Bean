@@ -9,7 +9,7 @@ import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { applyChatopsActivity, clearBotJobs } from "./chatops-activity.js";
 import { installAvatarControls } from "./avatar-window.js";
-import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker } from "electron";
+import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker, webContents } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, ensurePrivateBeanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
@@ -43,6 +43,7 @@ import {
 import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
 import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } from "./delegate-tasks.js";
+import { createLiveTasks, LIVE_AGENT_NAMES } from "./live-tasks.js";
 import { createRoutineBuilder } from "./routine-builder.js";
 import { createTaskStatus } from "./task-status.js";
 import { createKeepAwake, keepAwakeFile, keepAwakeTooltip, loadKeepAwake, saveKeepAwake, type KeepAwakeState } from "./keep-awake.js";
@@ -289,8 +290,12 @@ app.whenReady().then(async () => {
   // blocking the quit sequence on an async continuation is its own source of hangs. Every other
   // before-quit hook in this file is plain synchronous fire-and-forget; this matches that.
   let interruptAllDelegates: () => void = () => {};
+  let forceKillLive: () => void = () => {};
   app.on("before-quit", () => {
     interruptAllDelegates();
+    // Live agent sessions run permissions-bypassed in their own process groups: SIGKILL every
+    // tree now (no outbox notice — the next boot's sweepDeadRuns clears their records silently).
+    forceKillLive();
     // Delegates run in their own process group (detached) and would outlive us — routine steps
     // and builder agents included, and so do routine command steps. SIGKILL them now; cancel()'s
     // 5s escalation can't fire after exit.
@@ -312,6 +317,7 @@ app.whenReady().then(async () => {
 
   const componentWindows = new Map<ComponentKind, BrowserWindow>();
   let cancelAllDelegates: () => void = () => {};
+  let stopLiveOwner: (ownerId: number) => void = () => {};
   // Same drop-race fix as planStore below: a URL dropped on the avatar can reach a chat window
   // whose renderer hasn't mounted (and subscribed to componentDroppedUrl) yet, silently losing
   // the push. droppedUrlStore.get() is stashed alongside every push so the renderer can pull it
@@ -359,7 +365,9 @@ app.whenReady().then(async () => {
         componentWindows.set(kind, win);
         sendToWindow(win, IPC.reviewBeforeClose, undefined);
       });
-      win.on("closed", () => cancelAllDelegates());
+      // Captured now: the webContents is destroyed by the time `closed` fires.
+      const ownerId = win.webContents.id;
+      win.on("closed", () => { cancelAllDelegates(); stopLiveOwner(ownerId); });
     }
     if (droppedUrl && kind === "chat") {
       droppedUrlStore.set(droppedUrl);
@@ -619,6 +627,34 @@ app.whenReady().then(async () => {
     cancelAllDelegates = delegateTasks.cancelAll;
     interruptAllDelegates = delegateTasks.interruptAll;
 
+    const liveTasks = createLiveTasks({
+      resolvedPath,
+      dir,
+      enabledClis,
+      projectAllowed: async (path) =>
+        path === scratchDir(dir) || (await loadProjects(projectsFile(dir))).some((p) => p.path === path),
+      newId: () => randomUUID(),
+      send: (ownerId, event) => {
+        const id = `live:${event.sessionId}`;
+        if (event.type === "started") {
+          taskStatus.upsert(id, {
+            kind: "live", agent: event.agent, name: `${LIVE_AGENT_NAMES[event.agent]} · ${basename(event.projectPath) || "scratch"}`,
+            line: "Starting…", detail: event.projectPath, startedAt: Date.now(), state: "running",
+          });
+        } else if (event.type === "output") {
+          const line = event.line.trim();
+          if (line) taskStatus.upsert(id, { line });
+        } else if (event.type === "turn") {
+          taskStatus.upsert(id, { line: event.failed ? "Turn failed" : "Waiting for you" });
+        } else if (event.reason === "failed") taskStatus.finish(id, "failed", event.error ?? "Session died");
+        else taskStatus.finish(id, "done", event.reason === "stopped" ? "Session ended" : "Session ended on its own", false);
+        const owner = webContents.fromId(ownerId);
+        if (owner && !owner.isDestroyed()) owner.send(IPC.liveEvent, event);
+      },
+    });
+    stopLiveOwner = liveTasks.stopOwner;
+    forceKillLive = liveTasks.forceKillAll;
+
     const chatopsRoot = app.isPackaged ? process.resourcesPath : dirname(projectBeanDir());
     const chatopsEnabledPath = chatopsEnabledFile(app.getPath("userData"));
     let chatopsSave: Promise<void> = Promise.resolve();
@@ -843,6 +879,8 @@ app.whenReady().then(async () => {
       beanDirPath: dir,
       modelMemoryFile: modelMemoryFile(dir),
       delegateTasks,
+      liveTasks,
+      isChatSender: (sender) => componentWindows.get("chat")?.webContents === sender,
       delegateAvailable: () => enabledClis().length > 0,
       webSearch: () => runtime.getWebSearch(),
       onChatTurn: () => {
