@@ -631,6 +631,7 @@ app.whenReady().then(async () => {
       resolvedPath,
       dir,
       enabledClis,
+      scratchPath: scratchDir(dir),
       projectAllowed: async (path) =>
         path === scratchDir(dir) || (await loadProjects(projectsFile(dir))).some((p) => p.path === path),
       newId: () => randomUUID(),
