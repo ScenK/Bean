@@ -61,10 +61,10 @@ const SURFACES = ["--bean-bg", "--bean-surface", "--bean-surface-2"] as const;
 // as a line on a surface is `--bean-accent-text`, which is what has to clear 4.5:1.
 const TEXT_ON_SURFACE = ["--bean-text", "--bean-text-dim", "--bean-accent-text", "--bean-link", "--bean-error", "--bean-orb-check-ink"];
 // Claude's spark (AgentAvatar) is a graphic too. Codex and opencode wear their official colors
-// (opencode = --bean-text); Bean's avatar is the orb mark and wears the orb tokens.
+// (opencode = --bean-text); Bean's avatar is the orb mark, its body in --bean-agent-bean.
 const GRAPHIC_ON_SURFACE = [
   "--bean-star", "--bean-control-border",
-  "--bean-agent-claude",
+  "--bean-agent-claude", "--bean-agent-bean",
 ];
 
 describe.each(["hearth", "graphite"])("%s theme contrast", (theme) => {
