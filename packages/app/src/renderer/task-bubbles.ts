@@ -13,6 +13,7 @@ const ICONS = {
   chat: '<path d="M7 12h.01"/><path d="M12 12h.01"/><path d="M17 12h.01"/>',
   bot: '<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01"/><path d="M8 17h.01"/>',
   reminder: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
+  live: '<path d="m5 8 4 4-4 4"/><path d="M12 17h7"/>',
   memory: '<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 3 5 3 3 0 0 0 5 1V5a3 3 0 0 0-3-1z"/><path d="M15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-3 5 3 3 0 0 1-5 1"/>',
   done: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   failed: '<path d="M12 7v6"/><path d="M12 17h.01"/>',
@@ -31,6 +32,15 @@ const meta = (j: TaskJob, now: number): string => {
   const elapsed = clock(now - j.startedAt);
   return j.steps && j.step !== undefined ? `${j.step + 1}/${j.steps.length} · ${elapsed}` : elapsed;
 };
+
+/** The agent whose badge the pet wears: the newest still-running desktop live session's. */
+export function liveBadgeAgent(jobs: readonly TaskJob[]): TaskJob["agent"] {
+  let best: TaskJob | undefined;
+  for (const j of jobs) {
+    if (j.kind === "live" && j.state === "running" && j.agent && (!best || j.startedAt >= best.startedAt)) best = j;
+  }
+  return best?.agent;
+}
 
 const iconKey = (j: TaskJob): keyof typeof ICONS => (j.state === "running" ? j.kind : j.state);
 
@@ -52,7 +62,7 @@ function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh:
   const detail = open && (j.detail || steps.length || failed)
     ? `<div class="bean-bubble-detail">${j.detail ? `<div class="bean-bubble-note">${esc(j.detail)}</div>` : ""}${stepRows ? `<div class="bean-bubble-steps">${stepRows}</div>` : ""}${hint}</div>`
     : "";
-  const caret = running && j.kind === "delegate" ? '<span class="bean-bubble-caret"></span>' : "";
+  const caret = running && (j.kind === "delegate" || j.kind === "live") ? '<span class="bean-bubble-caret"></span>' : "";
   // A finished routine doesn't expand, it navigates — the label keeps its name and result audible.
   const action = opensRun(j)
     ? `title="Open in Dashboard" aria-label="${esc(`${j.name} — ${j.line}. Open in Dashboard`)}"`

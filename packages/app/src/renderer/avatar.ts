@@ -1,5 +1,7 @@
 import { createOrb } from "./orb.js";
-import { createTaskBubbles } from "./task-bubbles.js";
+import { createTaskBubbles, liveBadgeAgent } from "./task-bubbles.js";
+import { h, render } from "preact";
+import { AgentAvatar } from "./shared/AgentAvatar.js";
 import type { AvatarMode, ComponentKind } from "../channels.js";
 import { createDragPreparationGate } from "../drag-preparation.js";
 import { createDragWatchdog } from "../drag-watchdog.js";
@@ -65,6 +67,13 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
 
   const orb = createOrb(orbSlot, { size: 48 });
   orb.setState("listening");
+  // The running desktop agent's mascot, in the orb's corner. Lives in the orb slot, not the
+  // bubble stack, so it stays visible in menu/drag modes.
+  const badge = document.createElement("span");
+  badge.className = "bean-orb-badge";
+  badge.hidden = true;
+  orbSlot.append(badge);
+  let badgeAgent: string | undefined;
 
   // The HTML supplies a visible fallback even if theme IPC fails.
   void window.bean.getTheme().then((t) => {
@@ -97,6 +106,12 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
   let doneTimer: ReturnType<typeof setTimeout> | undefined;
   window.bean.onTaskStatus((jobs) => {
     taskBubbles.update(jobs);
+    const agent = liveBadgeAgent(jobs);
+    if (agent !== badgeAgent) {
+      badgeAgent = agent;
+      badge.hidden = !agent;
+      render(agent ? h(AgentAvatar, { agent, size: 16 }) : null, badge);
+    }
     const running = taskBubbles.running();
     if (running) {
       clearTimeout(doneTimer);

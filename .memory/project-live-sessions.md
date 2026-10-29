@@ -54,8 +54,8 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   exported `discordCards: CardBuilders`). Don't assume one pattern when touching the other
   surface's card file — this exact mismatch caused a broken typecheck mid-build (see git
   history around commit range `482d173..c7c0050`).
-- Gating differs by surface. **Desktop** has no live-session entry point today (its old
-  `config.json` opt-in flag was dead and was deleted in #473). **Discord** has no config
+- Gating differs by surface. **Desktop** starts from the chat window over IPC (see the Desktop
+  section below; its old `config.json` opt-in flag was dead and was deleted in #473). **Discord** has no config
   opt-in: `liveSessionsEnabled: () => clis.includes("claude")` — always on when claude is
   present, since the allowlist + the confirm-first card are the authorization boundary there.
   Launch is always confirm-first via a card even though the session itself runs with
@@ -179,3 +179,30 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
     silent until it finishes, so the 30-min idle timer is the only ceiling.
   - Start refuses a `browser: true` skill on opencode (`OPENCODE_BROWSER_REFUSAL`) and a picked
     skill that's gone/disabled **before claiming the card**, so the user can re-pick on it.
+
+## Desktop (#476, epic #472)
+
+- `app/src/live-tasks.ts` `createLiveTasks` hosts desktop sessions over core's `startLiveEngine`
+  — not `LiveSessionRegistry` (its 1900-char rollover, 1.5s throttle and co-drivers are
+  Discord/multi-user shapes). Registry is keyed by **session id**; "one session per chat window"
+  is only a check in `start()` (owner = sender `webContents.id`), so a multi-agent mode relaxes
+  the check, not the data shape. The pending entry is registered **before** awaiting the project
+  check, so a window close mid-startup (`stopOwner`) means the child is never spawned.
+- Two spawns (`liveSpawnFn`): claude stdin `pipe` (stream-json turns), codex/opencode stdin
+  `ignore`; both get the login-shell PATH, `PWD=cwd`, `spawnEnv`. Don't reuse delegate-tasks'
+  `resolvedPathSpawnFn` for claude — its stdin is `ignore`.
+- IPC `bean:live-start|send|stop` + push `bean:live-event` (`started`/`output`/`turn`/`ended`,
+  each with `sessionId`, `agent`, per-session `seq`). Main checks the sender is the chat window,
+  the CLI is enabled, the project is configured or `scratchDir`, and sizes (`ASK_LIMIT`).
+- Handoff (`buildHandoff`, pure): last ≤20 user/reply items, ≤8k chars (≤2k per item), as `> `
+  quoted context labeled non-instructions, then the ask; an oversized ask is rejected, never
+  truncated; `count` is exactly what was sent. Memories/persona never go in.
+- Lifecycle: chat window `closed` → `stopOwner`; `before-quit` → `forceKillAll()` (SIGKILL trees +
+  `killPendingGroups`) beside `killAllDelegates()`, and the update install's `relaunch` hook too
+  (`app.exit()` skips before-quit; a source test in `live-tasks.test.ts` guards both). No outbox notice: records stay for the next
+  boot's silent `sweepDeadRuns`. Record pid moves to the child for claude only (chatops rule).
+- Pet badge: desktop sessions are `TaskJob` `kind: "live"` + `agent`; `liveBadgeAgent` picks the
+  newest running one and avatar.ts renders a 16px `AgentAvatar` in the orb slot's corner (visible in
+  menu/drag modes). Chatops sessions stay `kind: "delegate"` (`chatops-activity.ts`) → no badge.
+  The `.bean-agent-avatar--*` fill mappings live in `orb.css` because the avatar window doesn't
+  load `shared.css`.

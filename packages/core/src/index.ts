@@ -86,6 +86,7 @@ export type { OutboxMessage } from "./outbox.js";
 export { recordRun, releaseRun, updateRunPid, interruptedRunNotice, clearReservations, sweepDeadRuns } from "./run-queue.js";
 export type { TrackedRun } from "./run-queue.js";
 export * from "./live-session.js";
+export { killTree, killPendingGroups } from "./kill-tree.js";
 export * from "./codex-live-session.js";
 export * from "./opencode-live-session.js";
 export * from "./turn-live-session.js";

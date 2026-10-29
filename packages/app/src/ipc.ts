@@ -15,9 +15,10 @@ import type { WatchCheckResult } from "@bean/core";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import type { RouterDeps } from "@bean/core";
-import { BrowserWindow, dialog, screen, shell, type IpcMain } from "electron";
+import { BrowserWindow, dialog, screen, shell, type IpcMain, type WebContents } from "electron";
 import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
+import type { createLiveTasks } from "./live-tasks.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import type { UpdateCheckOutcome } from "./updater.js";
 
@@ -945,6 +946,9 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
     start: (req: DelegateStartRequest) => Promise<string>;
     cancel: (taskId: string) => void;
   };
+  liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop">;
+  /** Whether an IPC sender is the chat window — the only window that may drive an agent session. */
+  isChatSender: (sender: WebContents) => boolean;
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
   /** Called as a chat turn starts; the returned fn is called when it ends (with the failure, if any). */
   onChatTurn?: () => (error?: string) => void;
@@ -1036,6 +1040,12 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.on(IPC.launch, (_e, req: LaunchRequest) => launchHandler(req));
   ipcMain.handle(IPC.delegateStart, (_e, req: DelegateStartRequest) => deps.delegateTasks.start(req));
   ipcMain.on(IPC.delegateCancel, (_e, taskId: string) => deps.delegateTasks.cancel(taskId));
+  // Sessions belong to the sender's webContents id; every payload is validated in live-tasks.
+  ipcMain.handle(IPC.liveStart, (e, req: unknown) =>
+    deps.isChatSender(e.sender) ? deps.liveTasks.start(e.sender.id, req) : { error: "Agent sessions run from the chat window." });
+  ipcMain.handle(IPC.liveSend, (e, sessionId: unknown, text: unknown) =>
+    deps.isChatSender(e.sender) ? deps.liveTasks.send(e.sender.id, sessionId, text) : "Agent sessions run from the chat window.");
+  ipcMain.on(IPC.liveStop, (e, sessionId: unknown) => { if (deps.isChatSender(e.sender)) deps.liveTasks.stop(e.sender.id, sessionId); });
   ipcMain.handle(IPC.availableClis, () => deps.getAvailableClis());
   ipcMain.handle(IPC.detectedClis, () => deps.getDetectedClis());
 

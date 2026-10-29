@@ -5,6 +5,7 @@ import type {
 } from "@bean/core";
 import type { Theme, ComponentKind, DashboardTarget, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
+import type { LiveEvent, LiveStartRequest, LiveStartResult } from "../live-tasks.js";
 import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn } from "../ipc.js";
@@ -19,6 +20,12 @@ declare global {
       delegateStart(req: DelegateStartRequest): Promise<string>;
       delegateCancel(taskId: string): void;
       onDelegateEvent(cb: (e: DelegateEvent) => void): void;
+      /** Start an agent session in this chat window; history is handed over as quoted context. */
+      liveStart(req: LiveStartRequest): Promise<LiveStartResult>;
+      /** Undefined = sent; otherwise why it wasn't (e.g. the next-turn queue is full). */
+      liveSend(sessionId: string, text: string): Promise<string | undefined>;
+      liveStop(sessionId: string): void;
+      onLiveEvent(cb: (e: LiveEvent) => void): void;
       availableClis(): Promise<CliName[]>;
       detectedClis(): Promise<CliName[]>;
       availableModels(): Promise<AvailableModel[]>;
