@@ -2,12 +2,13 @@ import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-sessions.js";
+import { LiveSessionRegistry, startLiveEngine, type LiveSessionSink } from "../src/chatops/live-sessions.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { CODEX_SIGNED_OUT } from "../src/codex-live-session.js";
 import { OPENCODE_SIGNED_OUT } from "../src/opencode-live-session.js";
-import { RESUME_REJECTED, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest } from "../src/live-session.js";
+import { RESUME_REJECTED, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type LiveSessionSpawnFn } from "../src/live-session.js";
+import type { ChildProcess } from "node:child_process";
 
 // killTree's `ps` snapshot (kill-tree.ts): no descendants unless a test sets one.
 const ps = vi.hoisted(() => ({ out: "" }));
@@ -454,6 +455,25 @@ describe("LiveSessionRegistry", () => {
     expect(reg.start({ channelId: "o", projectPath: "/proj", instruction: "go", cli: "opencode", sink: fakeSink().sink })).toBe("started");
     expect(spawned[0]).toMatchObject({ command: "opencode", opts: { stdio: ["ignore", "pipe", "pipe"], env: { PWD: "/proj" } } });
     expect(spawned[0]!.args.slice(0, 4)).toEqual(["run", "--auto", "--format", "json"]);
+  });
+
+  it("startLiveEngine hands an injected spawn to every engine; absent cli = claude", () => {
+    const cbs: LiveSessionCallbacks = { onOutput: () => {}, onTurnStart: () => {}, onTurnComplete: () => {}, onExit: () => {} };
+    for (const [cli, command] of [[undefined, "claude"], ["claude", "claude"], ["codex", "codex"], ["opencode", "opencode"]] as const) {
+      const calls: string[] = [];
+      const children: EventEmitter[] = [];
+      const spawnFn: LiveSessionSpawnFn = (cmd) => {
+        calls.push(cmd);
+        const c = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true });
+        children.push(c);
+        return c as unknown as ChildProcess;
+      };
+      spawned.length = 0;
+      startLiveEngine({ cli, projectPath: "/p", prompt: "go" }, cbs, spawnFn, 60_000);
+      expect(calls, String(cli)).toEqual([command]);
+      expect(spawned).toEqual([]);
+      for (const c of children) c.emit("exit", 0, null);
+    }
   });
 
   it("per-turn CLIs keep the run record on the bot pid; claude moves it to the child", () => {
