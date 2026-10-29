@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
 import { newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
-import { chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, parseSlash } from "./agent-mode.js";
+import { chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent, parseSlash } from "./agent-mode.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { dataUrlToAttachment } from "../../shared/note-images.js";
 import type {
@@ -129,6 +129,8 @@ export function ChatWindow() {
   const setLive = (l: LiveState | undefined): void => { liveRef.current = l; setLiveState(l); };
   // Sessions this window adopted — events from any other (a start abandoned mid-startup) are ignored.
   const knownSessionsRef = useRef(new Set<string>());
+  // Hand-off offers already started (startOffer's claim-once guard).
+  const offersClaimedRef = useRef(new Set<string>());
   const busyRef = useRef(false);
   const queuedSendsRef = useRef<QueuedSend[]>([]);
   const pendingDelegateStartsRef = useRef(new Map<string, Promise<string>>());
@@ -269,6 +271,7 @@ export function ChatWindow() {
         if (res.proposedSkill) next.push({ kind: "skill", id: newId(), skill: res.proposedSkill, state: "pending" });
         if (res.proposedTodo) next.push({ kind: "todo", id: newId(), todo: res.proposedTodo, state: "pending" });
         if (res.proposedDelegate) next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
+        if (res.proposedLiveSession) next.push({ kind: "offer", id: newId(), offer: res.proposedLiveSession, state: "pending" });
         for (const m of res.remembered ?? []) next.push({ kind: "status", id: newId(), text: `🧠 Remembered — ${m.text}`, tone: "done" });
         return next;
       });
@@ -379,6 +382,25 @@ export function ChatWindow() {
     const agent = modeRef.current;
     if (isLiveAgent(agent)) sendToAgent(agent, text);
     else void sendMessage(text, undefined, false, images);
+  };
+
+  // Start on Bean's hand-off offer: the same handoff as `/claude <ask>` (startSession), with the
+  // model's instruction as the ask line. Claimed once — a double click can't start two sessions.
+  const startOffer = (id: string): void => {
+    const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "offer" }> => it.kind === "offer" && it.id === id);
+    const agent = offerAgent(clis);
+    if (!item || item.state !== "pending" || !agent || offersClaimedRef.current.has(id)) return;
+    offersClaimedRef.current.add(id);
+    setItems((prev) => prev.map((it) => (it.id === id && it.kind === "offer" ? { ...it, state: "started" as const } : it)));
+    endSession(AGENT_NAMES[agent]); // an older offer's Start replaces whatever session is running
+    setMode(agent);
+    // Scratch is "" in the window's project state (main maps it back); core sends its real path.
+    rememberProject(projects.some((p) => p.path === item.offer.projectPath) ? item.offer.projectPath : "");
+    void startSession(agent, item.offer.instruction);
+  };
+
+  const dismissOffer = (id: string): void => {
+    setItems((prev) => prev.map((it) => (it.id === id && it.kind === "offer" && it.state === "pending" ? { ...it, state: "dismissed" as const } : it)));
   };
 
   const onLiveEvent = (e: LiveEvent): void => {
@@ -670,6 +692,8 @@ export function ChatWindow() {
         onSkillDismiss={dismissSkill}
         onTodoQueue={(id) => void queueTodo(id)}
         onTodoDismiss={dismissTodo}
+        onOfferStart={startOffer}
+        onOfferDismiss={dismissOffer}
         onDelegateConfirm={(id, edited, model) => void confirmDelegate(id, edited, model)}
         onDelegateDismiss={dismissDelegate}
         onDelegateCancelTask={cancelDelegateTask}

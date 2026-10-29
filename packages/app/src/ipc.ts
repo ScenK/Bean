@@ -215,6 +215,8 @@ export interface ChatHandlerDeps {
   dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
+  /** Offer propose_live_session (the hand-off card) to this chat window — per request, by sender. */
+  liveSessionAvailable?: (senderId: number) => boolean;
   /** Config `webSearch`, read per chat request so a Settings toggle applies without restart. */
   webSearch?: () => boolean;
   /** Its scratch workspace hosts delegates that aren't about a project (main.ts creates it). */
@@ -229,7 +231,7 @@ export interface ChatHandlerDeps {
 }
 
 export function buildChatHandler(deps: ChatHandlerDeps) {
-  return async (req: ChatRequest): Promise<ConverseResult> => {
+  return async (req: ChatRequest, senderId?: number): Promise<ConverseResult> => {
     const [skills, projects, persona, memories, routines] = await Promise.all([
       deps.loadSkills(deps.projectSkillsDir, deps.skillsDir),
       deps.loadProjects(deps.projectsFile),
@@ -273,6 +275,8 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       linkedNote: req.linkedNote,
       delegateAvailable: deps.delegateAvailable?.() ?? false,
       scratchPath: deps.beanDirPath ? scratchDir(deps.beanDirPath) : undefined,
+      liveSessionAvailable: senderId !== undefined && (deps.liveSessionAvailable?.(senderId) ?? false),
+      liveSessionHost: "desktop",
       todoRoutines,
       webSearch: deps.webSearch?.() ?? false,
     });
@@ -919,6 +923,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
+  liveSessionAvailable?: ChatHandlerDeps["liveSessionAvailable"];
   webSearch?: () => boolean;
   imageGen?: ChatHandlerDeps["imageGen"];
   broadcast: (channel: string, payload: unknown) => void;
@@ -967,7 +972,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.chat, async (e, req: ChatRequest) => {
     const end = deps.onChatTurn?.();
     try {
-      const result = await chatHandler(req);
+      const result = await chatHandler(req, e.sender.id);
       end?.(result.error);
       // Fire-and-forget, off the reply path: the reply returns now, the receipt row follows.
       const sender = e.sender;

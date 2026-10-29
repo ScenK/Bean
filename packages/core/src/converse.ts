@@ -442,6 +442,35 @@ function proposeLiveSessionTool(projects: Project[], models: AvailableModel[], l
   };
 }
 
+// The desktop chat's variant: an offer to hand the whole chat window over (agent mode). The
+// renderer picks the engine and hands the recent chat over itself, so no cli/model and the
+// instruction is only the ask line. Project is optional (Bean's scratch workspace), as for delegates.
+function proposeDesktopLiveSessionTool(projects: Project[]): ToolSpec {
+  return {
+    name: "propose_live_session",
+    description:
+      "Offer to hand this chat over to a live coding agent (e.g. Claude Code) working in a project: " +
+      "the recent conversation is handed to it, its work streams into this chat, and the user's " +
+      "next messages go to it until they end the session. Use it for substantial hands-on coding " +
+      "the user will want to follow and steer (building a feature, debugging, a multi-file change) " +
+      "— never for a question you can answer in chat, and for a self-contained background task " +
+      "use propose_delegate instead. Call it directly; the offer card is what the user confirms.",
+    parameters: {
+      type: "object",
+      properties: {
+        ...(projects.length > 0
+          ? { project: { type: "string", enum: projects.map((p) => p.path), description: "the project to work in; omit if none fits" } }
+          : {}),
+        instruction: {
+          type: "string",
+          description: "one short line stating the ask — the conversation itself is handed over separately",
+        },
+      },
+      required: ["instruction"],
+    },
+  };
+}
+
 function catalog(skills: Skill[], projects: Project[]): string {
   const skillList = skills.map((s) => `- ${s.name}: ${s.description}`).join("\n");
   const projectList = projects.map((p) => `- ${p.name} (${p.path})`).join("\n");
@@ -474,6 +503,10 @@ export interface ConverseInput {
   /** Working dir for a delegate with no project; when set, propose_delegate's project is optional. */
   scratchPath?: string;
   liveSessionAvailable?: boolean;
+  /** Who hosts a live session: a chatops channel (default) or the desktop chat window, which
+   * gets its own propose_live_session wording (an offer to hand the chat over). Desktop needs
+   * `scratchPath` when there are no projects. */
+  liveSessionHost?: "channel" | "desktop";
   availableClis?: CliName[];
   models?: AvailableModel[]; // configured models (clis.json) for the propose_delegate enum; [] = no model param offered
   /** false where confirming a run couldn't execute anything (chatops — no desktop, no terminal). */
@@ -520,6 +553,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     delegateAvailable = false,
     scratchPath,
     liveSessionAvailable = false,
+    liveSessionHost = "channel",
     availableClis = [],
     models = [],
     runAvailable = true,
@@ -584,12 +618,15 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   // Live-capable detected CLIs; a caller that didn't pass availableClis means claude (as before).
   const detectedLive = availableClis.filter(isLiveCli);
   const liveClis: LiveCli[] = detectedLive.length > 0 ? detectedLive : ["claude"];
+  const desktopLive = liveSessionHost === "desktop";
   const tools = [
     ...(runnableSkills.length > 0 ? [proposeRunTool(runnableSkills, projects, !runAvailable)] : []),
     ...(delegateOffered
       ? [proposeDelegateTool(skills, projects, availableClis, models, scratchPath !== undefined)]
       : []),
-    ...(liveSessionAvailable && projects.length > 0 ? [proposeLiveSessionTool(projects, models, liveClis)] : []),
+    ...(!liveSessionAvailable ? []
+      : desktopLive ? (projects.length > 0 || scratchPath !== undefined ? [proposeDesktopLiveSessionTool(projects)] : [])
+      : projects.length > 0 ? [proposeLiveSessionTool(projects, models, liveClis)] : []),
     ...(noteAvailable ? [proposeNoteTool(projects, linkedNote)] : []),
     ...(skillAuthoringAvailable ? [proposeSkillTool()] : []),
     ...(noteArchiveAvailable ? [PROPOSE_NOTE_ARCHIVE] : []),
@@ -693,10 +730,16 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     const liveCall = toolCalls.find((c) => c.name === "propose_live_session");
     if (liveCall) {
       const args = (liveCall.args ?? {}) as { project?: unknown; instruction?: unknown; model?: unknown; cli?: unknown };
-      const project = projects.find((p) => p.path === args.project);
-      if (!project || typeof args.instruction !== "string" || !args.instruction.trim()) {
+      // Desktop: same absent-vs-unknown split as propose_delegate (absent = scratch workspace).
+      const projectPath = desktopLive && args.project === undefined
+        ? scratchPath
+        : projects.find((p) => p.path === args.project)?.path;
+      if (!projectPath || typeof args.instruction !== "string" || !args.instruction.trim()) {
         reject(liveCall, "unknown project or empty instruction.");
         continue;
+      }
+      if (desktopLive) {
+        return { reply: content, model: deps.model, proposedLiveSession: { projectPath, instruction: args.instruction.trim() } };
       }
       const cli = isLiveCli(args.cli) && liveClis.includes(args.cli) ? args.cli : undefined;
       // A model is kept only if the CLI that will run it (picked, else the bot's default) offers it.
@@ -705,7 +748,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         reply: content,
         model: deps.model,
         proposedLiveSession: {
-          projectPath: project.path,
+          projectPath,
           instruction: args.instruction,
           ...(cli ? { cli } : {}),
           model: runsOn && models.some((m) => m.id === args.model && m.availableOn.includes(runsOn))

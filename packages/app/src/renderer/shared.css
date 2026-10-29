@@ -335,6 +335,9 @@ button, input, textarea, select, a {
   overflow-x: hidden;
 }
 .bean-card-actions { display: flex; gap: 8px; }
+/* LiveOfferCard: the hand-off question, then the ask line the agent gets. */
+.bean-offer-title { display: flex; align-items: center; gap: 6px; color: var(--bean-text); font-size: 13px; }
+.bean-offer-ask { color: var(--bean-text-dim); font-size: 12px; white-space: pre-wrap; }
 .bean-btn {
   font: 600 12px sans-serif;
   color: var(--bean-accent-ink);

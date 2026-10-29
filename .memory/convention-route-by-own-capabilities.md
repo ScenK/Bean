@@ -17,7 +17,7 @@ The user's own repos, tickets, mail, calendar, team, deployments, and accounts a
 as a *fact* — "never on the public web" — not a prohibition, so the model doesn't search,
 find nothing, and guess; those still hand off (or are declined without a delegate). Flag
 off keeps the old "web or current data → agent" wording byte-for-byte. Any edit to this
-wording must re-run the live guardrails: `converse-web-search.live.test.ts` (skipped
+wording must re-run the live guardrails: `converse-web-search.live.test.ts` (and `converse-live-offer.live.test.ts` for the desktop hand-off offer) (skipped
 without `BEAN_LIVE_OPENAI_KEY`) — the fake-chat unit tests can't see routing behavior.
 
 **Why:** the old rule described the *harness's* job ("project work", "inspect a linked

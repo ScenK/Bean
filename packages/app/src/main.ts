@@ -26,7 +26,7 @@ import {
   addTodo, claimTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   recoverInterruptedTodos, deleteTodosForRoutine, sweepDeadRuns,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  availableModels, pinnedStepSelection,
+  availableModels, pinnedStepSelection, isLiveCli,
   createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, CliName } from "@bean/core";
@@ -883,6 +883,9 @@ app.whenReady().then(async () => {
       liveTasks,
       isChatSender: (sender) => componentWindows.get("chat")?.webContents === sender,
       delegateAvailable: () => enabledClis().length > 0,
+      // A live CLI is enabled and this window has no agent session yet (#478).
+      liveSessionAvailable: (senderId) => componentWindows.get("chat")?.webContents.id === senderId
+        && enabledClis().some(isLiveCli) && !liveTasks.hasSession(senderId),
       webSearch: () => runtime.getWebSearch(),
       onChatTurn: () => {
         const id = `chat:${randomUUID()}`;

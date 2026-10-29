@@ -1,4 +1,4 @@
-import type { LiveCli } from "@bean/core";
+import type { CliName, LiveCli } from "@bean/core";
 import type { HandoffItem, LiveEvent } from "../../../live-tasks.js";
 import type { CloseTurn } from "../../../ipc.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
@@ -16,6 +16,11 @@ export const HANDOFF_ITEMS = 20;
 /** An agent's final, as Bean's history sees it. */
 export const AGENT_FINAL_CHARS = 4000;
 const TAIL_LINES = 30;
+
+/** The engine a hand-off offer starts: Claude Code when it's enabled, else the first enabled live agent. */
+export function offerAgent(enabled: readonly CliName[]): LiveCli | undefined {
+  return enabled.includes("claude") ? "claude" : LIVE_AGENTS.find((a) => enabled.includes(a));
+}
 
 /** `/claude fix X` → { agent: "claude", rest: "fix X" }; a bare alias has rest "". Only the four
  * aliases parse — any other `/text` stays a normal message. Installed-ness is the caller's check. */

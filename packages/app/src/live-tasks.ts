@@ -145,12 +145,19 @@ export function createLiveTasks(deps: LiveTasksDeps) {
     else emit(sessionId, s, { type: "ended", reason: s.stopping ? "stopped" : "ended" });
   };
 
+  // A session that's stopping (End, a switch) is on its way out: the next one may start.
+  const hasSession = (ownerId: number): boolean =>
+    [...sessions.values()].some((s) => s.ownerId === ownerId && !s.stopping);
+
   const stopSession = (s: Session): void => {
     s.stopping = true;
     s.handle?.stop(); // ended() fires from onExit once the process is gone
   };
 
   return {
+    /** Whether this window already has an agent session (Bean then doesn't offer another). */
+    hasSession,
+
     async start(ownerId: number, raw: unknown): Promise<LiveStartResult> {
       const req = raw as Partial<LiveStartRequest> | null;
       if (!req || !isLiveCli(req.agent) || typeof req.projectPath !== "string" || typeof req.ask !== "string") {
@@ -160,8 +167,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (!deps.enabledClis().includes(agent)) return { error: `${LIVE_AGENT_NAMES[agent]} isn't installed or is turned off in Settings.` };
       const handoff = buildHandoff(parseHistory(req.history), req.ask);
       if ("error" in handoff) return handoff;
-      // A session that's stopping (End, a switch) is on its way out: the next one may start.
-      if ([...sessions.values()].some((s) => s.ownerId === ownerId && !s.stopping)) {
+      if (hasSession(ownerId)) {
         return { error: "This chat already has an agent session — end it first." };
       }
       // Registered before any await, so a window close during startup finds it and cancels the spawn.

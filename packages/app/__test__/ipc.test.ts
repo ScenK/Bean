@@ -74,6 +74,37 @@ test("chat handler wires skills/projects/persona into converse", async () => {
   expect(out.proposedRun?.composedPrompt).toContain("BODY");
 });
 
+test("chat handler offers the desktop hand-off only to a sender without a live session", async () => {
+  let toolNames: string[] = [];
+  let description = "";
+  const handler = buildChatHandler({
+    loadSkills: async () => [],
+    loadProjects: async () => [{ name: "api", path: "/work/api" }],
+    loadPersona: async () => ({ name: "Ponyta", tags: [] }),
+    converse: async ({ tools }) => {
+      toolNames = tools.map((t) => t.name);
+      description = tools.find((t) => t.name === "propose_live_session")?.description ?? "";
+      return { content: "ok", toolCalls: [] };
+    },
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills",
+    skillsDir: "/b/skills",
+    projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json",
+    projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [],
+    dbFile: "/b/memory.json",
+    liveSessionAvailable: (senderId) => senderId === 7,
+  });
+  await handler({ history: [], message: "build it" }, 7);
+  expect(toolNames).toContain("propose_live_session");
+  expect(description).toContain("hand this chat over");
+  await handler({ history: [], message: "build it" }, 8);
+  expect(toolNames).not.toContain("propose_live_session");
+  await handler({ history: [], message: "build it" });
+  expect(toolNames).not.toContain("propose_live_session");
+});
+
 test("chat handler forwards req.images to converse and runs generate_image into generatedImages", async () => {
   const { mkdtemp } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");

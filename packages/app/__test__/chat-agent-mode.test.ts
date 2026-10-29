@@ -4,7 +4,7 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { ChatTurn } from "@bean/core";
 import {
-  AGENT_FINAL_CHARS, applyLiveEvent, chatTurns, handoffLines, parseSlash, slashMatches, turnFooter,
+  AGENT_FINAL_CHARS, applyLiveEvent, chatTurns, handoffLines, offerAgent, parseSlash, slashMatches, turnFooter,
 } from "../src/renderer/components/chat/agent-mode.js";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
 import type { ChatItem } from "../src/renderer/shared/chat-types.js";
@@ -22,6 +22,12 @@ describe("agent-mode helpers", () => {
     expect(parseSlash("/claudex")).toBeUndefined();
     expect(parseSlash("/new")).toBeUndefined();
     expect(parseSlash("see /claude")).toBeUndefined();
+  });
+
+  it("an offer starts Claude Code when enabled, else the first enabled live agent", () => {
+    expect(offerAgent(["codex", "claude"])).toBe("claude");
+    expect(offerAgent(["opencode", "codex"])).toBe("codex");
+    expect(offerAgent([])).toBeUndefined();
   });
 
   it("lists only installed agents in the / popover", () => {
@@ -165,6 +171,35 @@ describe("ChatWindow agent mode", () => {
     expect(transcript.some((t) => t.source === "live")).toBe(false);
     expect(transcript.some((t) => t.content.includes("Fixed X") || t.content.includes("fix X") || t.content.includes("add a test"))).toBe(false);
     expect(transcript[0]).toMatchObject({ role: "user", content: "hi bean", source: "typed" });
+  });
+
+  it("Bean's hand-off offer: Start runs the /claude handoff once with the ask line; Not now leaves Bean in charge", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    const offer = { reply: "This needs hands-on work.", model: "m", proposedLiveSession: { projectPath: "/scratch-abs", instruction: "Add OAuth login" } };
+
+    bean.chat!.mockResolvedValueOnce(offer);
+    await send("build oauth login for me");
+    expect(root.textContent).toContain("This looks like a job for Claude Code in scratch. Hand over this chat?");
+    await click("Not now");
+    expect(bean.liveStart).not.toHaveBeenCalled();
+    await send("thanks");
+    expect(chatCalls().at(-1)).toMatchObject({ message: "thanks", source: "typed" });
+
+    bean.chat!.mockResolvedValueOnce(offer);
+    await send("ok, let's do it");
+    const start = [...root.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Start").at(-1)!;
+    await act(async () => { start.click(); start.click(); });
+    await flush();
+    expect(bean.liveStart).toHaveBeenCalledTimes(1);
+    // Same deterministic handoff as /claude: the transcript so far, then the model's ask line.
+    // A project Bean doesn't know (core's scratch path) maps to the window's "" scratch.
+    expect(bean.liveStart).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude", projectPath: "", ask: "Add OAuth login" }));
+    expect(bean.liveStart!.mock.calls[0]![0].history.map((h: { text: string }) => h.text))
+      .toEqual(["build oauth login for me", "This needs hands-on work.", "thanks", "ok", "ok, let's do it", "This needs hands-on work."]);
+    await live({ type: "started", projectPath: "/scratch", handedOver: 6 });
+    await send("use GitHub as the provider");
+    expect(bean.liveSend).toHaveBeenCalledWith("s1", "use GitHub as the provider");
   });
 
   it("closing mid-session asks first, then ends the session and closes", async () => {

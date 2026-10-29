@@ -220,3 +220,11 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
     check, so a switch doesn't wait for the old process to exit.
   - Project: `""` = scratch (main maps it via `scratchPath`); the window's last used project
     (chip pick, confirmed delegate/terminal run) — never `projects[0]`.
+- Hand-off offer (#478): desktop passes `liveSessionAvailable` per request **by sender** (chat
+  window, a live CLI enabled, `liveTasks.hasSession(id)` false) plus `liveSessionHost: "desktop"`,
+  which swaps in `proposeDesktopLiveSessionTool` (offer wording, no cli/model, project optional =
+  `scratchPath`). The chatops channel tool and its tests are untouched. The renderer shows an
+  `offer` item (`LiveOfferCard`); Start = `startOffer` → the same `startSession` handoff as
+  `/claude <ask>` with the model's instruction as the ask, engine = `offerAgent(clis)` (claude
+  first), claimed once via `offersClaimedRef`; an unknown project path (core's scratch) maps to
+  `""`. Wording edits: re-run `converse-live-offer.live.test.ts`.
