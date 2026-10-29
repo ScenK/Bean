@@ -43,6 +43,7 @@ test("persona: a long memory list scrolls within the panel", async () => {
     text: `seed fact ${i}`,
     createdAt: "2026-08-01T00:00:00.000Z",
     ...(i >= 30 ? { projectPath: home.projectPath } : {}),
+    ...(i === 5 ? { subjectId: "discord:alice" } : {}),
   }));
   await appendMemories(dbFile(join(home.homeDir, ".bean")), memories);
   const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
@@ -73,6 +74,12 @@ test("persona: a long memory list scrolls within the panel", async () => {
     });
     expect(inView).toBe(true);
     expect(await persona.locator(".bean-dashboard").evaluate((el) => el.scrollTop)).toBe(0);
+
+    // #464: each row shows its saved date, private rows a lock; search filters rows across groups.
+    await expect(persona.locator(".bean-memory-date").first()).toContainText("2026");
+    await expect(persona.locator(".bean-memory-private")).toHaveCount(1);
+    await persona.locator(".bean-memory-search").fill("FACT 5");
+    await expect(persona.locator(".bean-memory-input")).toHaveCount(11); // 5 and 50–59
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }

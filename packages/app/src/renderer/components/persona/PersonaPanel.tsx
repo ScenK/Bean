@@ -21,6 +21,7 @@ export function PersonaPanel() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [memError, setMemError] = useState<string | undefined>(undefined);
+  const [query, setQuery] = useState("");
   const [batch, setBatch] = useState<MemoryBatch | undefined>(undefined);
   const [dream, setDream] = useState<DreamDigest | undefined>(undefined);
   const [dreamDetails, setDreamDetails] = useState<{ before: string[]; after?: string }[] | undefined>(undefined);
@@ -99,6 +100,7 @@ export function PersonaPanel() {
   const addMemory = (projectPath?: string): void => {
     const entry: Memory = { id: crypto.randomUUID(), text: "", projectPath, createdAt: new Date().toISOString() };
     setMemories((prev) => [...prev, entry]);
+    setQuery(""); // the new row is empty — a live filter would hide it
     void run(() => window.bean.appendMemories([entry]));
   };
   const undoBatch = (): void => {
@@ -122,9 +124,11 @@ export function PersonaPanel() {
       .filter(Boolean).join(", ")
     : "";
 
+  const needle = query.trim().toLowerCase();
+  const shown = needle ? memories.filter((m) => m.text.toLowerCase().includes(needle)) : memories;
   const batchIds = new Set(batch?.ids ?? []);
-  const justRemembered = memories.filter((m) => batchIds.has(m.id));
-  const rest = memories.filter((m) => !batchIds.has(m.id));
+  const justRemembered = shown.filter((m) => batchIds.has(m.id));
+  const rest = shown.filter((m) => !batchIds.has(m.id));
   const row = (m: Memory) => (
     <div key={m.id} class="bean-memory-item">
       <input
@@ -133,6 +137,10 @@ export function PersonaPanel() {
         onInput={(e) => editMemory(m.id, (e.target as HTMLInputElement).value)}
         onBlur={() => commitMemory(m)}
       />
+      {m.subjectId ? <span class="bean-memory-private" title="Private to one chat member" aria-label="Private">🔒</span> : null}
+      <span class="bean-memory-date" title={new Date(m.createdAt).toLocaleString()}>
+        {new Date(m.createdAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
+      </span>
       <button type="button" class="bean-memory-del" onClick={() => deleteMemory(m.id)} aria-label="Delete">×</button>
     </div>
   );
@@ -194,6 +202,14 @@ export function PersonaPanel() {
 
       <div class="bean-persona-label">MEMORY</div>
       {memError ? <div class="bean-persona-error">Save failed: {memError}</div> : null}
+      <input
+        type="search"
+        class="bean-input bean-input--boxed bean-memory-search"
+        placeholder="Search memories"
+        aria-label="Search memories"
+        value={query}
+        onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
+      />
 
       {batch && justRemembered.length > 0 ? (
         <div class="bean-memory-just" ref={justRef}>
@@ -229,7 +245,7 @@ export function PersonaPanel() {
 
       <div class="bean-memory-group-label">About you</div>
       {rest.filter((m) => !m.projectPath).length === 0 ? (
-        <div class="bean-memory-empty">Nothing yet.</div>
+        <div class="bean-memory-empty">{needle ? "No matches." : "Nothing yet."}</div>
       ) : (
         rest.filter((m) => !m.projectPath).map(row)
       )}
