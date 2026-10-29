@@ -504,6 +504,7 @@ function memoryHandlersFor(over: Partial<Parameters<typeof buildMemoryHandlers>[
   const appended: Memory[][] = [];
   const deleted: string[][] = [];
   const batches: Memory[][] = [];
+  let failures = 0;
   const existing: Memory[] = [{ id: "1", text: "prefers pnpm", createdAt: "2026-07-03T00:00:00.000Z" }];
   const handlers = buildMemoryHandlers({
     loadMemories: async () => existing,
@@ -520,6 +521,7 @@ function memoryHandlersFor(over: Partial<Parameters<typeof buildMemoryHandlers>[
     getModel: () => "m",
     autoMemory: () => true,
     onMemoryBatch: (b) => { batches.push(b); },
+    onMemoryFailure: () => { failures++; },
     getLastDream: async () => undefined,
     restoreDreamRun: async () => ({ restored: 0, skipped: 0 }),
     dreamDetails: async () => [],
@@ -527,7 +529,7 @@ function memoryHandlersFor(over: Partial<Parameters<typeof buildMemoryHandlers>[
     projectsFile: "/b/projects.json",
     ...over,
   });
-  return { handlers, appended, deleted, batches, existing };
+  return { handlers, appended, deleted, batches, existing, failures: () => failures };
 }
 
 const typed: ChatTurn[] = [{ role: "user", content: "I prefer pnpm", source: "typed" }];
@@ -547,19 +549,22 @@ test("rememberOnClose extracts and appends in the background, then Undo deletes 
 
 test("an incognito chat writes nothing and never calls extraction", async () => {
   let extracted = false;
-  const { handlers, appended, batches } = memoryHandlersFor({ extractMemories: async () => { extracted = true; return { candidates: [], rejected: 0, failed: false }; } });
+  const { handlers, appended, batches, failures } = memoryHandlersFor({ extractMemories: async () => { extracted = true; return { candidates: [], rejected: 0, failed: true }; } });
   expect(await handlers.rememberOnClose(typed, { incognito: true })).toEqual([]);
   expect(extracted).toBe(false);
   expect(appended).toEqual([]);
   expect(batches).toEqual([]);
+  expect(failures()).toBe(0);
 });
 
 test("autoMemory off means no background extraction", async () => {
   let extracted = false;
-  const { handlers, appended } = memoryHandlersFor({ autoMemory: () => false, extractMemories: async () => { extracted = true; return { candidates: [], rejected: 0, failed: false }; } });
+  const { handlers, appended, batches, failures } = memoryHandlersFor({ autoMemory: () => false, extractMemories: async () => { extracted = true; return { candidates: [], rejected: 0, failed: true }; } });
   expect(await handlers.rememberOnClose(typed, {})).toEqual([]);
   expect(extracted).toBe(false);
   expect(appended).toEqual([]);
+  expect(batches).toEqual([]);
+  expect(failures()).toBe(0);
 });
 
 test("Undo last dream restores the recorded run once; an undone or absent run is a no-op", async () => {
@@ -579,8 +584,25 @@ test("Undo last dream restores the recorded run once; an undone or absent run is
 });
 
 test("no candidates means no batch and no bubble", async () => {
-  const { handlers, batches } = memoryHandlersFor({ extractMemories: async () => ({ candidates: [], rejected: 0, failed: false }) });
+  const { handlers, batches, failures } = memoryHandlersFor({ extractMemories: async () => ({ candidates: [], rejected: 2, failed: false }) });
   expect(await handlers.rememberOnClose(typed, {})).toEqual([]);
+  expect(batches).toEqual([]);
+  expect(failures()).toBe(0);
+  expect(handlers.batch()).toBeUndefined();
+});
+
+test("a failed extraction model call raises exactly one failure bubble", async () => {
+  const { handlers, appended, batches, failures } = memoryHandlersFor({ extractMemories: async () => ({ candidates: [], rejected: 0, failed: true }) });
+  await expect(handlers.rememberOnClose(typed, {})).rejects.toThrow(/extraction/);
+  expect(failures()).toBe(1);
+  expect(appended).toEqual([]);
+  expect(batches).toEqual([]);
+});
+
+test("a store failure raises exactly one failure bubble and leaves no Undo batch", async () => {
+  const { handlers, batches, failures } = memoryHandlersFor({ appendMemories: async () => { throw new Error("SQLITE_BUSY"); } });
+  await expect(handlers.rememberOnClose(typed, {})).rejects.toThrow("SQLITE_BUSY");
+  expect(failures()).toBe(1);
   expect(batches).toEqual([]);
   expect(handlers.batch()).toBeUndefined();
 });

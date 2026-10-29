@@ -786,6 +786,7 @@ app.whenReady().then(async () => {
           }
         })().catch((err) => console.error("memory bubble/dream failed:", err));
       },
+      onMemoryFailure: () => taskStatus.error("memory:error", { kind: "memory", name: "Memory", line: "Couldn't update memory" }),
       loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage,
       dbFile: dbFile(dir),
       chat: runtime.chat,

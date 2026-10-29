@@ -16,6 +16,9 @@ see `db.ts`'s `migrateFromFiles`.
   Persona (never undoes — its old click meaning was dismiss). Persona's **Just remembered · Undo**
   deletes exactly that batch's ids; the Undo window lasts until the next batch or app restart.
   A one-shot `auto-memory-notice.json` flag (userData) makes the first bubble explain itself.
+  A broken save (`failed`, or any load/store rejection) raises a sticky `memory:error` bubble
+  ("Couldn't update memory") via `onMemoryFailure`; nothing worth saving shows no bubble. Logs
+  carry the rejected *count* only, never fact text.
   Config `autoMemory` (default true; Settings → Memory) off = explicit remember/forget only.
   The per-window `🕶` chip (incognito) makes a chat write nothing.
 - **Trust boundary:** `ChatTurn.source` is recorded when a turn arrives; only `role: "user"` +
@@ -29,7 +32,7 @@ see `db.ts`'s `migrateFromFiles`.
   *widened to its clause* in the source, so a cropped quote can't shed a negation. Instruction-
   (EN + CJK/Korean cues), secret-, Bean-subject, >300-char, and mostly-link/code quotes are
   rejected in code. `extractMemories` returns `{ candidates, rejected, failed }` (rejected =
-  validation rejects, failed = model call threw); callers read `candidates` only so far.
+  validation rejects, failed = model call threw); desktop `rememberOnClose` acts on all three.
   The recall block frames memories as data and tags them `[id]`.
 - **Explicit remember/forget:** `makeMemoryTools()` → direct `remember` + `forget_memory` action
   tools, offered only on a typed turn (`ChatRequest.source === "typed"` on desktop). Desktop
