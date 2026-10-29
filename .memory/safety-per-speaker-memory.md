@@ -2,7 +2,8 @@
 
 `memories.subject_id` (nullable, added via [convention-bean-db-column-additions](convention-bean-db-column-additions.md))
 is the chatops speaker's platform id a fact is private to; NULL = household-shared, so every
-pre-#281 row and every desktop/auto-memory save is shared.
+pre-#281 row and every desktop save (auto or Persona) is shared. Chatops DM auto-capture (#462)
+is always private to the speaker.
 
 - **Recall is filtered in SQL before ranking** — `loadMemories(file, subject)`: absent = all rows
   (desktop + Persona: the owner's own machine, unchanged), `null` = shared only (channels and

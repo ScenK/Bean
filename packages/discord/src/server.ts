@@ -121,6 +121,8 @@ const bot = buildTeamsBot({
   reminders: { file: remindersFile(dir), transport: "discord" },
   systemControlsEnabled: () => beanConfig.systemControls,
   webSearchEnabled: () => beanConfig.webSearch,
+  // Re-read per DM so a Settings toggle applies without a restart; unreadable config = off.
+  autoMemoryEnabled: () => loadConfig(configFile(dir), dir).then((c) => c.autoMemory, () => false),
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
   roles,
   chatter: makeChatter({ dbPath: dbFile(dir), surface: "discord" }),

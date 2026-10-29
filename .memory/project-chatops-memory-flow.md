@@ -1,7 +1,20 @@
 # chatops memory
 
-Teams/Discord bots remember only on an explicit ask (background extraction there is deferred
-to #178 — group channels mix several people's words, and chatops has no "conversation end").
+Teams/Discord bots remember on an explicit ask anywhere, and automatically in DMs only (#462).
+Channels never auto-capture — they mix several people's words.
+
+- **DM auto-capture** (`captureDm` in `bot.ts`): after a DM reply, core's per-turn
+  `extractMemories(..., { latestTurn: true })` runs on the speaker's `typedText` only (the audio
+  transcript is never the citable turn; prior history rides along as non-citable context). Gated
+  by `can(role, "memory")` (so guests, even with `allowGuestDms`, never capture), a non-failed
+  turn, and a turn that used neither `remember` nor `forget_memory` (a "forget that I live in X"
+  turn must not re-save X). Rows are saved with `subjectId` = speaker (always private) and each
+  gets the normal `rememberedCard` (Forget + Share). Captures run on one serialized chain so each
+  sees the last one's rows; `onMessage`'s `finally` awaits it because Teams' `postCard` rides the
+  turn's `context`, which is revoked once the handler returns — don't detach it.
+- Config `autoMemory` gates DM capture only (explicit tools stay on): `deps.autoMemoryEnabled`,
+  which each server wires to a per-turn `loadConfig` re-read (unreadable = off), so a Settings
+  toggle applies without restarting the bot.
 
 - `bot.ts` builds `makeMemoryTools()` (core `memory/tools.ts`) per converse turn with
   `latestUserText: msg.text` — the addressed person's own typed text is the only citable source.
