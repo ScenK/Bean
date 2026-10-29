@@ -20,6 +20,12 @@
   --bean-orb-glow: oklch(0.74 0.15 52 / 0.5);
   --bean-orb-check: oklch(0.62 0.13 150 / 0.55);
   --bean-orb-check-ink: oklch(0.48 0.13 150); /* 4.6:1 on --bean-bg */
+  /* Agent mascot fills (AgentAvatar) — graphics, 3:1 on every surface; the mascot's features are
+     drawn in --bean-surface, so the same ratio holds inside the body. */
+  --bean-agent-bean: oklch(0.56 0.14 52);
+  --bean-agent-claude: oklch(0.56 0.15 33);
+  --bean-agent-codex: oklch(0.53 0.12 152);
+  --bean-agent-opencode: oklch(0.53 0.14 285);
 }
 
 :root[data-theme="graphite"] {
@@ -42,6 +48,10 @@
   --bean-orb-glow: oklch(0.7 0.14 240 / 0.5);
   --bean-orb-check: oklch(0.76 0.12 160 / 0.55);
   --bean-orb-check-ink: oklch(0.8 0.12 160);
+  --bean-agent-bean: oklch(0.8 0.12 62);
+  --bean-agent-claude: oklch(0.74 0.13 35);
+  --bean-agent-codex: oklch(0.78 0.14 152);
+  --bean-agent-opencode: oklch(0.74 0.12 285);
 }
 
 html, body {

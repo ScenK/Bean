@@ -6,7 +6,9 @@ Renderer colors that land on a surface or on an accent fill go through a `--bean
 - text tokens (`--bean-text`, `--bean-text-dim`, `--bean-accent-text`, `--bean-link`,
   `--bean-error`, `--bean-orb-check-ink`) — **4.5:1 against all three surfaces** (`--bean-bg`, `--bean-surface`,
   `--bean-surface-2`), because panels put the same text on all of them;
-- graphic tokens (`--bean-star`, `--bean-control-border`) — **3:1** (WCAG 1.4.11);
+- graphic tokens (`--bean-star`, `--bean-control-border`, the `--bean-agent-*` mascot fills) — **3:1**
+  (WCAG 1.4.11). `AgentAvatar` draws each mascot's features in `--bean-surface`, so that same
+  check also keeps eyes/prompt 3:1 against the body — keep features on that token;
 - `--bean-accent-ink` on an `--bean-accent` fill — 4.5:1 (buttons, selected rows, chips).
 
 The accent is **three tokens with three jobs**, and mixing them is the mistake to avoid:
