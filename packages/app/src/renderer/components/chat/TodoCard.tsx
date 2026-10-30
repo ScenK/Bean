@@ -10,7 +10,7 @@ export function TodoCard({
   onDismiss,
 }: {
   todo: ProposedTodo;
-  state: "pending" | "queued" | "dismissed";
+  state: "pending" | "queued" | "dismissed" | "expired";
   onQueue: () => void;
   onDismiss: () => void;
 }) {
@@ -27,7 +27,7 @@ export function TodoCard({
           {state === "queued" ? "Queued" : "Queue"}
         </button>
         <button type="button" class="bean-btn bean-btn--ghost" disabled={done} onClick={onDismiss}>
-          {state === "dismissed" ? "Dismissed" : "Dismiss"}
+          {state === "dismissed" ? "Dismissed" : state === "expired" ? "Expired" : "Dismiss"}
         </button>
       </div>
     </div>

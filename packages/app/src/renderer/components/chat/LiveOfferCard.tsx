@@ -14,7 +14,7 @@ export function LiveOfferCard({
   offer: ProposedLiveSession;
   agent?: LiveCli;
   projectName: string;
-  state: "pending" | "started" | "dismissed";
+  state: "pending" | "started" | "dismissed" | "expired";
   onStart: () => void;
   onDismiss: () => void;
 }) {
@@ -37,7 +37,7 @@ export function LiveOfferCard({
           {state === "started" ? "Started" : "Start"}
         </button>
         <button type="button" class="bean-btn bean-btn--ghost" disabled={done} onClick={onDismiss}>
-          Not now
+          {state === "expired" ? "Expired" : "Not now"}
         </button>
       </div>
     </div>

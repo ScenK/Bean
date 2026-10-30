@@ -4,6 +4,7 @@ import { newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
+import { normalizeForSave, restoreItems, threadTitle } from "./chat-thread.js";
 import { composePrompt } from "@bean/core/prompt";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { dataUrlToAttachment } from "../../shared/note-images.js";
@@ -19,7 +20,13 @@ import type { CloseTurn, InterruptedRunNotice } from "../../../ipc.js";
 type CloseFlow = { stage: "delegates" } | null;
 
 // Transcript handed to rememberOnClose — see chatTurns (live steering and agent finals stay out).
-export const closeTranscript = (items: ChatItem[]): CloseTurn[] => chatTurns(items, { memory: true });
+// Nothing typed since this window loaded = nothing new to remember (a restored chat's turns were
+// covered when it first closed), so no extraction call at all.
+export const closeTranscript = (items: ChatItem[], typedSinceLoad: boolean): CloseTurn[] =>
+  typedSinceLoad ? chatTurns(items, { memory: true }) : [];
+
+/** Desktop chat history: a change is written at most this long after it lands. */
+export const THREAD_SAVE_MS = 1000;
 
 /** The window's agent session. `key` tells a start apart from a later one; `sessionId` arrives with
  * the `started` event (or liveStart's result); texts typed before it are `queued`. `continuing` =
@@ -107,7 +114,25 @@ export function ChatWindow() {
     incognitoRef.current = on;
     window.bean.setChatIncognito(on);
     setIncognito(on);
+    // Main deletes the saved thread and latches the window unsavable; mirrored here so no save is
+    // even attempted. Sticky — toggling back off doesn't resume history.
+    if (on && !unsavableRef.current) {
+      unsavableRef.current = true;
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = undefined;
+      addStatus("Removed from history. Nothing in this chat will be saved.", "info");
+    }
   };
+  // Desktop chat history (chat-thread.ts). `threadRef` is assigned on the first composer input (or
+  // by a restore); `savedRef` is the last written snapshot — a restore's is the baseline, so only a
+  // real change writes and viewing a chat never bumps it. `flushRef` = write on the next render.
+  const threadRef = useRef<{ id: string; title: string } | undefined>(undefined);
+  const unsavableRef = useRef(false);
+  const savedRef = useRef<string | undefined>(undefined);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const flushRef = useRef(false);
+  const savingRef = useRef<Promise<void>>(Promise.resolve());
+  const typedSinceLoadRef = useRef(false);
   // Facts undone from a "Memory updated" row — handed to close catch-up so it won't re-save them.
   const rejectedMemoriesRef = useRef<string[]>([]);
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
@@ -167,6 +192,31 @@ export function ChatWindow() {
   const sendRef = useRef<(text: string, display?: string, queueIfBusy?: boolean, images?: ImageAttachment[], source?: TurnSource) => Promise<void>>(async () => {});
   const liveEventRef = useRef<(e: LiveEvent) => void>(() => {});
 
+  const snapshot = (): string => JSON.stringify([normalizeForSave(itemsRef.current), linkedNoteRef.current?.slug ?? null]);
+  // Writes run one at a time, in order; a failed one is retried by the next change.
+  const saveThread = (): Promise<void> => {
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = undefined;
+    const t = threadRef.current;
+    if (!t || unsavableRef.current) return savingRef.current;
+    const snap = snapshot();
+    if (snap === savedRef.current) return savingRef.current;
+    savedRef.current = snap;
+    const [items, noteSlug] = JSON.parse(snap) as [ChatItem[], string | null];
+    savingRef.current = savingRef.current
+      .then(() => window.bean.chatThreadSave({ id: t.id, title: t.title, items, ...(noteSlug ? { noteSlug } : {}) }))
+      .then(() => {}, (err: unknown) => {
+        if (savedRef.current === snap) savedRef.current = undefined;
+        console.error("chat history save failed:", err);
+      });
+    return savingRef.current;
+  };
+  useEffect(() => {
+    if (!threadRef.current || unsavableRef.current) return;
+    if (flushRef.current) { flushRef.current = false; void saveThread(); return; }
+    saveTimerRef.current ??= setTimeout(() => void saveThread(), THREAD_SAVE_MS);
+  }, [items, linkedNote]);
+
   useEffect(() => {
     const setTheme = (theme: string): void => {
       document.documentElement.dataset.theme = theme;
@@ -199,6 +249,25 @@ export function ChatWindow() {
         await sendRef.current(p.prompt, `▶ ${p.label}`, false, undefined, "skill");
       })();
     };
+    // A thread picked from history: restored inert (chat-thread.ts), its snapshot the baseline. The
+    // linked-note chip comes back only if that note still exists.
+    window.bean.getPendingChatThread().then(async (t) => {
+      if (!t) return;
+      if ("missing" in t) {
+        addStatus("That chat is no longer in history — it was deleted, or not opened for 90 days.", "info");
+        return;
+      }
+      const note = t.noteSlug ? (await window.bean.listNotes().catch(() => [])).find((n) => n.slug === t.noteSlug) : undefined;
+      if (note) {
+        const linked = { slug: note.slug, title: note.title, version: note.version, body: note.body };
+        linkedNoteRef.current = linked;
+        setLinkedNote(linked);
+      }
+      threadRef.current = { id: t.id, title: t.title };
+      itemsRef.current = [...restoreItems(t.items), ...itemsRef.current];
+      savedRef.current = snapshot();
+      setItems(itemsRef.current);
+    }, () => {});
     window.bean.getPendingChatPrompt().then((p) => { if (p) runPrompt(p); });
     window.bean.onChatPrompt(runPrompt);
     // A delegate run that was still going when Bean last quit gets reported here — pull +
@@ -228,7 +297,7 @@ export function ChatWindow() {
         setCloseFlow({ stage: "delegates" });
         return;
       }
-      closeNow();
+      void closeNow();
     });
   }, []);
 
@@ -297,6 +366,7 @@ export function ChatWindow() {
         for (const m of res.remembered ?? []) next.push({ kind: "status", id: newId(), text: `🧠 Remembered — ${m.text}`, tone: "done" });
         return next;
       });
+      flushRef.current = true;
       setStatus("idle");
     } catch {
       setItems((prev) => [...prev.filter((it) => it.id !== workingId), { kind: "status", id: newId(), text: "Failed to reach Bean.", tone: "error" }]);
@@ -415,6 +485,8 @@ export function ChatWindow() {
   // Commands parse here only — replies, streamed agent text, loopbacks and skill prompts never
   // pass through this path.
   const onComposerSend = (raw: string, images?: ImageAttachment[]): void => {
+    typedSinceLoadRef.current = true;
+    if (!threadRef.current && !unsavableRef.current) threadRef.current = { id: crypto.randomUUID(), title: threadTitle(raw) };
     let text = raw;
     const slash = resolveSlash(raw, modeRef.current, { agents: clis.filter(isLiveAgent), skills, sprouts });
     if (slash?.kind === "ambiguous" || slash?.kind === "unknown") {
@@ -510,6 +582,7 @@ export function ChatWindow() {
       setLive({ ...l, sessionId: e.sessionId });
     }
     if (!knownSessionsRef.current.has(e.sessionId)) return;
+    if (e.type === "turn" || e.type === "ended") flushRef.current = true;
     setItems((prev) => applyLiveEvent(prev, e, newId));
     // Rows and mode changes only for the current session; a late event from an ended one just
     // closes its bubbles.
@@ -725,16 +798,19 @@ export function ChatWindow() {
         if (taskId === e.taskId) delegateTaskIdsRef.current.delete(id);
       }
       pendingDelegateEventsRef.current.delete(e.taskId);
+      flushRef.current = true;
     }
     setItems((prev) => applyDelegateEventToItems(prev, e).items);
     if (loopback) void sendRef.current(loopback.text, loopback.display, true, undefined, loopback.source);
   };
 
-  // Hand the transcript to main (fire-and-forget) and close immediately — no review card.
-  // Main extracts in the background; Undo lives in Persona via the avatar bubble.
-  const closeNow = (): void => {
+  // Write the thread one last time (main re-checks the incognito latch), hand the transcript to
+  // main (fire-and-forget) and close — no review card. Main extracts in the background; Undo lives
+  // in Persona via the avatar bubble.
+  const closeNow = async (): Promise<void> => {
     setCloseFlow(null);
-    const transcript = closeTranscript(itemsRef.current);
+    await saveThread();
+    const transcript = closeTranscript(itemsRef.current, typedSinceLoadRef.current);
     if (transcript.length > 0) {
       window.bean.rememberOnClose(transcript, { incognito: incognitoRef.current, rejected: rejectedMemoriesRef.current });
     }
@@ -761,7 +837,7 @@ export function ChatWindow() {
     // The session dies with the window anyway (main's stopOwner); stopping now is just sooner, and
     // leaves its Continue live row in the transcript.
     endSession();
-    closeNow();
+    await closeNow();
   };
 
   const delegatesRunning = closeFlow ? hasActiveDelegates(items, pendingDelegateStartsRef.current.size) : false;

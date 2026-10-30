@@ -124,6 +124,10 @@ export const IPC = {
   memoryUpdated: "bean:memory-updated",
   // chat window → main: its 🕶 chip changed (gates per-turn capture already in flight).
   chatIncognito: "bean:chat-incognito",
+  // chat window → main: write-through of its transcript (desktop chat history), and the thread a
+  // fresh chat window restores (pulled on mount).
+  chatThreadSave: "bean:chat-thread-save",
+  getPendingChatThread: "bean:get-pending-chat-thread",
   getMemoryBatch: "bean:get-memory-batch",
   undoMemoryBatch: "bean:undo-memory-batch",
   getLastDream: "bean:get-last-dream",

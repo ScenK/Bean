@@ -8,7 +8,7 @@ import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
 import type { LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult } from "../live-tasks.js";
 import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
-import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn } from "../ipc.js";
+import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "../ipc.js";
 import type { RoutineBuildView } from "../routine-builder.js";
 import type { WatchCheckResult } from "@bean/core";
 
@@ -127,6 +127,10 @@ declare global {
       /** Fire-and-forget at chat close: main extracts + saves in the background. */
       rememberOnClose(transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[] }): void;
       setChatIncognito(on: boolean): void;
+      /** Write-through of this chat's transcript; undefined = refused (the window went incognito). */
+      chatThreadSave(req: ChatThreadSaveRequest): Promise<ChatThreadAck | undefined>;
+      /** The saved thread this fresh chat window restores, if one was picked. */
+      getPendingChatThread(): Promise<PendingChatThread | undefined>;
       onMemoryUpdated(cb: (saved: Array<{ id: string; text: string }>) => void): void;
       getMemoryBatch(): Promise<MemoryBatch | undefined>;
       undoMemoryBatch(): Promise<number>;
