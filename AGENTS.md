@@ -140,7 +140,7 @@ call paths and signatures.
   rationale: [`.memory/convention-core-is-electron-free.md`](.memory/convention-core-is-electron-free.md)).
   Import from `@bean/core` (`index.ts` re-exports everything), not deep paths.
   - `openai-chat.ts` is the only place the `openai` SDK is touched; everything else takes a
-    `deps.chat` function, so tests inject a fake (`makeOpenAIChatWithClient`).
+    `deps.chat` function, so tests inject a fake (`makeOpenAIConverseWithClient`).
   - Three ways to run a CLI: `launcher.ts` is fire-and-forget into Terminal.app (Bean never sees
     the output); `delegate.ts` is a tracked one-shot (stream, collect, cancel the process group);
     `live-session.ts` / `turn-live-session.ts` are multi-turn live sessions (agent mode in the

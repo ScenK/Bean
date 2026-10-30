@@ -37,8 +37,8 @@ migration, not a bug. `/v1/responses` accepts every effort with tools.
   `function:`), images are `input_image` with a bare `image_url` string, an assistant turn with
   N tool calls expands to N sibling `function_call` items, and the id to echo back is
   `call_id`, not the item's `id` (`fc_…`).
-- `makeOpenAIChat` (the `route()` path, no longer called by any renderer code) deliberately
-  stays on chat.completions. It sends no tools, so nothing forced it to move.
+- Bean no longer has a chat.completions client: the old one-shot `route()` path was
+  deleted (#524). Don't reintroduce a second client.
 
 **The bug this port introduced and how it's guarded:** a dynamic tool enum that comes out empty
 (`enum: []` — no projects configured, no todo routines, no CLIs detected) makes /v1/responses

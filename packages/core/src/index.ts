@@ -24,7 +24,6 @@ export * from "./models.js";
 export * from "./cli-models.js";
 export * from "./model-memory.js";
 export * from "./web-page.js";
-export * from "./router.js";
 export * from "./converse.js";
 export * from "./openai-chat.js";
 export * from "./launcher.js";

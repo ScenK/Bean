@@ -1,29 +1,6 @@
 import OpenAI from "openai";
-import type { ChatMsg, RouterDeps } from "./router.js";
 import type { ConverseDeps, ConvoMsg, ToolCall } from "./converse.js";
 import type { ImageGenDeps } from "./image-gen.js";
-
-interface ChatClient {
-  chat: {
-    completions: {
-      create: (args: { model: string; messages: ChatMsg[] }) => Promise<{
-        choices: Array<{ message?: { content?: string | null } }>;
-      }>;
-    };
-  };
-}
-
-export function makeOpenAIChatWithClient(client: ChatClient): RouterDeps["chat"] {
-  return async ({ model, messages }) => {
-    const res = await client.chat.completions.create({ model, messages });
-    return res.choices[0]?.message?.content ?? "";
-  };
-}
-
-export function makeOpenAIChat(apiKey: string): RouterDeps["chat"] {
-  const client = new OpenAI({ apiKey }) as unknown as ChatClient;
-  return makeOpenAIChatWithClient(client);
-}
 
 // Bean's brain talks to /v1/responses, NOT /v1/chat/completions. OpenAI rejects function
 // tools combined with any reasoning effort other than "none" on chat.completions for

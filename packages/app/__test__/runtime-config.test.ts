@@ -6,52 +6,49 @@ type RuntimeUpdate = Parameters<RuntimeConfig["apply"]>[0];
 
 test("apply saves config and rebuilds clients with the new key", async () => {
   const saved: RuntimeUpdate[] = [];
-  const madeChat: string[] = [];
+  const madeConverse: string[] = [];
   const rt = createRuntimeConfig(
     { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },
     {
-      makeChat: (k) => { madeChat.push(k); return (async () => "chat:" + k) as never; },
-      makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
+      makeConverse: (k) => { madeConverse.push(k); return (async () => ({ content: "", toolCalls: [] })) as never; },
       saveConfigFile: async (u) => { saved.push(u); },
     },
   );
 
   expect(rt.getModel()).toBe("gpt-4o-mini");
   expect(rt.getApiKey()).toBe("sk-old");
-  expect(madeChat).toEqual(["sk-old"]);
+  expect(madeConverse).toEqual(["sk-old"]);
 
   await rt.apply({ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] });
 
   expect(saved).toEqual([{ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] }]);
   expect(rt.getModel()).toBe("gpt-5");
   expect(rt.getApiKey()).toBe("sk-new");
-  expect(madeChat).toEqual(["sk-old", "sk-new"]);
+  expect(madeConverse).toEqual(["sk-old", "sk-new"]);
 });
 
-test("the stable chat wrapper delegates to the current client after apply", async () => {
+test("the stable converse wrapper delegates to the current client after apply", async () => {
   const rt = createRuntimeConfig(
     { openaiApiKey: "a", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },
     {
-      makeChat: (k) => (async () => "R:" + k) as never,
-      makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
+      makeConverse: (k) => (async () => "R:" + k) as never,
       saveConfigFile: async () => {},
     },
   );
-  const wrapper = rt.chat;
+  const wrapper = rt.converse;
   expect(await (wrapper as never as () => Promise<string>)()).toBe("R:a");
   await rt.apply({ openaiApiKey: "b", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] });
   // same wrapper reference, new underlying client
-  expect(rt.chat).toBe(wrapper);
+  expect(rt.converse).toBe(wrapper);
   expect(await (wrapper as never as () => Promise<string>)()).toBe("R:b");
 });
 
-test("apply builds clients before persisting: a failing makeChat leaves disk and state untouched", async () => {
+test("apply builds clients before persisting: a failing makeConverse leaves disk and state untouched", async () => {
   let saved = 0;
   const rt = createRuntimeConfig(
     { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },
     {
-      makeChat: (k) => { if (k === "bad") throw new Error("bad key"); return (async () => "chat:" + k) as never; },
-      makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
+      makeConverse: (k) => { if (k === "bad") throw new Error("bad key"); return (async () => ({ content: "", toolCalls: [] })) as never; },
       saveConfigFile: async () => { saved++; },
     },
   );
@@ -66,7 +63,6 @@ test("getTerminalApp reflects the initial value and updates after apply", async 
   const rt = createRuntimeConfig(
     { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },
     {
-      makeChat: () => (async () => "") as never,
       makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
       saveConfigFile: async (u) => { saved.push(u); },
     },
@@ -84,7 +80,6 @@ test("getEditorApp reflects the initial value and updates after apply", async ()
   const rt = createRuntimeConfig(
     { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },
     {
-      makeChat: () => (async () => "") as never,
       makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
       saveConfigFile: async () => {},
     },
@@ -102,7 +97,6 @@ test("getDelegateCli reflects the initial value and updates after apply", async 
   const rt = createRuntimeConfig(
     { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },
     {
-      makeChat: () => (async () => "") as never,
       makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
       saveConfigFile: async (u) => { saved.push(u); },
     },
@@ -129,7 +123,6 @@ test("disabledClis is exposed and updated by apply", async () => {
       disabledClis: ["codex"],
     },
     {
-      makeChat: () => (async () => "") as never,
       makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
       saveConfigFile: async (update) => { saved.push(update); },
     },
@@ -167,7 +160,6 @@ test("reasoning effort reaches the converse client and is rebuilt on save", asyn
       webSearch: false,
     },
     {
-      makeChat: () => (async () => "") as never,
       makeConverse: (_k, effort) => { madeConverse.push(effort); return (async () => ({ content: "", toolCalls: [] })) as never; },
       saveConfigFile: async (u) => { saved.push(u); },
     },

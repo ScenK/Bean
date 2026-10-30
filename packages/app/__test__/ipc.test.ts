@@ -1,6 +1,6 @@
 import { describe, expect, it, test, vi } from "vitest";
 import {
-  buildRouteHandler, buildThemeHandlers, buildChatHandler,
+  buildThemeHandlers, buildChatHandler,
   buildListSkillsHandler, buildListProjectsHandler, buildSaveProjectsHandler, buildSaveSkillHandler,
   buildDeleteSkillHandler,
   buildPersonaHandlers, buildLaunchHandler, buildConfigHandlers, buildPlanStore, buildMemoryHandlers,
@@ -14,24 +14,6 @@ import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate,
 import type { LaunchSpawnFn } from "@bean/core";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
-
-test("route handler wires core pieces together", async () => {
-  const skills: Skill[] = [{ name: "review-code", description: "r", body: "BODY" }];
-  const projects: Project[] = [{ name: "acme", path: "/dev/acme" }];
-  const handler = buildRouteHandler({
-    loadSkills: async () => skills,
-    loadProjects: async () => projects,
-    chat: async () => JSON.stringify({ skillName: "review-code", projectPath: "/dev/acme", confidence: 0.7 }),
-    getModel: () => "m",
-    projectSkillsDir: "/b/project-skills",
-    skillsDir: "/b/skills",
-    projectsFile: "/b/projects.json",
-  });
-  const out: RouteSuggestion = await handler({ userText: "go", droppedUrl: "u" });
-  expect(out.skillName).toBe("review-code");
-  expect(out.projectPath).toBe("/dev/acme");
-  expect(out.composedPrompt).toContain("BODY");
-});
 
 test("theme handlers read and write through the injected deps", async () => {
   let current: "hearth" | "graphite" = "hearth";

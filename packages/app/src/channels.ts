@@ -47,7 +47,6 @@ export type UpdateStatus =
 export interface InstallUpdateResult { status: "error"; message: string }
 
 export const IPC = {
-  route: "bean:route",
   launch: "bean:launch",
   delegateStart: "bean:delegate-start",
   delegateCancel: "bean:delegate-cancel",

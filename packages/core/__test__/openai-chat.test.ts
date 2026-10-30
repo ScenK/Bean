@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { makeOpenAIChatWithClient, makeOpenAIConverseWithClient, makeOpenAISpeakWithClient, makeOpenAITranscribeWithClient } from "../src/openai-chat.js";
+import { makeOpenAIConverseWithClient, makeOpenAISpeakWithClient, makeOpenAITranscribeWithClient } from "../src/openai-chat.js";
 
 // A fake /v1/responses client that records the request and replays a canned output[].
 function fakeResponses(output: unknown[] = [{ type: "message", content: [{ type: "output_text", text: "ok" }] }]) {
@@ -7,27 +7,6 @@ function fakeResponses(output: unknown[] = [{ type: "message", content: [{ type:
   const client = { responses: { create: async (args: Record<string, unknown>) => { seen.args = args; return { output }; } } };
   return { client, seen };
 }
-
-test("returns first choice content", async () => {
-  const fakeClient = {
-    chat: {
-      completions: {
-        create: async () => ({ choices: [{ message: { content: "hello" } }] }),
-      },
-    },
-  };
-  const chat = makeOpenAIChatWithClient(fakeClient as never);
-  const out = await chat({ model: "m", messages: [{ role: "user", content: "hi" }] });
-  expect(out).toBe("hello");
-});
-
-test("returns empty string when no choices", async () => {
-  const fakeClient = {
-    chat: { completions: { create: async () => ({ choices: [] }) } },
-  };
-  const chat = makeOpenAIChatWithClient(fakeClient as never);
-  expect(await chat({ model: "m", messages: [] })).toBe("");
-});
 
 test("converse adapter maps content and a tool call", async () => {
   const { client } = fakeResponses([

@@ -3,7 +3,7 @@ import type { CliName } from "./launcher.js";
 export interface Skill {
   /** Stable id derived from filename without extension, e.g. "review-code". */
   name: string;
-  /** Short description the router reads to choose a skill. */
+  /** Short description Bean's chat model reads to choose a skill. */
   description: string;
   /** Full markdown body used to compose the prompt. */
   body: string;
@@ -41,13 +41,8 @@ export interface Project {
   defaultSkill?: string;
   /** Names of skills grouped under this project in the Skills panel. Many-to-many: a skill
    * name can appear in multiple projects' lists. Separate from `defaultSkill`, which is an
-   * unrelated best-guess fallback used by the router/drop-plan/avatar heuristics. */
+   * unrelated best-guess fallback used by the drop-plan/avatar heuristics. */
   skills?: string[];
-}
-
-export interface RouteInput {
-  userText: string;
-  droppedUrl?: string;
 }
 
 export interface RouteSuggestion {
@@ -59,7 +54,7 @@ export interface RouteSuggestion {
   /** Optional URL to prefill the "no project" picker's URL box with. Purely a UI seed —
    * ProposalCard folds it into the composed prompt text at confirm time (not resolved by
    * Bean into a clone/fetch) so the launched agent fetches/clones it itself if needed.
-   * Distinct from RouteInput.droppedUrl, which seeds the prompt directly via composePrompt. */
+   * Distinct from a dropped URL, which seeds the prompt directly via composePrompt. */
   sourceUrl?: string;
   composedPrompt: string;
   confidence: number; // 0..1

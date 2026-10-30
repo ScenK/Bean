@@ -2,7 +2,7 @@
 
 `@bean/app` is `"type": "module"`, but Electron's sandboxed preload loader **cannot load
 ESM** — `import`/`export` in a preload silently breaks the `contextBridge` exposure, so
-`window.bean` never appears in the renderer and every `route`/`run` call fails.
+`window.bean` never appears in the renderer and every `chat`/`launch` call fails.
 
 **Why it's load-bearing:** `esbuild.config.mjs` emits the preload as `dist/preload.cjs`
 (CJS format, `.cjs` extension so the `"type": "module"` package doesn't treat it as ESM)
