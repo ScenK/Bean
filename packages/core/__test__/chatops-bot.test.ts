@@ -10,6 +10,8 @@ import type { ResumableRun } from "../src/delegate-runs.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { ConversationCatalog, chatopsConversationTurns, listChatopsConversations } from "../src/chatops/catalog.js";
 import { openDb } from "../src/db.js";
+import { MAX_DESK_TEXT } from "../src/chatops/desk.js";
+import { speakerLine } from "../src/converse.js";
 import { dbFile } from "../src/config.js";
 import { ProposalStore } from "../src/chatops/proposals.js";
 import { NoteProposalStore } from "../src/chatops/note-proposals.js";
@@ -2900,5 +2902,104 @@ describe("conversation catalog (#527)", () => {
     await c.bot.onMessage({ conversationId: "a:dm", text: "hi", fromId: "29:abc", fromAltId: "aad-1", fromName: "Scen", direct: true }, fx());
     expect(c.list("aad-1")).toEqual([expect.objectContaining({ conversationId: "a:dm", surface: "teams", ownerId: "29:abc" })]);
     expect(c.list("29:abc")).toHaveLength(1);
+  });
+});
+
+describe("desk turns (#528)", () => {
+  function deskBot(opts: { liveAccepts?: boolean } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "bean-bot-desk-"));
+    const file = dbFile(dir);
+    const catalog = new ConversationCatalog(file, "discord");
+    const sent: string[] = [];
+    const startFn = (_req: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => ({
+      pid: 1, send: (t: string) => { sent.push(t); return opts.liveAccepts ?? true; }, stop: () => c.onExit(undefined),
+    });
+    const subjects: (string | null | undefined)[] = [];
+    let chats = 0;
+    const conversations = new ConversationStore(file);
+    const { deps } = makeDeps({
+      chat: async () => { chats++; return { content: "hello there", toolCalls: [] }; },
+      loadMemories: async (s) => { subjects.push(s); return []; },
+      conversations, catalog,
+      roles: makeRoles({ dbPath: file, surface: "discord", ownerId: "u1", ownerName: "Scen" }),
+      liveSessionsEnabled: () => true,
+      liveSessions: new LiveSessionRegistry(startFn as never, { dir, surface: "discord" }),
+    });
+    const bot = buildTeamsBot(deps);
+    const run = async (req: object, effects = fx()) => {
+      const acks: object[] = [];
+      await bot.onDeskTurn(req as never, async () => ({ fx: effects, scopeId: "ch" }), (r) => acks.push(r));
+      return { acks, effects };
+    };
+    return { bot, catalog, conversations, sent, subjects, chats: () => chats, run };
+  }
+
+  test("an unknown or ineligible conversation is refused without an echo or a turn", async () => {
+    const d = deskBot();
+    expect((await d.run({ conversationId: "nope", text: "hi" })).acks).toEqual([{ refused: "no-record" }]);
+    d.catalog.upsert({ conversationId: "d-old", place: { kind: "dm", title: "DM" }, ownerId: "old-owner" });
+    const { acks, effects } = await d.run({ conversationId: "d-old", text: "hi" });
+    expect(acks).toEqual([{ refused: "not-eligible" }]);
+    expect(effects.posted).toEqual([]);
+    expect(d.chats()).toBe(0);
+  });
+
+  test("runs as the catalog's owner id, echoes outside history, and acks with no text", async () => {
+    const d = deskBot();
+    d.catalog.upsert({ conversationId: "d1", place: { kind: "dm", title: "DM" }, ownerId: "u1" });
+    const { acks, effects } = await d.run({ conversationId: "d1", text: "  hi from the desk ", fromId: "intruder" });
+    expect(acks).toEqual([{ ok: true }]);
+    expect(effects.posted).toEqual(["🖥 (desk): hi from the desk", "hello there"]);
+    expect(d.subjects).toEqual(["u1"]);
+    expect(d.conversations.history("d1")).toEqual([
+      { role: "user", content: speakerLine("Scen", "hi from the desk") },
+      { role: "assistant", content: "hello there" },
+    ]);
+  });
+
+  test("too long is refused before any lookup", async () => {
+    const d = deskBot();
+    d.catalog.upsert({ conversationId: "d1", place: { kind: "dm", title: "DM" }, ownerId: "u1" });
+    expect((await d.run({ conversationId: "d1", text: "x".repeat(MAX_DESK_TEXT + 1) })).acks).toEqual([{ refused: "too-long" }]);
+  });
+
+  test("a failed echo runs no turn", async () => {
+    const d = deskBot();
+    d.catalog.upsert({ conversationId: "d1", place: { kind: "dm", title: "DM" }, ownerId: "u1" });
+    const broken = { ...fx(), post: async () => { throw new Error("Missing Access"); } };
+    expect((await d.run({ conversationId: "d1", text: "hi" }, broken)).acks).toEqual([{ refused: "post-failed" }]);
+    const acks: object[] = [];
+    await d.bot.onDeskTurn({ conversationId: "d1", text: "hi" }, async () => { throw new Error("Unknown Channel"); }, (r) => acks.push(r));
+    expect(acks).toEqual([{ refused: "post-failed" }]);
+    expect(d.chats()).toBe(0);
+    expect(d.conversations.history("d1")).toEqual([]);
+  });
+
+  async function withLive(liveAccepts: boolean) {
+    const d = deskBot({ liveAccepts });
+    const effects = fx();
+    await d.bot.proposeLiveSession({ conversationId: "t1", instruction: "fix the login bug", proposedBy: "Scen" }, effects);
+    await d.bot.onCardAction({
+      conversationId: "t1", fromId: "u1", fromName: "Scen", place: { kind: "thread", title: "login bugs" },
+      value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) },
+    }, effects);
+    return d;
+  }
+
+  test("a running live session receives the text as a steer", async () => {
+    const d = await withLive(true);
+    const { acks, effects } = await d.run({ conversationId: "t1", text: "also check logout" });
+    expect(acks).toEqual([{ ok: true }]);
+    expect(effects.posted).toEqual(["🖥 (desk): also check logout"]);
+    expect(d.sent.at(-1)).toBe("also check logout");
+    expect(d.conversations.history("t1").at(-1)).toEqual({ role: "user", content: speakerLine("Scen", "also check logout") });
+    expect(d.chats()).toBe(0);
+  });
+
+  test("a full live queue is acked queue-full and kept out of history", async () => {
+    const d = await withLive(false);
+    const before = d.conversations.history("t1").length;
+    expect((await d.run({ conversationId: "t1", text: "more" })).acks).toEqual([{ refused: "queue-full" }]);
+    expect(d.conversations.history("t1")).toHaveLength(before);
   });
 });

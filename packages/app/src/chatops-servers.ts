@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { parseChatopsActivity, type ChatopsActivity } from "@bean/core";
+import { parseChatopsActivity, parseDeskAck, parseDeskSaved, type ChatopsActivity, type DeskAckResult, type DeskTurn } from "@bean/core";
 
 export type ChatopsBot = "discord" | "teams";
 /** `running` is the process; `enabled` is the user's switch — the two come apart while a crashed
@@ -23,6 +24,8 @@ export interface SpawnedProcess {
   on(event: "exit", cb: (code: number | null, signal: string | null) => void): void;
   /** IPC messages from the bot (process.send) — its activity for the status bubbles. */
   on(event: "message", cb: (msg: unknown) => void): void;
+  /** IPC to the bot (desk turns). The callback reports a send that never left this process. */
+  send(msg: DeskTurn, cb: (err: Error | null) => void): boolean;
   kill(): void;
 }
 
@@ -61,6 +64,9 @@ const RETRY_DELAY_MS = 5_000;
 /** Past this, a run counts as having served rather than failed to start, so its crash gets a
  * fresh retry budget instead of being charged to the original start. */
 const STABLE_MS = 10_000;
+/** How long a desk turn waits for the bot's ack (the echo post, not the turn). No auto-resend:
+ * a lost ack may still have run the turn, and a resend would run it twice. */
+const DESK_ACK_TIMEOUT_MS = 15_000;
 
 export interface ChatopsServersDeps {
   repoRoot: string;
@@ -74,6 +80,8 @@ export interface ChatopsServersDeps {
   onEnabledChange?: (enabled: ChatopsBot[]) => void;
   /** What a running bot is doing (turns, delegate runs, live sessions), already validated. */
   onActivity?: (bot: ChatopsBot, e: ChatopsActivity) => void;
+  /** A bot's conversation history changed (a conversation id only, never text). */
+  onSaved?: (bot: ChatopsBot, conversationId: string) => void;
   spawnFn?: (command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => SpawnedProcess;
   existsFn?: (path: string) => boolean;
   nowFn?: () => number;
@@ -91,6 +99,8 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
   const liveness: Record<ChatopsBot, Omit<ChatopsState, "enabled">> = { discord: { running: false }, teams: { running: false } };
   const enabled = new Set<ChatopsBot>();
   const attempts = new Map<ChatopsBot, number>();
+  // Desk turns awaiting their ack, per bot (an ack only settles its own bot's requests).
+  const pending: Record<ChatopsBot, Map<string, { settle: (r: DeskAckResult | Error) => void }>> = { discord: new Map(), teams: new Map() };
   // Set once by stopAll() at quit. A retry timer can outlive the kill it was scheduled by, and
   // respawning then would recreate exactly the launchd orphan stopAll() exists to prevent —
   // see .memory/safety-chatops-servers-must-die-with-the-app.md.
@@ -136,6 +146,16 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
         emit(bot);
         return;
       }
+      const ack = parseDeskAck(msg);
+      if (ack) {
+        pending[bot].get(ack.requestId)?.settle("ok" in ack ? { ok: true } : { refused: ack.refused });
+        return;
+      }
+      const saved = parseDeskSaved(msg);
+      if (saved) {
+        deps.onSaved?.(bot, saved.conversationId);
+        return;
+      }
       const e = parseChatopsActivity(msg);
       if (e) deps.onActivity?.(bot, e);
     });
@@ -144,6 +164,7 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     emit(bot);
     child.on("exit", (code, signal) => {
       procs.delete(bot);
+      for (const p of [...pending[bot].values()]) p.settle(new Error(`${bot} bot exited`));
       // These are daemons: they run until told otherwise, so *any* exit we didn't ask for is
       // abnormal and the code carries no useful signal about intent. We are the only ones who
       // take a bot out of `enabled` or set `shuttingDown`, so those two flags alone identify the
@@ -186,6 +207,29 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
       // No process to kill means no "exit" event, so this is the only chance to tell the UI the
       // switch moved — that's the path that turns off a bot which crashed or gave up retrying.
       if (child) child.kill(); else emit(bot);
+    },
+
+    /** Sends a turn the owner typed at the desktop into a catalogued conversation. Resolves with
+     * the bot's ack (ok, or a refusal code); rejects when the bot isn't running, exits, or doesn't
+     * ack in time. */
+    deskTurn(bot: ChatopsBot, conversationId: string, text: string): Promise<DeskAckResult> {
+      const child = procs.get(bot);
+      if (!child) return Promise.reject(new Error(`${bot} bot is not running`));
+      const requestId = randomUUID();
+      return new Promise<DeskAckResult>((resolve, reject) => {
+        const timer = setTimeout(() => settle(new Error(`${bot} bot didn't answer`)), DESK_ACK_TIMEOUT_MS);
+        const settle = (r: DeskAckResult | Error): void => {
+          if (!pending[bot].delete(requestId)) return;
+          clearTimeout(timer);
+          if (r instanceof Error) reject(r); else resolve(r);
+        };
+        pending[bot].set(requestId, { settle });
+        try {
+          child.send({ type: "desk-turn", requestId, conversationId, text }, (err) => { if (err) settle(err); });
+        } catch (err) {
+          settle(err instanceof Error ? err : new Error(String(err)));
+        }
+      });
     },
 
     stopAll(): void {

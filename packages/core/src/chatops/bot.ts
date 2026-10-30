@@ -26,6 +26,7 @@ import { formatAmbientBlock, formatRepliedBlock, REPLIED_UNAVAILABLE, type Ambie
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
 import type { ConversationCatalog, ConversationPlace } from "./catalog.js";
+import { MAX_DESK_TEXT, type DeskAckResult } from "./desk.js";
 import { maybeCompact } from "./compact.js";
 import { MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
@@ -262,6 +263,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
    * text-only chime-in after a lull, if `chatty on` there, and feeds household memory capture
    * (#463, unless `memory off` there or config `autoMemory` is off). No-op without `deps.chatter`. */
   onAmbient: (conversationId: string, scopeId: string, fx: ChimeInFx, line: AmbientLine) => void;
+  /** A turn the owner typed at the desktop (desk ingress, chatops/desk.ts). Checks the catalog,
+   * posts the `🖥 (desk):` echo, then runs it as the owner's turn — or steers the running live
+   * session. `ack` is called exactly once, as soon as the turn is accepted or refused (before the
+   * turn's work); the promise settles when the turn is done. `effects` resolves the platform's
+   * proactive effects for the conversation, and is only called once the request is eligible. */
+  onDeskTurn: (
+    req: { conversationId: string; text: string },
+    effects: () => Promise<{ fx: BotEffects; scopeId?: string }>,
+    ack: (r: DeskAckResult) => void,
+  ) => Promise<void>;
 } {
   const chimeIn = deps.chatter && makeChimeIn({
     chatter: deps.chatter, chat: deps.chat, model: deps.model,
@@ -1103,8 +1114,61 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     return true;
   }
 
-  return {
+  // Refused text (a per-turn CLI's next-turn queue is full) never reaches history.
+  function steerLive(conv: string, fromName: string, text: string): boolean {
+    if (!deps.liveSessions.send(conv, text)) return false;
+    deps.conversations.append(conv, { role: "user", content: speakerLine(fromName, text) });
+    return true;
+  }
+
+  // Desk turns running right now, across conversations — the bot-busy cap.
+  // ponytail: one global cap; per-conversation if the desk ever sends in bulk.
+  let deskInFlight = 0;
+  const MAX_DESK_IN_FLIGHT = 4;
+
+  const bot: ReturnType<typeof buildTeamsBot> = {
     onCommand,
+
+    async onDeskTurn(req, effects, ack): Promise<void> {
+      const conv = req.conversationId;
+      const text = req.text.trim();
+      if (text.length > MAX_DESK_TEXT) return ack({ refused: "too-long" });
+      const row = deps.catalog?.get(conv);
+      if (!row) return ack({ refused: "no-record" });
+      // The id to act as is the one the catalog recorded, never one the request names, and it
+      // must still be the configured owner (a changed owner config hides the old owner's rows).
+      const owner = { fromId: row.ownerId, fromAltId: row.ownerAltId };
+      if (deps.roles.roleOf(owner) !== "owner") return ack({ refused: "not-eligible" });
+      if (deps.liveSessions.has(conv) && !deps.liveSessions.canSteer(conv, row.ownerId)) return ack({ refused: "channel-busy" });
+      if (deskInFlight >= MAX_DESK_IN_FLIGHT) return ack({ refused: "bot-busy" });
+      deskInFlight++;
+      try {
+        // The echo shows the channel who spoke; it's a platform post, never a history turn.
+        let target: { fx: BotEffects; scopeId?: string };
+        try {
+          target = await effects();
+          await target.fx.post(`🖥 (desk): ${text}`);
+        } catch (err) {
+          console.warn("bean: desk echo failed:", err instanceof Error ? err.name : "error");
+          return ack({ refused: "post-failed" });
+        }
+        const fromName = deps.roles.ownerName;
+        // Re-checked after the echo's await: a session that ended meanwhile takes a normal turn.
+        if (deps.liveSessions.has(conv)) {
+          deps.conversations.setAmbientCutoff(conv, Date.now());
+          return ack(steerLive(conv, fromName, text) ? { ok: true } : { refused: "queue-full" });
+        }
+        ack({ ok: true });
+        const direct = row.kind === "dm";
+        await bot.onMessage({
+          conversationId: conv, text, ...owner, fromName, direct,
+          ...(direct ? {} : { scopeId: target.scopeId }),
+          channelName: direct ? "DM" : row.title,
+        }, target.fx);
+      } finally {
+        deskInFlight--;
+      }
+    },
 
     onAmbient(conversationId, scopeId, fx, line) {
       chimeIn?.onAmbient(conversationId, scopeId, fx);
@@ -1160,12 +1224,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             return;
           }
           if (!steers(msg)) return;
-          // Refused text (a per-turn CLI's next-turn queue is full) never reaches history.
-          if (!deps.liveSessions.send(conv, msg.text)) {
-            await fx.reply(TURN_QUEUE_FULL);
-            return;
-          }
-          deps.conversations.append(conv, { role: "user", content: speakerLine(msg.fromName, msg.text) });
+          if (!steerLive(conv, msg.fromName, msg.text)) await fx.reply(TURN_QUEUE_FULL);
           return;
         }
         // Typed `stop` with nothing live stays a model turn, as it always was.
@@ -1660,4 +1719,5 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await startRun(p, choice.cli, choice.model, action.fromName, fx);
     },
   };
+  return bot;
 }
