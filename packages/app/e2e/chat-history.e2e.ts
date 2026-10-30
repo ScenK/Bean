@@ -14,6 +14,9 @@ async function openChat(app: ElectronApplication): Promise<Page> {
     avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
   ]);
   await chat.waitForLoadState("domcontentloaded");
+  // Shown on ready-to-show, which can land after the DOM renders — later checks assume it's up.
+  await expect.poll(() => app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))?.isVisible())).toBe(true);
   return chat;
 }
 

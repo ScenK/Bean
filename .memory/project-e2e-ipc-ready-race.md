@@ -20,3 +20,9 @@ pushes (`webContents.send`) in a React mount effect, after `domcontentloaded`. A
 pushes right after `waitForLoadState` loses the message on a slow CI runner (`ipcRenderer.on`
 does not buffer), and an untimed `waitFor()` then hangs to the 30s test timeout. Wrap the
 push + a short `waitFor` in `expect(...).toPass()` so it re-sends (see `contrast.e2e.ts`).
+
+Two more CI-only races of the same shape (#520): component windows are `show: false` until
+`ready-to-show`, so DOM being visible doesn't mean `BrowserWindow.isVisible()` is — poll it
+before asserting on it (`chat-history.e2e.ts` `openChat`). And theme colors transition (the orb
+body's `fill .3s`), so a contrast scan right after a theme flip reads a blended color — await
+the document's `CSSTransition`s first (`contrast.e2e.ts` `setTheme`).
