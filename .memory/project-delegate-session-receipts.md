@@ -20,7 +20,10 @@ Receipts (terminal states only — copying mid-run would put two writers on one 
 Session ids are untrusted subprocess output: only `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`
 (`isValidSessionId`) is accepted — the leading alphanumeric blocks `--help`-style values.
 
-Not recorded: the routine builder's `startAgent` (internal tooling) and live sessions. `findDelegateRun` reads the table back for Continue live — chatops by default (desktop rows refused), the desktop card with `surface: "desktop"` (desktop rows only); see project-live-sessions.md.
+Desktop **live** sessions (#503) record too: the engines' `onSessionId` (once per engine, after the
+proving event and a matching resume id) → `live-tasks.ts` appends one desktop row for a fresh session
+(`instruction` = the user's ask, never the handoff; a resume adds none) and emits a `session` receipt.
+Not recorded: the routine builder's `startAgent` (internal tooling) and chatops live sessions. `findDelegateRun` reads the table back for Continue live — chatops by default (desktop rows refused), the desktop card with `surface: "desktop"` (desktop rows only); see project-live-sessions.md.
 Recovery after a restart (no list UI by design):
 
 ```sh

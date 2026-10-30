@@ -22,11 +22,12 @@ export function offerAgent(enabled: readonly CliName[]): LiveCli | undefined {
   return enabled.includes("claude") ? "claude" : LIVE_AGENTS.find((a) => enabled.includes(a));
 }
 
-/** Whether a delegate card offers Continue live: its receipt carries a live session id (main set it
- * only for a live CLI's id shape), that CLI is enabled, and the window has no live session. */
+/** Whether a delegate card or an ended live session's status row offers Continue live: its receipt
+ * carries a live session id (main set it only for a live CLI's id shape), that CLI is enabled, and
+ * the window has no live session. A row whose child is still `exiting` shows it disabled. */
 export function canContinueLive(item: ChatItem, enabled: readonly CliName[], liveInWindow: boolean): boolean {
-  return item.kind === "delegate" && !liveInWindow && !!item.receipt?.sessionId
-    && !!item.receipt.agent && enabled.includes(item.receipt.agent);
+  const receipt = item.kind === "delegate" || item.kind === "status" ? item.receipt : undefined;
+  return !liveInWindow && !!receipt?.sessionId && !!receipt.agent && enabled.includes(receipt.agent);
 }
 
 /** `/claude fix X` → { agent: "claude", rest: "fix X" }; a bare alias has rest "". Only the four
@@ -96,6 +97,7 @@ export function applyLiveEvent(items: ChatItem[], e: LiveEvent, newId: () => str
   const patch = (fn: (it: Extract<ChatItem, { kind: "reply" }>) => ChatItem): ChatItem[] =>
     items.map((it, i) => (i === open && it.kind === "reply" ? fn(it) : it));
   if (e.type === "started") return ensureStreaming(items, e.sessionId, e.agent, newId());
+  if (e.type === "session") return items;
   if (e.type === "output") {
     if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", agent: e.agent, session: e.sessionId, tail: [e.line], streaming: true }];
     return patch((it) => ({ ...it, tail: [...(it.tail ?? []).slice(-(TAIL_LINES - 1)), e.line] }));
@@ -105,7 +107,10 @@ export function applyLiveEvent(items: ChatItem[], e: LiveEvent, newId: () => str
     if (open < 0) return [...items, { kind: "reply", id: newId(), agent: e.agent, session: e.sessionId, tail: [], ...done }];
     return patch((it) => ({ ...it, ...done }));
   }
-  // ended: no turn is coming for an open bubble.
-  return items.map((it) => (it.kind === "reply" && it.session === e.sessionId && it.streaming
-    ? { ...it, streaming: false, footer: "— turn interrupted" } : it));
+  // ended: no turn is coming for an open bubble, and the child is gone — Continue live may run.
+  return items.map((it) => {
+    if (it.kind === "reply" && it.session === e.sessionId && it.streaming) return { ...it, streaming: false, footer: "— turn interrupted" };
+    if (it.kind === "status" && it.exiting === e.sessionId) { const { exiting: _, ...rest } = it; return rest; }
+    return it;
+  });
 }

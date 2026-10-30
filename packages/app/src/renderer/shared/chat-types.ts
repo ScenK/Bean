@@ -49,8 +49,11 @@ export type ChatItem =
   | { kind: "offer"; id: string; offer: ProposedLiveSession; state: "pending" | "started" | "dismissed" }
   // A propose_todo draft awaiting confirmation — todos are never queued silently.
   | { kind: "todo"; id: string; todo: ProposedTodo; state: "pending" | "queued" | "dismissed" }
-  // `details` expand under the row (e.g. the messages handed over to an agent).
-  | { kind: "status"; id: string; text: string; tone: "info" | "done" | "error"; details?: string[] }
+  // `details` expand under the row (e.g. the messages handed over to an agent). `receipt`: an ended
+  // live session's CLI session, offered as Continue live; `exiting` = Bean's id for that session
+  // while its child is still stopping (the button waits for its `ended` event).
+  | { kind: "status"; id: string; text: string; tone: "info" | "done" | "error"; details?: string[];
+      receipt?: { sessionId: string; agent: LiveCli; label: string }; exiting?: string }
   // A per-turn memory capture's receipt: "🧠 Memory updated — … · Undo". Undo deletes exactly
   // `saved`'s ids; an undone row stays as a quiet record.
   | { kind: "memory"; id: string; saved: Array<{ id: string; text: string }>; state: "saved" | "undoing" | "undone" };

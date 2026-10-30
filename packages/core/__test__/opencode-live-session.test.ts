@@ -29,9 +29,10 @@ function harness(opts: { resume?: string } = {}) {
   const outputs: string[] = [];
   const turns: TurnSummary[] = [];
   const exits: (Error | undefined)[] = [];
+  const ids: string[] = [];
   const handle = startOpencodeLiveSession(
     { cli: "opencode", projectPath: "/p", prompt: "go", ...(opts.resume ? { resume: opts.resume } : {}) },
-    { onOutput: (l) => outputs.push(l), onExit: (e) => exits.push(e), onTurnComplete: (s) => turns.push(s) },
+    { onOutput: (l) => outputs.push(l), onExit: (e) => exits.push(e), onTurnComplete: (s) => turns.push(s), onSessionId: (id) => ids.push(id) },
     spawnFn, 60_000, () => 0,
   );
   const last = (): Fake => spawned.at(-1)!;
@@ -45,7 +46,7 @@ function harness(opts: { resume?: string } = {}) {
     for (const p of parts) emit({ sessionID: sid, ...p }, f);
     emit({ type: "step_finish", sessionID: sid, part: { reason } }, f);
   };
-  return { handle, spawned, last, emit, close, step, outputs, turns, exits };
+  return { handle, spawned, last, emit, close, step, outputs, turns, exits, ids };
 }
 
 let killSpy: ReturnType<typeof vi.spyOn>;
@@ -71,6 +72,9 @@ describe("startOpencodeLiveSession", () => {
 
     h.handle.send("next");
     expect(h.last().args).toEqual(["run", "--auto", "--format", "json", "--session", SID, "--", "next"]);
+    h.step(SID, "stop", [{ type: "text", part: { text: "again" } }]);
+    await h.close(0);
+    expect(h.ids).toEqual([SID]); // once per session, not per event or turn
   });
 
   it("a 401 error never leaks data.message; it ends turn 1 with the signed-out notice", async () => {
@@ -98,6 +102,7 @@ describe("startOpencodeLiveSession", () => {
     h.emit({ type: "error", sessionID: SID, error: { name: "UnknownError", data: {} } });
     await h.close(1);
     expect(h.turns).toEqual([]);
+    expect(h.ids).toEqual([]);
     expect(h.exits[0]?.message).toMatch(/^opencode couldn't run that turn \(UnknownError\)/);
   });
 
@@ -109,6 +114,7 @@ describe("startOpencodeLiveSession", () => {
     await h.close(1);
     warn.mockRestore();
     expect(h.exits[0]?.message).toBe(RESUME_REJECTED);
+    expect(h.ids).toEqual([]);
 
     const bad = harness({ resume: "3f2a-uuid" });
     await Promise.resolve();
@@ -123,6 +129,14 @@ describe("startOpencodeLiveSession", () => {
     expect(h.outputs).toEqual([]);
     expect(h.turns).toEqual([]);
     expect(h.exits[0]?.message).toBe(OPENCODE_SESSION_MISMATCH);
+    expect(h.ids).toEqual([]);
+  });
+
+  it("a resume reports the matching session id once", async () => {
+    const h = harness({ resume: SID });
+    h.step(SID, "stop", [{ type: "text", part: { text: "where things stand" } }]);
+    await h.close(0);
+    expect(h.ids).toEqual([SID]);
   });
 
   it("stop reaps the tool groups: SIGTERM to each now, SIGKILL after 5s even once opencode closed", async () => {
