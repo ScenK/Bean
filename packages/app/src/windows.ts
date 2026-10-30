@@ -97,7 +97,11 @@ export function createComponentWindow(kind: ComponentKind, anchor?: Rectangle, b
     title: COMPONENT_WINDOW_TITLE[kind],
     titleBarStyle: "hiddenInset",
     webPreferences: { preload },
+    // Shown once painted: a chat-history switch replaces the window in place, and an
+    // immediately-shown window flashes blank before its first frame.
+    show: false,
   });
+  win.once("ready-to-show", () => win.show());
   if (sizeFile) {
     win.on("close", () => {
       const [width = 0, height = 0] = win.getSize();

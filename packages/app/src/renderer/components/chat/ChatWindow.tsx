@@ -109,6 +109,7 @@ export function ChatWindow() {
   const [incognito, setIncognito] = useState(false);
   const incognitoRef = useRef(false);
   incognitoRef.current = incognito;
+  const removedNoticeRef = useRef<string | undefined>(undefined);
   // Sent from the toggle itself, not an effect: a close right after the click must not beat it.
   const toggleIncognito = (): void => {
     const on = !incognitoRef.current;
@@ -116,12 +117,19 @@ export function ChatWindow() {
     window.bean.setChatIncognito(on);
     setIncognito(on);
     // Main deletes the saved thread and latches the window unsavable; mirrored here so no save is
-    // even attempted. Sticky — toggling back off doesn't resume history.
+    // even attempted. Sticky — toggling back off doesn't resume history, but its notice goes with
+    // the switch (the chat staying out of the sidebar is the lasting cue).
+    if (!on && removedNoticeRef.current) {
+      const id = removedNoticeRef.current;
+      removedNoticeRef.current = undefined;
+      setItems((prev) => prev.filter((it) => it.id !== id));
+    }
     if (on && !unsavableRef.current) {
       unsavableRef.current = true;
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = undefined;
-      addStatus("Removed from history. Nothing in this chat will be saved.", "info");
+      removedNoticeRef.current = newId();
+      addStatus("Removed from history. Nothing in this chat will be saved.", "info", undefined, removedNoticeRef.current);
       const gone = threadRef.current?.id;
       setThreads((prev) => prev.filter((t) => t.id !== gone));
     }
@@ -916,7 +924,7 @@ export function ChatWindow() {
     <div class="bean-dashboard bean-chat-window">
       <button
         type="button"
-        class="bean-chat-sidebar-toggle"
+        class={`bean-chat-sidebar-toggle${sidebarOpen ? " bean-chat-sidebar-toggle--open" : ""}`}
         aria-expanded={sidebarOpen}
         aria-label={sidebarOpen ? "Hide chat history" : "Show chat history"}
         title="Chat history"

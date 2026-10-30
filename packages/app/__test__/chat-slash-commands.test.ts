@@ -274,7 +274,7 @@ describe("ChatWindow slash commands", () => {
     await type("/");
     expect(bean.routinesList!.mock.calls.length).toBe(before + 1);
     expect(root.querySelector(".bean-slash-menu")?.textContent).toContain("Switch to");
-    expect(composer().placeholder).toBe("Message Bean… — / for skills & sprouts");
+    expect(composer().placeholder).toBe("Message Bean · type / for skills");
 
     await type("/sprout:");
     await key("ArrowDown");

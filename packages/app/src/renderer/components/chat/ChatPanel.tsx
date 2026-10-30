@@ -358,32 +358,38 @@ export function ChatPanel({
 
   return (
     <div class="bean-chat">
-      <div class="bean-chat-scroll" ref={scrollRef} onScroll={onScroll}>
-        <div class="bean-chat-meta">
-          <span class="bean-chat-avatar" />
-          <span class="bean-chat-name">Bean</span>
+      {/* Pinned below the drag band, not inside it — no drag region here. */}
+      <div class="bean-chat-meta">
+        <AgentAvatar agent="bean" size={18} />
+        <span class="bean-chat-name">Bean</span>
+        <span class="bean-chat-status">
           <span class={`bean-chat-state bean-chat-state--${status}`} />
-          <span>{status}</span>
-          <span class="bean-chat-meta-spacer" />
-          <button
-            type="button"
-            class={`bean-chip bean-chat-incognito${incognito ? " bean-chat-incognito--on" : ""}`}
-            aria-pressed={incognito}
-            title={incognito ? "This chat won't be remembered or kept in history" : "Off the record — also removes this chat from history."}
-            onClick={onToggleIncognito}
-          >
-            🕶 {incognito ? "off the record" : "record"}
-          </button>
-          {/* The linked-note chip replaces the model chip (mockup 1d) — both don't fit. */}
-          {linkedNote ? (
-            <span class="bean-chip bean-chat-notechip" title={`Saving from this chat updates "${linkedNote.title}" in place`}>
-              📝 <span class="bean-chat-notechip-title">{linkedNote.title}</span> · v{linkedNote.version}
-              <button type="button" class="bean-chat-unlink" aria-label="Unlink note" onClick={onUnlink}>✕</button>
-            </span>
-          ) : (
-            <span class="bean-chat-model">{model}</span>
-          )}
-        </div>
+          {status}
+        </span>
+        <span class="bean-chat-meta-spacer" />
+        {/* The linked-note chip replaces the model id (mockup 1d) — both don't fit. */}
+        {linkedNote ? (
+          <span class="bean-chat-notechip" title={`Saving from this chat updates "${linkedNote.title}" in place`}>
+            <span class="bean-chat-notechip-title">{linkedNote.title}</span> · v{linkedNote.version}
+            <button type="button" class="bean-chat-unlink" aria-label="Unlink note" onClick={onUnlink}>✕</button>
+          </span>
+        ) : (
+          <span class="bean-chat-model">{model}</span>
+        )}
+        <span class="bean-chat-meta-divider" />
+        <button
+          type="button"
+          role="switch"
+          class={`bean-chat-incognito${incognito ? " bean-chat-incognito--on" : ""}`}
+          aria-checked={incognito}
+          title={incognito ? "This chat won't be remembered or kept in history" : "Off the record — also removes this chat from history."}
+          onClick={onToggleIncognito}
+        >
+          <span class="bean-switch" aria-hidden="true" />
+          Off the record
+        </button>
+      </div>
+      <div class="bean-chat-scroll" ref={scrollRef} onScroll={onScroll}>
         {items.length === 0 ? (
           <div class="bean-panel-empty">Ask Bean to do something, or just say hi.</div>
         ) : null}
@@ -461,7 +467,7 @@ export function ChatPanel({
             const facts = it.saved.map((m) => m.text).join("; ");
             return (
               <div key={it.id} class={`bean-status bean-status--${it.state === "undone" ? "info" : "done"}`}>
-                {it.state === "undone" ? `Forgot — ${facts}` : `🧠 Memory updated — ${facts}${it.state === "kept" ? "" : " · "}`}
+                {it.state === "undone" ? `Forgot: ${facts}` : `Remembered: ${facts}`}
                 {it.state === "undone" || it.state === "kept" ? null : (
                   <button type="button" class="bean-status-action" disabled={it.state === "undoing"} onClick={() => onMemoryUndo(it.id)}>Undo</button>
                 )}
@@ -617,7 +623,7 @@ export function ChatPanel({
             ref={inputRef}
             class="bean-input bean-input--composer"
             rows={1}
-            placeholder={!agentMode ? "Message Bean… — / for skills & sprouts" : live
+            placeholder={!agentMode ? "Message Bean · type / for skills" : live
               ? `Message ${agentName}…`
               : `Message ${agentName}… (Bean will hand over up to ${Math.min(handoffItems(items).filter((h) => h.text.trim()).length, HANDOFF_ITEMS)} messages)`}
             onInput={(e) => { resizeInput(); onComposerInput((e.target as HTMLTextAreaElement).value); }}
@@ -689,7 +695,7 @@ export function ChatPanel({
               title="Ask Bean to draft a note from this conversation"
               disabled={busy || !items.some((it) => it.kind === "reply")}
               onClick={onSaveToNotes}
-            >📝 Save to notes</button>
+            >Save to notes</button>
             <button type="button" class="bean-send" aria-label="Send" disabled={busy || imageReadsInFlight > 0} onClick={submit}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg>
             </button>
