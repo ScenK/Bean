@@ -32,28 +32,33 @@ export type ChatItem =
   | { kind: "reply"; id: string; text: string; display?: string; images?: Array<{ path: string; dataUrl: string }>; agent?: AgentId;
       session?: string; tail?: string[]; footer?: string; streaming?: boolean }
   | { kind: "working"; id: string; text: string; agent?: AgentId }
-  | { kind: "proposal"; id: string; run: ProposedRun; state: "pending" | "confirmed" | "cancelled" }
+  | { kind: "proposal"; id: string; run: ProposedRun; state: "pending" | "confirmed" | "cancelled" | "expired" }
   | { kind: "delegate"; id: string; proposal: ProposedDelegate;
-      state: "pending" | "starting" | "running" | "done" | "failed" | "cancelled" | "dismissed";
+      state: "pending" | "starting" | "running" | "done" | "failed" | "cancelled" | "dismissed" | "expired" | "interrupted";
       taskId?: string; tail: string[]; result?: string; error?: string;
       // The started CLI session's Copy chip (terminal states only) — never chat/loopback text.
       // sessionId + agent: set when the card may offer Continue live (DelegateReceipt).
       receipt?: { label: string; command: string; sessionId?: string; agent?: LiveCli } }
+  // Card states `expired` (and a delegate's `interrupted`) only come from a restored thread
+  // (chat-thread.ts): read-only, never actionable again.
   // A propose_note draft awaiting confirmation — notes are never saved silently.
   // `images` = the latest chat turn's attached images (data URLs), offered for the saved note.
-  | { kind: "note"; id: string; note: ProposedNote; state: "pending" | "saved" | "dismissed"; images?: string[] }
+  | { kind: "note"; id: string; note: ProposedNote; state: "pending" | "saved" | "dismissed" | "expired"; images?: string[] }
   // A propose_skill draft awaiting confirmation — skills are never written silently.
-  | { kind: "skill"; id: string; skill: ProposedSkill; state: "pending" | "saved" | "dismissed" }
+  | { kind: "skill"; id: string; skill: ProposedSkill; state: "pending" | "saved" | "dismissed" | "expired" }
   // Bean's offer to hand the chat over to a live agent (propose_live_session) — Start runs the
   // same handoff as /claude; Not now leaves Bean in charge.
-  | { kind: "offer"; id: string; offer: ProposedLiveSession; state: "pending" | "started" | "dismissed" }
+  | { kind: "offer"; id: string; offer: ProposedLiveSession; state: "pending" | "started" | "dismissed" | "expired" }
   // A propose_todo draft awaiting confirmation — todos are never queued silently.
-  | { kind: "todo"; id: string; todo: ProposedTodo; state: "pending" | "queued" | "dismissed" }
-  // `details` expand under the row (e.g. the messages handed over to an agent).
-  | { kind: "status"; id: string; text: string; tone: "info" | "done" | "error"; details?: string[] }
+  | { kind: "todo"; id: string; todo: ProposedTodo; state: "pending" | "queued" | "dismissed" | "expired" }
+  // `details` expand under the row (e.g. the messages handed over to an agent). `receipt`: an ended
+  // live session's CLI session, offered as Continue live; `exiting` = Bean's id for that session
+  // while its child is still stopping (the button waits for its `ended` event).
+  | { kind: "status"; id: string; text: string; tone: "info" | "done" | "error"; details?: string[];
+      receipt?: { sessionId: string; agent: LiveCli; label: string }; exiting?: string }
   // A per-turn memory capture's receipt: "🧠 Memory updated — … · Undo". Undo deletes exactly
-  // `saved`'s ids; an undone row stays as a quiet record.
-  | { kind: "memory"; id: string; saved: Array<{ id: string; text: string }>; state: "saved" | "undoing" | "undone" };
+  // `saved`'s ids; an undone row stays as a quiet record. `kept` = restored from history, no Undo.
+  | { kind: "memory"; id: string; saved: Array<{ id: string; text: string }>; state: "saved" | "undoing" | "undone" | "kept" };
 
 /** The speaker of a reply/working bubble, or undefined for every other item. */
 export function itemAgent(it: ChatItem): AgentId | undefined {

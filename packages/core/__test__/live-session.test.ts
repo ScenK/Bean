@@ -191,3 +191,55 @@ describe("startLiveSession resume", () => {
     expect(onExit).toHaveBeenCalledWith(undefined);
   });
 });
+
+describe("startLiveSession onSessionId", () => {
+  const init = (id: string): string => JSON.stringify({ type: "system", subtype: "init", session_id: id }) + "\n";
+  const start = (resume?: string) => {
+    const f = fakeChild();
+    const ids: string[] = [];
+    startLiveSession(
+      { projectPath: "/p", prompt: "go", ...(resume ? { resume } : {}) },
+      { onOutput: () => {}, onTurnComplete: () => {}, onExit: () => {}, onSessionId: (id) => ids.push(id) },
+      () => f.child,
+    );
+    return { f, ids };
+  };
+
+  it("fires once from system/init; a later turn's init doesn't re-fire it", () => {
+    const { f, ids } = start();
+    f.stdout.write(init("sess-a"));
+    f.stdout.write(JSON.stringify({ type: "result", result: "ok" }) + "\n");
+    f.stdout.write(init("sess-a"));
+    expect(ids).toEqual(["sess-a"]);
+  });
+
+  it("a resume fires with the matching id only; a rejected or mismatched resume never fires", () => {
+    const ok = start("sess-a");
+    ok.f.stdout.write(init("sess-a"));
+    expect(ok.ids).toEqual(["sess-a"]);
+
+    const rejected = start("sess-a");
+    rejected.f.stdout.write(JSON.stringify({ type: "result", is_error: true, session_id: "sess-a" }) + "\n");
+    rejected.f.emit("close", 1, null);
+    expect(rejected.ids).toEqual([]);
+
+    const other = start("sess-a");
+    other.f.stdout.write(init("sess-b"));
+    expect(other.ids).toEqual([]);
+  });
+
+  it("a throwing callback doesn't break the session", () => {
+    const f = fakeChild();
+    const turns: unknown[] = [];
+    startLiveSession(
+      { projectPath: "/p", prompt: "go" },
+      { onOutput: () => {}, onTurnComplete: (t) => turns.push(t), onExit: () => {}, onSessionId: () => { throw new Error("db"); } },
+      () => f.child,
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    f.stdout.write(init("sess-a"));
+    f.stdout.write(JSON.stringify({ type: "result", result: "ok" }) + "\n");
+    warn.mockRestore();
+    expect(turns).toHaveLength(1);
+  });
+});

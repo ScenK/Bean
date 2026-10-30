@@ -9,6 +9,7 @@ import {
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type ExtractResult, type ChatTurn,
   type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
   type TodoItem, type StepKind, type CliModels, type DreamDigest, type RoutineBrief, type RoutineWatch, type WatchItem,
+  DESKTOP_CHAT_MAX_BYTES, DESKTOP_CHAT_TITLE_MAX, type DesktopChat, type DesktopChatInput, type DesktopChatListing,
 } from "@bean/core";
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { WatchCheckResult } from "@bean/core";
@@ -657,6 +658,98 @@ function toTranscript(v: unknown): CloseTurn[] {
   });
 }
 
+/** A chat window's transcript save. `items` are the renderer's normalized ChatItems — opaque here. */
+export interface ChatThreadSaveRequest { id: string; title: string; items: unknown[]; noteSlug?: string }
+export interface ChatThreadAck { id: string; title: string; updatedAt: string }
+/** What a fresh chat window restores: a saved thread, or `missing` when the picked one is gone
+ * (deleted or pruned) — the window opens empty with a status row. */
+export type PendingChatThread = { id: string; title: string; items: unknown[]; noteSlug: string | null } | { missing: true };
+
+export interface ChatThreadHandlerDeps {
+  saveDesktopChat: (file: string, chat: DesktopChatInput, now?: Date) => void;
+  getDesktopChat: (file: string, id: string) => DesktopChat | undefined;
+  deleteDesktopChat: (file: string, id: string) => void;
+  listDesktopChats: (file: string) => DesktopChatListing[];
+  dbFile: string;
+}
+
+const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Desktop chat history (see .memory/project-desktop-chat-history.md). Per chat window (webContents
+ * id): the one thread it writes — pinned by its first save or its restore — and the sticky
+ * unsavable latch, set on incognito toggle-on *before* the row is deleted and re-checked on every
+ * write, the final close write included. Toggling incognito off never clears it. */
+export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
+  // ponytail: one entry per chat window per app run; webContents ids are never reused.
+  const threads = new Map<number, string>();
+  const unsavable = new Set<number>();
+  let pending: string | undefined;
+  // The history sidebar's pick ("new" or a thread id), held while the chat window runs its normal
+  // close (Keep/Stop card included); the next chat window restores it.
+  let switchTo: string | undefined;
+  return {
+    list: (): DesktopChatListing[] => deps.listDesktopChats(deps.dbFile),
+    /** Sidebar delete: never the window's own (open) thread. */
+    delete: (windowId: number, id: unknown): void => {
+      if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
+      if (threads.get(windowId) === id) throw new Error("the open chat can't be deleted");
+      deps.deleteDesktopChat(deps.dbFile, id);
+    },
+    /** True = close the chat window now to switch. `null` (Keep working) cancels a pending switch;
+     * anything but "new" or a UUID is ignored. */
+    requestSwitch: (target: unknown): boolean => {
+      if (target === null) { switchTo = undefined; return false; }
+      if (target !== "new" && (typeof target !== "string" || !THREAD_ID.test(target))) return false;
+      switchTo = target;
+      return true;
+    },
+    /** At the chat window's `closed`: true = open the next window, which restores the pick. */
+    takeSwitch: (): boolean => {
+      const t = switchTo;
+      switchTo = undefined;
+      if (t === undefined) return false;
+      pending = t === "new" ? undefined : t;
+      return true;
+    },
+    /** The thread the next chat window restores (pulled once). */
+    setPending: (id: string | undefined): void => { pending = id; },
+    pending: (windowId: number): PendingChatThread | undefined => {
+      const id = pending;
+      pending = undefined;
+      if (id === undefined) return undefined;
+      const row = deps.getDesktopChat(deps.dbFile, id);
+      if (!row) return { missing: true };
+      let items: unknown;
+      try { items = JSON.parse(row.itemsJson); } catch { items = []; }
+      if (!unsavable.has(windowId)) threads.set(windowId, id);
+      return { id: row.id, title: row.title, items: Array.isArray(items) ? items : [], noteSlug: row.noteSlug };
+    },
+    /** Undefined = refused by the latch (quietly: the renderer already stopped saving). */
+    save: (windowId: number, req: unknown): ChatThreadAck | undefined => {
+      if (unsavable.has(windowId)) return undefined;
+      const o = req as Partial<ChatThreadSaveRequest> | null;
+      if (!o || typeof o.id !== "string" || !THREAD_ID.test(o.id)) throw new Error("chat thread id must be a UUID");
+      if (typeof o.title !== "string" || !Array.isArray(o.items)) throw new Error("malformed chat thread");
+      if (o.noteSlug !== undefined && o.noteSlug !== null && typeof o.noteSlug !== "string") throw new Error("malformed chat thread");
+      const pinned = threads.get(windowId);
+      if (pinned !== undefined && pinned !== o.id) throw new Error("this window saves a different chat thread");
+      const itemsJson = JSON.stringify(o.items);
+      if (Buffer.byteLength(itemsJson, "utf8") > DESKTOP_CHAT_MAX_BYTES) throw new Error("desktop chat is too large to save");
+      const now = new Date();
+      deps.saveDesktopChat(deps.dbFile, { id: o.id, title: o.title, itemsJson, noteSlug: o.noteSlug ?? null }, now);
+      threads.set(windowId, o.id);
+      return { id: o.id, title: o.title.trim().slice(0, DESKTOP_CHAT_TITLE_MAX), updatedAt: now.toISOString() };
+    },
+    /** 🕶 on: latch first, then delete the window's saved row. Off: nothing — the latch is sticky. */
+    setIncognito: (windowId: number, on: boolean): void => {
+      if (!on) return;
+      unsavable.add(windowId);
+      const id = threads.get(windowId);
+      if (id !== undefined) deps.deleteDesktopChat(deps.dbFile, id);
+    },
+  };
+}
+
 export interface NotesHandlerDeps {
   loadNotes: (file: string, opts?: { includeArchived?: boolean }) => Promise<Note[]>;
   saveNote: (file: string, draft: NoteDraft) => Promise<string>;
@@ -963,6 +1056,9 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   routineHandlers: ReturnType<typeof buildRoutineHandlers>;
   skillProposalHandlers: ReturnType<typeof buildSkillProposalHandlers>;
   todoHandlers: ReturnType<typeof buildTodoHandlers>;
+  chatThreadHandlers: ReturnType<typeof buildChatThreadHandlers>;
+  /** Starts the chat window's normal close (its Keep/Stop card may still hold it open). */
+  closeChatWindow: () => void;
 }
 
 export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
@@ -1078,7 +1174,22 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.deleteMemories, (_e, ids: string[]) => memoryHandlers.delete(ids));
   // Fire-and-forget: the chat window is already closing. A failure already raised its bubble
   // (onMemoryFailure); this only logs it.
-  ipcMain.on(IPC.chatIncognito, (e, on: unknown) => memoryHandlers.setIncognito(e.sender.id, on === true));
+  ipcMain.on(IPC.chatIncognito, (e, on: unknown) => {
+    memoryHandlers.setIncognito(e.sender.id, on === true);
+    if (!deps.isChatSender(e.sender)) return;
+    try { deps.chatThreadHandlers.setIncognito(e.sender.id, on === true); } catch (err) { console.error("chat history delete failed:", err); }
+  });
+  const notChat = (): never => { throw new Error("Chat history is for the chat window."); };
+  ipcMain.handle(IPC.chatThreadSave, (e, req: unknown) =>
+    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.save(e.sender.id, req) : notChat());
+  ipcMain.handle(IPC.getPendingChatThread, (e) =>
+    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.pending(e.sender.id) : notChat());
+  ipcMain.handle(IPC.chatThreadList, (e) => deps.isChatSender(e.sender) ? deps.chatThreadHandlers.list() : notChat());
+  ipcMain.handle(IPC.chatThreadDelete, (e, id: unknown) =>
+    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.delete(e.sender.id, id) : notChat());
+  ipcMain.on(IPC.chatThreadOpen, (e, target: unknown) => {
+    if (deps.isChatSender(e.sender) && deps.chatThreadHandlers.requestSwitch(target)) deps.closeChatWindow();
+  });
   ipcMain.on(IPC.rememberOnClose, (e, transcript: unknown, opts: unknown) => {
     const o = opts as { incognito?: unknown; rejected?: unknown } | null;
     const incognito = o?.incognito === true;

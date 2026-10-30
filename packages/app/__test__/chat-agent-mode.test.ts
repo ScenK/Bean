@@ -95,6 +95,17 @@ describe("canContinueLive", () => {
     expect(canContinueLive(card({ label: "l", command: "c" }), ["claude"], false)).toBe(false);
     expect(canContinueLive(card(), ["claude"], false)).toBe(false);
   });
+
+  it("also offers it on an ended live session's status row; its child's ended event clears `exiting`", () => {
+    const row: ChatItem = { kind: "status", id: "r", text: "ended", tone: "info", receipt: { sessionId: "sess-a", agent: "codex", label: "l" }, exiting: "s1" };
+    expect(canContinueLive(row, ["codex"], false)).toBe(true);
+    expect(canContinueLive({ kind: "status", id: "x", text: "t", tone: "info" }, ["codex"], false)).toBe(false);
+    const ev = (type: "session" | "ended"): LiveEvent => (type === "session"
+      ? { sessionId: "s1", agent: "codex", seq: 2, type, receipt: { sessionId: "sess-a", agent: "codex", label: "l" } }
+      : { sessionId: "s1", agent: "codex", seq: 3, type, reason: "stopped" });
+    expect(applyLiveEvent([row], ev("session"), () => "n")).toEqual([row]);
+    expect(applyLiveEvent([row], ev("ended"), () => "n")).toEqual([{ kind: "status", id: "r", text: "ended", tone: "info", receipt: row.receipt }]);
+  });
 });
 
 describe("ChatWindow agent mode", () => {
@@ -275,6 +286,33 @@ describe("ChatWindow agent mode", () => {
     await click("End Claude Code session & close");
     expect(bean.liveStop).toHaveBeenCalledWith("s1");
     expect(bean.allowChatClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("an ended live session's row offers Continue live with its CLI session id", async () => {
+    bean.liveResume = vi.fn(async () => ({ sessionId: "s2", agent: "claude", projectPath: "/p" }));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await send("/claude go");
+    await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
+    await live({ type: "session", receipt: { sessionId: "sess-a", agent: "claude", label: "claude · sess…" } });
+    await live({ type: "ended", reason: "ended" });
+    expect(root.textContent).toContain("Claude Code session ended");
+    await click("Continue live");
+    expect(bean.liveResume).toHaveBeenCalledWith("sess-a");
+  });
+
+  it("End leaves a Continue live row that waits for the child to exit", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await send("/claude go");
+    await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
+    await live({ type: "session", receipt: { sessionId: "sess-a", agent: "claude", label: "claude · sess…" } });
+    await click("End");
+    expect(bean.liveStop).toHaveBeenCalledWith("s1");
+    const btn = (): HTMLButtonElement => [...root.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Continue live")!;
+    expect(btn().disabled).toBe(true);
+    await live({ type: "ended", reason: "stopped" });
+    expect(btn().disabled).toBe(false);
   });
 
   it("reports a crash and returns to Bean; an alias for a missing CLI never starts", async () => {

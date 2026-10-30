@@ -43,5 +43,5 @@ test("too small is raised to the minimum", () => {
 test("larger than the work area is cut to the work area", () => {
   expect(clampChatSize({ width: 5000, height: 4000 }, work)).toEqual(work);
   // The default is clamped too, on a display smaller than it.
-  expect(clampChatSize(undefined, { width: 1280, height: 700 })).toEqual({ width: 600, height: 700 });
+  expect(clampChatSize(undefined, { width: 1280, height: 700 })).toEqual({ width: 820, height: 700 });
 });

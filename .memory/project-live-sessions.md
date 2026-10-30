@@ -235,3 +235,11 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   `findDelegateRun(…, "desktop")` (desktop rows only; chatops' default still refuses them), opens
   with `RESUME_OPENING`, no handoff, and refuses an id already live in any window (claim lasts
   while the session lives). The CLI is frozen; a rejected id ends `RESUME_REJECTED`, never fresh.
+- Live sessions resume too (#503): `LiveSessionCallbacks.onSessionId` (optional, errors swallowed;
+  chatops ignores it) fires once per engine — claude on `system/init`, per-turn CLIs on the first
+  accepted session event — and never on a rejected or mismatched resume. `live-tasks` checks
+  `isLiveSessionId`, records a desktop `delegate_runs` row (fresh only), claims the CLI id like
+  `resumeId` (`cliId`, so a still-stopping child can't get a second writer), and emits `session`
+  (`LiveReceipt`, kept on `LiveState`). The ended/failed row, and End/switch/close's row, carry it as
+  a `status` receipt → Continue live; End's row is `exiting` (button disabled) until that session's
+  `ended` event. `LiveEvent.sessionId` stays Bean's own id.

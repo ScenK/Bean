@@ -16,6 +16,8 @@ const STATE_LABEL: Record<DelegateItem["state"], string> = {
   failed: "Failed",
   cancelled: "Cancelled",
   dismissed: "Dismissed",
+  expired: "Expired",
+  interrupted: "Interrupted",
 };
 
 // Copies `cd '<project>' && <cli resume id>` so the user can reopen the session by hand.

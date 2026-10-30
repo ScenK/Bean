@@ -257,6 +257,18 @@ CREATE TABLE IF NOT EXISTS watch_seen (
   PRIMARY KEY (routine, item_id)
 );
 
+-- Desktop chat threads (desktop-chats.ts): the renderer's whole transcript (cards and receipts
+-- included) as JSON, pruned 90 days after the last save. Never joined to delegate_runs.
+CREATE TABLE IF NOT EXISTS desktop_chats (
+  id         TEXT PRIMARY KEY,
+  title      TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  items_json TEXT NOT NULL,
+  note_slug  TEXT
+);
+CREATE INDEX IF NOT EXISTS desktop_chats_updated ON desktop_chats(updated_at);
+
 CREATE TABLE IF NOT EXISTS watch_source (
   routine TEXT PRIMARY KEY,
   source  TEXT NOT NULL

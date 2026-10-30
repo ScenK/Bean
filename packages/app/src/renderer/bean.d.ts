@@ -8,9 +8,9 @@ import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
 import type { LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult } from "../live-tasks.js";
 import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
-import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn } from "../ipc.js";
+import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "../ipc.js";
 import type { RoutineBuildView } from "../routine-builder.js";
-import type { WatchCheckResult } from "@bean/core";
+import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
 
 declare global {
   interface Window {
@@ -127,6 +127,17 @@ declare global {
       /** Fire-and-forget at chat close: main extracts + saves in the background. */
       rememberOnClose(transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[] }): void;
       setChatIncognito(on: boolean): void;
+      /** Write-through of this chat's transcript; undefined = refused (the window went incognito). */
+      chatThreadSave(req: ChatThreadSaveRequest): Promise<ChatThreadAck | undefined>;
+      /** The saved thread this fresh chat window restores, if one was picked. */
+      getPendingChatThread(): Promise<PendingChatThread | undefined>;
+      /** Saved threads, newest first (main prunes past 90 days on each list). */
+      chatThreadList(): Promise<DesktopChatListing[]>;
+      /** Refused for this window's own thread. */
+      chatThreadDelete(id: string): Promise<void>;
+      /** Switch: this window closes normally and a new one opens at its bounds with `target`
+       * ("new" = empty). `null` cancels a switch the Keep/Stop card held. */
+      chatThreadOpen(target: string | null): void;
       onMemoryUpdated(cb: (saved: Array<{ id: string; text: string }>) => void): void;
       getMemoryBatch(): Promise<MemoryBatch | undefined>;
       undoMemoryBatch(): Promise<number>;

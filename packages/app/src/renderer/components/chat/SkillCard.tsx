@@ -14,7 +14,7 @@ export function SkillCard({
 }: {
   skill: ProposedSkill;
   skills: Skill[];
-  state: "pending" | "saved" | "dismissed";
+  state: "pending" | "saved" | "dismissed" | "expired";
   onSave: (edited: ProposedSkill) => void;
   onDismiss: () => void;
 }) {
@@ -54,7 +54,7 @@ export function SkillCard({
           {state === "saved" ? "Saved" : collides ? "Update skill" : "Save skill"}
         </button>
         <button type="button" class="bean-btn bean-btn--ghost" disabled={done} onClick={onDismiss}>
-          {state === "dismissed" ? "Dismissed" : "Dismiss"}
+          {state === "dismissed" ? "Dismissed" : state === "expired" ? "Expired" : "Dismiss"}
         </button>
       </div>
     </div>

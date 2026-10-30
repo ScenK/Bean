@@ -3,7 +3,7 @@
 // stdout, driven remotely from a chatops channel. Permissions are deliberately bypassed (true bypass).
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { BEAN_GIT_IDENTITY, GIT_TRAILER_INSTRUCTION, claudeTailLine } from "./delegate.js";
+import { BEAN_GIT_IDENTITY, GIT_TRAILER_INSTRUCTION, claudeTailLine, sessionIdOf } from "./delegate.js";
 import { spawnEnv } from "./spawn-env.js";
 
 /** CLIs that can host a live session, claude first (the default engine): claude (one long-lived
@@ -80,6 +80,9 @@ export interface LiveSessionCallbacks {
   /** A turn began without a fresh send() (per-turn CLIs: a queued, merged turn) — relight typing. */
   onTurnStart?: () => void;
   onTurnComplete: (summary: TurnSummary) => void;
+  /** The CLI's own session id, once per engine: after the event that proves the session started,
+   * and on a resume only when it matches the resumed id. A throw is swallowed (bookkeeping). */
+  onSessionId?: (id: string) => void;
   /** Fires exactly once. undefined = clean end (stop/idle/exit 0); Error = crash. */
   onExit: (err?: Error) => void;
 }
@@ -89,6 +92,15 @@ export interface LiveSessionHandle {
   send: (text: string) => boolean;
   stop: () => void;
   pid: number | undefined;
+}
+
+/** Calls `onSessionId` with a session id, swallowing its errors so bookkeeping can't break a session. */
+export function reportSessionId(cbs: LiveSessionCallbacks, id: string): void {
+  try {
+    cbs.onSessionId?.(id);
+  } catch (err) {
+    console.warn("bean: live session id callback failed:", err instanceof Error ? err.name : "error");
+  }
 }
 
 export type LiveSessionSpawnFn = (command: string, args: string[], cwd: string) => ChildProcess;
@@ -148,7 +160,11 @@ export function startLiveSession(
       return;
     }
     const e = event as { type?: unknown; subtype?: unknown } | null;
-    if (e?.type === "system" && e.subtype === "init") initSeen = true;
+    if (e?.type === "system" && e.subtype === "init" && !initSeen) {
+      initSeen = true;
+      const id = sessionIdOf("claude", event);
+      if (id && (!req.resume || id === req.resume)) reportSessionId(cbs, id);
+    }
     // Pre-init on a resume, a `result` is claude's rejection, not a turn — the exit reports it.
     if (req.resume && !initSeen) return;
     const summary = claudeTurnSummary(event);

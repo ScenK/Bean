@@ -9,9 +9,9 @@ import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
 import type { LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult } from "./live-tasks.js";
 import type { TaskJob } from "./task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
-import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn } from "./ipc.js";
+import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "./ipc.js";
 import type { RoutineBuildView } from "./routine-builder.js";
-import type { WatchCheckResult } from "@bean/core";
+import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
 
 contextBridge.exposeInMainWorld("bean", {
   route: (input: RouteInput): Promise<RouteSuggestion> => ipcRenderer.invoke(IPC.route, input),
@@ -142,6 +142,11 @@ contextBridge.exposeInMainWorld("bean", {
   rememberOnClose: (transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[] }): void =>
     ipcRenderer.send(IPC.rememberOnClose, transcript, opts),
   setChatIncognito: (on: boolean): void => ipcRenderer.send(IPC.chatIncognito, on),
+  chatThreadSave: (req: ChatThreadSaveRequest): Promise<ChatThreadAck | undefined> => ipcRenderer.invoke(IPC.chatThreadSave, req),
+  getPendingChatThread: (): Promise<PendingChatThread | undefined> => ipcRenderer.invoke(IPC.getPendingChatThread),
+  chatThreadList: (): Promise<DesktopChatListing[]> => ipcRenderer.invoke(IPC.chatThreadList),
+  chatThreadDelete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.chatThreadDelete, id),
+  chatThreadOpen: (target: string | null): void => ipcRenderer.send(IPC.chatThreadOpen, target),
   onMemoryUpdated: (cb: (saved: Array<{ id: string; text: string }>) => void) =>
     ipcRenderer.on(IPC.memoryUpdated, (_e, saved: Array<{ id: string; text: string }>) => cb(saved)),
   getMemoryBatch: (): Promise<MemoryBatch | undefined> => ipcRenderer.invoke(IPC.getMemoryBatch),

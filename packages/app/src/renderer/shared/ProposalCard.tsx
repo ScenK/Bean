@@ -32,7 +32,7 @@ export function ProposalCard({
   lastUsedModel,
 }: {
   run: ProposedRun;
-  state: "pending" | "confirmed" | "cancelled";
+  state: "pending" | "confirmed" | "cancelled" | "expired";
   onConfirm: (
     editedPrompt: string,
     choice: { cli?: CliName; projectPath?: string; model?: string },
@@ -218,7 +218,7 @@ export function ProposalCard({
             : !canConfirm ? "Enable a CLI in Settings" : "Confirm & run"}
         </button>
         <button type="button" class="bean-btn bean-btn--ghost" disabled={done} onClick={onCancel}>
-          {state === "cancelled" ? "Cancelled" : "Cancel"}
+          {state === "cancelled" ? "Cancelled" : state === "expired" ? "Expired" : "Cancel"}
         </button>
       </div>
     </div>

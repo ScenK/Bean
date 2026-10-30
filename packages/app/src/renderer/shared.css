@@ -114,6 +114,138 @@ button, input, textarea, select, a {
 }
 .bean-chat-window {
   background: var(--bean-surface);
+  /* History sidebar beside the chat: each column insets itself under the 32px drag band. */
+  flex-direction: row;
+  padding-top: 0;
+}
+.bean-chat-window > .bean-chat {
+  padding-top: 32px;
+  min-width: 0;
+}
+/* Right of the traffic lights (titleBarStyle hiddenInset), inside the drag band. */
+.bean-chat-sidebar-toggle {
+  position: absolute;
+  top: 5px;
+  left: 78px;
+  z-index: 6;
+  width: 26px;
+  height: 22px;
+  padding: 3px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--bean-text-dim);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.bean-chat-sidebar-toggle:hover { background: var(--bean-surface-2); color: var(--bean-text); }
+.bean-chat-sidebar-toggle svg { width: 100%; height: 100%; }
+.bean-chat-sidebar {
+  flex: none;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bean-surface);
+  border-right: 1px solid var(--bean-border);
+  box-sizing: border-box;
+}
+.bean-chat-sidebar--overlay {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+.bean-chat-sidebar-head {
+  padding: 32px 10px 8px;
+  -webkit-app-region: drag;
+}
+.bean-chat-sidebar-new {
+  width: 100%;
+  -webkit-app-region: no-drag;
+}
+.bean-chat-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 6px 8px;
+}
+.bean-chat-sidebar-group {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--bean-text-dim);
+  margin: 10px 6px 4px;
+}
+.bean-chat-sidebar-empty {
+  font-size: 12.5px;
+  color: var(--bean-text-dim);
+  padding: 8px 6px;
+}
+.bean-chat-sidebar-row {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  border-left: 3px solid transparent;
+}
+.bean-chat-sidebar-row:hover { background: var(--bean-surface-2); }
+.bean-chat-sidebar-row--active {
+  background: var(--bean-surface-2);
+  border-left-color: var(--bean-accent-text);
+}
+.bean-chat-sidebar-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 6px 6px 5px;
+  border: none;
+  background: transparent;
+  color: var(--bean-text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.bean-chat-sidebar-open:disabled { cursor: default; }
+.bean-chat-sidebar-row--active .bean-chat-sidebar-open { cursor: default; }
+.bean-chat-sidebar-title {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bean-chat-sidebar-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--bean-text-dim);
+}
+/* Hover-revealed, but opacity (not visibility) keeps it in the tab order. */
+.bean-chat-sidebar-row-delete {
+  flex: none;
+  opacity: 0;
+  width: 24px;
+  height: 24px;
+  margin-right: 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--bean-text-dim);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.bean-chat-sidebar-row:hover .bean-chat-sidebar-row-delete,
+.bean-chat-sidebar-row-delete:focus-visible { opacity: 1; }
+.bean-chat-sidebar-row-delete:hover { color: var(--bean-text); }
+.bean-chat-sidebar-foot {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--bean-text-dim);
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--bean-border);
 }
 .bean-chat-scroll {
   flex: 1;

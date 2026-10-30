@@ -9,7 +9,7 @@ import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { applyChatopsActivity, clearBotJobs } from "./chatops-activity.js";
 import { installAvatarControls } from "./avatar-window.js";
-import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker, webContents } from "electron";
+import { app, ipcMain, dialog, BrowserWindow, type Rectangle, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker, webContents } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import {
   beanDir, ensurePrivateBeanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
@@ -26,14 +26,14 @@ import {
   addTodo, claimTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   recoverInterruptedTodos, deleteTodosForRoutine, sweepDeadRuns,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  availableModels, pinnedStepSelection, isLiveCli, findDelegateRun,
+  availableModels, pinnedStepSelection, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat, deleteDesktopChat, listDesktopChats,
   createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens,
-  buildRoutineHandlers, buildSkillProposalHandlers, buildTodoHandlers, buildPendingUpdateStore, type ChatPromptPayload,
+  buildRoutineHandlers, buildSkillProposalHandlers, buildTodoHandlers, buildPendingUpdateStore, buildChatThreadHandlers, type ChatPromptPayload,
 } from "./ipc.js";
 import { IPC, type Theme, type ComponentKind, type DashboardTarget } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
@@ -326,7 +326,10 @@ app.whenReady().then(async () => {
   // A run to open in the Dashboard: pulled on mount by a fresh (or still-loading) window, pushed to
   // an open one. A mounted window never stores it — that would make a later reopen jump to an old run.
   let pendingDashboardTarget: DashboardTarget | undefined;
-  const openComponent = (kind: ComponentKind, payload?: string | DashboardTarget): void => {
+  // Desktop chat history: built here (not with the other handlers) because the chat window's
+  // `closed` hands a sidebar switch to the next window.
+  const chatThreadHandlers = buildChatThreadHandlers({ dbFile: dbFile(dir), saveDesktopChat, getDesktopChat, deleteDesktopChat, listDesktopChats });
+  const openComponent = (kind: ComponentKind, payload?: string | DashboardTarget, bounds?: Rectangle): void => {
     const droppedUrl = typeof payload === "string" ? payload : undefined;
     const target = typeof payload === "object" && kind === "dashboard" ? payload : undefined;
     const existing = componentWindows.get(kind);
@@ -347,9 +350,11 @@ app.whenReady().then(async () => {
     // Defense-in-depth: with hide-on-close the avatar isn't destroyed in normal use, but never
     // call getBounds() on a destroyed window (it throws) — fall back to default placement.
     const anchor = avatar.isDestroyed() ? undefined : avatar.getBounds();
-    const win = createComponentWindow(kind, anchor);
+    const win = createComponentWindow(kind, anchor, bounds);
     trackComponentWindow(componentWindows, kind, win);
     if (kind === "chat") {
+      // Where a sidebar switch reopens: the bounds at the real close (the window is gone at `closed`).
+      let lastBounds = win.getBounds();
       win.on("close", (e) => {
         // First close attempt: hold the window open just long enough for the renderer to hand its
         // transcript to rememberOnClose (main extracts in the background — no review card) or
@@ -357,7 +362,7 @@ app.whenReady().then(async () => {
         // allowChatClose. quitting/allowClose bypass it
         // so app-quit and the second close aren't blocked (safety-window-behavior: chat is its
         // own window, so this never touches avatar/intake).
-        if (quitting || allowClose.has(win)) return;
+        if (quitting || allowClose.has(win)) { lastBounds = win.getBounds(); return; }
         e.preventDefault();
         // trackComponentWindow's once("close") fired on this same cancelable close and dropped our
         // map entry; we're keeping the window open for that hand-off, so re-register it — otherwise
@@ -367,7 +372,12 @@ app.whenReady().then(async () => {
       });
       // Captured now: the webContents is destroyed by the time `closed` fires.
       const ownerId = win.webContents.id;
-      win.on("closed", () => { cancelAllDelegates(); stopLiveOwner(ownerId); });
+      win.on("closed", () => {
+        cancelAllDelegates();
+        stopLiveOwner(ownerId);
+        // A sidebar switch: the next chat takes this one's place and pulls the picked thread.
+        if (chatThreadHandlers.takeSwitch() && !quitting) openComponent("chat", undefined, lastBounds);
+      });
     }
     if (droppedUrl && kind === "chat") {
       droppedUrlStore.set(droppedUrl);
@@ -649,6 +659,8 @@ app.whenReady().then(async () => {
           if (line) taskStatus.upsert(id, { line });
         } else if (event.type === "turn") {
           taskStatus.upsert(id, { line: event.failed ? "Turn failed" : "Waiting for you" });
+        } else if (event.type === "session") {
+          // the receipt is for the chat window only
         } else if (event.reason === "failed") taskStatus.finish(id, "failed", event.error ?? "Session died");
         else taskStatus.finish(id, "done", event.reason === "stopped" ? "Session ended" : "Session ended on its own", false);
         const owner = webContents.fromId(ownerId);
@@ -1003,6 +1015,8 @@ app.whenReady().then(async () => {
         loadRoutines: () => loadRoutines(routinesPath),
         addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
       }),
+      chatThreadHandlers,
+      closeChatWindow: () => componentWindows.get("chat")?.close(),
     });
 
     await loadAvatarWindow(avatar);

@@ -197,6 +197,48 @@ describe("createLiveTasks resume (Continue live)", () => {
   });
 });
 
+describe("createLiveTasks CLI session ids", () => {
+  const rows = (dir: string) => findDelegateRun(join(dir, "bean.db"), "sess-a", () => true, "desktop");
+
+  it("records one desktop row per fresh session with the user's ask, and emits the receipt", async () => {
+    const h = harness();
+    await h.live.start(1, { agent: "claude", projectPath: "", ask: "  fix the bug ", history: [{ role: "user", text: "earlier" }] });
+    h.cbs[0]!.onSessionId!("sess-a");
+    expect(rows(h.dir)).toEqual({ run: { surface: "desktop", cli: "claude", sessionId: "sess-a", projectPath: "/scratch", instruction: "fix the bug" } });
+    expect(h.events.at(-1)!.e).toEqual({
+      type: "session", sessionId: "s1", agent: "claude", seq: 2, receipt: { sessionId: "sess-a", agent: "claude", label: "claude · sess…" },
+    });
+  });
+
+  it("ignores an id its CLI can't continue", async () => {
+    const h = harness();
+    await h.live.start(1, { agent: "codex", projectPath: "/proj", ask: "a" });
+    h.cbs[0]!.onSessionId!("not-a-uuid");
+    expect(h.types()).toEqual(["started"]);
+  });
+
+  it("a resume adds no row but re-emits the receipt", () => {
+    const dir = tmp();
+    const proj = tmp();
+    recordDelegateSession(join(dir, "bean.db"), { surface: "desktop", cli: "claude", sessionId: "sess-a", projectPath: proj, instruction: "x" });
+    const h = harness({ findResumable: (id) => findDelegateRun(join(dir, "bean.db"), id, undefined, "desktop") });
+    h.live.resume(1, "sess-a");
+    h.cbs[0]!.onSessionId!("sess-a");
+    expect(h.events.at(-1)!.e).toMatchObject({ type: "session", receipt: { sessionId: "sess-a" } });
+    expect(existsSync(join(h.dir, "bean.db"))).toBe(false);
+  });
+
+  it("refuses to continue a fresh session while its child is still stopping", async () => {
+    const h = harness({ findResumable: (id) => findDelegateRun(join(h.dir, "bean.db"), id, () => true, "desktop") });
+    await h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "a" });
+    h.cbs[0]!.onSessionId!("sess-a");
+    h.live.stop(1, "s1");
+    expect(h.live.resume(2, "sess-a")).toEqual({ error: "That session is already live." });
+    h.cbs[0]!.onExit();
+    expect(h.live.resume(2, "sess-a")).toMatchObject({ sessionId: "s2" });
+  });
+});
+
 describe("liveSpawnFn", () => {
   const probe = "const fs=require('fs');process.stdout.write(JSON.stringify({pipe:!fs.fstatSync(0).isCharacterDevice(),path:process.env.PATH,pwd:process.env.PWD}))";
   const run = async (agent: "claude" | "codex" | "opencode") => {

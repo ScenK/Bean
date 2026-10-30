@@ -29,12 +29,13 @@ function harness(opts: { resume?: string; idleMs?: number } = {}) {
   const outputs: string[] = [];
   const turns: TurnSummary[] = [];
   const exits: (Error | undefined)[] = [];
+  const ids: string[] = [];
   const hooks: { onTurn?: (s: TurnSummary) => void; turnStarts: number } = { turnStarts: 0 };
   let clock = 0;
   const handle = startCodexLiveSession(
     { cli: "codex", projectPath: "/p", prompt: "go", ...(opts.resume ? { resume: opts.resume } : {}) },
     {
-      onOutput: (l) => outputs.push(l), onExit: (e) => exits.push(e),
+      onOutput: (l) => outputs.push(l), onExit: (e) => exits.push(e), onSessionId: (id) => ids.push(id),
       onTurnStart: () => { hooks.turnStarts++; },
       onTurnComplete: (s) => { turns.push(s); hooks.onTurn?.(s); },
     },
@@ -54,7 +55,7 @@ function harness(opts: { resume?: string; idleMs?: number } = {}) {
     clock += 6100;
     await close(0, f);
   };
-  return { handle, spawned, last, emit, close, completeTurn, outputs, turns, exits, hooks };
+  return { handle, spawned, last, emit, close, completeTurn, outputs, turns, exits, ids, hooks };
 }
 
 let killSpy: ReturnType<typeof vi.spyOn>;
@@ -74,6 +75,8 @@ describe("startCodexLiveSession", () => {
     expect(h.handle.send("next")).toBe(true);
     expect(h.spawned[1]!.args.slice(0, 2)).toEqual(["exec", "resume"]);
     expect(h.spawned[1]!.args.slice(-3)).toEqual(["--", TID, "next"]);
+    await h.completeTurn("again");
+    expect(h.ids).toEqual([TID]); // once per session, not per turn
   });
 
   it("a send() from inside onTurnComplete starts exactly one next turn; queued turns fire onTurnStart", async () => {
@@ -183,6 +186,13 @@ describe("startCodexLiveSession", () => {
     await h.close(1);
     expect(h.exits[0]?.message).toBe(RESUME_REJECTED);
     expect(h.spawned).toHaveLength(1);
+    expect(h.ids).toEqual([]);
+  });
+
+  it("a resume reports the matching thread id once", async () => {
+    const h = harness({ resume: TID });
+    await h.completeTurn("where things stand");
+    expect(h.ids).toEqual([TID]);
   });
 
   it("a resume that emits a different thread is stopped, its output suppressed", async () => {
@@ -195,6 +205,7 @@ describe("startCodexLiveSession", () => {
     expect(h.outputs).toEqual([]);
     expect(h.turns).toEqual([]);
     expect(h.exits[0]?.message).toBe(CODEX_THREAD_MISMATCH);
+    expect(h.ids).toEqual([]);
   });
 
   it("refuses a non-UUID resume id before spawning", async () => {

@@ -369,7 +369,7 @@ export function ChatPanel({
             type="button"
             class={`bean-chip bean-chat-incognito${incognito ? " bean-chat-incognito--on" : ""}`}
             aria-pressed={incognito}
-            title={incognito ? "This chat won't be remembered" : "Go off the record: this chat won't be remembered"}
+            title={incognito ? "This chat won't be remembered or kept in history" : "Off the record — also removes this chat from history."}
             onClick={onToggleIncognito}
           >
             🕶 {incognito ? "off the record" : "record"}
@@ -433,6 +433,22 @@ export function ChatPanel({
             ));
           }
           if (it.kind === "status") {
+            if (it.receipt) {
+              return (
+                <div key={it.id} class={`bean-status bean-status--${it.tone}`}>
+                  {it.text}
+                  {canContinueLive(it, clis, !!live) ? (
+                    <>
+                      {" · "}
+                      <button type="button" class="bean-status-action" disabled={!!it.exiting}
+                        title={it.exiting ? "Waiting for the agent to exit…" : it.receipt.label} onClick={() => onContinueLive(it.id)}>
+                        Continue live
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              );
+            }
             if (!it.details?.length) return <div key={it.id} class={`bean-status bean-status--${it.tone}`}>{it.text}</div>;
             return (
               <details key={it.id} class={`bean-status bean-status--${it.tone} bean-status--details`}>
@@ -445,8 +461,8 @@ export function ChatPanel({
             const facts = it.saved.map((m) => m.text).join("; ");
             return (
               <div key={it.id} class={`bean-status bean-status--${it.state === "undone" ? "info" : "done"}`}>
-                {it.state === "undone" ? `Forgot — ${facts}` : `🧠 Memory updated — ${facts} · `}
-                {it.state === "undone" ? null : (
+                {it.state === "undone" ? `Forgot — ${facts}` : `🧠 Memory updated — ${facts}${it.state === "kept" ? "" : " · "}`}
+                {it.state === "undone" || it.state === "kept" ? null : (
                   <button type="button" class="bean-status-action" disabled={it.state === "undoing"} onClick={() => onMemoryUndo(it.id)}>Undo</button>
                 )}
               </div>
