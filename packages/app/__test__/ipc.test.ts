@@ -715,6 +715,16 @@ test("switching the chip on while a capture is in flight saves nothing", async (
   expect(d.pending).toHaveLength(1);
 });
 
+test("isIncognito reports each window's live chip (delegate starts read it)", () => {
+  const { handlers } = memoryHandlersFor({});
+  expect(handlers.isIncognito(5)).toBe(false);
+  handlers.setIncognito(5, true);
+  expect(handlers.isIncognito(5)).toBe(true);
+  expect(handlers.isIncognito(6)).toBe(false);
+  handlers.setIncognito(5, false);
+  expect(handlers.isIncognito(5)).toBe(false);
+});
+
 test("a reply that settles after its window closed is never captured (close already covered it)", async () => {
   let extracted = 0;
   const { handlers, appended } = memoryHandlersFor({

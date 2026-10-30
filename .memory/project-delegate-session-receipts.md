@@ -7,6 +7,12 @@ recorded too; runs that die before the session starts have no id and no row. App
 a thread follow-up resumes the same id, so repeated `session_id`s mean one continuous session.
 No retention job. A failed write is logged without values and never alters the run.
 
+Incognito (#506): a desktop run started from an off-the-record (🕶) chat still gets its row —
+skipping it would break resume and the card's Continue live — but with `instruction` = `""`.
+Main reads the sender window's live chip (`memoryHandlers.isIncognito`) at `bean:delegate-start`
+and sets `offRecord`; the renderer's request is never trusted for it. Live sessions record no
+rows today; when they do (#503), apply the same rule.
+
 Receipts (terminal states only — copying mid-run would put two writers on one transcript):
 - **Desktop** delegate card: `claude · 3f2a…` chip + Copy → `cd '<path>' && claude --resume <id>`.
   Computed in main (`delegate-tasks.ts`), carried on the `done`/`failed`/`cancelled` event;
