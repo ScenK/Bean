@@ -598,6 +598,8 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     setIncognito: (windowId: number, on: boolean): void => {
       if (!closed.has(windowId)) windowState(windowId).incognito = on;
     },
+    /** The window's live 🕶 chip — also keeps its delegate instructions out of `delegate_runs`. */
+    isIncognito: (windowId: number): boolean => windows.get(windowId)?.incognito ?? false,
     /** Chat-window close: a catch-up — extract → validate → append in the background, no review
      * card. Turns per-turn capture handled stay as context only; `rejected` = facts the user
      * undid in this window, shown to extraction as already remembered so they aren't re-saved. */
@@ -1043,7 +1045,8 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
 
   const launchHandler = buildLaunchHandler(deps);
   ipcMain.on(IPC.launch, (_e, req: LaunchRequest) => launchHandler(req));
-  ipcMain.handle(IPC.delegateStart, (_e, req: DelegateStartRequest) => deps.delegateTasks.start(req));
+  ipcMain.handle(IPC.delegateStart, (e, req: DelegateStartRequest) =>
+    deps.delegateTasks.start({ ...req, offRecord: memoryHandlers.isIncognito(e.sender.id) }));
   ipcMain.on(IPC.delegateCancel, (_e, taskId: string) => deps.delegateTasks.cancel(taskId));
   // Sessions belong to the sender's webContents id; every payload is validated in live-tasks.
   ipcMain.handle(IPC.liveStart, (e, req: unknown) =>

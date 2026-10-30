@@ -299,6 +299,19 @@ describe("delegate session receipts", () => {
     expect(rows.map((r) => ({ ...r }))).toEqual([{ surface: "desktop", instruction: "fix it" }]);
   });
 
+  it("an off-the-record run records its session with no instruction text (#506)", async () => {
+    const dir = tmp();
+    const h = harness({ dir });
+    await h.tasks.start({ projectPath: "/p", prompt: "composed secret", instruction: "secret plan", offRecord: true });
+    h.cbs().onSessionStart?.(1, "sess-3");
+    h.cbs().onDone("ok");
+    expect(h.sent.at(-1)).toMatchObject({ type: "done", receipt: { sessionId: "sess-3" } });
+    const db = new DatabaseSync(join(dir, "bean.db"));
+    const rows = db.prepare("SELECT session_id, instruction FROM delegate_runs").all();
+    db.close();
+    expect(rows.map((r) => ({ ...r }))).toEqual([{ session_id: "sess-3", instruction: "" }]);
+  });
+
   it("a cancelled run carries the receipt; a run with no valid session id has none", async () => {
     const h = harness();
     await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "go" });

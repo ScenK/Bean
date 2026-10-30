@@ -32,6 +32,10 @@ export interface DelegateStartRequest {
   // The proposal's skill. Main re-resolves it to decide browser access — the renderer never
   // sends a trusted browser flag, so a forged or unknown name just grants nothing.
   skillName?: string;
+  // Set by main from the sender window's 🕶 chip, never trusted from the renderer: an
+  // off-the-record chat's run still gets its `delegate_runs` row (resume/Continue live need the
+  // session id) but with an empty instruction.
+  offRecord?: boolean;
 }
 
 export interface DelegateTasksDeps {
@@ -136,7 +140,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
           onError: (err) => { settled = true; emit({ taskId, type: "failed", message: err.message, ...receipt }); },
           onSessionStart: (_pid, sessionId) => {
             recordDelegateSession(dbFile(deps.dir), {
-              surface: "desktop", cli: choice.cli, sessionId, projectPath: req.projectPath, instruction: req.instruction,
+              surface: "desktop", cli: choice.cli, sessionId, projectPath: req.projectPath, instruction: req.offRecord ? "" : req.instruction,
             });
             if (isValidSessionId(sessionId)) {
               receipt = { receipt: {
