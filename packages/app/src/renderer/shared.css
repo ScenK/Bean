@@ -122,6 +122,8 @@ button, input, textarea, select, a {
   padding-top: 32px;
   min-width: 0;
 }
+/* A chat with work in flight stays mounted while another is shown (#517). */
+.bean-chat-window > .bean-chat[hidden] { display: none; }
 /* Right of the traffic lights (titleBarStyle hiddenInset), inside the drag band; on the
    sidebar's divider while it's open. */
 .bean-chat-sidebar-toggle {
@@ -244,6 +246,15 @@ button, input, textarea, select, a {
 }
 .bean-chat-sidebar-row--active .bean-chat-sidebar-title { font-weight: 700; }
 .bean-chat-sidebar-line .bean-agent-avatar { flex: none; }
+.bean-chat-sidebar-spinner,
+.bean-chat-sidebar-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.bean-chat-sidebar-spinner {
+  box-sizing: border-box;
+  border: 1.5px solid var(--bean-text-dim);
+  border-right-color: transparent;
+  animation: bean-spin 0.9s linear infinite;
+}
+.bean-chat-sidebar-dot { background: var(--bean-accent); }
 .bean-chat-sidebar-time,
 .bean-chat-sidebar-meta {
   flex: none;

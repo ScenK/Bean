@@ -20,10 +20,10 @@ contextBridge.exposeInMainWorld("bean", {
   delegateCancel: (taskId: string): void => ipcRenderer.send(IPC.delegateCancel, taskId),
   onDelegateEvent: (cb: (e: DelegateEvent) => void) =>
     ipcRenderer.on(IPC.delegateEvent, (_e, ev: DelegateEvent) => cb(ev)),
-  liveStart: (req: LiveStartRequest): Promise<LiveStartResult> => ipcRenderer.invoke(IPC.liveStart, req),
-  liveSend: (sessionId: string, text: string): Promise<string | undefined> => ipcRenderer.invoke(IPC.liveSend, sessionId, text),
-  liveStop: (sessionId: string): void => ipcRenderer.send(IPC.liveStop, sessionId),
-  liveResume: (sessionId: string): Promise<LiveResumeResult> => ipcRenderer.invoke(IPC.liveResume, sessionId),
+  liveStart: (req: LiveStartRequest, mountId: string): Promise<LiveStartResult> => ipcRenderer.invoke(IPC.liveStart, req, mountId),
+  liveSend: (sessionId: string, text: string, mountId: string): Promise<string | undefined> => ipcRenderer.invoke(IPC.liveSend, sessionId, text, mountId),
+  liveStop: (sessionId: string, mountId: string): void => ipcRenderer.send(IPC.liveStop, sessionId, mountId),
+  liveResume: (sessionId: string, mountId: string): Promise<LiveResumeResult> => ipcRenderer.invoke(IPC.liveResume, sessionId, mountId),
   onLiveEvent: (cb: (e: LiveEvent) => void) =>
     ipcRenderer.on(IPC.liveEvent, (_e, ev: LiveEvent) => cb(ev)),
   availableClis: (): Promise<CliName[]> => ipcRenderer.invoke(IPC.availableClis),

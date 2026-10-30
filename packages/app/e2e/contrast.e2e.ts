@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
 import { dbFile, saveDesktopChat } from "@bean/core";
 import { launchBean } from "./fixtures/launch-app.js";
@@ -88,6 +88,12 @@ const SCAN = `(() => {
   return fails;
 })()`;
 
+// Theme colors transition (the orb body's fill eases over .3s): scan only once they've settled.
+const setTheme = (win: Page, theme: string): Promise<void> => win.evaluate(async (t) => {
+  document.documentElement.setAttribute("data-theme", t);
+  await Promise.all(document.getAnimations().filter((a) => a instanceof CSSTransition).map((a) => a.finished.catch(() => {})));
+}, theme);
+
 const WINDOWS = ["chat", "skills", "projects", "routines", "dashboard", "settings", "persona", "about", "notes", "plan"];
 
 test("every component window clears WCAG AA text contrast in both themes", async () => {
@@ -121,7 +127,7 @@ test("every component window clears WCAG AA text contrast in both themes", async
       }
       await win.waitForTimeout(600);
       for (const theme of ["hearth", "graphite"]) {
-        await win.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
+        await setTheme(win, theme);
         expect(await win.evaluate(SCAN), `${kind} / ${theme}`).toEqual([]);
       }
       // #505: the history sidebar inline (default width) is covered above; narrow the window and
@@ -135,7 +141,7 @@ test("every component window clears WCAG AA text contrast in both themes", async
         await win.locator(".bean-chat-sidebar-toggle").click();
         await expect(win.locator(".bean-chat-sidebar--overlay")).toBeVisible();
         for (const theme of ["hearth", "graphite"]) {
-          await win.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
+          await setTheme(win, theme);
           expect(await win.evaluate(SCAN), `chat overlay / ${theme}`).toEqual([]);
         }
         await win.keyboard.press("Escape");

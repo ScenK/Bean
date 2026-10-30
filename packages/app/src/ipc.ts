@@ -216,8 +216,8 @@ export interface ChatHandlerDeps {
   dbFile: string;
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
-  /** Offer propose_live_session (the hand-off card) to this chat window — per request, by sender. */
-  liveSessionAvailable?: (senderId: number) => boolean;
+  /** Offer propose_live_session (the hand-off card) to this chat — per request, by sender + mount. */
+  liveSessionAvailable?: (senderId: number, mountId: string) => boolean;
   /** Config `webSearch`, read per chat request so a Settings toggle applies without restart. */
   webSearch?: () => boolean;
   /** Its scratch workspace hosts delegates that aren't about a project (main.ts creates it). */
@@ -276,7 +276,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       linkedNote: req.linkedNote,
       delegateAvailable: deps.delegateAvailable?.() ?? false,
       scratchPath: deps.beanDirPath ? scratchDir(deps.beanDirPath) : undefined,
-      liveSessionAvailable: senderId !== undefined && (deps.liveSessionAvailable?.(senderId) ?? false),
+      liveSessionAvailable: senderId !== undefined && mountId !== undefined && (deps.liveSessionAvailable?.(senderId, mountId) ?? false),
       liveSessionHost: "desktop",
       todoRoutines,
       webSearch: deps.webSearch?.() ?? false,
@@ -1070,7 +1070,7 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
     /** Stops every task one chat (mount) started — its release. */
     cancelMount: (mountId: string) => void;
   };
-  liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "resume">;
+  liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "resume" | "stopMount">;
   /** Whether an IPC sender is the chat window — the only window that may drive an agent session. */
   isChatSender: (sender: WebContents) => boolean;
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
@@ -1106,6 +1106,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     memoryHandlers.release(mountId);
     deps.chatThreadHandlers.release(mountId);
     deps.delegateTasks.cancelMount(mountId);
+    deps.liveTasks.stopMount(mountId);
   };
   ipcMain.on(IPC.chatAttach, (e, mountId: unknown) => {
     if (deps.isChatSender(e.sender) && !mounts.attach(e.sender.id, mountId)) console.error("chat attach refused");
@@ -1194,14 +1195,28 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     return deps.delegateTasks.start({ ...req, offRecord: memoryHandlers.isIncognito(key), mountId: key });
   });
   ipcMain.on(IPC.delegateCancel, (_e, taskId: string) => deps.delegateTasks.cancel(taskId));
-  // Sessions belong to the sender's webContents id; every payload is validated in live-tasks.
-  ipcMain.handle(IPC.liveStart, (e, req: unknown) =>
-    deps.isChatSender(e.sender) ? deps.liveTasks.start(e.sender.id, req) : { error: "Agent sessions run from the chat window." });
-  ipcMain.handle(IPC.liveSend, (e, sessionId: unknown, text: unknown) =>
-    deps.isChatSender(e.sender) ? deps.liveTasks.send(e.sender.id, sessionId, text) : "Agent sessions run from the chat window.");
-  ipcMain.on(IPC.liveStop, (e, sessionId: unknown) => { if (deps.isChatSender(e.sender)) deps.liveTasks.stop(e.sender.id, sessionId); });
-  ipcMain.handle(IPC.liveResume, (e, sessionId: unknown) =>
-    deps.isChatSender(e.sender) ? deps.liveTasks.resume(e.sender.id, sessionId) : { error: "Agent sessions run from the chat window." });
+  // Sessions belong to one chat (sender + attached mount); every payload is validated in live-tasks.
+  const liveOwner = (sender: WebContents, mountId: unknown) => {
+    const key = tryChatKey(sender, mountId);
+    return key === undefined ? undefined : { senderId: sender.id, mountId: key };
+  };
+  const notLive = "Agent sessions run from the chat window.";
+  ipcMain.handle(IPC.liveStart, (e, req: unknown, mountId: unknown) => {
+    const o = liveOwner(e.sender, mountId);
+    return o ? deps.liveTasks.start(o, req) : { error: notLive };
+  });
+  ipcMain.handle(IPC.liveSend, (e, sessionId: unknown, text: unknown, mountId: unknown) => {
+    const o = liveOwner(e.sender, mountId);
+    return o ? deps.liveTasks.send(o, sessionId, text) : notLive;
+  });
+  ipcMain.on(IPC.liveStop, (e, sessionId: unknown, mountId: unknown) => {
+    const o = liveOwner(e.sender, mountId);
+    if (o) deps.liveTasks.stop(o, sessionId);
+  });
+  ipcMain.handle(IPC.liveResume, (e, sessionId: unknown, mountId: unknown) => {
+    const o = liveOwner(e.sender, mountId);
+    return o ? deps.liveTasks.resume(o, sessionId) : { error: notLive };
+  });
   ipcMain.handle(IPC.availableClis, () => deps.getAvailableClis());
   ipcMain.handle(IPC.detectedClis, () => deps.getDetectedClis());
 

@@ -12,13 +12,16 @@ import type { CliModelSelection, CliName, LiveCli, DelegateCallbacks, DelegateHa
  * shape); the id is opaque to the renderer, which hands it back and main re-checks everything. */
 export interface DelegateReceipt { label: string; command: string; sessionId?: string; agent?: LiveCli }
 
-export type DelegateEvent =
+// `mountId` = the chat that started it (set by main), so the window routes it there even while
+// that chat is hidden.
+export type DelegateEvent = { mountId?: string } & (
   // projectPath/instruction label the avatar's status bubble (task-status.ts); chat ignores them.
   | { taskId: string; type: "started"; projectPath: string; instruction: string }
   | { taskId: string; type: "output"; line: string }
   | { taskId: string; type: "done"; result: string; receipt?: DelegateReceipt }
   | { taskId: string; type: "failed"; message: string; receipt?: DelegateReceipt }
-  | { taskId: string; type: "cancelled"; receipt?: DelegateReceipt };
+  | { taskId: string; type: "cancelled"; receipt?: DelegateReceipt }
+);
 
 export interface DelegateStartRequest {
   projectPath: string;
@@ -107,7 +110,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       if (task) releaseRun(deps.dir, event.taskId);
       tasks.delete(event.taskId);
     }
-    deps.send(event);
+    deps.send(task?.mountId ? { ...event, mountId: task.mountId } : event);
   };
 
   const cancelWhere = (pick: (t: Task) => boolean): void => {
@@ -127,7 +130,9 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       const browser = req.skillName && deps.skillBrowser ? await deps.skillBrowser(req.skillName) : false;
       const choice = deps.resolveCli(req.model);
       if (!choice) {
-        setImmediate(() => deps.send({ taskId, type: "failed", message: "No enabled delegate CLI found — enable one in Settings." }));
+        setImmediate(() => deps.send({
+          taskId, type: "failed", message: "No enabled delegate CLI found — enable one in Settings.", ...(req.mountId ? { mountId: req.mountId } : {}),
+        }));
         return taskId;
       }
       recordRun(deps.dir, taskId, req.projectPath, process.pid);

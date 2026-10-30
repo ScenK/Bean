@@ -13,8 +13,9 @@ import type { CliName, LiveCli, LiveSessionCallbacks, LiveSessionHandle, LiveSes
 export interface LiveReceipt { sessionId: string; agent: LiveCli; label: string }
 
 /** A main→renderer push on `bean:live-event`. `seq` counts up per session from 1. `sessionId` is
- * Bean's own id for the session; the CLI's id travels only in the `session` receipt. */
-export type LiveEvent = { sessionId: string; agent: LiveCli; seq: number } & (
+ * Bean's own id for the session; the CLI's id travels only in the `session` receipt. `mountId` = the
+ * chat that owns it, so the window routes it there even while that chat is hidden. */
+export type LiveEvent = { sessionId: string; agent: LiveCli; mountId: string; seq: number } & (
   | { type: "started"; projectPath: string; handedOver: number }
   | { type: "output"; line: string }
   | { type: "turn"; result: string; durationMs?: number; costUsd?: number; failed?: string }
@@ -46,6 +47,14 @@ export const HANDOFF_ITEM_CHARS = 2000;
 export const ASK_LIMIT = 8000;
 // Upper bound on what main even looks at; the handoff keeps far fewer.
 const HISTORY_MAX = 200;
+
+/** At most this many sessions at once across every chat — they run with permissions bypassed.
+ * Starting and stopping ones count. */
+export const LIVE_SESSION_CAP = 10;
+export const LIVE_CAP_REACHED = `${LIVE_SESSION_CAP} live agent sessions are already running in other chats — end one to start another.`;
+
+/** A session's owner: one chat (mount) in one chat window. */
+export interface LiveOwner { senderId: number; mountId: string }
 
 export const LIVE_AGENT_NAMES: Record<LiveCli, string> = { claude: "Claude Code", codex: "Codex", opencode: "opencode" };
 
@@ -112,7 +121,7 @@ export interface LiveTasksDeps {
   /** Where a "" (no project) request runs — the renderer doesn't know Bean's scratch path. */
   scratchPath?: string;
   /** Push to the owning window (and the pet's status). */
-  send: (ownerId: number, event: LiveEvent) => void;
+  send: (senderId: number, event: LiveEvent) => void;
   newId: () => string;
   /** ~/.bean — run records (run-queue.ts) for crash cleanup. */
   dir: string;
@@ -122,7 +131,8 @@ export interface LiveTasksDeps {
 }
 
 interface Session {
-  ownerId: number;
+  senderId: number;
+  mountId: string;
   agent: LiveCli;
   seq: number;
   /** Unset while startup awaits its checks — a stop then means "never spawn". */
@@ -138,16 +148,15 @@ interface Session {
 }
 
 // Distributive, so each event variant keeps its own fields.
-type LiveEventBody = LiveEvent extends infer E ? E extends LiveEvent ? Omit<E, "sessionId" | "agent" | "seq"> : never : never;
+type LiveEventBody = LiveEvent extends infer E ? E extends LiveEvent ? Omit<E, "sessionId" | "agent" | "mountId" | "seq"> : never : never;
 
 export function createLiveTasks(deps: LiveTasksDeps) {
   const engine = deps.engine ?? startLiveEngine;
-  // Keyed by session id, not window: "one per window" is only a check in start(), so a later
-  // multi-agent mode relaxes that check instead of reshaping the registry.
+  // Keyed by session id, not chat: "one per chat" is only a check in start()/resume().
   const sessions = new Map<string, Session>();
 
   const emit = (sessionId: string, s: Session, body: LiveEventBody): void => {
-    deps.send(s.ownerId, { ...body, sessionId, agent: s.agent, seq: ++s.seq } as LiveEvent);
+    deps.send(s.senderId, { ...body, sessionId, agent: s.agent, mountId: s.mountId, seq: ++s.seq } as LiveEvent);
   };
 
   // Only reached from the engine's onExit, i.e. once the child is confirmed dead — so the run
@@ -161,9 +170,14 @@ export function createLiveTasks(deps: LiveTasksDeps) {
     else emit(sessionId, s, { type: "ended", reason: s.stopping ? "stopped" : "ended" });
   };
 
-  // A session that's stopping (End, a switch) is on its way out: the next one may start.
-  const hasSession = (ownerId: number): boolean =>
-    [...sessions.values()].some((s) => s.ownerId === ownerId && !s.stopping);
+  const owns = (s: Session, o: LiveOwner): boolean => s.senderId === o.senderId && s.mountId === o.mountId;
+  // A session that's stopping (End, a mode switch) is on its way out: the chat's next one may start.
+  const hasSession = (o: LiveOwner): boolean => [...sessions.values()].some((s) => owns(s, o) && !s.stopping);
+  // Why this chat can't open a session now, if it can't.
+  const refusal = (o: LiveOwner): string | undefined => {
+    if (hasSession(o)) return "This chat already has an agent session — end it first.";
+    return sessions.size >= LIVE_SESSION_CAP ? LIVE_CAP_REACHED : undefined;
+  };
 
   const stopSession = (s: Session): void => {
     s.stopping = true;
@@ -217,10 +231,12 @@ export function createLiveTasks(deps: LiveTasksDeps) {
   };
 
   return {
-    /** Whether this window already has an agent session (Bean then doesn't offer another). */
+    /** Whether this chat already has an agent session. */
     hasSession,
+    /** Whether this chat could open one now (Bean offers a hand-off only then). */
+    canStart: (o: LiveOwner): boolean => refusal(o) === undefined,
 
-    async start(ownerId: number, raw: unknown): Promise<LiveStartResult> {
+    async start(owner: LiveOwner, raw: unknown): Promise<LiveStartResult> {
       const req = raw as Partial<LiveStartRequest> | null;
       if (!req || !isLiveCli(req.agent) || typeof req.projectPath !== "string" || typeof req.ask !== "string") {
         return { error: "Invalid live session request." };
@@ -229,12 +245,11 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (!deps.enabledClis().includes(agent)) return { error: `${LIVE_AGENT_NAMES[agent]} isn't installed or is turned off in Settings.` };
       const handoff = buildHandoff(parseHistory(req.history), req.ask);
       if ("error" in handoff) return handoff;
-      if (hasSession(ownerId)) {
-        return { error: "This chat already has an agent session — end it first." };
-      }
+      const refused = refusal(owner);
+      if (refused) return { error: refused };
       // Registered before any await, so a window close during startup finds it and cancels the spawn.
       const sessionId = deps.newId();
-      const s: Session = { ownerId, agent, seq: 0, stopping: false, ask: req.ask.trim() };
+      const s: Session = { ...owner, agent, seq: 0, stopping: false, ask: req.ask.trim() };
       sessions.set(sessionId, s);
       const projectPath = req.projectPath || deps.scratchPath || "";
       let allowed = false;
@@ -257,7 +272,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
      * renderer: the CLI and project are the recorded run's (the CLI is frozen — no substitute, and a
      * rejected id ends with RESUME_REJECTED, never a fresh session). No handoff: the agent already
      * has its context. Claimed while it lives, so a double click can't put two writers on it. */
-    resume(ownerId: number, rawId: unknown): LiveResumeResult {
+    resume(owner: LiveOwner, rawId: unknown): LiveResumeResult {
       if (typeof rawId !== "string") return { error: "Invalid live session request." };
       let found: ResumableRun;
       try {
@@ -269,33 +284,40 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       const { cli, projectPath } = found.run;
       if (!isLiveCli(cli)) return { error: "That run can't continue live." };
       if (!deps.enabledClis().includes(cli)) return { error: `${LIVE_AGENT_NAMES[cli]} isn't installed or is turned off in Settings.` };
-      if (hasSession(ownerId)) return { error: "This chat already has an agent session — end it first." };
       const id = found.run.sessionId;
+      if (hasSession(owner)) return { error: "This chat already has an agent session — end it first." };
       if ([...sessions.values()].some((x) => x.resumeId === id || x.cliId === id)) return { error: "That session is already live." };
+      const refused = refusal(owner);
+      if (refused) return { error: refused };
       const sessionId = deps.newId();
-      const s: Session = { ownerId, agent: cli, seq: 0, stopping: false, resumeId: id };
+      const s: Session = { ...owner, agent: cli, seq: 0, stopping: false, resumeId: id };
       sessions.set(sessionId, s);
       const err = launch(sessionId, s, projectPath, RESUME_OPENING, 0);
       return err ? { error: err } : { sessionId, agent: cli, projectPath };
     },
 
     /** Undefined = sent; otherwise the reason it wasn't. */
-    send(ownerId: number, sessionId: unknown, text: unknown): string | undefined {
+    send(owner: LiveOwner, sessionId: unknown, text: unknown): string | undefined {
       const s = typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
-      if (!s || s.ownerId !== ownerId || !s.handle || s.stopping) return "That agent session has ended.";
+      if (!s || !owns(s, owner) || !s.handle || s.stopping) return "That agent session has ended.";
       if (typeof text !== "string" || !text.trim()) return "Nothing to send.";
       if (text.length > ASK_LIMIT) return `That message is too long (${text.length} of ${ASK_LIMIT} characters).`;
       return s.handle.send(text) ? undefined : TURN_QUEUE_FULL;
     },
 
-    stop(ownerId: number, sessionId: unknown): void {
+    stop(owner: LiveOwner, sessionId: unknown): void {
       const s = typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
-      if (s && s.ownerId === ownerId) stopSession(s);
+      if (s && owns(s, owner)) stopSession(s);
     },
 
-    /** The owning window closed: no agent runs on without its chat. */
-    stopOwner(ownerId: number): void {
-      for (const s of sessions.values()) if (s.ownerId === ownerId) stopSession(s);
+    /** The chat was released (evicted or discarded): its session goes with it. */
+    stopMount(mountId: string): void {
+      for (const s of sessions.values()) if (s.mountId === mountId) stopSession(s);
+    },
+
+    /** The chat window closed: no agent runs on without its chat. */
+    stopOwner(senderId: number): void {
+      for (const s of sessions.values()) if (s.senderId === senderId) stopSession(s);
     },
 
     /** before-quit: SIGKILL every session's process tree now — stop()'s 5s escalation would never

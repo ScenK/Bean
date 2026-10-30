@@ -8,12 +8,14 @@ import {
   type CliName, type LiveSessionCallbacks, type LiveSessionRequest, type ResumableRun,
 } from "@bean/core";
 import {
-  ASK_LIMIT, HANDOFF_CHARS, HANDOFF_ITEMS, buildHandoff, createLiveTasks, liveSpawnFn,
+  ASK_LIMIT, HANDOFF_CHARS, HANDOFF_ITEMS, LIVE_CAP_REACHED, LIVE_SESSION_CAP, buildHandoff, createLiveTasks, liveSpawnFn,
   type HandoffItem, type LiveEvent,
 } from "../src/live-tasks.js";
 import { liveBadgeAgent } from "../src/renderer/task-bubbles.js";
 import type { TaskJob } from "../src/task-status.js";
 
+const A = { senderId: 1, mountId: "m1" };
+const B = { senderId: 2, mountId: "m2" };
 const tmp = (): string => mkdtempSync(join(tmpdir(), "bean-live-tasks-"));
 const record = (dir: string, id: string): { pid: number } | undefined => {
   const f = join(dir, "runs", `${id}.json`);
@@ -51,58 +53,81 @@ function harness(opts: {
 describe("createLiveTasks", () => {
   it("starts, sends and stops a session, releasing its record only once the process exits", async () => {
     const h = harness();
-    const res = await h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "fix the bug" });
+    const res = await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "fix the bug" });
     expect(res).toEqual({ sessionId: "s1", handedOver: 0 });
     expect(h.reqs[0]).toEqual({ cli: "claude", projectPath: "/proj", prompt: "fix the bug" });
-    expect(h.events[0]).toEqual({ owner: 1, e: { type: "started", sessionId: "s1", agent: "claude", seq: 1, projectPath: "/proj", handedOver: 0 } });
+    expect(h.events[0]).toEqual({ owner: 1, e: { type: "started", sessionId: "s1", agent: "claude", mountId: "m1", seq: 1, projectPath: "/proj", handedOver: 0 } });
 
     h.cbs[0]!.onOutput("reading files");
     h.cbs[0]!.onTurnComplete({ result: "done", durationMs: 1200 });
-    expect(h.live.send(1, "s1", "now the tests")).toBeUndefined();
+    expect(h.live.send(A, "s1", "now the tests")).toBeUndefined();
     expect(h.sent).toEqual(["now the tests"]);
 
-    h.live.stop(1, "s1");
+    h.live.stop(A, "s1");
     expect(h.stops()).toBe(1);
     expect(record(h.dir, "s1")).toBeDefined(); // the child hasn't confirmed dead yet
     h.cbs[0]!.onExit();
     expect(record(h.dir, "s1")).toBeUndefined();
     expect(h.events.map(({ e }) => [e.type, e.seq])).toEqual([["started", 1], ["output", 2], ["turn", 3], ["ended", 4]]);
     expect(h.events.at(-1)!.e).toMatchObject({ type: "ended", reason: "stopped" });
-    expect(h.live.send(1, "s1", "late")).toBe("That agent session has ended.");
+    expect(h.live.send(A, "s1", "late")).toBe("That agent session has ended.");
   });
 
   it("reports a crash as failed and an idle/clean exit as ended", async () => {
     const h = harness();
-    await h.live.start(1, { agent: "codex", projectPath: "/proj", ask: "a" });
+    await h.live.start(A, { agent: "codex", projectPath: "/proj", ask: "a" });
     h.cbs[0]!.onExit(new Error("codex exited with code 1"));
     expect(h.events.at(-1)!.e).toMatchObject({ type: "ended", reason: "failed", error: "codex exited with code 1" });
-    await h.live.start(1, { agent: "codex", projectPath: "/proj", ask: "b" });
+    await h.live.start(A, { agent: "codex", projectPath: "/proj", ask: "b" });
     h.cbs[1]!.onExit();
     expect(h.events.at(-1)!.e).toMatchObject({ type: "ended", reason: "ended" });
   });
 
   it("refuses a second session in the same window, not in another one", async () => {
     const h = harness();
-    await h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "a" });
-    expect(await h.live.start(1, { agent: "codex", projectPath: "/proj", ask: "b" })).toEqual({ error: expect.stringMatching(/already has an agent/) });
-    expect(await h.live.start(2, { agent: "codex", projectPath: "/proj", ask: "b" })).toMatchObject({ sessionId: "s2" });
+    await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "a" });
+    expect(await h.live.start(A, { agent: "codex", projectPath: "/proj", ask: "b" })).toEqual({ error: expect.stringMatching(/already has an agent/) });
+    expect(await h.live.start(B, { agent: "codex", projectPath: "/proj", ask: "b" })).toMatchObject({ sessionId: "s2" });
     expect(h.reqs).toHaveLength(2);
+  });
+
+  it("one session per chat, several chats in one window at once, at most LIVE_SESSION_CAP across them", async () => {
+    const h = harness({ findResumable: () => ({ run: { cli: "claude", projectPath: "/proj", sessionId: "sess-r" } } as ResumableRun) });
+    const chat = (i: number) => ({ senderId: 1, mountId: `c${i}` });
+    for (let i = 0; i < LIVE_SESSION_CAP - 1; i++) expect(await h.live.start(chat(i), { agent: "codex", projectPath: "/proj", ask: "a" })).toMatchObject({ sessionId: `s${i + 1}` });
+    expect(await h.live.start(chat(0), { agent: "codex", projectPath: "/proj", ask: "b" })).toEqual({ error: expect.stringMatching(/already has an agent/) });
+    // A pending start counts: it's registered before its project check resolves.
+    const tenth = h.live.start(chat(LIVE_SESSION_CAP - 1), { agent: "codex", projectPath: "/proj", ask: "a" });
+    expect(h.live.canStart(chat(99))).toBe(false);
+    expect(await h.live.start(chat(99), { agent: "codex", projectPath: "/proj", ask: "a" })).toEqual({ error: LIVE_CAP_REACHED });
+    expect(h.live.resume(chat(99), "sess-r")).toEqual({ error: LIVE_CAP_REACHED });
+    expect(await tenth).toMatchObject({ sessionId: `s${LIVE_SESSION_CAP}` });
+    // A stopping one still counts until its process exits.
+    h.live.stop(chat(0), "s1");
+    expect(await h.live.start(chat(99), { agent: "codex", projectPath: "/proj", ask: "a" })).toEqual({ error: LIVE_CAP_REACHED });
+    h.cbs[0]!.onExit();
+    expect(await h.live.start(chat(99), { agent: "codex", projectPath: "/proj", ask: "a" })).toMatchObject({ sessionId: expect.any(String) });
+    // Events name their chat; a released chat's session stops; another chat can't drive it.
+    expect(h.events.find(({ e }) => e.sessionId === "s2")!.e.mountId).toBe("c1");
+    expect(h.live.send(chat(2), "s2", "hi")).toBe("That agent session has ended.");
+    h.live.stopMount("c1");
+    expect(h.stops()).toBe(2);
   });
 
   it("a switch can start the next session while the ended one is still exiting; no project = scratch", async () => {
     const h = harness();
-    await h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "a" });
-    expect(h.live.hasSession(1)).toBe(true);
-    h.live.stop(1, "s1"); // its onExit hasn't fired yet
-    expect(h.live.hasSession(1)).toBe(false); // stopping counts as gone: Bean may offer again
-    expect(await h.live.start(1, { agent: "codex", projectPath: "", ask: "b" })).toMatchObject({ sessionId: "s2" });
+    await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "a" });
+    expect(h.live.hasSession(A)).toBe(true);
+    h.live.stop(A, "s1"); // its onExit hasn't fired yet
+    expect(h.live.hasSession(A)).toBe(false); // stopping counts as gone: Bean may offer again
+    expect(await h.live.start(A, { agent: "codex", projectPath: "", ask: "b" })).toMatchObject({ sessionId: "s2" });
     expect(h.reqs[1]).toMatchObject({ cli: "codex", projectPath: "/scratch" });
   });
 
   it("a window close during startup leaves no child and no record", async () => {
     let allow!: (ok: boolean) => void;
     const h = harness({ allowed: () => new Promise((r) => { allow = r; }) });
-    const pending = h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "a" });
+    const pending = h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "a" });
     h.live.stopOwner(1);
     allow(true);
     expect(await pending).toEqual({ error: "Stopped before it started." });
@@ -113,31 +138,31 @@ describe("createLiveTasks", () => {
 
   it("validates the CLI, project and payload sizes", async () => {
     const h = harness({ clis: ["claude"] });
-    expect(await h.live.start(1, { agent: "codex", projectPath: "/proj", ask: "a" })).toEqual({ error: expect.stringMatching(/Codex isn't installed/) });
-    expect(await h.live.start(1, { agent: "bash", projectPath: "/proj", ask: "a" })).toEqual({ error: "Invalid live session request." });
-    expect(await h.live.start(1, { agent: "claude", projectPath: "/etc", ask: "a" })).toEqual({ error: "That project isn't configured in Bean." });
-    expect(await h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "x".repeat(ASK_LIMIT + 1) })).toEqual({ error: expect.stringMatching(/too long/) });
+    expect(await h.live.start(A, { agent: "codex", projectPath: "/proj", ask: "a" })).toEqual({ error: expect.stringMatching(/Codex isn't installed/) });
+    expect(await h.live.start(A, { agent: "bash", projectPath: "/proj", ask: "a" })).toEqual({ error: "Invalid live session request." });
+    expect(await h.live.start(A, { agent: "claude", projectPath: "/etc", ask: "a" })).toEqual({ error: "That project isn't configured in Bean." });
+    expect(await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "x".repeat(ASK_LIMIT + 1) })).toEqual({ error: expect.stringMatching(/too long/) });
     expect(h.reqs).toHaveLength(0);
 
-    const res = await h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "a" });
+    const res = await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "a" });
     const id = "sessionId" in res ? res.sessionId : "";
-    expect(h.live.send(1, id, "x".repeat(ASK_LIMIT + 1))).toMatch(/too long/);
-    expect(h.live.send(2, id, "not my window")).toBe("That agent session has ended.");
-    h.live.stop(2, id);
+    expect(h.live.send(A, id, "x".repeat(ASK_LIMIT + 1))).toMatch(/too long/);
+    expect(h.live.send(B, id, "not my window")).toBe("That agent session has ended.");
+    h.live.stop(B, id);
     expect(h.stops()).toBe(0);
     expect(h.sent).toEqual([]);
   });
 
   it("surfaces a full next-turn queue", async () => {
     const h = harness({ sendOk: false });
-    await h.live.start(1, { agent: "opencode", projectPath: "/proj", ask: "a" });
-    expect(h.live.send(1, "s1", "more")).toBe(TURN_QUEUE_FULL);
+    await h.live.start(A, { agent: "opencode", projectPath: "/proj", ask: "a" });
+    expect(h.live.send(A, "s1", "more")).toBe(TURN_QUEUE_FULL);
   });
 
   it("moves claude's record to its child pid; per-turn CLIs keep this process's", async () => {
     const h = harness({ pid: 424242 });
-    await h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "a" });
-    await h.live.start(2, { agent: "codex", projectPath: "/proj", ask: "a" });
+    await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "a" });
+    await h.live.start(B, { agent: "codex", projectPath: "/proj", ask: "a" });
     expect(record(h.dir, "s1")?.pid).toBe(424242);
     expect(record(h.dir, "s2")?.pid).toBe(process.pid);
   });
@@ -145,7 +170,7 @@ describe("createLiveTasks", () => {
   it("hands the recent chat over as quoted context", async () => {
     const h = harness();
     const history: HandoffItem[] = [{ role: "user", text: "hi" }, { role: "reply", text: "hello" }];
-    const res = await h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "go", history });
+    const res = await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "go", history });
     expect(res).toMatchObject({ handedOver: 2 });
     expect(h.reqs[0]!.prompt).toContain("> User: hi\n>\n> Bean: hello\n\ngo");
   });
@@ -166,7 +191,7 @@ describe("createLiveTasks resume (Continue live)", () => {
   it("resumes the recorded CLI in the recorded project with no handoff", () => {
     const r = resumable();
     const h = harness({ findResumable: r.find });
-    expect(h.live.resume(1, "sess-1")).toEqual({ sessionId: "s1", agent: "claude", projectPath: r.proj });
+    expect(h.live.resume(A, "sess-1")).toEqual({ sessionId: "s1", agent: "claude", projectPath: r.proj });
     expect(h.reqs[0]).toEqual({ cli: "claude", projectPath: r.proj, prompt: RESUME_OPENING, resume: "sess-1" });
     expect(h.events[0]!.e).toMatchObject({ type: "started", projectPath: r.proj, handedOver: 0 });
   });
@@ -174,26 +199,26 @@ describe("createLiveTasks resume (Continue live)", () => {
   it("refuses forged, mismatched and chatops ids, a disabled CLI, and a missing lookup", () => {
     const r = resumable();
     const h = harness({ findResumable: r.find });
-    expect(h.live.resume(1, "forged")).toEqual({ error: "I have no record of that run." });
-    expect(h.live.resume(1, "--help")).toEqual({ error: expect.stringMatching(/session id/) });
-    expect(h.live.resume(1, "cx-not-uuid")).toEqual({ error: expect.stringMatching(/session id/) }); // codex needs a UUID
-    expect(h.live.resume(1, "chatops-1")).toEqual({ error: "I have no record of that run." });
-    expect(h.live.resume(1, 42)).toEqual({ error: "Invalid live session request." });
-    expect(harness({ findResumable: r.find, clis: ["codex"] }).live.resume(1, "sess-1")).toEqual({ error: expect.stringMatching(/turned off/) });
-    expect(harness().live.resume(1, "sess-1")).toEqual({ error: "I have no record of that run." });
+    expect(h.live.resume(A, "forged")).toEqual({ error: "I have no record of that run." });
+    expect(h.live.resume(A, "--help")).toEqual({ error: expect.stringMatching(/session id/) });
+    expect(h.live.resume(A, "cx-not-uuid")).toEqual({ error: expect.stringMatching(/session id/) }); // codex needs a UUID
+    expect(h.live.resume(A, "chatops-1")).toEqual({ error: "I have no record of that run." });
+    expect(h.live.resume(A, 42)).toEqual({ error: "Invalid live session request." });
+    expect(harness({ findResumable: r.find, clis: ["codex"] }).live.resume(A, "sess-1")).toEqual({ error: expect.stringMatching(/turned off/) });
+    expect(harness().live.resume(A, "sess-1")).toEqual({ error: "I have no record of that run." });
     expect(h.reqs).toEqual([]);
   });
 
   it("a double click starts one session, and one id can't run live in two windows", () => {
     const r = resumable();
     const h = harness({ findResumable: r.find });
-    h.live.resume(1, "sess-1");
-    expect(h.live.resume(1, "sess-1")).toEqual({ error: expect.stringMatching(/already has an agent/) });
-    expect(h.live.resume(2, "sess-1")).toEqual({ error: "That session is already live." });
+    h.live.resume(A, "sess-1");
+    expect(h.live.resume(A, "sess-1")).toEqual({ error: expect.stringMatching(/already has an agent/) });
+    expect(h.live.resume(B, "sess-1")).toEqual({ error: "That session is already live." });
     expect(h.reqs).toHaveLength(1);
     // Once it has exited, the id is free again.
     h.cbs[0]!.onExit();
-    expect(h.live.resume(2, "sess-1")).toMatchObject({ sessionId: "s2" });
+    expect(h.live.resume(B, "sess-1")).toMatchObject({ sessionId: "s2" });
   });
 });
 
@@ -202,17 +227,17 @@ describe("createLiveTasks CLI session ids", () => {
 
   it("records one desktop row per fresh session with the user's ask, and emits the receipt", async () => {
     const h = harness();
-    await h.live.start(1, { agent: "claude", projectPath: "", ask: "  fix the bug ", history: [{ role: "user", text: "earlier" }] });
+    await h.live.start(A, { agent: "claude", projectPath: "", ask: "  fix the bug ", history: [{ role: "user", text: "earlier" }] });
     h.cbs[0]!.onSessionId!("sess-a");
     expect(rows(h.dir)).toEqual({ run: { surface: "desktop", cli: "claude", sessionId: "sess-a", projectPath: "/scratch", instruction: "fix the bug" } });
     expect(h.events.at(-1)!.e).toEqual({
-      type: "session", sessionId: "s1", agent: "claude", seq: 2, receipt: { sessionId: "sess-a", agent: "claude", label: "claude · sess…" },
+      type: "session", sessionId: "s1", agent: "claude", mountId: "m1", seq: 2, receipt: { sessionId: "sess-a", agent: "claude", label: "claude · sess…" },
     });
   });
 
   it("ignores an id its CLI can't continue", async () => {
     const h = harness();
-    await h.live.start(1, { agent: "codex", projectPath: "/proj", ask: "a" });
+    await h.live.start(A, { agent: "codex", projectPath: "/proj", ask: "a" });
     h.cbs[0]!.onSessionId!("not-a-uuid");
     expect(h.types()).toEqual(["started"]);
   });
@@ -222,7 +247,7 @@ describe("createLiveTasks CLI session ids", () => {
     const proj = tmp();
     recordDelegateSession(join(dir, "bean.db"), { surface: "desktop", cli: "claude", sessionId: "sess-a", projectPath: proj, instruction: "x" });
     const h = harness({ findResumable: (id) => findDelegateRun(join(dir, "bean.db"), id, undefined, "desktop") });
-    h.live.resume(1, "sess-a");
+    h.live.resume(A, "sess-a");
     h.cbs[0]!.onSessionId!("sess-a");
     expect(h.events.at(-1)!.e).toMatchObject({ type: "session", receipt: { sessionId: "sess-a" } });
     expect(existsSync(join(h.dir, "bean.db"))).toBe(false);
@@ -230,12 +255,12 @@ describe("createLiveTasks CLI session ids", () => {
 
   it("refuses to continue a fresh session while its child is still stopping", async () => {
     const h = harness({ findResumable: (id) => findDelegateRun(join(h.dir, "bean.db"), id, () => true, "desktop") });
-    await h.live.start(1, { agent: "claude", projectPath: "/proj", ask: "a" });
+    await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "a" });
     h.cbs[0]!.onSessionId!("sess-a");
-    h.live.stop(1, "s1");
-    expect(h.live.resume(2, "sess-a")).toEqual({ error: "That session is already live." });
+    h.live.stop(A, "s1");
+    expect(h.live.resume(B, "sess-a")).toEqual({ error: "That session is already live." });
     h.cbs[0]!.onExit();
-    expect(h.live.resume(2, "sess-a")).toMatchObject({ sessionId: "s2" });
+    expect(h.live.resume(B, "sess-a")).toMatchObject({ sessionId: "s2" });
   });
 });
 

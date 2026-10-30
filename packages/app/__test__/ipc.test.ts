@@ -74,7 +74,7 @@ test("chat handler wires skills/projects/persona into converse", async () => {
   expect(out.proposedRun?.composedPrompt).toContain("BODY");
 });
 
-test("chat handler offers the desktop hand-off only to a sender without a live session", async () => {
+test("chat handler offers the desktop hand-off only to a chat that can open a live session", async () => {
   let toolNames: string[] = [];
   let description = "";
   const handler = buildChatHandler({
@@ -94,12 +94,16 @@ test("chat handler offers the desktop hand-off only to a sender without a live s
     projectPersonaFile: "/b/project-persona.json",
     loadMemories: async () => [],
     dbFile: "/b/memory.json",
-    liveSessionAvailable: (senderId) => senderId === 7,
+    liveSessionAvailable: (senderId, mountId) => senderId === 7 && mountId === "m1",
   });
-  await handler({ history: [], message: "build it" }, 7);
+  await handler({ history: [], message: "build it" }, 7, "m1");
   expect(toolNames).toContain("propose_live_session");
   expect(description).toContain("hand this chat over");
-  await handler({ history: [], message: "build it" }, 8);
+  await handler({ history: [], message: "build it" }, 7, "m2");
+  expect(toolNames).not.toContain("propose_live_session");
+  await handler({ history: [], message: "build it" }, 8, "m1");
+  expect(toolNames).not.toContain("propose_live_session");
+  await handler({ history: [], message: "build it" }, 7);
   expect(toolNames).not.toContain("propose_live_session");
   await handler({ history: [], message: "build it" });
   expect(toolNames).not.toContain("propose_live_session");

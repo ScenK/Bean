@@ -20,13 +20,13 @@ declare global {
       delegateStart(req: DelegateStartRequest, mountId: string): Promise<string>;
       delegateCancel(taskId: string): void;
       onDelegateEvent(cb: (e: DelegateEvent) => void): void;
-      /** Start an agent session in this chat window; history is handed over as quoted context. */
-      liveStart(req: LiveStartRequest): Promise<LiveStartResult>;
+      /** Start an agent session in this chat (mount); history is handed over as quoted context. */
+      liveStart(req: LiveStartRequest, mountId: string): Promise<LiveStartResult>;
       /** Undefined = sent; otherwise why it wasn't (e.g. the next-turn queue is full). */
-      liveSend(sessionId: string, text: string): Promise<string | undefined>;
-      liveStop(sessionId: string): void;
+      liveSend(sessionId: string, text: string, mountId: string): Promise<string | undefined>;
+      liveStop(sessionId: string, mountId: string): void;
       /** Continue live from a finished delegate card: only the receipt's session id goes over. */
-      liveResume(sessionId: string): Promise<LiveResumeResult>;
+      liveResume(sessionId: string, mountId: string): Promise<LiveResumeResult>;
       onLiveEvent(cb: (e: LiveEvent) => void): void;
       availableClis(): Promise<CliName[]>;
       detectedClis(): Promise<CliName[]>;

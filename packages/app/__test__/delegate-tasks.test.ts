@@ -213,6 +213,15 @@ describe("createDelegateTasks", () => {
     expect(h.cancels).toEqual(["one"]);
   });
 
+  it("tags every event with the chat that started it, so a hidden chat still gets its result", async () => {
+    const h = harness();
+    await h.tasks.start({ projectPath: "/p", prompt: "one", instruction: "do it", mountId: "a" });
+    h.cbs().onOutput("working");
+    h.cbs().onDone("done");
+    await h.tasks.start({ projectPath: "/r", prompt: "three", instruction: "no chat" });
+    expect(h.sent.map((e) => [e.type, e.mountId])).toEqual([["started", "a"], ["output", "a"], ["done", "a"], ["started", undefined]]);
+  });
+
   it("cancelAll skips already-finished tasks and is idempotent", async () => {
     const h = harness();
     await h.tasks.start({ projectPath: "/p", prompt: "one", instruction: "do it" });

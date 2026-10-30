@@ -23,7 +23,7 @@ close, delegate start) carries the mount id as its trailing arg and is refused u
 window and that mount is attached to it; the memory receipt and image progress pushes carry it back
 (the renderer drops other mounts'). Release (or the window's `closed` → `releaseChatSender`) drops
 the mount's thread pin/latch and memory state and cancels its delegates (`cancelMount`); a released
-id is never re-attachable. Live sessions are still per window (#517). A late memory receipt for a
+id is never re-attachable (release also `stopMount`s its live session). Live sessions are per chat (#517). A late memory receipt for a
 released mount never lands in the chat now shown: the shell maps evicted mount → thread and holds it
 until that thread is restored (then it's a live row with Undo, saved), or shows it at once if that
 thread is already back on screen. Held per window lifetime only.
@@ -44,18 +44,31 @@ never bumps `updated_at` or resets its prune clock. `closeNow` awaits a final sa
 resolves to whether the snapshot landed (never rejects) — the switch-away save needs the answer. The linked-note
 chip returns only if the slug still exists; a restored chat opens in Bean mode.
 
-**History sidebar + in-place switch (#505, #516) — `ChatWindow.tsx` (shell), `ChatSidebar.tsx`.** The
-shell owns the sidebar, CLI availability, the dropped URL, and every `window.bean.on*` listener — the
-preload bridges can't unsubscribe, so they're registered once and routed through `sessionRef` to the
-one mounted `ChatSession` (keyed by its mount id; a session's own cleanup clears the ref only if it's
-still its own). A pick or New chat never closes the window: the session **evicts** — final save (a
-failed save keeps it mounted with an error row), `rememberOnClose`, then the shell remounts with a
-new mount id, whose unmount `chatRelease`s the old (same IPC pipe, so main sees remember first) — and
-the new one restores via `chatThreadGet`. A running delegate or live session still shows the Keep/Stop
-card ("Switching chats stops…"); Stop & switch cancels then evicts, Keep working just closes the card.
-During the eviction save the composer is blocked (ChatPanel `busy`); a turn, delegate start or live
-session that began some other way meanwhile cancels the switch instead of being dropped. New chat on an untouched empty chat does nothing; an unused new chat never saves, so never gets a row.
-`busy` (sidebar disabled) = the shown chat's reply in flight or its eviction. The list loads on mount
+**History sidebar + in-place switch (#505, #516, #517) — `ChatWindow.tsx` (shell), `ChatSidebar.tsx`.** The
+shell owns the sidebar, CLI availability, the dropped URL, the window-close card, and every
+`window.bean.on*` listener — the preload bridges can't unsubscribe, so they're registered once and
+routed through the `sessions` registry (mount id → `ChatSessionApi`, set each render, deleted at
+unmount): delegate/live events and memory/image pushes by their `mountId` tag (untagged = the shown
+chat), Plan-popup prompts and notices to the shown chat. A pick or New chat never closes the window.
+The chat left behind **stays mounted, hidden** (`ChatPanel hidden` → `[hidden]` CSS) while it has work
+(`hasWork`: a Bean request in flight or queued, a delegate starting/running, a live session), so its
+loopback runs there at once; otherwise it **evicts** — final save (a failed save keeps it mounted with
+an error row), `rememberOnClose`, then the shell drops it and its unmount `chatRelease`s it (same IPC
+pipe, so main sees remember first). A pick another mount already holds is just shown; otherwise it
+mounts fresh and restores via `chatThreadGet`. Every switch `sweep`s the other hidden chats: an idle
+one evicts itself (a failed save silently stays for the next switch; re-shown meanwhile = stays).
+**Off-the-record** chats are discarded on leave (`rememberOnClose` with incognito, then release); with
+a running task the Keep/Stop card asks first ("Leaving discards this chat and stops its task.").
+**Window close** = one shell card over every chat's `tasks()` (`closeCard`: single-chat wording, else
+"Closing stops N tasks in M chats."); Stop & close `stopTasks` everywhere, then every chat `closeOut`s
+(save + remember) before `allowChatClose`; main's `closed` stops everything anyway. Sidebar: a spinner
+while a chat has work (`onWorking`, per mount → its thread), an unread dot when a reply or live turn
+lands while hidden (`onUnread`), cleared when shown — held in the shell by thread, so it outlives
+eviction. During an eviction save the composer is blocked (ChatPanel `busy`); work that began some
+other way meanwhile keeps the chat mounted instead. New chat on an untouched empty chat does nothing;
+an unused new chat never saves, so never gets a row. `busy` (sidebar disabled) = the shown chat's
+eviction save only. Tests and e2e must scope queries to `.bean-chat:not([hidden])` — hidden chats are
+in the DOM. The list loads on mount
 and the active row follows the save ack (`withSaveAck`) — no push channel; listing's per-thread agents
 come from SQL (`json_each`) so transcripts never cross IPC for the picker. Delete refuses a thread any
 open chat holds, in main. Inline at ≥640px (collapse remembered in `localStorage`), overlay below

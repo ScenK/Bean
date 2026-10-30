@@ -628,7 +628,7 @@ app.whenReady().then(async () => {
         else if (event.type === "failed") taskStatus.finish(event.taskId, "failed", event.message);
         else taskStatus.finish(event.taskId, "failed", "Stopped", false); // the user's own Stop isn't a failure to chase
         const chat = componentWindows.get("chat");
-        if (chat && !chat.isDestroyed()) sendToWindow(chat, IPC.delegateEvent, event);
+        if (chat && !chat.isDestroyed()) sendToWindow(chat, IPC.delegateEvent, event); // the shell routes it by mountId
       },
       newId: () => randomUUID(),
     });
@@ -644,7 +644,7 @@ app.whenReady().then(async () => {
       projectAllowed: async (path) =>
         path === scratchDir(dir) || (await loadProjects(projectsFile(dir))).some((p) => p.path === path),
       newId: () => randomUUID(),
-      send: (ownerId, event) => {
+      send: (senderId, event) => {
         const id = `live:${event.sessionId}`;
         if (event.type === "started") {
           taskStatus.upsert(id, {
@@ -660,7 +660,7 @@ app.whenReady().then(async () => {
           // the receipt is for the chat window only
         } else if (event.reason === "failed") taskStatus.finish(id, "failed", event.error ?? "Session died");
         else taskStatus.finish(id, "done", event.reason === "stopped" ? "Session ended" : "Session ended on its own", false);
-        const owner = webContents.fromId(ownerId);
+        const owner = webContents.fromId(senderId);
         if (owner && !owner.isDestroyed()) owner.send(IPC.liveEvent, event);
       },
     });
@@ -895,9 +895,9 @@ app.whenReady().then(async () => {
       liveTasks,
       isChatSender: (sender) => componentWindows.get("chat")?.webContents === sender,
       delegateAvailable: () => enabledClis().length > 0,
-      // A live CLI is enabled and this window has no agent session yet (#478).
-      liveSessionAvailable: (senderId) => componentWindows.get("chat")?.webContents.id === senderId
-        && enabledClis().some(isLiveCli) && !liveTasks.hasSession(senderId),
+      // A live CLI is enabled and this chat could open a session now (#478, cap #517).
+      liveSessionAvailable: (senderId, mountId) => componentWindows.get("chat")?.webContents.id === senderId
+        && enabledClis().some(isLiveCli) && liveTasks.canStart({ senderId, mountId }),
       webSearch: () => runtime.getWebSearch(),
       onChatTurn: (mountId) => {
         const id = `chat:${randomUUID()}`;

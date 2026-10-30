@@ -18,10 +18,13 @@ Key contracts:
 - **Loopback:** on `done` the renderer auto-sends `[delegate result for "…"]: …` through the
   normal chat flow (collapsed display label), so the model summarizes and the result enters
   history for chaining.
-- **Tasks share the chat window's lifetime — no ghosts:** closing the chat with a running
-  delegate shows a Keep working / Stop & close card (same pattern as the memory review),
-  and main calls `cancelAll()` on chat-window `closed` as the hard backstop. The renderer only
-  buffers delegate events until `delegateStart()` returns the task id, then replays them; a
+- **Tasks live for the chat window, not the shown chat — no ghosts:** switching chats keeps a
+  chat with a running delegate mounted, hidden (#517); every event carries the starting chat's
+  `mountId` (stamped by `delegate-tasks` from the task, set by main) and the shell routes it there,
+  so the loopback runs in that chat at once. Closing the window with tasks in any chat shows one
+  Keep working / Stop & close card counting them; main calls `cancelAll()` on chat-window `closed`
+  as the hard backstop, and a chat's release `cancelMount`s its own. The renderer only buffers a
+  chat's delegate events until `delegateStart()` returns the task id, then replays them; a
   delegate never runs on without its human context.
 - **Cancel waits for process close:** `DelegateHandle.cancel(onCancelled)` sends SIGTERM to the
   process group, escalates to SIGKILL if it does not close quickly, and only then lets the app
