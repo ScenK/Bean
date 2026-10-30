@@ -23,7 +23,6 @@
   /* Agent mascot fills (AgentAvatar) — graphics, 3:1 on every surface; the mascot's features are
      drawn in --bean-surface, so the same ratio holds inside the body. */
   --bean-agent-claude: oklch(0.56 0.15 33);
-  --bean-agent-bean: oklch(0.56 0.14 52); /* chat avatar body: --bean-orb-2 is only 2.7:1 here */
 }
 
 :root[data-theme="graphite"] {
@@ -47,7 +46,6 @@
   --bean-orb-check: oklch(0.76 0.12 160 / 0.55);
   --bean-orb-check-ink: oklch(0.8 0.12 160);
   --bean-agent-claude: oklch(0.74 0.13 35);
-  --bean-agent-bean: oklch(0.71 0.13 248); /* = --bean-orb-2 */
 }
 
 html, body {
