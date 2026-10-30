@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, saveRoutine, createRoutine, RoutineProposalStore, memberTodoEligible, resolveTodoRoutine,
-  buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
+  buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, ConversationCatalog, type ConversationPlace, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeChatter, dmAllowed,
 } from "@bean/core";
@@ -99,7 +99,7 @@ const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reas
 const conversations = new ConversationStore(dbFile(dir));
 // Hoisted (not inline in deps) so the /api/messages handler can check `has()` to capture
 // steer messages for a bound session, and the SIGTERM handler can kill them. Mirrors Discord.
-const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink });
+const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink, surface: "teams" });
 const liveSessionProposals = new LiveSessionProposalStore();
 // Hosts delegates not tied to a project (a Jira ticket, research); spawn needs the cwd to exist.
 const scratchPath = scratchDir(dir);
@@ -149,6 +149,7 @@ const bot = buildTeamsBot({
   deleteMemories: (ids, subject) => deleteMemories(dbFile(dir), ids, subject),
   shareMemory: (id, actor) => shareMemory(dbFile(dir), id, actor),
   conversations,
+  catalog: new ConversationCatalog(dbFile(dir), "teams"),
   liveSessions,
   liveSessionProposals,
   // Same rule as Discord: on whenever a live-capable CLI (claude, codex or opencode) is detected and not
@@ -254,6 +255,15 @@ function scopeOf(a: Activity): string | undefined {
   return c.conversationType === "channel" ? bareChannelId(c.id) : c.id;
 }
 
+/** The conversation catalog's kind and title (display only). A channel conversation id carrying
+ * `;messageid=` is one post's reply chain. */
+function placeOf(a: Activity): ConversationPlace {
+  const c = a.conversation;
+  if (c.conversationType === "personal") return { kind: "dm", title: "DM" };
+  if (c.conversationType === "channel" && c.id.includes(";")) return { kind: "post", title: c.name || "Teams post" };
+  return { kind: "channel", title: c.name || "Teams chat" };
+}
+
 /** Effects bound to the incoming turn's conversation; posts after the turn ends go
  * through continueConversationAsync (proactive messages need a fresh context). */
 function effectsFor(context: TurnContext): BotEffects {
@@ -327,6 +337,7 @@ app.post("/api/messages", (req, res) => {
           fromAltId: a.from.aadObjectId,
           scopeId: scopeOf(a),
           fromName: a.from.name ?? "someone",
+          place: placeOf(a),
           value: {
             beanAction: value.beanAction, proposalId: value.proposalId, projectPath: value.projectPath, runId: value.runId,
             cli: value.cli, model: value.model,

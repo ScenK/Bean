@@ -1,8 +1,9 @@
-import { expect, test, beforeEach, afterEach } from "vitest";
+import { expect, test, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConversationStore } from "../src/chatops/conversation.js";
+import { ConversationCatalog, listChatopsConversations } from "../src/chatops/catalog.js";
 import { closeDb } from "../src/db.js";
 import { dbFile } from "../src/config.js";
 
@@ -77,4 +78,37 @@ test("replaceOldest collapses the oldest n turns into one summary turn, keeping 
   const h = s.history("c1");
   expect(h.map((t) => t.content)).toEqual(["summary of m0..m5", "m6", "m7", "m8", "m9"]);
   expect(h[0]?.role).toBe("system");
+});
+
+test("onChange fires once per append, replaceOldest and clear", () => {
+  const changed: string[] = [];
+  const s = new ConversationStore(file, { onChange: (id) => changed.push(id) });
+  s.append("c1", { role: "user", content: "a" });
+  s.append("c1", { role: "user", content: "b" });
+  s.replaceOldest("c1", 1, { role: "assistant", content: "summary" });
+  s.clear("c1");
+  expect(changed).toEqual(["c1", "c1", "c1", "c1"]);
+});
+
+test("a throwing onChange doesn't fail the write", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const s = new ConversationStore(file, { onChange: () => { throw new Error("boom"); } });
+  s.append("c1", { role: "user", content: "a" });
+  expect(s.history("c1")).toHaveLength(1);
+  warn.mockRestore();
+});
+
+test("clear (/new) drops turns, thread sessions and the catalog's live binding", () => {
+  const s = new ConversationStore(file);
+  const catalog = new ConversationCatalog(file, "discord");
+  s.append("c1", { role: "user", content: "a" });
+  s.setThreadSession("c1", "claude", "sess-d");
+  catalog.upsert({ conversationId: "c1", place: { kind: "thread", title: "bugs" }, ownerId: "u1", live: { cli: "claude", sessionId: "sess-l" } });
+  s.clear("c1");
+  expect(s.history("c1")).toEqual([]);
+  expect(s.threadSession("c1", "claude")).toBeUndefined();
+  const [row] = listChatopsConversations(file, [{ surface: "discord", ownerId: "u1" }]);
+  expect(row).toMatchObject({ conversationId: "c1", title: "bugs" });
+  expect(row?.liveSessionId).toBeUndefined();
+  expect(row?.liveCli).toBeUndefined();
 });

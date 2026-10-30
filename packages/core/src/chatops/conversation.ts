@@ -14,9 +14,22 @@ function toChatTurn(row: TurnRow): ChatTurn {
  * way the old MAX_TURNS slice did, just smarter. */
 export class ConversationStore {
   private db: DatabaseSync;
+  private onChange?: (conversationId: string) => void;
 
-  constructor(file: string) {
+  /** `onChange` fires after every history write (append, replaceOldest, clear) — the one place
+   * every writer (bot turns, delegate results, compaction, outbox notices) goes through. */
+  constructor(file: string, opts: { onChange?: (conversationId: string) => void } = {}) {
     this.db = openDb(file);
+    this.onChange = opts.onChange;
+  }
+
+  // A throwing listener must not fail the write it reports.
+  private changed(conversationId: string): void {
+    try {
+      this.onChange?.(conversationId);
+    } catch (err) {
+      console.warn("bean: conversation change hook failed:", err instanceof Error ? err.name : "error");
+    }
   }
 
   history(conversationId: string): ChatTurn[] {
@@ -34,13 +47,21 @@ export class ConversationStore {
     this.db.prepare(
       "INSERT INTO chatops_turns (conversation_id, seq, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
     ).run(conversationId, seq, turn.role, turn.content, new Date().toISOString());
+    // Keeps the desktop's conversation list (chatops/catalog.ts) in recency order.
+    this.db.prepare("UPDATE chatops_conversations SET updated_at = ? WHERE conversation_id = ?")
+      .run(new Date().toISOString(), conversationId);
+    this.changed(conversationId);
   }
 
   /** Deletes a conversation's entire history — backs the "/new" fresh-start command. Its
-   * resumable delegate sessions go too: a fresh start shouldn't resume the old agent. */
+   * resumable delegate sessions and its catalog live binding go too: a fresh start shouldn't
+   * resume the old agent. */
   clear(conversationId: string): void {
     this.db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ?").run(conversationId);
     this.db.prepare("DELETE FROM thread_sessions WHERE conversation_id = ?").run(conversationId);
+    this.db.prepare("UPDATE chatops_conversations SET live_cli = NULL, live_session_id = NULL WHERE conversation_id = ?")
+      .run(conversationId);
+    this.changed(conversationId);
   }
 
   /** The CLI's own session id from this thread's last delegate run with that CLI, if any. */
@@ -110,5 +131,6 @@ export class ConversationStore {
       this.db.exec("ROLLBACK");
       throw err;
     }
+    this.changed(conversationId);
   }
 }

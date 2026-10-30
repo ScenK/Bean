@@ -9,6 +9,8 @@ import { codexTurnAdapter } from "../codex-live-session.js";
 import { opencodeTurnAdapter } from "../opencode-live-session.js";
 import { startTurnLiveSession } from "../turn-live-session.js";
 import { recordRun, releaseRun, updateRunPid } from "../run-queue.js";
+import { dbFile } from "../config.js";
+import { isLiveSessionId, recordDelegateSession } from "../delegate-runs.js";
 import { killPendingGroups, killTree } from "../kill-tree.js";
 
 /** Surface-agnostic "post or edit a plain text message". Chatops builds this on top of
@@ -31,6 +33,9 @@ export interface LiveSessionStart {
   channelId: string;
   projectPath: string;
   instruction: string;
+  /** The user's own ask for the session's `delegate_runs` row — never the composed skill prompt.
+   * Absent = `instruction`. */
+  ask?: string;
   model?: string;
   /** Engine; absent = claude. */
   cli?: LiveCli;
@@ -46,6 +51,9 @@ export interface LiveSessionStart {
   onTurnResult?: (result: string) => void;
   /** Fires exactly once, after cleanup, with a human-readable end notice. */
   onEnded?: (notice: string) => void;
+  /** A fresh session's CLI id, once its `delegate_runs` row is written (never on a resume, a
+   * failed write, or without the registry's `surface`). */
+  onSessionId?: (sessionId: string) => void;
 }
 
 type StartFn = (
@@ -118,6 +126,9 @@ export interface LiveSessionRegistryOptions {
   newId?: () => string;
   /** Session start/end for the desktop app's status bubbles (see activity.ts). */
   onActivity?: ChatopsActivitySink;
+  /** Records each fresh session's CLI id in bean.db's `delegate_runs` under this surface. Absent =
+   * no rows (and no onSessionId). */
+  surface?: "discord" | "teams";
 }
 
 /** channelId → active live session. One session per channel; while bound, the bot routes
@@ -202,6 +213,7 @@ export class LiveSessionRegistry {
           s.dirty = true;
         },
         onTurnStart: () => this.startTyping(s),
+        onSessionId: (id) => this.recordSession(input, id),
         onTurnComplete: (summary) => {
           this.stopTyping(s);
           if (summary.failed === undefined) input.onTurnResult?.(summary.result);
@@ -226,6 +238,17 @@ export class LiveSessionRegistry {
     }
     this.startTyping(s); // the opening instruction is already in flight
     return "started";
+  }
+
+  // A resume continues a session that already has its row (same rule as the desktop's live-tasks).
+  private recordSession(input: LiveSessionStart, id: string): void {
+    const cli = input.cli ?? "claude";
+    const { surface } = this.opts;
+    if (!surface || id === input.resume || !isLiveSessionId(cli, id)) return;
+    const ok = recordDelegateSession(dbFile(this.opts.dir), {
+      surface, cli, sessionId: id, projectPath: input.projectPath, instruction: input.ask ?? input.instruction,
+    });
+    if (ok) input.onSessionId?.(id);
   }
 
   // Lit while a turn runs (start / send) until onTurnComplete or teardown clears it.

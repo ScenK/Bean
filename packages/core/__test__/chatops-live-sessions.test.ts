@@ -9,6 +9,8 @@ import { CODEX_SIGNED_OUT } from "../src/codex-live-session.js";
 import { OPENCODE_SIGNED_OUT } from "../src/opencode-live-session.js";
 import { RESUME_REJECTED, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type LiveSessionSpawnFn } from "../src/live-session.js";
 import type { ChildProcess } from "node:child_process";
+import { closeDb, openDb } from "../src/db.js";
+import { dbFile } from "../src/config.js";
 
 // killTree's `ps` snapshot (kill-tree.ts): no descendants unless a test sets one.
 const ps = vi.hoisted(() => ({ out: "" }));
@@ -521,5 +523,56 @@ describe("LiveSessionRegistry", () => {
     reg.start({ channelId: "c", projectPath: "/p", instruction: "go", cli: "opencode", sink: fakeSink().sink, onEnded });
     cbs.onExit(new Error(OPENCODE_SIGNED_OUT));
     await vi.waitFor(() => expect(onEnded).toHaveBeenCalledWith(OPENCODE_SIGNED_OUT));
+  });
+});
+
+describe("LiveSessionRegistry session ids (delegate_runs)", () => {
+  const rows = (dir: string): unknown[] =>
+    openDb(dbFile(dir)).prepare("SELECT surface, cli, session_id, project_path, instruction FROM delegate_runs").all().map((r) => ({ ...r }));
+  const dirs: string[] = [];
+  const setup = (opts: { surface?: "discord" | "teams" } = {}) => {
+    const dir = tmp();
+    dirs.push(dir);
+    const f = fakeStart();
+    return { dir, f, reg: new LiveSessionRegistry(f.startFn as never, { dir, ...opts }) };
+  };
+  afterEach(() => { for (const d of dirs.splice(0)) closeDb(dbFile(d)); });
+
+  it("records a fresh session once under the registry's surface with the user's ask, then reports the id", () => {
+    const { dir, f, reg } = setup({ surface: "teams" });
+    const onSessionId = vi.fn();
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "SKILL BODY ## Task fix it", ask: "fix it", sink: fakeSink().sink, onSessionId });
+    f.cbs().onSessionId?.("sess-1");
+    expect(rows(dir)).toEqual([{ surface: "teams", cli: "claude", session_id: "sess-1", project_path: "/p", instruction: "fix it" }]);
+    expect(onSessionId).toHaveBeenCalledExactlyOnceWith("sess-1");
+  });
+
+  it("records nothing for a resume (its row already exists)", () => {
+    const { dir, f, reg } = setup({ surface: "discord" });
+    const onSessionId = vi.fn();
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", resume: "sess-1", sink: fakeSink().sink, onSessionId });
+    f.cbs().onSessionId?.("sess-1");
+    expect(rows(dir)).toEqual([]);
+    expect(onSessionId).not.toHaveBeenCalled();
+  });
+
+  it("a failed write reports no id", () => {
+    const { dir, f, reg } = setup({ surface: "discord" });
+    openDb(dbFile(dir)).exec("DROP TABLE delegate_runs");
+    const onSessionId = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: fakeSink().sink, onSessionId });
+    f.cbs().onSessionId?.("sess-1");
+    expect(onSessionId).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("records nothing without a surface", () => {
+    const { dir, f, reg } = setup();
+    const onSessionId = vi.fn();
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: fakeSink().sink, onSessionId });
+    f.cbs().onSessionId?.("sess-1");
+    expect(rows(dir)).toEqual([]);
+    expect(onSessionId).not.toHaveBeenCalled();
   });
 });

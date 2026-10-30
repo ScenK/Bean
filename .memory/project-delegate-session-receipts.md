@@ -29,7 +29,7 @@ Session ids are untrusted subprocess output: only `^[A-Za-z0-9][A-Za-z0-9._:-]{0
 Desktop **live** sessions (#503) record too: the engines' `onSessionId` (once per engine, after the
 proving event and a matching resume id) → `live-tasks.ts` appends one desktop row for a fresh session
 (`instruction` = the user's ask, never the handoff; a resume adds none) and emits a `session` receipt.
-Not recorded: the routine builder's `startAgent` (internal tooling) and chatops live sessions. `findDelegateRun` reads the table back for Continue live — chatops by default (desktop rows refused), the desktop card with `surface: "desktop"` (desktop rows only); see project-live-sessions.md.
+Chatops live sessions (#527) record the same way: `LiveSessionRegistry`'s `surface` option → one `discord`/`teams` row per fresh session (`instruction` = the card's ask, never the composed skill prompt; none on a resume or without `surface`). Not recorded: the routine builder's `startAgent` (internal tooling). `findDelegateRun` reads the table back for Continue live — chatops by default (desktop rows refused), the desktop card with `surface: "desktop"` (desktop rows only); see project-live-sessions.md.
 Recovery after a restart (no list UI by design):
 
 ```sh
