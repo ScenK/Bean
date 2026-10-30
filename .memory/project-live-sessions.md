@@ -184,9 +184,13 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
 
 - `app/src/live-tasks.ts` `createLiveTasks` hosts desktop sessions over core's `startLiveEngine`
   — not `LiveSessionRegistry` (its 1900-char rollover, 1.5s throttle and co-drivers are
-  Discord/multi-user shapes). Registry is keyed by **session id**; "one session per chat window"
-  is only a check in `start()` (owner = sender `webContents.id`), so a multi-agent mode relaxes
-  the check, not the data shape. The pending entry is registered **before** awaiting the project
+  Discord/multi-user shapes). Registry is keyed by **session id**; "one session per chat" is only a
+  check in `start()`/`resume()` (owner `LiveOwner` = sender `webContents.id` + chat mount id, #517;
+  IPC refuses an unattached mount). At most `LIVE_SESSION_CAP` (10) sessions at once across all chats
+  — they run with permissions bypassed — counting pending starts and still-stopping ones; the cap
+  refusal is `LIVE_CAP_REACHED`, shown as the chat's error row, and `canStart` gates the hand-off
+  offer. Events carry `mountId` so a hidden chat still gets them; release `stopMount`s, window
+  `closed` `stopOwner`s (by sender). The pending entry is registered **before** awaiting the project
   check, so a window close mid-startup (`stopOwner`) means the child is never spawned.
 - Two spawns (`liveSpawnFn`): claude stdin `pipe` (stream-json turns), codex/opencode stdin
   `ignore`; both get the login-shell PATH, `PWD=cwd`, `spawnEnv`. Don't reuse delegate-tasks'
@@ -220,8 +224,8 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
     check, so a switch doesn't wait for the old process to exit.
   - Project: `""` = scratch (main maps it via `scratchPath`); the window's last used project
     (chip pick, confirmed delegate/terminal run) — never `projects[0]`.
-- Hand-off offer (#478): desktop passes `liveSessionAvailable` per request **by sender** (chat
-  window, a live CLI enabled, `liveTasks.hasSession(id)` false) plus `liveSessionHost: "desktop"`,
+- Hand-off offer (#478): desktop passes `liveSessionAvailable` per request **by sender + mount**
+  (chat window, a live CLI enabled, `liveTasks.canStart(owner)`) plus `liveSessionHost: "desktop"`,
   which swaps in `proposeDesktopLiveSessionTool` (offer wording, no cli/model, project optional =
   `scratchPath`). The chatops channel tool and its tests are untouched. The renderer shows an
   `offer` item (`LiveOfferCard`); Start = `startOffer` → the same `startSession` handoff as

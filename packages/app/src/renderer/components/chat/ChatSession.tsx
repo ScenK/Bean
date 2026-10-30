@@ -15,10 +15,10 @@ import type { DelegateEvent } from "../../../delegate-tasks.js";
 import type { LiveEvent, LiveReceipt, LiveStartResult } from "../../../live-tasks.js";
 import type { CloseTurn, InterruptedRunNotice } from "../../../ipc.js";
 
-// Closing (or switching away, `switchTo` = the pick) with a delegate or live session still running
-// asks Keep/Stop first; everything else goes at once (memory is extracted in main afterwards).
-// `null` = no card.
-type CloseFlow = { stage: "delegates"; switchTo?: string } | null;
+// Leaving an off-the-record chat discards it, so a running delegate or live session asks Keep/Stop
+// first (`switchTo` = the pick). Any other chat with work stays mounted, hidden. `null` = no card.
+// Window close asks in the shell (ChatWindow), across every chat.
+type LeaveFlow = { switchTo: string } | null;
 
 // Transcript handed to rememberOnClose — see chatTurns (live steering and agent finals stay out).
 // Nothing typed since this window loaded = nothing new to remember (a restored chat's turns were
@@ -96,8 +96,12 @@ export function attachDelegateTaskId(
   return { items: next, loopbacks };
 }
 
-/** What the window shell (ChatWindow) routes to the shown chat: the preload's `on*` bridges can't
- * unsubscribe, so the shell registers them once and calls whichever session is mounted. */
+/** Running tasks in one chat, for the window-close card. */
+export interface ChatTasks { delegates: number; live?: LiveCli }
+
+/** What the window shell (ChatWindow) routes to a mounted chat: the preload's `on*` bridges can't
+ * unsubscribe, so the shell registers them once and calls the chat an event is tagged with (or the
+ * shown one). */
 export interface ChatSessionApi {
   mountId: string;
   delegateEvent: (e: DelegateEvent) => void;
@@ -106,14 +110,21 @@ export interface ChatSessionApi {
   threadId: () => string | undefined;
   /** A per-turn "Memory updated" receipt for this chat (the shell routes by mount and thread). */
   memoryUpdated: (saved: Array<{ id: string; text: string }>) => void;
-  imageProgress: (from: string) => void;
+  imageProgress: () => void;
   runPrompt: (p: { prompt: string; label: string; noteSlug?: string }) => void;
   notices: (notices: InterruptedRunNotice[]) => void;
-  reviewBeforeClose: () => void;
-  /** A sidebar pick ("new" or a thread id). */
+  /** A sidebar pick ("new" or a thread id) while this chat is shown. */
   open: (target: string) => void;
   /** An error row in this chat (a failed sidebar delete). */
   error: (text: string) => void;
+  /** Its running delegates and live session (the window-close count). */
+  tasks: () => ChatTasks;
+  /** Stop them (window close's Stop & close). */
+  stopTasks: () => Promise<void>;
+  /** Window close: the final save and close-time memory. */
+  closeOut: () => Promise<void>;
+  /** A switch elsewhere: a hidden chat with nothing running evicts itself (onEvicted). */
+  sweep: () => void;
 }
 
 export interface ChatSessionProps {
@@ -121,28 +132,42 @@ export interface ChatSessionProps {
   mountId: string;
   /** A saved thread to restore on mount; undefined = a new chat. */
   restoreId?: string;
-  sessionRef: { current?: ChatSessionApi };
+  /** The shell's registry: this chat puts its api here on each render, removed at unmount. */
+  sessions: Map<string, ChatSessionApi>;
+  /** Mounted but not shown — it has work in flight (#517). */
+  hidden: boolean;
   clis: CliName[];
   runModels: AvailableModel[];
   prefillUrl?: string;
   setThreads: (update: (prev: DesktopChatListing[]) => DesktopChatListing[]) => void;
   onActive: (id: string | undefined) => void;
+  /** Its switch-away save is in flight (the sidebar waits). */
   onBusy: (busy: boolean) => void;
-  /** Eviction done (saved, memory handed off): the shell mounts the pick in this one's place.
-   * `threadId` = the thread the evicted chat wrote, so its late receipts can follow it. */
-  onSwitch: (target: string, threadId: string | undefined) => void;
+  /** Its thread while it has work in flight (the sidebar spinner), undefined once idle. */
+  onWorking: (threadId: string | undefined) => void;
+  /** A reply or live turn landed while hidden (the sidebar dot). */
+  onUnread: () => void;
+  /** This shown chat is leaving for the pick: `keep` = it stays mounted, hidden (work in flight);
+   * otherwise it's evicted (saved, memory handed off) and the shell unmounts it. */
+  onSwitch: (target: string, keep: boolean) => void;
+  /** A hidden chat evicted itself (sweep): the shell unmounts it. */
+  onEvicted: () => void;
   /** Receipts that landed after this thread's chat was switched away — shown again on restore. */
   takeLateReceipts: (threadId: string) => Array<Array<{ id: string; text: string }>>;
 }
 
 /** One chat inside the chat window. A switch evicts it — final save, close-time memory, release —
  * and the shell mounts the next one with a new mount id; the window itself stays. */
-export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onSwitch, takeLateReceipts }: ChatSessionProps) {
+export function ChatSession({
+  mountId, restoreId, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onUnread, onSwitch, onEvicted, takeLateReceipts,
+}: ChatSessionProps) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState("model");
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
-  const [closeFlow, setCloseFlow] = useState<CloseFlow>(null);
+  const [leaveFlow, setLeaveFlow] = useState<LeaveFlow>(null);
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
   // Attached in a layout effect, so before any passive effect's request; released at unmount.
   useLayoutEffect(() => {
     window.bean.chatAttach(mountId);
@@ -193,7 +218,7 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
   // Set while a switch saves this chat on its way out; the sidebar stays disabled meanwhile.
   const evictingRef = useRef(false);
   const [evicting, setEvicting] = useState(false);
-  useEffect(() => onBusy(busy || evicting), [busy, evicting]);
+  useEffect(() => onBusy(evicting), [evicting]);
   // Facts undone from a "Memory updated" row — handed to close catch-up so it won't re-save them.
   const rejectedMemoriesRef = useRef<string[]>([]);
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
@@ -389,6 +414,7 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
       });
       flushRef.current = true;
       setStatus("idle");
+      if (hiddenRef.current) onUnread();
     } catch {
       setItems((prev) => [...prev.filter((it) => it.id !== workingId), { kind: "status", id: newId(), text: "Failed to reach Bean.", tone: "error" }]);
       setStatus("error");
@@ -428,7 +454,7 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
     const l = liveRef.current;
     if (!l) return;
     setLive(undefined);
-    if (l.sessionId) window.bean.liveStop(l.sessionId);
+    if (l.sessionId) window.bean.liveStop(l.sessionId, mountId);
     const row: ChatItem = {
       kind: "status", id: newId(), tone: "info",
       text: `${AGENT_NAMES[l.agent]} ended (${l.turns} turn${l.turns === 1 ? "" : "s"})${next ? ` → ${next}` : ""}`,
@@ -454,7 +480,7 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
 
   const deliver = async (sessionId: string, agent: LiveCli, text: string): Promise<void> => {
     // Undefined = sent; otherwise why not (TURN_QUEUE_FULL, an ended session) — shown inline.
-    const err = await window.bean.liveSend(sessionId, text).catch(() => "Couldn't reach the agent session.");
+    const err = await window.bean.liveSend(sessionId, text, mountId).catch(() => "Couldn't reach the agent session.");
     if (err) { addStatus(err, "error"); return; }
     setItems((prev) => ensureStreaming(prev, sessionId, agent, newId()));
     const l = liveRef.current;
@@ -468,7 +494,7 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
     const history = handoffItems(itemsRef.current);
     const userId = newId();
     setItems((prev) => [...prev, { kind: "user", id: userId, text, source: "live" }]);
-    const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask: text, history })
+    const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask: text, history }, mountId)
       .catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
     if ("error" in res) {
       // A crash during startup already reported itself through the ended event.
@@ -477,7 +503,7 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
     }
     knownSessionsRef.current.add(res.sessionId);
     const cur = liveRef.current;
-    if (cur?.key !== l.key) { window.bean.liveStop(res.sessionId); return; } // ended while starting
+    if (cur?.key !== l.key) { window.bean.liveStop(res.sessionId, mountId); return; } // ended while starting
     setLive({ ...cur, sessionId: res.sessionId, queued: [] });
     if (res.handedOver > 0) {
       const row: ChatItem = {
@@ -582,14 +608,14 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
     const prevMode = modeRef.current;
     setLive(l);
     setMode(agent);
-    const res = await window.bean.liveResume(sessionId).catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
+    const res = await window.bean.liveResume(sessionId, mountId).catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
     if ("error" in res) {
       if (liveRef.current?.key === l.key) { setLive(undefined); setMode(prevMode); addStatus(res.error, "error"); }
       return;
     }
     knownSessionsRef.current.add(res.sessionId);
     const cur = liveRef.current;
-    if (cur?.key !== l.key) { window.bean.liveStop(res.sessionId); return; } // ended while starting
+    if (cur?.key !== l.key) { window.bean.liveStop(res.sessionId, mountId); return; } // ended while starting
     setLive({ ...cur, sessionId: res.sessionId, projectPath: res.projectPath, queued: [] });
     if (projects.some((p) => p.path === res.projectPath)) rememberProject(res.projectPath);
     for (const q of cur.queued) await deliver(res.sessionId, agent, q);
@@ -607,6 +633,7 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
     }
     if (!knownSessionsRef.current.has(e.sessionId)) return;
     if (e.type === "turn" || e.type === "ended") flushRef.current = true;
+    if (e.type === "turn" && hiddenRef.current) onUnread();
     setItems((prev) => applyLiveEvent(prev, e, newId));
     // Rows and mode changes only for the current session; a late event from an ended one just
     // closes its bubbles.
@@ -836,83 +863,79 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
     }
   };
 
-  // Write the thread one last time (main re-checks the incognito latch), hand off memory and close.
-  const closeNow = async (): Promise<void> => {
-    setCloseFlow(null);
+  // Anything that keeps this chat mounted when it's switched away from: a Bean request in flight or
+  // queued (a loopback), a delegate starting or running, or a live session.
+  const hasWork = (): boolean => busyRef.current || queuedSendsRef.current.length > 0 || liveRef.current !== undefined
+    || hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size);
+  const tasks = (): ChatTasks => ({
+    delegates: Math.max(pendingDelegateStartsRef.current.size,
+      itemsRef.current.filter((it) => it.kind === "delegate" && (it.state === "starting" || it.state === "running")).length),
+    ...(liveRef.current ? { live: liveRef.current.agent } : {}),
+  });
+  // The sidebar spinner follows the same work, from state.
+  const working = busy || live !== undefined || hasActiveDelegates(items, 0);
+  useEffect(() => onWorking(working ? threadRef.current?.id : undefined), [working]);
+
+  // Window close: write the thread one last time (main re-checks the incognito latch), hand off memory.
+  const closeOut = async (): Promise<void> => {
     await saveThread();
     rememberNow();
-    window.bean.allowChatClose();
   };
 
-  // A switch away: the final save must land (otherwise this chat stays, with an error row), then
-  // memory, then the shell unmounts this chat — which releases it — and mounts the pick. The
-  // composer is blocked meanwhile (ChatPanel's busy); work started some other way during the save
-  // (a Plan-popup prompt, a loopback) cancels the switch rather than being thrown away.
-  const evict = async (target: string): Promise<void> => {
-    setCloseFlow(null);
-    if (evictingRef.current) return;
+  // The final save must land (otherwise this chat stays, with an error row when shown), then memory,
+  // then the shell unmounts this chat — which releases it. The composer is blocked meanwhile
+  // (ChatPanel's busy); work started some other way during the save (a Plan-popup prompt, a
+  // loopback) keeps it mounted instead. Resolves to whether it's gone.
+  const evict = async (): Promise<boolean> => {
+    if (evictingRef.current) return false;
     evictingRef.current = true;
     setEvicting(true);
-    const stay = (why?: string): void => {
-      evictingRef.current = false;
-      setEvicting(false);
-      if (why) addStatus(why, "error");
-    };
     // The second write picks up anything that landed while the first was in flight (a no-op otherwise).
-    if (!(await saveThread()) || !(await saveThread())) { stay("Couldn't save this chat, so it stays open — try switching again."); return; }
-    if (busyRef.current || pendingDelegateStartsRef.current.size > 0 || liveRef.current) { stay(); return; }
+    const saved = (await saveThread()) && (await saveThread());
+    evictingRef.current = false;
+    setEvicting(false);
+    if (!saved) {
+      if (!hiddenRef.current) addStatus("Couldn't save this chat, so it stays open — try switching again.", "error");
+      return false;
+    }
+    if (hasWork()) return false;
     rememberNow();
-    onSwitch(target, threadRef.current?.id);
+    return true;
   };
 
-  // A sidebar row or New chat. A running delegate or live session asks Keep/Stop first.
+  // Off the record: leaving discards the chat (rememberNow carries the incognito flag, then the
+  // unmount's chatRelease).
+  const discard = (target: string): void => {
+    setLeaveFlow(null);
+    rememberNow();
+    onSwitch(target, false);
+  };
+
+  // A sidebar row or New chat. A chat with work stays mounted, hidden; an idle one is evicted.
   const open = (target: string): void => {
-    if (busyRef.current || evictingRef.current) return;
+    if (evictingRef.current) return;
     if (target === "new" ? !threadRef.current && itemsRef.current.length === 0 : target === threadRef.current?.id) return;
-    if (hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size) || liveRef.current) {
-      setCloseFlow({ stage: "delegates", switchTo: target });
+    if (incognitoRef.current) {
+      const t = tasks();
+      if (t.delegates > 0 || t.live) setLeaveFlow({ switchTo: target });
+      else discard(target);
       return;
     }
-    void evict(target);
+    if (hasWork()) { onSwitch(target, true); return; }
+    void (async () => {
+      if (await evict()) onSwitch(target, false);
+      else if (hasWork()) onSwitch(target, true);
+    })();
   };
 
-  const reviewBeforeClose = (): void => {
-    if (hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size) || liveRef.current) {
-      setCloseFlow({ stage: "delegates" });
-      return;
-    }
-    void closeNow();
+  // Hidden and idle again: evicted at the next switch. A failed save just stays for the next try;
+  // shown again meanwhile (the user picked it) = it stays.
+  const sweep = (): void => {
+    if (!hiddenRef.current || hasWork()) return;
+    void evict().then((gone) => { if (gone && hiddenRef.current) onEvicted(); });
   };
 
-  // Rendered into the shell's ref, so the shell's once-registered listeners reach this chat. Only
-  // this mount's cleanup clears it — the next chat has already rendered its own by then.
-  sessionRef.current = {
-    mountId,
-    delegateEvent: applyDelegateEvent,
-    liveEvent: onLiveEvent,
-    threadId: () => threadRef.current?.id,
-    memoryUpdated: (saved) => setItems((prev) => [...prev, { kind: "memory", id: newId(), saved, state: "saved" }]),
-    // Tagged: progress from a chat that was switched away is dropped, never shown in this one.
-    // generate_image started inside the current turn — flip the working bubble so the
-    // (up to a minute) wait reads as painting, not a hang.
-    imageProgress: (from) => {
-      if (from === mountId) setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it)));
-    },
-    runPrompt,
-    // Rendered as a `reply` (not `status`) so it enters conversation history: a later "retry" needs
-    // the full instruction (notice.text) in context, not just the short bubble text (notice.display).
-    notices: (notices) => setItems((prev) => [
-      ...prev,
-      ...notices.map((n) => ({ kind: "reply" as const, id: newId(), text: n.text, display: n.display })),
-    ]),
-    reviewBeforeClose,
-    open,
-    error: (text) => addStatus(text, "error"),
-  };
-  useLayoutEffect(() => () => { if (sessionRef.current?.mountId === mountId) sessionRef.current = undefined; }, []);
-
-  const stopDelegatesAndLeave = async (): Promise<void> => {
-    const switchTo = closeFlow?.switchTo;
+  const stopTasks = async (): Promise<void> => {
     await Promise.allSettled(pendingDelegateStartsRef.current.values());
     const cancelled = new Set<string>();
     for (const taskId of delegateTaskIdsRef.current.values()) {
@@ -927,39 +950,60 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
         window.bean.delegateCancel(taskId);
       }
     }
-    // The session dies with the window anyway (main's stopOwner); stopping now is just sooner, and
-    // leaves its Continue live row in the transcript.
+    // The session dies with its chat anyway (main's stopMount/stopOwner); stopping now is just
+    // sooner, and leaves its Continue live row in the transcript.
     endSession();
-    if (switchTo !== undefined) await evict(switchTo);
-    else await closeNow();
   };
 
-  const switching = closeFlow?.switchTo !== undefined;
-  const delegatesRunning = closeFlow ? hasActiveDelegates(items, pendingDelegateStartsRef.current.size) : false;
-  const liveName = live ? AGENT_NAMES[live.agent] : undefined;
-  const closeTitle = switching
-    ? `Switching chats stops ${liveName && delegatesRunning ? `the delegated task and the ${liveName} session` : liveName ? `the ${liveName} session` : "the delegated task"}.`
-    : liveName && delegatesRunning
-      ? `A delegated task and a ${liveName} session are still running — closing stops both.`
-      : liveName ? `${liveName} is still running — closing ends the session.`
-        : "A delegated task is still running — closing will stop it.";
+  // Rendered into the shell's registry, so its once-registered listeners reach this chat. Removed
+  // at unmount.
+  sessions.set(mountId, {
+    mountId,
+    delegateEvent: applyDelegateEvent,
+    liveEvent: onLiveEvent,
+    threadId: () => threadRef.current?.id,
+    memoryUpdated: (saved) => setItems((prev) => [...prev, { kind: "memory", id: newId(), saved, state: "saved" }]),
+    // generate_image started inside the current turn — flip the working bubble so the
+    // (up to a minute) wait reads as painting, not a hang.
+    imageProgress: () => setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it))),
+    runPrompt,
+    // Rendered as a `reply` (not `status`) so it enters conversation history: a later "retry" needs
+    // the full instruction (notice.text) in context, not just the short bubble text (notice.display).
+    notices: (notices) => setItems((prev) => [
+      ...prev,
+      ...notices.map((n) => ({ kind: "reply" as const, id: newId(), text: n.text, display: n.display })),
+    ]),
+    open,
+    error: (text) => addStatus(text, "error"),
+    tasks,
+    stopTasks,
+    closeOut,
+    sweep,
+  });
+  useLayoutEffect(() => () => { sessions.delete(mountId); }, []);
+
+  const stopAndDiscard = async (): Promise<void> => {
+    const switchTo = leaveFlow?.switchTo;
+    if (switchTo === undefined) return;
+    await stopTasks();
+    discard(switchTo);
+  };
 
   return (
     <>
-      {closeFlow?.stage === "delegates" ? (
+      {leaveFlow && !hidden ? (
         <div class="bean-memory-review">
           <div class="bean-memory-review-card">
-            <div class="bean-memory-review-title">{closeTitle}</div>
+            <div class="bean-memory-review-title">Leaving discards this chat and stops its task.</div>
             <div class="bean-card-actions">
-              <button type="button" class="bean-btn" onClick={() => setCloseFlow(null)}>Keep working</button>
-              <button type="button" class="bean-btn bean-btn--ghost" onClick={stopDelegatesAndLeave}>
-                {switching ? "Stop & switch" : liveName && !delegatesRunning ? `End ${liveName} session & close` : "Stop & close"}
-              </button>
+              <button type="button" class="bean-btn" onClick={() => setLeaveFlow(null)}>Keep working</button>
+              <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void stopAndDiscard()}>Stop & switch</button>
             </div>
           </div>
         </div>
       ) : null}
       <ChatPanel
+        hidden={hidden}
         items={items}
         busy={busy || evicting}
         model={model}

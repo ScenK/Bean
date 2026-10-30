@@ -28,8 +28,11 @@ export function withSaveAck(threads: DesktopChatListing[], ack: ChatThreadAck, i
 interface Props {
   threads: DesktopChatListing[];
   activeId: string | undefined;
-  /** Bean's reply in flight: rows and New chat wait. */
+  /** The shown chat's switch-away save in flight: rows and New chat wait. */
   busy: boolean;
+  /** Threads with work in flight (a spinner) and with a reply that landed while hidden (a dot). */
+  working: Set<string>;
+  unread: Set<string>;
   overlay: boolean;
   onNew: () => void;
   onOpen: (id: string) => void;
@@ -44,7 +47,7 @@ export function rowTime(iso: string, now: Date): string {
   return agoText(iso, now).replace("just now", "now").replace(" ago", "");
 }
 
-export function ChatSidebar({ threads, activeId, busy, overlay, onNew, onOpen, onDelete }: Props) {
+export function ChatSidebar({ threads, activeId, busy, working, unread, overlay, onNew, onOpen, onDelete }: Props) {
   const now = new Date();
   return (
     <nav class={`bean-chat-sidebar${overlay ? " bean-chat-sidebar--overlay" : ""}`} aria-label="Chat history">
@@ -70,6 +73,9 @@ export function ChatSidebar({ threads, activeId, busy, overlay, onNew, onOpen, o
                     <span class="bean-chat-sidebar-line">
                       <span class="bean-chat-sidebar-title">{title}</span>
                       {active ? null : agents.map((a) => <AgentAvatar agent={a} size={12} />)}
+                      {working.has(t.id)
+                        ? <span class="bean-chat-sidebar-spinner" role="img" aria-label="Working" />
+                        : unread.has(t.id) ? <span class="bean-chat-sidebar-dot" role="img" aria-label="New reply" /> : null}
                       <span class="bean-chat-sidebar-time">{rowTime(t.updatedAt, now)}</span>
                     </span>
                     {active ? (

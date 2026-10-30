@@ -168,7 +168,7 @@ describe("ChatWindow agent mode", () => {
 
     await send("/claude fix X");
     // The confirmed delegate's project is this window's last used one.
-    expect(bean.liveStart).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude", projectPath: "/p", ask: "fix X" }));
+    expect(bean.liveStart).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude", projectPath: "/p", ask: "fix X" }), expect.any(String));
     expect(bean.liveStart!.mock.calls[0]![0].history.map((h: { text: string }) => h.text)).toEqual(["hi bean", "on it"]);
     await live({ type: "started", projectPath: "/scratch", handedOver: 2 });
     expect(root.textContent).toContain("Handed over 2 messages");
@@ -178,7 +178,7 @@ describe("ChatWindow agent mode", () => {
 
     // Typed text in agent mode steers the session.
     await send("also add a test");
-    expect(bean.liveSend).toHaveBeenCalledWith("s1", "also add a test");
+    expect(bean.liveSend).toHaveBeenCalledWith("s1", "also add a test", expect.any(String));
 
     // The delegate finishes while the agent is live: its loopback is a Bean turn, never live-send.
     await act(async () => { listeners.onDelegateEvent!({ taskId: "task1", type: "done", result: "audit ok" } satisfies DelegateEvent); });
@@ -187,7 +187,7 @@ describe("ChatWindow agent mode", () => {
     expect(bean.liveSend).toHaveBeenCalledTimes(1);
 
     await send("/bean");
-    expect(bean.liveStop).toHaveBeenCalledWith("s1");
+    expect(bean.liveStop).toHaveBeenCalledWith("s1", expect.any(String));
     expect(root.textContent).toContain("Claude Code ended (1 turn) → Bean");
     await send("what did claude do?");
     const last = chatCalls().at(-1)!;
@@ -223,12 +223,12 @@ describe("ChatWindow agent mode", () => {
     expect(bean.liveStart).toHaveBeenCalledTimes(1);
     // Same deterministic handoff as /claude: the transcript so far, then the model's ask line.
     // A project Bean doesn't know (core's scratch path) maps to the window's "" scratch.
-    expect(bean.liveStart).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude", projectPath: "", ask: "Add OAuth login" }));
+    expect(bean.liveStart).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude", projectPath: "", ask: "Add OAuth login" }), expect.any(String));
     expect(bean.liveStart!.mock.calls[0]![0].history.map((h: { text: string }) => h.text))
       .toEqual(["build oauth login for me", "This needs hands-on work.", "thanks", "ok", "ok, let's do it", "This needs hands-on work."]);
     await live({ type: "started", projectPath: "/scratch", handedOver: 6 });
     await send("use GitHub as the provider");
-    expect(bean.liveSend).toHaveBeenCalledWith("s1", "use GitHub as the provider");
+    expect(bean.liveSend).toHaveBeenCalledWith("s1", "use GitHub as the provider", expect.any(String));
   });
 
   it("Continue live on a finished delegate: one session on a double click, sends only the id, next message continues it", async () => {
@@ -246,14 +246,14 @@ describe("ChatWindow agent mode", () => {
     await act(async () => { btn.click(); btn.click(); });
     await flush();
     expect(bean.liveResume).toHaveBeenCalledTimes(1);
-    expect(bean.liveResume).toHaveBeenCalledWith("sess-1");
+    expect(bean.liveResume).toHaveBeenCalledWith("sess-1", expect.any(String));
     expect(bean.liveStart).not.toHaveBeenCalled();
     expect(root.querySelector(".bean-agent-banner")?.textContent).toContain("Continuing");
     // Hidden while the session is live.
     expect([...root.querySelectorAll("button")].some((b) => b.textContent?.includes("Continue live"))).toBe(false);
 
     await send("now fix what you found");
-    expect(bean.liveSend).toHaveBeenCalledWith("s1", "now fix what you found");
+    expect(bean.liveSend).toHaveBeenCalledWith("s1", "now fix what you found", expect.any(String));
   });
 
   it("a refused Continue live reports why and leaves Bean in charge", async () => {
@@ -284,7 +284,7 @@ describe("ChatWindow agent mode", () => {
     expect(bean.allowChatClose).not.toHaveBeenCalled();
     expect(root.textContent).toContain("Claude Code is still running");
     await click("End Claude Code session & close");
-    expect(bean.liveStop).toHaveBeenCalledWith("s1");
+    expect(bean.liveStop).toHaveBeenCalledWith("s1", expect.any(String));
     expect(bean.allowChatClose).toHaveBeenCalledTimes(1);
   });
 
@@ -298,7 +298,7 @@ describe("ChatWindow agent mode", () => {
     await live({ type: "ended", reason: "ended" });
     expect(root.textContent).toContain("Claude Code session ended");
     await click("Continue live");
-    expect(bean.liveResume).toHaveBeenCalledWith("sess-a");
+    expect(bean.liveResume).toHaveBeenCalledWith("sess-a", expect.any(String));
   });
 
   it("End leaves a Continue live row that waits for the child to exit", async () => {
@@ -308,7 +308,7 @@ describe("ChatWindow agent mode", () => {
     await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
     await live({ type: "session", receipt: { sessionId: "sess-a", agent: "claude", label: "claude · sess…" } });
     await click("End");
-    expect(bean.liveStop).toHaveBeenCalledWith("s1");
+    expect(bean.liveStop).toHaveBeenCalledWith("s1", expect.any(String));
     const btn = (): HTMLButtonElement => [...root.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Continue live")!;
     expect(btn().disabled).toBe(true);
     await live({ type: "ended", reason: "stopped" });

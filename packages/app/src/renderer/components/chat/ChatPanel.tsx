@@ -69,6 +69,7 @@ function ImagePreview({ image, onClose }: { image: { dataUrl: string; path?: str
 }
 
 export function ChatPanel({
+  hidden,
   items,
   busy,
   model,
@@ -110,6 +111,8 @@ export function ChatPanel({
   onPickProject,
   onEndAgent,
 }: {
+  /** A chat kept mounted in the background while another one is shown. */
+  hidden?: boolean;
   items: ChatItem[];
   busy: boolean;
   model: string;
@@ -281,7 +284,7 @@ export function ChatPanel({
   }, [prefillUrl]);
 
   // A chat mounts with the composer focused — the window's first chat and every switched-to one.
-  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => { if (!hidden) inputRef.current?.focus(); }, [hidden]);
 
   const submit = (): void => {
     const el = inputRef.current;
@@ -360,7 +363,7 @@ export function ChatPanel({
   const speaker = (it: ChatItem) => <span class="bean-sr-only">{AGENT_NAMES[itemAgent(it) ?? "bean"]}: </span>;
 
   return (
-    <div class="bean-chat">
+    <div class="bean-chat" hidden={hidden}>
       {/* Pinned below the drag band, not inside it — no drag region here. */}
       <div class="bean-chat-meta">
         <AgentAvatar agent="bean" size={18} />
