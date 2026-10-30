@@ -14,6 +14,8 @@ export interface SyncedChatListing {
   live: boolean;
   /** The CLI of the last live session bound here, if any. */
   liveCli?: LiveCli;
+  /** That session's id is recorded, so Continue live can reopen it (the id itself stays in main). */
+  resumable: boolean;
 }
 
 /** One transcript line, already mapped for display: the owner's lines lose their `[Name]:`
@@ -64,6 +66,7 @@ export interface SyncedChatHandlerDeps {
   /** Conversation ids with a running live session, per surface (from the bots' `live` activity). */
   liveIds: (surface: ChatopsSurface) => ReadonlySet<string>;
   deskTurn: (surface: ChatopsSurface, conversationId: string, text: string) => Promise<DeskAckResult>;
+  deskResume: (surface: ChatopsSurface, conversationId: string) => Promise<DeskAckResult>;
 }
 
 /** Handlers behind the synced-chat IPC. Every read and send goes through the current owner's
@@ -84,6 +87,7 @@ export function buildSyncedChatHandlers(deps: SyncedChatHandlerDeps) {
     list: async (): Promise<SyncedChatListing[]> => (await listed()).rows.map((r) => ({
       surface: r.surface, conversationId: r.conversationId, kind: r.kind, title: r.title, updatedAt: r.updatedAt,
       live: deps.liveIds(r.surface).has(r.conversationId), ...(r.liveCli ? { liveCli: r.liveCli } : {}),
+      resumable: !!r.liveSessionId,
     })),
     get: async (surface: unknown, conversationId: unknown): Promise<SyncedChatRow[]> => {
       const { row, ownerName } = await find(surface, conversationId);
@@ -95,6 +99,16 @@ export function buildSyncedChatHandlers(deps: SyncedChatHandlerDeps) {
       const { row } = await find(surface, conversationId);
       try {
         return await deps.deskTurn(row.surface, row.conversationId, text);
+      } catch (err) {
+        return { failed: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    /** Continue live: only the conversation id goes to the bot, which re-derives the session. */
+    resume: async (surface: unknown, conversationId: unknown): Promise<SyncedSendResult> => {
+      const { row } = await find(surface, conversationId);
+      if (!row.liveSessionId) return { refused: "no-record" };
+      try {
+        return await deps.deskResume(row.surface, row.conversationId);
       } catch (err) {
         return { failed: err instanceof Error ? err.message : String(err) };
       }

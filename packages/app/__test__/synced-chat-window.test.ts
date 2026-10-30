@@ -126,4 +126,48 @@ describe("ChatWindow synced chats", () => {
     const row = [...root.querySelectorAll(".bean-chat-sidebar-row")].find((r) => r.textContent?.includes("Standup"))!;
     expect(row.querySelector(".bean-chat-sidebar-dot")).not.toBeNull();
   });
+
+  it("Continue live: shown on an ended recorded session, Opening… until live, one request for a double click", async () => {
+    let ack!: (r: unknown) => void;
+    bean.syncedChatResume = vi.fn(() => new Promise((r) => { ack = r; }));
+    bean.syncedChatList!.mockResolvedValue([dm, { ...post, live: false, resumable: true }]);
+    await mount();
+    await openRow("DM");
+    expect(synced().textContent).not.toContain("Continue live");
+    await openRow("Standup");
+    const button = (): HTMLButtonElement | undefined =>
+      [...synced().querySelectorAll("button.bean-status-action")].find((b) => /Continue live|Opening/.test(b.textContent ?? "")) as HTMLButtonElement | undefined;
+    expect(button()?.textContent).toBe("Continue live");
+    const mountId = bean.chatAttach!.mock.calls.at(-1)![0];
+
+    await act(async () => { button()!.click(); button()!.click(); });
+    await flush();
+    expect(bean.syncedChatResume).toHaveBeenCalledTimes(1);
+    expect(bean.syncedChatResume).toHaveBeenCalledWith("teams", "t1", mountId);
+    expect(button()?.textContent).toBe("Opening…");
+    expect(button()?.disabled).toBe(true);
+    await act(async () => { ack({ ok: true }); });
+    await flush();
+    expect(button()?.textContent).toBe("Opening…");
+
+    // The bot's `live start` lands: hidden while live.
+    bean.syncedChatList!.mockResolvedValue([dm, { ...post, live: true, resumable: true }]);
+    await act(async () => { listeners.onSyncedChatEvent!({ surface: "teams", conversationId: "t1" }); });
+    await flush();
+    expect(button()).toBeUndefined();
+    expect(composer().placeholder).toBe("Steer the live session…");
+  });
+
+  it("a refused Continue live becomes an error row and the button comes back", async () => {
+    bean.syncedChatResume = vi.fn(async () => ({ refused: "channel-busy" }));
+    bean.syncedChatList!.mockResolvedValue([dm, { ...post, live: false, resumable: true }]);
+    await mount();
+    await openRow("Standup");
+    const button = synced().querySelector("button.bean-status-action") as HTMLButtonElement;
+    await act(async () => { button.click(); });
+    await flush();
+    expect(synced().querySelector(".bean-status--error")?.textContent).toBe("A live session is already running there.");
+    expect((synced().querySelector("button.bean-status-action") as HTMLButtonElement).textContent).toBe("Continue live");
+  });
 });
+

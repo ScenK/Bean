@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DeskTurn } from "@bean/core";
+import type { DeskResume, DeskTurn } from "@bean/core";
 import { createChatopsServers, parseTunnelEndpoint, type ChatopsBot, type ChatopsEvent, type SpawnedProcess } from "../src/chatops-servers.js";
 
 function fakeProcess() {
   const listeners: Record<string, ((arg: unknown) => void)[]> = {};
-  const outbox: DeskTurn[] = [];
+  const outbox: Array<DeskTurn | DeskResume> = [];
   const proc: SpawnedProcess = {
     send: (msg) => { outbox.push(msg); return true; },
     stderr: { on: (event, cb) => { (listeners[event] ??= []).push(cb as (...args: unknown[]) => void); } },
@@ -352,6 +352,15 @@ describe("desk turns", () => {
     p.emit("message", { type: "desk-ack", requestId: "someone-else", ok: true });
     p.emit("message", { type: "desk-ack", requestId: sent.requestId, refused: "queue-full" });
     await expect(done).resolves.toEqual({ refused: "queue-full" });
+  });
+
+  it("a desk resume sends only the conversation id and settles on its ack", async () => {
+    const { p, servers } = deskHarness();
+    const done = servers.deskResume("discord", "t1");
+    const sent = p.outbox[0]!;
+    expect(sent).toEqual({ type: "desk-resume", requestId: expect.any(String), conversationId: "t1" });
+    p.emit("message", { type: "desk-ack", requestId: sent.requestId, refused: "channel-busy" });
+    await expect(done).resolves.toEqual({ refused: "channel-busy" });
   });
 
   it("times out without resending", async () => {

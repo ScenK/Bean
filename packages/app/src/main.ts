@@ -1038,6 +1038,7 @@ app.whenReady().then(async () => {
         conversationTurns: chatopsConversationTurns,
         liveIds: (surface) => liveConvs[surface],
         deskTurn: (surface, id, text) => chatopsServers!.deskTurn(surface, id, text),
+        deskResume: (surface, id) => chatopsServers!.deskResume(surface, id),
       }),
     }));
 

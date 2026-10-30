@@ -144,6 +144,8 @@ declare global {
       syncedChatGet(surface: string, conversationId: string, mountId: string): Promise<SyncedChatRow[]>;
       /** A desk turn into a listed conversation: the bot's ack, or why there was none. */
       syncedChatSend(surface: string, conversationId: string, text: string, mountId: string): Promise<SyncedSendResult>;
+      /** Continue live: asks the bot to reopen the conversation's ended live session. */
+      syncedChatResume(surface: string, conversationId: string, mountId: string): Promise<SyncedSendResult>;
       onSyncedChatEvent(cb: (e: SyncedChatEvent) => void): void;
       /** Tagged with the chat (mount) whose turn it captured. */
       onMemoryUpdated(cb: (saved: Array<{ id: string; text: string }>, mountId: string) => void): void;

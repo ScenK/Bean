@@ -31,7 +31,7 @@ export interface ChatopsConversation {
  * .memory/project-chatops-conversation-catalog.md). Only the bot writes it: owner DM turns and
  * owner-started live sessions. */
 export class ConversationCatalog {
-  constructor(private file: string, private surface: ChatopsSurface, private now: () => Date = () => new Date()) {}
+  constructor(private file: string, readonly surface: ChatopsSurface, private now: () => Date = () => new Date()) {}
 
   /** Adds or refreshes a row. `live` set = bind that session (sessionId absent = unset until the
    * CLI reports one); absent = keep the existing binding. */
@@ -53,12 +53,22 @@ export class ConversationCatalog {
     );
   }
 
-  /** This surface's row for a conversation, if catalogued — who it belongs to and where it is. */
-  get(conversationId: string): { kind: ConversationKind; title: string; ownerId: string; ownerAltId?: string } | undefined {
+  /** This surface's row for a conversation, if catalogued — who it belongs to, where it is, and
+   * the live session last bound there. */
+  get(conversationId: string): {
+    kind: ConversationKind; title: string; ownerId: string; ownerAltId?: string; liveCli?: LiveCli; liveSessionId?: string;
+  } | undefined {
     const r = openDb(this.file).prepare(
-      "SELECT kind, title, owner_id, owner_alt_id FROM chatops_conversations WHERE conversation_id = ? AND surface = ?",
-    ).get(conversationId, this.surface) as { kind: ConversationKind; title: string; owner_id: string; owner_alt_id: string | null } | undefined;
-    return r && { kind: r.kind, title: r.title, ownerId: r.owner_id, ...(r.owner_alt_id ? { ownerAltId: r.owner_alt_id } : {}) };
+      "SELECT kind, title, owner_id, owner_alt_id, live_cli, live_session_id FROM chatops_conversations WHERE conversation_id = ? AND surface = ?",
+    ).get(conversationId, this.surface) as {
+      kind: ConversationKind; title: string; owner_id: string; owner_alt_id: string | null; live_cli: LiveCli | null; live_session_id: string | null;
+    } | undefined;
+    return r && {
+      kind: r.kind, title: r.title, ownerId: r.owner_id,
+      ...(r.owner_alt_id ? { ownerAltId: r.owner_alt_id } : {}),
+      ...(r.live_cli ? { liveCli: r.live_cli } : {}),
+      ...(r.live_session_id ? { liveSessionId: r.live_session_id } : {}),
+    };
   }
 
   /** Records the live session id the CLI reported for this conversation's current binding. */

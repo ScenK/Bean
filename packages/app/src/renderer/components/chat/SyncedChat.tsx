@@ -29,6 +29,14 @@ export const REFUSAL_TEXT: Record<DeskRefusal, string> = {
   "bot-busy": "The bot is busy with other desk messages — try again in a moment.",
 };
 
+/** A Continue live refusal reads differently from a turn's for the codes that mean something else here. */
+export const RESUME_REFUSAL_TEXT: Record<DeskRefusal, string> = {
+  ...REFUSAL_TEXT,
+  "channel-busy": "A live session is already running there.",
+  "no-record": "The bot has no record of that session — it can't be continued.",
+  "cli-missing": "The bot can't find that agent's CLI — the session wasn't continued.",
+};
+
 /** Bot down → read-only; a live session → steer; otherwise a Bean turn (after a session ended,
  * the placeholder says so). */
 export function composerState(l: SyncedChatListing, botRunning: boolean, rows: SyncedChatRow[]): { readOnly: boolean; placeholder: string } {
@@ -62,6 +70,10 @@ export function SyncedChat({ listing, botRunning, version, onWorking }: Props) {
   const [pending, setPending] = useState<Array<{ id: number; text: string; seen: number }>>([]);
   const [errors, setErrors] = useState<Array<{ id: number; text: string }>>([]);
   const [text, setText] = useState("");
+  // Continue live sent, waiting for the bot's `live start` (listing.live) or a refusal. The ref
+  // stops a second click before the re-render.
+  const [opening, setOpening] = useState(false);
+  const openingRef = useRef(false);
   const seq = useRef(0);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
@@ -83,6 +95,12 @@ export function SyncedChat({ listing, botRunning, version, onWorking }: Props) {
     );
     return () => { stale = true; };
   }, [version]);
+  // Opening ends when the session shows up live, or the bot goes away (its ack can't come now).
+  useEffect(() => {
+    if (!listing.live && botRunning) return;
+    openingRef.current = false;
+    setOpening(false);
+  }, [listing.live, botRunning]);
   useEffect(() => { onWorking(pending.length > 0); }, [pending.length > 0]);
   useEffect(() => () => onWorking(false), []);
   useEffect(() => {
@@ -108,6 +126,23 @@ export function SyncedChat({ listing, botRunning, version, onWorking }: Props) {
       id,
       text: "refused" in r ? REFUSAL_TEXT[r.refused]
         : `Not confirmed by the ${surface} bot (${r.failed}). Check ${surface} before sending again.`,
+    }]);
+  };
+
+  const continueLive = async (): Promise<void> => {
+    if (openingRef.current) return;
+    openingRef.current = true;
+    setOpening(true);
+    const r = await window.bean.syncedChatResume(listing.surface, listing.conversationId, mountId)
+      .catch((err: unknown) => ({ failed: err instanceof Error ? err.message : String(err) }));
+    // Ok stays "Opening…" until the bot reports the session (listing.live hides the button).
+    if ("ok" in r) return;
+    openingRef.current = false;
+    setOpening(false);
+    setErrors((e) => [...e, {
+      id: ++seq.current,
+      text: "refused" in r ? RESUME_REFUSAL_TEXT[r.refused]
+        : `Not confirmed by the ${surface} bot (${r.failed}). Check ${surface} before trying again.`,
     }]);
   };
 
@@ -163,6 +198,13 @@ export function SyncedChat({ listing, botRunning, version, onWorking }: Props) {
           <div class="bean-agent-banner">
             <span class="bean-agent-banner-dot" aria-hidden="true">●</span>
             <span>Live session running — your messages steer it</span>
+          </div>
+        ) : listing.resumable ? (
+          <div class="bean-status bean-status--info">
+            Session ended{" · "}
+            <button type="button" class="bean-status-action" disabled={opening} onClick={() => void continueLive()}>
+              {opening ? "Opening…" : "Continue live"}
+            </button>
           </div>
         ) : null}
         <div class="bean-chat-input-shell">

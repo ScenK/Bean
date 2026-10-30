@@ -26,7 +26,7 @@ import { formatAmbientBlock, formatRepliedBlock, REPLIED_UNAVAILABLE, type Ambie
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
 import type { ConversationCatalog, ConversationPlace } from "./catalog.js";
-import { MAX_DESK_TEXT, type DeskAckResult } from "./desk.js";
+import { MAX_DESK_TEXT, type DeskAckResult, type DeskRefusal } from "./desk.js";
 import { maybeCompact } from "./compact.js";
 import { MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
@@ -83,6 +83,8 @@ export interface IncomingMessage {
    * command parsing, remember citations, or the role check. */
   repliedTo?: RepliedMessage;
 }
+
+const NO_RUN_RECORD = "I have no record of that run.";
 
 export interface CardAction {
   conversationId: string;
@@ -273,6 +275,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     effects: () => Promise<{ fx: BotEffects; scopeId?: string }>,
     ack: (r: DeskAckResult) => void,
   ) => Promise<void>;
+  /** The owner's desk Continue live: reopens the conversation's ended owner-started live session
+   * with no card — the desk click is the confirmation. CLI, session id and project come from the
+   * catalog row and `findDelegateRun`, never the request. Starts restricted, steered by the
+   * catalog's owner id, and posts the mode line so the channel sees it reopen. `ack` is called
+   * exactly once: ok once the session is bound, or a fixed refusal. */
+  onDeskResume: (
+    req: { conversationId: string },
+    effects: () => Promise<{ fx: BotEffects }>,
+    ack: (r: DeskAckResult) => void,
+  ) => Promise<void>;
 } {
   const chimeIn = deps.chatter && makeChimeIn({
     chatter: deps.chatter, chat: deps.chat, model: deps.model,
@@ -456,37 +468,28 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   const liveSkillNameOf = (p: ProposedLiveSession, v: CardAction["value"]): string | undefined =>
     v.skillName === undefined ? p.skillName : v.skillName === "__none__" ? undefined : v.skillName || undefined;
 
-  /** `owner` set = the owner tapped Start: the conversation goes into the catalog with this
-   * session's live binding. */
+  /** `owner` set = the owner tapped Start (or Continue live at the desk): the conversation goes
+   * into the catalog with this session's live binding. `quiet` = a desk resume: a refusal is only
+   * returned (the desk shows its own line), never posted to the channel. */
   async function startLiveSessionAction(
     p: PendingLiveSession, startedBy: string, starterId: string, fx: BotEffects,
-    owner?: { altId?: string; place: ConversationPlace },
-  ): Promise<void> {
+    owner?: { altId?: string; place: ConversationPlace }, quiet = false,
+  ): Promise<DeskAckResult> {
     const updateTo = async (card: object): Promise<void> => {
       if (p.cardActivityId !== undefined) await fx.updateCard(p.cardActivityId, card);
     };
     const resume = p.proposal.resume;
     // A resume runs on the CLI frozen from its row; another installed CLI never substitutes.
     const cli = resume?.cli ?? p.proposal.cli ?? liveClis()[0] ?? "claude";
-    let refusal: string | undefined;
-    if (resume) {
-      // Re-check at the launch point (the row or folder may have gone while the card sat), and
-      // always launch in the recorded folder — never a path that arrived with the submit.
-      const found = deps.findDelegateRun?.(resume.sessionId) ?? { refusal: "I have no record of that run." };
-      refusal = "refusal" in found ? found.refusal
-        : found.run.projectPath !== resume.projectPath || found.run.cli !== resume.cli ? "I have no record of that run."
-        // Restricted needs an owner to gate on; the registry would otherwise open it to everyone.
-        : !starterId ? "I couldn't tell who tapped Start, so I won't continue that session."
-        : undefined;
-    }
-    refusal ??= liveClis().includes(cli) ? undefined : `${cli} isn't installed on this Mac any more.`;
+    let refusal = resume ? resumeRefusal(resume, starterId) : undefined;
+    refusal ??= liveClis().includes(cli) ? undefined : { refused: "cli-missing", text: `${cli} isn't installed on this Mac any more.` };
     // A resume has no opening turn for a skill to frame.
     const picked = refusal || resume ? {} : await liveSkill(cli, p.proposal.skillName);
-    refusal ??= picked.refusal;
+    if (picked.refusal) refusal = { refused: "no-record", text: picked.refusal };
     if (refusal) {
       await updateTo(deps.cards.liveSessionResultCard({ projectName: await projectLabel(resume?.projectPath ?? p.proposal.projectPath, !!resume), startedBy, outcome: "cancelled" }));
-      await fx.post(refusal);
-      return;
+      if (!quiet) await fx.post(refusal.text);
+      return { refused: refusal.refused };
     }
     if (resume) p.proposal.projectPath = resume.projectPath;
     const projectName = await projectLabel(p.proposal.projectPath, !!resume);
@@ -543,8 +546,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }));
     }
     if (started === "channel") {
-      await fx.post("A live session is already running in this channel — say `stop` to end it first.");
-      return;
+      if (!quiet) await fx.post("A live session is already running in this channel — say `stop` to end it first.");
+      return { refused: "channel-busy" };
     }
     await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started" }));
     const mode = p.proposal.steering ?? "restricted";
@@ -552,6 +555,21 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     await fx.post(mode === "open"
       ? `War-room mode: anyone here can steer. Say \`stop\` to end it.${ready}`
       : `Restricted mode: only you steer. Add co-drivers with \`+driver @name\`, remove with \`-driver @name\`. Say \`stop\` to end it.${ready}`);
+    return { ok: true };
+  }
+
+  // Shared by Start and the desk's Continue live. Re-checked at the launch point (the row or
+  // folder may have gone while the card sat); the launch is always in the recorded folder — never
+  // a path that arrived with the submit.
+  function resumeRefusal(
+    resume: NonNullable<ProposedLiveSession["resume"]>, starterId: string,
+  ): { refused: DeskRefusal; text: string } | undefined {
+    const found = deps.findDelegateRun?.(resume.sessionId) ?? { refusal: NO_RUN_RECORD };
+    if ("refusal" in found) return { refused: "no-record", text: found.refusal };
+    if (found.run.projectPath !== resume.projectPath || found.run.cli !== resume.cli) return { refused: "no-record", text: NO_RUN_RECORD };
+    // Restricted needs an owner to gate on; the registry would otherwise open it to everyone.
+    if (!starterId) return { refused: "not-eligible", text: "I couldn't tell who tapped Start, so I won't continue that session." };
+    return undefined;
   }
 
   // Post the confirm-first Start/Cancel card. Shared by the LLM path (propose_live_session)
@@ -590,7 +608,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // card locked to the recorded run. Returns the refusal, or undefined once the card is posted.
   async function proposeResumeLive(conversationId: string, sessionId: string, proposedBy: string, fx: BotEffects): Promise<string | undefined> {
     if (!deps.liveSessionsEnabled()) return "Live sessions are disabled here.";
-    const found = deps.findDelegateRun?.(sessionId) ?? { refusal: "I have no record of that run." };
+    const found = deps.findDelegateRun?.(sessionId) ?? { refusal: NO_RUN_RECORD };
     if ("refusal" in found) return found.refusal;
     const { run } = found;
     if (!liveClis().includes(run.cli)) return `${run.cli} isn't installed on this Mac any more.`;
@@ -1129,6 +1147,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // ponytail: one global cap; per-conversation if the desk ever sends in bulk.
   let deskInFlight = 0;
   const MAX_DESK_IN_FLIGHT = 4;
+  // Desk Continue live clicks between their checks and the registry's bind (effects() awaits): a
+  // second one for the same conversation is channel-busy, never a second session.
+  const deskResuming = new Set<string>();
 
   const bot: ReturnType<typeof buildTeamsBot> = {
     onCommand,
@@ -1171,6 +1192,56 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         }, target.fx);
       } finally {
         deskInFlight--;
+      }
+    },
+
+    async onDeskResume(req, effects, ack): Promise<void> {
+      const conv = req.conversationId;
+      const catalog = deps.catalog;
+      const row = catalog?.get(conv);
+      if (!catalog || !row) return ack({ refused: "no-record" });
+      const owner = { fromId: row.ownerId, fromAltId: row.ownerAltId };
+      if (deps.roles.roleOf(owner) !== "owner") return ack({ refused: "not-eligible" });
+      if (deps.liveSessions.has(conv) || deskResuming.has(conv)) return ack({ refused: "channel-busy" });
+      // The catalog binding and the delegate_runs row must agree on surface, CLI and session; the
+      // project comes from the row (findDelegateRun checks the folder still exists). A
+      // conversation with no recorded session never starts fresh.
+      const found = row.liveCli && row.liveSessionId ? deps.findDelegateRun?.(row.liveSessionId) : undefined;
+      if (!found || "refusal" in found || found.run.surface !== catalog.surface || found.run.cli !== row.liveCli) {
+        return ack({ refused: "no-record" });
+      }
+      const { run } = found;
+      if (!isLiveCli(run.cli)) return ack({ refused: "no-record" });
+      if (!liveClis().includes(run.cli)) return ack({ refused: "cli-missing" });
+      deskResuming.add(conv);
+      try {
+        let fx: BotEffects;
+        try {
+          fx = (await effects()).fx;
+        } catch (err) {
+          console.warn("bean: desk resume target failed:", err instanceof Error ? err.name : "error");
+          return ack({ refused: "post-failed" });
+        }
+        const startedBy = deps.roles.ownerName;
+        const pending: PendingLiveSession = {
+          id: "desk", conversationId: conv, proposedBy: startedBy, createdAt: Date.now(),
+          proposal: {
+            projectPath: run.projectPath, instruction: "", steering: "restricted",
+            resume: { sessionId: run.sessionId, projectPath: run.projectPath, instruction: run.instruction, cli: run.cli },
+          },
+        };
+        let result: DeskAckResult;
+        try {
+          result = await startLiveSessionAction(pending, startedBy, row.ownerId, fx,
+            { altId: row.ownerAltId, place: { kind: row.kind, title: row.title } }, true);
+        } catch (err) {
+          // The mode line's post failed after the bind: the session is open all the same.
+          console.warn("bean: desk resume post failed:", err instanceof Error ? err.name : "error");
+          result = deps.liveSessions.has(conv) ? { ok: true } : { refused: "post-failed" };
+        }
+        ack(result);
+      } finally {
+        deskResuming.delete(conv);
       }
     },
 

@@ -11,6 +11,9 @@ export const DESK_REFUSALS = [
 export type DeskRefusal = (typeof DESK_REFUSALS)[number];
 
 export type DeskTurn = { type: "desk-turn"; requestId: string; conversationId: string; text: string };
+/** App → bot: reopen the conversation's ended live session (Continue live). Only the
+ * conversation id crosses — CLI, session id and project come from the bot's own records. */
+export type DeskResume = { type: "desk-resume"; requestId: string; conversationId: string };
 export type DeskAckResult = { ok: true } | { refused: DeskRefusal };
 export type DeskAck = { type: "desk-ack"; requestId: string } & DeskAckResult;
 export type DeskSaved = { type: "saved"; conversationId: string };
@@ -34,6 +37,13 @@ export function parseDeskTurn(v: unknown): DeskTurn | undefined {
   if (!o || !id(o.requestId) || !id(o.conversationId)) return undefined;
   if (typeof o.text !== "string" || !o.text.trim() || o.text.length > MAX_WIRE_TEXT) return undefined;
   return { type: "desk-turn", requestId: o.requestId, conversationId: o.conversationId, text: o.text };
+}
+
+/** App → bot, validated in the bot. */
+export function parseDeskResume(v: unknown): DeskResume | undefined {
+  const o = fields(v, "desk-resume");
+  return o && id(o.requestId) && id(o.conversationId)
+    ? { type: "desk-resume", requestId: o.requestId, conversationId: o.conversationId } : undefined;
 }
 
 /** Bot → app, validated in the app. Rebuilt from known fields, so nothing extra crosses. */

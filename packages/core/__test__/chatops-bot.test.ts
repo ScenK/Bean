@@ -2908,14 +2908,17 @@ describe("conversation catalog (#527)", () => {
 });
 
 describe("desk turns (#528)", () => {
-  function deskBot(opts: { liveAccepts?: boolean } = {}) {
+  function deskBot(opts: { liveAccepts?: boolean; found?: (id: string) => ResumableRun; clis?: CliName[] } = {}) {
     const dir = mkdtempSync(join(tmpdir(), "bean-bot-desk-"));
     const file = dbFile(dir);
     const catalog = new ConversationCatalog(file, "discord");
     const sent: string[] = [];
-    const startFn = (_req: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => ({
-      pid: 1, send: (t: string) => { sent.push(t); return opts.liveAccepts ?? true; }, stop: () => c.onExit(undefined),
-    });
+    const reqs: LiveSessionRequest[] = [];
+    const startFn = (req: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
+      reqs.push(req);
+      return { pid: 1, send: (t: string) => { sent.push(t); return opts.liveAccepts ?? true; }, stop: () => c.onExit(undefined) };
+    };
+    const liveSessions = new LiveSessionRegistry(startFn as never, { dir, surface: "discord" });
     const subjects: (string | null | undefined)[] = [];
     let chats = 0;
     const conversations = new ConversationStore(file);
@@ -2925,7 +2928,9 @@ describe("desk turns (#528)", () => {
       conversations, catalog,
       roles: makeRoles({ dbPath: file, surface: "discord", ownerId: "u1", ownerName: "Scen" }),
       liveSessionsEnabled: () => true,
-      liveSessions: new LiveSessionRegistry(startFn as never, { dir, surface: "discord" }),
+      liveSessions,
+      ...(opts.found ? { findDelegateRun: opts.found } : {}),
+      ...(opts.clis ? { detectClis: () => opts.clis! } : {}),
     });
     const bot = buildTeamsBot(deps);
     const run = async (req: object, effects = fx()) => {
@@ -2933,7 +2938,12 @@ describe("desk turns (#528)", () => {
       await bot.onDeskTurn(req as never, async () => ({ fx: effects, scopeId: "ch" }), (r) => acks.push(r));
       return { acks, effects };
     };
-    return { bot, catalog, conversations, sent, subjects, chats: () => chats, run };
+    const resume = async (conversationId: string, effects = fx()) => {
+      const acks: object[] = [];
+      await bot.onDeskResume({ conversationId }, async () => ({ fx: effects }), (r) => acks.push(r));
+      return { acks, effects };
+    };
+    return { bot, catalog, conversations, liveSessions, sent, reqs, subjects, chats: () => chats, run, resume };
   }
 
   test("an unknown or ineligible conversation is refused without an echo or a turn", async () => {
@@ -3003,5 +3013,76 @@ describe("desk turns (#528)", () => {
     const before = d.conversations.history("t1").length;
     expect((await d.run({ conversationId: "t1", text: "more" })).acks).toEqual([{ refused: "queue-full" }]);
     expect(d.conversations.history("t1")).toHaveLength(before);
+  });
+
+  // ── desk Continue live (#532) ──
+  const OWN_RUN: ResumableRun = { run: { surface: "discord", cli: "claude", sessionId: "sess-1", projectPath: "/p/bean", instruction: "fix the login bug" } };
+  const ownRun = (id: string): ResumableRun => (id === "sess-1" ? OWN_RUN : { refusal: "I have no record of that run." });
+  const bindOwner = (d: ReturnType<typeof deskBot>, conversationId = "t1", ownerId = "u1"): void =>
+    d.catalog.upsert({ conversationId, place: { kind: "thread", title: "login bugs" }, ownerId, live: { cli: "claude", sessionId: "sess-1" } });
+
+  test("desk Continue live resumes the catalog's session with no card, steered only by the catalog owner", async () => {
+    const d = deskBot({ found: ownRun });
+    bindOwner(d);
+    const { acks, effects } = await d.resume("t1");
+    expect(acks).toEqual([{ ok: true }]);
+    expect(d.reqs).toEqual([expect.objectContaining({ resume: "sess-1", projectPath: "/p/bean", cli: "claude", prompt: "" })]);
+    expect(effects.cards).toEqual([]);
+    // The phone sees it reopen.
+    expect(effects.posted).toEqual([expect.stringContaining("Restricted mode: only you steer")]);
+    expect(effects.posted[0]).toContain("picks up where it left off on your next message");
+    expect(d.liveSessions.canSteer("t1", "u1")).toBe(true);
+    expect(d.liveSessions.canSteer("t1", "m1")).toBe(false);
+    expect(d.catalog.get("t1")).toMatchObject({ ownerId: "u1", liveCli: "claude", liveSessionId: "sess-1" });
+  });
+
+  test("desk Continue live refuses a missing, forged or mismatched binding and never starts fresh", async () => {
+    // No row; a row with no recorded session (an owner DM, or a session whose id never landed).
+    const d = deskBot({ found: ownRun });
+    expect((await d.resume("nope")).acks).toEqual([{ refused: "no-record" }]);
+    d.catalog.upsert({ conversationId: "d1", place: { kind: "dm", title: "DM" }, ownerId: "u1" });
+    expect((await d.resume("d1")).acks).toEqual([{ refused: "no-record" }]);
+    // The binding names a session delegate_runs doesn't have.
+    d.catalog.upsert({ conversationId: "t2", place: { kind: "thread", title: "x" }, ownerId: "u1", live: { cli: "claude", sessionId: "forged" } });
+    expect((await d.resume("t2")).acks).toEqual([{ refused: "no-record" }]);
+    // The row is another surface's, or another CLI's.
+    for (const run of [{ ...OWN_RUN.run, surface: "teams" as const }, { ...OWN_RUN.run, cli: "codex" as const }]) {
+      const m = deskBot({ found: () => ({ run }) });
+      bindOwner(m);
+      const { acks, effects } = await m.resume("t1");
+      expect(acks).toEqual([{ refused: "no-record" }]);
+      expect(effects.posted).toEqual([]);
+      expect(m.reqs).toEqual([]);
+    }
+    expect(d.reqs).toEqual([]);
+  });
+
+  test("desk Continue live: a member-started session isn't the owner's to reopen; a stale owner is not-eligible", async () => {
+    const d = deskBot({ found: ownRun });
+    const effects = fx();
+    await d.bot.proposeLiveSession({ conversationId: "m1", instruction: "deploy", proposedBy: "Mia" }, effects);
+    await d.bot.onCardAction({
+      conversationId: "m1", fromId: "m1-user", fromName: "Mia", place: { kind: "thread", title: "deploys" },
+      value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) },
+    }, effects);
+    d.liveSessions.stop("m1");
+    expect((await d.resume("m1")).acks).toEqual([{ refused: "no-record" }]);
+    bindOwner(d, "t-old", "old-owner");
+    expect((await d.resume("t-old")).acks).toEqual([{ refused: "not-eligible" }]);
+    expect(d.reqs.filter((r) => r.resume)).toEqual([]);
+  });
+
+  test("desk Continue live: a busy channel, a second click and a missing CLI are refused", async () => {
+    const d = deskBot({ found: ownRun });
+    bindOwner(d);
+    const [a, b] = await Promise.all([d.resume("t1"), d.resume("t1")]);
+    expect([...a.acks, ...b.acks]).toEqual(expect.arrayContaining([{ ok: true }, { refused: "channel-busy" }]));
+    expect(d.reqs).toHaveLength(1);
+    expect((await d.resume("t1")).acks).toEqual([{ refused: "channel-busy" }]);
+
+    const gone = deskBot({ found: ownRun, clis: ["codex"] });
+    bindOwner(gone);
+    expect((await gone.resume("t1")).acks).toEqual([{ refused: "cli-missing" }]);
+    expect(gone.reqs).toEqual([]);
   });
 });
