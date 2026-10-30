@@ -112,3 +112,17 @@ test("clear (/new) drops turns, thread sessions and the catalog's live binding",
   expect(row?.liveSessionId).toBeUndefined();
   expect(row?.liveCli).toBeUndefined();
 });
+
+test("loadChatopsOwners reads each surface's configured owner, skipping missing ones", async () => {
+  const { writeFile } = await import("node:fs/promises");
+  const { loadChatopsOwners } = await import("../src/chatops/catalog.js");
+  expect(await loadChatopsOwners(dir)).toEqual([]);
+  await writeFile(join(dir, "discord.json"), JSON.stringify({ botToken: "t", allowedUserIds: ["legacy-owner"] }));
+  await writeFile(join(dir, "teams.json"), JSON.stringify({ ownerId: "aad-1", ownerName: "Scen" }));
+  expect(await loadChatopsOwners(dir)).toEqual([
+    { surface: "discord", ownerId: "legacy-owner", ownerName: "the owner" },
+    { surface: "teams", ownerId: "aad-1", ownerName: "Scen" },
+  ]);
+  await writeFile(join(dir, "teams.json"), "{not json");
+  expect((await loadChatopsOwners(dir)).map((o) => o.surface)).toEqual(["discord"]);
+});

@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { groupThreads, withSaveAck } from "../src/renderer/components/chat/ChatSidebar.js";
+import { groupThreads, mergeRows, withSaveAck } from "../src/renderer/components/chat/ChatSidebar.js";
+import { kindChip } from "../src/renderer/components/chat/SyncedChat.js";
 import type { ChatItem } from "../src/renderer/shared/chat-types.js";
 
 const now = new Date(2026, 9, 29, 15, 0);
@@ -32,4 +33,17 @@ test("a save ack moves the active row to the top with its title, time and live a
   ]);
   // A first save adds the row.
   expect(withSaveAck([], { id: "c", title: "c", updatedAt: "x" }, [])).toEqual([{ id: "c", title: "c", updatedAt: "x", agents: [] }]);
+});
+
+test("synced chats merge into the one list by time, keyed so they never collide with a thread", () => {
+  const threads = [t("a", "2026-10-29T12:00:00.000Z"), t("b", "2026-10-29T08:00:00.000Z")];
+  const synced = [{ surface: "teams" as const, conversationId: "19:x;messageid=1", kind: "post" as const, title: "Standup", updatedAt: "2026-10-29T10:00:00.000Z", live: false }];
+  expect(mergeRows(threads, synced).map((r) => r.key)).toEqual(["a", "teams:19:x;messageid=1", "b"]);
+});
+
+test("the kind chip names a DM, a thread, a #channel and a running live session", () => {
+  const base = { surface: "discord" as const, conversationId: "c", updatedAt: "", live: false };
+  expect(kindChip({ ...base, kind: "dm", title: "DM" })).toBe("DM");
+  expect(kindChip({ ...base, kind: "thread", title: "bugs" })).toBe("bugs");
+  expect(kindChip({ ...base, kind: "channel", title: "ops", live: true })).toBe("#ops · live");
 });

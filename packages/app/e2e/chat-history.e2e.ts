@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication, type Page } from "@playwright/t
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
-import { dbFile, getDesktopChat, listDesktopChats } from "@bean/core";
+import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, listDesktopChats, speakerLine } from "@bean/core";
 import { join } from "node:path";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -232,5 +232,36 @@ test("chat history: closing the window counts tasks across chats and stops them 
     await closed;
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup(), rm(bin, { recursive: true, force: true })]);
+  }
+});
+
+// #530: the owner's Discord DM, from bean.db's catalog + chatops_turns, shows in the sidebar with its
+// badge and opens read-only while no bot runs.
+test("chat history: a synced Discord DM lists with its badge and opens read-only without a bot", async () => {
+  const home = await makeBeanHome();
+  const beanDir = join(home.homeDir, ".bean");
+  await writeFile(join(beanDir, "discord.json"), JSON.stringify({ botToken: "t", ownerId: "u1" }));
+  const file = dbFile(beanDir);
+  new ConversationCatalog(file, "discord").upsert({ conversationId: "dm-1", place: { kind: "dm", title: "DM" }, ownerId: "u1" });
+  const store = new ConversationStore(file);
+  store.append("dm-1", { role: "user", content: speakerLine("Scen", "sent from my phone") });
+  store.append("dm-1", { role: "assistant", content: "Got it on Discord." });
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const chat = await openChat(app);
+    const row = chat.locator(".bean-chat-sidebar-row", { hasText: "DM" });
+    await expect(row.locator(".bean-chat-sidebar-badge")).toHaveText("Discord");
+    await expect(row.locator(".bean-chat-sidebar-row-delete")).toHaveCount(0);
+    await row.locator(".bean-chat-sidebar-open").click();
+    const synced = chat.locator(".bean-chat--synced");
+    await expect(synced.locator(".bean-bubble--user")).toHaveText(/sent from my phone/);
+    await expect(synced.locator(".bean-bubble--bean")).toContainText("Got it on Discord.");
+    await expect(synced.locator(".bean-input--composer")).toBeDisabled();
+    await expect(synced).toContainText("The Discord bot isn't running");
+    await expect(synced).toContainText("Cards, approvals and memory receipts stay in Discord.");
+    await expect(chat.locator(".bean-chat:not([hidden]):not(.bean-chat--synced)")).toHaveCount(0);
+    expect(listDesktopChats(file)).toEqual([]);
+  } finally {
+    await Promise.allSettled([app.close(), home.cleanup()]);
   }
 });

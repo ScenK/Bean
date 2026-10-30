@@ -21,6 +21,7 @@ import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { createLiveTasks } from "./live-tasks.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import type { UpdateCheckOutcome } from "./updater.js";
+import type { buildSyncedChatHandlers } from "./synced-chats.js";
 
 export { IPC };
 
@@ -1063,6 +1064,7 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   skillProposalHandlers: ReturnType<typeof buildSkillProposalHandlers>;
   todoHandlers: ReturnType<typeof buildTodoHandlers>;
   chatThreadHandlers: ReturnType<typeof buildChatThreadHandlers>;
+  syncedChatHandlers: ReturnType<typeof buildSyncedChatHandlers>;
 }
 
 /** `releaseChatSender` = a chat window is gone: release every chat it still had attached. */
@@ -1232,6 +1234,15 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.handle(IPC.chatThreadList, (e) => deps.isChatSender(e.sender) ? deps.chatThreadHandlers.list() : notChat());
   ipcMain.handle(IPC.chatThreadDelete, (e, id: unknown) =>
     deps.isChatSender(e.sender) ? deps.chatThreadHandlers.delete(id) : notChat());
+  ipcMain.handle(IPC.syncedChatList, (e) => deps.isChatSender(e.sender) ? deps.syncedChatHandlers.list() : notChat());
+  ipcMain.handle(IPC.syncedChatGet, (e, surface: unknown, conversationId: unknown, mountId: unknown) => {
+    chatKey(e.sender, mountId);
+    return deps.syncedChatHandlers.get(surface, conversationId);
+  });
+  ipcMain.handle(IPC.syncedChatSend, (e, surface: unknown, conversationId: unknown, text: unknown, mountId: unknown) => {
+    chatKey(e.sender, mountId);
+    return deps.syncedChatHandlers.send(surface, conversationId, text);
+  });
   ipcMain.on(IPC.rememberOnClose, (e, transcript: unknown, opts: unknown) => {
     const o = opts as { incognito?: unknown; rejected?: unknown; mountId?: unknown } | null;
     const key = tryChatKey(e.sender, o?.mountId);

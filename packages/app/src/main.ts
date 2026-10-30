@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { basename, join, dirname } from "node:path";
 import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./chatops-enabled-store.js";
 import { createChatopsServers } from "./chatops-servers.js";
+import { buildSyncedChatHandlers, type SyncedChatEvent } from "./synced-chats.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { applyChatopsActivity, clearBotJobs } from "./chatops-activity.js";
@@ -28,6 +29,7 @@ import {
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
   availableModels, pinnedStepSelection, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat, deleteDesktopChat, listDesktopChats,
   createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
+  listChatopsConversations, chatopsConversationTurns, loadChatopsOwners,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
@@ -669,11 +671,28 @@ app.whenReady().then(async () => {
     const chatopsRoot = app.isPackaged ? process.resourcesPath : dirname(projectBeanDir());
     const chatopsEnabledPath = chatopsEnabledFile(app.getPath("userData"));
     let chatopsSave: Promise<void> = Promise.resolve();
+    // Synced chats (synced-chats.ts): conversations with a live session running, from the bots'
+    // `live` activity (its id is the conversation id), and the pushes that re-read the sidebar.
+    const liveConvs: Record<ChatopsBot, Set<string>> = { discord: new Set(), teams: new Set() };
+    const syncedChanged = (e: SyncedChatEvent): void => {
+      const chat = componentWindows.get("chat");
+      if (chat && !chat.isDestroyed()) chat.webContents.send(IPC.syncedChatEvent, e);
+    };
     chatopsServers = createChatopsServers({
       repoRoot: chatopsRoot,
       resolvedPath,
-      onActivity: (bot, e) => applyChatopsActivity(taskStatus, bot, e),
+      onActivity: (bot, e) => {
+        applyChatopsActivity(taskStatus, bot, e);
+        if (e.type !== "live") return;
+        if (e.phase === "start") liveConvs[bot].add(e.id); else liveConvs[bot].delete(e.id);
+        syncedChanged({ surface: bot, conversationId: e.id });
+      },
+      onSaved: (bot, conversationId) => syncedChanged({ surface: bot, conversationId, saved: true }),
       send: (event) => {
+        if (!event.running && liveConvs[event.bot].size > 0) {
+          liveConvs[event.bot].clear();
+          syncedChanged({ surface: event.bot });
+        }
         if (event.error) {
           chatopsErrorSince[event.bot] = Date.now();
           taskStatus.error(`bot:${event.bot}`, { kind: "bot", name: event.bot === "discord" ? "Discord" : "Teams", line: event.error, detail: event.error });
@@ -1012,6 +1031,14 @@ app.whenReady().then(async () => {
         addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
       }),
       chatThreadHandlers,
+      syncedChatHandlers: buildSyncedChatHandlers({
+        dbFile: dbFile(dir),
+        owners: () => loadChatopsOwners(dir),
+        listConversations: listChatopsConversations,
+        conversationTurns: chatopsConversationTurns,
+        liveIds: (surface) => liveConvs[surface],
+        deskTurn: (surface, id, text) => chatopsServers!.deskTurn(surface, id, text),
+      }),
     }));
 
     await loadAvatarWindow(avatar);

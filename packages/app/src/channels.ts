@@ -134,6 +134,12 @@ export const IPC = {
   // chat window's history sidebar → main: list/delete saved threads.
   chatThreadList: "bean:chat-thread-list",
   chatThreadDelete: "bean:chat-thread-delete",
+  // chat window ⇄ main: the owner's Discord/Teams conversations in the sidebar (synced-chats.ts) —
+  // list, one transcript, a desk turn; main pushes `syncedChatEvent` when one changes.
+  syncedChatList: "bean:synced-chat-list",
+  syncedChatGet: "bean:synced-chat-get",
+  syncedChatSend: "bean:synced-chat-send",
+  syncedChatEvent: "bean:synced-chat-event",
   getMemoryBatch: "bean:get-memory-batch",
   undoMemoryBatch: "bean:undo-memory-batch",
   getLastDream: "bean:get-last-dream",

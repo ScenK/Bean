@@ -11,6 +11,7 @@ import type { TaskJob } from "./task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "./ipc.js";
 import type { RoutineBuildView } from "./routine-builder.js";
+import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "./synced-chats.js";
 import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
 
 contextBridge.exposeInMainWorld("bean", {
@@ -148,6 +149,13 @@ contextBridge.exposeInMainWorld("bean", {
   chatThreadGet: (id: string, mountId: string): Promise<PendingChatThread> => ipcRenderer.invoke(IPC.chatThreadGet, id, mountId),
   chatThreadList: (): Promise<DesktopChatListing[]> => ipcRenderer.invoke(IPC.chatThreadList),
   chatThreadDelete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.chatThreadDelete, id),
+  syncedChatList: (): Promise<SyncedChatListing[]> => ipcRenderer.invoke(IPC.syncedChatList),
+  syncedChatGet: (surface: string, conversationId: string, mountId: string): Promise<SyncedChatRow[]> =>
+    ipcRenderer.invoke(IPC.syncedChatGet, surface, conversationId, mountId),
+  syncedChatSend: (surface: string, conversationId: string, text: string, mountId: string): Promise<SyncedSendResult> =>
+    ipcRenderer.invoke(IPC.syncedChatSend, surface, conversationId, text, mountId),
+  onSyncedChatEvent: (cb: (e: SyncedChatEvent) => void) =>
+    ipcRenderer.on(IPC.syncedChatEvent, (_e, ev: SyncedChatEvent) => cb(ev)),
   onMemoryUpdated: (cb: (saved: Array<{ id: string; text: string }>, mountId: string) => void) =>
     ipcRenderer.on(IPC.memoryUpdated, (_e, saved: Array<{ id: string; text: string }>, mountId: string) => cb(saved, mountId)),
   getMemoryBatch: (): Promise<MemoryBatch | undefined> => ipcRenderer.invoke(IPC.getMemoryBatch),
