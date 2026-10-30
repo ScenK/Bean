@@ -132,17 +132,12 @@ declare global {
       setChatIncognito(on: boolean, mountId: string): void;
       /** Write-through of this chat's transcript; undefined = refused (the chat went incognito). */
       chatThreadSave(req: ChatThreadSaveRequest, mountId: string): Promise<ChatThreadAck | undefined>;
-      /** The saved thread this fresh chat window restores, if one was picked. */
-      getPendingChatThread(mountId: string): Promise<PendingChatThread | undefined>;
       /** A saved thread for this chat (mount) to restore; refused if another open chat holds it. */
       chatThreadGet(id: string, mountId: string): Promise<PendingChatThread>;
       /** Saved threads, newest first (main prunes past 90 days on each list). */
       chatThreadList(): Promise<DesktopChatListing[]>;
       /** Refused for a thread any open chat holds. */
       chatThreadDelete(id: string): Promise<void>;
-      /** Switch: this window closes normally and a new one opens at its bounds with `target`
-       * ("new" = empty). `null` cancels a switch the Keep/Stop card held. */
-      chatThreadOpen(target: string | null): void;
       /** Tagged with the chat (mount) whose turn it captured. */
       onMemoryUpdated(cb: (saved: Array<{ id: string; text: string }>, mountId: string) => void): void;
       getMemoryBatch(): Promise<MemoryBatch | undefined>;

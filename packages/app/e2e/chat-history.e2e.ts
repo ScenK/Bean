@@ -20,13 +20,27 @@ async function openChat(app: ElectronApplication): Promise<Page> {
 async function closeChat(app: ElectronApplication, chat: Page): Promise<void> {
   const closed = chat.waitForEvent("close");
   await app.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("chat"))!.close();
+    BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))!.close();
   });
   await closed;
 }
 
-const chatBounds = (app: ElectronApplication) => app.evaluate(({ BrowserWindow }) =>
-  BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("chat"))!.getBounds());
+// The chat BrowserWindow, and every close/hide it emits from here on (a switch must emit none).
+const watchChat = (app: ElectronApplication) => app.evaluate(({ BrowserWindow }) => {
+  const w = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))!;
+  const g = globalThis as unknown as { chatEvents: string[] };
+  g.chatEvents = [];
+  w.on("close", () => g.chatEvents.push("close"));
+  w.on("hide", () => g.chatEvents.push("hide"));
+});
+const chatState = (app: ElectronApplication) => app.evaluate(({ BrowserWindow }) => {
+  const all = BrowserWindow.getAllWindows();
+  const chats = all.filter((w) => w.webContents.getURL().endsWith("/chat.html"));
+  return {
+    ids: chats.map((w) => w.id), count: all.length, visible: chats.every((w) => w.isVisible()),
+    events: (globalThis as unknown as { chatEvents: string[] }).chatEvents,
+  };
+});
 
 // #504: a typed chat is written to desktop_chats and its final state survives the close.
 test("chat history: a chat is saved through its close", async () => {
@@ -82,8 +96,9 @@ test("chat history: incognito removes the chat and blocks the close write", asyn
   }
 });
 
-// #505: a saved chat survives a relaunch, and picking it in the sidebar replaces the window in place.
-test("chat history: relaunch, pick the saved chat, transcript restored at the same bounds", async () => {
+// #505/#516: a saved chat survives a relaunch, and picking it in the sidebar restores it inside the
+// same window — no close, no hide, no second window.
+test("chat history: relaunch, pick the saved chat, transcript restored in the same window", async () => {
   const home = await makeBeanHome({ autoMemory: false });
   const stub = await startStubOpenAI();
   stub.queue({ content: "Hello there!" });
@@ -102,20 +117,23 @@ test("chat history: relaunch, pick the saved chat, transcript restored at the sa
     const row = chat.locator(".bean-chat-sidebar-row", { hasText: "hi bean, plan my week" });
     await expect(row).toBeVisible();
     await expect(chat.locator(".bean-bubble")).toHaveCount(0);
-    const before = await chatBounds(app);
-    const [next] = await Promise.all([app.waitForEvent("window"), row.locator(".bean-chat-sidebar-open").click()]);
-    await next.waitForLoadState("domcontentloaded");
-    await expect(next.locator(".bean-bubble--bean")).toContainText("Hello there!");
-    await expect(next.locator(".bean-chat-sidebar-row--active")).toContainText("hi bean, plan my week");
-    await expect(next.locator(".bean-chat-sidebar-row--active .bean-chat-sidebar-row-delete")).toHaveCount(0);
-    expect(await chatBounds(app)).toEqual(before);
+    await watchChat(app);
+    const before = await chatState(app);
+    await row.locator(".bean-chat-sidebar-open").click();
+    await expect(chat.locator(".bean-bubble--bean")).toContainText("Hello there!");
+    await expect(chat.locator(".bean-chat-sidebar-row--active")).toContainText("hi bean, plan my week");
+    await expect(chat.locator(".bean-chat-sidebar-row--active .bean-chat-sidebar-row-delete")).toHaveCount(0);
+    await expect(chat.locator(".bean-input--composer")).toBeFocused();
+    expect(before).toMatchObject({ ids: [expect.any(Number)], visible: true });
+    expect(await chatState(app)).toEqual({ ...before, events: [] });
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });
 
-// #505: New chat opens empty; a running delegate holds a switch on the Keep/Stop card.
-test("chat history: New chat starts empty, and Keep working cancels a switch past a running delegate", async () => {
+// #505/#516: New chat opens empty in place (an unused one leaves no row); a running delegate holds a
+// switch on the Keep/Stop card, and Stop & switch then switches — still the same window.
+test("chat history: New chat in place, and a running delegate holds a switch until Stop & switch", async () => {
   // A fake `claude` that just keeps running — the delegate stays "running" without a real CLI.
   const bin = await mkdtemp(join(tmpdir(), "bean-e2e-bin-"));
   await writeFile(join(bin, "claude"), "#!/bin/sh\nsleep 120\n", "utf8");
@@ -129,25 +147,38 @@ test("chat history: New chat starts empty, and Keep working cancels a switch pas
     await chat.locator(".bean-input--composer").fill("first chat");
     await chat.locator(".bean-send").click();
     await expect(chat.locator(".bean-bubble--bean")).toContainText("First!");
+    await watchChat(app);
+    const before = await chatState(app);
+    expect(before).toMatchObject({ ids: [expect.any(Number)], visible: true });
+    const firstRow = chat.locator(".bean-chat-sidebar-row", { hasText: "first chat" });
 
-    const [fresh] = await Promise.all([app.waitForEvent("window"), chat.locator(".bean-chat-sidebar-new").click()]);
-    await fresh.waitForLoadState("domcontentloaded");
-    await expect(fresh.locator(".bean-chat-sidebar-row", { hasText: "first chat" })).toBeVisible();
-    await expect(fresh.locator(".bean-bubble")).toHaveCount(0);
-    await expect(fresh.locator(".bean-chat-sidebar-row--active")).toHaveCount(0);
+    await chat.locator(".bean-chat-sidebar-new").click();
+    await expect(chat.locator(".bean-bubble")).toHaveCount(0);
+    await expect(firstRow).toBeVisible();
+    await expect(chat.locator(".bean-chat-sidebar-row--active")).toHaveCount(0);
+    // Back and forth past the untouched new chat: it never becomes a row.
+    await firstRow.locator(".bean-chat-sidebar-open").click();
+    await expect(chat.locator(".bean-bubble--bean")).toContainText("First!");
+    await expect(chat.locator(".bean-chat-sidebar-row")).toHaveCount(1);
+    await chat.locator(".bean-chat-sidebar-new").click();
+    await expect(chat.locator(".bean-bubble")).toHaveCount(0);
 
-    await fresh.locator(".bean-input--composer").fill("/review-pr now");
-    await fresh.locator(".bean-send").click();
-    await expect(fresh.locator(".bean-card", { hasText: "delegate" }).getByRole("button", { name: /stop|cancel/i })).toBeVisible();
+    await chat.locator(".bean-input--composer").fill("/review-pr now");
+    await chat.locator(".bean-send").click();
+    await expect(chat.locator(".bean-card", { hasText: "delegate" }).getByRole("button", { name: /stop|cancel/i })).toBeVisible();
 
-    await fresh.locator(".bean-chat-sidebar-row", { hasText: "first chat" }).locator(".bean-chat-sidebar-open").click();
-    await expect(fresh.locator(".bean-memory-review-title")).toContainText("Switching chats stops");
-    await expect(fresh.getByRole("button", { name: "Stop & switch" })).toBeVisible();
-    await fresh.getByRole("button", { name: "Keep working" }).click();
-    await expect(fresh.locator(".bean-memory-review")).toHaveCount(0);
-    await fresh.waitForTimeout(500);
-    expect(fresh.isClosed()).toBe(false);
-    await expect(fresh.locator(".bean-chat-sidebar-row", { hasText: "now" })).toHaveCount(1); // still this chat
+    await firstRow.locator(".bean-chat-sidebar-open").click();
+    await expect(chat.locator(".bean-memory-review-title")).toContainText("Switching chats stops");
+    await chat.getByRole("button", { name: "Keep working" }).click();
+    await expect(chat.locator(".bean-memory-review")).toHaveCount(0);
+    await expect(chat.locator(".bean-chat-sidebar-row--active")).toContainText("now"); // still this chat
+
+    await firstRow.locator(".bean-chat-sidebar-open").click();
+    await chat.getByRole("button", { name: "Stop & switch" }).click();
+    await expect(chat.locator(".bean-bubble--bean")).toContainText("First!");
+    await expect(chat.locator(".bean-chat-sidebar-row--active")).toContainText("first chat");
+    await expect(chat.locator(".bean-chat-sidebar-row")).toHaveCount(2);
+    expect(await chatState(app)).toEqual({ ...before, events: [] });
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup(), rm(bin, { recursive: true, force: true })]);
   }

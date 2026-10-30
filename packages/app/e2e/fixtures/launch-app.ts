@@ -23,8 +23,12 @@ export async function launchBean(
   reuseUserDataDir?: string,
 ): Promise<ElectronApplication> {
   const userDataDir = reuseUserDataDir ?? (await mkdtemp(join(tmpdir(), "bean-e2e-userdata-")));
+  // BEAN_E2E_EXECUTABLE = a packaged build's binary (…/Bean.app/Contents/MacOS/Bean): the same
+  // specs then smoke-test the compiled app instead of dist/main.js.
+  const exe = process.env.BEAN_E2E_EXECUTABLE;
   const app = await electron.launch({
-    args: [mainJs, `--user-data-dir=${userDataDir}`],
+    ...(exe ? { executablePath: exe } : {}),
+    args: [...(exe ? [] : [mainJs]), `--user-data-dir=${userDataDir}`],
     cwd: appRoot,
     env: { ...process.env, ...env },
   });

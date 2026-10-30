@@ -128,16 +128,13 @@ export const IPC = {
   chatRelease: "bean:chat-release",
   // chat window → main: its 🕶 chip changed (gates per-turn capture already in flight).
   chatIncognito: "bean:chat-incognito",
-  // chat window → main: write-through of its transcript (desktop chat history), and the thread a
-  // fresh chat window restores (pulled on mount).
+  // chat window → main: write-through of a chat's transcript (desktop chat history), and the thread
+  // a chat picked in the sidebar restores.
   chatThreadSave: "bean:chat-thread-save",
   chatThreadGet: "bean:chat-thread-get",
-  getPendingChatThread: "bean:get-pending-chat-thread",
-  // chat window's history sidebar → main: list/delete saved threads, and switch to one ("new" = an
-  // empty chat; null = Keep working cancelled the switch).
+  // chat window's history sidebar → main: list/delete saved threads.
   chatThreadList: "bean:chat-thread-list",
   chatThreadDelete: "bean:chat-thread-delete",
-  chatThreadOpen: "bean:chat-thread-open",
   getMemoryBatch: "bean:get-memory-batch",
   undoMemoryBatch: "bean:undo-memory-batch",
   getLastDream: "bean:get-last-dream",

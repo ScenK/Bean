@@ -61,13 +61,10 @@ describe("buildChatThreadHandlers", () => {
     expect(row()).toBeUndefined();
   });
 
-  it("restores the pending thread once and pins it; incognito then deletes the restored row", () => {
+  it("restores a thread and pins it; incognito then deletes the restored row", () => {
     const { dbFile, handlers, row } = setup();
     saveDesktopChat(dbFile, { id: ID, title: "old", itemsJson: JSON.stringify([{ kind: "user", id: "item-1", text: "hey" }]), noteSlug: "n" });
-    expect(handlers.pending("a")).toBeUndefined();
-    handlers.setPending(ID);
-    expect(handlers.pending("a")).toEqual({ id: ID, title: "old", items: [{ kind: "user", id: "item-1", text: "hey" }], noteSlug: "n" });
-    expect(handlers.pending("a")).toBeUndefined(); // pulled once
+    expect(handlers.get("a", ID)).toEqual({ id: ID, title: "old", items: [{ kind: "user", id: "item-1", text: "hey" }], noteSlug: "n" });
     expect(() => handlers.save("a", save([], OTHER))).toThrow(/different/);
     handlers.setIncognito("a", true);
     expect(row()).toBeUndefined();
@@ -86,25 +83,6 @@ describe("buildChatThreadHandlers", () => {
     handlers.release("a"); // the chat is gone: its thread is free to delete
     handlers.delete(ID);
     expect(row()).toBeUndefined();
-  });
-
-  it("a switch is held until the window closes, then becomes the next window's pending thread", () => {
-    const { dbFile, handlers } = setup();
-    saveDesktopChat(dbFile, { id: OTHER, title: "other", itemsJson: "[]" });
-    expect(handlers.requestSwitch("../x")).toBe(false);
-    expect(handlers.takeSwitch()).toBe(false);
-    expect(handlers.requestSwitch(OTHER)).toBe(true);
-    expect(handlers.takeSwitch()).toBe(true);
-    expect(handlers.takeSwitch()).toBe(false); // taken once
-    expect(handlers.pending("a")).toMatchObject({ id: OTHER });
-    // Keep working cancels: a later plain close opens nothing.
-    expect(handlers.requestSwitch(ID)).toBe(true);
-    expect(handlers.requestSwitch(null)).toBe(false);
-    expect(handlers.takeSwitch()).toBe(false);
-    // New chat: the next window opens empty.
-    expect(handlers.requestSwitch("new")).toBe(true);
-    expect(handlers.takeSwitch()).toBe(true);
-    expect(handlers.pending("a")).toBeUndefined();
   });
 
   it("two chats save two threads; neither may save, restore or delete the other's", () => {
@@ -128,10 +106,9 @@ describe("buildChatThreadHandlers", () => {
     expect(handlers.get("d", OTHER)).toMatchObject({ id: OTHER });
   });
 
-  it("a deleted or pruned pending thread restores as missing", () => {
+  it("a deleted or pruned thread restores as missing", () => {
     const { handlers } = setup();
-    handlers.setPending(OTHER);
-    expect(handlers.pending("a")).toEqual({ missing: true });
+    expect(handlers.get("a", OTHER)).toEqual({ missing: true });
   });
 });
 
@@ -167,7 +144,7 @@ describe("chat thread IPC", () => {
     expect(() => invoke(IPC.chatThreadSave, chat, save(), B)).toThrow(/unknown chat session/);
     expect(() => invoke(IPC.chatThreadSave, chat, save(), "not-a-uuid")).toThrow(/unknown chat session/);
     expect(() => invoke(IPC.chatThreadSave, chat, save())).toThrow(/unknown chat session/);
-    expect(() => invoke(IPC.getPendingChatThread, other, A)).toThrow(/chat window/);
+    expect(() => invoke(IPC.chatThreadGet, other, ID, A)).toThrow(/chat window/);
     expect(() => invoke(IPC.chatThreadGet, chat, ID, B)).toThrow(/unknown chat session/);
     expect(() => invoke(IPC.delegateStart, chat, { projectPath: "", prompt: "p", instruction: "i" }, B)).toThrow(/unknown chat session/);
     await expect(invoke(IPC.chat, chat, { history: [], message: "hi" }, B)).rejects.toThrow(/unknown chat session/);
@@ -235,18 +212,10 @@ describe("chat thread IPC", () => {
     expect(chat.send).toHaveBeenCalledWith(IPC.memoryUpdated, [{ id: expect.any(String), text: "fact 1" }], A);
   });
 
-  it("list/delete/open are chat-window only, and an open closes the chat window", () => {
-    const closeChatWindow = vi.fn();
-    const { handlers, chat, other, invoke, emit } = ipcHarness({ closeChatWindow });
+  it("list/delete are chat-window only", () => {
+    const { chat, other, invoke } = ipcHarness();
     expect(() => invoke(IPC.chatThreadList, other)).toThrow(/chat window/);
     expect(() => invoke(IPC.chatThreadDelete, other, OTHER)).toThrow(/chat window/);
     expect(invoke(IPC.chatThreadList, chat)).toEqual([]);
-    emit(IPC.chatThreadOpen, other, OTHER);
-    emit(IPC.chatThreadOpen, chat, "bogus");
-    expect(closeChatWindow).not.toHaveBeenCalled();
-    expect(handlers.takeSwitch()).toBe(false);
-    emit(IPC.chatThreadOpen, chat, OTHER);
-    expect(closeChatWindow).toHaveBeenCalledTimes(1);
-    expect(handlers.takeSwitch()).toBe(true);
   });
 });

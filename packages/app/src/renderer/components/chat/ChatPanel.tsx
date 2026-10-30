@@ -280,6 +280,9 @@ export function ChatPanel({
     resizeInput();
   }, [prefillUrl]);
 
+  // A chat mounts with the composer focused — the window's first chat and every switched-to one.
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
   const submit = (): void => {
     const el = inputRef.current;
     // Type-ahead: while Bean answers the draft and images stay put — return before clearing.
