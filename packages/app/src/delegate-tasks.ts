@@ -36,6 +36,8 @@ export interface DelegateStartRequest {
   // off-the-record chat's run still gets its `delegate_runs` row (resume/Continue live need the
   // session id) but with an empty instruction.
   offRecord?: boolean;
+  // The chat (mount) that started it, set by main — its release stops the task.
+  mountId?: string;
 }
 
 export interface DelegateTasksDeps {
@@ -81,6 +83,7 @@ interface Task {
   cancelling: boolean;
   projectPath: string;
   instruction: string;
+  mountId?: string;
   receipt: () => { receipt?: DelegateReceipt };
 }
 
@@ -105,6 +108,14 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       tasks.delete(event.taskId);
     }
     deps.send(event);
+  };
+
+  const cancelWhere = (pick: (t: Task) => boolean): void => {
+    for (const [taskId, t] of [...tasks]) {
+      if (t.cancelling || !pick(t)) continue;
+      t.cancelling = true;
+      t.cancel(() => emit({ taskId, type: "cancelled", ...t.receipt() }));
+    }
   };
 
   return {
@@ -164,7 +175,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       if (handle.pid !== undefined) updateRunPid(deps.dir, taskId, handle.pid);
       tasks.set(taskId, {
         cancel: handle.cancel,
-        cancelling: false, projectPath: req.projectPath, instruction: req.instruction,
+        cancelling: false, projectPath: req.projectPath, instruction: req.instruction, mountId: req.mountId,
         receipt: () => receipt,
       });
       emit({ taskId, type: "started", projectPath: req.projectPath, instruction: req.instruction });
@@ -179,13 +190,10 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       t.cancel(() => emit({ taskId, type: "cancelled", ...t.receipt() }));
     },
 
-    cancelAll(): void {
-      for (const [taskId, t] of [...tasks]) {
-        if (t.cancelling) continue;
-        t.cancelling = true;
-        t.cancel(() => emit({ taskId, type: "cancelled", ...t.receipt() }));
-      }
-    },
+    cancelAll: (): void => cancelWhere(() => true),
+
+    /** A chat (mount) was released: stop just the tasks it started. */
+    cancelMount: (mountId: string): void => cancelWhere((t) => t.mountId === mountId),
 
     // Called only when Bean itself is quitting (before-quit) — unlike cancelAll(), doesn't wait
     // for the child to confirm termination or emit any chat event (the window is closing right

@@ -122,11 +122,16 @@ export const IPC = {
   rememberOnClose: "bean:remember-on-close",
   // main → chat window: a per-turn capture saved these facts (the Undo receipt row).
   memoryUpdated: "bean:memory-updated",
+  // chat window → main: a chat session (mount id) starts/ends inside the window; per-chat requests
+  // name an attached mount (ipc.ts buildChatMounts).
+  chatAttach: "bean:chat-attach",
+  chatRelease: "bean:chat-release",
   // chat window → main: its 🕶 chip changed (gates per-turn capture already in flight).
   chatIncognito: "bean:chat-incognito",
   // chat window → main: write-through of its transcript (desktop chat history), and the thread a
   // fresh chat window restores (pulled on mount).
   chatThreadSave: "bean:chat-thread-save",
+  chatThreadGet: "bean:chat-thread-get",
   getPendingChatThread: "bean:get-pending-chat-thread",
   // chat window's history sidebar → main: list/delete saved threads, and switch to one ("new" = an
   // empty chat; null = Keep working cancelled the switch).

@@ -103,6 +103,14 @@ export function ChatWindow() {
   const [model, setModel] = useState("model");
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
   const [closeFlow, setCloseFlow] = useState<CloseFlow>(null);
+  // This chat session's key in main (ipc.ts buildChatMounts): every per-chat request names it, and
+  // tagged pushes for another mount are ignored. A layout effect, so it's attached before any
+  // passive effect's request.
+  const [mountId] = useState(() => crypto.randomUUID());
+  useLayoutEffect(() => {
+    window.bean.chatAttach(mountId);
+    return () => window.bean.chatRelease(mountId);
+  }, []);
   // Off the record: per window (a new chat starts off). Read at close, and mirrored to main so it
   // also stops per-turn captures still in flight. Facts captured before it was switched on stay
   // saved — their "Memory updated" rows keep Undo.
@@ -114,7 +122,7 @@ export function ChatWindow() {
   const toggleIncognito = (): void => {
     const on = !incognitoRef.current;
     incognitoRef.current = on;
-    window.bean.setChatIncognito(on);
+    window.bean.setChatIncognito(on, mountId);
     setIncognito(on);
     // Main deletes the saved thread and latches the window unsavable; mirrored here so no save is
     // even attempted. Sticky — toggling back off doesn't resume history, but its notice goes with
@@ -229,7 +237,7 @@ export function ChatWindow() {
     savedRef.current = snap;
     const [items, noteSlug] = JSON.parse(snap) as [ChatItem[], string | null];
     savingRef.current = savingRef.current
-      .then(() => window.bean.chatThreadSave({ id: t.id, title: t.title, items, ...(noteSlug ? { noteSlug } : {}) }))
+      .then(() => window.bean.chatThreadSave({ id: t.id, title: t.title, items, ...(noteSlug ? { noteSlug } : {}) }, mountId))
       .then((ack) => { if (ack) setThreads((prev) => withSaveAck(prev, ack, items)); }, (err: unknown) => {
         if (savedRef.current === snap) savedRef.current = undefined;
         console.error("chat history save failed:", err);
@@ -298,7 +306,7 @@ export function ChatWindow() {
     };
     // A thread picked from history: restored inert (chat-thread.ts), its snapshot the baseline. The
     // linked-note chip comes back only if that note still exists.
-    window.bean.getPendingChatThread().then(async (t) => {
+    window.bean.getPendingChatThread(mountId).then(async (t) => {
       if (!t) return;
       if ("missing" in t) {
         addStatus("That chat is no longer in history — it was deleted, or not opened for 90 days.", "info");
@@ -332,12 +340,14 @@ export function ChatWindow() {
     window.bean.onInterruptedRunNotice(showInterruptedRunNotices);
     window.bean.onDelegateEvent(applyDelegateEvent);
     window.bean.onLiveEvent((e) => liveEventRef.current(e));
-    window.bean.onMemoryUpdated((saved) => {
+    window.bean.onMemoryUpdated((saved, from) => {
+      if (from !== mountId) return;
       setItems((prev) => [...prev, { kind: "memory", id: newId(), saved, state: "saved" }]);
     });
     // generate_image started inside the current turn — flip the working bubble so the
     // (up to a minute) wait reads as painting, not a hang.
-    window.bean.onChatImageProgress(() => {
+    window.bean.onChatImageProgress((from) => {
+      if (from !== mountId) return;
       setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it)));
     });
     window.bean.onReviewBeforeClose(() => {
@@ -382,7 +392,7 @@ export function ChatWindow() {
     const history = chatTurns(itemsRef.current);
 
     try {
-      const res = await window.bean.chat({ history, message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, turnId });
+      const res = await window.bean.chat({ history, message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, turnId }, mountId);
       if (res.model) setModel(res.model);
 
       setItems((prev) => {
@@ -685,7 +695,7 @@ export function ChatWindow() {
 
   const startDelegate = async (id: string, projectPath: string, prompt: string, instruction: string, model?: string, skillName?: string): Promise<void> => {
     if (pendingDelegateStartsRef.current.has(id)) return;
-    const start = window.bean.delegateStart({ projectPath, prompt, instruction, model, skillName });
+    const start = window.bean.delegateStart({ projectPath, prompt, instruction, model, skillName }, mountId);
     rememberProject(projectPath);
     pendingDelegateStartsRef.current.set(id, start);
     setItems((prev) => markDelegateStarting(prev, id));
@@ -863,7 +873,7 @@ export function ChatWindow() {
     await saveThread();
     const transcript = closeTranscript(itemsRef.current, typedSinceLoadRef.current);
     if (transcript.length > 0) {
-      window.bean.rememberOnClose(transcript, { incognito: incognitoRef.current, rejected: rejectedMemoriesRef.current });
+      window.bean.rememberOnClose(transcript, { incognito: incognitoRef.current, rejected: rejectedMemoriesRef.current, mountId });
     }
     window.bean.allowChatClose();
   };

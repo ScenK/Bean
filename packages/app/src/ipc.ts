@@ -224,15 +224,15 @@ export interface ChatHandlerDeps {
   beanDirPath?: string;
   loadRoutines?: () => Promise<Routine[]>;
   /** Enables the generate_image action tool. getModel (not a value): imageModel may live
-   * behind runtime config someday; onStart drives the chat window's 🎨 working indicator. */
+   * behind runtime config someday; onStart drives the 🎨 working indicator of the chat (mount) that asked. */
   imageGen?: {
-    generate: ImageGenDeps["generate"]; getModel: () => string; imagesDir: string; onStart?: () => void;
+    generate: ImageGenDeps["generate"]; getModel: () => string; imagesDir: string; onStart?: (mountId?: string) => void;
     saveNoteImage?: ImageGenDeps["saveNoteImage"];
   };
 }
 
 export function buildChatHandler(deps: ChatHandlerDeps) {
-  return async (req: ChatRequest, senderId?: number): Promise<ConverseResult> => {
+  return async (req: ChatRequest, senderId?: number, mountId?: string): Promise<ConverseResult> => {
     const [skills, projects, persona, memories, routines] = await Promise.all([
       deps.loadSkills(deps.projectSkillsDir, deps.skillsDir),
       deps.loadProjects(deps.projectsFile),
@@ -248,7 +248,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
           generate: deps.imageGen.generate,
           model: deps.imageGen.getModel(),
           imagesDir: deps.imageGen.imagesDir,
-          onStart: deps.imageGen.onStart,
+          onStart: () => deps.imageGen?.onStart?.(mountId),
           saveNoteImage: deps.imageGen.saveNoteImage,
         })
       : undefined;
@@ -512,21 +512,25 @@ export type CloseTurn = ChatTurn & { id?: string };
 
 export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
   let lastBatch: MemoryBatch | undefined;
-  // Per chat window (webContents id), dropped at its close: typed turns whose per-turn capture
-  // is in flight or done (close catch-up won't re-cite them), and the ids those captures saved —
-  // still undoable from the window's "Memory updated" rows, so dream leaves them alone.
-  // `incognito` = the window's live 🕶 chip (a request's flag is a send-time snapshot); `queue`
+  // Per chat (mount id — see buildChatMounts), dropped at its close or release: typed turns whose
+  // per-turn capture is in flight or done (close catch-up won't re-cite them), and the ids those
+  // captures saved — still undoable from the chat's "Memory updated" rows, so dream leaves them alone.
+  // `incognito` = the chat's live 🕶 chip (a request's flag is a send-time snapshot); `queue`
   // runs captures one at a time so facts are saved — and timestamped — in turn order.
   type ChatWindowState = { turns: Set<string>; ids: string[]; incognito: boolean; queue: Promise<unknown> };
-  const windows = new Map<number, ChatWindowState>();
-  // Windows already closed: a reply that settles after close must not recreate their state (and
-  // lose the chip) — close catch-up already covered that turn under the close-time flag.
-  // ponytail: one int per chat window per app run; webContents ids are never reused.
-  const closed = new Set<number>();
-  const windowState = (windowId: number): ChatWindowState => {
-    let w = windows.get(windowId);
-    if (!w) windows.set(windowId, w = { turns: new Set(), ids: [], incognito: false, queue: Promise.resolve() });
+  const windows = new Map<string, ChatWindowState>();
+  // Chats already closed/released: a reply that settles after close must not recreate their state
+  // (and lose the chip) — close catch-up already covered that turn under the close-time flag.
+  // ponytail: one UUID per chat mount per app run; mount ids are never re-attached.
+  const closed = new Set<string>();
+  const windowState = (key: string): ChatWindowState => {
+    let w = windows.get(key);
+    if (!w) windows.set(key, w = { turns: new Set(), ids: [], incognito: false, queue: Promise.resolve() });
     return w;
+  };
+  const close = (key: string): void => {
+    windows.delete(key);
+    closed.add(key);
   };
   const pendingIds = (): string[] => [...(lastBatch?.ids ?? []), ...[...windows.values()].flatMap((w) => w.ids)];
   const extract = async (transcript: ChatTurn[], extra: Memory[], latestTurn: boolean): Promise<Memory[]> => {
@@ -568,10 +572,10 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     delete: (ids: string[]): Promise<number> => deps.deleteMemories(deps.dbFile, ids),
     /** After a chat reply: capture this typed turn's facts (only it is citable; a few prior
      * turns are context). Skipped when the turn used the explicit remember tool or errored. */
-    captureTurn: async (windowId: number, req: ChatRequest, result: ConverseResult): Promise<Memory[]> => {
+    captureTurn: async (key: string, req: ChatRequest, result: ConverseResult): Promise<Memory[]> => {
       if (req.source !== "typed" || req.incognito || !deps.autoMemory() || result.error || result.remembered?.length) return [];
-      if (closed.has(windowId)) return [];
-      const w = windowState(windowId);
+      if (closed.has(key)) return [];
+      const w = windowState(key);
       if (w.incognito) return [];
       if (req.turnId) w.turns.add(req.turnId);
       // Re-checked before the model call and again before the insert: the chip can be switched
@@ -587,33 +591,32 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
         return batch;
       }).catch((err: unknown) => {
         if (req.turnId) w.turns.delete(req.turnId);
-        // Window still open: close catch-up retries this turn. Already closed: catch-up skipped
+        // Chat still open: close catch-up retries this turn. Already closed: catch-up skipped
         // it as in flight, so nothing will — surface it like a failed close save.
-        if (windows.get(windowId) !== w) deps.onMemoryFailure?.();
+        if (windows.get(key) !== w) deps.onMemoryFailure?.();
         throw err;
       });
       w.queue = run.catch(() => {});
       return run;
     },
-    /** The chat window's 🕶 chip changed — gates its per-turn captures from now on. */
-    setIncognito: (windowId: number, on: boolean): void => {
-      if (!closed.has(windowId)) windowState(windowId).incognito = on;
+    /** A chat's 🕶 chip changed — gates its per-turn captures from now on. */
+    setIncognito: (key: string, on: boolean): void => {
+      if (!closed.has(key)) windowState(key).incognito = on;
     },
-    /** The window's live 🕶 chip — also keeps its delegate instructions out of `delegate_runs`. */
-    isIncognito: (windowId: number): boolean => windows.get(windowId)?.incognito ?? false,
-    /** Chat-window close: a catch-up — extract → validate → append in the background, no review
+    /** A chat's live 🕶 chip — also keeps its delegate instructions out of `delegate_runs`. */
+    isIncognito: (key: string): boolean => windows.get(key)?.incognito ?? false,
+    /** The chat mount is gone without a close catch-up: drop its state; a late reply captures nothing. */
+    release: close,
+    /** Chat close: a catch-up — extract → validate → append in the background, no review
      * card. Turns per-turn capture handled stay as context only; `rejected` = facts the user
-     * undid in this window, shown to extraction as already remembered so they aren't re-saved. */
+     * undid in this chat, shown to extraction as already remembered so they aren't re-saved. */
     rememberOnClose: async (
-      transcript: CloseTurn[], opts: { incognito?: boolean; rejected?: string[]; windowId?: number },
+      transcript: CloseTurn[], opts: { incognito?: boolean; rejected?: string[]; key?: string },
     ): Promise<Memory[]> => {
-      const w = opts.windowId === undefined ? undefined : windows.get(opts.windowId);
+      const w = opts.key === undefined ? undefined : windows.get(opts.key);
       // An in-flight capture keeps its own reference to `w` — the close-time chip must reach it.
       if (w && opts.incognito) w.incognito = true;
-      if (opts.windowId !== undefined) {
-        windows.delete(opts.windowId);
-        closed.add(opts.windowId);
-      }
+      if (opts.key !== undefined) close(opts.key);
       if (opts.incognito || !deps.autoMemory()) return [];
       const turns = transcript.map(({ id, ...t }): ChatTurn => (id && w?.turns.has(id) ? { ...t, source: undefined } : t));
       const rejected = (opts.rejected ?? []).map((text): Memory => ({ id: "", text, createdAt: "" }));
@@ -675,24 +678,68 @@ export interface ChatThreadHandlerDeps {
 
 const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Desktop chat history (see .memory/project-desktop-chat-history.md). Per chat window (webContents
- * id): the one thread it writes — pinned by its first save or its restore — and the sticky
- * unsavable latch, set on incognito toggle-on *before* the row is deleted and re-checked on every
- * write, the final close write included. Toggling incognito off never clears it. */
+/** Chat sessions ("mounts") inside chat windows. A mount id is a renderer-made UUID attached to
+ * exactly one sender; every per-chat request names it, and main keys that chat's thread pin,
+ * incognito latch, memory state and delegate tasks by it — so one window can hold several chats. */
+export function buildChatMounts() {
+  const mounts = new Map<string, number>(); // mount id → sender (webContents) id
+  // ponytail: one UUID per chat mount per app run; kept so a released id can't be re-attached.
+  const released = new Set<string>();
+  return {
+    /** False = refused: not a UUID, already attached, or released. */
+    attach: (senderId: number, id: unknown): boolean => {
+      if (typeof id !== "string" || !THREAD_ID.test(id) || mounts.has(id) || released.has(id)) return false;
+      mounts.set(id, senderId);
+      return true;
+    },
+    /** The state key for a request — throws unless `id` is a mount attached to this sender. */
+    key: (senderId: number, id: unknown): string => {
+      if (typeof id !== "string" || mounts.get(id) !== senderId) throw new Error("unknown chat session");
+      return id;
+    },
+    /** True = it was this sender's mount (the caller then drops that chat's state). */
+    release: (senderId: number, id: unknown): boolean => {
+      if (typeof id !== "string" || mounts.get(id) !== senderId) return false;
+      mounts.delete(id);
+      released.add(id);
+      return true;
+    },
+    ofSender: (senderId: number): string[] => [...mounts].flatMap(([id, s]) => (s === senderId ? [id] : [])),
+  };
+}
+
+/** Desktop chat history (see .memory/project-desktop-chat-history.md). Per chat (mount key): the
+ * one thread it writes — pinned by its first save or its restore, and never held by two chats —
+ * and the sticky unsavable latch, set on incognito toggle-on *before* the row is deleted and
+ * re-checked on every write, the final close write included. Toggling incognito off never clears it. */
 export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
-  // ponytail: one entry per chat window per app run; webContents ids are never reused.
-  const threads = new Map<number, string>();
-  const unsavable = new Set<number>();
+  const threads = new Map<string, string>(); // mount key → thread id; dropped at release
+  const unsavable = new Set<string>();
+  const holder = (id: string): string | undefined => [...threads].find(([, t]) => t === id)?.[0];
   let pending: string | undefined;
   // The history sidebar's pick ("new" or a thread id), held while the chat window runs its normal
   // close (Keep/Stop card included); the next chat window restores it.
   let switchTo: string | undefined;
+  /** A saved thread for this chat to restore (pinned to it), or `missing` when it's gone. */
+  const get = (key: string, id: unknown): PendingChatThread => {
+    if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
+    const pinned = threads.get(key);
+    if (pinned !== undefined && pinned !== id) throw new Error("this chat saves a different chat thread");
+    const other = holder(id);
+    if (other !== undefined && other !== key) throw new Error("that chat is already open");
+    const row = deps.getDesktopChat(deps.dbFile, id);
+    if (!row) return { missing: true };
+    let items: unknown;
+    try { items = JSON.parse(row.itemsJson); } catch { items = []; }
+    if (!unsavable.has(key)) threads.set(key, id);
+    return { id: row.id, title: row.title, items: Array.isArray(items) ? items : [], noteSlug: row.noteSlug };
+  };
   return {
     list: (): DesktopChatListing[] => deps.listDesktopChats(deps.dbFile),
-    /** Sidebar delete: never the window's own (open) thread. */
-    delete: (windowId: number, id: unknown): void => {
+    /** Sidebar delete: never a thread an open chat holds. */
+    delete: (id: unknown): void => {
       if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
-      if (threads.get(windowId) === id) throw new Error("the open chat can't be deleted");
+      if (holder(id) !== undefined) throw new Error("an open chat can't be deleted");
       deps.deleteDesktopChat(deps.dbFile, id);
     },
     /** True = close the chat window now to switch. `null` (Keep working) cancels a pending switch;
@@ -713,39 +760,41 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
     },
     /** The thread the next chat window restores (pulled once). */
     setPending: (id: string | undefined): void => { pending = id; },
-    pending: (windowId: number): PendingChatThread | undefined => {
+    pending: (key: string): PendingChatThread | undefined => {
       const id = pending;
       pending = undefined;
-      if (id === undefined) return undefined;
-      const row = deps.getDesktopChat(deps.dbFile, id);
-      if (!row) return { missing: true };
-      let items: unknown;
-      try { items = JSON.parse(row.itemsJson); } catch { items = []; }
-      if (!unsavable.has(windowId)) threads.set(windowId, id);
-      return { id: row.id, title: row.title, items: Array.isArray(items) ? items : [], noteSlug: row.noteSlug };
+      return id === undefined ? undefined : get(key, id);
     },
+    get,
     /** Undefined = refused by the latch (quietly: the renderer already stopped saving). */
-    save: (windowId: number, req: unknown): ChatThreadAck | undefined => {
-      if (unsavable.has(windowId)) return undefined;
+    save: (key: string, req: unknown): ChatThreadAck | undefined => {
+      if (unsavable.has(key)) return undefined;
       const o = req as Partial<ChatThreadSaveRequest> | null;
       if (!o || typeof o.id !== "string" || !THREAD_ID.test(o.id)) throw new Error("chat thread id must be a UUID");
       if (typeof o.title !== "string" || !Array.isArray(o.items)) throw new Error("malformed chat thread");
       if (o.noteSlug !== undefined && o.noteSlug !== null && typeof o.noteSlug !== "string") throw new Error("malformed chat thread");
-      const pinned = threads.get(windowId);
-      if (pinned !== undefined && pinned !== o.id) throw new Error("this window saves a different chat thread");
+      const pinned = threads.get(key);
+      if (pinned !== undefined && pinned !== o.id) throw new Error("this chat saves a different chat thread");
+      const other = holder(o.id);
+      if (other !== undefined && other !== key) throw new Error("another open chat saves this thread");
       const itemsJson = JSON.stringify(o.items);
       if (Buffer.byteLength(itemsJson, "utf8") > DESKTOP_CHAT_MAX_BYTES) throw new Error("desktop chat is too large to save");
       const now = new Date();
       deps.saveDesktopChat(deps.dbFile, { id: o.id, title: o.title, itemsJson, noteSlug: o.noteSlug ?? null }, now);
-      threads.set(windowId, o.id);
+      threads.set(key, o.id);
       return { id: o.id, title: o.title.trim().slice(0, DESKTOP_CHAT_TITLE_MAX), updatedAt: now.toISOString() };
     },
-    /** 🕶 on: latch first, then delete the window's saved row. Off: nothing — the latch is sticky. */
-    setIncognito: (windowId: number, on: boolean): void => {
+    /** 🕶 on: latch first, then delete the chat's saved row. Off: nothing — the latch is sticky. */
+    setIncognito: (key: string, on: boolean): void => {
       if (!on) return;
-      unsavable.add(windowId);
-      const id = threads.get(windowId);
+      unsavable.add(key);
+      const id = threads.get(key);
       if (id !== undefined) deps.deleteDesktopChat(deps.dbFile, id);
+    },
+    /** The chat mount is gone: its thread is free to delete or reopen. */
+    release: (key: string): void => {
+      threads.delete(key);
+      unsavable.delete(key);
     },
   };
 }
@@ -1045,13 +1094,15 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   delegateTasks: {
     start: (req: DelegateStartRequest) => Promise<string>;
     cancel: (taskId: string) => void;
+    /** Stops every task one chat (mount) started — its release. */
+    cancelMount: (mountId: string) => void;
   };
   liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "resume">;
   /** Whether an IPC sender is the chat window — the only window that may drive an agent session. */
   isChatSender: (sender: WebContents) => boolean;
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
-  /** Called as a chat turn starts; the returned fn is called when it ends (with the failure, if any). */
-  onChatTurn?: () => (error?: string) => void;
+  /** Called as a chat (mount) turn starts; the returned fn is called when it ends (with the failure, if any). */
+  onChatTurn?: (mountId: string) => (error?: string) => void;
   loadRoutines?: () => Promise<Routine[]>;
   routineHandlers: ReturnType<typeof buildRoutineHandlers>;
   skillProposalHandlers: ReturnType<typeof buildSkillProposalHandlers>;
@@ -1061,22 +1112,48 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   closeChatWindow: () => void;
 }
 
-export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
+/** `releaseChatSender` = a chat window is gone: release every chat it still had attached. */
+export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChatSender: (senderId: number) => void } {
   const routeHandler = buildRouteHandler(deps);
   ipcMain.handle(IPC.route, (_e, input: RouteInput) => routeHandler(input));
 
   const chatHandler = buildChatHandler(deps);
   const memoryHandlers = buildMemoryHandlers(deps);
-  ipcMain.handle(IPC.chat, async (e, req: ChatRequest) => {
-    const end = deps.onChatTurn?.();
+  // Every per-chat request names its chat's mount id (see buildChatMounts). Refused unless it comes
+  // from the chat window and that mount is attached to it.
+  const mounts = buildChatMounts();
+  const chatKey = (sender: WebContents, mountId: unknown): string => {
+    if (!deps.isChatSender(sender)) throw new Error("Chats run in the chat window.");
+    return mounts.key(sender.id, mountId);
+  };
+  // For fire-and-forget channels: a refused request is dropped, never thrown into the void.
+  const tryChatKey = (sender: WebContents, mountId: unknown): string | undefined => {
+    try { return chatKey(sender, mountId); } catch { return undefined; }
+  };
+  const releaseChat = (senderId: number, mountId: string): void => {
+    if (!mounts.release(senderId, mountId)) return;
+    memoryHandlers.release(mountId);
+    deps.chatThreadHandlers.release(mountId);
+    deps.delegateTasks.cancelMount(mountId);
+  };
+  ipcMain.on(IPC.chatAttach, (e, mountId: unknown) => {
+    if (deps.isChatSender(e.sender) && !mounts.attach(e.sender.id, mountId)) console.error("chat attach refused");
+  });
+  ipcMain.on(IPC.chatRelease, (e, mountId: unknown) => {
+    if (typeof mountId === "string") releaseChat(e.sender.id, mountId);
+  });
+  ipcMain.handle(IPC.chat, async (e, req: ChatRequest, mountId: unknown) => {
+    const key = chatKey(e.sender, mountId);
+    const end = deps.onChatTurn?.(key);
     try {
-      const result = await chatHandler(req, e.sender.id);
+      const result = await chatHandler(req, e.sender.id, key);
       end?.(result.error);
-      // Fire-and-forget, off the reply path: the reply returns now, the receipt row follows.
+      // Fire-and-forget, off the reply path: the reply returns now, the receipt row follows —
+      // tagged with its chat, which may no longer be the visible one.
       const sender = e.sender;
-      memoryHandlers.captureTurn(sender.id, req, result).then((batch) => {
+      memoryHandlers.captureTurn(key, req, result).then((batch) => {
         if (batch.length > 0 && !sender.isDestroyed()) {
-          sender.send(IPC.memoryUpdated, batch.map(({ id, text }) => ({ id, text })));
+          sender.send(IPC.memoryUpdated, batch.map(({ id, text }) => ({ id, text })), key);
         }
       }).catch((err) => console.error("per-turn memory capture failed:", err));
       return result;
@@ -1141,8 +1218,10 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
 
   const launchHandler = buildLaunchHandler(deps);
   ipcMain.on(IPC.launch, (_e, req: LaunchRequest) => launchHandler(req));
-  ipcMain.handle(IPC.delegateStart, (e, req: DelegateStartRequest) =>
-    deps.delegateTasks.start({ ...req, offRecord: memoryHandlers.isIncognito(e.sender.id) }));
+  ipcMain.handle(IPC.delegateStart, (e, req: DelegateStartRequest, mountId: unknown) => {
+    const key = chatKey(e.sender, mountId);
+    return deps.delegateTasks.start({ ...req, offRecord: memoryHandlers.isIncognito(key), mountId: key });
+  });
   ipcMain.on(IPC.delegateCancel, (_e, taskId: string) => deps.delegateTasks.cancel(taskId));
   // Sessions belong to the sender's webContents id; every payload is validated in live-tasks.
   ipcMain.handle(IPC.liveStart, (e, req: unknown) =>
@@ -1174,27 +1253,32 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.deleteMemories, (_e, ids: string[]) => memoryHandlers.delete(ids));
   // Fire-and-forget: the chat window is already closing. A failure already raised its bubble
   // (onMemoryFailure); this only logs it.
-  ipcMain.on(IPC.chatIncognito, (e, on: unknown) => {
-    memoryHandlers.setIncognito(e.sender.id, on === true);
-    if (!deps.isChatSender(e.sender)) return;
-    try { deps.chatThreadHandlers.setIncognito(e.sender.id, on === true); } catch (err) { console.error("chat history delete failed:", err); }
+  ipcMain.on(IPC.chatIncognito, (e, on: unknown, mountId: unknown) => {
+    const key = tryChatKey(e.sender, mountId);
+    if (key === undefined) return;
+    memoryHandlers.setIncognito(key, on === true);
+    try { deps.chatThreadHandlers.setIncognito(key, on === true); } catch (err) { console.error("chat history delete failed:", err); }
   });
   const notChat = (): never => { throw new Error("Chat history is for the chat window."); };
-  ipcMain.handle(IPC.chatThreadSave, (e, req: unknown) =>
-    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.save(e.sender.id, req) : notChat());
-  ipcMain.handle(IPC.getPendingChatThread, (e) =>
-    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.pending(e.sender.id) : notChat());
+  ipcMain.handle(IPC.chatThreadSave, (e, req: unknown, mountId: unknown) =>
+    deps.chatThreadHandlers.save(chatKey(e.sender, mountId), req));
+  ipcMain.handle(IPC.getPendingChatThread, (e, mountId: unknown) =>
+    deps.chatThreadHandlers.pending(chatKey(e.sender, mountId)));
+  ipcMain.handle(IPC.chatThreadGet, (e, id: unknown, mountId: unknown) =>
+    deps.chatThreadHandlers.get(chatKey(e.sender, mountId), id));
   ipcMain.handle(IPC.chatThreadList, (e) => deps.isChatSender(e.sender) ? deps.chatThreadHandlers.list() : notChat());
   ipcMain.handle(IPC.chatThreadDelete, (e, id: unknown) =>
-    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.delete(e.sender.id, id) : notChat());
+    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.delete(id) : notChat());
   ipcMain.on(IPC.chatThreadOpen, (e, target: unknown) => {
     if (deps.isChatSender(e.sender) && deps.chatThreadHandlers.requestSwitch(target)) deps.closeChatWindow();
   });
   ipcMain.on(IPC.rememberOnClose, (e, transcript: unknown, opts: unknown) => {
-    const o = opts as { incognito?: unknown; rejected?: unknown } | null;
+    const o = opts as { incognito?: unknown; rejected?: unknown; mountId?: unknown } | null;
+    const key = tryChatKey(e.sender, o?.mountId);
+    if (key === undefined) return;
     const incognito = o?.incognito === true;
     const rejected = Array.isArray(o?.rejected) ? o.rejected.filter((t): t is string => typeof t === "string") : [];
-    memoryHandlers.rememberOnClose(toTranscript(transcript), { incognito, rejected, windowId: e.sender.id }).catch((err) => {
+    memoryHandlers.rememberOnClose(toTranscript(transcript), { incognito, rejected, key }).catch((err) => {
       console.error("auto-remember failed:", err);
     });
   });
@@ -1292,4 +1376,6 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
     const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
     win.setContentSize(width ?? 0, Math.min(Math.round(height), workArea.height), true);
   });
+
+  return { releaseChatSender: (senderId) => { for (const id of mounts.ofSender(senderId)) releaseChat(senderId, id); } };
 }

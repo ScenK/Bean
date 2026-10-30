@@ -203,6 +203,16 @@ describe("createDelegateTasks", () => {
     expect(h.sent.filter((e) => e.type === "cancelled").map((e) => e.taskId)).toEqual([a, b]);
   });
 
+  it("cancelMount cancels only that chat's tasks", async () => {
+    const h = harness();
+    await h.tasks.start({ projectPath: "/p", prompt: "one", instruction: "do it", mountId: "a" });
+    await h.tasks.start({ projectPath: "/q", prompt: "two", instruction: "do it too", mountId: "b" });
+    await h.tasks.start({ projectPath: "/r", prompt: "three", instruction: "no chat" });
+    h.tasks.cancelMount("a");
+    h.tasks.cancelMount("a");
+    expect(h.cancels).toEqual(["one"]);
+  });
+
   it("cancelAll skips already-finished tasks and is idempotent", async () => {
     const h = harness();
     await h.tasks.start({ projectPath: "/p", prompt: "one", instruction: "do it" });
