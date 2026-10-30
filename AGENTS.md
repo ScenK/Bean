@@ -90,7 +90,12 @@ pnpm --filter @bean/core exec vitest run -t "falls back"   # by test name
 ```
 
 **Validation gate:** run `pnpm test && pnpm typecheck` and confirm both exit 0 before
-claiming work is done. If a change touches subprocesses, spawned CLIs/bots, PATH/env handling,
+claiming work is done. If the diff touches `packages/app/` (renderer, CSS, main, preload, or
+`e2e/` itself), also run `pnpm build && pnpm --filter @bean/app run test:e2e` and confirm it
+exits 0 — the e2e specs assert things unit tests can't see (rendered contrast, window sizes,
+chat restore). Core/Discord/Teams-only diffs skip it. When you deliberately change something a
+test asserts (a token, a size, a list), grep `packages/app/e2e/` too, not just `__test__/`.
+If a change touches subprocesses, spawned CLIs/bots, PATH/env handling,
 Electron resources, app boot, IPC/preload, window/tray behavior, or anything that differs between
 source checkout and packaged app, also verify both worlds before claiming done:
 
@@ -105,8 +110,8 @@ and use fresh temp `HOME`/`~/.bean` fixtures when config affects the result). CI
 (`.github/workflows/ci.yml`) runs the same two commands on every push to `main` and every PR,
 plus an `e2e` job (Playwright driving the real built Electron app — see `packages/app/e2e/`) on
 `macos-latest`. The `e2e` job is advisory, not a required check, so an occasional flake never
-blocks a merge — but check its result before merging a PR that touches app boot, IPC, or window
-behavior.
+blocks a merge — but a red `e2e` on a PR that touches `packages/app/` is a real failure until
+shown to be a flake (re-run it); don't merge over it.
 
 ---
 

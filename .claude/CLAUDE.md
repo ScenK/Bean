@@ -20,7 +20,7 @@ Tips that only apply to Claude Code sessions. Everything else lives in `AGENTS.m
 
 - Use **plan mode** for changes spanning both packages or touching the preload/IPC boundary.
 - Use **act mode** for single-file fixes, test additions, and docs.
-- Run `pnpm test && pnpm typecheck` via the terminal before reporting success.
+- Run the AGENTS.md validation gate (incl. e2e for `packages/app/` diffs) before reporting success.
 
 <!-- CODEGRAPH_START -->
 ## CodeGraph
