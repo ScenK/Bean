@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
 import { newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import { normalizeForSave, restoreItems, threadTitle } from "./chat-thread.js";
+import { ChatSidebar, SIDEBAR_INLINE_MIN, SIDEBAR_OPEN_KEY, withSaveAck } from "./ChatSidebar.js";
 import { composePrompt } from "@bean/core/prompt";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { dataUrlToAttachment } from "../../shared/note-images.js";
 import type {
-  CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, Routine, RouteSuggestion, Skill, TurnSource,
+  CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, Routine, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
 import type { LiveEvent, LiveReceipt, LiveStartResult } from "../../../live-tasks.js";
@@ -121,6 +122,8 @@ export function ChatWindow() {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = undefined;
       addStatus("Removed from history. Nothing in this chat will be saved.", "info");
+      const gone = threadRef.current?.id;
+      setThreads((prev) => prev.filter((t) => t.id !== gone));
     }
   };
   // Desktop chat history (chat-thread.ts). `threadRef` is assigned on the first composer input (or
@@ -133,6 +136,20 @@ export function ChatWindow() {
   const flushRef = useRef(false);
   const savingRef = useRef<Promise<void>>(Promise.resolve());
   const typedSinceLoadRef = useRef(false);
+  // History sidebar: the list loads on mount and the active row follows each save ack. `activeId`
+  // mirrors threadRef for rendering. `switching` = a row/New chat pick is closing this window.
+  const [threads, setThreads] = useState<DesktopChatListing[]>([]);
+  const [activeId, setActiveId] = useState<string | undefined>(undefined);
+  const [switching, setSwitching] = useState(false);
+  const [narrow, setNarrow] = useState(() => window.innerWidth < SIDEBAR_INLINE_MIN);
+  const [inlineOpen, setInlineOpen] = useState(() => localStorage.getItem(SIDEBAR_OPEN_KEY) !== "0");
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const sidebarOpen = narrow ? overlayOpen : inlineOpen;
+  const toggleSidebar = (): void => {
+    if (narrow) { setOverlayOpen(!overlayOpen); return; }
+    localStorage.setItem(SIDEBAR_OPEN_KEY, inlineOpen ? "0" : "1");
+    setInlineOpen(!inlineOpen);
+  };
   // Facts undone from a "Memory updated" row — handed to close catch-up so it won't re-save them.
   const rejectedMemoriesRef = useRef<string[]>([]);
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
@@ -205,7 +222,7 @@ export function ChatWindow() {
     const [items, noteSlug] = JSON.parse(snap) as [ChatItem[], string | null];
     savingRef.current = savingRef.current
       .then(() => window.bean.chatThreadSave({ id: t.id, title: t.title, items, ...(noteSlug ? { noteSlug } : {}) }))
-      .then(() => {}, (err: unknown) => {
+      .then((ack) => { if (ack) setThreads((prev) => withSaveAck(prev, ack, items)); }, (err: unknown) => {
         if (savedRef.current === snap) savedRef.current = undefined;
         console.error("chat history save failed:", err);
       });
@@ -218,6 +235,27 @@ export function ChatWindow() {
   }, [items, linkedNote]);
 
   useEffect(() => {
+    let was = window.innerWidth < SIDEBAR_INLINE_MIN;
+    const onResize = (): void => {
+      const now = window.innerWidth < SIDEBAR_INLINE_MIN;
+      if (now === was) return;
+      was = now;
+      setNarrow(now);
+      setOverlayOpen(false);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  // Layout effect: listening as soon as the overlay renders (a passive effect can lag a frame).
+  useLayoutEffect(() => {
+    if (!narrow || !overlayOpen) return;
+    // The composer's own Escape (slash menu) prevents default first.
+    const onKey = (e: KeyboardEvent): void => { if (e.key === "Escape" && !e.defaultPrevented) setOverlayOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [narrow, overlayOpen]);
+
+  useEffect(() => {
     const setTheme = (theme: string): void => {
       document.documentElement.dataset.theme = theme;
     };
@@ -226,6 +264,7 @@ export function ChatWindow() {
     window.bean.onThemeChanged(setTheme);
     window.bean.listProjects().then(setProjects);
     refreshCatalogs();
+    window.bean.chatThreadList().then((t) => setThreads(t ?? []), () => {});
     // Pull any URL dropped before this window's renderer finished mounting — the push below
     // (onComponentDroppedUrl) can arrive first and gets silently dropped, same race
     // getPendingPlan fixes for the Plan window.
@@ -264,6 +303,7 @@ export function ChatWindow() {
         setLinkedNote(linked);
       }
       threadRef.current = { id: t.id, title: t.title };
+      setActiveId(t.id);
       itemsRef.current = [...restoreItems(t.items), ...itemsRef.current];
       savedRef.current = snapshot();
       setItems(itemsRef.current);
@@ -486,7 +526,10 @@ export function ChatWindow() {
   // pass through this path.
   const onComposerSend = (raw: string, images?: ImageAttachment[]): void => {
     typedSinceLoadRef.current = true;
-    if (!threadRef.current && !unsavableRef.current) threadRef.current = { id: crypto.randomUUID(), title: threadTitle(raw) };
+    if (!threadRef.current && !unsavableRef.current) {
+      threadRef.current = { id: crypto.randomUUID(), title: threadTitle(raw) };
+      setActiveId(threadRef.current.id);
+    }
     let text = raw;
     const slash = resolveSlash(raw, modeRef.current, { agents: clis.filter(isLiveAgent), skills, sprouts });
     if (slash?.kind === "ambiguous" || slash?.kind === "unknown") {
@@ -817,7 +860,27 @@ export function ChatWindow() {
     window.bean.allowChatClose();
   };
 
-  const keepWorking = (): void => setCloseFlow(null);
+  // Keep working: stay put, and tell main to forget the pick so a later close doesn't switch.
+  const keepWorking = (): void => {
+    setCloseFlow(null);
+    if (switching) { setSwitching(false); window.bean.chatThreadOpen(null); }
+  };
+
+  // A row or New chat: this window closes the normal way (Keep/Stop card, final save, memory) and
+  // main opens the pick in a new window at these bounds.
+  const openThread = (target: string): void => {
+    if (busyRef.current) return;
+    setOverlayOpen(false);
+    if (target === "new" && !threadRef.current && itemsRef.current.length === 0) return; // already a new chat
+    setSwitching(true);
+    window.bean.chatThreadOpen(target);
+  };
+  const deleteThread = (id: string): void => {
+    window.bean.chatThreadDelete(id).then(
+      () => setThreads((prev) => prev.filter((t) => t.id !== id)),
+      (err: unknown) => addStatus(`Couldn't delete that chat: ${err instanceof Error ? err.message : String(err)}`, "error"),
+    );
+  };
 
   const stopDelegatesAndClose = async (): Promise<void> => {
     await Promise.allSettled(pendingDelegateStartsRef.current.values());
@@ -842,13 +905,36 @@ export function ChatWindow() {
 
   const delegatesRunning = closeFlow ? hasActiveDelegates(items, pendingDelegateStartsRef.current.size) : false;
   const liveName = live ? AGENT_NAMES[live.agent] : undefined;
-  const closeTitle = liveName && delegatesRunning
-    ? `A delegated task and a ${liveName} session are still running — closing stops both.`
-    : liveName ? `${liveName} is still running — closing ends the session.`
-      : "A delegated task is still running — closing will stop it.";
+  const closeTitle = switching
+    ? `Switching chats stops ${liveName && delegatesRunning ? `the delegated task and the ${liveName} session` : liveName ? `the ${liveName} session` : "the delegated task"}.`
+    : liveName && delegatesRunning
+      ? `A delegated task and a ${liveName} session are still running — closing stops both.`
+      : liveName ? `${liveName} is still running — closing ends the session.`
+        : "A delegated task is still running — closing will stop it.";
 
   return (
     <div class="bean-dashboard bean-chat-window">
+      <button
+        type="button"
+        class="bean-chat-sidebar-toggle"
+        aria-expanded={sidebarOpen}
+        aria-label={sidebarOpen ? "Hide chat history" : "Show chat history"}
+        title="Chat history"
+        onClick={toggleSidebar}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" /></svg>
+      </button>
+      {sidebarOpen ? (
+        <ChatSidebar
+          threads={threads}
+          activeId={activeId}
+          busy={busy}
+          overlay={narrow}
+          onNew={() => openThread("new")}
+          onOpen={openThread}
+          onDelete={deleteThread}
+        />
+      ) : null}
       {closeFlow?.stage === "delegates" ? (
         <div class="bean-memory-review">
           <div class="bean-memory-review-card">
@@ -856,7 +942,7 @@ export function ChatWindow() {
             <div class="bean-card-actions">
               <button type="button" class="bean-btn" onClick={keepWorking}>Keep working</button>
               <button type="button" class="bean-btn bean-btn--ghost" onClick={stopDelegatesAndClose}>
-                {liveName && !delegatesRunning ? `End ${liveName} session & close` : "Stop & close"}
+                {switching ? "Stop & switch" : liveName && !delegatesRunning ? `End ${liveName} session & close` : "Stop & close"}
               </button>
             </div>
           </div>

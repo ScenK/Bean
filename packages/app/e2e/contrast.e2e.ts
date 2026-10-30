@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import { join } from "node:path";
+import { dbFile, saveDesktopChat } from "@bean/core";
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
@@ -90,6 +92,10 @@ const WINDOWS = ["chat", "skills", "projects", "routines", "dashboard", "setting
 
 test("every component window clears WCAG AA text contrast in both themes", async () => {
   const home = await makeBeanHome();
+  // Two saved chats (one with an agent) so the history sidebar's rows, groups and mini-avatars are measured.
+  const db = dbFile(join(home.homeDir, ".bean"));
+  saveDesktopChat(db, { id: "11111111-1111-4111-8111-111111111111", title: "Plan the week", itemsJson: JSON.stringify([{ kind: "reply", agent: "claude", text: "ok" }]) });
+  saveDesktopChat(db, { id: "22222222-2222-4222-8222-222222222222", title: "Older chat", itemsJson: "[]" }, new Date(Date.now() - 3 * 86_400_000));
   const stub = await startStubOpenAI();
   const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
   try {
@@ -117,6 +123,23 @@ test("every component window clears WCAG AA text contrast in both themes", async
       for (const theme of ["hearth", "graphite"]) {
         await win.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
         expect(await win.evaluate(SCAN), `${kind} / ${theme}`).toEqual([]);
+      }
+      // #505: the history sidebar inline (default width) is covered above; narrow the window and
+      // scan its overlay too.
+      if (kind === "chat") {
+        await expect(win.locator(".bean-chat-sidebar")).toBeVisible();
+        await app.evaluate(({ BrowserWindow }) => {
+          BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))!.setSize(500, 600);
+        });
+        await expect(win.locator(".bean-chat-sidebar")).toHaveCount(0);
+        await win.locator(".bean-chat-sidebar-toggle").click();
+        await expect(win.locator(".bean-chat-sidebar--overlay")).toBeVisible();
+        for (const theme of ["hearth", "graphite"]) {
+          await win.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
+          expect(await win.evaluate(SCAN), `chat overlay / ${theme}`).toEqual([]);
+        }
+        await win.keyboard.press("Escape");
+        await expect(win.locator(".bean-chat-sidebar--overlay")).toHaveCount(0);
       }
       await win.close();
     }

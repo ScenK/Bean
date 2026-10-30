@@ -85,7 +85,7 @@ test("persona: a long memory list scrolls within the panel", async () => {
   }
 });
 
-// #492: chat opens at 600×760 (clamped to the work area — CI's display is shorter), can't shrink
+// #492/#505: chat opens at 820×760 (clamped to the work area — CI's display is shorter), can't shrink
 // below 440×520, and a resize survives close + reopen.
 test("chat window: default size, minimum size, remembered size", async () => {
   const home = await makeBeanHome();
@@ -107,7 +107,7 @@ test("chat window: default size, minimum size, remembered size", async () => {
     // Wait for the mount: the close hand-off listener only exists once React has rendered.
     await expect(chat.locator(".bean-input--composer")).toBeVisible();
     const work = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
-    expect(await chatSize()).toEqual([Math.min(600, work.width), Math.min(760, work.height)]);
+    expect(await chatSize()).toEqual([Math.min(820, work.width), Math.min(760, work.height)]);
 
     await resizeChat(100, 100);
     expect(await chatSize()).toEqual([440, 520]);

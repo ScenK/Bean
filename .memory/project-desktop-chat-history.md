@@ -21,7 +21,7 @@ a UUID, the payload ≤ 2 MB, and one window writes one thread (pinned by its fi
 The **sticky unsavable latch** is per window: incognito toggle-on sets it *before* deleting the row, every
 write (the final close write too) re-checks it, and toggling incognito off never clears it. A pending
 thread that's gone (deleted/pruned) restores as `{ missing: true }` → empty chat + status row.
-`setPending` is main's hook for the history sidebar (#505); the window pulls it once on mount.
+The window pulls the pending thread once on mount.
 
 **Renderer — `ChatWindow.tsx`.** Thread id on the first composer input (agent mode included). Saves at
 most 1 s after a change (`THREAD_SAVE_MS`, max-wait, not reset), immediately on a Bean reply, a live
@@ -30,3 +30,15 @@ snapshot is unchanged. **The restored snapshot is the baseline** — viewing a c
 never bumps `updated_at` or resets its prune clock. `closeNow` awaits a final save before
 `allowChatClose`, and sends `rememberOnClose` only when something was typed since load. The linked-note
 chip returns only if the slug still exists; a restored chat opens in Bean mode.
+
+**History sidebar (#505) — `ChatSidebar.tsx`, `ChatWindow.tsx`.** A pick never swaps transcripts in
+place: `chatThreadOpen(id | "new")` stores the target in main (`requestSwitch`) and closes the chat
+window the normal way, so the Keep/Stop card ("Switching chats stops…", `Stop & switch`), the final
+save and close-time memory all still run. Keep working sends `chatThreadOpen(null)` to clear the
+target — otherwise a later plain close would switch. At `closed`, `takeSwitch` makes the target the
+pending thread and main opens the next chat window at the old window's exact bounds (captured at
+the real close; the window is gone by `closed`). The list loads on mount and the active row follows
+the save ack (`withSaveAck`) — no push channel; listing's per-thread agents come from SQL
+(`json_each`) so transcripts never cross IPC for the picker. Delete refuses the window's own thread
+in main. Inline at ≥640px (collapse remembered in `localStorage`), overlay below (always opens
+collapsed; Escape closes it via a layout effect — a passive effect missed a quick Escape in e2e).

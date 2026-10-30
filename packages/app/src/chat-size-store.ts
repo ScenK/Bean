@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 export interface Size { width: number; height: number }
 
-export const CHAT_DEFAULT_SIZE: Size = { width: 600, height: 760 };
+export const CHAT_DEFAULT_SIZE: Size = { width: 820, height: 760 };
 export const CHAT_MIN_SIZE: Size = { width: 440, height: 520 };
 
 export function chatSizeFile(userDataDir: string): string {

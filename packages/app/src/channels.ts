@@ -128,6 +128,11 @@ export const IPC = {
   // fresh chat window restores (pulled on mount).
   chatThreadSave: "bean:chat-thread-save",
   getPendingChatThread: "bean:get-pending-chat-thread",
+  // chat window's history sidebar → main: list/delete saved threads, and switch to one ("new" = an
+  // empty chat; null = Keep working cancelled the switch).
+  chatThreadList: "bean:chat-thread-list",
+  chatThreadDelete: "bean:chat-thread-delete",
+  chatThreadOpen: "bean:chat-thread-open",
   getMemoryBatch: "bean:get-memory-batch",
   undoMemoryBatch: "bean:undo-memory-batch",
   getLastDream: "bean:get-last-dream",

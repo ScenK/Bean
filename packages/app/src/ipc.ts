@@ -9,7 +9,7 @@ import {
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type ExtractResult, type ChatTurn,
   type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
   type TodoItem, type StepKind, type CliModels, type DreamDigest, type RoutineBrief, type RoutineWatch, type WatchItem,
-  DESKTOP_CHAT_MAX_BYTES, DESKTOP_CHAT_TITLE_MAX, type DesktopChat, type DesktopChatInput,
+  DESKTOP_CHAT_MAX_BYTES, DESKTOP_CHAT_TITLE_MAX, type DesktopChat, type DesktopChatInput, type DesktopChatListing,
 } from "@bean/core";
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { WatchCheckResult } from "@bean/core";
@@ -667,6 +667,7 @@ export interface ChatThreadHandlerDeps {
   saveDesktopChat: (file: string, chat: DesktopChatInput, now?: Date) => void;
   getDesktopChat: (file: string, id: string) => DesktopChat | undefined;
   deleteDesktopChat: (file: string, id: string) => void;
+  listDesktopChats: (file: string) => DesktopChatListing[];
   dbFile: string;
 }
 
@@ -681,7 +682,33 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
   const threads = new Map<number, string>();
   const unsavable = new Set<number>();
   let pending: string | undefined;
+  // The history sidebar's pick ("new" or a thread id), held while the chat window runs its normal
+  // close (Keep/Stop card included); the next chat window restores it.
+  let switchTo: string | undefined;
   return {
+    list: (): DesktopChatListing[] => deps.listDesktopChats(deps.dbFile),
+    /** Sidebar delete: never the window's own (open) thread. */
+    delete: (windowId: number, id: unknown): void => {
+      if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
+      if (threads.get(windowId) === id) throw new Error("the open chat can't be deleted");
+      deps.deleteDesktopChat(deps.dbFile, id);
+    },
+    /** True = close the chat window now to switch. `null` (Keep working) cancels a pending switch;
+     * anything but "new" or a UUID is ignored. */
+    requestSwitch: (target: unknown): boolean => {
+      if (target === null) { switchTo = undefined; return false; }
+      if (target !== "new" && (typeof target !== "string" || !THREAD_ID.test(target))) return false;
+      switchTo = target;
+      return true;
+    },
+    /** At the chat window's `closed`: true = open the next window, which restores the pick. */
+    takeSwitch: (): boolean => {
+      const t = switchTo;
+      switchTo = undefined;
+      if (t === undefined) return false;
+      pending = t === "new" ? undefined : t;
+      return true;
+    },
     /** The thread the next chat window restores (pulled once). */
     setPending: (id: string | undefined): void => { pending = id; },
     pending: (windowId: number): PendingChatThread | undefined => {
@@ -1028,6 +1055,8 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
   skillProposalHandlers: ReturnType<typeof buildSkillProposalHandlers>;
   todoHandlers: ReturnType<typeof buildTodoHandlers>;
   chatThreadHandlers: ReturnType<typeof buildChatThreadHandlers>;
+  /** Starts the chat window's normal close (its Keep/Stop card may still hold it open). */
+  closeChatWindow: () => void;
 }
 
 export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
@@ -1152,6 +1181,12 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
     deps.isChatSender(e.sender) ? deps.chatThreadHandlers.save(e.sender.id, req) : notChat());
   ipcMain.handle(IPC.getPendingChatThread, (e) =>
     deps.isChatSender(e.sender) ? deps.chatThreadHandlers.pending(e.sender.id) : notChat());
+  ipcMain.handle(IPC.chatThreadList, (e) => deps.isChatSender(e.sender) ? deps.chatThreadHandlers.list() : notChat());
+  ipcMain.handle(IPC.chatThreadDelete, (e, id: unknown) =>
+    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.delete(e.sender.id, id) : notChat());
+  ipcMain.on(IPC.chatThreadOpen, (e, target: unknown) => {
+    if (deps.isChatSender(e.sender) && deps.chatThreadHandlers.requestSwitch(target)) deps.closeChatWindow();
+  });
   ipcMain.on(IPC.rememberOnClose, (e, transcript: unknown, opts: unknown) => {
     const o = opts as { incognito?: unknown; rejected?: unknown } | null;
     const incognito = o?.incognito === true;
