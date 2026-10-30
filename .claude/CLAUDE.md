@@ -18,7 +18,7 @@ Tips that only apply to Claude Code sessions. Everything else lives in `AGENTS.m
 
 ### Workflow Preferences
 
-- Use **plan mode** for changes spanning both packages or touching the preload/IPC boundary.
+- Use **plan mode** for changes spanning packages or touching the preload/IPC boundary.
 - Use **act mode** for single-file fixes, test additions, and docs.
 - Run the AGENTS.md validation gate (incl. e2e for `packages/app/` diffs) before reporting success.
 
