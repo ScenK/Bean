@@ -146,11 +146,9 @@ contextBridge.exposeInMainWorld("bean", {
   setChatIncognito: (on: boolean, mountId: string): void => ipcRenderer.send(IPC.chatIncognito, on, mountId),
   chatThreadSave: (req: ChatThreadSaveRequest, mountId: string): Promise<ChatThreadAck | undefined> =>
     ipcRenderer.invoke(IPC.chatThreadSave, req, mountId),
-  getPendingChatThread: (mountId: string): Promise<PendingChatThread | undefined> => ipcRenderer.invoke(IPC.getPendingChatThread, mountId),
   chatThreadGet: (id: string, mountId: string): Promise<PendingChatThread> => ipcRenderer.invoke(IPC.chatThreadGet, id, mountId),
   chatThreadList: (): Promise<DesktopChatListing[]> => ipcRenderer.invoke(IPC.chatThreadList),
   chatThreadDelete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.chatThreadDelete, id),
-  chatThreadOpen: (target: string | null): void => ipcRenderer.send(IPC.chatThreadOpen, target),
   onMemoryUpdated: (cb: (saved: Array<{ id: string; text: string }>, mountId: string) => void) =>
     ipcRenderer.on(IPC.memoryUpdated, (_e, saved: Array<{ id: string; text: string }>, mountId: string) => cb(saved, mountId)),
   getMemoryBatch: (): Promise<MemoryBatch | undefined> => ipcRenderer.invoke(IPC.getMemoryBatch),

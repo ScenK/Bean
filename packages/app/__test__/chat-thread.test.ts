@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, THREAD_MAX_BYTES, THREAD_TEXT_MAX, normalizeForSave, restoreItems, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
-import { applyDelegateEventToItems, closeTranscript } from "../src/renderer/components/chat/ChatWindow.js";
+import { applyDelegateEventToItems, closeTranscript } from "../src/renderer/components/chat/ChatSession.js";
 import { canContinueLive } from "../src/renderer/components/chat/agent-mode.js";
 import { newId, type ChatItem } from "../src/renderer/shared/chat-types.js";
 
