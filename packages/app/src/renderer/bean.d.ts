@@ -17,7 +17,7 @@ declare global {
     bean: {
       route(input: RouteInput): Promise<RouteSuggestion>;
       launch(req: LaunchRequest): void;
-      delegateStart(req: DelegateStartRequest): Promise<string>;
+      delegateStart(req: DelegateStartRequest, mountId: string): Promise<string>;
       delegateCancel(taskId: string): void;
       onDelegateEvent(cb: (e: DelegateEvent) => void): void;
       /** Start an agent session in this chat window; history is handed over as quoted context. */
@@ -34,8 +34,11 @@ declare global {
       onCliAvailabilityChanged(cb: () => void): void;
       getModelMemory(skillName: string): Promise<string | undefined>;
       setModelMemory(skillName: string, modelId: string): Promise<void>;
-      chat(req: ChatRequest): Promise<ConverseResult>;
-      onChatImageProgress(cb: () => void): void;
+      /** A chat session (mount id, a UUID) starts / ends in this window; every per-chat request names one. */
+      chatAttach(mountId: string): void;
+      chatRelease(mountId: string): void;
+      chat(req: ChatRequest, mountId: string): Promise<ConverseResult>;
+      onChatImageProgress(cb: (mountId: string) => void): void;
       getModel(): Promise<string>;
       getPathForFile(file: File): string;
       getTheme(): Promise<Theme>;
@@ -125,20 +128,23 @@ declare global {
       updateMemory(id: string, text: string): Promise<void>;
       deleteMemories(ids: string[]): Promise<number>;
       /** Fire-and-forget at chat close: main extracts + saves in the background. */
-      rememberOnClose(transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[] }): void;
-      setChatIncognito(on: boolean): void;
-      /** Write-through of this chat's transcript; undefined = refused (the window went incognito). */
-      chatThreadSave(req: ChatThreadSaveRequest): Promise<ChatThreadAck | undefined>;
+      rememberOnClose(transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[]; mountId: string }): void;
+      setChatIncognito(on: boolean, mountId: string): void;
+      /** Write-through of this chat's transcript; undefined = refused (the chat went incognito). */
+      chatThreadSave(req: ChatThreadSaveRequest, mountId: string): Promise<ChatThreadAck | undefined>;
       /** The saved thread this fresh chat window restores, if one was picked. */
-      getPendingChatThread(): Promise<PendingChatThread | undefined>;
+      getPendingChatThread(mountId: string): Promise<PendingChatThread | undefined>;
+      /** A saved thread for this chat (mount) to restore; refused if another open chat holds it. */
+      chatThreadGet(id: string, mountId: string): Promise<PendingChatThread>;
       /** Saved threads, newest first (main prunes past 90 days on each list). */
       chatThreadList(): Promise<DesktopChatListing[]>;
-      /** Refused for this window's own thread. */
+      /** Refused for a thread any open chat holds. */
       chatThreadDelete(id: string): Promise<void>;
       /** Switch: this window closes normally and a new one opens at its bounds with `target`
        * ("new" = empty). `null` cancels a switch the Keep/Stop card held. */
       chatThreadOpen(target: string | null): void;
-      onMemoryUpdated(cb: (saved: Array<{ id: string; text: string }>) => void): void;
+      /** Tagged with the chat (mount) whose turn it captured. */
+      onMemoryUpdated(cb: (saved: Array<{ id: string; text: string }>, mountId: string) => void): void;
       getMemoryBatch(): Promise<MemoryBatch | undefined>;
       undoMemoryBatch(): Promise<number>;
       getLastDream(): Promise<DreamDigest | undefined>;

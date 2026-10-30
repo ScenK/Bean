@@ -103,8 +103,8 @@ app.whenReady().then(async () => {
     if (!avatar.isDestroyed()) avatar.webContents.send(IPC.taskStatus, jobs);
   });
   ipcMain.on(IPC.dismissTask, (_e, id: unknown) => { if (typeof id === "string") taskStatus.dismiss(id); });
-  // One local chat turn at a time (one chat window), so image progress can find its bubble.
-  let chatTurnId: string | undefined;
+  // The running turn per chat (mount id), so image progress can find its bubble.
+  const chatTurnIds = new Map<string, string>();
   let avatarReady = false;
   // Hoisted out of the `try` block below (where it's created) so the tray menu's click
   // handler — built further up in this function, long before that `try` runs — can read
@@ -318,6 +318,7 @@ app.whenReady().then(async () => {
   const componentWindows = new Map<ComponentKind, BrowserWindow>();
   let cancelAllDelegates: () => void = () => {};
   let stopLiveOwner: (ownerId: number) => void = () => {};
+  let releaseChatSender: (senderId: number) => void = () => {};
   // Same drop-race fix as planStore below: a URL dropped on the avatar can reach a chat window
   // whose renderer hasn't mounted (and subscribed to componentDroppedUrl) yet, silently losing
   // the push. droppedUrlStore.get() is stashed alongside every push so the renderer can pull it
@@ -375,6 +376,8 @@ app.whenReady().then(async () => {
       win.on("closed", () => {
         cancelAllDelegates();
         stopLiveOwner(ownerId);
+        // Before a switch opens the next window: its chats' thread pins go, so it may restore one.
+        releaseChatSender(ownerId);
         // A sidebar switch: the next chat takes this one's place and pulls the picked thread.
         if (chatThreadHandlers.takeSwitch() && !quitting) openComponent("chat", undefined, lastBounds);
       });
@@ -821,7 +824,7 @@ app.whenReady().then(async () => {
       taskStatus.finish("memory:dream", "done", `🌙 Tidied memory: ${parts} · click to review`);
     };
 
-    registerIpc(ipcMain, {
+    ({ releaseChatSender } = registerIpc(ipcMain, {
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
       loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories, restoreDreamRun, dreamDetails,
       getLastDream: async (file) => (await getMemoryMeta(file, "lastDream")) as DreamDigest | undefined,
@@ -861,9 +864,10 @@ app.whenReady().then(async () => {
         getModel: () => cfg.imageModel,
         imagesDir: imagesDir(dir),
         saveNoteImage: (bytes) => saveNoteImage(dbFile(dir), bytes),
-        onStart: () => {
-          componentWindows.get("chat")?.webContents.send(IPC.chatImageProgress);
-          if (chatTurnId) taskStatus.upsert(chatTurnId, { line: "Drawing an image…" });
+        onStart: (mountId) => {
+          componentWindows.get("chat")?.webContents.send(IPC.chatImageProgress, mountId);
+          const turnId = mountId === undefined ? undefined : chatTurnIds.get(mountId);
+          if (turnId) taskStatus.upsert(turnId, { line: "Drawing an image…" });
         },
       },
       getConfig: () => ({
@@ -901,12 +905,12 @@ app.whenReady().then(async () => {
       liveSessionAvailable: (senderId) => componentWindows.get("chat")?.webContents.id === senderId
         && enabledClis().some(isLiveCli) && !liveTasks.hasSession(senderId),
       webSearch: () => runtime.getWebSearch(),
-      onChatTurn: () => {
+      onChatTurn: (mountId) => {
         const id = `chat:${randomUUID()}`;
-        chatTurnId = id;
+        chatTurnIds.set(mountId, id);
         taskStatus.upsert(id, { kind: "chat", name: "Chat", line: "Thinking…", startedAt: Date.now(), state: "running" });
         return (error) => {
-          if (chatTurnId === id) chatTurnId = undefined;
+          if (chatTurnIds.get(mountId) === id) chatTurnIds.delete(mountId);
           // The reply is already in the chat window — a done bubble would only echo it.
           taskStatus.dismiss(id);
           if (error) taskStatus.error("chat:error", { kind: "chat", name: "Chat", line: error, detail: error });
@@ -1017,7 +1021,7 @@ app.whenReady().then(async () => {
       }),
       chatThreadHandlers,
       closeChatWindow: () => componentWindows.get("chat")?.close(),
-    });
+    }));
 
     await loadAvatarWindow(avatar);
     avatarReady = true;

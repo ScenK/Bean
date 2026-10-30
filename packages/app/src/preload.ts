@@ -16,7 +16,7 @@ import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
 contextBridge.exposeInMainWorld("bean", {
   route: (input: RouteInput): Promise<RouteSuggestion> => ipcRenderer.invoke(IPC.route, input),
   launch: (req: LaunchRequest): void => ipcRenderer.send(IPC.launch, req),
-  delegateStart: (req: DelegateStartRequest): Promise<string> => ipcRenderer.invoke(IPC.delegateStart, req),
+  delegateStart: (req: DelegateStartRequest, mountId: string): Promise<string> => ipcRenderer.invoke(IPC.delegateStart, req, mountId),
   delegateCancel: (taskId: string): void => ipcRenderer.send(IPC.delegateCancel, taskId),
   onDelegateEvent: (cb: (e: DelegateEvent) => void) =>
     ipcRenderer.on(IPC.delegateEvent, (_e, ev: DelegateEvent) => cb(ev)),
@@ -34,8 +34,10 @@ contextBridge.exposeInMainWorld("bean", {
   getModelMemory: (skillName: string): Promise<string | undefined> => ipcRenderer.invoke(IPC.getModelMemory, skillName),
   setModelMemory: (skillName: string, modelId: string): Promise<void> =>
     ipcRenderer.invoke(IPC.setModelMemory, skillName, modelId),
-  chat: (req: ChatRequest): Promise<ConverseResult> => ipcRenderer.invoke(IPC.chat, req),
-  onChatImageProgress: (cb: () => void) => ipcRenderer.on(IPC.chatImageProgress, () => cb()),
+  chatAttach: (mountId: string): void => ipcRenderer.send(IPC.chatAttach, mountId),
+  chatRelease: (mountId: string): void => ipcRenderer.send(IPC.chatRelease, mountId),
+  chat: (req: ChatRequest, mountId: string): Promise<ConverseResult> => ipcRenderer.invoke(IPC.chat, req, mountId),
+  onChatImageProgress: (cb: (mountId: string) => void) => ipcRenderer.on(IPC.chatImageProgress, (_e, mountId: string) => cb(mountId)),
   getModel: (): Promise<string> => ipcRenderer.invoke(IPC.getModel),
   // File/folder drags (Finder) populate dataTransfer.files, not text/uri-list — this is the
   // only way to recover an absolute path from a dropped File since Electron 32 (File.path was
@@ -139,16 +141,18 @@ contextBridge.exposeInMainWorld("bean", {
   appendMemories: (additions: Memory[]): Promise<void> => ipcRenderer.invoke(IPC.appendMemories, additions),
   updateMemory: (id: string, text: string): Promise<void> => ipcRenderer.invoke(IPC.updateMemory, id, text),
   deleteMemories: (ids: string[]): Promise<number> => ipcRenderer.invoke(IPC.deleteMemories, ids),
-  rememberOnClose: (transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[] }): void =>
+  rememberOnClose: (transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[]; mountId: string }): void =>
     ipcRenderer.send(IPC.rememberOnClose, transcript, opts),
-  setChatIncognito: (on: boolean): void => ipcRenderer.send(IPC.chatIncognito, on),
-  chatThreadSave: (req: ChatThreadSaveRequest): Promise<ChatThreadAck | undefined> => ipcRenderer.invoke(IPC.chatThreadSave, req),
-  getPendingChatThread: (): Promise<PendingChatThread | undefined> => ipcRenderer.invoke(IPC.getPendingChatThread),
+  setChatIncognito: (on: boolean, mountId: string): void => ipcRenderer.send(IPC.chatIncognito, on, mountId),
+  chatThreadSave: (req: ChatThreadSaveRequest, mountId: string): Promise<ChatThreadAck | undefined> =>
+    ipcRenderer.invoke(IPC.chatThreadSave, req, mountId),
+  getPendingChatThread: (mountId: string): Promise<PendingChatThread | undefined> => ipcRenderer.invoke(IPC.getPendingChatThread, mountId),
+  chatThreadGet: (id: string, mountId: string): Promise<PendingChatThread> => ipcRenderer.invoke(IPC.chatThreadGet, id, mountId),
   chatThreadList: (): Promise<DesktopChatListing[]> => ipcRenderer.invoke(IPC.chatThreadList),
   chatThreadDelete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.chatThreadDelete, id),
   chatThreadOpen: (target: string | null): void => ipcRenderer.send(IPC.chatThreadOpen, target),
-  onMemoryUpdated: (cb: (saved: Array<{ id: string; text: string }>) => void) =>
-    ipcRenderer.on(IPC.memoryUpdated, (_e, saved: Array<{ id: string; text: string }>) => cb(saved)),
+  onMemoryUpdated: (cb: (saved: Array<{ id: string; text: string }>, mountId: string) => void) =>
+    ipcRenderer.on(IPC.memoryUpdated, (_e, saved: Array<{ id: string; text: string }>, mountId: string) => cb(saved, mountId)),
   getMemoryBatch: (): Promise<MemoryBatch | undefined> => ipcRenderer.invoke(IPC.getMemoryBatch),
   undoMemoryBatch: (): Promise<number> => ipcRenderer.invoke(IPC.undoMemoryBatch),
   getLastDream: (): Promise<DreamDigest | undefined> => ipcRenderer.invoke(IPC.getLastDream),

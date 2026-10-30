@@ -16,11 +16,21 @@ capped at 20k chars, the list at 500 items (oldest dropped), the JSON at 2 MB (r
 collide with the new load's counter) and drops `source` from user turns, so restored turns are context
 only for memory extraction. A restored done delegate has no `taskId`, so no event can loop it back.
 
+**Chat mounts (#515) — `buildChatMounts` (`ipc.ts`).** Main keys per-chat state by a **mount id** (a
+renderer-made UUID per chat session, `chatAttach`/`chatRelease`), not by webContents id, so one window
+can hold several chats. Every per-chat request (chat, thread save/get/pending, incognito, remember on
+close, delegate start) carries the mount id as its trailing arg and is refused unless it's the chat
+window and that mount is attached to it; the memory receipt and image progress pushes carry it back
+(the renderer drops other mounts'). Release (or the window's `closed` → `releaseChatSender`) drops
+the mount's thread pin/latch and memory state and cancels its delegates (`cancelMount`); a released
+id is never re-attachable. Live sessions are still per window (#517).
+
 **Main — `buildChatThreadHandlers` (`ipc.ts`).** Sender must be the chat window (`isChatSender`), the id
-a UUID, the payload ≤ 2 MB, and one window writes one thread (pinned by its first save or its restore).
-The **sticky unsavable latch** is per window: incognito toggle-on sets it *before* deleting the row, every
+a UUID, the payload ≤ 2 MB, and one chat (mount) writes one thread (pinned by its first save or its
+restore) that no other open chat may save, restore (`chatThreadGet`) or delete.
+The **sticky unsavable latch** is per mount: incognito toggle-on sets it *before* deleting the row, every
 write (the final close write too) re-checks it, and toggling incognito off never clears it. A pending
-thread that's gone (deleted/pruned) restores as `{ missing: true }` → empty chat + status row.
+or fetched thread that's gone (deleted/pruned) restores as `{ missing: true }` → empty chat + status row.
 The window pulls the pending thread once on mount.
 
 **Renderer — `ChatWindow.tsx`.** Thread id on the first composer input (agent mode included). Saves at
@@ -39,6 +49,6 @@ target — otherwise a later plain close would switch. At `closed`, `takeSwitch`
 pending thread and main opens the next chat window at the old window's exact bounds (captured at
 the real close; the window is gone by `closed`). The list loads on mount and the active row follows
 the save ack (`withSaveAck`) — no push channel; listing's per-thread agents come from SQL
-(`json_each`) so transcripts never cross IPC for the picker. Delete refuses the window's own thread
-in main. Inline at ≥640px (collapse remembered in `localStorage`), overlay below (always opens
+(`json_each`) so transcripts never cross IPC for the picker. Delete refuses a thread any
+open chat holds, in main. Inline at ≥640px (collapse remembered in `localStorage`), overlay below (always opens
 collapsed; Escape closes it via a layout effect — a passive effect missed a quick Escape in e2e).
