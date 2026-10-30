@@ -14,7 +14,7 @@ const SID = "ses_edb5b5b8cffeC9yAycV4DZhfig";
 
 interface Fake { child: ChildProcess; stdout: PassThrough; stderr: PassThrough; args: string[]; cwd: string; pid: number }
 
-function harness(opts: { resume?: string } = {}) {
+function harness(opts: { resume?: string; prompt?: string } = {}) {
   const spawned: Fake[] = [];
   let pid = 100;
   const spawnFn = (command: string, args: string[], cwd: string): ChildProcess => {
@@ -31,7 +31,7 @@ function harness(opts: { resume?: string } = {}) {
   const exits: (Error | undefined)[] = [];
   const ids: string[] = [];
   const handle = startOpencodeLiveSession(
-    { cli: "opencode", projectPath: "/p", prompt: "go", ...(opts.resume ? { resume: opts.resume } : {}) },
+    { cli: "opencode", projectPath: "/p", prompt: opts.prompt ?? "go", ...(opts.resume ? { resume: opts.resume } : {}) },
     { onOutput: (l) => outputs.push(l), onExit: (e) => exits.push(e), onTurnComplete: (s) => turns.push(s), onSessionId: (id) => ids.push(id) },
     spawnFn, 60_000, () => 0,
   );
@@ -120,6 +120,22 @@ describe("startOpencodeLiveSession", () => {
     await Promise.resolve();
     expect(bad.spawned).toHaveLength(0);
     expect(bad.exits[0]?.message).toBe(RESUME_REJECTED);
+  });
+
+  it("a lazy resume spawns nothing until the first send; a rejection then fails it, never fresh", async () => {
+    const h = harness({ resume: SID, prompt: "" });
+    expect(h.spawned).toHaveLength(0);
+    h.handle.send("what changed?");
+    expect(h.spawned).toHaveLength(1);
+    expect(h.last().args).toContain("--session");
+    expect(h.last().args.at(-1)).toMatch(/^what changed\?/);
+    h.last().stderr.write("Error: Session not found\n");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await h.close(1);
+    warn.mockRestore();
+    expect(h.exits[0]?.message).toBe(RESUME_REJECTED);
+    h.handle.send("again");
+    expect(h.spawned).toHaveLength(1);
   });
 
   it("a resume answered from another session is stopped and its output suppressed", async () => {

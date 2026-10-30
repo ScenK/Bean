@@ -132,6 +132,16 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   and exit 1 **before** `system/init`: `startLiveSession` ignores pre-init `result`s on a resume
   and reports `RESUME_REJECTED`, never a fresh session. The id doesn't change, so the ended card
   re-offers the button and nothing new is recorded.
+- **Lazy resume (#531)**: every Continue live (desktop, chatops card, `/live-session resume`) starts
+  with `prompt: ""` — no synthetic opening turn (the old `RESUME_OPENING` is gone). Both engines
+  then spawn **nothing until the first `send()`**, which becomes turn 1 (with the git trailer); the
+  idle timer arms at start, and a stop/idle before any send ends clean with no spawn. A rejected id
+  therefore fails *that first send* with `RESUME_REJECTED` ("Nothing was sent."). Consequences:
+  claude's `pid` is a getter and is undefined until then, so both hosts move the run record to
+  claude's child on the first send too (`trackPid`), not only at start; the resume card has no
+  prompt or skill (nothing to frame); the channel gets no typing ping until someone types; the
+  desktop composer isn't busy, and a rejection hands the unanswered text back to the composer
+  (`LiveState.unopened`, refilled when the session fails before its `session` receipt).
 - **Codex engine (#233)**: `core/codex-live-session.ts`, a second `LiveSessionHandle` picked by
   `cli` (registry's default StartFn dispatches; tests inject one fake and read `req.cli`). Codex
   has no multi-turn stdin, so it is **one `codex exec [resume <thread>]` spawn per turn**
@@ -237,7 +247,7 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   receipt + CLI enabled + no live session in the window) sends **only the id** over
   `bean:live-resume`; `liveTasks.resume` reads CLI + project from the newest row via
   `findDelegateRun(…, "desktop")` (desktop rows only; chatops' default still refuses them), opens
-  with `RESUME_OPENING`, no handoff, and refuses an id already live in any window (claim lasts
+  lazily on the first send (no opening turn, no handoff), and refuses an id already live in any window (claim lasts
   while the session lives). The CLI is frozen; a rejected id ends `RESUME_REJECTED`, never fresh.
 - Live sessions resume too (#503): `LiveSessionCallbacks.onSessionId` (optional, errors swallowed;
   chatops ignores it) fires once per engine — claude on `system/init`, per-turn CLIs on the first

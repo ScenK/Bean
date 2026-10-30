@@ -155,9 +155,13 @@ test("Continue live: finished/ended cards submit resume-live with the session id
     .not.toContain("resume-live");
 
   const card = JSON.stringify(liveSessionProposalCard({
-    proposalId: "live-1", projectName: "other", instruction: "Continue where you left off",
-    projects: [{ name: "bean", path: "/p/bean" }], models: [], skills: [], cli: "codex", clis: [], agent: "codex", continues: "fix the flaky test",
+    proposalId: "live-1", projectName: "other", instruction: "",
+    projects: [{ name: "bean", path: "/p/bean" }], models: [], skills: [{ name: "review" }], cli: "codex", clis: [], agent: "codex", continues: "fix the flaky test",
   }));
+  // No opening turn: no prompt input, no skill to frame it.
+  expect(card).toContain("on your next message here");
+  expect(card).not.toContain('"id":"instruction"');
+  expect(card).not.toContain('"id":"skillName"');
   // A resume's engine is frozen: an Agent fact, no CLI picker.
   expect(card).toContain("Agent");
   expect(card).not.toContain('"id":"cli"');

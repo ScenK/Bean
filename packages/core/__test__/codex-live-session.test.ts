@@ -14,7 +14,7 @@ const TID = "019a6b1e-7c3d-7f00-9a1b-2c3d4e5f6a7b";
 
 interface Fake { child: ChildProcess; stdout: PassThrough; stderr: PassThrough; args: string[]; pid: number }
 
-function harness(opts: { resume?: string; idleMs?: number } = {}) {
+function harness(opts: { resume?: string; idleMs?: number; prompt?: string } = {}) {
   const spawned: Fake[] = [];
   let pid = 100;
   const spawnFn = (command: string, args: string[]): ChildProcess => {
@@ -33,7 +33,7 @@ function harness(opts: { resume?: string; idleMs?: number } = {}) {
   const hooks: { onTurn?: (s: TurnSummary) => void; turnStarts: number } = { turnStarts: 0 };
   let clock = 0;
   const handle = startCodexLiveSession(
-    { cli: "codex", projectPath: "/p", prompt: "go", ...(opts.resume ? { resume: opts.resume } : {}) },
+    { cli: "codex", projectPath: "/p", prompt: opts.prompt ?? "go", ...(opts.resume ? { resume: opts.resume } : {}) },
     {
       onOutput: (l) => outputs.push(l), onExit: (e) => exits.push(e), onSessionId: (id) => ids.push(id),
       onTurnStart: () => { hooks.turnStarts++; },
@@ -187,6 +187,33 @@ describe("startCodexLiveSession", () => {
     expect(h.exits[0]?.message).toBe(RESUME_REJECTED);
     expect(h.spawned).toHaveLength(1);
     expect(h.ids).toEqual([]);
+  });
+
+  it("a lazy resume spawns nothing until the first send, then resumes with that text", async () => {
+    const h = harness({ resume: TID, prompt: "" });
+    expect(h.spawned).toHaveLength(0);
+    h.handle.send("what changed?");
+    expect(h.spawned).toHaveLength(1);
+    expect(h.spawned[0]!.args.slice(-3, -1)).toEqual(["--", TID]);
+    expect(h.spawned[0]!.args.at(-1)).toMatch(/^what changed\?/);
+  });
+
+  it("a lazy resume rejected on its first send is RESUME_REJECTED, never a fresh session", async () => {
+    const h = harness({ resume: TID, prompt: "" });
+    h.handle.send("hi");
+    h.last().stderr.write(`thread/resume failed: no rollout found for thread id ${TID}\n`);
+    await h.close(1);
+    expect(h.exits[0]?.message).toBe(RESUME_REJECTED);
+    h.handle.send("again");
+    expect(h.spawned).toHaveLength(1);
+  });
+
+  it("a lazy resume idles out with no spawn", () => {
+    vi.useFakeTimers();
+    const h = harness({ resume: TID, prompt: "", idleMs: 1000 });
+    vi.advanceTimersByTime(1001);
+    expect(h.exits).toEqual([undefined]);
+    expect(h.spawned).toHaveLength(0);
   });
 
   it("a resume reports the matching thread id once", async () => {

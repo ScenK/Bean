@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  RESUME_OPENING, TURN_QUEUE_FULL, findDelegateRun, recordDelegateSession,
+  TURN_QUEUE_FULL, findDelegateRun, recordDelegateSession,
   type CliName, type LiveSessionCallbacks, type LiveSessionRequest, type ResumableRun,
 } from "@bean/core";
 import {
@@ -25,6 +25,8 @@ const record = (dir: string, id: string): { pid: number } | undefined => {
 function harness(opts: {
   clis?: CliName[]; allowed?: (p: string) => Promise<boolean>; pid?: number; sendOk?: boolean;
   findResumable?: (id: string) => ResumableRun;
+  /** The child's pid once the first send spawns it (a lazy resume). */
+  sendPid?: number;
 } = {}) {
   const dir = tmp();
   const events: Array<{ owner: number; e: LiveEvent }> = [];
@@ -44,7 +46,12 @@ function harness(opts: {
     engine: (req, c) => {
       reqs.push(req);
       cbs.push(c);
-      return { pid: opts.pid, send: (t) => { sent.push(t); return opts.sendOk ?? true; }, stop: () => { stops++; } };
+      let pid = opts.pid;
+      return {
+        get pid() { return pid; },
+        send: (t) => { sent.push(t); pid ??= opts.sendPid; return opts.sendOk ?? true; },
+        stop: () => { stops++; },
+      };
     },
   });
   return { live, dir, events, reqs, cbs, sent, stops: () => stops, types: () => events.map(({ e }) => e.type) };
@@ -188,12 +195,22 @@ describe("createLiveTasks resume (Continue live)", () => {
     return { file, proj, find: (id: string) => findDelegateRun(file, id, undefined, "desktop") };
   }
 
-  it("resumes the recorded CLI in the recorded project with no handoff", () => {
+  it("resumes the recorded CLI in the recorded project with no handoff and no opening turn", () => {
     const r = resumable();
     const h = harness({ findResumable: r.find });
     expect(h.live.resume(A, "sess-1")).toEqual({ sessionId: "s1", agent: "claude", projectPath: r.proj });
-    expect(h.reqs[0]).toEqual({ cli: "claude", projectPath: r.proj, prompt: RESUME_OPENING, resume: "sess-1" });
+    expect(h.reqs[0]).toEqual({ cli: "claude", projectPath: r.proj, prompt: "", resume: "sess-1" });
     expect(h.events[0]!.e).toMatchObject({ type: "started", projectPath: r.proj, handedOver: 0 });
+  });
+
+  it("claude's run record moves to the child once the first send spawns it", () => {
+    const r = resumable();
+    const h = harness({ findResumable: r.find, sendPid: 4242 });
+    h.live.resume(A, "sess-1");
+    expect(record(h.dir, "s1")?.pid).toBe(process.pid);
+    expect(h.live.send(A, "s1", "what changed?")).toBeUndefined();
+    expect(h.sent).toEqual(["what changed?"]);
+    expect(record(h.dir, "s1")?.pid).toBe(4242);
   });
 
   it("refuses forged, mismatched and chatops ids, a disabled CLI, and a missing lookup", () => {

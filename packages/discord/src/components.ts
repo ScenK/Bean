@@ -306,8 +306,12 @@ function reminderCard(input: ReminderCardInput): object {
 // Discord embed description cap; also the modal text-input cap, so a stored prompt never
 // overflows what the Edit modal can hold.
 const LIVE_PROMPT_LIMIT = 4000;
+const RESUME_LAZY_NOTE = "Picks up where it left off on your next message here — nothing runs until then.";
 
 function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
+  // A resumed session's project is locked (a field, no picker) and it has no opening turn, so no
+  // prompt or skill either: the channel's first message opens it.
+  const resuming = input.continues !== undefined;
   // Discord: select value ≤ 100 chars (drops any project whose path is longer), ≤ 25 options.
   const projectSelect = {
     type: STRING_SELECT,
@@ -318,7 +322,7 @@ function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
       .slice(0, 25)
       .map((p) => ({ label: p.name.slice(0, 100), value: p.path, default: p.name === input.projectName })),
   };
-  const skillRows = skillSelectRows(`bean:live-skill:${input.proposalId}`, input.skills, input.skillName);
+  const skillRows = resuming ? [] : skillSelectRows(`bean:live-skill:${input.proposalId}`, input.skills, input.skillName);
   const cliRows = input.clis.length > 0
     ? [row([{
         type: STRING_SELECT,
@@ -341,12 +345,10 @@ function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
   const steeringHelp = restricted
     ? "Restricted: only the starter steers (add co-drivers in-session with `+driver @name`)."
     : "War-room: anyone in this channel steers.";
-  // A resumed session's project is locked: shown as a field, no picker.
-  const resuming = input.continues !== undefined;
   return {
     embeds: [{
       title: resuming ? "Bean proposes continuing a session live" : "Bean proposes a live agent session",
-      description: input.instruction.slice(0, LIVE_PROMPT_LIMIT),
+      description: resuming ? RESUME_LAZY_NOTE : input.instruction.slice(0, LIVE_PROMPT_LIMIT),
       fields: [
         ...(resuming ? [
           { name: "Continues", value: clampField(input.continues ?? "") },
@@ -365,7 +367,7 @@ function liveSessionProposalCard(input: LiveSessionProposalCardInput): object {
       row([
         // Label shows the CURRENT mode; tapping toggles restricted ⇄ war-room.
         { type: BUTTON, style: 2, label: restricted ? "Mode: Restricted" : "Mode: War-room", custom_id: `bean:live-mode:${input.proposalId}` },
-        { type: BUTTON, style: 1, label: "Edit prompt", custom_id: `bean:live-edit:${input.proposalId}` },
+        ...(resuming ? [] : [{ type: BUTTON, style: 1, label: "Edit prompt", custom_id: `bean:live-edit:${input.proposalId}` }]),
         { type: BUTTON, style: 3, label: "Start session", custom_id: `bean:start-live:${input.proposalId}` },
         { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-live:${input.proposalId}` },
       ]),

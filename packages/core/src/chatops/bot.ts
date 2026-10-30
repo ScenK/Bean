@@ -19,7 +19,7 @@ import type { CliName } from "../launcher.js";
 import type { CliModels } from "../cli-models.js";
 import { OPENCODE_BROWSER_REFUSAL, type DelegateRequest } from "../delegate.js";
 import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type ResumableRun } from "../delegate-runs.js";
-import { LIVE_CLIS, RESUME_OPENING, isLiveCli, type LiveCli } from "../live-session.js";
+import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
 import { TURN_QUEUE_FULL } from "../turn-live-session.js";
 import type { CardBuilders } from "./cards-api.js";
 import { formatAmbientBlock, formatRepliedBlock, REPLIED_UNAVAILABLE, type AmbientMessage, type RepliedMessage } from "./ambient.js";
@@ -480,7 +480,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         : undefined;
     }
     refusal ??= liveClis().includes(cli) ? undefined : `${cli} isn't installed on this Mac any more.`;
-    const picked = refusal ? {} : await liveSkill(cli, p.proposal.skillName);
+    // A resume has no opening turn for a skill to frame.
+    const picked = refusal || resume ? {} : await liveSkill(cli, p.proposal.skillName);
     refusal ??= picked.refusal;
     if (refusal) {
       await updateTo(deps.cards.liveSessionResultCard({ projectName: await projectLabel(resume?.projectPath ?? p.proposal.projectPath, !!resume), startedBy, outcome: "cancelled" }));
@@ -496,8 +497,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       edit: fx.editStream ?? ((id, text) => fx.updateCard(id, { content: text })),
       typing: fx.sendTyping,
     };
-    // A picked skill's body frames the opening turn (composePrompt = body + "## Task" + text).
-    const instruction = picked.skill ? composePrompt(picked.skill, p.proposal.instruction) : p.proposal.instruction;
+    // A picked skill's body frames the opening turn (composePrompt = body + "## Task" + text). A
+    // resume has none: the channel's first message opens it, so no turn is spent until then.
+    const instruction = resume ? "" : picked.skill ? composePrompt(picked.skill, p.proposal.instruction) : p.proposal.instruction;
     const conv = p.conversationId;
     // Before start(): the CLI's session id lands on this row. A resume binds its known id now (the
     // registry reports no id for it); a fresh session stays unbound until its id is recorded.
@@ -546,9 +548,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started" }));
     const mode = p.proposal.steering ?? "restricted";
+    const ready = resume ? " It picks up where it left off on your next message." : "";
     await fx.post(mode === "open"
-      ? "War-room mode: anyone here can steer. Say `stop` to end it."
-      : "Restricted mode: only you steer. Add co-drivers with `+driver @name`, remove with `-driver @name`. Say `stop` to end it.");
+      ? `War-room mode: anyone here can steer. Say \`stop\` to end it.${ready}`
+      : `Restricted mode: only you steer. Add co-drivers with \`+driver @name\`, remove with \`-driver @name\`. Say \`stop\` to end it.${ready}`);
   }
 
   // Post the confirm-first Start/Cancel card. Shared by the LLM path (propose_live_session)
@@ -592,7 +595,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const { run } = found;
     if (!liveClis().includes(run.cli)) return `${run.cli} isn't installed on this Mac any more.`;
     await postLiveSessionProposal({
-      projectPath: run.projectPath, instruction: RESUME_OPENING, steering: "restricted",
+      // No opening turn: the session opens on the channel's first message.
+      projectPath: run.projectPath, instruction: "", steering: "restricted",
       resume: { sessionId: run.sessionId, projectPath: run.projectPath, instruction: run.instruction, cli: run.cli },
     }, conversationId, proposedBy, fx);
     return undefined;

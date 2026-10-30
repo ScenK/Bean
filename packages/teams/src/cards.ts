@@ -362,7 +362,8 @@ export function liveSessionProposalCard(input: LiveSessionProposalCardInput): ob
     value: input.projects.find((p) => p.name === input.projectName)?.path ?? input.projectName,
     choices: input.projects.map((p) => ({ title: p.name, value: p.path })),
   };
-  // A resumed session's project is locked (core ignores a submitted projectPath): no picker.
+  // A resumed session's project is locked (core ignores a submitted projectPath): no picker. It has
+  // no opening turn either, so no prompt or skill: the chat's first message opens it.
   const resuming = input.continues !== undefined;
   const body: object[] = [
     { type: "TextBlock", text: resuming ? "Bean proposes continuing a session live" : "Bean proposes a live agent session", weight: "Bolder" },
@@ -370,10 +371,12 @@ export function liveSessionProposalCard(input: LiveSessionProposalCardInput): ob
       { title: "Continues", value: input.continues }, { title: "Project", value: input.projectName },
       ...(input.agent ? [{ title: "Agent", value: input.agent }] : []),
     ] }] : []),
-    { type: "Input.Text", id: "instruction", label: resuming ? "Opening prompt" : "Prompt", isMultiline: true, value: input.instruction },
+    resuming
+      ? { type: "TextBlock", text: "Picks up where it left off on your next message here — nothing runs until then.", wrap: true }
+      : { type: "Input.Text", id: "instruction", label: "Prompt", isMultiline: true, value: input.instruction },
     ...(resuming ? [] : [projectPicker]),
   ];
-  if (input.skills.length > 0) {
+  if (input.skills.length > 0 && !resuming) {
     body.push({
       type: "Input.ChoiceSet", id: "skillName", label: "Skill (optional)", value: input.skillName ?? "__none__",
       choices: [{ title: "— no skill —", value: "__none__" }, ...input.skills.map((s) => ({ title: s.name, value: s.name }))],

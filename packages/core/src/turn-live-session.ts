@@ -208,7 +208,8 @@ export function startTurnLiveSession(
 
   if (req.resume && !adapter.validResume(req.resume)) {
     queueMicrotask(() => finish(new Error(RESUME_REJECTED)));
-  } else runTurn(req.prompt);
+  } else if (req.prompt) runTurn(req.prompt);
+  else armIdle(); // lazy (Continue live): the first send() is turn 1
 
   return {
     get pid() { return child?.pid; },

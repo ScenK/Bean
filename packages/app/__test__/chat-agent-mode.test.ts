@@ -256,6 +256,25 @@ describe("ChatWindow agent mode", () => {
     expect(bean.liveSend).toHaveBeenCalledWith("s1", "now fix what you found", expect.any(String));
   });
 
+  it("a Continue live rejected on its first send hands the typed text back to the composer", async () => {
+    bean.liveResume = vi.fn(async () => ({ sessionId: "s1", agent: "claude", projectPath: "/p" }));
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    bean.chat!.mockResolvedValueOnce({ reply: "on it", model: "m", proposedDelegate: { projectPath: "/p", instruction: "audit", composedPrompt: "audit" } });
+    await send("hi bean");
+    await click("Delegate");
+    const receipt = { label: "l", command: "c", sessionId: "sess-1", agent: "claude" as const };
+    await act(async () => { listeners.onDelegateEvent!({ taskId: "task1", type: "done", result: "ok", receipt } satisfies DelegateEvent); });
+    await flush();
+    await click("Continue live");
+    await live({ type: "started", projectPath: "/p", handedOver: 0 });
+    await send("what changed?");
+    await live({ type: "ended", reason: "failed", error: "Couldn't reopen that session (expired or removed on the host). Nothing was sent." });
+    const ta = root.querySelector("textarea.bean-input--composer") as HTMLTextAreaElement;
+    expect(ta.value).toBe("what changed?");
+    expect(root.textContent).toContain("Couldn't reopen that session");
+  });
+
   it("a refused Continue live reports why and leaves Bean in charge", async () => {
     bean.liveResume = vi.fn(async () => ({ error: "I have no record of that run." }));
     await act(async () => { render(h(ChatWindow, {}), root); });

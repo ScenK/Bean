@@ -31,10 +31,12 @@ export const THREAD_SAVE_MS = 1000;
 
 /** The window's agent session. `key` tells a start apart from a later one; `sessionId` arrives with
  * the `started` event (or liveStart's result); texts typed before it are `queued`. `continuing` =
- * resumed from a receipt (Continue live). `receipt` = the CLI's own session, from the `session` event. */
+ * resumed from a receipt (Continue live). `receipt` = the CLI's own session, from the `session` event.
+ * `unopened` = texts sent to a continued session before its resume was accepted (it opens lazily, on
+ * the first send) — handed back to the composer if the host rejects the id. */
 interface LiveState {
   key: string; agent: LiveCli; projectPath: string; sessionId?: string; turns: number; busy: boolean; queued: string[];
-  continuing?: boolean; receipt?: LiveReceipt;
+  continuing?: boolean; receipt?: LiveReceipt; unopened?: string[];
 }
 
 type QueuedSend = { text: string; display?: string; source?: TurnSource };
@@ -255,6 +257,8 @@ export function ChatSession({
   const agentProjectRef = useRef("");
   const rememberProject = (path: string): void => { agentProjectRef.current = path; setAgentProjectState(path); };
   const [live, setLiveState] = useState<LiveState | undefined>(undefined);
+  // Text handed back to the composer (a rejected Continue live); a fresh object per hand-back.
+  const [refill, setRefill] = useState<{ text: string } | undefined>(undefined);
   const liveRef = useRef<LiveState | undefined>(undefined);
   const setLive = (l: LiveState | undefined): void => { liveRef.current = l; setLiveState(l); };
   // Sessions this window adopted — events from any other (a start abandoned mid-startup) are ignored.
@@ -525,6 +529,7 @@ export function ChatSession({
     const l = liveRef.current;
     if (!l || l.agent !== agent) { void startSession(agent, text); return; }
     setItems((prev) => [...prev, { kind: "user", id: newId(), text, source: "live" }]);
+    if (!l.receipt) l.unopened?.push(text);
     if (l.sessionId) void deliver(l.sessionId, agent, text);
     else l.queued.push(text);
   };
@@ -604,7 +609,8 @@ export function ChatSession({
     if (!sessionId || !agent || hasLive()) return;
     // A placeholder until main answers with the recorded project.
     const projectPath = item?.kind === "delegate" ? item.proposal.projectPath : agentProjectRef.current;
-    const l: LiveState = { key: newId(), agent, projectPath, turns: 0, busy: true, queued: [], continuing: true };
+    // Not busy: no opening turn — it opens on the first send.
+    const l: LiveState = { key: newId(), agent, projectPath, turns: 0, busy: false, queued: [], continuing: true, unopened: [] };
     const prevMode = modeRef.current;
     setLive(l);
     setMode(agent);
@@ -649,6 +655,8 @@ export function ChatSession({
     const receipt = cur.receipt ? { receipt: cur.receipt } : {};
     const row = (text: string, tone: "info" | "error"): void => setItems((prev) => [...prev, { kind: "status", id: newId(), text, tone, ...receipt }]);
     if (e.reason === "failed") row(`${name} stopped unexpectedly: ${e.error ?? "no details"}. Back to Bean.`, "error");
+    // The resume never opened (rejected id): what was typed for it got no answer — hand it back.
+    if (e.reason === "failed" && !cur.receipt && cur.unopened?.length) setRefill({ text: cur.unopened.join("\n\n") });
     else if (e.reason === "ended") row(`${name} session ended (idle for 30 min, or it exited). /${e.agent} starts a fresh one with this chat.`, "info");
   };
 
@@ -1009,6 +1017,7 @@ export function ChatSession({
         model={model}
         status={status}
         prefillUrl={prefillUrl}
+        refill={refill}
         linkedNote={linkedNote}
         clis={clis}
         projects={projects}

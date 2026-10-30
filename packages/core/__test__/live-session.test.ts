@@ -179,6 +179,51 @@ describe("startLiveSession resume", () => {
     });
   }
 
+  it("a lazy resume (no prompt) spawns nothing until the first send, then opens with that text", () => {
+    const f = fakeChild();
+    const written: string[] = [];
+    f.stdin.on("data", (c: Buffer) => written.push(c.toString("utf8")));
+    const spawn = vi.fn(() => f.child);
+    const h = startLiveSession({ projectPath: "/p", prompt: "", resume: "s1" }, { onOutput: () => {}, onTurnComplete: () => {}, onExit: () => {} }, spawn);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(h.pid).toBeUndefined();
+    h.send("what changed?");
+    expect(spawn).toHaveBeenCalledWith("claude", expect.arrayContaining(["--resume", "s1"]), "/p");
+    expect(h.pid).toBe(4242);
+    const first = JSON.parse(written.join("").split("\n")[0]!);
+    expect(first.message.content[0].text).toContain("what changed?");
+    expect(first.message.content[0].text).toContain("Co-Authored-By: Bean");
+    h.send("and then?");
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("a lazy resume rejected on its first send fails with RESUME_REJECTED and never starts fresh", () => {
+    const f = fakeChild();
+    const spawn = vi.fn(() => f.child);
+    const onExit = vi.fn();
+    const h = startLiveSession({ projectPath: "/p", prompt: "", resume: "s1" }, { onOutput: () => {}, onTurnComplete: () => {}, onExit }, spawn);
+    h.send("hi");
+    f.stdout.write(rejection);
+    f.emit("close", 1, null);
+    expect(onExit).toHaveBeenCalledWith(new Error(RESUME_REJECTED));
+    h.send("again");
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("a lazy resume that idles out or is stopped before any send ends cleanly with no spawn", () => {
+    vi.useFakeTimers();
+    const spawn = vi.fn();
+    const idle = vi.fn();
+    startLiveSession({ projectPath: "/p", prompt: "", resume: "s1" }, { onOutput: () => {}, onTurnComplete: () => {}, onExit: idle }, spawn, 1000);
+    vi.advanceTimersByTime(1001);
+    expect(idle).toHaveBeenCalledWith(undefined);
+    const stopped = vi.fn();
+    startLiveSession({ projectPath: "/p", prompt: "", resume: "s1" }, { onOutput: () => {}, onTurnComplete: () => {}, onExit: stopped }, spawn).stop();
+    expect(stopped).toHaveBeenCalledWith(undefined);
+    expect(spawn).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("after init, a resumed session behaves like any other", () => {
     const f = fakeChild();
     const onExit = vi.fn();
