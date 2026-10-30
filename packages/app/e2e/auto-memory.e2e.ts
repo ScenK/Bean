@@ -6,7 +6,7 @@ import { appendMemories, dbFile } from "@bean/core";
 import { join } from "node:path";
 
 // #177 + per-turn capture: a typed turn's facts are saved right after the reply, with a
-// "Memory updated" row in the chat whose Undo forgets them; closing stays instant (no card).
+// "Remembered" row in the chat whose Undo forgets them; closing stays instant (no card).
 test("auto memory: a typed turn is captured with an Undo row, close is instant", async () => {
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
@@ -24,7 +24,7 @@ test("auto memory: a typed turn is captured with an Undo row, close is instant",
     await chat.locator(".bean-send").click();
     await expect(chat.locator(".bean-bubble--bean")).toContainText("Noted!");
 
-    const row = chat.locator(".bean-status", { hasText: "Memory updated" });
+    const row = chat.locator(".bean-status", { hasText: "Remembered" });
     await expect(row).toContainText("Prefers pnpm over npm");
     await row.getByRole("button", { name: "Undo" }).click();
     await expect(chat.locator(".bean-status", { hasText: "Forgot" })).toContainText("Prefers pnpm over npm");

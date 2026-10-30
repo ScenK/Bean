@@ -51,7 +51,7 @@ const MASCOTS: Record<AgentId, () => JSX.Element> = {
 };
 
 /** Decorative mascot (aria-hidden) — the speaker's name rides on the bubble as hidden text. */
-export function AgentAvatar({ agent, size = 24, bob = false }: { agent: AgentId; size?: 16 | 24; bob?: boolean }) {
+export function AgentAvatar({ agent, size = 24, bob = false }: { agent: AgentId; size?: 12 | 16 | 18 | 24; bob?: boolean }) {
   const Mascot = MASCOTS[agent];
   return (
     <svg

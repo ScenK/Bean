@@ -36,21 +36,28 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
+/** Row time: "now"/"3h" today, "Oct 28" before that. */
+export function rowTime(iso: string, now: Date): string {
+  if (new Date(iso).toDateString() !== now.toDateString()) {
+    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  return agoText(iso, now).replace("just now", "now").replace(" ago", "");
+}
+
 export function ChatSidebar({ threads, activeId, busy, overlay, onNew, onOpen, onDelete }: Props) {
   const now = new Date();
   return (
     <nav class={`bean-chat-sidebar${overlay ? " bean-chat-sidebar--overlay" : ""}`} aria-label="Chat history">
-      <div class="bean-chat-sidebar-head">
-        <button type="button" class="bean-btn bean-chat-sidebar-new" disabled={busy} onClick={onNew}>+ New chat</button>
-      </div>
+      <div class="bean-chat-sidebar-head">All chats · {threads.length}</div>
       <div class="bean-chat-sidebar-list">
         {threads.length === 0 ? <div class="bean-chat-sidebar-empty">No saved chats yet.</div> : null}
         {groupThreads(threads, now).map((g) => (
           <>
-            <div class="bean-chat-sidebar-group">{g.label}</div>
+            <div class="bean-chat-sidebar-group"><span>{g.label}</span><span>{g.threads.length}</span></div>
             {g.threads.map((t) => {
               const active = t.id === activeId;
               const title = t.title || "Untitled chat";
+              const agents = t.agents.filter((a): a is AgentId => a in AGENT_NAMES);
               return (
                 <div key={t.id} class={`bean-chat-sidebar-row${active ? " bean-chat-sidebar-row--active" : ""}`}>
                   <button
@@ -60,11 +67,18 @@ export function ChatSidebar({ threads, activeId, busy, overlay, onNew, onOpen, o
                     aria-current={active ? "true" : undefined}
                     onClick={() => { if (!active) onOpen(t.id); }}
                   >
-                    <span class="bean-chat-sidebar-title">{title}</span>
-                    <span class="bean-chat-sidebar-meta">
-                      {t.agents.filter((a): a is AgentId => a in AGENT_NAMES).map((a) => <AgentAvatar agent={a} size={16} />)}
-                      {agoText(t.updatedAt, now)}
+                    <span class="bean-chat-sidebar-line">
+                      <span class="bean-chat-sidebar-title">{title}</span>
+                      {active ? null : agents.map((a) => <AgentAvatar agent={a} size={12} />)}
+                      <span class="bean-chat-sidebar-time">{rowTime(t.updatedAt, now)}</span>
                     </span>
+                    {active ? (
+                      <span class="bean-chat-sidebar-meta">
+                        <AgentAvatar agent="bean" size={12} />
+                        {agents.map((a) => <AgentAvatar agent={a} size={12} />)}
+                        {["Bean", ...agents.map((a) => AGENT_NAMES[a])].join(" · ")}
+                      </span>
+                    ) : null}
                   </button>
                   {active ? null : (
                     <button type="button" class="bean-chat-sidebar-row-delete" aria-label={`Delete "${title}"`} title="Delete" onClick={() => onDelete(t.id)}>✕</button>
@@ -75,7 +89,8 @@ export function ChatSidebar({ threads, activeId, busy, overlay, onNew, onOpen, o
           </>
         ))}
       </div>
-      <div class="bean-chat-sidebar-foot">Chats older than 90 days are removed. Incognito chats are never kept.</div>
+      <button type="button" class="bean-btn bean-chat-sidebar-new" disabled={busy} onClick={onNew}>+ New chat</button>
+      <div class="bean-chat-sidebar-foot">Kept 90 days · incognito chats never kept</div>
     </nav>
   );
 }
