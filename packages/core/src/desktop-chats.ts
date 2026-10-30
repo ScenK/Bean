@@ -7,6 +7,11 @@ export interface DesktopChatSummary {
   updatedAt: string;
 }
 
+/** A listed thread plus the live agents that replied in it (`reply` items' `agent`), for the picker. */
+export interface DesktopChatListing extends DesktopChatSummary {
+  agents: string[];
+}
+
 export interface DesktopChat extends DesktopChatSummary {
   createdAt: string;
   /** The renderer's transcript items, opaque to core. */
@@ -42,14 +47,21 @@ export function saveDesktopChat(file: string, chat: DesktopChatInput, now: Date 
 }
 
 /** Prunes threads not saved in DESKTOP_CHAT_RETENTION_DAYS, then lists the rest newest first. */
-export function listDesktopChats(file: string, now: Date = new Date()): DesktopChatSummary[] {
+export function listDesktopChats(file: string, now: Date = new Date()): DesktopChatListing[] {
   const db = openDb(file);
   const cutoff = new Date(now.getTime() - DESKTOP_CHAT_RETENTION_DAYS * 86_400_000).toISOString();
   db.prepare("DELETE FROM desktop_chats WHERE updated_at < ?").run(cutoff);
+  // Agents are read in SQL so the picker never ships transcripts; a non-JSON row lists none.
   return db
-    .prepare("SELECT id, title, updated_at AS updatedAt FROM desktop_chats ORDER BY updated_at DESC, id")
+    .prepare(
+      `SELECT id, title, updated_at AS updatedAt,
+         (SELECT group_concat(agent) FROM (SELECT DISTINCT json_extract(j.value, '$.agent') AS agent
+            FROM json_each(CASE WHEN json_valid(items_json) THEN items_json ELSE '[]' END) j
+            WHERE json_extract(j.value, '$.kind') = 'reply' AND json_extract(j.value, '$.agent') NOT IN ('bean'))) AS agents
+       FROM desktop_chats ORDER BY updated_at DESC, id`,
+    )
     .all()
-    .map((r) => ({ ...r }) as unknown as DesktopChatSummary);
+    .map((r) => ({ id: r.id, title: r.title, updatedAt: r.updatedAt, agents: typeof r.agents === "string" ? r.agents.split(",") : [] }) as DesktopChatListing);
 }
 
 export function getDesktopChat(file: string, id: string): DesktopChat | undefined {

@@ -84,7 +84,8 @@ function nearAnchor(anchor: Rectangle, size: { width: number; height: number }):
   return { x, y };
 }
 
-export function createComponentWindow(kind: ComponentKind, anchor?: Rectangle): BrowserWindow {
+// `bounds`: reopen exactly there instead (a chat-history switch replaces the window in place).
+export function createComponentWindow(kind: ComponentKind, anchor?: Rectangle, bounds?: Rectangle): BrowserWindow {
   // Chat remembers its size (clamped before nearAnchor places it); every other kind is fixed.
   const sizeFile = kind === "chat" ? chatSizeFile(app.getPath("userData")) : undefined;
   const work = (anchor ? screen.getDisplayMatching(anchor) : screen.getPrimaryDisplay()).workArea;
@@ -92,7 +93,7 @@ export function createComponentWindow(kind: ComponentKind, anchor?: Rectangle): 
   const win = new BrowserWindow({
     ...size,
     ...(kind === "chat" ? { minWidth: CHAT_MIN_SIZE.width, minHeight: CHAT_MIN_SIZE.height } : {}),
-    ...(anchor ? nearAnchor(anchor, size) : {}),
+    ...(bounds ?? (anchor ? nearAnchor(anchor, size) : {})),
     title: COMPONENT_WINDOW_TITLE[kind],
     titleBarStyle: "hiddenInset",
     webPreferences: { preload },

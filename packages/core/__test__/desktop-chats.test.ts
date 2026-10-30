@@ -41,9 +41,24 @@ test("lists newest first without the transcript", () => {
   saveDesktopChat(file, { id: A, title: "a", itemsJson: "[]" }, day(1));
   saveDesktopChat(file, { id: B, title: "b", itemsJson: "[]" }, day(3));
   expect(listDesktopChats(file, day(4))).toEqual([
-    { id: B, title: "b", updatedAt: day(3).toISOString() },
-    { id: A, title: "a", updatedAt: day(1).toISOString() },
+    { id: B, title: "b", updatedAt: day(3).toISOString(), agents: [] },
+    { id: A, title: "a", updatedAt: day(1).toISOString(), agents: [] },
   ]);
+});
+
+test("lists each thread's live agents once, ignoring Bean and unparseable rows", () => {
+  const file = tmpDb();
+  const items = [
+    { kind: "reply", text: "hi" },
+    { kind: "reply", agent: "claude", text: "a" },
+    { kind: "working", agent: "codex", text: "…" },
+    { kind: "reply", agent: "claude", text: "b" },
+    { kind: "reply", agent: "bean", text: "c" },
+    { kind: "reply", agent: "codex", text: "d" },
+  ];
+  saveDesktopChat(file, { id: A, title: "a", itemsJson: JSON.stringify(items) }, day(2));
+  saveDesktopChat(file, { id: B, title: "b", itemsJson: "not json" }, day(1));
+  expect(listDesktopChats(file, day(3)).map((c) => [c.id, [...c.agents].sort()])).toEqual([[A, ["claude", "codex"]], [B, []]]);
 });
 
 test("listing prunes only threads untouched for more than 90 days, and never delegate_runs", () => {
