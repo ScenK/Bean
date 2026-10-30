@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import {
   startLiveEngine, isLiveCli, recordRun, releaseRun, updateRunPid, killTree, killPendingGroups,
-  spawnEnv, BEAN_GIT_IDENTITY, TURN_QUEUE_FULL, RESUME_OPENING,
+  spawnEnv, BEAN_GIT_IDENTITY, TURN_QUEUE_FULL, RESUME_OPENING, dbFile, isLiveSessionId, recordDelegateSession,
 } from "@bean/core";
 import type { CliName, LiveCli, LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest, LiveSessionSpawnFn, ResumableRun } from "@bean/core";
 
@@ -9,11 +9,16 @@ import type { CliName, LiveCli, LiveSessionCallbacks, LiveSessionHandle, LiveSes
 // The desktop sibling of chatops' LiveSessionRegistry, without its Discord-shaped parts
 // (1900-char rollover, 1.5s render throttle, co-driver steering). See .memory/project-live-sessions.md.
 
-/** A main→renderer push on `bean:live-event`. `seq` counts up per session from 1. */
+/** The CLI's own session, for Continue live once the session ends. */
+export interface LiveReceipt { sessionId: string; agent: LiveCli; label: string }
+
+/** A main→renderer push on `bean:live-event`. `seq` counts up per session from 1. `sessionId` is
+ * Bean's own id for the session; the CLI's id travels only in the `session` receipt. */
 export type LiveEvent = { sessionId: string; agent: LiveCli; seq: number } & (
   | { type: "started"; projectPath: string; handedOver: number }
   | { type: "output"; line: string }
   | { type: "turn"; result: string; durationMs?: number; costUsd?: number; failed?: string }
+  | { type: "session"; receipt: LiveReceipt }
   // stopped = End / window close; ended = idle timeout or a clean exit on its own; failed = crash.
   | { type: "ended"; reason: "stopped" | "ended" | "failed"; error?: string }
 );
@@ -125,6 +130,11 @@ interface Session {
   stopping: boolean;
   /** The delegate session this one continues (Continue live) — claimed while it lives. */
   resumeId?: string;
+  /** The CLI's session id once reported — claimed like resumeId, so Continue live can't put a
+   * second writer on it while this child is still stopping. */
+  cliId?: string;
+  /** The user's ask (fresh sessions only) — the delegate_runs `instruction`, never the handoff. */
+  ask?: string;
 }
 
 // Distributive, so each event variant keeps its own fields.
@@ -179,6 +189,15 @@ export function createLiveTasks(deps: LiveTasksDeps) {
               ...(t.failed !== undefined ? { failed: t.failed } : {}),
             });
           },
+          onSessionId: (id) => {
+            if (sessions.get(sessionId) !== s || !isLiveSessionId(agent, id)) return;
+            s.cliId = id;
+            // A resume continues a session that already has its row.
+            if (id !== s.resumeId) {
+              recordDelegateSession(dbFile(deps.dir), { surface: "desktop", cli: agent, sessionId: id, projectPath, instruction: s.ask ?? "" });
+            }
+            emit(sessionId, s, { type: "session", receipt: { sessionId: id, agent, label: `${agent} · ${id.slice(0, 4)}…` } });
+          },
           onExit: (err) => ended(sessionId, err),
         },
         liveSpawnFn(agent, deps.resolvedPath),
@@ -215,7 +234,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       }
       // Registered before any await, so a window close during startup finds it and cancels the spawn.
       const sessionId = deps.newId();
-      const s: Session = { ownerId, agent, seq: 0, stopping: false };
+      const s: Session = { ownerId, agent, seq: 0, stopping: false, ask: req.ask.trim() };
       sessions.set(sessionId, s);
       const projectPath = req.projectPath || deps.scratchPath || "";
       let allowed = false;
@@ -251,9 +270,10 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (!isLiveCli(cli)) return { error: "That run can't continue live." };
       if (!deps.enabledClis().includes(cli)) return { error: `${LIVE_AGENT_NAMES[cli]} isn't installed or is turned off in Settings.` };
       if (hasSession(ownerId)) return { error: "This chat already has an agent session — end it first." };
-      if ([...sessions.values()].some((x) => x.resumeId === found.run.sessionId)) return { error: "That session is already live." };
+      const id = found.run.sessionId;
+      if ([...sessions.values()].some((x) => x.resumeId === id || x.cliId === id)) return { error: "That session is already live." };
       const sessionId = deps.newId();
-      const s: Session = { ownerId, agent: cli, seq: 0, stopping: false, resumeId: found.run.sessionId };
+      const s: Session = { ownerId, agent: cli, seq: 0, stopping: false, resumeId: id };
       sessions.set(sessionId, s);
       const err = launch(sessionId, s, projectPath, RESUME_OPENING, 0);
       return err ? { error: err } : { sessionId, agent: cli, projectPath };

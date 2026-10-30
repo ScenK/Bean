@@ -9,7 +9,7 @@ import { BEAN_GIT_IDENTITY, GIT_TRAILER_INSTRUCTION } from "./delegate.js";
 import { escalateKill } from "./kill-tree.js";
 import { spawnEnv } from "./spawn-env.js";
 import {
-  LIVE_SESSION_IDLE_MS, RESUME_REJECTED,
+  LIVE_SESSION_IDLE_MS, RESUME_REJECTED, reportSessionId,
   type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type LiveSessionSpawnFn,
 } from "./live-session.js";
 
@@ -71,6 +71,7 @@ export function startTurnLiveSession(
   let exited = false;
   let stopping = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let reported = false;
 
   const finish = (err?: Error): void => {
     if (exited) return;
@@ -136,6 +137,10 @@ export function startTurnLiveSession(
           mismatch = true;
           if (!stopping) interrupt(c);
           return;
+        }
+        if (!reported) {
+          reported = true;
+          reportSessionId(cbs, sessionId);
         }
       }
       if (e.completed) completed = true;

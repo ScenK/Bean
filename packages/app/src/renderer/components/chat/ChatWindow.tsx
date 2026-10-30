@@ -11,7 +11,7 @@ import type {
   CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, Routine, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
-import type { LiveEvent, LiveStartResult } from "../../../live-tasks.js";
+import type { LiveEvent, LiveReceipt, LiveStartResult } from "../../../live-tasks.js";
 import type { CloseTurn, InterruptedRunNotice } from "../../../ipc.js";
 
 // Closing with a delegate still running asks Keep/Stop first; everything else closes at once
@@ -23,10 +23,10 @@ export const closeTranscript = (items: ChatItem[]): CloseTurn[] => chatTurns(ite
 
 /** The window's agent session. `key` tells a start apart from a later one; `sessionId` arrives with
  * the `started` event (or liveStart's result); texts typed before it are `queued`. `continuing` =
- * resumed from a delegate card (Continue live). */
+ * resumed from a receipt (Continue live). `receipt` = the CLI's own session, from the `session` event. */
 interface LiveState {
   key: string; agent: LiveCli; projectPath: string; sessionId?: string; turns: number; busy: boolean; queued: string[];
-  continuing?: boolean;
+  continuing?: boolean; receipt?: LiveReceipt;
 }
 
 type QueuedSend = { text: string; display?: string; source?: TurnSource };
@@ -330,14 +330,21 @@ export function ChatWindow() {
     );
   };
 
-  // End the window's session (End, a switch, a project change) and say where the chat goes next.
-  // A session still starting is stopped once its id arrives (startSession).
-  const endSession = (next: string): void => {
+  // End the window's session (End, a switch, a project change, a close) and say where the chat goes
+  // next. A session still starting is stopped once its id arrives (startSession). The row offers
+  // Continue live, disabled until the child's `ended` event clears `exiting`.
+  const endSession = (next?: string): void => {
     const l = liveRef.current;
     if (!l) return;
     setLive(undefined);
     if (l.sessionId) window.bean.liveStop(l.sessionId);
-    addStatus(`${AGENT_NAMES[l.agent]} ended (${l.turns} turn${l.turns === 1 ? "" : "s"}) → ${next}`, "info");
+    const row: ChatItem = {
+      kind: "status", id: newId(), tone: "info",
+      text: `${AGENT_NAMES[l.agent]} ended (${l.turns} turn${l.turns === 1 ? "" : "s"})${next ? ` → ${next}` : ""}`,
+      ...(l.receipt ? { receipt: l.receipt, ...(l.sessionId ? { exiting: l.sessionId } : {}) } : {}),
+    };
+    itemsRef.current = [...itemsRef.current, row]; // a close reads the transcript before the next render
+    setItems((prev) => [...prev, row]);
   };
 
   const switchMode = (next: AgentId): void => {
@@ -462,17 +469,20 @@ export function ChatWindow() {
     void startSession(agent, item.offer.instruction);
   };
 
-  // Continue live on a finished delegate card: only the receipt's session id goes to main, which
-  // reads the CLI and project from the recorded run. No handoff — the agent has its context. The
-  // button is hidden while a session is live, and liveRef is set before the await, so a double
-  // click starts one session.
+  // Continue live on a finished delegate card or an ended live session's row: only the receipt's
+  // session id goes to main, which reads the CLI and project from the recorded run. No handoff — the
+  // agent has its context. The button is hidden while a session is live, and liveRef is set before
+  // the await, so a double click starts one session.
   const hasLive = (): boolean => liveRef.current !== undefined; // a function, so TS keeps liveRef unnarrowed
   const continueLive = async (id: string): Promise<void> => {
-    const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id);
-    const sessionId = item?.receipt?.sessionId;
-    const agent = item?.receipt?.agent;
+    const item = itemsRef.current.find((it) => it.id === id);
+    const receipt = item?.kind === "delegate" ? item.receipt : item?.kind === "status" && !item.exiting ? item.receipt : undefined;
+    const sessionId = receipt?.sessionId;
+    const agent = receipt?.agent;
     if (!sessionId || !agent || hasLive()) return;
-    const l: LiveState = { key: newId(), agent, projectPath: item.proposal.projectPath, turns: 0, busy: true, queued: [], continuing: true };
+    // A placeholder until main answers with the recorded project.
+    const projectPath = item?.kind === "delegate" ? item.proposal.projectPath : agentProjectRef.current;
+    const l: LiveState = { key: newId(), agent, projectPath, turns: 0, busy: true, queued: [], continuing: true };
     const prevMode = modeRef.current;
     setLive(l);
     setMode(agent);
@@ -506,12 +516,16 @@ export function ChatWindow() {
     const cur = liveRef.current;
     if (!cur || cur.sessionId !== e.sessionId) return;
     if (e.type === "turn") setLive({ ...cur, turns: cur.turns + 1, busy: false });
+    if (e.type === "session") setLive({ ...cur, receipt: e.receipt });
     if (e.type !== "ended") return;
     setLive(undefined);
     setMode("bean");
     const name = AGENT_NAMES[e.agent];
-    if (e.reason === "failed") addStatus(`${name} stopped unexpectedly: ${e.error ?? "no details"}. Back to Bean.`, "error");
-    else if (e.reason === "ended") addStatus(`${name} session ended (idle for 30 min, or it exited). /${e.agent} starts a fresh one with this chat.`, "info");
+    // The child has exited: the receipt's Continue live is ready at once.
+    const receipt = cur.receipt ? { receipt: cur.receipt } : {};
+    const row = (text: string, tone: "info" | "error"): void => setItems((prev) => [...prev, { kind: "status", id: newId(), text, tone, ...receipt }]);
+    if (e.reason === "failed") row(`${name} stopped unexpectedly: ${e.error ?? "no details"}. Back to Bean.`, "error");
+    else if (e.reason === "ended") row(`${name} session ended (idle for 30 min, or it exited). /${e.agent} starts a fresh one with this chat.`, "info");
   };
   liveEventRef.current = onLiveEvent;
 
@@ -744,9 +758,9 @@ export function ChatWindow() {
         window.bean.delegateCancel(taskId);
       }
     }
-    // The session dies with the window anyway (main's stopOwner); stopping now is just sooner.
-    const sessionId = liveRef.current?.sessionId;
-    if (sessionId) window.bean.liveStop(sessionId);
+    // The session dies with the window anyway (main's stopOwner); stopping now is just sooner, and
+    // leaves its Continue live row in the transcript.
+    endSession();
     closeNow();
   };
 

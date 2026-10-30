@@ -433,6 +433,22 @@ export function ChatPanel({
             ));
           }
           if (it.kind === "status") {
+            if (it.receipt) {
+              return (
+                <div key={it.id} class={`bean-status bean-status--${it.tone}`}>
+                  {it.text}
+                  {canContinueLive(it, clis, !!live) ? (
+                    <>
+                      {" · "}
+                      <button type="button" class="bean-status-action" disabled={!!it.exiting}
+                        title={it.exiting ? "Waiting for the agent to exit…" : it.receipt.label} onClick={() => onContinueLive(it.id)}>
+                        Continue live
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              );
+            }
             if (!it.details?.length) return <div key={it.id} class={`bean-status bean-status--${it.tone}`}>{it.text}</div>;
             return (
               <details key={it.id} class={`bean-status bean-status--${it.tone} bean-status--details`}>

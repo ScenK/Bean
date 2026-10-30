@@ -649,6 +649,8 @@ app.whenReady().then(async () => {
           if (line) taskStatus.upsert(id, { line });
         } else if (event.type === "turn") {
           taskStatus.upsert(id, { line: event.failed ? "Turn failed" : "Waiting for you" });
+        } else if (event.type === "session") {
+          // the receipt is for the chat window only
         } else if (event.reason === "failed") taskStatus.finish(id, "failed", event.error ?? "Session died");
         else taskStatus.finish(id, "done", event.reason === "stopped" ? "Session ended" : "Session ended on its own", false);
         const owner = webContents.fromId(ownerId);
