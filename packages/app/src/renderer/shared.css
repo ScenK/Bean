@@ -445,40 +445,26 @@ button, input, textarea, select, a {
   0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
   40% { opacity: 1; transform: translateY(-3px); }
 }
-/* System lines: plain text behind a status dot, with an inline action — not an outlined pill. */
 .bean-status {
   align-self: center;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0 7px;
   font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--bean-border);
   color: var(--bean-text-dim);
 }
-.bean-status::before {
-  content: "";
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--bean-accent);
-}
-.bean-status--details::before { content: none; }
-.bean-status--done::before { background: var(--bean-orb-check-ink); }
-.bean-status--error { color: var(--bean-error); }
-.bean-status--error::before { background: var(--bean-error); }
+.bean-status--info { color: var(--bean-text-dim); }
+.bean-status--done { color: var(--bean-orb-check-ink); border-color: var(--bean-orb-check-ink); }
+.bean-status--error { color: var(--bean-error); border-color: var(--bean-error); }
 .bean-status-action {
   font: inherit;
-  font-weight: 600;
-  color: var(--bean-accent-text);
+  color: inherit;
   background: none;
   border: none;
   padding: 0;
+  text-decoration: underline;
   cursor: pointer;
 }
-.bean-status-action:hover:not(:disabled) { text-decoration: underline; }
-.bean-status-action:disabled { color: var(--bean-text-dim); cursor: default; }
 
 .bean-card {
   align-self: stretch;
@@ -2923,3 +2909,40 @@ button, input, textarea, select, a {
 .bean-chat-window .bean-chip-menu-row { font-family: inherit; }
 .bean-chat-window .bean-chip-menu-panel,
 .bean-chat-window .bean-slash-menu { border-radius: 14px; }
+/* Chat system lines: plain text behind a status dot, with an inline action — not an outlined pill. */
+.bean-chat-window .bean-status {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0 7px;
+  font-size: 12px;
+  color: var(--bean-text-dim);
+}
+.bean-chat-window .bean-status::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bean-accent);
+}
+.bean-chat-window .bean-status--details::before { content: none; }
+.bean-chat-window .bean-status--done::before { background: var(--bean-orb-check-ink); }
+.bean-chat-window .bean-status--error { color: var(--bean-error); }
+.bean-chat-window .bean-status--error::before { background: var(--bean-error); }
+.bean-chat-window .bean-status-action {
+  font: inherit;
+  font-weight: 600;
+  color: var(--bean-accent-text);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.bean-chat-window .bean-status-action:hover:not(:disabled) { text-decoration: underline; }
+.bean-chat-window .bean-status-action:disabled { color: var(--bean-text-dim); cursor: default; }
