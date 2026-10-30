@@ -102,7 +102,10 @@ export interface ChatSessionApi {
   mountId: string;
   delegateEvent: (e: DelegateEvent) => void;
   liveEvent: (e: LiveEvent) => void;
-  memoryUpdated: (saved: Array<{ id: string; text: string }>, from: string) => void;
+  /** The thread this chat writes, once it has one. */
+  threadId: () => string | undefined;
+  /** A per-turn "Memory updated" receipt for this chat (the shell routes by mount and thread). */
+  memoryUpdated: (saved: Array<{ id: string; text: string }>) => void;
   imageProgress: (from: string) => void;
   runPrompt: (p: { prompt: string; label: string; noteSlug?: string }) => void;
   notices: (notices: InterruptedRunNotice[]) => void;
@@ -125,13 +128,16 @@ export interface ChatSessionProps {
   setThreads: (update: (prev: DesktopChatListing[]) => DesktopChatListing[]) => void;
   onActive: (id: string | undefined) => void;
   onBusy: (busy: boolean) => void;
-  /** Eviction done (saved, memory handed off): the shell mounts the pick in this one's place. */
-  onSwitch: (target: string) => void;
+  /** Eviction done (saved, memory handed off): the shell mounts the pick in this one's place.
+   * `threadId` = the thread the evicted chat wrote, so its late receipts can follow it. */
+  onSwitch: (target: string, threadId: string | undefined) => void;
+  /** Receipts that landed after this thread's chat was switched away — shown again on restore. */
+  takeLateReceipts: (threadId: string) => Array<Array<{ id: string; text: string }>>;
 }
 
 /** One chat inside the chat window. A switch evicts it — final save, close-time memory, release —
  * and the shell mounts the next one with a new mount id; the window itself stays. */
-export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onSwitch }: ChatSessionProps) {
+export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onSwitch, takeLateReceipts }: ChatSessionProps) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState("model");
@@ -295,6 +301,13 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
       onActive(t.id);
       itemsRef.current = [...restoreItems(t.items), ...itemsRef.current];
       savedRef.current = snapshot();
+      // A receipt that missed this chat (it was switched away mid-capture) comes back live, Undo
+      // included — and is then saved like any new row.
+      const late = takeLateReceipts(t.id).map((saved): ChatItem => ({ kind: "memory", id: newId(), saved, state: "saved" }));
+      if (late.length > 0) {
+        itemsRef.current = [...itemsRef.current, ...late];
+        flushRef.current = true;
+      }
       setItems(itemsRef.current);
     }, (err: unknown) => addStatus(`Couldn't open that chat: ${err instanceof Error ? err.message : String(err)}`, "error"));
   }, []);
@@ -832,20 +845,24 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
   };
 
   // A switch away: the final save must land (otherwise this chat stays, with an error row), then
-  // memory, then the shell unmounts this chat — which releases it — and mounts the pick.
+  // memory, then the shell unmounts this chat — which releases it — and mounts the pick. The
+  // composer is blocked meanwhile (ChatPanel's busy); work started some other way during the save
+  // (a Plan-popup prompt, a loopback) cancels the switch rather than being thrown away.
   const evict = async (target: string): Promise<void> => {
     setCloseFlow(null);
     if (evictingRef.current) return;
     evictingRef.current = true;
     setEvicting(true);
-    if (!(await saveThread())) {
+    const stay = (why?: string): void => {
       evictingRef.current = false;
       setEvicting(false);
-      addStatus("Couldn't save this chat, so it stays open — try switching again.", "error");
-      return;
-    }
+      if (why) addStatus(why, "error");
+    };
+    // The second write picks up anything that landed while the first was in flight (a no-op otherwise).
+    if (!(await saveThread()) || !(await saveThread())) { stay("Couldn't save this chat, so it stays open — try switching again."); return; }
+    if (busyRef.current || pendingDelegateStartsRef.current.size > 0 || liveRef.current) { stay(); return; }
     rememberNow();
-    onSwitch(target);
+    onSwitch(target, threadRef.current?.id);
   };
 
   // A sidebar row or New chat. A running delegate or live session asks Keep/Stop first.
@@ -873,11 +890,9 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
     mountId,
     delegateEvent: applyDelegateEvent,
     liveEvent: onLiveEvent,
-    // Tagged pushes: a receipt or progress from a chat that was switched away is dropped, never
-    // shown in this one.
-    memoryUpdated: (saved, from) => {
-      if (from === mountId) setItems((prev) => [...prev, { kind: "memory", id: newId(), saved, state: "saved" }]);
-    },
+    threadId: () => threadRef.current?.id,
+    memoryUpdated: (saved) => setItems((prev) => [...prev, { kind: "memory", id: newId(), saved, state: "saved" }]),
+    // Tagged: progress from a chat that was switched away is dropped, never shown in this one.
     // generate_image started inside the current turn — flip the working bubble so the
     // (up to a minute) wait reads as painting, not a hang.
     imageProgress: (from) => {
@@ -946,7 +961,7 @@ export function ChatSession({ mountId, restoreId, sessionRef, clis, runModels, p
       ) : null}
       <ChatPanel
         items={items}
-        busy={busy}
+        busy={busy || evicting}
         model={model}
         status={status}
         prefillUrl={prefillUrl}

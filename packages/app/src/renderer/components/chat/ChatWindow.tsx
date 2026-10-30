@@ -12,6 +12,25 @@ export function ChatWindow() {
   const sessionRef = useRef<ChatSessionApi | undefined>(undefined);
   const [session, setSession] = useState<{ mountId: string; restoreId?: string }>(() => ({ mountId: crypto.randomUUID() }));
   const [droppedUrl, setDroppedUrl] = useState<string | undefined>(undefined);
+  // A per-turn memory receipt is tagged with the mount that asked. One for a chat switched away
+  // mid-capture follows its thread: shown at once if that thread is back on screen, otherwise held
+  // until it's restored. ponytail: held for this window's lifetime only — a receipt for a chat never
+  // reopened before the window closes stays in Persona's memory list, not in the chat.
+  const evictedRef = useRef(new Map<string, string>()); // evicted mount id → its thread id
+  const lateRef = useRef(new Map<string, Array<Array<{ id: string; text: string }>>>()); // thread id → receipts
+  const onMemoryUpdated = (saved: Array<{ id: string; text: string }>, from: string): void => {
+    const shown = sessionRef.current;
+    if (from === shown?.mountId) { shown.memoryUpdated(saved); return; }
+    const thread = evictedRef.current.get(from);
+    if (thread === undefined) return;
+    if (shown?.threadId() === thread) { shown.memoryUpdated(saved); return; }
+    lateRef.current.set(thread, [...(lateRef.current.get(thread) ?? []), saved]);
+  };
+  const takeLateReceipts = (thread: string): Array<Array<{ id: string; text: string }>> => {
+    const late = lateRef.current.get(thread) ?? [];
+    lateRef.current.delete(thread);
+    return late;
+  };
   // Settings invalidates this catalog, so an already-open card immediately stops offering a
   // CLI the user just disabled.
   const { clis, models: runModels } = useCliAvailability();
@@ -72,7 +91,7 @@ export function ChatWindow() {
     window.bean.onInterruptedRunNotice((n) => to()?.notices(n));
     window.bean.onDelegateEvent((e) => to()?.delegateEvent(e));
     window.bean.onLiveEvent((e) => to()?.liveEvent(e));
-    window.bean.onMemoryUpdated((saved, from) => to()?.memoryUpdated(saved, from));
+    window.bean.onMemoryUpdated((saved, from) => onMemoryUpdated(saved, from));
     window.bean.onChatImageProgress((from) => to()?.imageProgress(from));
     window.bean.onReviewBeforeClose(() => {
       const s = to();
@@ -135,7 +154,9 @@ export function ChatWindow() {
         setThreads={setThreads}
         onActive={setActiveId}
         onBusy={setBusy}
-        onSwitch={(target) => {
+        takeLateReceipts={takeLateReceipts}
+        onSwitch={(target, thread) => {
+          if (thread !== undefined) evictedRef.current.set(session.mountId, thread);
           setActiveId(target === "new" ? undefined : target);
           setBusy(false);
           setSession({ mountId: crypto.randomUUID(), ...(target === "new" ? {} : { restoreId: target }) });

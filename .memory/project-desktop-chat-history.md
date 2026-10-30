@@ -23,8 +23,10 @@ close, delegate start) carries the mount id as its trailing arg and is refused u
 window and that mount is attached to it; the memory receipt and image progress pushes carry it back
 (the renderer drops other mounts'). Release (or the window's `closed` → `releaseChatSender`) drops
 the mount's thread pin/latch and memory state and cancels its delegates (`cancelMount`); a released
-id is never re-attachable. Live sessions are still per window (#517). A push for a released mount
-(a late memory receipt) is dropped, not re-homed — it never lands in the chat now shown.
+id is never re-attachable. Live sessions are still per window (#517). A late memory receipt for a
+released mount never lands in the chat now shown: the shell maps evicted mount → thread and holds it
+until that thread is restored (then it's a live row with Undo, saved), or shows it at once if that
+thread is already back on screen. Held per window lifetime only.
 
 **Main — `buildChatThreadHandlers` (`ipc.ts`).** Sender must be the chat window (`isChatSender`), the id
 a UUID, the payload ≤ 2 MB, and one chat (mount) writes one thread (pinned by its first save or its
@@ -51,7 +53,8 @@ failed save keeps it mounted with an error row), `rememberOnClose`, then the she
 new mount id, whose unmount `chatRelease`s the old (same IPC pipe, so main sees remember first) — and
 the new one restores via `chatThreadGet`. A running delegate or live session still shows the Keep/Stop
 card ("Switching chats stops…"); Stop & switch cancels then evicts, Keep working just closes the card.
-New chat on an untouched empty chat does nothing; an unused new chat never saves, so never gets a row.
+During the eviction save the composer is blocked (ChatPanel `busy`); a turn, delegate start or live
+session that began some other way meanwhile cancels the switch instead of being dropped. New chat on an untouched empty chat does nothing; an unused new chat never saves, so never gets a row.
 `busy` (sidebar disabled) = the shown chat's reply in flight or its eviction. The list loads on mount
 and the active row follows the save ack (`withSaveAck`) — no push channel; listing's per-thread agents
 come from SQL (`json_each`) so transcripts never cross IPC for the picker. Delete refuses a thread any

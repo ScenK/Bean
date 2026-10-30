@@ -71,7 +71,7 @@ describe("ChatWindow switches chats in place", () => {
     expect(root.textContent).not.toContain("first reply");
     expect(document.activeElement).toBe(root.querySelector("textarea.bean-input--composer"));
 
-    // A late receipt from the evicted chat never lands in this one.
+    // A late receipt from the evicted chat never lands in this one; this chat's own does.
     await act(async () => { listeners.onMemoryUpdated!([{ id: "m1", text: "old fact" }], first); });
     expect(root.querySelector(".bean-memory")).toBeNull();
     await act(async () => { listeners.onMemoryUpdated!([{ id: "m2", text: "new fact" }], second); });
@@ -89,6 +89,47 @@ describe("ChatWindow switches chats in place", () => {
     expect(bean.chatAttach).toHaveBeenCalledTimes(1);
     expect(root.textContent).toContain("Couldn't save this chat");
     expect(root.textContent).toContain("one more");
+  });
+
+  it("the composer is blocked while the switch-away save is in flight — nothing typed then is lost", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await send("hello there");
+    let ack: () => void = () => {};
+    bean.chatThreadSave!.mockImplementationOnce((req: { id: string; title: string }) => new Promise((resolve) => {
+      ack = () => resolve({ id: req.id, title: req.title, updatedAt: new Date().toISOString() });
+    }));
+    await send("one more"); // its reply queues the delayed write
+    await clickEl(otherRow());
+    const ta = root.querySelector("textarea.bean-input--composer") as HTMLTextAreaElement;
+    await send("typed during the save");
+    expect(bean.chat).toHaveBeenCalledTimes(2);
+    expect(ta.value).toBe("typed during the save"); // the draft stays put
+    await act(async () => { ack(); });
+    await flush();
+    expect(bean.chatThreadGet).toHaveBeenCalledWith(OTHER, expect.any(String));
+  });
+
+  it("a receipt that lands after its chat was switched away comes back, Undo included, when that chat is reopened", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    const first = mounts("chatAttach")[0]!;
+    await send("hello there");
+    const thread = (bean.chatThreadSave!.mock.calls[0]![0] as { id: string }).id;
+    await clickEl(otherRow());
+    await act(async () => { listeners.onMemoryUpdated!([{ id: "m1", text: "old fact" }], first); });
+    expect(root.textContent).not.toContain("old fact");
+
+    bean.chatThreadGet!.mockResolvedValueOnce({ id: thread, title: "hello there", items: [{ kind: "user", id: "item-1", text: "hello there" }], noteSlug: null });
+    await clickEl([...root.querySelectorAll(".bean-chat-sidebar-open")].find((b) => b.textContent?.includes("hello there")));
+    expect(root.textContent).toContain("old fact");
+    expect([...root.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Undo")).toBe(true);
+    // ...and it's saved into that thread like any new row.
+    await vi.waitFor(() => {
+      const last = bean.chatThreadSave!.mock.calls.at(-1)![0] as { id: string; items: Array<{ kind: string }> };
+      expect(last.id).toBe(thread);
+      expect(last.items.some((it) => it.kind === "memory")).toBe(true);
+    });
   });
 
   it("New chat on an untouched empty chat does nothing; on a used one it mounts an empty chat", async () => {
