@@ -1956,7 +1956,7 @@ button, input, textarea, select, a {
   border-radius: 13px;
   padding: 11px 15px;
 }
-.bean-routines-todo-add:focus-within { border-color: var(--bean-accent-text); }
+
 .bean-routines-todo-add-input {
   font-size: 13px;
   font-weight: 600;
@@ -2206,9 +2206,33 @@ button, input, textarea, select, a {
 
 /* Keyboard focus must stay visible: a few inputs clear the UA outline for the wrapper look.
    Last rule in the file so it wins the specificity tie with those `outline: none` blocks. */
-:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+:where(button, a, input[type="checkbox"], [tabindex]):focus-visible {
   outline: 2px solid var(--bean-accent-text);
   outline-offset: 2px;
+}
+
+/* Text fields get a soft glow instead of the hard ring. Wrapped fields (composer, search,
+   sentence box) glow on the wrapper; the bare input inside stays clean. */
+:where(input:not([type="checkbox"]), textarea, select):focus-visible { outline: none; }
+:where(.bean-input--boxed, .bean-card-prompt, .bean-routines-watch-command, .bean-routines-watch-url,
+  .bean-routines-chip-select, .bean-skills-search, .bean-chat-input-shell, .bean-rb-describe,
+  .bean-routines-todo-add) {
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+:where(.bean-input--boxed, .bean-card-prompt, .bean-routines-watch-command, .bean-routines-watch-url,
+  .bean-routines-chip-select, .bean-skills-search, .bean-rb-describe,
+  .bean-routines-todo-add):focus-within {
+  border-color: color-mix(in oklch, var(--bean-accent) 40%, var(--bean-border));
+  box-shadow:
+    inset 0 1px 2px oklch(0.3 0.03 50 / 0.07),
+    0 0 0 3px color-mix(in oklch, var(--bean-accent) 14%, transparent);
+}
+/* Composer keeps its drop shadow under the glow. */
+.bean-chat-input-shell:focus-within {
+  border-color: color-mix(in oklch, var(--bean-accent) 35%, var(--bean-border));
+  box-shadow:
+    0 0 0 3px color-mix(in oklch, var(--bean-accent) 12%, transparent),
+    0 6px 20px -12px oklch(0.4 0.05 50 / 0.35);
 }
 
 /* --- Dashboard (4a "night-shift ledger"): rail of runs + one time spine ---------------- */
