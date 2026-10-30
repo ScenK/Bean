@@ -13,7 +13,7 @@ export function NoteCard({
   onDismiss,
 }: {
   note: ProposedNote;
-  state: "pending" | "saved" | "dismissed";
+  state: "pending" | "saved" | "dismissed" | "expired";
   /** Current version of the linked note, when updating in place. */
   linkedVersion?: number;
   /** The chat's latest attached images (data URLs), saved into the note when checked. */
@@ -65,7 +65,7 @@ export function NoteCard({
           </button>
         ) : null}
         <button type="button" class="bean-btn bean-btn--ghost" disabled={done} onClick={onDismiss}>
-          {state === "dismissed" ? "Dismissed" : "Dismiss"}
+          {state === "dismissed" ? "Dismissed" : state === "expired" ? "Expired" : "Dismiss"}
         </button>
       </div>
     </div>

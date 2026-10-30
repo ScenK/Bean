@@ -26,14 +26,14 @@ import {
   addTodo, claimTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   recoverInterruptedTodos, deleteTodosForRoutine, sweepDeadRuns,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  availableModels, pinnedStepSelection, isLiveCli, findDelegateRun,
+  availableModels, pinnedStepSelection, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat, deleteDesktopChat,
   createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens,
-  buildRoutineHandlers, buildSkillProposalHandlers, buildTodoHandlers, buildPendingUpdateStore, type ChatPromptPayload,
+  buildRoutineHandlers, buildSkillProposalHandlers, buildTodoHandlers, buildPendingUpdateStore, buildChatThreadHandlers, type ChatPromptPayload,
 } from "./ipc.js";
 import { IPC, type Theme, type ComponentKind, type DashboardTarget } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
@@ -1005,6 +1005,7 @@ app.whenReady().then(async () => {
         loadRoutines: () => loadRoutines(routinesPath),
         addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
       }),
+      chatThreadHandlers: buildChatThreadHandlers({ dbFile: dbFile(dir), saveDesktopChat, getDesktopChat, deleteDesktopChat }),
     });
 
     await loadAvatarWindow(avatar);
