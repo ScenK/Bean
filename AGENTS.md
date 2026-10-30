@@ -85,12 +85,17 @@ Per-package / single test:
 
 ```bash
 pnpm --filter @bean/core test
-pnpm --filter @bean/core exec vitest run __test__/router.test.ts
-pnpm --filter @bean/core exec vitest run -t "falls back"   # by test name
+pnpm --filter @bean/core exec vitest run __test__/converse.test.ts
+pnpm --filter @bean/core exec vitest run -t "<test name>"
 ```
 
 **Validation gate:** run `pnpm test && pnpm typecheck` and confirm both exit 0 before
-claiming work is done. If a change touches subprocesses, spawned CLIs/bots, PATH/env handling,
+claiming work is done. If the diff touches `packages/app/` (renderer, CSS, main, preload, or
+`e2e/` itself), also run `pnpm build && pnpm --filter @bean/app run test:e2e` and confirm it
+exits 0 — the e2e specs assert things unit tests can't see (rendered contrast, window sizes,
+chat restore). Core/Discord/Teams-only diffs skip it. When you deliberately change something a
+test asserts (a token, a size, a list), grep `packages/app/e2e/` too, not just `__test__/`.
+If a change touches subprocesses, spawned CLIs/bots, PATH/env handling,
 Electron resources, app boot, IPC/preload, window/tray behavior, or anything that differs between
 source checkout and packaged app, also verify both worlds before claiming done:
 
@@ -105,8 +110,8 @@ and use fresh temp `HOME`/`~/.bean` fixtures when config affects the result). CI
 (`.github/workflows/ci.yml`) runs the same two commands on every push to `main` and every PR,
 plus an `e2e` job (Playwright driving the real built Electron app — see `packages/app/e2e/`) on
 `macos-latest`. The `e2e` job is advisory, not a required check, so an occasional flake never
-blocks a merge — but check its result before merging a PR that touches app boot, IPC, or window
-behavior.
+blocks a merge — but a red `e2e` on a PR that touches `packages/app/` is a real failure until
+shown to be a flake (re-run it); don't merge over it.
 
 ---
 
@@ -128,54 +133,32 @@ worktrees — each checkout needs its own.
 
 ## Architecture
 
-- **`@bean/core`** — all routing/IO logic, zero Electron, pure and dependency-injected (the
-  rule and rationale: [`.memory/convention-core-is-electron-free.md`](.memory/convention-core-is-electron-free.md)):
-  - `converse.ts` `converse()` builds a system prompt from persona, skills/projects catalog,
-    and memories, and can call the `propose_run` tool (skill + project + instruction) to
-    return a `ConverseResult` with an optional `proposedRun: RouteSuggestion`. This is the
-    active path behind the ChatWindow.
-  - `router.ts` `route()` takes a `deps.chat` function, not an OpenAI client. It always
-    returns a `RouteSuggestion`; on any chat/parse failure or an unknown skill/project it
-    **falls back** to `projects[0]` + its `defaultSkill` (or `skills[0]`) with `confidence: 0`.
-    Never throws. Still wired up (`window.bean.route()` → `bean:route` → `buildRouteHandler()`)
-    but no renderer code calls it anymore — `converse()` supersedes it for the chat flow.
-  - `launcher.ts` `launchCommand()`/`launchInTerminal()` handle the launch modes `"opencode"`,
-    `"claude"`, `"codex"`, and `"open"` (zed). For terminal CLIs it writes a temp
-    `bean-run-*.command` script and opens it via `open -a <terminalApp>`; for `"open"` it
-    spawns `zed` directly. Fire-and-forget — Bean does not stream or track that process's output.
-  - `delegate.ts` `runDelegate()` is the tracked counterpart to the launcher: it spawns a
-    headless CLI (`delegateCommand()` maps Claude/OpenCode/Codex flags), streams a parsed tail,
-    collects the final result, and can cancel the process group. Pure and DI'd like the rest.
-  - `routine-store.ts` / `routine-runner.ts` — routines are cron-scheduled pipelines of
-    `delegate`/`chat` steps saved as `~/.bean/routines/*.json` (state in `.state.json`).
-    `runRoutine()` executes a routine and delivers to its sinks; `cron.ts` schedules them.
-  - `system-control.ts` — the `system_control` action tool. The model never writes AppleScript;
-    it picks a verb from a closed union and each maps to a fixed, validated `execFile` argv.
-  - `chatops/` — the shared bot layer behind the Discord/Teams surfaces: `bot.ts`, conversation
-    state, `ambient.ts` (untagged channel chatter kept as context — only an explicit @mention,
-    reply, or DM gets a turn), and the one-shot `*ProposalStore` claim stores that back
-    confirm-first cards. `db.ts` is the SQLite (FTS5) store for memory/notes/chatops history.
-  - `openai-chat.ts` is the only place the real `openai` SDK is touched; it adapts the client
-    to the `deps.chat` shape. `makeOpenAIChatWithClient` exists so tests inject a fake client.
-  - `config.ts` / `skill-library.ts` / `project-registry.ts` are pure loaders taking explicit
-    paths. Missing/invalid files degrade to `[]`; only a missing **config** throws.
-  - `index.ts` re-exports everything; import from `@bean/core`, not deep paths.
+Only the boundaries and rules that aren't obvious from the code — use CodeGraph for structure,
+call paths and signatures.
 
-- **`@bean/app`** — Electron shell bundled with **esbuild** (not tsc). `main.ts` is the wiring
-  layer: loads `~/.bean` config via core, builds the real OpenAI chat fn, opens windows, calls
-  `registerIpc`. `ipc.ts` keeps handlers thin and testable (`buildChatHandler`/`buildLaunchHandler`
-  are separable from Electron). The renderer is `avatar.ts`/`orb.ts` plus component windows
-  under `renderer/components/` (`chat`, `plan`, `projects`, `skills`, `persona`, `routines`,
-  `dashboard`, `settings`, `about`) — there is no `intake`/`console` page anymore.
+- **`@bean/core`** — all routing/IO logic, zero Electron, pure and dependency-injected (rule and
+  rationale: [`.memory/convention-core-is-electron-free.md`](.memory/convention-core-is-electron-free.md)).
+  Import from `@bean/core` (`index.ts` re-exports everything), not deep paths.
+  - `openai-chat.ts` is the only place the `openai` SDK is touched; everything else takes a
+    `deps.chat` function, so tests inject a fake (`makeOpenAIChatWithClient`).
+  - Three ways to run a CLI: `launcher.ts` is fire-and-forget into Terminal.app (Bean never sees
+    the output); `delegate.ts` is a tracked one-shot (stream, collect, cancel the process group);
+    `live-session.ts` / `turn-live-session.ts` are multi-turn live sessions (agent mode in the
+    desktop chat, live channels in chatops).
+  - `system-control.ts` — the model never writes AppleScript; it picks a verb from a closed union
+    and each maps to a fixed, validated `execFile` argv. Keep it that way.
+  - `chatops/` — only an explicit @mention, reply, or DM gets a turn; untagged channel chatter is
+    kept as context (`ambient.ts`). Confirm-first cards are backed by one-shot claim stores.
+  - Loaders (`config.ts`, `skill-library.ts`, `project-registry.ts`) take explicit paths;
+    missing/invalid files degrade to `[]` — only a missing **config** throws.
 
-- **`@bean/discord` / `@bean/teams`** — standalone Node bot servers (not Electron), each a
-  thin surface that wires its platform SDK to core's `chatops/` layer and reads its own
-  `*-config.ts`. They share the core brain; adding a surface shouldn't touch core logic.
+- **`@bean/app`** — Electron shell bundled with **esbuild** (not tsc). `main.ts` wires core into
+  Electron; `ipc.ts` keeps handlers thin and separable from Electron so they're unit-testable.
+  The renderer is Preact: the avatar/orb plus one component window per folder under
+  `renderer/components/`.
 
-Control flow: `ChatWindow` → `window.bean.chat()` (preload bridge) → IPC `bean:chat` →
-`buildChatHandler()` → `converse()` → optional `proposedRun` rendered as a `ProposalCard` →
-user confirms → `window.bean.launch()` → IPC `bean:launch` → `buildLaunchHandler()` →
-`launchInTerminal()` → Terminal.app / CLI.
+- **`@bean/discord` / `@bean/teams`** — thin surfaces wiring a platform SDK to core's `chatops/`
+  layer. Adding a surface shouldn't touch core logic.
 
 Subsystem gotchas that have bitten before live in `.memory/` — read the relevant entry
 **before** touching that area (preload bundling, IPC channels, window behavior). `INDEX.md`
@@ -201,8 +184,9 @@ Two layers:
 
 ## Code Style
 
-- **Files:** kebab-case (`skill-library.ts`, `openai-chat.ts`); TypeScript `.ts`.
-- **Modules:** both packages are ESM (`"type": "module"`) with `verbatimModuleSyntax` on — use
+- **Files:** kebab-case `.ts` (`skill-library.ts`); Preact components are PascalCase `.tsx`
+  (`ChatPanel.tsx`).
+- **Modules:** every package is ESM (`"type": "module"`) with `verbatimModuleSyntax` on — use
   `.js` extensions in relative imports (`from "./types.js"`) and `import type` for type-only
   imports. The **one exception** is the Electron preload, which is emitted as CommonJS `.cjs`.
 - **Async:** async/await with explicit `Promise<T>` return types on exports.
@@ -220,23 +204,21 @@ Two layers:
 
 Per-user, outside the repo. Path helpers live in `core/src/config.ts`.
 
-- `~/.bean/config.json` → `{ "openaiApiKey", "model", "terminalApp", "editorApp",
-  "delegateCli", "systemControls", "webSearch", "autoMemory" }`. Only `openaiApiKey`/`model` are load-bearing (`model`
-  defaults to `gpt-4o-mini`); the rest default to `""`/`false` (except `autoMemory`, default `true`). A missing config throws; an
-  empty `openaiApiKey` shows an error dialog but the app still opens.
+- `~/.bean/config.json` → `BeanConfig` (`core/src/types.ts`; defaults in `loadConfig()`). Only
+  `openaiApiKey`/`model` are load-bearing. A missing config throws; an empty `openaiApiKey`
+  shows an error dialog but the app still opens.
 - `~/.bean/clis.json` → optional per-provider model lists overriding the repo default
   `.bean/clis.json`: `[{ "provider": "claude", "models": ["sonnet", ...] }]`. A user entry
   replaces that provider's default list; model strings are passed verbatim to `--model`.
   Providers are still code (`opencode`, `claude`, `codex`) — only their model lists are config.
 - `~/.bean/skills/*.md` → one markdown file per skill. `description:` frontmatter is the
-  router-visible summary; otherwise the first heading is used. The full body composes the prompt.
+  catalog summary the model sees; otherwise the first heading is used. The full body composes the prompt.
 - `~/.bean/projects.json` → `[{ "name": "...", "path": "/abs/path", "defaultSkill": "..." }]`
-  (`defaultSkill` optional; the first project + its default skill is the router fallback).
+  (`defaultSkill` optional).
 - `~/.bean/routines/*.json` → one routine per file; runtime state (last run, history) lives
   beside them in `.state.json` so definitions stay clean and shareable.
 - `~/.bean/bean.db` → SQLite (FTS5) store for memories, notes, chatops history, and the
-  `delegate_runs` session log ([`.memory/project-delegate-session-receipts.md`](.memory/project-delegate-session-receipts.md)) — replaces
-  the old flat `memory.json` + `notes/*.md`. Other files: `persona.json`, `reminders.json`.
+  `delegate_runs` session log ([`.memory/project-delegate-session-receipts.md`](.memory/project-delegate-session-receipts.md)). Other files: `persona.json`, `reminders.json`.
 
 All path helpers live in `core/src/config.ts` — check there for the current set, don't
 hand-maintain the list here.
