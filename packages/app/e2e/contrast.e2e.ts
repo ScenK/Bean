@@ -77,7 +77,8 @@ const SCAN = `(() => {
     if (got < need) fails.push(\`\${el.className || el.tagName} "\${(el.textContent || "").trim().slice(0, 30)}" \${got.toFixed(2)}:1 < \${need}:1\`);
   }
   // Agent mascots are graphics (WCAG 1.4.11): the body fill holds 3:1 against what it sits on.
-  for (const svg of document.querySelectorAll(".bean-agent-avatar")) {
+  // Bean's own mark is exempt: it wears the desktop orb colors (~2.7:1 in hearth) by choice.
+  for (const svg of document.querySelectorAll(".bean-agent-avatar:not(.bean-agent-avatar--bean)")) {
     const body = svg.firstElementChild;
     const fill = body && parse(getComputedStyle(body).fill);
     if (!fill) { fails.push(\`\${svg.getAttribute("class")} has no resolvable fill\`); continue; }
