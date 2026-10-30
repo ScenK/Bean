@@ -4,7 +4,7 @@
 serve **unrelated** purposes — don't conflate or merge them:
 
 - **`defaultSkill?: string`** — a single best-guess fallback name, consumed by
-  `router.ts`/`drop-plan.ts`/`avatar.ts` heuristics ("no model match → try this skill").
+  `drop-plan.ts`/`avatar.ts` heuristics ("no model match → try this skill").
   Pre-existing, untouched by the skills-grouping feature.
 - **`skills?: string[]`** — explicit many-to-many assignment: which skills the Skills panel
   groups under this project. A skill name can appear in multiple projects' `skills` arrays

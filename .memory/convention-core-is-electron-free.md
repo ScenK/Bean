@@ -3,7 +3,7 @@
 `@bean/core` must never import `electron` or reach for ambient IO. Everything it needs is
 **injected**:
 
-- `route()` takes a `deps.chat` function, not an OpenAI client.
+- `converse()` takes a `deps.chat` function, not an OpenAI client.
 - `runOpencode()` takes an injectable `SpawnFn` (defaults to `node:child_process.spawn`).
 - config/skills/projects loaders take explicit file paths, not `~/.bean` lookups.
 

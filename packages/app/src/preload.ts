@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC, type Theme, type ComponentKind, type DashboardTarget, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type {
-  RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
+  RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
@@ -14,7 +14,6 @@ import type { RoutineBuildView } from "./routine-builder.js";
 import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
 
 contextBridge.exposeInMainWorld("bean", {
-  route: (input: RouteInput): Promise<RouteSuggestion> => ipcRenderer.invoke(IPC.route, input),
   launch: (req: LaunchRequest): void => ipcRenderer.send(IPC.launch, req),
   delegateStart: (req: DelegateStartRequest, mountId: string): Promise<string> => ipcRenderer.invoke(IPC.delegateStart, req, mountId),
   delegateCancel: (taskId: string): void => ipcRenderer.send(IPC.delegateCancel, taskId),

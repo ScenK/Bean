@@ -1,10 +1,10 @@
 import {
-  route, converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, type ImageGenDeps,
+  converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, type ImageGenDeps,
   attachNoteImages, MAX_NOTE_IMAGE_BYTES, type ImageAttachment,
   availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine,
   listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash,
   type SkillProposal, type ProposalOutcome,
-  type Project, type RouteInput, type RouteSuggestion, type Skill,
+  type Project, type RouteSuggestion, type Skill,
   type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type ExtractResult, type ChatTurn,
   type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
@@ -15,7 +15,6 @@ import type { RoutineBuildView } from "./routine-builder.js";
 import type { WatchCheckResult } from "@bean/core";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
-import type { RouterDeps } from "@bean/core";
 import { BrowserWindow, dialog, screen, shell, type IpcMain, type WebContents } from "electron";
 import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
@@ -173,29 +172,6 @@ export function buildUpdateHandlers(deps: UpdateHandlerDeps) {
       }
     },
     openReleasesPage: (): void => deps.openReleasesPage(),
-  };
-}
-
-export interface RouteHandlerDeps {
-  loadSkills: (projectDir: string, userDir: string) => Promise<Skill[]>;
-  loadProjects: (file: string) => Promise<Project[]>;
-  chat: RouterDeps["chat"];
-  getModel: () => string;
-  projectSkillsDir: string;
-  skillsDir: string;
-  projectsFile: string;
-}
-
-export function buildRouteHandler(deps: RouteHandlerDeps) {
-  return async (input: RouteInput): Promise<RouteSuggestion> => {
-    const [skills, projects] = await Promise.all([
-      deps.loadSkills(deps.projectSkillsDir, deps.skillsDir),
-      deps.loadProjects(deps.projectsFile),
-    ]);
-    // Same `enabled` gate as buildChatHandler — route()'s fallback picks a skill on its own, so
-    // an unfiltered list would hand back a switched-off one.
-    const enabled = skills.filter((s) => s.enabled !== false);
-    return route(input, enabled, projects, { chat: deps.chat, model: deps.getModel() });
   };
 }
 
@@ -1007,7 +983,13 @@ export function buildTodoHandlers(deps: TodoHandlerDeps) {
   };
 }
 
-export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, ChatopsHandlerDeps, UpdateHandlerDeps {
+export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, UpdateHandlerDeps {
+  loadSkills: (projectDir: string, userDir: string) => Promise<Skill[]>;
+  loadProjects: (file: string) => Promise<Project[]>;
+  getModel: () => string;
+  projectSkillsDir: string;
+  skillsDir: string;
+  projectsFile: string;
   converse: ConverseDeps["chat"];
   saveSkill: (dir: string, name: string, body: string) => Promise<void>;
   deleteSkill: (dir: string, name: string) => Promise<void>;
@@ -1085,9 +1067,6 @@ export interface RegisterDeps extends RouteHandlerDeps, ThemeHandlerDeps, Chatop
 
 /** `releaseChatSender` = a chat window is gone: release every chat it still had attached. */
 export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChatSender: (senderId: number) => void } {
-  const routeHandler = buildRouteHandler(deps);
-  ipcMain.handle(IPC.route, (_e, input: RouteInput) => routeHandler(input));
-
   const chatHandler = buildChatHandler(deps);
   const memoryHandlers = buildMemoryHandlers(deps);
   // Every per-chat request names its chat's mount id (see buildChatMounts). Refused unless it comes

@@ -1,5 +1,5 @@
 import type {
-  RouteInput, RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
+  RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
@@ -15,7 +15,6 @@ import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
 declare global {
   interface Window {
     bean: {
-      route(input: RouteInput): Promise<RouteSuggestion>;
       launch(req: LaunchRequest): void;
       delegateStart(req: DelegateStartRequest, mountId: string): Promise<string>;
       delegateCancel(taskId: string): void;

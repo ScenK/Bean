@@ -424,7 +424,7 @@ export function SkillsPanel({
             <textarea
               class="bean-skills-editor"
               value={draft}
-              placeholder={"---\ndescription: One line for the router\ntarget: terminal\n---\n# Skill title\nSteps..."}
+              placeholder={"---\ndescription: One line for Bean\ntarget: terminal\n---\n# Skill title\nSteps..."}
               onInput={(e) => { setDraft((e.target as HTMLTextAreaElement).value); setSaveError(undefined); }}
             />
             {saveError ? <div class="bean-skills-notice">{saveError}</div> : null}
