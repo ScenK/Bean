@@ -1193,6 +1193,30 @@ test("proposeLiveSession posts the confirm card, defaulting to the first project
   expect(card).toContain("look at auth");
 });
 
+test("a new live card defaults to the last started session's project, model and skill", async () => {
+  let memory: Record<string, string> = {};
+  const { deps } = makeDeps({
+    liveSessionsEnabled: () => true,
+    loadProjects: async () => [{ name: "bean", path: "/p/bean" }, { name: "web", path: "/p/web" }],
+    loadModelMemory: async () => memory,
+    saveModelMemory: async (m) => { memory = m; },
+  });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.proposeLiveSession({ conversationId: "c1", instruction: "first", proposedBy: "sam" }, effects);
+  await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: {
+    beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards), projectPath: "/p/web", model: "opus", skillName: "fix-bug",
+  } }, effects);
+  expect(memory).toMatchObject({ "live:project": "/p/web", "live:cli": "claude", "live:model:claude": "opus", "live:skill": "fix-bug" });
+
+  await bot.proposeLiveSession({ conversationId: "c2", instruction: "second", proposedBy: "sam" }, effects);
+  expect(effects.cards.at(-1)).toMatchObject({ projectName: "web", model: "opus", skillName: "fix-bug", cli: "claude" });
+  // A remembered skill that's gone falls back to none rather than a dangling pick.
+  memory = { ...memory, "live:skill": "deleted-skill" };
+  await bot.proposeLiveSession({ conversationId: "c3", instruction: "third", proposedBy: "sam" }, effects);
+  expect((effects.cards.at(-1) as { skillName?: string }).skillName).toBeUndefined();
+});
+
 test("proposeLiveSession refuses when disabled, with no card", async () => {
   const off = makeDeps({ liveSessionsEnabled: () => false });
   const botOff = buildTeamsBot(off.deps);
