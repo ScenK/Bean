@@ -51,9 +51,11 @@ see `db.ts`'s `migrateFromFiles`.
   validation rejects, failed = model call threw); desktop `rememberOnClose` acts on all three.
   The recall block frames memories as data and tags them `[id]`.
 - **Explicit remember/forget:** `makeMemoryTools()` → direct `remember` + `forget_memory` action
-  tools, offered only on a typed turn (`ChatRequest.source === "typed"` on desktop). Desktop
-  shows a `🧠 Remembered — …` status line; chatops posts a Forget card
-  (see [[project-chatops-memory-flow]]).
+  tools, offered only on a typed turn (`ChatRequest.source === "typed"` on desktop), authorized
+  in `run()` by a typed-text-only intent classifier. Desktop shows a `🧠 Remembered — …` status
+  line; chatops posts a Forget card (see [[project-chatops-memory-flow]]). A forget turn is marked
+  handled in `captureTurn` and its `ConverseResult.forgotten` texts join the renderer's
+  `rejectedMemoriesRef`, so close catch-up never re-saves what was just forgotten.
 - **Recall:** `converse()` ranks via `selectRelevantMemories()` — below 20 memories inject all;
   above, an FTS5 bm25 top-12 against the latest user message.
 - **Enabled-skills filter** lives in `buildChatHandler` (app `ipc.ts`), not in `converse()`.

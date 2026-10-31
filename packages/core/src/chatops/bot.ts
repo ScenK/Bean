@@ -177,7 +177,7 @@ export interface TeamsBotDeps {
   appendMemories: (additions: Memory[]) => Promise<void>;
   /** Idempotent per-id delete (remember card's Forget button, forget_memory tool). `subject`
    * set = only that speaker's private rows may go (non-owners); absent = any row (the owner). */
-  deleteMemories: (ids: string[], subject?: string) => Promise<number>;
+  deleteMemories: (ids: string[], subject?: string) => Promise<string[]>;
   /** Share button on a private receipt: only the row's author (`actor`) can make it household-shared. */
   shareMemory: (id: string, actor: string) => Promise<number>;
   /** Config `autoMemory`, read per turn (no restart): gates DM auto-capture only, never the
@@ -917,8 +917,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   async function handleForget(memoryId: string | undefined, actor: string, subject: string | undefined, fx: BotEffects): Promise<void> {
     if (!memoryId) return;
     const text = (await deps.loadMemories()).find((m) => m.id === memoryId)?.text;
-    const n = await deps.deleteMemories([memoryId], subject);
-    if (n > 0) await fx.post(`Forgot (by ${actor}): ${text ?? "that fact"}`);
+    const gone = await deps.deleteMemories([memoryId], subject);
+    if (gone.length > 0) await fx.post(`Forgot (by ${actor}): ${text ?? "that fact"}`);
     else await fx.post(text === undefined ? "Already forgotten." : "Only the owner can forget household facts or another member's.");
   }
 
@@ -1422,6 +1422,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const memoryTools = makeMemoryTools({
           append: deps.appendMemories, forget: (ids) => deps.deleteMemories(ids, isOwner ? undefined : msg.fromId),
           memories, projects, latestUserText: typed, ...(scope === "private" ? { subjectId: msg.fromId } : {}),
+          classifier: { chat: deps.chat, model: deps.model },
         });
         // Delivery goes where it was asked: a Discord DM → this speaker's DM, anything else
         // (every Teams conversation, a Discord channel) → this conversation's full ingress id.

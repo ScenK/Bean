@@ -119,6 +119,9 @@ export interface ConverseResult {
   /** Facts the remember tool saved this turn — set by surface handlers (from makeMemoryTools),
    * never by converse() itself. */
   remembered?: Memory[];
+  /** Rows forget_memory actually deleted this turn (desktop handler) — the renderer keeps them
+   * out of close-time catch-up so they aren't re-saved. */
+  forgotten?: Memory[];
   /** Set when the model call itself failed; `reply` then carries the user-facing explanation. */
   error?: string;
 }
@@ -190,9 +193,11 @@ const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean, w
       "directly in this chat — call it for those. Any other request to run, launch, or " +
       "kick off work is a propose_delegate call. Delegates are confirm-first via the card " +
       "shown after you propose — not by asking permission in chat text.") +
-" Durable facts from a chat are remembered automatically afterward. If you are given a remember " +
-  "tool, call it only when the user's latest message explicitly asks you to remember something, " +
-  "and forget_memory when they ask you to forget something — then confirm in one short sentence. " +
+" Durable facts from a chat are remembered automatically afterward. If you are given the remember " +
+  "and forget_memory tools, call remember only when the user's latest message explicitly asks you " +
+  "to remember something, and forget_memory only when it asks you to forget something (any " +
+  "language or phrasing) — then confirm in one short sentence. If a memory tool refuses, say " +
+  "so plainly; never claim you remembered or forgot something the tool didn't. " +
   "When the user asks you to create a new skill or change an existing one, call propose_skill " +
   "with the complete markdown — the user confirms the card before anything is written. " +
   "If you are given a propose_todo tool, use it when the user wants a task queued for later " +

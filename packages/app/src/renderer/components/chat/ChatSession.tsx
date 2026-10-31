@@ -221,7 +221,8 @@ export function ChatSession({
   const evictingRef = useRef(false);
   const [evicting, setEvicting] = useState(false);
   useEffect(() => onBusy(evicting), [evicting]);
-  // Facts undone from a "Memory updated" row — handed to close catch-up so it won't re-save them.
+  // Facts undone from a "Memory updated" row or forgotten by forget_memory — handed to close
+  // catch-up so it won't re-save them.
   const rejectedMemoriesRef = useRef<string[]>([]);
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -386,6 +387,8 @@ export function ChatSession({
     try {
       const res = await window.bean.chat({ history, message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, turnId }, mountId);
       if (res.model) setModel(res.model);
+      // Forgotten facts go to close catch-up as already handled, so closing doesn't re-save them.
+      rejectedMemoriesRef.current.push(...(res.forgotten ?? []).map((m) => m.text));
 
       setItems((prev) => {
         const next = prev.filter((it) => it.id !== workingId);
