@@ -13,6 +13,11 @@ Bean has two chat adapters over one shared brain:
 - Model memory keys `teams:cli` / `teams:model:<cli>` are intentionally shared by ALL chat
   adapters (historical name) in ~/.bean/model-memory.json beside the desktop's skillName
   keys. Don't rename or "clean up" either side.
+- The live-session card's picks live in the same file as `live:project` / `live:cli` /
+  `live:model:<cli>` / `live:skill` (`""` = none/CLI default), saved on a fresh Start (never a
+  resume) and used as a new card's defaults when still valid. A chat-stated project/cli/model
+  wins; only `/live-session` (no project in mind) takes the remembered project. Steering is
+  deliberately not remembered (war-room must be a per-card choice).
 - Conversation/proposal state is in-memory by design (POC): restart = amnesia.
 - Settings has a "CHAT BOTS" section (Start/Stop per bot) wired via `packages/app/src/chatops-servers.ts`
   (`createChatopsServers`): Electron main spawns a plain child `node` process and tracks running/error

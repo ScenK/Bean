@@ -361,6 +361,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // CLI's own default — a model from another provider never switches the engine.
   const liveModelFor = (cli: LiveCli, model: string | undefined): string | undefined =>
     model && (deps.cliModels.find((e) => e.provider === cli)?.models ?? []).includes(model) ? model : undefined;
+  // The last started fresh live session's card picks, in model memory beside the delegate's
+  // `teams:*` keys: a new card opens on them. "" = no skill / the CLI's default model.
+  const LIVE_PROJECT = "live:project", LIVE_CLI = "live:cli", LIVE_SKILL = "live:skill";
+  const liveModelKey = (cli: LiveCli): string => `live:model:${cli}`;
 
   // `/new` count per conversation (this process): a run launched before a reset must not
   // store its session afterwards and resurrect the pre-reset agent.
@@ -551,6 +555,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return { refused: "channel-busy" };
     }
     await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started" }));
+    // A resume's project and CLI were locked to its row, not picked — nothing to remember.
+    if (!resume) {
+      const memory = await deps.loadModelMemory();
+      await deps.saveModelMemory({
+        ...memory,
+        [LIVE_PROJECT]: p.proposal.projectPath, [LIVE_CLI]: cli,
+        [liveModelKey(cli)]: liveModelFor(cli, p.proposal.model) ?? "", [LIVE_SKILL]: picked.skill?.name ?? "",
+      });
+    }
     const mode = p.proposal.steering ?? "restricted";
     const ready = resume ? " It picks up where it left off on your next message." : "";
     await fx.post(mode === "open"
@@ -576,14 +589,25 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // Post the confirm-first Start/Cancel card. Shared by the LLM path (propose_live_session)
   // and the explicit /live-session command — both just fill in a ProposedLiveSession.
   async function postLiveSessionProposal(
-    live: ProposedLiveSession, conversationId: string, proposedBy: string, fx: BotEffects,
+    live: ProposedLiveSession, conversationId: string, proposedBy: string, fx: BotEffects, rememberProject = false,
   ): Promise<void> {
-    const [projects, skills] = await Promise.all([deps.loadProjects(), loadActiveSkills()]);
-    const projectName = await projectLabel(live.projectPath, !!live.resume);
+    const [projects, skills, memory] = await Promise.all([deps.loadProjects(), loadActiveSkills(), deps.loadModelMemory()]);
     const clis = liveClis();
-    // Frozen on a resume; a fresh card defaults to claude when it's here.
-    const cli = live.resume?.cli ?? (live.cli && clis.includes(live.cli) ? live.cli : clis[0] ?? "claude");
-    const proposal: ProposedLiveSession = { ...live, model: liveModelFor(cli, live.model), ...(live.resume ? {} : { cli }) };
+    // A fresh card's unstated picks fall back to the last started session's, while they still
+    // exist; a resume is locked to its row. `rememberProject` = the caller had no project in mind.
+    const last = (key: string): string | undefined => (live.resume ? undefined : memory[key]);
+    const lastCli = last(LIVE_CLI);
+    // Frozen on a resume; a fresh card defaults to the last CLI, else claude when it's here.
+    const cli = live.resume?.cli ?? [live.cli, lastCli].find((c): c is LiveCli => isLiveCli(c) && clis.includes(c)) ?? clis[0] ?? "claude";
+    const lastProject = rememberProject ? projects.find((pr) => pr.path === last(LIVE_PROJECT))?.path : undefined;
+    const lastSkill = skills.find((s) => !s.hidden && s.name === last(LIVE_SKILL))?.name;
+    const proposal: ProposedLiveSession = {
+      ...live,
+      ...(lastProject ? { projectPath: lastProject } : {}),
+      model: liveModelFor(cli, live.model ?? last(liveModelKey(cli))),
+      ...(live.resume ? {} : { cli, skillName: live.skillName ?? lastSkill }),
+    };
+    const projectName = await projectLabel(proposal.projectPath, !!live.resume);
     const pending = deps.liveSessionProposals.add({ proposal, conversationId, proposedBy });
     const activityId = await fx.postCard(deps.cards.liveSessionProposalCard({
       proposalId: pending.id, projectName, instruction: proposal.instruction, model: proposal.model, skillName: proposal.skillName,
@@ -939,9 +963,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const projects = await deps.loadProjects();
     const first = projects[0];
     if (!first) return "No projects are configured — add one first.";
-    // Project/model are picked on the card; default to the first project (user can switch).
+    // Project/model are picked on the card; to the last started session's project, else the first (user can switch).
     const live: ProposedLiveSession = { projectPath: first.path, instruction: text };
-    await postLiveSessionProposal(live, conversationId, proposedBy, fx);
+    await postLiveSessionProposal(live, conversationId, proposedBy, fx, true);
     return "Proposed a live session — pick the project/model, edit the prompt if you want, then Start.";
   }
 
