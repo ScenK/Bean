@@ -1,4 +1,4 @@
-import type { BotEffects } from "@bean/core";
+import type { BotEffects, ConversationPlace } from "@bean/core";
 import { ActivityTypes, type Activity, type ConversationReference, type TurnContext } from "botbuilder";
 import { teamsText } from "./teams-text.js";
 
@@ -22,8 +22,27 @@ export function refFor(
   return known?.conversation ? { ...known, conversation: { ...known.conversation, id } } : undefined;
 }
 
+/** A real 1:1 DM with Bean. A `/` pick in a group chat, meeting chat or channel also arrives as
+ * `personal` (its own `a:` id), but targeted (`bot.isTargeted`, the activity's `recipient`) —
+ * it's a shared conversation: no private recall/capture, no guest-DM gate, no "DM" row (#551).
+ * Microsoft only targets messages in shared conversations, so a real DM is never targeted. */
+export function isDirect(ref: Partial<ConversationReference>): boolean {
+  return ref.conversation?.conversationType === "personal" && (ref.bot as { isTargeted?: unknown } | undefined)?.isTargeted !== true;
+}
+
+/** The conversation catalog's kind and title (display only). A channel conversation id carrying
+ * `;messageid=` is one post's reply chain. */
+export function placeOf(ref: Partial<ConversationReference>): ConversationPlace {
+  const c = ref.conversation;
+  if (isDirect(ref)) return { kind: "dm", title: "DM" };
+  if (c?.conversationType === "channel" && c.id.includes(";")) return { kind: "post", title: c.name || "Teams post" };
+  return { kind: "channel", title: c?.name || "Teams chat" };
+}
+
 /** Admin scope for a ref'd conversation: bare channel id for a channel, the chat's id for a group
- * chat, none for a personal chat (same rule as the server's `scopeOf(activity)`). */
+ * chat, none for a personal chat (same rule as the server's `scopeOf(activity)`). A targeted
+ * `personal` conversation is shared but unscoped: its `a:` id isn't the shared chat's, and the
+ * payload shows no parent id (yet), so no admins or `chatty` settings apply there. */
 export function refScope(ref: Partial<ConversationReference>): string | undefined {
   const c = ref.conversation;
   if (!c || c.conversationType === "personal") return undefined;

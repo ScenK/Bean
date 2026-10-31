@@ -9,8 +9,13 @@ typed (`@Bean foo`) until a menu entry lands. Limits: 3 lists × 12 commands.
 A pick arrives as a *targeted message*: `activity.recipient.isTargeted === true`, no @mention
 entity (botbuilder 4.23's `ChannelAccount` has no such field — runtime check). `addressing.ts`
 `addressedToBot()` counts it as addressed only when strictly `true` and the recipient is the bot
-(`28:<appId>`). Addressed = a turn, **never a permission**: `direct` stays the real conversation
-type, scope/roles unchanged, so a targeted channel message still recalls shared memories only.
+(`28:<appId>`). Addressed = a turn, **never a permission**. A pick in a group/meeting chat or channel arrives as
+`conversationType: "personal"` with its own `a:` id — so `personal` alone is **not** a DM:
+`proactive.ts` `isDirect()` (`personal && bot.isTargeted !== true`) drives `direct`, the catalog
+place and the channel label (#551). A pick is a shared, unscoped turn: shared recall only, no
+DM capture, no guest-DM gate, no "DM" catalog row; `refScope` stays undefined (the `a:` id isn't
+the chat's; the TEMP log now dumps `channelData` to look for a parent id). Old "DM" rows from
+earlier picks are left as-is.
 Without this gate a private pick fell into the shared ambient store and replayed publicly.
 Replies stay public by decision (no targeted-reply path).
 
