@@ -84,6 +84,15 @@ const DEFAULT_THROTTLE_MS = 1500;
 // across a long agent turn.
 const TYPING_PING_MS = 4000;
 
+/** Drops a delivered `buf` prefix (plus the one separator newline after it) and rebases every
+ * remaining seal by what was removed. Called only after the send succeeds — a failed send
+ * leaves buf/seals untouched for the retry, and a delivered chunk is never resent. */
+function consumePrefix(s: ActiveSession, n: number): void {
+  const removed = s.buf[n] === "\n" ? n + 1 : n;
+  s.buf = s.buf.slice(removed);
+  s.seals = s.seals.filter((x) => x > n).map((x) => x - removed);
+}
+
 function turnFooter(s: TurnSummary): string {
   if (s.failed !== undefined) return `— turn failed: ${s.failed}`;
   const parts: string[] = [];
@@ -115,8 +124,10 @@ interface ActiveSession {
   /** The currently in-flight flushSession() run, if any — teardown awaits this before its
    * own final flush so an in-progress send isn't silently dropped by the rendering guard. */
   inFlight?: Promise<void>;
-  /** Set on turn completion: after the next successful flush, reset for a fresh message. */
-  closeAfterFlush: boolean;
+  /** Strictly increasing offsets into `buf`, each the end of a completed turn's message (pushed
+   * the moment the turn ends, so the next turn's output can never be edited into it). Rebased by
+   * consumePrefix whenever a delivered prefix leaves `buf`. */
+  seals: number[];
   /** Repeats sink.typing() while a turn is in flight; cleared on turn complete / teardown. */
   typingTimer?: ReturnType<typeof setInterval>;
   onEnded?: (notice: string) => void;
@@ -209,7 +220,7 @@ export class LiveSessionRegistry {
       coDrivers: new Set(),
       sink: input.sink,
       timer: setInterval(() => void this.flush(input.channelId), this.opts.throttleMs ?? DEFAULT_THROTTLE_MS),
-      buf: "", msgId: undefined, dirty: false, rendering: false, closeAfterFlush: false,
+      buf: "", msgId: undefined, dirty: false, rendering: false, seals: [],
       onEnded: input.onEnded,
     };
     this.byChannel.set(input.channelId, s);
@@ -229,7 +240,7 @@ export class LiveSessionRegistry {
           if (summary.failed === undefined) input.onTurnResult?.(summary.result);
           s.buf += (s.buf ? "\n" : "") + turnFooter(summary);
           s.dirty = true;
-          s.closeAfterFlush = true;
+          s.seals.push(s.buf.length);
         },
         onExit: (err) => this.teardown(input.channelId, err),
       },
@@ -366,42 +377,36 @@ export class LiveSessionRegistry {
     s.dirty = false;
     const run = (async () => {
       try {
-        while (s.buf.length > MSG_LIMIT) {
-          const cut = s.buf.lastIndexOf("\n", MSG_LIMIT);
-          const at = cut > 0 ? cut : MSG_LIMIT;
-          const head = s.buf.slice(0, at);
-          if (s.msgId !== undefined) {
-            await s.sink.edit(s.msgId, head);
+        // Every bound is re-read from s.buf/s.seals before each send. Output and seals can be
+        // appended during any await, but only past the end — this flush is the one thing that
+        // removes a prefix — so offsets taken before an await still hold after it.
+        for (;;) {
+          const end = s.seals[0] ?? s.buf.length;
+          if (end > MSG_LIMIT) {
+            // Rollover: send the head of the current message, the rest starts a new one.
+            const cut = s.buf.lastIndexOf("\n", MSG_LIMIT);
+            const at = cut > 0 ? cut : MSG_LIMIT;
+            const head = s.buf.slice(0, at);
+            if (s.msgId !== undefined) await s.sink.edit(s.msgId, head);
+            else await s.sink.post(head);
             s.msgId = undefined;
+            consumePrefix(s, at);
+          } else if (s.seals.length > 0) {
+            // A completed turn: deliver exactly its content as that message's final text.
+            const text = s.buf.slice(0, end);
+            if (s.msgId !== undefined) await s.sink.edit(s.msgId, text);
+            else if (text) await s.sink.post(text);
+            s.msgId = undefined;
+            consumePrefix(s, end);
           } else {
-            await s.sink.post(head);
+            // The turn still running: s.buf is the CURRENT message's full cumulative content,
+            // resent whole every tick (post the first time, edit thereafter) — never trimmed here.
+            if (s.buf) {
+              if (s.msgId !== undefined) await s.sink.edit(s.msgId, s.buf);
+              else s.msgId = await s.sink.post(s.buf);
+            }
+            break;
           }
-          // Re-slice from s.buf (not a pre-await snapshot) after the send succeeds: new
-          // output can be appended (the agent is still streaming) while this await is in
-          // flight, and `at` — a fixed offset from the start — still correctly excludes
-          // exactly what was just sent regardless of what's since been appended past it.
-          s.buf = s.buf.slice(at).replace(/^\n/, "");
-        }
-        if (s.buf) {
-          // s.buf holds the CURRENT message's full cumulative content — every tick resends
-          // it whole (post the first time, edit thereafter), so it must NOT be truncated
-          // after an ordinary send; only closeAfterFlush below ever resets it, and only to
-          // what's left over after this specific send.
-          const sentLength = s.buf.length;
-          if (s.msgId !== undefined) await s.sink.edit(s.msgId, s.buf);
-          else s.msgId = await s.sink.post(s.buf);
-          if (s.closeAfterFlush) {
-            s.closeAfterFlush = false;
-            s.msgId = undefined;
-            // Drop only what was actually sent — output appended during this await (the
-            // next turn starting early) must survive as the start of the next message,
-            // not be wiped by a blind reset to "".
-            s.buf = s.buf.slice(sentLength).replace(/^\n/, "");
-          }
-        } else if (s.closeAfterFlush) {
-          // Nothing queued to send this tick, but the turn still needs closing out.
-          s.closeAfterFlush = false;
-          s.msgId = undefined;
         }
       } catch {
         // Rate limit or transient send failure: buffer is the source of truth — retry next tick.
