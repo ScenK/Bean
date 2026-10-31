@@ -360,7 +360,7 @@ describe("LiveSessionRegistry", () => {
     reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink });
 
     f.cbs().onOutput("turn one output");
-    f.cbs().onTurnComplete({ result: "done", durationMs: 100 }); // sets closeAfterFlush = true
+    f.cbs().onTurnComplete({ result: "done", durationMs: 100 }); // seals turn one
 
     // Throttle tick dispatches the turn-closing send, which hangs.
     await flushTicks(reg, 1001);
@@ -377,9 +377,133 @@ describe("LiveSessionRegistry", () => {
     expect(posts[0]).not.toContain("turn two output");
 
     // Turn two's output must not be silently dropped by the turn-close reset — the next
-    // tick delivers it as a fresh message (closeAfterFlush already reset msgId).
+    // flush delivers it as a fresh message.
     await flushTicks(reg, 1001);
     expect(posts[1]).toBe("turn two output");
+  });
+
+  describe("turn seals (#564): a reply never lands in an earlier turn's message", () => {
+    const FOOTER = "— turn done (0.1s)";
+    const done = { result: "ok", durationMs: 100 };
+    // A sink whose `n`th post (1-based) hangs until release() — a send in flight.
+    function deferredSink(hangOn: { post?: number; edit?: number }) {
+      const posts: string[] = [];
+      const edits: [string, string][] = [];
+      let postCalls = 0;
+      let editCalls = 0;
+      let release!: () => void;
+      const gate = () => new Promise<void>((r) => { release = r; });
+      const sink: LiveSessionSink = {
+        post: async (text) => {
+          if (++postCalls === hangOn.post) await gate();
+          posts.push(text);
+          return `msg-${posts.length}`;
+        },
+        edit: async (id, text) => {
+          if (++editCalls === hangOn.edit) await gate();
+          edits.push([id, text]);
+        },
+      };
+      return { sink, posts, edits, release: () => release() };
+    }
+    const settle = async (): Promise<void> => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+
+    it("next-turn output before the tick starts its own message", async () => {
+      const f = fakeStart();
+      const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
+      const { sink, posts, edits } = fakeSink();
+      reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink });
+      f.cbs().onOutput("one");
+      f.cbs().onTurnComplete(done);
+      f.cbs().onOutput("two");
+      await flushTicks(reg, 1001);
+      expect(posts).toEqual([`one\n${FOOTER}`, "two"]);
+      expect(edits).toEqual([]);
+    });
+
+    it("a turn ending during an ordinary edit keeps its footer in that message", async () => {
+      const f = fakeStart();
+      const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
+      const d = deferredSink({ edit: 1 });
+      reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: d.sink });
+      f.cbs().onOutput("a");
+      await flushTicks(reg, 1001); // post "a" → msg-1
+      f.cbs().onOutput("b");
+      await flushTicks(reg, 1001); // edit msg-1 → "a\nb", hangs
+      f.cbs().onTurnComplete(done);
+      d.release();
+      await settle();
+      await flushTicks(reg, 1001); // the sealed turn's final edit
+      f.cbs().onOutput("next");
+      await flushTicks(reg, 1001);
+      expect(d.posts).toEqual(["a", "next"]);
+      expect(d.edits.at(-1)).toEqual(["msg-1", `a\nb\n${FOOTER}`]);
+    });
+
+    it("two turns ending during one closing send stay three messages", async () => {
+      const f = fakeStart();
+      const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
+      const d = deferredSink({ post: 1 });
+      reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: d.sink });
+      f.cbs().onOutput("t1");
+      f.cbs().onTurnComplete(done);
+      await flushTicks(reg, 1001); // closing post hangs
+      f.cbs().onOutput("t2");
+      f.cbs().onTurnComplete(done);
+      f.cbs().onOutput("t3");
+      f.cbs().onTurnComplete(done);
+      d.release();
+      await settle();
+      expect(d.posts).toEqual([`t1\n${FOOTER}`, `t2\n${FOOTER}`, `t3\n${FOOTER}`]);
+    });
+
+    it.each([
+      { split: "newline", first: `${"a".repeat(1500)}\n${"b".repeat(1500)}`, next: `${"c".repeat(50)}\n${"d".repeat(500)}`,
+        want: ["a".repeat(1500), `${"b".repeat(1500)}\n${FOOTER}`, `${"c".repeat(50)}\n${"d".repeat(500)}`] },
+      { split: "hard", first: "x".repeat(2500), next: "y".repeat(300),
+        want: ["x".repeat(1900), `${"x".repeat(600)}\n${FOOTER}`, "y".repeat(300)] },
+    ])("rebases seals appended during an unsealed rollover ($split split)", async ({ first, next, want }) => {
+      const f = fakeStart();
+      const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
+      const d = deferredSink({ post: 1 });
+      reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: d.sink });
+      f.cbs().onOutput(first);
+      await flushTicks(reg, 1001); // rollover head post hangs
+      f.cbs().onTurnComplete(done);
+      f.cbs().onOutput(next);
+      d.release();
+      await settle();
+      expect(d.posts).toEqual(want);
+      expect(d.edits).toEqual([]);
+      for (const p of d.posts) expect(p.length).toBeLessThanOrEqual(1900);
+    });
+
+    it("a failed send mid-drain resumes from committed progress at teardown, no duplicates", async () => {
+      const f = fakeStart();
+      const notices: string[] = [];
+      const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });
+      const posts: string[] = [];
+      let calls = 0;
+      const sink: LiveSessionSink = {
+        post: async (text) => {
+          if (++calls === 2) throw new Error("rate limited");
+          posts.push(text);
+          return `msg-${posts.length}`;
+        },
+        edit: async () => {},
+      };
+      reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink, onEnded: (n) => notices.push(n) });
+      f.cbs().onOutput(`${"a".repeat(1500)}\n${"b".repeat(1500)}`);
+      f.cbs().onTurnComplete(done);
+      f.cbs().onOutput("t2");
+      f.cbs().onTurnComplete(done);
+      await flushTicks(reg, 1001); // rollover head posts; the sealed tail's post rejects
+      expect(posts).toEqual(["a".repeat(1500)]);
+      f.cbs().onExit(undefined);
+      await settle();
+      expect(posts).toEqual(["a".repeat(1500), `${"b".repeat(1500)}\n${FOOTER}`, `t2\n${FOOTER}`]);
+      expect(notices).toEqual(["Live session ended."]);
+    });
   });
 
   it("forceKillAll SIGKILLs every active session's process group immediately", () => {

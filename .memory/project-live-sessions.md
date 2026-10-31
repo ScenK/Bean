@@ -15,7 +15,7 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   `converse()` entirely) until someone says `stop` or the 30-minute idle timeout fires. The
   render buffer is the source of truth: a failed Discord post/edit retries on the next
   ~1.5s tick without losing content — but this took a real bug fix to get right (see below).
-- **Three real concurrency bugs found by review, now fixed** — all in the same class (async
+- **Four real concurrency bugs, now fixed** — all in the same class (async
   work racing new output arriving mid-flight):
   1. The rollover-split loop truncated the buffer *before* the network call that persisted
      the truncated chunk succeeded, so a rejected send (rate limit) permanently dropped up
@@ -28,13 +28,21 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
      `s.buf` still equaled what was just sent, which isn't true if the next turn's first
      token arrived in the meantime.
   Fixed by: tracking the in-flight flush as a promise (`ActiveSession.inFlight`); never
-  truncating the buffer until the corresponding send resolves; and, for the turn-closing
-  reset specifically, slicing off only the sent-length prefix (captured right before that
-  send) instead of resetting to `""`. **Important asymmetry to preserve if you touch
-  `flushSession` again**: `s.buf` for a *continuing* (non-closing) send is the message's full
-  cumulative content and must NOT be truncated after an ordinary send — only the rollover
-  loop (each chunk becomes its own finalized message) and the `closeAfterFlush` reset (the
-  message is actually ending) ever remove sent content from it.
+  truncating the buffer until the corresponding send resolves.
+  4. (#564) A turn boundary was a single `closeAfterFlush` boolean applied at the *next*
+     flush, so next-turn output arriving before that tick (per-turn engines start the next
+     turn synchronously; claude answers queued stdin right after `result`) was edited into
+     the previous turn's message above the user's new one, and a turn ending mid-edit
+     orphaned its footer as a separate message.
+  Now `onTurnComplete` pushes `s.buf.length` onto `s.seals` (strictly increasing offsets, one
+  per finished message) the moment the turn ends; `flushSession` re-reads `seals[0]` before
+  every send. **Important asymmetry to preserve if you touch `flushSession` again**: `s.buf`
+  for the unsealed tail is the message's full cumulative content and must NOT be truncated
+  after an ordinary send — only rollover chunks and sealed segments ever leave it, always via
+  `consumePrefix` *after* the send succeeds, which rebases every remaining seal by what was
+  removed (output and seals can be appended during any await, so never rebase from a
+  pre-await snapshot). `send()` deliberately does not seal: a mid-turn message's answer is
+  the next turn.
 - The stream sink rides `BotEffects`, preferring the optional **`postStream(text)→id` /
   `editStream(id,text)`** text effects, falling back to `postCard({content})` /
   `updateCard(id,{content})` when a surface omits them. Discord omits them — its `postCard`
