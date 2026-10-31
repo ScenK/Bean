@@ -41,7 +41,7 @@ test("routines: only-on-problems chat rule round-trips and hides for notify-only
     const quiet = win.getByLabel(QUIET);
     await expect(quiet).not.toBeChecked();
     await quiet.check();
-    await expect(win.locator(".bean-routines-digest-line")).toContainText("Discord only when a run needs you");
+    await expect(win.locator(".bean-routines-digest-line")).toContainText("Discord DM only when a run needs you");
     await win.getByRole("button", { name: "Save sprout" }).click();
     await expect.poll(async () => (await saved()).chatopsOnlyOnProblems).toBe(true);
 
@@ -63,5 +63,74 @@ test("routines: only-on-problems chat rule round-trips and hides for notify-only
   } finally {
     await app.close();
     await Promise.allSettled([stub.close(), home.cleanup()]);
+  }
+});
+
+/** A DM plus several channels per transport: every entry shows, each row edits only itself, and
+ * save trims, drops blank rows and exact duplicates; a Discord `user` entry survives and removes. */
+test("routines: chat sinks show and edit a DM plus several channels per transport", async () => {
+  const home = await makeBeanHome();
+  const file = join(home.homeDir, ".bean", "routines", "multi.json");
+  await writeFile(file, JSON.stringify({
+    name: "multi", enabled: false, cron: "0 6 * * *",
+    sinks: { chatops: [
+      { transport: "discord" },
+      { transport: "discord", channel: "111" },
+      { transport: "discord", channel: "222" },
+      { transport: "discord", user: "u1" },
+      { transport: "teams", channel: "19:abc@thread.v2" },
+    ] },
+    steps: [{ kind: "chat", instruction: "check the build" }],
+  }), "utf8");
+  const chatops = async (): Promise<unknown> =>
+    (JSON.parse(await readFile(file, "utf8")) as { sinks: { chatops?: unknown } }).sinks.chatops;
+
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const avatar = await app.firstWindow();
+    const [win] = await Promise.all([
+      app.waitForEvent("window"),
+      avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("routines")),
+    ]);
+    await win.locator(".bean-routines-row", { hasText: "multi" }).click();
+    await expect(win.getByLabel("Post to Discord (DM)")).toBeChecked();
+    await expect(win.getByLabel("Post to Teams (DM)")).not.toBeChecked();
+    const discord = win.getByLabel("Discord channel id");
+    await expect(discord).toHaveCount(2);
+    await expect(discord.nth(0)).toHaveValue("111");
+    await expect(discord.nth(1)).toHaveValue("222");
+    await expect(win.getByLabel("Teams conversation id")).toHaveValue("19:abc@thread.v2");
+    await expect(win.getByText("DM to user u1")).toBeVisible();
+    await expect(win.locator(".bean-routines-digest-line"))
+      .toContainText("Discord DM, 2 Discord channels, Discord DM to 1 user, 1 Teams conversation");
+
+    await discord.nth(0).fill("333");
+    await win.getByRole("button", { name: "+ Add Teams conversation" }).click();
+    await win.getByLabel("Teams conversation id").nth(1).fill(" 19:new@thread.v2 ");
+    await win.getByRole("button", { name: "+ Add Discord channel" }).click(); // left blank
+    await win.getByRole("button", { name: "+ Add Discord channel" }).click();
+    await discord.nth(3).fill("222"); // exact duplicate
+    await win.getByRole("button", { name: "Save sprout" }).click();
+    await expect.poll(chatops).toEqual([
+      { transport: "discord" },
+      { transport: "discord", channel: "333" },
+      { transport: "discord", channel: "222" },
+      { transport: "discord", user: "u1" },
+      { transport: "teams", channel: "19:abc@thread.v2" },
+      { transport: "teams", channel: "19:new@thread.v2" },
+    ]);
+
+    await win.getByRole("button", { name: "Remove Discord DM to user u1" }).click();
+    await win.getByRole("button", { name: "Save sprout" }).click();
+    await expect.poll(chatops).toEqual([
+      { transport: "discord" },
+      { transport: "discord", channel: "333" },
+      { transport: "discord", channel: "222" },
+      { transport: "teams", channel: "19:abc@thread.v2" },
+      { transport: "teams", channel: "19:new@thread.v2" },
+    ]);
+  } finally {
+    await app.close();
+    await home.cleanup();
   }
 });

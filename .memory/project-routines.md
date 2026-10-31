@@ -27,6 +27,10 @@ owner's digests, #253); present = a specific discord channel id or teams convers
 sinks for an `ok` run in `deliverDigest` — the one choke point for single, per-todo and watch
 deliveries; note/notify/history still get every run. Ignored on notify-only watches (`steps: []`):
 `fireNotify` always records `ok`, so the rule would mute them entirely.
+`sinks.chatops` may hold several entries per transport (a DM plus channels, Discord `user` DMs);
+the panel edits each entry by its index — never map over a whole transport (#562: that collapsed
+extra channels into duplicates → double posts). `cleanChatSinks` (renderer `chat-sinks.ts`) trims,
+drops blank rows and exact duplicates on every panel save.
 
 **Headless host (#279).** `BEAN_HEADLESS_ROUTINES=1` makes the Discord server a routine host
 (`discord/src/headless-routines.ts`): scheduler + `createRoutineHost` + core `makeRoutineSteps`

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { Routine, RoutineBrief, RoutineWatch, Skill, Project, TodoItem, WatchWindow } from "@bean/core";
+import type { Routine, RoutineBrief, RoutineChatopsSink, RoutineWatch, Skill, Project, TodoItem, WatchWindow } from "@bean/core";
 import { nextRun, parseCron } from "@bean/core/cron";
 import { watchWindowText } from "@bean/core/watch-window";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
@@ -8,6 +8,7 @@ import { useCliAvailability } from "../../shared/cli-availability.js";
 import type { RoutineStateView } from "../../../ipc.js";
 import type { RoutineBuildView } from "../../../routine-builder.js";
 import { StepsEditor } from "./StepsEditor.js";
+import { chatTargets, cleanChatSinks } from "./chat-sinks.js";
 import { stepProblemsText } from "./step-ids.js";
 import { BuildPane, DescribePane, ExampleChips, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
 import { everyMinutes, failureCount, intervalText, needsReview, WATCH_MINUTES, watchRowSub, watchStatusLine, windowTooShortNote } from "./watch-status.js";
@@ -369,7 +370,7 @@ export function RoutinesPanel() {
     const next = { ...draft, enabled: !draft.enabled };
     setDraft(next);
     if (selected) {
-      await window.bean.routinesSave(next);
+      await window.bean.routinesSave({ ...next, sinks: cleanChatSinks(next.sinks) });
       await refresh();
     }
   };
@@ -384,7 +385,7 @@ export function RoutinesPanel() {
     setDraft(next);
     if (selected) {
       try {
-        await window.bean.routinesSave(next);
+        await window.bean.routinesSave({ ...next, sinks: cleanChatSinks(next.sinks) });
         await refresh();
       } catch (e) {
         setError(ipcErrorMessage(e) ?? "couldn't save the type change");
@@ -394,7 +395,7 @@ export function RoutinesPanel() {
 
   const save = async (): Promise<void> => {
     try {
-      await window.bean.routinesSave(draft);
+      await window.bean.routinesSave({ ...draft, sinks: cleanChatSinks(draft.sinks) });
       setError("");
       await refresh();
       setSelected(draft.name);
@@ -450,11 +451,16 @@ export function RoutinesPanel() {
 
   const sinkTargets: string[] = [];
   if (draft.sinks.note) sinkTargets.push("your Daily Dashboard");
-  const chatTargets = (draft.sinks.chatops ?? []).map((c) => (c.transport === "discord" ? "Discord" : "Teams"));
+  const chatTargetList = chatTargets(draft.sinks.chatops);
   // Inert on a notify-only watch (deliverDigest ignores it there), so the footer doesn't claim it.
-  if (chatTargets.length > 0 && draft.sinks.chatopsOnlyOnProblems && !(draft.watch && draft.steps.length === 0)) {
-    sinkTargets.push(`${chatTargets.join(" and ")} only when a run needs you`);
-  } else sinkTargets.push(...chatTargets);
+  if (chatTargetList.length > 0 && draft.sinks.chatopsOnlyOnProblems && !(draft.watch && draft.steps.length === 0)) {
+    sinkTargets.push(`${chatTargetList.join(" and ")} only when a run needs you`);
+  } else sinkTargets.push(...chatTargetList);
+  // No chat sink left = the only-on-problems rule has nothing to govern; drop it.
+  const setChatops = (chatops: RoutineChatopsSink[]): void => {
+    const { chatops: _c, chatopsOnlyOnProblems: _q, ...rest } = draft.sinks;
+    setDraft({ ...draft, sinks: chatops.length > 0 ? { ...draft.sinks, chatops } : rest });
+  };
   if (draft.sinks.notify) sinkTargets.push("a desktop notification");
 
   const routineRow = (r: Routine) => (
@@ -1064,65 +1070,59 @@ export function RoutinesPanel() {
             Send a desktop notification
           </label>
           {(["discord", "teams"] as const).map((transport) => {
-            const entry = draft.sinks.chatops?.find((c) => c.transport === transport);
             const label = transport === "discord" ? "Discord" : "Teams";
-            const specific = entry?.channel !== undefined;
+            const room = transport === "discord" ? "channel" : "conversation";
+            // Rows index the full list, so each row edits/removes only its own entry.
+            const all = draft.sinks.chatops ?? [];
+            const rows = all.map((c, i) => ({ c, i })).filter(({ c }) => c.transport === transport);
+            const dm = rows.some(({ c }) => c.channel === undefined && c.user === undefined);
             return (
-              <div key={transport} class="bean-routines-sink-row">
+              <div key={transport} class="bean-routines-sink-group">
                 <label class="bean-routines-sink-row">
                   <input
                     type="checkbox"
-                    checked={entry !== undefined}
-                    onChange={(e) => {
-                      const on = (e.target as HTMLInputElement).checked;
-                      const rest = (draft.sinks.chatops ?? []).filter((c) => c.transport !== transport);
-                      // Default to DM (no channel) — a specific channel/conversation is opt-in below.
-                      const chatops = on ? [...rest, { transport, channel: undefined }] : rest;
-                      // No chat sink left = the only-on-problems rule has nothing to govern; drop it.
-                      const { chatopsOnlyOnProblems: _q, ...sinks } = draft.sinks;
-                      setDraft({ ...draft, sinks: chatops.length > 0 ? { ...draft.sinks, chatops } : { ...sinks, chatops: undefined } });
-                    }}
+                    checked={dm}
+                    onChange={(e) => setChatops((e.target as HTMLInputElement).checked
+                      ? [...all, { transport }]
+                      : all.filter((c) => !(c.transport === transport && c.channel === undefined && c.user === undefined)))}
                   />
                   Post to {label} (DM)
                 </label>
-                {entry ? (
-                  <label class="bean-routines-sink-row bean-routines-sink-suboption">
-                    <input
-                      type="checkbox"
-                      checked={specific}
-                      onChange={(e) => {
-                        const useSpecific = (e.target as HTMLInputElement).checked;
-                        setDraft({
-                          ...draft,
-                          sinks: {
-                            ...draft.sinks,
-                            chatops: (draft.sinks.chatops ?? []).map((c) =>
-                              c.transport === transport ? { ...c, channel: useSpecific ? "" : undefined } : c),
-                          },
-                        });
-                      }}
-                    />
-                    Use a specific {transport === "discord" ? "channel" : "conversation"} instead
-                  </label>
-                ) : null}
-                {entry && specific ? (
-                  <input
-                    class="bean-input bean-input--boxed bean-routines-sink-suboption"
-                    placeholder={transport === "discord" ? "channel id" : "conversation id"}
-                    value={entry.channel ?? ""}
-                    onInput={(e) => setDraft({
-                      ...draft,
-                      sinks: {
-                        ...draft.sinks,
-                        chatops: (draft.sinks.chatops ?? []).map((c) =>
-                          c.transport === transport ? { ...c, channel: (e.target as HTMLInputElement).value } : c),
-                      },
-                    })}
-                  />
-                ) : null}
+                {rows.map(({ c, i }) => c.channel === undefined && c.user === undefined ? null : (
+                  <div key={i} class="bean-routines-sink-row bean-routines-sink-suboption">
+                    {c.user !== undefined ? (
+                      <span>DM to user {c.user}</span>
+                    ) : (
+                      <input
+                        class="bean-input bean-input--boxed"
+                        aria-label={`${label} ${room} id`}
+                        placeholder={`${room} id`}
+                        value={c.channel}
+                        onInput={(e) => setChatops(all.map((x, j) => (j === i ? { ...x, channel: (e.target as HTMLInputElement).value } : x)))}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      class="bean-skills-delete-link"
+                      aria-label={c.user !== undefined ? `Remove ${label} DM to user ${c.user}` : `Remove ${label} ${room}`}
+                      title="Remove"
+                      onClick={() => setChatops(all.filter((_, j) => j !== i))}
+                    >×</button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  class="bean-routines-sink-add bean-routines-sink-suboption"
+                  onClick={() => setChatops([...all, { transport, channel: "" }])}
+                >+ Add {label} {room}</button>
               </div>
             );
           })}
+          {draft.sinks.chatops?.some((c) => c.channel !== undefined) ? (
+            <div class="bean-routines-section-note">
+              A new Teams conversation needs one @mention of the bot before Bean can post there. A bad id shows up as a DM notice to you after retries.
+            </div>
+          ) : null}
           {/* Hidden for notify-only watches: their fires are always "ok", so the rule would mute them. */}
           {(draft.sinks.chatops?.length ?? 0) > 0 && !notifyOnly ? (
             <label class="bean-routines-sink-row bean-routines-only-on-problems">

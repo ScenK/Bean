@@ -2099,6 +2099,16 @@ button, input, textarea, select, a {
   margin-left: 22px;
   font-size: 12px;
 }
+.bean-routines-sink-group { display: flex; flex-direction: column; gap: 6px; }
+.bean-routines-sink-add {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--bean-accent-text);
+}
 .bean-routines-footer { display: flex; align-items: center; gap: 12px; }
 .bean-routines-digest-line {
   display: flex;
