@@ -10,6 +10,7 @@ import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "../ipc.js";
 import type { RoutineBuildView } from "../routine-builder.js";
+import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "../synced-chats.js";
 import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
 
 declare global {
@@ -137,6 +138,13 @@ declare global {
       chatThreadList(): Promise<DesktopChatListing[]>;
       /** Refused for a thread any open chat holds. */
       chatThreadDelete(id: string): Promise<void>;
+      /** The owner's Discord/Teams conversations, newest first. */
+      syncedChatList(): Promise<SyncedChatListing[]>;
+      /** One listed conversation's transcript, mapped for display. */
+      syncedChatGet(surface: string, conversationId: string, mountId: string): Promise<SyncedChatRow[]>;
+      /** A desk turn into a listed conversation: the bot's ack, or why there was none. */
+      syncedChatSend(surface: string, conversationId: string, text: string, mountId: string): Promise<SyncedSendResult>;
+      onSyncedChatEvent(cb: (e: SyncedChatEvent) => void): void;
       /** Tagged with the chat (mount) whose turn it captured. */
       onMemoryUpdated(cb: (saved: Array<{ id: string; text: string }>, mountId: string) => void): void;
       getMemoryBatch(): Promise<MemoryBatch | undefined>;

@@ -3,7 +3,9 @@ import { ChatSession, type ChatSessionApi, type ChatTasks } from "./ChatSession.
 import { ChatSidebar, SIDEBAR_INLINE_MIN, SIDEBAR_OPEN_KEY } from "./ChatSidebar.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
+import { SyncedChat, syncedKey } from "./SyncedChat.js";
 import type { DesktopChatListing } from "@bean/core";
+import type { SyncedChatListing } from "../../../synced-chats.js";
 
 /** The window-close card for the chats with running tasks (one entry per chat). */
 export function closeCard(busy: ChatTasks[]): { title: string; stop: string } {
@@ -62,6 +64,16 @@ export function ChatWindow() {
   const [threads, setThreads] = useState<DesktopChatListing[]>([]);
   const [activeId, setActiveId] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  // Synced chats (Discord/Teams, SyncedChat.tsx): shown over the current desktop chat, which stays
+  // mounted (hidden) underneath — picking a desktop row or New chat goes back through it.
+  const [synced, setSynced] = useState<SyncedChatListing[]>([]);
+  const [syncedShown, setSyncedShownState] = useState<string | undefined>(undefined);
+  const syncedRef = useRef<string | undefined>(undefined);
+  const setSyncedShown = (key: string | undefined): void => { syncedRef.current = key; setSyncedShownState(key); };
+  const [syncedVersion, setSyncedVersion] = useState(0);
+  const [syncedWorking, setSyncedWorking] = useState<string | undefined>(undefined);
+  const [bots, setBots] = useState<Record<string, boolean>>({});
+  const syncedListing = synced.find((c) => syncedKey(c) === syncedShown);
   const [narrow, setNarrow] = useState(() => window.innerWidth < SIDEBAR_INLINE_MIN);
   const [inlineOpen, setInlineOpen] = useState(() => localStorage.getItem(SIDEBAR_OPEN_KEY) !== "0");
   const [overlayOpen, setOverlayOpen] = useState(false);
@@ -103,14 +115,29 @@ export function ChatWindow() {
     window.bean.getTheme().then(setTheme);
     window.bean.onThemeChanged(setTheme);
     window.bean.chatThreadList().then((t) => setThreads(t ?? []), () => {});
+    const refreshSynced = (): void => { window.bean.syncedChatList().then((c) => setSynced(c ?? []), () => {}); };
+    refreshSynced();
+    window.bean.chatopsStatus().then((st) => {
+      if (st) setBots({ discord: st.discord.running, teams: st.teams.running });
+    }, () => {});
+    window.bean.onChatopsEvent((e) => setBots((prev) => ({ ...prev, [e.bot]: e.running })));
+    window.bean.onSyncedChatEvent((e) => {
+      refreshSynced();
+      const shownKey = syncedRef.current;
+      const key = e.conversationId === undefined ? undefined : syncedKey({ surface: e.surface, conversationId: e.conversationId });
+      if (e.saved && key !== undefined && key !== shownKey) setUnread((prev) => new Set(prev).add(key));
+      if (shownKey !== undefined && (key === shownKey || (key === undefined && shownKey.startsWith(`${e.surface}:`)))) {
+        setSyncedVersion((v) => v + 1);
+      }
+    });
     // Pull any URL dropped before this window's renderer finished mounting — the push below
     // (onComponentDroppedUrl) can arrive first and gets silently dropped, same race
     // getPendingPlan fixes for the Plan window.
-    window.bean.getPendingDroppedUrl().then((u) => { if (u) setDroppedUrl(u); });
-    window.bean.onComponentDroppedUrl(setDroppedUrl);
+    window.bean.getPendingDroppedUrl().then((u) => { if (u) { setSyncedShown(undefined); setDroppedUrl(u); } });
+    window.bean.onComponentDroppedUrl((u) => { setSyncedShown(undefined); setDroppedUrl(u); });
     // A chat-target skill run confirmed in the Plan popup. Pull + push, same race fix as the dropped URL.
-    window.bean.getPendingChatPrompt().then((p) => { if (p) to()?.runPrompt(p); });
-    window.bean.onChatPrompt((p) => to()?.runPrompt(p));
+    window.bean.getPendingChatPrompt().then((p) => { if (p) { setSyncedShown(undefined); to()?.runPrompt(p); } });
+    window.bean.onChatPrompt((p) => { setSyncedShown(undefined); to()?.runPrompt(p); });
     // A delegate run that was still going when Bean last quit — pull + push, same race fix.
     window.bean.getPendingInterruptedRunNotices().then((n) => { if (n?.length) to()?.notices(n); });
     window.bean.onInterruptedRunNotice((n) => to()?.notices(n));
@@ -170,6 +197,15 @@ export function ChatWindow() {
 
   const openThread = (target: string): void => {
     setOverlayOpen(false);
+    if (synced.some((c) => syncedKey(c) === target)) {
+      setSyncedShown(target);
+      setUnread((prev) => { const u = new Set(prev); u.delete(target); return u; });
+      return;
+    }
+    const fromSynced = syncedRef.current !== undefined;
+    setSyncedShown(undefined);
+    // The desktop chat under a synced one is already the pick — just show it again.
+    if (fromSynced && target !== "new" && target === activeId) return;
     shownApi()?.open(target);
   };
   const deleteThread = (id: string): void => {
@@ -194,9 +230,10 @@ export function ChatWindow() {
       {sidebarOpen ? (
         <ChatSidebar
           threads={threads}
-          activeId={activeId}
+          synced={synced}
+          activeId={syncedListing ? syncedShown : activeId}
           busy={busy}
-          working={new Set(Object.values(working))}
+          working={new Set([...Object.values(working), ...(syncedWorking ? [syncedWorking] : [])])}
           unread={unread}
           overlay={narrow}
           onNew={() => openThread("new")}
@@ -210,7 +247,7 @@ export function ChatWindow() {
           mountId={mountId}
           restoreId={restoreId}
           sessions={sessions}
-          hidden={mountId !== shown}
+          hidden={mountId !== shown || syncedListing !== undefined}
           clis={clis}
           runModels={runModels}
           prefillUrl={mountId === shown ? droppedUrl : undefined}
@@ -220,13 +257,25 @@ export function ChatWindow() {
           onWorking={(thread) => setWorking(({ [mountId]: _, ...rest }) => (thread === undefined ? rest : { ...rest, [mountId]: thread }))}
           onUnread={() => {
             const thread = sessions.get(mountId)?.threadId();
-            if (thread !== undefined && mountId !== shownRef.current) setUnread((prev) => new Set(prev).add(thread));
+            if (thread !== undefined && (mountId !== shownRef.current || syncedRef.current !== undefined)) setUnread((prev) => new Set(prev).add(thread));
           }}
           takeLateReceipts={takeLateReceipts}
           onSwitch={(target, keep) => switchTo(mountId, target, keep)}
           onEvicted={() => dropMount(mountId)}
         />
       ))}
+      {syncedListing ? (
+        <SyncedChat
+          key={syncedShown}
+          listing={syncedListing}
+          botRunning={bots[syncedListing.surface] === true}
+          version={syncedVersion}
+          onWorking={(w) => {
+            const key = syncedKey(syncedListing);
+            setSyncedWorking((prev) => (w ? key : prev === key ? undefined : prev));
+          }}
+        />
+      ) : null}
       {closing ? (
         <div class="bean-memory-review">
           <div class="bean-memory-review-card">

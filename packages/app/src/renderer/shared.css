@@ -284,6 +284,26 @@ button, input, textarea, select, a {
 .bean-chat-sidebar-row:hover .bean-chat-sidebar-row-delete,
 .bean-chat-sidebar-row-delete:focus-visible { opacity: 1; }
 .bean-chat-sidebar-row-delete:hover { color: var(--bean-text); }
+/* Discord/Teams badge on a synced chat's sidebar row and header. */
+.bean-chat-sidebar-badge {
+  flex: none;
+  font: 600 9.5px/1.4 ui-monospace, SFMono-Regular, monospace;
+  color: var(--bean-text-dim);
+  border: 1px solid var(--bean-control-border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.bean-chat-synced-count {
+  margin-right: auto;
+  font: 10.5px ui-monospace, SFMono-Regular, monospace;
+  color: var(--bean-text-dim);
+}
+.bean-chat-synced-count--over { color: var(--bean-error); }
+.bean-chat-synced-foot {
+  font: 11px/1.45 ui-monospace, SFMono-Regular, monospace;
+  color: var(--bean-text-dim);
+  padding-top: 6px;
+}
 .bean-chat-sidebar-foot {
   flex: none;
   font: 600 11px/1.45 ui-monospace, SFMono-Regular, monospace;

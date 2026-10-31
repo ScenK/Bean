@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { openDb } from "../db.js";
 import type { ChatTurn } from "../converse.js";
 import type { LiveCli } from "../live-session.js";
@@ -97,4 +99,22 @@ export function chatopsConversationTurns(file: string, conversationId: string): 
     "SELECT role, content FROM chatops_turns WHERE conversation_id = ? ORDER BY seq",
   ).all(conversationId) as unknown as { role: ChatTurn["role"]; content: string }[])
     .map((r) => ({ role: r.role, content: r.content }));
+}
+
+/** The configured owner of each surface (`discord.json` / `teams.json` in `dir`), for
+ * `listChatopsConversations`. A missing or unreadable config, or one with no ownerId, is left out.
+ * `ownerName` is what the bot calls the owner (roles' fallback "the owner"). */
+export async function loadChatopsOwners(dir: string): Promise<Array<{ surface: ChatopsSurface; ownerId: string; ownerName: string }>> {
+  const surfaces: ChatopsSurface[] = ["discord", "teams"];
+  const owners = await Promise.all(surfaces.map(async (surface) => {
+    let cfg: { ownerId?: unknown; ownerName?: unknown; allowedUserIds?: unknown } | undefined;
+    try { cfg = JSON.parse(await readFile(join(dir, `${surface}.json`), "utf8")) as typeof cfg; } catch { return []; }
+    // Same owner as the bot resolves: Discord's pre-roles config with one allowed id is the owner.
+    const legacy = surface === "discord" && Array.isArray(cfg?.allowedUserIds) && cfg.allowedUserIds.length === 1
+      ? cfg.allowedUserIds[0] : undefined;
+    const ownerId = typeof cfg?.ownerId === "string" && cfg.ownerId ? cfg.ownerId : typeof legacy === "string" ? legacy : "";
+    const ownerName = typeof cfg?.ownerName === "string" && cfg.ownerName ? cfg.ownerName : "the owner";
+    return ownerId ? [{ surface, ownerId, ownerName }] : [];
+  }));
+  return owners.flat();
 }

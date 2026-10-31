@@ -76,3 +76,24 @@ open chat holds, in main. Inline at ≥640px (collapse remembered in `localStora
 in e2e). e2e: match the chat window by `endsWith("/chat.html")`, not `includes("chat")` — a worktree
 path like `.worktrees/516-chat-…` matches every window. `BEAN_E2E_EXECUTABLE` runs the specs against a
 packaged `Bean.app` binary.
+
+**Synced chats (#530) — `app/src/synced-chats.ts`, `SyncedChat.tsx`.** The owner's Discord/Teams
+conversations (`chatops_conversations`, see `project-chatops-conversation-catalog.md`) merge into the
+same Today/Earlier list (`mergeRows`, keyed `<surface>:<conversationId>` so they never collide with a
+thread UUID) with a surface badge and kind chip, no ✕. A synced chat is a **view**, not a thread:
+it never writes `desktop_chats`, has no incognito, no memory extraction, and its own attached mount.
+Every list/get/send in main goes through the current owner's listing (`loadChatopsOwners` reads
+`discord.json`/`teams.json` per call), so the renderer can only name a row the sidebar shows; get
+and send also need an attached mount. Transcript mapping happens in main: the owner's `[Name]:`
+prefix is dropped (a DM: always; elsewhere: the configured `ownerName`, which desk turns use —
+the owner's own platform display name in a thread still shows), `[live session]` finals are the
+last bound CLI's, the compaction summary is a status row, and stored context blocks (ambient,
+replied-to) are left out. The view sits **over** the current desktop chat, which stays mounted
+hidden — picking a desktop row/New chat goes back through that chat's `open()`; a dropped URL or
+Plan-popup prompt shows it again. Main tracks running live sessions from the bots' `live`
+activity (id = conversation id, cleared when a bot stops) and pushes `syncedChatEvent` (ids only)
+on that and on `saved`; the shell re-lists, re-reads the shown one, and dots the others. A desk
+turn shows as a pending bubble until a matching owner line lands; a refusal or a missing ack is an
+error row (never resent). Composer: bot down → read-only, live → steer, after a session the
+"Session ended — Continue live, or message Bean" placeholder; 4,000-char counter (renderer copy of
+`MAX_DESK_TEXT`, a test pins them equal).
