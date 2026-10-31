@@ -1,6 +1,6 @@
 import type { ConversationReference, TurnContext } from "botbuilder";
 import { expect, test } from "vitest";
-import { proactiveEffects, refFor, refScope, type ContinueConversation } from "../src/proactive.js";
+import { isDirect, placeOf, proactiveEffects, refFor, refScope, type ContinueConversation } from "../src/proactive.js";
 
 const CHANNEL = "19:abc@thread.tacv2";
 const POST = `${CHANNEL};messageid=1700`;
@@ -64,4 +64,17 @@ test("proactive effects for a DM post to that DM", async () => {
   const { calls, cont } = recorder();
   await proactiveEffects(refFor(refs, DM)!, cont).post("hi");
   expect(calls).toEqual([{ conversationId: DM, activity: { type: "message", text: "hi" } }]);
+});
+
+test("a real 1:1 DM is direct; a targeted personal conversation (a / pick in a shared chat) is not", () => {
+  const conversation = { id: DM, conversationType: "personal" } as ConversationReference["conversation"];
+  const dm = { conversation, bot: { id: "28:bean", name: "Bean" } };
+  expect(isDirect(dm)).toBe(true);
+  expect(placeOf(dm)).toEqual({ kind: "dm", title: "DM" });
+  const picked = { conversation, bot: { id: "28:bean", name: "Bean", isTargeted: true } as ConversationReference["bot"] };
+  expect(isDirect(picked)).toBe(false);
+  expect(placeOf(picked)).toEqual({ kind: "channel", title: "Teams chat" });
+  expect(refScope(picked)).toBeUndefined(); // the a: id isn't the shared chat's: unscoped
+  // Only a strict true targets: a stray truthy value never demotes a real DM.
+  expect(isDirect({ conversation, bot: { id: "28:bean", name: "Bean", isTargeted: "true" } as unknown as ConversationReference["bot"] })).toBe(true);
 });

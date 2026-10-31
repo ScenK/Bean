@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, saveRoutine, createRoutine, RoutineProposalStore, memberTodoEligible, resolveTodoRoutine, ownerDmRefs,
-  buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, ConversationCatalog, type ConversationPlace, maybeCompact, NoteProposalStore, ProposalStore,
+  buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, ConversationCatalog, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeChatter, dmAllowed,
 } from "@bean/core";
@@ -24,7 +24,7 @@ import {
 } from "./cards.js";
 import { addressedToBot } from "./addressing.js";
 import { startDevtunnel } from "./devtunnel.js";
-import { bareChannelId, proactiveEffects, refFor, refScope } from "./proactive.js";
+import { bareChannelId, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
 import { parseQuote } from "./replied-to.js";
 import { deliveredAppend, loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 import { teamsText } from "./teams-text.js";
@@ -251,15 +251,6 @@ function scopeOf(a: Activity): string | undefined {
   return refScope({ conversation: a.conversation });
 }
 
-/** The conversation catalog's kind and title (display only). A channel conversation id carrying
- * `;messageid=` is one post's reply chain. */
-function placeOf(a: Activity): ConversationPlace {
-  const c = a.conversation;
-  if (c.conversationType === "personal") return { kind: "dm", title: "DM" };
-  if (c.conversationType === "channel" && c.id.includes(";")) return { kind: "post", title: c.name || "Teams post" };
-  return { kind: "channel", title: c.name || "Teams chat" };
-}
-
 const proactive = (ref: Partial<ConversationReference>, fn: (ctx: TurnContext) => Promise<void>): Promise<void> =>
   adapter.continueConversationAsync(teamsConfig.botAppId, ref, fn);
 
@@ -297,7 +288,7 @@ app.post("/api/messages", (req, res) => {
           fromAltId: a.from.aadObjectId,
           scopeId: scopeOf(a),
           fromName: a.from.name ?? "someone",
-          place: placeOf(a),
+          place: placeOf({ conversation: a.conversation, bot: a.recipient }),
           value: {
             beanAction: value.beanAction, proposalId: value.proposalId, projectPath: value.projectPath, runId: value.runId,
             cli: value.cli, model: value.model,
@@ -342,7 +333,9 @@ app.post("/api/messages", (req, res) => {
       }
       return;
     }
-    const direct = a.conversation.conversationType === "personal";
+    // A `/` pick in a shared chat arrives `personal` but targeted: not a DM (see isDirect).
+    const place = placeOf({ conversation: a.conversation, bot: a.recipient });
+    const direct = place.kind === "dm";
     // Role before any paid pre-work: a non-owner DM with guest DMs off gets core's one fixed
     // line (or a whoami answer), so its images are never downloaded.
     const dmBlocked = direct && !dmAllowed(roles.roleOf({ fromId: a.from.id, fromAltId: a.from.aadObjectId }), roles);
@@ -368,7 +361,7 @@ app.post("/api/messages", (req, res) => {
           fromId: a.from.id, fromAltId: a.from.aadObjectId, fromName: a.from.name ?? "someone",
           scopeId: scopeOf(a), direct,
           mentions, mentionedIds: mentions.map((m) => m.id),
-          channelName: a.conversation.conversationType === "personal" ? "DM" : a.conversation.name,
+          channelName: place.title,
         },
         fx,
       );
