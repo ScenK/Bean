@@ -7,7 +7,8 @@ const models = [
 ];
 
 const proposalInput = {
-  proposalId: "prop-1", projectName: "bean", skillName: "fix-bug",
+  proposalId: "prop-1", projectPath: "/p/bean", skillName: "fix-bug",
+  projects: [{ name: "bean", path: "/p/bean" }, { name: "web", path: "/p/web" }], scratch: true,
   instruction: "fix the <flaky> test & report", clis: ["claude" as const, "opencode" as const],
   skills: [{ name: "fix-bug" }, { name: "review-code" }],
   models, defaultCli: "claude" as const, defaultModel: "sonnet",
@@ -59,6 +60,37 @@ test("proposal skill select drops names past Discord's 100-char option-value cap
   };
   const skill = card.components.flatMap((r) => r.components).find((c) => c.custom_id === "bean:skill:prop-1");
   expect(skill?.options?.map((o) => o.value)).toEqual(["__none__", "ok"]);
+});
+
+type SelectCard = { embeds: { fields?: { name: string }[] }[]; components: { components: { custom_id: string; options?: { label: string; value: string; default?: boolean }[] }[] }[] };
+const projectSelect = (card: SelectCard) => card.components[0]?.components.find((c) => c.custom_id === "bean:project:prop-1");
+
+test("delegate proposal: project select is row 1 of 5, defaulting to the proposal's project, no Project field", () => {
+  const card = discordCards.proposalCard(proposalInput) as SelectCard;
+  expect(card.components).toHaveLength(5);
+  const select = projectSelect(card);
+  expect(select?.options?.map((o) => o.value)).toEqual(["__none__", "/p/bean", "/p/web"]);
+  expect(select?.options?.find((o) => o.default)?.value).toBe("/p/bean");
+  expect(card.embeds[0]?.fields ?? []).toEqual([]);
+});
+
+test("delegate proposal: the no-project option only with a scratch workspace, and defaults for scratch", () => {
+  const without = discordCards.proposalCard({ ...proposalInput, scratch: false }) as SelectCard;
+  expect(projectSelect(without)?.options?.map((o) => o.value)).toEqual(["/p/bean", "/p/web"]);
+  const scratch = discordCards.proposalCard({ ...proposalInput, projectPath: "__none__" }) as SelectCard;
+  expect(projectSelect(scratch)?.options?.find((o) => o.default)?.label).toBe("— no project (scratch) —");
+});
+
+test("delegate proposal: project select hoists the pick past the 25-option cap and drops >100-char paths", () => {
+  const many = Array.from({ length: 40 }, (_, i) => ({ name: `p${i}`, path: `/p/${i}` }));
+  const card = discordCards.proposalCard({
+    ...proposalInput, projectPath: "/p/39", projects: [{ name: "long", path: "/" + "x".repeat(100) }, ...many],
+  }) as SelectCard;
+  const options = projectSelect(card)?.options ?? [];
+  expect(options).toHaveLength(25);
+  expect(options.slice(0, 2).map((o) => o.value)).toEqual(["__none__", "/p/39"]);
+  expect(options.find((o) => o.default)?.value).toBe("/p/39");
+  expect(options.every((o) => o.value.length <= 100)).toBe(true);
 });
 
 test("running message carries cancel-run and the tail in a code block", () => {

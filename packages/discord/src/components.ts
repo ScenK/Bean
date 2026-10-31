@@ -65,6 +65,19 @@ function proposalCard(input: ProposalCardInput): object {
       })),
   };
   const skillRows = skillSelectRows(`bean:skill:${input.proposalId}`, input.skills, input.skillName);
+  // Same caps as skillSelectRows: values ≤ 100 chars (a longer path gets no option), ≤ 25
+  // options, the picked project hoisted so truncation can't drop the default.
+  const selectable = input.projects
+    .filter((p) => p.path.length <= 100)
+    .map((p) => ({ label: p.name.slice(0, 100), value: p.path }));
+  const projectOptions = [
+    ...(input.scratch ? [{ label: "— no project (scratch) —", value: "__none__" }] : []),
+    ...selectable.filter((o) => o.value === input.projectPath),
+    ...selectable.filter((o) => o.value !== input.projectPath),
+  ].slice(0, 25).map((o) => ({ ...o, default: o.value === input.projectPath }));
+  const projectRows = projectOptions.length > 0
+    ? [row([{ type: STRING_SELECT, custom_id: `bean:project:${input.proposalId}`, placeholder: "Project", options: projectOptions }])]
+    : [];
   const buttons = [
     { type: BUTTON, style: 2, label: "Edit prompt", custom_id: `bean:delegate-edit:${input.proposalId}` },
     { type: BUTTON, style: 3, label: "Run", custom_id: `bean:confirm:${input.proposalId}` },
@@ -74,9 +87,9 @@ function proposalCard(input: ProposalCardInput): object {
     embeds: [{
       title: "Bean proposes a delegate run",
       description: clampInstruction(input.instruction),
-      fields: [{ name: "Project", value: input.projectName, inline: true }],
     }],
-    components: [...skillRows, row([cliSelect]), row([modelSelect]), row(buttons)],
+    // Discord caps a message at 5 action rows: project, skill, cli, model, buttons (the live card's order).
+    components: [...projectRows, ...skillRows, row([cliSelect]), row([modelSelect]), row(buttons)],
   };
 }
 

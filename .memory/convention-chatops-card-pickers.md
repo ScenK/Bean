@@ -39,5 +39,11 @@ launch). Teams sends it as an `Input.Text` in the Run submit; Discord uses a mod
 `conversationId` (ids are sequential `prop-N`; a forged submit would inject into another thread's
 resumed session) and rejects >4000 chars — both *before* `claim()`, so the real card stays usable.
 
+**Project picker on the delegate card** (#556): a submitted `projectPath` is client-supplied, so
+confirm accepts only a path in a fresh `loadProjects()` or `__none__` (→ the bot's own
+`scratchPath`), refused before `claim()`. The card never shows the scratch path (absolute, under
+`$HOME`) — `delegateProjectLabel` names it "No project (scratch)". The Discord delegate card now
+uses all 5 action rows (project, skill, cli, model, buttons): the next control needs a modal.
+
 Related: [project-live-sessions.md](project-live-sessions.md),
 [project-config-driven-cli-models.md](project-config-driven-cli-models.md).

@@ -156,7 +156,7 @@ const client = new Client({
 // Latest select-menu choices per proposal message id — Discord sends each select change
 // as its own interaction, so the values must be cached until the Run button is pressed.
 // Entries die with the proposal (deleted on confirm/cancel).
-const selections = new Map<string, { cli?: string; model?: string; skillName?: string }>();
+const selections = new Map<string, { cli?: string; model?: string; skillName?: string; projectPath?: string }>();
 
 // Admin scope is the channel, not the thread: a thread's parent channel (computed before
 // startThread reassigns the turn's channel). History, cards and runs keep the thread id.
@@ -208,7 +208,9 @@ async function liveSessionCardFor(
 
 // Rebuild the delegate proposal card after an Edit-prompt change. The select defaults come from
 // the message's pending `selections` (what Run will send), falling back to the proposal's own.
-async function delegateCardFor(pending: PendingProposal, sel: { cli?: string; model?: string; skillName?: string }): Promise<object> {
+async function delegateCardFor(
+  pending: PendingProposal, sel: { cli?: string; model?: string; skillName?: string; projectPath?: string },
+): Promise<object> {
   const [projects, skills] = await Promise.all([
     loadProjects(projectsFile(dir)),
     loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
@@ -219,7 +221,8 @@ async function delegateCardFor(pending: PendingProposal, sel: { cli?: string; mo
   const detected = clis();
   return discordCards.proposalCard({
     proposalId: pending.id,
-    projectName: projects.find((p) => p.path === pending.proposal.projectPath)?.name ?? pending.proposal.projectPath,
+    projectPath: sel.projectPath ?? (pending.proposal.projectPath === scratchPath ? "__none__" : pending.proposal.projectPath),
+    projects: projects.map((p) => ({ name: p.name, path: p.path })), scratch: true,
     skillName, instruction: pending.proposal.instruction, clis: detected,
     skills: skills.filter((s) => !s.hidden && s.enabled !== false).map((s) => ({ name: s.name, ...(s.browser ? { browser: true } : {}) })),
     models: availableModels(cliModels, detected),
@@ -661,6 +664,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       if (action === "cli") sel.cli = interaction.values[0];
       if (action === "model") sel.model = interaction.values[0];
       if (action === "skill") sel.skillName = interaction.values[0];
+      if (action === "project") sel.projectPath = interaction.values[0];
       selections.set(interaction.message.id, sel);
       return;
     }
@@ -697,7 +701,10 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         scopeId: scopeOf(interaction.channel),
         fromName: interaction.user.displayName,
         place: placeOf(interaction.channel),
-        value: { beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, skillName: sel.skillName },
+        value: {
+          beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, skillName: sel.skillName,
+          projectPath: sel.projectPath,
+        },
       },
       fx,
     );
