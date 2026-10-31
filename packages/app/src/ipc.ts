@@ -1243,6 +1243,10 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     chatKey(e.sender, mountId);
     return deps.syncedChatHandlers.send(surface, conversationId, text);
   });
+  ipcMain.handle(IPC.syncedChatResume, (e, surface: unknown, conversationId: unknown, mountId: unknown) => {
+    chatKey(e.sender, mountId);
+    return deps.syncedChatHandlers.resume(surface, conversationId);
+  });
   ipcMain.on(IPC.rememberOnClose, (e, transcript: unknown, opts: unknown) => {
     const o = opts as { incognito?: unknown; rejected?: unknown; mountId?: unknown } | null;
     const key = tryChatKey(e.sender, o?.mountId);

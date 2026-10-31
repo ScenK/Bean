@@ -257,6 +257,17 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   (`LiveReceipt`, kept on `LiveState`). The ended/failed row, and End/switch/close's row, carry it as
   a `status` receipt → Continue live; End's row is `exiting` (button disabled) until that session's
   `ended` event. `LiveEvent.sessionId` stays Bean's own id.
+- **Desk Continue live (#532)**: app→bot `desk-resume {requestId, conversationId}` only (same
+  `desk-ack` contract as a desk turn). `bot.onDeskResume` re-derives everything: the catalog row's
+  `live_cli`/`live_session_id` and `findDelegateRun` must agree on surface (`catalog.surface`), CLI and
+  session, else `no-record` — a row with no recorded id never starts fresh. Then owner-now
+  (`not-eligible`), `channel-busy` (a running session, or another desk resume for the conversation
+  mid-await — a phone-side reopen racing it gets the registry's one-per-channel `"channel"` →
+  `channel-busy` too), `cli-missing`. It runs the same `startLiveSessionAction` as a card Start
+  (shared `resumeRefusal`), with no card, `quiet` (refusals are only acked, never posted), restricted,
+  `starterId` = the catalog's `owner_id`; the mode line still posts so the phone sees it reopen. The
+  synced chat's button (`listing.resumable` = an id is recorded; the id never crosses IPC) shows
+  "Opening…" until the bot's `live start` makes the row live (hidden while live) or a refusal row.
 - Desk turns (#528) into a conversation with a running live session are plain steers (same
   `steerLive` path as typed text, starter/co-driver check against the catalog's owner id) —
   never keyword commands like `stop`/`+driver`; see project-teams-bot.md → Desk ingress.

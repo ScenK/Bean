@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { parseChatopsActivity, parseDeskAck, parseDeskSaved, type ChatopsActivity, type DeskAckResult, type DeskTurn } from "@bean/core";
+import { parseChatopsActivity, parseDeskAck, parseDeskSaved, type ChatopsActivity, type DeskAckResult, type DeskResume, type DeskTurn } from "@bean/core";
 
 export type ChatopsBot = "discord" | "teams";
 /** `running` is the process; `enabled` is the user's switch — the two come apart while a crashed
@@ -24,8 +24,8 @@ export interface SpawnedProcess {
   on(event: "exit", cb: (code: number | null, signal: string | null) => void): void;
   /** IPC messages from the bot (process.send) — its activity for the status bubbles. */
   on(event: "message", cb: (msg: unknown) => void): void;
-  /** IPC to the bot (desk turns). The callback reports a send that never left this process. */
-  send(msg: DeskTurn, cb: (err: Error | null) => void): boolean;
+  /** IPC to the bot (desk turns, desk resumes). The callback reports a send that never left this process. */
+  send(msg: DeskTurn | DeskResume, cb: (err: Error | null) => void): boolean;
   kill(): void;
 }
 
@@ -64,8 +64,8 @@ const RETRY_DELAY_MS = 5_000;
 /** Past this, a run counts as having served rather than failed to start, so its crash gets a
  * fresh retry budget instead of being charged to the original start. */
 const STABLE_MS = 10_000;
-/** How long a desk turn waits for the bot's ack (the echo post, not the turn). No auto-resend:
- * a lost ack may still have run the turn, and a resend would run it twice. */
+/** How long a desk request waits for the bot's ack (the echo post, not the turn; a resume's bind).
+ * No auto-resend: a lost ack may still have run the turn, and a resend would run it twice. */
 const DESK_ACK_TIMEOUT_MS = 15_000;
 
 export interface ChatopsServersDeps {
@@ -185,8 +185,30 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     });
   };
 
+  // One desk request (turn or resume) and its ack: rejects when the bot isn't running, exits, or
+  // doesn't ack in time.
+  const deskRequest = (bot: ChatopsBot, msg: (requestId: string) => DeskTurn | DeskResume): Promise<DeskAckResult> => {
+    const child = procs.get(bot);
+    if (!child) return Promise.reject(new Error(`${bot} bot is not running`));
+    const requestId = randomUUID();
+    return new Promise<DeskAckResult>((resolve, reject) => {
+      const timer = setTimeout(() => settle(new Error(`${bot} bot didn't answer`)), DESK_ACK_TIMEOUT_MS);
+      const settle = (r: DeskAckResult | Error): void => {
+        if (!pending[bot].delete(requestId)) return;
+        clearTimeout(timer);
+        if (r instanceof Error) reject(r); else resolve(r);
+      };
+      pending[bot].set(requestId, { settle });
+      try {
+        child.send(msg(requestId), (err) => { if (err) settle(err); });
+      } catch (err) {
+        settle(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  };
+
   return {
-    status: (): Record<ChatopsBot, ChatopsState> => ({ discord: view("discord"), teams: view("teams") }),
+    status:(): Record<ChatopsBot, ChatopsState> => ({ discord: view("discord"), teams: view("teams") }),
 
     /** Explicit start (autostart at boot, tray, Settings) — always gets the full retry budget.
      * Also clears `shuttingDown`: it's only set on the way out, so if the process is still here
@@ -213,23 +235,13 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
      * the bot's ack (ok, or a refusal code); rejects when the bot isn't running, exits, or doesn't
      * ack in time. */
     deskTurn(bot: ChatopsBot, conversationId: string, text: string): Promise<DeskAckResult> {
-      const child = procs.get(bot);
-      if (!child) return Promise.reject(new Error(`${bot} bot is not running`));
-      const requestId = randomUUID();
-      return new Promise<DeskAckResult>((resolve, reject) => {
-        const timer = setTimeout(() => settle(new Error(`${bot} bot didn't answer`)), DESK_ACK_TIMEOUT_MS);
-        const settle = (r: DeskAckResult | Error): void => {
-          if (!pending[bot].delete(requestId)) return;
-          clearTimeout(timer);
-          if (r instanceof Error) reject(r); else resolve(r);
-        };
-        pending[bot].set(requestId, { settle });
-        try {
-          child.send({ type: "desk-turn", requestId, conversationId, text }, (err) => { if (err) settle(err); });
-        } catch (err) {
-          settle(err instanceof Error ? err : new Error(String(err)));
-        }
-      });
+      return deskRequest(bot, (requestId) => ({ type: "desk-turn", requestId, conversationId, text }));
+    },
+
+    /** Asks the bot to reopen a catalogued conversation's ended live session (desk Continue
+     * live). Same ack contract as deskTurn. */
+    deskResume(bot: ChatopsBot, conversationId: string): Promise<DeskAckResult> {
+      return deskRequest(bot, (requestId) => ({ type: "desk-resume", requestId, conversationId }));
     },
 
     stopAll(): void {

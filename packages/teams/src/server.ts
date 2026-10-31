@@ -4,7 +4,7 @@ import {
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, saveRoutine, createRoutine, RoutineProposalStore, memberTodoEligible, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, ConversationCatalog, type ConversationPlace, maybeCompact, NoteProposalStore, ProposalStore,
-  RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
+  RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeChatter, dmAllowed,
 } from "@bean/core";
 import {
@@ -391,16 +391,18 @@ app.post("/api/messages", (req, res) => {
 // does the eligibility checks, then asks for the effects). No turn context, so every effect is
 // proactive on the stored ref; a conversation Bean never saw has none and fails the echo, which
 // refuses the turn (`post-failed`).
+// A desk-resume (Continue live) reopens the conversation's ended live session the same way.
 process.on("message", (raw) => {
-  const req = parseDeskTurn(raw);
+  const req = parseDeskTurn(raw) ?? parseDeskResume(raw);
   if (!req) return;
   const effects = async () => {
     const ref = refFor(conversationRefs, req.conversationId);
     if (!ref) throw new Error("no conversation reference");
     return { fx: proactiveEffects(ref, proactive), scopeId: refScope(ref) };
   };
-  bot.onDeskTurn(req, effects, (r) => parentDeskAck(req.requestId, r))
-    .catch((err: unknown) => console.error("desk turn error:", err));
+  const ack = (r: DeskAckResult): void => parentDeskAck(req.requestId, r);
+  (req.type === "desk-turn" ? bot.onDeskTurn(req, effects, ack) : bot.onDeskResume(req, effects, ack))
+    .catch((err: unknown) => console.error("desk request error:", err));
 });
 
 // Die with the desktop app that spawned us — see exitWhenOrphaned's doc comment.

@@ -95,5 +95,6 @@ activity (id = conversation id, cleared when a bot stops) and pushes `syncedChat
 on that and on `saved`; the shell re-lists, re-reads the shown one, and dots the others. A desk
 turn shows as a pending bubble until a matching owner line lands; a refusal or a missing ack is an
 error row (never resent). Composer: bot down → read-only, live → steer, after a session the
-"Session ended — Continue live, or message Bean" placeholder; 4,000-char counter (renderer copy of
+"Session ended — Continue live, or message Bean" placeholder (the Continue live button: see
+project-live-sessions.md → Desk Continue live); 4,000-char counter (renderer copy of
 `MAX_DESK_TEXT`, a test pins them equal).

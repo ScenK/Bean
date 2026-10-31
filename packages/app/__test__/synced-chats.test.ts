@@ -39,7 +39,7 @@ describe("mapSyncedTranscript", () => {
 
 const ROWS: ChatopsConversation[] = [
   { conversationId: "d1", surface: "discord", kind: "dm", title: "DM", ownerId: "u1", updatedAt: "2026-10-30T10:00:00.000Z" },
-  { conversationId: "t1", surface: "teams", kind: "post", title: "Standup", ownerId: "29:x", liveCli: "claude", updatedAt: "2026-10-30T09:00:00.000Z" },
+  { conversationId: "t1", surface: "teams", kind: "post", title: "Standup", ownerId: "29:x", liveCli: "claude", liveSessionId: "sess-1", updatedAt: "2026-10-30T09:00:00.000Z" },
 ];
 
 function handlers(given: Partial<SyncedChatHandlerDeps> = {}) {
@@ -50,6 +50,7 @@ function handlers(given: Partial<SyncedChatHandlerDeps> = {}) {
     conversationTurns: vi.fn(() => [{ role: "user" as const, content: speakerLine("Scen", "hello") }]),
     liveIds: (s) => new Set(s === "teams" ? ["t1"] : []),
     deskTurn: vi.fn(async () => ({ ok: true as const })),
+    deskResume: vi.fn(async () => ({ ok: true as const })),
     ...given,
   };
   return { deps, h: buildSyncedChatHandlers(deps) };
@@ -60,8 +61,8 @@ describe("buildSyncedChatHandlers", () => {
     const { h, deps } = handlers();
     const list = await h.list();
     expect(list).toEqual([
-      { surface: "discord", conversationId: "d1", kind: "dm", title: "DM", updatedAt: ROWS[0]!.updatedAt, live: false },
-      { surface: "teams", conversationId: "t1", kind: "post", title: "Standup", updatedAt: ROWS[1]!.updatedAt, live: true, liveCli: "claude" },
+      { surface: "discord", conversationId: "d1", kind: "dm", title: "DM", updatedAt: ROWS[0]!.updatedAt, live: false, resumable: false },
+      { surface: "teams", conversationId: "t1", kind: "post", title: "Standup", updatedAt: ROWS[1]!.updatedAt, live: true, liveCli: "claude", resumable: true },
     ]);
     expect(deps.listConversations).toHaveBeenCalledWith("/db", expect.arrayContaining([expect.objectContaining({ surface: "teams", ownerId: "29:x" })]));
   });
@@ -86,6 +87,19 @@ describe("buildSyncedChatHandlers", () => {
     await expect(h.send("discord", "d1", "hi")).resolves.toEqual({ refused: "queue-full" });
     expect(deskTurn).toHaveBeenCalledWith("discord", "d1", "hi");
     await expect(h.send("discord", "d1", "hi")).resolves.toEqual({ failed: "discord bot is not running" });
+  });
+
+  it("Continue live sends only the conversation id, for a listed row with a recorded session", async () => {
+    const deskResume = vi.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockRejectedValueOnce(new Error("teams bot didn't answer"));
+    const { h } = handlers({ deskResume });
+    await expect(h.resume("discord", "d1")).resolves.toEqual({ refused: "no-record" });
+    await expect(h.resume("discord", "t1")).rejects.toThrow(/not a synced chat/);
+    expect(deskResume).not.toHaveBeenCalled();
+    await expect(h.resume("teams", "t1")).resolves.toEqual({ ok: true });
+    expect(deskResume).toHaveBeenCalledWith("teams", "t1");
+    await expect(h.resume("teams", "t1")).resolves.toEqual({ failed: "teams bot didn't answer" });
   });
 });
 
@@ -116,5 +130,9 @@ describe("synced chat IPC", () => {
     expect(sDeps.deskTurn).not.toHaveBeenCalled();
     await expect(invoke(IPC.syncedChatGet, chat, "discord", "d1", A)).resolves.toHaveLength(1);
     await expect(invoke(IPC.syncedChatSend, chat, "discord", "d1", "hi", A)).resolves.toEqual({ ok: true });
+    expect(() => invoke(IPC.syncedChatResume, chat, "teams", "t1", B)).toThrow(/unknown chat session/);
+    expect(() => invoke(IPC.syncedChatResume, other, "teams", "t1", A)).toThrow(/chat window/);
+    expect(sDeps.deskResume).not.toHaveBeenCalled();
+    await expect(invoke(IPC.syncedChatResume, chat, "teams", "t1", A)).resolves.toEqual({ ok: true });
   });
 });

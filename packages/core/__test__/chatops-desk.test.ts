@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { parseDeskAck, parseDeskSaved, parseDeskTurn } from "../src/chatops/desk.js";
+import { parseDeskAck, parseDeskResume, parseDeskSaved, parseDeskTurn } from "../src/chatops/desk.js";
 
 test("parseDeskTurn keeps only the three fields of a well-formed turn", () => {
   expect(parseDeskTurn({ type: "desk-turn", requestId: "r1", conversationId: "c1", text: "hi", fromId: "x" }))
@@ -31,5 +31,13 @@ test("parseDeskSaved accepts a conversation id only", () => {
   expect(parseDeskSaved({ type: "saved", conversationId: "c1", text: "x" })).toEqual({ type: "saved", conversationId: "c1" });
   for (const bad of [null, { type: "saved" }, { type: "saved", conversationId: "" }, { type: "saved", conversationId: "c".repeat(201) }, { type: "desk-ack", conversationId: "c1" }]) {
     expect(parseDeskSaved(bad)).toBeUndefined();
+  }
+});
+
+test("parseDeskResume carries only a request and conversation id — never a session, CLI or project", () => {
+  expect(parseDeskResume({ type: "desk-resume", requestId: "r1", conversationId: "c1", sessionId: "forged", cli: "codex", projectPath: "/x" }))
+    .toEqual({ type: "desk-resume", requestId: "r1", conversationId: "c1" });
+  for (const bad of [null, { type: "desk-resume", requestId: "r1" }, { type: "desk-turn", requestId: "r1", conversationId: "c1" }, { type: "desk-resume", requestId: "", conversationId: "c1" }]) {
+    expect(parseDeskResume(bad)).toBeUndefined();
   }
 });

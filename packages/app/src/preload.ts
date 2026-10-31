@@ -154,6 +154,8 @@ contextBridge.exposeInMainWorld("bean", {
     ipcRenderer.invoke(IPC.syncedChatGet, surface, conversationId, mountId),
   syncedChatSend: (surface: string, conversationId: string, text: string, mountId: string): Promise<SyncedSendResult> =>
     ipcRenderer.invoke(IPC.syncedChatSend, surface, conversationId, text, mountId),
+  syncedChatResume: (surface: string, conversationId: string, mountId: string): Promise<SyncedSendResult> =>
+    ipcRenderer.invoke(IPC.syncedChatResume, surface, conversationId, mountId),
   onSyncedChatEvent: (cb: (e: SyncedChatEvent) => void) =>
     ipcRenderer.on(IPC.syncedChatEvent, (_e, ev: SyncedChatEvent) => cb(ev)),
   onMemoryUpdated: (cb: (saved: Array<{ id: string; text: string }>, mountId: string) => void) =>
