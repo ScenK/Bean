@@ -166,6 +166,33 @@ describe("createRoutineHost", () => {
     expect(msg?.channel).toBeUndefined();
   });
 
+  it("chatopsOnlyOnProblems: ok posts no chat message; failed / needs-attention post one per sink; note + notify fire for all", async () => {
+    const sinks = { note: true, notify: true, chatops: [{ transport: "discord" as const }, { transport: "teams" as const, channel: "conv" }] };
+    const run = async (status: "ok" | "failed" | "needs-attention", flag?: boolean) => {
+      const notify = vi.fn(async () => {});
+      let n = 0;
+      const h = host({ notify, newId: () => `id-${status}-${n++}` });
+      const r = routine([{ kind: "chat", instruction: "x" }], { sinks: { ...sinks, ...(flag === undefined ? {} : { chatopsOnlyOnProblems: flag }) } });
+      await h.deliverDigest(r, { digest: `d-${status}`, results: [], record: { startedAt: "2026-10-23T06:00:00.000Z", status } as never });
+      const posted = [...await claimOutbox(outboxDir(dir), "discord"), ...await claimOutbox(outboxDir(dir), "teams")];
+      const notes = await loadNotes(dbFile(dir));
+      return { posted: posted.length, notified: notify.mock.calls.length, note: notes[0]?.body };
+    };
+    expect(await run("ok", true)).toEqual({ posted: 0, notified: 1, note: "d-ok" });
+    expect(await run("failed", true)).toEqual({ posted: 2, notified: 1, note: "d-failed" });
+    expect(await run("needs-attention", true)).toEqual({ posted: 2, notified: 1, note: "d-needs-attention" });
+    // Without the flag (or with it off) every run posts.
+    expect(await run("ok")).toEqual({ posted: 2, notified: 1, note: "d-ok" });
+    expect(await run("ok", false)).toEqual({ posted: 2, notified: 1, note: "d-ok" });
+  });
+
+  it("chatopsOnlyOnProblems doesn't mute a notify-only watch fire (always ok)", async () => {
+    const h = host();
+    const r = routine([], { cron: undefined, watch: { kind: "feed", url: "https://x" }, sinks: { chatops: [{ transport: "discord" }], chatopsOnlyOnProblems: true } });
+    await h.deliverDigest(r, { digest: "new item", results: [], record: { status: "ok" } as never });
+    expect(await claimOutbox(outboxDir(dir), "discord")).toHaveLength(1);
+  });
+
   it("skips the notify sink when the host has no notifier", async () => {
     const h = host();
     await expect(h.deliverDigest(routine([], { sinks: { notify: true } }), { digest: "x", results: [], record: {} as never })).resolves.toBeUndefined();

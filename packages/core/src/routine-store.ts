@@ -12,7 +12,9 @@ import { describeContinueErrors, describeEdgeError, describeGroupErrors } from "
 // specific discord channel id or teams conversation id instead.
 // `user` (Discord only, exclusive with `channel`): DM that Discord user id instead of the owner.
 export interface RoutineChatopsSink { transport: "teams" | "discord"; channel?: string; user?: string }
-export interface RoutineSinks { chatops?: RoutineChatopsSink[]; note?: boolean; notify?: boolean }
+/** `chatopsOnlyOnProblems`: the chatops sinks post only when a run isn't `ok` (failed /
+ * needs-attention); note, notify and run history still get every run. Absent = every run. */
+export interface RoutineSinks { chatops?: RoutineChatopsSink[]; chatopsOnlyOnProblems?: boolean; note?: boolean; notify?: boolean }
 
 /** A gated step ends its output with `VERDICT: PASS|FAIL`; FAIL either stops the run or jumps
  * to another step: forward = a branch, backward = a loop of at most `maxRounds` executions of
@@ -231,6 +233,7 @@ export function describeRoutineError(v: unknown, cliModels?: CliModels[]): strin
   const sinks = r.sinks as Record<string, unknown>;
   if (sinks.note !== undefined && typeof sinks.note !== "boolean") return "the note sink must be true or false";
   if (sinks.notify !== undefined && typeof sinks.notify !== "boolean") return "the notify sink must be true or false";
+  if (sinks.chatopsOnlyOnProblems !== undefined && typeof sinks.chatopsOnlyOnProblems !== "boolean") return "chatopsOnlyOnProblems must be true or false";
   if (sinks.chatops !== undefined) {
     if (!Array.isArray(sinks.chatops)) return "the chatops sink must be a list";
     for (let i = 0; i < sinks.chatops.length; i++) {

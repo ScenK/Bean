@@ -1,4 +1,10 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { createRoutineHost } from "../src/routine-host.js";
+import { outboxDir } from "../src/config.js";
+import { claimOutbox } from "../src/outbox.js";
 import { createRoutineScheduler, type RoutineSchedulerDeps } from "../src/routine-scheduler.js";
 import { runRoutine, type RoutineRunnerDeps } from "../src/routine-runner.js";
 import type { Routine, RoutineRunResult, RoutineState, TodoItem, TodoStatus } from "../src/index.js";
@@ -259,6 +265,31 @@ describe("maxParallel workers", () => {
     expect(runRoutineFn.mock.calls[0]).toHaveLength(1); // the routine only — the run claims its own todos
     expect(claimTodo).not.toHaveBeenCalled();
     expect(t.deps.deliverDigest).toHaveBeenCalledOnce();
+  });
+
+  it("chatopsOnlyOnProblems decides per todo: only the failed todo's run posts to chat", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bean-sched-quiet-"));
+    try {
+      let n = 0;
+      const { deliverDigest } = createRoutineHost({
+        dir, converse: async () => ({ content: "", toolCalls: [] }), getModel: () => "m",
+        delegateStep: async () => ({ output: "", cli: "claude" }), commandStep: async () => ({ exitCode: 0, output: "" }),
+        tools: [], loadSkills: async () => [], memories: async () => [], getRoutineDigestContext: () => false,
+        newId: () => `id-${n++}`,
+      });
+      const runRoutineFn = vi.fn(async (_r: Routine, t?: TodoItem): Promise<RoutineRunResult> => {
+        const status = t?.id === "2" ? "failed" as const : "ok" as const;
+        const record = { startedAt: "a", finishedAt: "b", status, digest: `did ${t?.id}`, steps: [] };
+        return { record, digest: record.digest, results: [] };
+      });
+      const r = cronQueue({ sinks: { chatops: [{ transport: "discord" }], chatopsOnlyOnProblems: true } });
+      const t = setup(r, [todo("1"), todo("2"), todo("3")], { runRoutine: runRoutineFn, deliverDigest });
+      await t.sched.tick();
+      expect(runRoutineFn).toHaveBeenCalledTimes(3);
+      expect((await claimOutbox(outboxDir(dir), "discord")).map((m) => m.body)).toEqual(["did 2"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("a member-refused todo fails without stalling the refill (real runner)", async () => {

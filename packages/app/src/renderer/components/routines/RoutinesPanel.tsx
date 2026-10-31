@@ -450,7 +450,11 @@ export function RoutinesPanel() {
 
   const sinkTargets: string[] = [];
   if (draft.sinks.note) sinkTargets.push("your Daily Dashboard");
-  for (const c of draft.sinks.chatops ?? []) sinkTargets.push(c.transport === "discord" ? "Discord" : "Teams");
+  const chatTargets = (draft.sinks.chatops ?? []).map((c) => (c.transport === "discord" ? "Discord" : "Teams"));
+  // Inert on a notify-only watch (deliverDigest ignores it there), so the footer doesn't claim it.
+  if (chatTargets.length > 0 && draft.sinks.chatopsOnlyOnProblems && !(draft.watch && draft.steps.length === 0)) {
+    sinkTargets.push(`${chatTargets.join(" and ")} only when a run needs you`);
+  } else sinkTargets.push(...chatTargets);
   if (draft.sinks.notify) sinkTargets.push("a desktop notification");
 
   const routineRow = (r: Routine) => (
@@ -1074,7 +1078,9 @@ export function RoutinesPanel() {
                       const rest = (draft.sinks.chatops ?? []).filter((c) => c.transport !== transport);
                       // Default to DM (no channel) — a specific channel/conversation is opt-in below.
                       const chatops = on ? [...rest, { transport, channel: undefined }] : rest;
-                      setDraft({ ...draft, sinks: { ...draft.sinks, chatops: chatops.length > 0 ? chatops : undefined } });
+                      // No chat sink left = the only-on-problems rule has nothing to govern; drop it.
+                      const { chatopsOnlyOnProblems: _q, ...sinks } = draft.sinks;
+                      setDraft({ ...draft, sinks: chatops.length > 0 ? { ...draft.sinks, chatops } : { ...sinks, chatops: undefined } });
                     }}
                   />
                   Post to {label} (DM)
@@ -1117,6 +1123,17 @@ export function RoutinesPanel() {
               </div>
             );
           })}
+          {/* Hidden for notify-only watches: their fires are always "ok", so the rule would mute them. */}
+          {(draft.sinks.chatops?.length ?? 0) > 0 && !notifyOnly ? (
+            <label class="bean-routines-sink-row bean-routines-only-on-problems">
+              <input
+                type="checkbox"
+                checked={draft.sinks.chatopsOnlyOnProblems === true}
+                onChange={(e) => setDraft({ ...draft, sinks: { ...draft.sinks, chatopsOnlyOnProblems: (e.target as HTMLInputElement).checked || undefined } })}
+              />
+              Only post when a run needs me
+            </label>
+          ) : null}
         </div>
 
         {error ? <div class="bean-status bean-status--error">{error}</div> : null}

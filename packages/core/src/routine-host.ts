@@ -230,7 +230,9 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         slug: `routine-${routine.name}`, // update-in-place: one living note per routine
       }, undefined, { upsert: true }); // the only upsert caller: the sink (re)creates its note
     }
-    for (const sink of routine.sinks.chatops ?? []) {
+    // A notify-only watch fire is always "ok", so the rule would mute it entirely — it doesn't apply there.
+    const quiet = routine.sinks.chatopsOnlyOnProblems === true && result.record.status === "ok" && routine.steps.length > 0;
+    for (const sink of quiet ? [] : routine.sinks.chatops ?? []) {
       await enqueueOutbox(outboxDir(dir), {
         transport: sink.transport, channel: sink.channel, userId: sink.user,
         title: `Sprout: ${routine.name}`,
