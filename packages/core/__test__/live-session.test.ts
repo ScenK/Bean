@@ -288,3 +288,55 @@ describe("startLiveSession onSessionId", () => {
     expect(turns).toHaveLength(1);
   });
 });
+
+describe("startLiveSession onTurnStart", () => {
+  const ev = (o: object): string => JSON.stringify(o) + "\n";
+  const init = ev({ type: "system", subtype: "init", session_id: "s1" });
+  const assistant = ev({ type: "assistant", message: { content: [{ type: "text", text: "hi" }] } });
+  const result = ev({ type: "result", result: "ok" });
+  const start = (resume?: string) => {
+    const f = fakeChild();
+    const onTurnStart = vi.fn();
+    const handle = startLiveSession(
+      { projectPath: "/p", prompt: "go", ...(resume ? { resume } : {}) },
+      { onOutput: () => {}, onTurnStart, onTurnComplete: () => {}, onExit: () => {} },
+      () => f.child,
+    );
+    return { f, onTurnStart, handle };
+  };
+
+  it("fires once, on the init that opens a queued turn after a result", () => {
+    const { f, onTurnStart } = start();
+    f.stdout.write(init + assistant + result);
+    expect(onTurnStart).not.toHaveBeenCalled(); // the opening turn already lit typing
+    f.stdout.write(init + assistant + result);
+    expect(onTurnStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the first assistant event when no init follows the result", () => {
+    const { f, onTurnStart } = start();
+    f.stdout.write(init + result + assistant + assistant);
+    expect(onTurnStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores other events after a result (system/thinking_tokens)", () => {
+    const { f, onTurnStart } = start();
+    f.stdout.write(init + result + ev({ type: "system", subtype: "thinking_tokens" }));
+    expect(onTurnStart).not.toHaveBeenCalled();
+  });
+
+  it("a resume rejected before init never fires it", () => {
+    const { f, onTurnStart } = start("s1");
+    f.stdout.write(ev({ type: "result", is_error: true, result: "" }) + assistant);
+    f.emit("close", 1, null);
+    expect(onTurnStart).not.toHaveBeenCalled();
+  });
+
+  it("never fires after stop()", () => {
+    const { f, onTurnStart, handle } = start();
+    f.stdout.write(init);
+    handle.stop();
+    f.stdout.write(result + init + assistant);
+    expect(onTurnStart).not.toHaveBeenCalled();
+  });
+});
