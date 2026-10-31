@@ -181,6 +181,9 @@ test("live-session card renders project/skill/cli/model dropdowns, edit+start+ca
   expect(selects.find((c) => c.custom_id === "bean:live-skill:live-1")?.options?.find((o) => o.default)?.value).toBe("review");
   // 5-row cap: project, skill, cli, model, buttons.
   expect(card.components).toHaveLength(5);
+  // Start leads; the rarely-touched Mode toggle sits by Cancel.
+  expect(card.components[4]!.components.map((b) => b.custom_id)).toEqual(
+    ["bean:start-live:live-1", "bean:live-edit:live-1", "bean:live-mode:live-1", "bean:cancel-live:live-1"]);
 });
 
 test("live-session skill picker defaults to the no-skill sentinel when none is chosen", () => {
