@@ -6,7 +6,7 @@ import type { ConverseResult } from "../src/index.js";
 import { buildTeamsBot, parseResumeArg, type BotEffects, type TeamsBotDeps } from "../src/chatops/bot.js";
 import { CHATOPS_COMMANDS } from "../src/chatops/commands.js";
 import { readFileSync } from "node:fs";
-import type { ResumableRun } from "../src/delegate-runs.js";
+import { recordDelegateSession, type ResumableRun } from "../src/delegate-runs.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { ConversationCatalog, chatopsConversationTurns, listChatopsConversations } from "../src/chatops/catalog.js";
 import { openDb } from "../src/db.js";
@@ -157,7 +157,7 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     roles: { ...makeRoles({ dbPath: dbFile(runsBeanDir), surface: "discord", ownerId: "u1", ownerName: "Scen" }), roleOf: () => "owner" },
     ...overrides,
   };
-  return { deps, delegateCalls, saved, savedNotes, savedMemories, forgotten, savedSkills, queuedTodos };
+  return { deps, delegateCalls, saved, savedNotes, savedMemories, forgotten, savedSkills, queuedTodos, runsBeanDir };
 }
 
 const msg = { conversationId: "c1", text: "hi bean", fromId: "u1", fromName: "alice", direct: false };
@@ -1077,12 +1077,10 @@ test("the running card's Cancel carries the run id, and a tap cancels that run",
 
 test("a second same-thread, same-CLI run starts fresh with a notice; the thread keeps the last completion", async () => {
   const result: ConverseResult = { ...delegateResult, proposedDelegate: { ...delegateResult.proposedDelegate! } };
-  const { deps, delegateCalls } = makeDeps({
-    converseResult: result,
-    loadProjects: async () => [{ name: "bean", path: "/p/bean" }, { name: "other", path: "/p/other" }],
-  });
+  const { deps, delegateCalls, runsBeanDir } = makeDeps({ converseResult: result });
   const bot = buildTeamsBot(deps);
   deps.conversations.setThreadSession("c1", "claude", "sess-0");
+  recordDelegateSession(dbFile(runsBeanDir), { surface: "teams", cli: "claude", sessionId: "sess-0", projectPath: "/p/bean", instruction: "earlier" });
   const confirm = async (): Promise<ReturnType<typeof fx>> => {
     const effects = fx();
     const id = await proposeThenGetId(deps, effects);
@@ -1092,9 +1090,7 @@ test("a second same-thread, same-CLI run starts fresh with a notice; the thread 
   await confirm();
   expect(delegateCalls[0]?.req.resume).toBe("sess-0");
   delegateCalls[0]?.cb.onSessionStart?.(1, "sess-0");
-  result.proposedDelegate!.projectPath = "/p/other";
   const second = await confirm();
-  expect(delegateCalls[1]?.req.projectPath).toBe("/p/other");
   expect(delegateCalls[1]?.req.resume).toBeUndefined();
   delegateCalls[1]?.cb.onSessionStart?.(2, "sess-new");
   // Reversed completions: the later run finishes first; the pointer ends on whichever finished last.

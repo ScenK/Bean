@@ -6,6 +6,7 @@ import type { DelegateCallbacks, DelegateRequest } from "../src/index.js";
 import { RunRegistry } from "../src/chatops/runs.js";
 import { dbFile } from "../src/config.js";
 import { closeDb, openDb } from "../src/db.js";
+import { recordDelegateSession } from "../src/delegate-runs.js";
 import { sweepDeadRuns } from "../src/run-queue.js";
 
 beforeEach(() => vi.useFakeTimers());
@@ -26,6 +27,11 @@ function fakeRun() {
     return { cancel: (done?: () => void) => { cancelled.push(true); done?.(); } };
   };
   return { fn, calls, cancelled };
+}
+
+/** A thread session resumes only where it last ran: record that row. */
+function seed(dir: string, sessionId: string, projectPath: string, cli: DelegateRequest["cli"] = "claude"): void {
+  recordDelegateSession(dbFile(dir), { surface: "discord", cli, sessionId, projectPath, instruction: "earlier" });
 }
 
 const runFiles = (dir: string): string[] => { try { return readdirSync(join(dir, "runs")); } catch { return []; } };
@@ -221,12 +227,14 @@ test("a resumed run keeps the record on this live process until the session star
   const { fn, calls } = fakeRun();
   const pids = [111];
   const reg = new RunRegistry((r, cb) => ({ ...fn(r, cb), pid: pids[0] }), { dir, botKind: "discord" });
+  seed(dir, "s-1", "/p");
   await reg.start({ ...req, resume: "s-1" }, events(), meta);
   const file = join(dir, "runs", readdirSync(join(dir, "runs"))[0]!);
   // Not the first child's pid: it may die on a rejected resume and get swept mid-run.
   expect(JSON.parse(readFileSync(file, "utf8")).pid).toBe(process.pid);
   calls[0]!.cb.onSessionStart?.(4242, "s-1");
   expect(JSON.parse(readFileSync(file, "utf8")).pid).toBe(4242);
+  closeDb(dbFile(dir));
 });
 
 test("every started run (not just resumes) is recorded, and error/cancel carry the session id", async () => {
@@ -254,22 +262,28 @@ test("every started run (not just resumes) is recorded, and error/cancel carry t
   closeDb(dbFile(dir));
 });
 
-test("an opencode resume recorded for another project starts fresh; the same project resumes (#247)", async () => {
+test.each(["claude", "codex", "opencode"] as const)("a %s resume recorded for another project starts fresh and says so; the same project resumes", async (cli) => {
   const { fn, calls } = fakeRun();
   const dir = tmp();
   const reg = new RunRegistry(fn, { dir, botKind: "discord" });
-  const oc: DelegateRequest = { cli: "opencode", projectPath: "/x", prompt: "do" };
-  await reg.start(oc, events(), meta);
+  const base: DelegateRequest = { cli, projectPath: "/x", prompt: "do" };
+  await reg.start(base, events(), meta);
   calls[0]?.cb.onSessionStart?.(1, "ses_x");
   calls[0]?.cb.onDone("ok");
-  await reg.start({ ...oc, projectPath: "/y", resume: "ses_x" }, events(), meta);
+  const moved = events();
+  await reg.start({ ...base, projectPath: "/y", resume: "ses_x" }, moved, meta);
   expect(calls[1]?.req.resume).toBeUndefined();
   calls[1]?.cb.onDone("ok");
-  await reg.start({ ...oc, resume: "ses_x" }, events(), meta);
+  expect(moved.onDone).toHaveBeenCalledWith(`${RunRegistry.projectSwitchNotice(cli)}ok`, undefined);
+  expect(RunRegistry.projectSwitchNotice(cli)).toContain(`earlier ${cli} session`);
+  const same = events();
+  await reg.start({ ...base, resume: "ses_x" }, same, meta);
   expect(calls[2]?.req.resume).toBe("ses_x");
-  // Only opencode hangs on a cross-folder resume; claude's rejected resume falls back itself.
-  await reg.start({ ...req, projectPath: "/z", resume: "ses_x" }, events(), meta);
-  expect(calls[3]?.req.resume).toBe("ses_x");
+  calls[2]?.cb.onDone("ok");
+  expect(same.onDone).toHaveBeenCalledWith("ok", undefined);
+  // No recorded project for the session: fresh too.
+  await reg.start({ ...base, resume: "ses_unknown" }, events(), meta);
+  expect(calls[3]?.req.resume).toBeUndefined();
   closeDb(dbFile(dir));
 });
 
@@ -288,10 +302,15 @@ test("cancel resolves by run id; a conversation scope cancels only that conversa
 
 test("a resume in a thread already running that CLI starts fresh and says so", async () => {
   const { fn, calls } = fakeRun();
-  const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord" });
+  const dir = tmp();
+  seed(dir, "s-1", "/p");
+  seed(dir, "s-2", "/r", "codex");
+  seed(dir, "s-3", "/s");
+  const reg = new RunRegistry(fn, { dir, botKind: "discord" });
   await reg.start({ ...req, resume: "s-1" }, events(), meta);
+  expect(calls[0]?.req.resume).toBe("s-1");
   const ev = events();
-  await reg.start({ ...req, projectPath: "/q", resume: "s-1" }, ev, meta);
+  await reg.start({ ...req, resume: "s-1" }, ev, meta);
   expect(calls[1]?.req.resume).toBeUndefined();
   calls[1]?.cb.onDone("ok");
   expect(ev.onDone).toHaveBeenCalledWith(`${RunRegistry.BUSY_THREAD_NOTICE}ok`, undefined);
@@ -300,19 +319,23 @@ test("a resume in a thread already running that CLI starts fresh and says so", a
   await reg.start({ ...req, projectPath: "/s", resume: "s-3" }, events(), { ...meta, conversationId: "c2" });
   expect(calls[2]?.req.resume).toBe("s-2");
   expect(calls[3]?.req.resume).toBe("s-3");
+  closeDb(dbFile(dir));
 });
 
 test("a cancelled run still keeps its thread's CLI busy until its child confirms it stopped", async () => {
   const calls: DelegateRequest[] = [];
   let confirm: (() => void) | undefined;
-  const reg = new RunRegistry((r) => { calls.push(r); return { cancel: (done?: () => void) => { confirm = done; } }; }, { dir: tmp(), botKind: "discord" });
+  const dir = tmp();
+  seed(dir, "s-1", "/p");
+  const reg = new RunRegistry((r) => { calls.push(r); return { cancel: (done?: () => void) => { confirm = done; } }; }, { dir, botKind: "discord" });
   const id = (await reg.start({ ...req, resume: "s-1" }, events(), meta))!;
   reg.cancel(id);
-  const q = (await reg.start({ ...req, projectPath: "/q", resume: "s-1" }, events(), meta))!;
+  const q = (await reg.start({ ...req, resume: "s-1" }, events(), meta))!;
   expect(calls[1]?.resume).toBeUndefined();
-  confirm?.(); // /p's child is gone…
+  confirm?.(); // the first child is gone…
   reg.cancel(q);
-  confirm?.(); // …and so is /q's: the thread is free again
-  await reg.start({ ...req, projectPath: "/r", resume: "s-1" }, events(), meta);
+  confirm?.(); // …and so is the second's: the thread is free again
+  await reg.start({ ...req, resume: "s-1" }, events(), meta);
   expect(calls[2]?.resume).toBe("s-1");
+  closeDb(dbFile(dir));
 });
