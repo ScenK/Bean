@@ -202,6 +202,19 @@ describe("ChatWindow agent mode", () => {
     expect(transcript[0]).toMatchObject({ role: "user", content: "hi bean", source: "typed" });
   });
 
+  it("remember X → forget X → close: close catch-up gets X as already handled, so it isn't re-saved", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    const x = { id: "x1", text: "Lives in Seattle", createdAt: "" };
+    bean.chat!.mockResolvedValueOnce({ reply: "Got it.", model: "m", remembered: [x] });
+    await send("remember that I live in Seattle");
+    bean.chat!.mockResolvedValueOnce({ reply: "Forgotten.", model: "m", forgotten: [x] });
+    await send("forget that");
+    await act(async () => { listeners.onReviewBeforeClose!(undefined); });
+    await flush();
+    expect(bean.rememberOnClose).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ rejected: ["Lives in Seattle"] }));
+  });
+
   it("Bean's hand-off offer: Start runs the /claude handoff once with the ask line; Not now leaves Bean in charge", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();

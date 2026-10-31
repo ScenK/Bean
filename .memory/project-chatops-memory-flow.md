@@ -32,9 +32,11 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   `latestUserText: msg.text` — the addressed person's own typed text is the only citable source.
   The chat-skill follow-up hop reuses `converseBase` *without* these tools (its latest text is a
   composed prompt, not the user's words).
-- Both tools are intent-gated in code (`makeMemoryTools`): `remember` is offered only when the
-  typed text says remember/keep in mind/note that, `forget_memory` only on forget/delete/remove —
-  so injected page or delegate text on an ordinary turn can't save or delete. The quote must
+- Both tools are intent-gated in code (`makeMemoryTools`, #570): always offered (byte-stable tool
+  list), but `run()` refuses before any mutation unless a classifier call — fixed prompt + the
+  typed text only, strict `{remember, forget}` booleans, one memoized call per turn — says yes.
+  So injected page/delegate/history text can't save or delete, in any language. Don't bring
+  back regex gates (they missed "忘掉这个", "forget it"). The quote must
   support *every* content word of the fact (`supports()` in extract.ts), not just share one.
 - Scope (#281, [safety-per-speaker-memory](safety-per-speaker-memory.md)): a DM saves private to
   the speaker, a channel to the household; the receipt says which.
@@ -49,7 +51,8 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   stored row, never the card payload. The model gets no share tool — a private `remember` result
   just tells it to point at the button when the fact updates a household one.
 - `forget_memory(ids)` is the text-command equivalent; ids come from the `[id]`-tagged recall
-  block in `converse()`.
+  block in `converse()`. `deleteMemories` returns the ids SQL actually deleted (`RETURNING id`),
+  so `forgotten` and the tool result name only those rows, never the requested ones.
 - `ConversationStore` (`chatops/conversation.ts`) is `bean.db`-backed (`chatops_turns`); `bot.ts`
   fires `maybeCompact()` after every reply — above 60 raw turns the oldest 40 become one
   `role: "system"` summary. Silent/automatic (pure efficiency, not a memory decision).

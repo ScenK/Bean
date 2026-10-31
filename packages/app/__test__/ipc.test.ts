@@ -138,6 +138,57 @@ test("chat handler forwards req.images to converse and runs generate_image into 
   expect(out.generatedImages![0]!.path).toMatch(/a-cat\.png$/);
 });
 
+test("chat handler offers both memory tools on every typed turn only, and reports the rows forget actually deleted", async () => {
+  const seen: Record<string, string[]> = {};
+  const intentPrompts: string[] = [];
+  let key = "";
+  const deleted: string[][] = [];
+  const handler = buildChatHandler({
+    loadSkills: async () => [],
+    loadProjects: async () => [],
+    loadPersona: async () => ({ name: "Bean", tags: [] }) as Persona,
+    converse: async ({ messages, tools }) => {
+      if (tools.length === 0) { // the memory tools' intent check: fixed prompt + typed text only
+        intentPrompts.push(String(messages[1]?.content));
+        return { content: '{"remember": false, "forget": true}', toolCalls: [] };
+      }
+      seen[key] ??= tools.map((t) => t.name).filter((n) => n === "remember" || n === "forget_memory");
+      if (key === "forget" && !messages.some((m) => m.role === "tool")) {
+        return { content: "", toolCalls: [{ id: "1", name: "forget_memory", args: { ids: ["d", "k"] } }] };
+      }
+      return { content: "ok", toolCalls: [] };
+    },
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills",
+    skillsDir: "/b/skills",
+    projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json",
+    projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [
+      { id: "d", text: "dentist on Friday", createdAt: "2026-07-03T00:00:00.000Z" },
+      { id: "k", text: "uses zed", createdAt: "2026-07-03T00:00:00.000Z" },
+    ],
+    appendMemories: async () => {},
+    deleteMemories: async (_f, ids) => { deleted.push(ids); return ["d"]; }, // "k" already gone
+    dbFile: "/b/bean.db",
+  });
+  for (const [k, req] of Object.entries({
+    typed: { message: "hi", source: "typed" as const },
+    loopback: { message: "delegate result", source: "loopback" as const },
+    skill: { message: "## Skill", source: "skill" as const },
+    incognito: { message: "hi", source: "typed" as const, incognito: true },
+  })) {
+    key = k;
+    await handler({ history: [], ...req });
+  }
+  expect(seen).toEqual({ typed: ["remember", "forget_memory"], loopback: [], skill: [], incognito: [] });
+  key = "forget";
+  const out = await handler({ history: [], message: "forget the dentist thing", source: "typed" });
+  expect(intentPrompts).toEqual(["forget the dentist thing"]);
+  expect(deleted).toEqual([["d", "k"]]);
+  expect(out.forgotten).toEqual([{ id: "d", text: "dentist on Friday", createdAt: "2026-07-03T00:00:00.000Z" }]);
+});
+
 test("chat handler drops disabled skills and injects recalled memories", async () => {
   const skills: Skill[] = [
     { name: "review-code", description: "r", body: "BODY", enabled: true },
@@ -530,7 +581,7 @@ function memoryHandlersFor(over: Partial<Parameters<typeof buildMemoryHandlers>[
     loadMemories: async () => existing,
     appendMemories: async (_file, additions) => { appended.push(additions); },
     updateMemory: async () => {},
-    deleteMemories: async (_file, ids) => { deleted.push(ids); return ids.length; },
+    deleteMemories: async (_file, ids) => { deleted.push(ids); return ids; },
     extractMemories: async (transcript, ex, projects) => {
       expect(ex).toEqual(existing);
       expect(projects).toEqual([{ name: "api", path: "/work/api" }]);
@@ -666,6 +717,22 @@ test("captureTurn skips incognito, autoMemory off, non-typed, errored, and expli
   const off = memoryHandlersFor({ ...count, autoMemory: () => false });
   expect(await off.handlers.captureTurn("m1", turnReq, reply)).toEqual([]);
   expect(extracted).toBe(0);
+});
+
+test("a turn that forgot something is marked handled, so close catch-up can't re-save the fact from its words", async () => {
+  const calls: ChatTurn[][] = [];
+  const { handlers, appended } = memoryHandlersFor({
+    extractMemories: async (transcript) => {
+      calls.push(transcript);
+      return { candidates: transcript.some((t) => t.source === "typed") ? [{ text: "Lives in Seattle" }] : [], rejected: 0, failed: false };
+    },
+  });
+  const forgot = { reply: "Done.", forgotten: [{ id: "x", text: "Lives in Seattle", createdAt: "" }] };
+  expect(await handlers.captureTurn("m3", { ...turnReq, message: "forget that I live in Seattle" }, forgot)).toEqual([]);
+  expect(calls).toEqual([]); // no per-turn extraction either
+  await handlers.rememberOnClose([{ role: "user", content: "forget that I live in Seattle", source: "typed", id: "item-1" }], { key: "m3" });
+  expect(calls[0]).toEqual([{ role: "user", content: "forget that I live in Seattle", source: undefined }]);
+  expect(appended).toEqual([]);
 });
 
 test("a failed per-turn capture is retried by close catch-up and raises no bubble itself", async () => {

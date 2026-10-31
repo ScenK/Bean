@@ -182,7 +182,7 @@ export interface ChatHandlerDeps {
   loadPersona: (userFile: string, projectFile: string) => Promise<Persona>;
   loadMemories: (file: string) => Promise<Memory[]>;
   appendMemories: (file: string, additions: Memory[]) => Promise<void>;
-  deleteMemories: (file: string, ids: string[]) => Promise<number>;
+  deleteMemories: (file: string, ids: string[]) => Promise<string[]>;
   converse: ConverseDeps["chat"];
   getModel: () => string;
   projectSkillsDir: string;
@@ -236,6 +236,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
           append: (m) => deps.appendMemories(deps.dbFile, m),
           forget: (ids) => deps.deleteMemories(deps.dbFile, ids),
           memories, projects, latestUserText: req.message,
+          classifier: { chat: deps.converse, model: deps.getModel() },
         })
       : undefined;
     const actions = [...(deps.actions ?? []), ...(imageTool ? [imageTool.tool] : []), ...(memoryTools?.tools ?? [])];
@@ -265,6 +266,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       })));
     }
     if (memoryTools && memoryTools.remembered.length > 0) result.remembered = memoryTools.remembered;
+    if (memoryTools && memoryTools.forgotten.length > 0) result.forgotten = memoryTools.forgotten;
     return result;
   };
 }
@@ -454,7 +456,7 @@ export interface MemoryHandlerDeps {
   // (.memory/safety-memory-append-vs-replace.md).
   appendMemories: (file: string, additions: Memory[]) => Promise<void>;
   updateMemory: (file: string, id: string, text: string) => Promise<void>;
-  deleteMemories: (file: string, ids: string[]) => Promise<number>;
+  deleteMemories: (file: string, ids: string[]) => Promise<string[]>;
   extractMemories: (
     transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps, opts?: { latestTurn?: boolean },
   ) => Promise<ExtractResult>;
@@ -546,15 +548,18 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     list: (): Promise<Memory[]> => deps.loadMemories(deps.dbFile),
     append: (additions: Memory[]): Promise<void> => deps.appendMemories(deps.dbFile, additions),
     update: (id: string, text: string): Promise<void> => deps.updateMemory(deps.dbFile, id, text),
-    delete: (ids: string[]): Promise<number> => deps.deleteMemories(deps.dbFile, ids),
+    delete: async (ids: string[]): Promise<number> => (await deps.deleteMemories(deps.dbFile, ids)).length,
     /** After a chat reply: capture this typed turn's facts (only it is citable; a few prior
-     * turns are context). Skipped when the turn used the explicit remember tool or errored. */
+     * turns are context). Skipped when the turn used the explicit remember/forget tools or errored. */
     captureTurn: async (key: string, req: ChatRequest, result: ConverseResult): Promise<Memory[]> => {
-      if (req.source !== "typed" || req.incognito || !deps.autoMemory() || result.error || result.remembered?.length) return [];
+      if (req.source !== "typed" || req.incognito || !deps.autoMemory() || result.error) return [];
       if (closed.has(key)) return [];
       const w = windowState(key);
       if (w.incognito) return [];
       if (req.turnId) w.turns.add(req.turnId);
+      // Handled before skipping: close catch-up must not re-cite a turn that just saved or
+      // forgot something explicitly (a forgotten fact would be re-saved from its own words).
+      if (result.remembered?.length || result.forgotten?.length) return [];
       // Re-checked before the model call and again before the insert: the chip can be switched
       // on while this turn waits or extracts.
       const offRecord = (): boolean => w.incognito || !deps.autoMemory();
@@ -618,7 +623,7 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     /** Deletes exactly the last batch's ids (rows edited since are still that batch's rows). */
     undoBatch: async (): Promise<number> => {
       if (!lastBatch) return 0;
-      const n = await deps.deleteMemories(deps.dbFile, lastBatch.ids);
+      const n = (await deps.deleteMemories(deps.dbFile, lastBatch.ids)).length;
       lastBatch = undefined;
       return n;
     },
