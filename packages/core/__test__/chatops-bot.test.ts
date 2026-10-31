@@ -1346,18 +1346,38 @@ test("start-live on an expired/unknown proposal posts an expiry message", async 
 // this test is only about the capture contract in onMessage, not about how a session starts.
 function makeBotWithActiveLiveSession(channelId: string) {
   const chatSpy = vi.fn(async () => ({ content: "should not be called", toolCalls: [] }));
-  const { startFn } = fakeLiveStartFn();
+  const { startFn, sent } = fakeLiveStartFn();
   const { deps } = makeDeps({
     chat: chatSpy,
     liveSessionsEnabled: () => true,
     liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
   });
   const sink: LiveSessionSink = { post: async () => "m1", edit: async () => {} };
-  deps.liveSessions.start({ channelId, projectPath: "/p/bean", instruction: "go", sink });
+  deps.liveSessions.start({ channelId, projectPath: "/p/bean", instruction: "go", sink, steering: "open" });
   const bot = buildTeamsBot(deps);
   const effects = fx();
-  return { bot, fx: effects, deps, chatCalls: () => chatSpy.mock.calls.length };
+  return { bot, fx: effects, deps, sent, chatCalls: () => chatSpy.mock.calls.length };
 }
+
+test("a `/live-session` inside a running session is refused for the owner, dropped for others, never steered", async () => {
+  const { bot, fx: effects, deps, sent } = makeBotWithActiveLiveSession("c1");
+  const before = sent.length;
+  await bot.onMessage({ conversationId: "c1", text: "/live-session fix the auth bug", fromId: "u", fromName: "sam" }, effects);
+  expect(effects.posted).toEqual(["A claude session is already running here — `stop` it first."]);
+  deps.roles = { ...deps.roles, roleOf: () => "member" };
+  await bot.onMessage({ conversationId: "c1", text: "live-session resume sess-1", fromId: "m", fromName: "mia" }, effects);
+  expect(effects.posted).toHaveLength(1);
+  expect(sent.length).toBe(before);
+  expect(deps.conversations.history("c1")).toEqual([]);
+  expect(effects.cards).toHaveLength(0);
+});
+
+test("a `/live-session` slash pick in a bound conversation posts no card", async () => {
+  const { bot, fx: effects } = makeBotWithActiveLiveSession("c1");
+  await bot.onCommand({ conversationId: "c1", text: "live-session fix the auth bug", fromId: "u", fromName: "sam" }, effects);
+  expect(effects.cards).toHaveLength(0);
+  expect(effects.posted).toEqual(["A claude session is already running here — `stop` it first."]);
+});
 
 test("channel messages route to an active session instead of converse, and stop ends it", async () => {
   const { bot, fx: effects, deps, chatCalls } = makeBotWithActiveLiveSession("c1");
@@ -1544,7 +1564,7 @@ test("`/live-session resume <id>` (literal text and slash) posts a locked resume
   const effects = fx();
   await bot.onMessage({ conversationId: "c1", text: "/live-session resume claude --resume sess-1", fromId: "u", fromName: "sam" }, effects);
   const reply = await bot.proposeLiveSession({ conversationId: "c1", instruction: "resume sess-1", proposedBy: "sam" }, effects);
-  expect(reply).toContain("Proposed continuing");
+  expect(reply).toBe("Proposed continuing that session — tap Start, then type to pick up where it left off.");
   expect(effects.cards).toHaveLength(2);
   for (const card of effects.cards) {
     expect(card).toMatchObject({ kind: "live-session-proposal", continues: "fix the flaky test", projectName: "other" });

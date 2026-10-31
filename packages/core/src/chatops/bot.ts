@@ -85,6 +85,7 @@ export interface IncomingMessage {
 }
 
 const NO_RUN_RECORD = "I have no record of that run.";
+const liveBusyLine = (cli: LiveCli): string => `A ${cli} session is already running here — \`stop\` it first.`;
 
 export interface CardAction {
   conversationId: string;
@@ -923,6 +924,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // slash command and its literal-text form in onMessage. Returns a one-line status for the caller.
   async function proposeLiveSessionFrom(conversationId: string, instruction: string, proposedBy: string, fx: BotEffects): Promise<string> {
     if (!deps.liveSessionsEnabled()) return "Live sessions are disabled here.";
+    const running = deps.liveSessions.cli(conversationId);
+    if (running) return liveBusyLine(running);
     const text = instruction.trim();
     if (!text) return "Add a prompt after `/live-session` — e.g. `/live-session investigate the auth bug`.";
     // `resume <id>` never falls through to a fresh session, even when the id is malformed.
@@ -931,7 +934,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       const parsed = parseResumeArg(resumeCmd[1] ?? "");
       if ("error" in parsed) return parsed.error;
       return await proposeResumeLive(conversationId, parsed.id, proposedBy, fx)
-        ?? "Proposed continuing that session — edit the opening prompt if you want, then Start.";
+        ?? "Proposed continuing that session — tap Start, then type to pick up where it left off.";
     }
     const projects = await deps.loadProjects();
     const first = projects[0];
@@ -1296,6 +1299,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           }
           if (cmd === "stop" || cmd === "drivers") {
             await onCommand(msg, fx);
+            return;
+          }
+          // A start/resume while one runs is never a steer: the owner hears why, anyone else is dropped.
+          if (/^\/?live-session\b/i.test(trimmed)) {
+            if (speakerRole(msg).role === "owner") await fx.reply(liveBusyLine(deps.liveSessions.cli(conv) ?? "claude"));
             return;
           }
           if (!steers(msg)) return;

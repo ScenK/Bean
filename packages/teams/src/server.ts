@@ -308,13 +308,18 @@ app.post("/api/messages", (req, res) => {
       );
       return;
     }
-    // TEMP: confirm the real slash-picker payload on the dev tenant (is `/` in the text, is
-    // there a mention entity). stdout only; remove after the check (#359).
+    // TEMP: confirm the real slash-picker payload on the tenant (is the command word in the text,
+    // does a mention entity named after the command carry it). stdout only; remove after the
+    // check, once sanitized fixtures are committed (#359, #533).
     if ((a.recipient as { isTargeted?: unknown }).isTargeted !== undefined) {
       console.log("teams targeted message:", JSON.stringify({
         recipient: a.recipient,
-        entities: (a.entities ?? []).map((e) => ({ type: e.type, mentionedId: (e as { mentioned?: { id?: string } }).mentioned?.id })),
-        text: a.text?.slice(0, 40),
+        conversationType: a.conversation.conversationType,
+        entities: (a.entities ?? []).map((e) => {
+          const m = e as { text?: string; mentioned?: { id?: string; name?: string } };
+          return { type: e.type, text: m.text, mentioned: m.mentioned };
+        }),
+        text: a.text,
       }));
     }
     // A quote-reply's quoted message is context, never input: split it out of the typed words.

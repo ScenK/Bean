@@ -154,6 +154,11 @@ export class LiveSessionRegistry {
     return this.byChannel.has(channelId);
   }
 
+  /** The running session's CLI, or undefined when the channel has none. */
+  cli(channelId: string): LiveCli | undefined {
+    return this.byChannel.get(channelId)?.cli;
+  }
+
   /** True if `userId` started the session in this channel. */
   isStarter(channelId: string, userId: string): boolean {
     const s = this.byChannel.get(channelId);
