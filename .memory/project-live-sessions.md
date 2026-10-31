@@ -43,6 +43,14 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   removed (output and seals can be appended during any await, so never rebase from a
   pre-await snapshot). `send()` deliberately does not seal: a mid-turn message's answer is
   the next turn.
+- **Typing across claude turns (#568)**: claude emits `system/init` at the start of *every* turn
+  (~0.2s after the previous `result`), so the engine's `afterResult` flag reports `onTurnStart` on
+  the first `init` (or `assistant`, fallback) after a `result`, never while `stopping` — a message
+  queued while claude was writing is answered as its own turn and the registry relights typing.
+  A message sent *during a tool run* is instead injected into the running turn (one `result` covers
+  both), so there's no turn boundary to signal. Don't add a pending-send counter or grace timer:
+  injection/merging makes them show false typing. Discord's `effectsFor` supplies `sendTyping`
+  (`.catch`ed), so its live-session typing lasts the whole turn, not just the ~10s ingress ping.
 - The stream sink rides `BotEffects`, preferring the optional **`postStream(text)→id` /
   `editStream(id,text)`** text effects, falling back to `postCard({content})` /
   `updateCard(id,{content})` when a surface omits them. Discord omits them — its `postCard`
