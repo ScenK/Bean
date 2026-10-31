@@ -52,7 +52,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "openai": "^7.25.0"
+    "openai": "^7.45.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
