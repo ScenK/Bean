@@ -42,7 +42,7 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   supply `postStream`/`editStream`** (real `sendActivity({text})` / `updateActivity`), because
   its `postCard` wraps the arg as an adaptive-card attachment and `{content: text}` is not a
   valid AdaptiveCard — it would render broken. This is why Teams was originally hard-disabled;
-  it is now **enabled** (`liveSessionsEnabled: () => clis.includes("claude")`, same as Discord)
+  it is now **enabled** (`liveSessionsEnabled: () => clis().some(isLiveCli)`, same as Discord)
   with those effects wired. Both Teams stream effects post **proactively**
   (`continueConversationAsync`), not on the turn context — turns stream in after the triggering
   turn's context is dead, and a stale-context send is silently dropped (same reason Teams'
@@ -56,7 +56,7 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   history around commit range `482d173..c7c0050`).
 - Gating differs by surface. **Desktop** starts from the chat window over IPC (see the Desktop
   section below; its old `config.json` opt-in flag was dead and was deleted in #473). **Discord** has no config
-  opt-in: `liveSessionsEnabled: () => clis.includes("claude")` — always on when claude is
+  opt-in: `liveSessionsEnabled: () => clis().some(isLiveCli)` — always on when a live CLI is
   present, since the allowlist + the confirm-first card are the authorization boundary there.
   Launch is always confirm-first via a card even though the session itself runs with
   permissions bypassed once started.
@@ -66,6 +66,13 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   regardless of role (explicit decision). Every *launch* entry point (propose_live_session,
   `/live-session`, resume-live, Start, the Discord live-* card controls) is owner-only. Don't
   widen the launch gate to match the steering bypass.
+- **Discord: a live session never binds a top-level channel (#533).** `live-session` is not in
+  `KEYWORD_RE`, so a typed top-level `@Bean /live-session …` opens a thread like any mention; an
+  owner's top-level slash pick creates a thread too (`channel.threads.create`, same two permissions,
+  falling back to the channel). A channel-bound session would capture everyone's messages there.
+- **Busy rule (#533):** while a session is bound, a `/live-session …` (start or resume) is never a
+  steer — the owner gets "A <cli> session is already running here — `stop` it first.", anyone else
+  is dropped; `proposeLiveSessionFrom` refuses the same way, so a slash pick posts no card.
 - Discord's SIGTERM shutdown handler calls `liveSessions.forceKillAll()`, not `stopAll()` —
   `stop()`'s graceful SIGTERM-then-SIGKILL-after-5s escalation relies on a `setTimeout` that
   would never fire before `process.exit()` runs immediately after, orphaning a

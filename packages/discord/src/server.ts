@@ -171,7 +171,8 @@ const placeOf = (channel: TextBasedChannel): ConversationPlace =>
 
 // bot.ts's keyword commands (same optional leading slash). They act on the channel and answer
 // in one line, so they never open a session thread. Chatty/mute/unmute reuse core's parser.
-const KEYWORD_RE = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins|usage|sprouts|routines)$|live-session\b|(?:add|remove)-admin\b|(?:enable|disable)\s)/i;
+// `live-session` is absent on purpose: its card and session get a thread, never the channel.
+const KEYWORD_RE = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins|usage|sprouts|routines)$|(?:add|remove)-admin\b|(?:enable|disable)\s)/i;
 const isKeywordCommand = (text: string): boolean => KEYWORD_RE.test(text) || parseChatterCommand(text) !== undefined;
 
 // A thread Bean opened is a session: every message in it is addressed to Bean. The Discord
@@ -524,19 +525,39 @@ client.on("interactionCreate", async (interaction: Interaction) => {
       const inGuild = interaction.inGuild();
       const parent = channel.isThread() ? channel.parent : channel;
       const target = interaction.options.getUser("user");
+      const arg = interaction.options.getString("name") ?? interaction.options.getString("prompt") ?? undefined;
+      // A top-level live-session pick gets its own thread, like a typed one: a session bound to the
+      // channel would capture everyone's messages there. Same permission check as messageCreate;
+      // without them (or for a non-owner, who core refuses anyway) it stays in the channel.
+      let home: TextBasedChannel = channel;
+      if (
+        interaction.commandName === "live-session" && role === "owner" && channel.type === ChannelType.GuildText && client.user &&
+        channel.permissionsFor(client.user)?.has([
+          PermissionFlagsBits.CreatePublicThreads, PermissionFlagsBits.SendMessagesInThreads,
+        ])
+      ) {
+        try {
+          home = await channel.threads.create({
+            name: (arg ? `Live: ${arg}` : "Live session").slice(0, 100),
+            autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+          });
+        } catch (err) {
+          console.error("live-session thread failed, using the channel:", err);
+        }
+      }
       const msg = slashMessage({
         commandName: interaction.commandName,
         user: { id: interaction.user.id, name: interaction.user.displayName },
         target: target ? { id: target.id, name: target.displayName, bot: target.bot } : undefined,
-        arg: interaction.options.getString("name") ?? interaction.options.getString("prompt") ?? undefined,
-        conversationId: interaction.channelId,
+        arg,
+        conversationId: home.id,
         scopeId: inGuild ? scopeOf(channel) : undefined,
         direct: !inGuild,
         channelName: !inGuild ? "DM" : parent && "name" in parent && parent.name ? `#${parent.name}` : undefined,
       });
-      const fx = effectsFor(channel);
+      const fx = effectsFor(home);
       await answerSlash((own) => bot.onCommand(msg, { ...fx, ...own }), {
-        editReply: (text) => interaction.editReply(text),
+        editReply: (text) => interaction.editReply(home === channel ? text : `In <#${home.id}>: ${text}`),
         followUp: (text) => interaction.followUp({ content: text, ephemeral: true }),
         announce: async (text) => {
           if (!("send" in channel)) throw new Error("channel is not sendable");
