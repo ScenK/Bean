@@ -1,16 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { DeskTurn } from "@bean/core";
 import { createChatopsServers, parseTunnelEndpoint, type ChatopsBot, type ChatopsEvent, type SpawnedProcess } from "../src/chatops-servers.js";
 
 function fakeProcess() {
   const listeners: Record<string, ((arg: unknown) => void)[]> = {};
+  const outbox: DeskTurn[] = [];
   const proc: SpawnedProcess = {
+    send: (msg) => { outbox.push(msg); return true; },
     stderr: { on: (event, cb) => { (listeners[event] ??= []).push(cb as (...args: unknown[]) => void); } },
     on: (event, cb) => { (listeners[event] ??= []).push(cb as (...args: unknown[]) => void); },
     // Real kill() sends SIGTERM; the servers' own handlers exit 0, so model the code-0 path.
     kill: () => { emit("exit", 0, null); },
   };
   const emit = (event: string, ...args: unknown[]) => { for (const cb of listeners[event] ?? []) cb(...args); };
-  return { proc, emit };
+  return { proc, emit, outbox };
 }
 
 function harness({ built = true }: { built?: boolean } = {}) {
@@ -326,5 +329,65 @@ describe("tunnel endpoint", () => {
     expect(h.sent.at(-1)).toEqual({ bot: "teams", running: true, enabled: true, endpoint: "https://abc-3978.usw3.devtunnels.ms/api/messages" });
     h.servers.stop("teams");
     expect(h.servers.status().teams.endpoint).toBeUndefined();
+  });
+});
+
+describe("desk turns", () => {
+  function deskHarness() {
+    const p = fakeProcess();
+    const saved: unknown[] = [];
+    const servers = createChatopsServers({
+      repoRoot: "/repo", resolvedPath: "/usr/bin", send: () => {}, existsFn: () => true,
+      spawnFn: () => p.proc, onSaved: (bot, id) => saved.push([bot, id]),
+    });
+    servers.start("discord");
+    return { p, servers, saved };
+  }
+
+  it("round-trips a turn to the bot's ack, ignoring acks for other requests", async () => {
+    const { p, servers } = deskHarness();
+    const done = servers.deskTurn("discord", "d1", "hi");
+    const sent = p.outbox[0]!;
+    expect(sent).toEqual({ type: "desk-turn", requestId: expect.any(String), conversationId: "d1", text: "hi" });
+    p.emit("message", { type: "desk-ack", requestId: "someone-else", ok: true });
+    p.emit("message", { type: "desk-ack", requestId: sent.requestId, refused: "queue-full" });
+    await expect(done).resolves.toEqual({ refused: "queue-full" });
+  });
+
+  it("times out without resending", async () => {
+    vi.useFakeTimers();
+    try {
+      const { p, servers } = deskHarness();
+      const done = servers.deskTurn("discord", "d1", "hi");
+      const caught = expect(done).rejects.toThrow(/didn't answer/);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await caught;
+      expect(p.outbox).toHaveLength(1);
+      // A late ack after the timeout is dropped, not delivered twice.
+      p.emit("message", { type: "desk-ack", requestId: p.outbox[0]!.requestId, ok: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a bot exit fails pending requests; a stopped bot refuses up front", async () => {
+    const { p, servers } = deskHarness();
+    const done = servers.deskTurn("discord", "d1", "hi");
+    p.emit("exit", 1, null);
+    await expect(done).rejects.toThrow(/exited/);
+    await expect(servers.deskTurn("teams", "t1", "hi")).rejects.toThrow(/not running/);
+  });
+
+  it("a failed IPC send rejects", async () => {
+    const { p, servers } = deskHarness();
+    p.proc.send = (_msg, cb) => { cb(new Error("channel closed")); return false; };
+    await expect(servers.deskTurn("discord", "d1", "hi")).rejects.toThrow(/channel closed/);
+  });
+
+  it("forwards a saved ping to onSaved and nothing else", () => {
+    const { p, saved } = deskHarness();
+    p.emit("message", { type: "saved", conversationId: "d1" });
+    p.emit("message", { type: "saved" });
+    expect(saved).toEqual([["discord", "d1"]]);
   });
 });

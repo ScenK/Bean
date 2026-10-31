@@ -55,3 +55,14 @@ Bean has two chat adapters over one shared brain:
   the Teams server — reminders fire only while Bean.app runs (late after it was off). The receipt
   card's When uses Adaptive Card `{{DATE()}} {{TIME()}}`, which needs a `Z` RFC 3339 string with no
   milliseconds (`reminderCard` normalises).
+- **Desk ingress** (#528, `chatops/desk.ts`): the desktop app sends `desk-turn {requestId,
+  conversationId, text}` over the bot's IPC slot; the bot answers `desk-ack` (ok or one fixed
+  refusal code) and pings `saved {conversationId}` from `ConversationStore.onChange`. **No text
+  ever goes bot → app** — parsers rebuild each message from known fields. `bot.onDeskTurn` checks
+  before any platform call: cap (`too-long`), catalog row (`no-record`), row owner is the owner
+  *now* (`not-eligible`), a live session the owner can't steer (`channel-busy`), 4 in flight
+  (`bot-busy`). It acts as the catalog's `owner_id` (never an id from the request), posts the
+  `🖥 (desk): <text>` echo via `fx.post` (not history; failure = `post-failed`, no turn), then acks
+  ok and runs `onMessage` — or steers a running live session (`queue-full` when refused). The ack
+  means "accepted", not "answered": the app times out at 15s and never resends (a lost ack may
+  have run the turn). A bot exit fails pending requests. Discord only so far; Teams follows.

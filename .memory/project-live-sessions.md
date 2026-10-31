@@ -247,3 +247,6 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   (`LiveReceipt`, kept on `LiveState`). The ended/failed row, and End/switch/close's row, carry it as
   a `status` receipt → Continue live; End's row is `exiting` (button disabled) until that session's
   `ended` event. `LiveEvent.sessionId` stays Bean's own id.
+- Desk turns (#528) into a conversation with a running live session are plain steers (same
+  `steerLive` path as typed text, starter/co-driver check against the catalog's owner id) —
+  never keyword commands like `stop`/`+driver`; see project-teams-bot.md → Desk ingress.

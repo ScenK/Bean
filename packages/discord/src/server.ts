@@ -4,7 +4,7 @@ import {
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine, createRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, ConversationCatalog, type ConversationPlace, maybeCompact, NoteProposalStore, ProposalStore,
-  RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
+  RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
   makeRoles, makeChatter, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, parseChatterCommand, RoutineProposalStore, type Role,
 } from "@bean/core";
@@ -47,7 +47,8 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "discord", onActivity:
 // otherwise a later "retry" in this channel has no idea what it's retrying.
 // Hoisted out of the bot deps so the outbox loop's maybeCompact can reuse the same client.
 const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reasoningEffort);
-const conversations = new ConversationStore(dbFile(dir));
+// onChange tells the desktop app a history changed (a conversation id only, never text).
+const conversations = new ConversationStore(dbFile(dir), { onChange: parentSavedSink });
 const noteProposals = new NoteProposalStore();
 const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink, surface: "discord" });
 // Hoisted (not inline in deps) so the /live-session card's project/model dropdowns and the
@@ -685,6 +686,21 @@ client.on("interactionCreate", async (interaction: Interaction) => {
 });
 
 client.on("error", (err) => console.error("client error:", err));
+
+// Desk ingress: the desktop app sends a turn into a catalogued conversation (core's onDeskTurn
+// does the eligibility checks, then asks for the channel). A DM, thread or channel id all fetch
+// to their channel; anything unsendable fails the echo, which refuses the turn.
+process.on("message", (raw) => {
+  const req = parseDeskTurn(raw);
+  if (!req) return;
+  const effects = async () => {
+    const channel = await client.channels.fetch(req.conversationId);
+    if (!channel?.isTextBased() || !("send" in channel)) throw new Error("channel not sendable");
+    return { fx: effectsFor(channel), scopeId: scopeOf(channel) };
+  };
+  bot.onDeskTurn(req, effects, (r) => parentDeskAck(req.requestId, r))
+    .catch((err: unknown) => console.error("desk turn error:", err));
+});
 
 // chatopsServers.stop() (packages/app/src/chatops-servers.ts) sends SIGTERM with no other
 // warning — mark any in-flight run interrupted (durable outbox notice to its conversation)

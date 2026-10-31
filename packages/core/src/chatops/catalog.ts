@@ -51,6 +51,14 @@ export class ConversationCatalog {
     );
   }
 
+  /** This surface's row for a conversation, if catalogued — who it belongs to and where it is. */
+  get(conversationId: string): { kind: ConversationKind; title: string; ownerId: string; ownerAltId?: string } | undefined {
+    const r = openDb(this.file).prepare(
+      "SELECT kind, title, owner_id, owner_alt_id FROM chatops_conversations WHERE conversation_id = ? AND surface = ?",
+    ).get(conversationId, this.surface) as { kind: ConversationKind; title: string; owner_id: string; owner_alt_id: string | null } | undefined;
+    return r && { kind: r.kind, title: r.title, ownerId: r.owner_id, ...(r.owner_alt_id ? { ownerAltId: r.owner_alt_id } : {}) };
+  }
+
   /** Records the live session id the CLI reported for this conversation's current binding. */
   setLiveSession(conversationId: string, cli: LiveCli, sessionId: string): void {
     openDb(this.file).prepare(
