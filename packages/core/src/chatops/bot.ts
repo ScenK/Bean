@@ -25,6 +25,7 @@ import type { CardBuilders } from "./cards-api.js";
 import { formatAmbientBlock, formatRepliedBlock, REPLIED_UNAVAILABLE, type AmbientMessage, type RepliedMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
+import type { ConversationCatalog, ConversationPlace } from "./catalog.js";
 import { maybeCompact } from "./compact.js";
 import { MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
@@ -91,6 +92,9 @@ export interface CardAction {
   /** Admin scope of the tapped card's channel (see IncomingMessage.scopeId). */
   scopeId?: string;
   fromName: string;
+  /** The tapped card's conversation as the surface sees it — feeds the owner's conversation
+   * catalog when a live session starts. Absent = not catalogued. */
+  place?: ConversationPlace;
   value: { beanAction?: string; proposalId?: string; projectPath?: string; runId?: string; cli?: string; model?: string; skillName?: string; steering?: string; instruction?: string };
 }
 
@@ -176,6 +180,9 @@ export interface TeamsBotDeps {
    * explicit remember/forget tools. Absent = off. */
   autoMemoryEnabled?: () => Promise<boolean>;
   conversations: ConversationStore;
+  /** The owner's continuable conversations (owner DMs, owner-started live sessions) for the
+   * desktop. Omit = nothing catalogued. */
+  catalog?: ConversationCatalog;
   cards: CardBuilders;
   /** Gates the system_control action tool, same as main.ts's desktop wiring. */
   systemControlsEnabled: () => boolean;
@@ -438,7 +445,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   const liveSkillNameOf = (p: ProposedLiveSession, v: CardAction["value"]): string | undefined =>
     v.skillName === undefined ? p.skillName : v.skillName === "__none__" ? undefined : v.skillName || undefined;
 
-  async function startLiveSessionAction(p: PendingLiveSession, startedBy: string, starterId: string, fx: BotEffects): Promise<void> {
+  /** `owner` set = the owner tapped Start: the conversation goes into the catalog with this
+   * session's live binding. */
+  async function startLiveSessionAction(
+    p: PendingLiveSession, startedBy: string, starterId: string, fx: BotEffects,
+    owner?: { altId?: string; place: ConversationPlace },
+  ): Promise<void> {
     const updateTo = async (card: object): Promise<void> => {
       if (p.cardActivityId !== undefined) await fx.updateCard(p.cardActivityId, card);
     };
@@ -475,10 +487,21 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     };
     // A picked skill's body frames the opening turn (composePrompt = body + "## Task" + text).
     const instruction = picked.skill ? composePrompt(picked.skill, p.proposal.instruction) : p.proposal.instruction;
+    const conv = p.conversationId;
+    // Before start(): the CLI's session id lands on this row. A resume binds its known id now (the
+    // registry reports no id for it); a fresh session stays unbound until its id is recorded.
+    if (owner && !deps.liveSessions.has(conv)) {
+      deps.catalog?.upsert({
+        conversationId: conv, place: owner.place, ownerId: starterId, ownerAltId: owner.altId,
+        live: { cli, ...(resume ? { sessionId: resume.sessionId } : {}) },
+      });
+    }
+    const resetsAtLaunch = resets.get(conv) ?? 0;
     const started = deps.liveSessions.start({
       channelId: p.conversationId,
       projectPath: p.proposal.projectPath,
       instruction,
+      ask: p.proposal.instruction,
       cli,
       model: liveModelFor(cli, p.proposal.model),
       ...(resume ? { resume: resume.sessionId } : {}),
@@ -489,6 +512,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       sink,
       onTurnResult: (result) =>
         deps.conversations.append(p.conversationId, { role: "assistant", content: `[live session] ${result}` }),
+      // A `/new` since launch unbound the conversation; a late id must not bind it again.
+      ...(owner ? {
+        onSessionId: (id: string) => {
+          if ((resets.get(conv) ?? 0) === resetsAtLaunch) deps.catalog?.setLiveSession(conv, cli, id);
+        },
+      } : {}),
       onEnded: (notice) => {
         updateToEnded().catch(logRunEffectError);
         fx.post(notice).catch(logRunEffectError);
@@ -1144,6 +1173,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const { role, scopeId } = speakerRole(msg);
         const isOwner = role === "owner";
         if (await dmBlocked(msg, role, fx)) return;
+        // The owner's own DM is continuable from the desktop; a member's DM never is.
+        if (msg.direct && isOwner) {
+          deps.catalog?.upsert({ conversationId: msg.conversationId, place: { kind: "dm", title: "DM" }, ownerId: msg.fromId, ownerAltId: msg.fromAltId });
+        }
         const permitted = permittedFor(role, scopeId, fx);
         turnId = randomUUID();
         deps.onActivity?.({ type: "turn", phase: "start", id: turnId, who: msg.fromName, where: msg.channelName });
@@ -1567,7 +1600,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (v.model !== undefined) pending.proposal.model = v.model || undefined;
         pending.proposal.skillName = liveSkillNameOf(pending.proposal, v);
         if (v.steering === "open" || v.steering === "restricted") pending.proposal.steering = v.steering;
-        await startLiveSessionAction(pending, action.fromName, action.fromId, fx);
+        await startLiveSessionAction(pending, action.fromName, action.fromId, fx,
+          role === "owner" && action.place ? { altId: action.fromAltId, place: action.place } : undefined);
         return;
       }
       if (!proposalId) return;

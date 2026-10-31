@@ -8,6 +8,8 @@ import { CHATOPS_COMMANDS } from "../src/chatops/commands.js";
 import { readFileSync } from "node:fs";
 import type { ResumableRun } from "../src/delegate-runs.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
+import { ConversationCatalog, chatopsConversationTurns, listChatopsConversations } from "../src/chatops/catalog.js";
+import { openDb } from "../src/db.js";
 import { dbFile } from "../src/config.js";
 import { ProposalStore } from "../src/chatops/proposals.js";
 import { NoteProposalStore } from "../src/chatops/note-proposals.js";
@@ -2820,4 +2822,83 @@ test("a longer message that starts like a mute is a normal turn", async () => {
   const { deps } = withRoles();
   deps.chatter = makeChatter({ dbPath: mkdtempSync(join(tmpdir(), "bean-chatty-")) + "/bean.db", surface: "discord" });
   expect(await buildTeamsBot(deps).onCommand({ ...owner, text: "be quiet about X and do Y" }, fx())).toBe(false);
+});
+
+describe("conversation catalog (#527)", () => {
+  function catalogBot(opts: { surface?: "discord" | "teams"; ownerId: string; memberIds?: string[] }) {
+    const dir = mkdtempSync(join(tmpdir(), "bean-bot-catalog-"));
+    const file = dbFile(dir);
+    const surface = opts.surface ?? "discord";
+    let cbs: LiveSessionCallbacks | undefined;
+    const startFn = (_req: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
+      cbs = c;
+      return { pid: 1, send: () => true, stop: () => c.onExit(undefined) };
+    };
+    const { deps } = makeDeps({
+      conversations: new ConversationStore(file),
+      catalog: new ConversationCatalog(file, surface),
+      roles: makeRoles({ dbPath: file, surface, ownerId: opts.ownerId, memberIds: opts.memberIds, ownerName: "Scen" }),
+      liveSessionsEnabled: () => true,
+      liveSessions: new LiveSessionRegistry(startFn as never, { dir, surface }),
+    });
+    const bot = buildTeamsBot(deps);
+    const startLive = async (fromId: string, conversationId = "t1"): Promise<void> => {
+      const effects = fx();
+      await bot.proposeLiveSession({ conversationId, instruction: "fix the login bug", proposedBy: "Scen" }, effects);
+      await bot.onCardAction({
+        conversationId, fromId, fromName: "someone", place: { kind: "thread", title: "login bugs" },
+        value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) },
+      }, effects);
+    };
+    return {
+      bot, file, startLive, cbs: () => cbs,
+      list: (ownerId = opts.ownerId) => listChatopsConversations(file, [{ surface, ownerId }]),
+    };
+  }
+
+  test("an owner DM is listed; a member DM and an owner channel turn are not", async () => {
+    const c = catalogBot({ ownerId: "u1", memberIds: ["m1"] });
+    await c.bot.onMessage({ conversationId: "d1", text: "hi", fromId: "u1", fromName: "Scen", direct: true }, fx());
+    await c.bot.onMessage({ conversationId: "d2", text: "hi", fromId: "m1", fromName: "Sam", direct: true }, fx());
+    await c.bot.onMessage({ conversationId: "ch1", text: "hi", fromId: "u1", fromName: "Scen", direct: false }, fx());
+    expect(c.list()).toEqual([expect.objectContaining({ conversationId: "d1", surface: "discord", kind: "dm", title: "DM", ownerId: "u1" })]);
+    expect(chatopsConversationTurns(c.file, "d1").map((t) => t.role)).toEqual(["user", "assistant"]);
+  });
+
+  test("an owner-started live session is listed and records its session id; a member's tap is not", async () => {
+    const c = catalogBot({ ownerId: "u1", memberIds: ["m1"] });
+    await c.startLive("m1", "t2");
+    expect(c.cbs()).toBeUndefined();
+    await c.startLive("u1");
+    expect(c.list()).toEqual([expect.objectContaining({ conversationId: "t1", kind: "thread", title: "login bugs", ownerId: "u1", liveCli: "claude" })]);
+    expect(c.list()[0]?.liveSessionId).toBeUndefined();
+    c.cbs()?.onSessionId?.("sess-1");
+    expect(c.list()[0]?.liveSessionId).toBe("sess-1");
+    const runs = openDb(c.file).prepare("SELECT surface, session_id, instruction FROM delegate_runs").all().map((r) => ({ ...r }));
+    expect(runs).toEqual([{ surface: "discord", session_id: "sess-1", instruction: "fix the login bug" }]);
+  });
+
+  test("a session id reported after /new doesn't bind the conversation again", async () => {
+    const c = catalogBot({ ownerId: "u1" });
+    await c.startLive("u1");
+    await c.bot.onCommand({ conversationId: "t1", text: "new", fromId: "u1", fromName: "Scen", direct: false }, fx());
+    c.cbs()?.onSessionId?.("sess-1");
+    expect(c.list()[0]?.liveSessionId).toBeUndefined();
+    expect(c.list()[0]?.liveCli).toBeUndefined();
+  });
+
+  test("an owner config change hides the old owner's rows", async () => {
+    const c = catalogBot({ ownerId: "u1" });
+    await c.bot.onMessage({ conversationId: "d1", text: "hi", fromId: "u1", fromName: "Scen", direct: true }, fx());
+    expect(c.list("u1")).toHaveLength(1);
+    expect(c.list("u2")).toEqual([]);
+    expect(c.list("")).toEqual([]);
+  });
+
+  test("Teams: an AAD-configured owner matches the row stored under the id the bot saw", async () => {
+    const c = catalogBot({ surface: "teams", ownerId: "aad-1" });
+    await c.bot.onMessage({ conversationId: "a:dm", text: "hi", fromId: "29:abc", fromAltId: "aad-1", fromName: "Scen", direct: true }, fx());
+    expect(c.list("aad-1")).toEqual([expect.objectContaining({ conversationId: "a:dm", surface: "teams", ownerId: "29:abc" })]);
+    expect(c.list("29:abc")).toHaveLength(1);
+  });
 });

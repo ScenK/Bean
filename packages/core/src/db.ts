@@ -98,6 +98,22 @@ CREATE TABLE IF NOT EXISTS chatops_turns (
 );
 CREATE INDEX IF NOT EXISTS chatops_turns_conv ON chatops_turns(conversation_id);
 
+-- Chatops conversations the owner can continue from the desktop (chatops/catalog.ts): the owner's
+-- DMs and channels where the owner started a live session. owner_id is the platform id the bot saw
+-- (Teams: the 29: id, owner_alt_id its AAD alias). live_* = the last live session bound here.
+CREATE TABLE IF NOT EXISTS chatops_conversations (
+  conversation_id TEXT NOT NULL,
+  surface         TEXT NOT NULL,
+  kind            TEXT NOT NULL,
+  title           TEXT NOT NULL,
+  owner_id        TEXT NOT NULL,
+  owner_alt_id    TEXT,
+  live_cli        TEXT,
+  live_session_id TEXT,
+  updated_at      TEXT NOT NULL,
+  PRIMARY KEY (conversation_id, surface)
+);
+
 -- Watermark of the newest ambient (non-mention) message already injected into a
 -- conversation. Lives beside chatops_turns rather than in bot memory: Discord re-reads
 -- live channel history on every mention, so a restart with an in-memory cutoff would

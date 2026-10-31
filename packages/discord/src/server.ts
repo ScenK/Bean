@@ -3,7 +3,7 @@ import {
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine, createRoutine,
-  buildTeamsBot, exitWhenOrphaned, ConversationStore, maybeCompact, NoteProposalStore, ProposalStore,
+  buildTeamsBot, exitWhenOrphaned, ConversationStore, ConversationCatalog, type ConversationPlace, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
   makeRoles, makeChatter, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, parseChatterCommand, RoutineProposalStore, type Role,
@@ -49,7 +49,7 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "discord", onActivity:
 const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reasoningEffort);
 const conversations = new ConversationStore(dbFile(dir));
 const noteProposals = new NoteProposalStore();
-const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink });
+const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink, surface: "discord" });
 // Hoisted (not inline in deps) so the /live-session card's project/model dropdowns and the
 // edit-prompt modal can read and mutate the pending proposal before Start claims it.
 const liveSessionProposals = new LiveSessionProposalStore();
@@ -110,6 +110,7 @@ const bot = buildTeamsBot({
   deleteMemories: (ids, subject) => deleteMemories(dbFile(dir), ids, subject),
   shareMemory: (id, actor) => shareMemory(dbFile(dir), id, actor),
   conversations,
+  catalog: new ConversationCatalog(dbFile(dir), "discord"),
   liveSessions,
   liveSessionProposals,
   // Always on for Discord (no `liveSessions` opt-in) when a live-capable CLI (claude, codex or opencode)
@@ -160,6 +161,12 @@ const selections = new Map<string, { cli?: string; model?: string; skillName?: s
 // startThread reassigns the turn's channel). History, cards and runs keep the thread id.
 const scopeOf = (channel: TextBasedChannel): string =>
   channel.isThread() ? channel.parentId ?? channel.id : channel.id;
+
+// The conversation catalog's kind and title for a channel (display only).
+const placeOf = (channel: TextBasedChannel): ConversationPlace =>
+  channel.isDMBased() ? { kind: "dm", title: "DM" }
+  : channel.isThread() ? { kind: "thread", title: channel.name }
+  : { kind: "channel", title: "name" in channel && channel.name ? `#${channel.name}` : "channel" };
 
 // bot.ts's keyword commands (same optional leading slash). They act on the channel and answer
 // in one line, so they never open a session thread. Chatty/mute/unmute reuse core's parser.
@@ -667,6 +674,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         fromId: interaction.user.id,
         scopeId: scopeOf(interaction.channel),
         fromName: interaction.user.displayName,
+        place: placeOf(interaction.channel),
         value: { beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, skillName: sel.skillName },
       },
       fx,
