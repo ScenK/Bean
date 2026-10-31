@@ -101,6 +101,12 @@ describe("isValidRoutine", () => {
     expect(describeRoutineError(routine({ sinks: { chatops: [{ transport: "teams", user: "u1" }] } }))).toMatch(/Discord-only/);
     expect(describeRoutineError(routine({ sinks: { chatops: [{ transport: "discord", user: " " }] } }))).toMatch(/invalid user/);
   });
+  it("chatopsOnlyOnProblems: boolean validates, non-boolean is rejected, absent loads", () => {
+    expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "discord" }], chatopsOnlyOnProblems: true } }))).toBe(true);
+    expect(isValidRoutine(routine({ sinks: { chatopsOnlyOnProblems: false } }))).toBe(true);
+    expect(describeRoutineError(routine({ sinks: { chatopsOnlyOnProblems: "yes" } } as never))).toMatch(/chatopsOnlyOnProblems must be true or false/);
+    expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "discord" }] } }))).toBe(true);
+  });
   it("accepts todoDriven boolean and rejects non-boolean", () => {
     expect(isValidRoutine(routine({ todoDriven: true }))).toBe(true);
     expect(isValidRoutine(routine({ todoDriven: false }))).toBe(true);
