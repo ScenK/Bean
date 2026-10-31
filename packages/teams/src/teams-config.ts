@@ -20,14 +20,21 @@ export interface TeamsConfig {
   allowGuestDms: boolean;
 }
 
-type DmRef = { conversation?: { conversationType?: string }; user?: { id?: string; aadObjectId?: string } };
+type DmRef = {
+  conversation?: { conversationType?: string };
+  user?: { id?: string; aadObjectId?: string };
+  bot?: { id?: string; isTargeted?: unknown }; // `id` too: a lone optional prop is a weak type ChannelAccount fails
+};
 
 /** Outbox DM targets: the owner's personal conversations only — never a coworker's who once
- * DMed the bot. No owner configured = no targets. */
+ * DMed the bot. No owner configured = no targets. A slash-picker pick in a group chat arrives
+ * as a "personal" conversation too (`bot.isTargeted`), but posts there land in that group chat:
+ * not a DM, so excluded. */
 export function ownerDmRefs<R extends DmRef>(refs: Record<string, R>, ownerId: string | undefined): R[] {
   if (!ownerId) return [];
   return Object.values(refs).filter((r) =>
-    r.conversation?.conversationType === "personal" && (r.user?.id === ownerId || r.user?.aadObjectId === ownerId));
+    r.conversation?.conversationType === "personal" && r.bot?.isTargeted !== true &&
+    (r.user?.id === ownerId || r.user?.aadObjectId === ownerId));
 }
 
 type Delivered = { channel?: string; context?: boolean; displayBody?: string; body: string };

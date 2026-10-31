@@ -44,7 +44,9 @@ test("outbox DMs reach only the owner's personal conversation, not a coworker's"
   const owner = { conversation: { id: "a", conversationType: "personal" }, user: { id: "29:owner", aadObjectId: "aad-owner" } };
   const coworker = { conversation: { id: "b", conversationType: "personal" }, user: { id: "29:cow", aadObjectId: "aad-cow" } };
   const channel = { conversation: { id: "c", conversationType: "channel" }, user: { id: "29:owner" } };
-  const refs = { a: owner, b: coworker, c: channel };
+  // A slash-picker pick in a group chat: "personal", but posting there lands in the group chat.
+  const targeted = { conversation: { id: "d", conversationType: "personal" }, user: { id: "29:owner" }, bot: { isTargeted: true } };
+  const refs = { a: owner, b: coworker, c: channel, d: targeted };
   expect(ownerDmRefs(refs, "29:owner")).toEqual([owner]);
   expect(ownerDmRefs(refs, "aad-owner")).toEqual([owner]);
   expect(ownerDmRefs(refs, undefined)).toEqual([]);

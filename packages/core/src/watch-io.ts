@@ -60,12 +60,12 @@ export async function sinkRecipients(dir: string): Promise<{ discord?: number; t
   };
   const discord = await readJson(join(dir, "discord.json"));
   const teamsOwner = owner(await readJson(join(dir, "teams.json")));
-  type Ref = { conversation?: { conversationType?: string }; user?: { id?: string; aadObjectId?: string } };
+  type Ref = { conversation?: { conversationType?: string }; user?: { id?: string; aadObjectId?: string }; bot?: { isTargeted?: unknown } };
   const teams = (await readJson(join(dir, "teams-conversations.json"))) as Record<string, Ref> | undefined;
   return {
     ...(discord && typeof discord === "object" ? { discord: owner(discord) ? 1 : 0 } : {}),
     ...(teams && typeof teams === "object"
-      ? { teams: teamsOwner ? Object.values(teams).filter((r) => r?.conversation?.conversationType === "personal" &&
+      ? { teams: teamsOwner ? Object.values(teams).filter((r) => r?.conversation?.conversationType === "personal" && r.bot?.isTargeted !== true &&
         (r.user?.id === teamsOwner || r.user?.aadObjectId === teamsOwner)).length : 0 }
       : {}),
   };
