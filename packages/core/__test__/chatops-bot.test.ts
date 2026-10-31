@@ -553,6 +553,89 @@ test("confirm from another conversation is refused and leaves the proposal claim
   expect(delegateCalls[0]?.req.prompt).toBe("fix it");
 });
 
+describe("delegate card project picker (#556)", () => {
+  const twoProjects = async () => [{ name: "bean", path: "/p/bean" }, { name: "web", path: "/p/web" }];
+  // propose_delegate without `project` = the scratch workspace.
+  const scratchResult: ConverseResult = {
+    reply: "delegating",
+    proposedDelegate: { projectPath: undefined as unknown as string, instruction: "fix it", composedPrompt: "fix it" },
+  };
+  const confirm = (id: string, projectPath?: string) =>
+    ({ conversationId: "c1", fromName: "bob", value: { beanAction: "confirm", proposalId: id, cli: "claude", projectPath } });
+
+  test("registered → no project runs in the scratch workspace, labelled, never by path", async () => {
+    const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult, scratchPath: "/home/u/.bean/workspace", loadProjects: twoProjects });
+    const effects = fx();
+    const id = await proposeThenGetId(deps, effects);
+    expect(effects.cards[0]).toMatchObject({
+      projectPath: "/p/bean", scratch: true,
+      projects: [{ name: "bean", path: "/p/bean" }, { name: "web", path: "/p/web" }],
+    });
+    await buildTeamsBot(deps).onCardAction(confirm(id, "__none__"), effects);
+    expect(delegateCalls[0]?.req.projectPath).toBe("/home/u/.bean/workspace");
+    expect(effects.updates[0]?.card).toMatchObject({ kind: "running", projectName: "No project (scratch)" });
+  });
+
+  test("scratch → registered: the card defaults to the sentinel and Run takes the picked project", async () => {
+    const { deps, delegateCalls } = makeDeps({ converseResult: scratchResult, scratchPath: "/home/u/.bean/workspace", loadProjects: twoProjects });
+    const effects = fx();
+    const id = await proposeThenGetId(deps, effects);
+    expect(effects.cards[0]).toMatchObject({ projectPath: "__none__", scratch: true });
+    expect(JSON.stringify(effects.cards[0])).not.toContain("/home/u/.bean/workspace");
+    await buildTeamsBot(deps).onCardAction(confirm(id, "/p/web"), effects);
+    expect(delegateCalls[0]?.req.projectPath).toBe("/p/web");
+  });
+
+  test("an untouched scratch card runs in scratch; Cancel labels it without the path", async () => {
+    const { deps, delegateCalls } = makeDeps({ converseResult: scratchResult, scratchPath: "/home/u/.bean/workspace" });
+    const effects = fx();
+    const bot = buildTeamsBot(deps);
+    const id = await proposeThenGetId(deps, effects);
+    await bot.onCardAction(confirm(id, "__none__"), effects);
+    expect(delegateCalls[0]?.req.projectPath).toBe("/home/u/.bean/workspace");
+    const other = fx();
+    await bot.onMessage(msg, other);
+    const id2 = /"proposalId":"(prop-\d+)"/.exec(JSON.stringify(other.cards[0]))?.[1] ?? "";
+    await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "cancel-proposal", proposalId: id2 } }, other);
+    expect(other.updates[0]?.card).toMatchObject({ kind: "finished", projectName: "No project (scratch)", outcome: "cancelled" });
+  });
+
+  test("an unregistered path is refused before claim and the card stays usable", async () => {
+    const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult, scratchPath: "/s" });
+    const effects = fx();
+    const bot = buildTeamsBot(deps);
+    const id = await proposeThenGetId(deps, effects);
+    await bot.onCardAction(confirm(id, "/etc"), effects);
+    expect(delegateCalls).toHaveLength(0);
+    expect(effects.posted.some((m) => m.includes("isn't registered any more"))).toBe(true);
+    await bot.onCardAction(confirm(id), effects);
+    expect(delegateCalls[0]?.req.projectPath).toBe("/p/bean");
+  });
+
+  test("the no-project sentinel is refused when the bot has no scratch workspace", async () => {
+    const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
+    const effects = fx();
+    const bot = buildTeamsBot(deps);
+    const id = await proposeThenGetId(deps, effects);
+    expect(effects.cards[0]).toMatchObject({ scratch: false });
+    await bot.onCardAction(confirm(id, "__none__"), effects);
+    expect(delegateCalls).toHaveLength(0);
+    expect(effects.posted.some((m) => m.includes("isn't registered any more"))).toBe(true);
+  });
+
+  test("a project pick from another conversation is refused without consuming the card", async () => {
+    const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult, scratchPath: "/s" });
+    const effects = fx();
+    const bot = buildTeamsBot(deps);
+    const id = await proposeThenGetId(deps, effects);
+    await bot.onCardAction({ ...confirm(id, "__none__"), conversationId: "c2" }, effects);
+    expect(delegateCalls).toHaveLength(0);
+    expect(effects.posted.some((m) => m.includes("another conversation"))).toBe(true);
+    await bot.onCardAction(confirm(id), effects);
+    expect(delegateCalls[0]?.req.projectPath).toBe("/p/bean");
+  });
+});
+
 test("confirm on an expired proposal posts an expiry message", async () => {
   const { deps } = makeDeps({ converseResult: delegateResult });
   const effects = fx();

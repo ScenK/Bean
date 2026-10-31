@@ -16,7 +16,7 @@ function flatten(card: object): string {
 
 test("proposal card shows the verbatim instruction and wires confirm/cancel data", () => {
   const card = proposalCard({
-    proposalId: "prop-1", projectName: "bean", skillName: "fix-bug",
+    proposalId: "prop-1", projectPath: "/p/bean", projects: [{ name: "bean", path: "/p/bean" }], scratch: true, skillName: "fix-bug",
     instruction: "fix the <flaky> test & report", clis: ["claude", "opencode"],
     skills: [{ name: "fix-bug" }], models, defaultCli: "claude", defaultModel: "sonnet",
   });
@@ -29,7 +29,7 @@ test("proposal card shows the verbatim instruction and wires confirm/cancel data
 
 test("proposal card's instruction is a required, capped, prefilled multiline input", () => {
   const card = proposalCard({
-    proposalId: "p", projectName: "bean", instruction: "fix it", skills: [],
+    proposalId: "p", projectPath: "/p/bean", projects: [{ name: "bean", path: "/p/bean" }], scratch: true, instruction: "fix it", skills: [],
     clis: ["claude"], models, defaultCli: "claude",
   }) as { body: { type: string; id?: string }[] };
   expect(card.body.find((b) => b.id === "instruction")).toMatchObject({
@@ -40,7 +40,7 @@ test("proposal card's instruction is a required, capped, prefilled multiline inp
 
 test("proposal card pre-selects the resolved cli and model in ChoiceSets", () => {
   const card = proposalCard({
-    proposalId: "p", projectName: "bean", instruction: "x", skills: [{ name: "fix-bug" }],
+    proposalId: "p", projectPath: "/p/bean", projects: [{ name: "bean", path: "/p/bean" }], scratch: true, instruction: "x", skills: [{ name: "fix-bug" }],
     clis: ["claude"], models, defaultCli: "claude", defaultModel: "sonnet",
   }) as { body: { type: string; id?: string; value?: string }[] };
   const cliInput = card.body.find((el) => el.id === "cli");
@@ -49,6 +49,21 @@ test("proposal card pre-selects the resolved cli and model in ChoiceSets", () =>
   expect(modelInput?.value).toBe("sonnet");
   // No skill picked by converse() -> the picker opens on the "no skill" sentinel.
   expect(card.body.find((el) => el.id === "skillName")?.value).toBe("__none__");
+});
+
+test("proposal card: projectPath ChoiceSet replaces the FactSet; no-project choice only with scratch", () => {
+  const base = {
+    proposalId: "p", projects: [{ name: "bean", path: "/p/bean" }], instruction: "x", skills: [],
+    clis: ["claude" as const], models, defaultCli: "claude" as const,
+  };
+  type Card = { body: { type: string; id?: string; value?: string; choices?: { value: string }[] }[] };
+  const scratch = proposalCard({ ...base, projectPath: "__none__", scratch: true }) as Card;
+  const picker = scratch.body.find((el) => el.id === "projectPath");
+  expect(picker).toMatchObject({ type: "Input.ChoiceSet", value: "__none__" });
+  expect(picker?.choices?.map((c) => c.value)).toEqual(["__none__", "/p/bean"]);
+  expect(scratch.body.some((el) => el.type === "FactSet")).toBe(false);
+  const plain = proposalCard({ ...base, projectPath: "/p/bean", scratch: false }) as Card;
+  expect(plain.body.find((el) => el.id === "projectPath")?.choices?.map((c) => c.value)).toEqual(["/p/bean"]);
 });
 
 test("running card carries a cancel-run action with the run id", () => {

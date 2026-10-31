@@ -373,7 +373,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   async function startRun(p: PendingProposal, cli: CliName, model: string | undefined, startedBy: string, fx: BotEffects): Promise<void> {
     const projects = await deps.loadProjects();
     // Shared channel: an unregistered project shows its folder name, never the absolute path.
-    const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? (basename(p.proposal.projectPath) || "project");
+    const projectName = delegateProjectLabel(p.proposal.projectPath, projects);
     // Recomposed here, not taken from proposal.composedPrompt: the card's skill picker can
     // swap the skill after converse() composed it, so the body must be re-applied at launch.
     const skill = p.proposal.skillName
@@ -620,6 +620,13 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       ...(live.resume ? { clis: [], continues: live.resume.instruction, agent: cli } : { clis }),
     }));
     deps.liveSessionProposals.setCardActivityId(pending.id, activityId);
+  }
+
+  // Display name for a delegate's project. Shared channel: the scratch workspace and an
+  // unregistered folder never show their absolute path.
+  function delegateProjectLabel(path: string, projects: Project[]): string {
+    return projects.find((pr) => pr.path === path)?.name
+      ?? (path === deps.scratchPath ? "No project (scratch)" : basename(path) || "project");
   }
 
   // Display name for a project path. A resumed session's folder may be unregistered and the card
@@ -1631,9 +1638,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           proposal, conversationId: msg.conversationId, proposedBy: msg.fromName,
           defaultCli: choice.cli, defaultModel: choice.model,
         });
-        const projectName = projects.find((p) => p.path === proposal.projectPath)?.name ?? proposal.projectPath;
         const activityId = await fx.postCard(deps.cards.proposalCard({
-          proposalId: pending.id, projectName, skillName: proposal.skillName,
+          proposalId: pending.id, skillName: proposal.skillName,
+          projectPath: proposal.projectPath === deps.scratchPath ? "__none__" : proposal.projectPath,
+          projects: projects.map((p) => ({ name: p.name, path: p.path })), scratch: deps.scratchPath !== undefined,
           instruction: proposal.instruction, clis: detected,
           skills: skills.filter((s) => !s.hidden).map((s) => ({ name: s.name, ...(s.browser ? { browser: true } : {}) })),
           models: availableModels(deps.cliModels, detected), defaultCli: choice.cli, defaultModel: choice.model,
@@ -1790,11 +1798,24 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         await fx.post(`That prompt is too long (${edited.length} chars, max ${MAX_INSTRUCTION_CHARS}) — shorten it and press Run again.`);
         return;
       }
+      // On-card project pick. Client-supplied (a forged Teams submit or Discord select value), so
+      // only a registered project or `__none__` (this bot's own scratch workspace) is accepted;
+      // refused before claim so the card stays usable. Absent = keep the proposal's project.
+      const pickedProject = beanAction === "confirm" ? action.value.projectPath : undefined;
+      let projectPick: string | undefined;
+      if (pickedProject) {
+        projectPick = pickedProject === "__none__"
+          ? deps.scratchPath
+          : (await deps.loadProjects()).find((pr) => pr.path === pickedProject)?.path;
+        if (!projectPick) {
+          await fx.post("That project isn't registered any more — pick another and press Run again.");
+          return;
+        }
+      }
       const p = deps.proposals.claim(proposalId);
       if (beanAction === "cancel-proposal") {
         if (p?.cardActivityId !== undefined) {
-          const projects = await deps.loadProjects();
-          const projectName = projects.find((pr) => pr.path === p.proposal.projectPath)?.name ?? p.proposal.projectPath;
+          const projectName = delegateProjectLabel(p.proposal.projectPath, await deps.loadProjects());
           await fx.updateCard(p.cardActivityId, deps.cards.finishedCard({
             projectName, instruction: p.proposal.instruction, startedBy: action.fromName, outcome: "cancelled",
           }));
@@ -1809,6 +1830,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       // On-card skill pick (same sentinel as the live-session card). Teams merges its
       // ChoiceSet value into the Run submit; Discord applies it from its per-message selections.
       if (edited) p.proposal = { ...p.proposal, instruction: edited };
+      if (projectPick) p.proposal = { ...p.proposal, projectPath: projectPick };
       const picked = action.value.skillName;
       if (picked !== undefined) p.proposal.skillName = picked === "__none__" ? undefined : (picked || undefined);
       const detected = deps.detectClis();

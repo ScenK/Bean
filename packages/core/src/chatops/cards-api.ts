@@ -3,7 +3,13 @@ import type { AvailableModel } from "../models.js";
 
 export interface ProposalCardInput {
   proposalId: string;
-  projectName: string;
+  /** Default of the on-card project picker: a registered project's path, or `__none__` for the
+   * scratch workspace. Never displayed — the scratch path is absolute and the card is shared. */
+  projectPath: string;
+  /** Selectable projects for the on-card project picker. */
+  projects: { name: string; path: string }[];
+  /** Offer the "no project (scratch)" option (`__none__`): the bot has a scratch workspace. */
+  scratch: boolean;
   /** Picked skill name (default in the skill picker); absent = no skill. */
   skillName?: string;
   instruction: string;
