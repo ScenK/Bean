@@ -14,14 +14,10 @@ type, scope/roles unchanged, so a targeted channel message still recalls shared 
 Without this gate a private pick fell into the shared ambient store and replayed publicly.
 Replies stay public by decision (no targeted-reply path).
 
-A `// TEMP:` stdout log in `server.ts` dumps targeted payloads (recipient, conversation type,
-every entity's type/text/mentioned, full text) for the tenant check — not yet run on any tenant
-(2026-10-30). Open question (#533): a pick may carry a bot-mention entity *named after the
-command*, so `removeRecipientMention` would strip the command word and every pick would reach
-`converse()` as plain text. Pick `whoami` + `live-session` in 1:1/group/channel, desktop + mobile;
-if the word is missing, rebuild `/<command> <rest>` from that entity (only for
-`recipient.isTargeted === true` addressed to this bot), commit sanitized fixtures, delete the log.
-If it shows no mention entity, `add-admin`/`remove-admin` picks can't carry the target; mark them typed-only.
+A pick's conversation ref is stored like any other (first-seen wins, `bot.isTargeted: true`) and
+can be `personal` for the owner even in a shared chat. Owner-DM selection (`ownerDmRefs`, core
+`watch-io.ts`, shared by the Teams outbox and the editor's recipient count) skips targeted refs —
+otherwise every DM-sink digest also posted into that shared chat (#549). A real 1:1 is never targeted.
 
 Bumping `manifestVersion` can remove fields, not just add them: the schema sets
 `additionalProperties: false`, and 1.30 dropped `packageName`. Teams then rejects the upload
