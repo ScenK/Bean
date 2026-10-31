@@ -221,7 +221,8 @@ export function ChatSession({
   const evictingRef = useRef(false);
   const [evicting, setEvicting] = useState(false);
   useEffect(() => onBusy(evicting), [evicting]);
-  // Facts undone from a "Memory updated" row — handed to close catch-up so it won't re-save them.
+  // Facts undone from a "Memory updated" row or forgotten by forget_memory — handed to close
+  // catch-up so it won't re-save them.
   const rejectedMemoriesRef = useRef<string[]>([]);
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -386,6 +387,8 @@ export function ChatSession({
     try {
       const res = await window.bean.chat({ history, message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, turnId }, mountId);
       if (res.model) setModel(res.model);
+      // Forgotten facts go to close catch-up as already handled, so closing doesn't re-save them.
+      rejectedMemoriesRef.current.push(...(res.forgotten ?? []).map((m) => m.text));
 
       setItems((prev) => {
         const next = prev.filter((it) => it.id !== workingId);
@@ -414,6 +417,7 @@ export function ChatSession({
         if (res.proposedDelegate) next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
         if (res.proposedLiveSession) next.push({ kind: "offer", id: newId(), offer: res.proposedLiveSession, state: "pending" });
         for (const m of res.remembered ?? []) next.push({ kind: "status", id: newId(), text: `🧠 Remembered — ${m.text}`, tone: "done" });
+        for (const m of res.forgotten ?? []) next.push({ kind: "forgot", id: newId(), text: m.text, row: m, state: "saved" });
         return next;
       });
       flushRef.current = true;
@@ -845,6 +849,26 @@ export function ChatSession({
     }
   };
 
+  // A forget receipt's Undo: re-append the exact deleted row; restored only once the append lands.
+  const undoForget = async (id: string): Promise<void> => {
+    const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "forgot" }> => it.kind === "forgot" && it.id === id);
+    if (!item?.row || (item.state !== "saved" && item.state !== "error")) return;
+    const row = item.row;
+    const update = (patch: Partial<Extract<ChatItem, { kind: "forgot" }>>): void =>
+      setItems((prev) => prev.map((it) => (it.id === id && it.kind === "forgot" ? { ...it, ...patch } : it)));
+    update({ state: "undoing", error: undefined });
+    try {
+      await window.bean.appendMemories([row]);
+      // Back in memory, so close catch-up may cite it again.
+      const i = rejectedMemoriesRef.current.indexOf(row.text);
+      if (i >= 0) rejectedMemoriesRef.current.splice(i, 1);
+      update({ state: "restored" });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      update({ state: "error", error: /UNIQUE/i.test(msg) ? "a memory with this id already exists" : msg });
+    }
+  };
+
   const applyDelegateEvent = (e: DelegateEvent): void => {
     const { loopback } = applyDelegateEventToItems(itemsRef.current, e);
     if (!itemsRef.current.some((it) => it.kind === "delegate" && it.taskId === e.taskId)) {
@@ -1053,6 +1077,7 @@ export function ChatSession({
         incognito={incognito}
         onToggleIncognito={toggleIncognito}
         onMemoryUndo={(id) => void undoMemory(id)}
+        onForgetUndo={(id) => void undoForget(id)}
       />
     </>
   );

@@ -59,6 +59,10 @@ export class RunRegistry {
 
   /** Prefixed to a run's result when it started fresh because its thread was busy. */
   static readonly BUSY_THREAD_NOTICE = "Started a fresh session — this thread's other run is still going.\n\n";
+  /** Prefixed when it started fresh because the thread's session ran on another project (no path: shared channels). */
+  static projectSwitchNotice(cli: DelegateRequest["cli"]): string {
+    return `Started a fresh session — this thread's earlier ${cli} session was on another project.\n\n`;
+  }
 
   constructor(
     private runDelegate: RunDelegateFn,
@@ -73,15 +77,17 @@ export class RunRegistry {
   // before start() ever reaches its map insert — `run.released` guards that hole.
   /** Resolves to the new run's id (for cancel()). */
   async start(req: DelegateRequest, callerEvents: RunEvents, meta: RunMeta): Promise<string> {
-    // opencode resuming a session from another folder emits nothing and never exits (claude
-    // rejects it, codex adopts the new cwd), so a thread follow-up on another project starts fresh.
-    if (req.cli === "opencode" && req.resume && delegateRunProject(dbFile(this.opts.dir), req.resume) !== req.projectPath) {
+    // A thread follow-up on another project starts fresh on every CLI: claude and codex would resume
+    // across folders and carry the old project's context and paths; opencode hangs. A session with
+    // no recorded project also starts fresh.
+    let notice = "";
+    if (req.resume && delegateRunProject(dbFile(this.opts.dir), req.resume) !== req.projectPath) {
       const { resume: _stale, ...fresh } = req;
       req = fresh;
+      notice = RunRegistry.projectSwitchNotice(req.cli);
     }
     // Two live processes must never drive one CLI session: while this thread already has a run on
     // this CLI, the new one starts fresh (the thread pointer keeps whichever completes last).
-    let notice = "";
     if (req.resume && [...this.byId.values(), ...this.stopping].some((r) => r.cli === req.cli && r.meta.conversationId === meta.conversationId)) {
       const { resume: _busy, ...fresh } = req;
       req = fresh;

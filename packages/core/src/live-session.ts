@@ -122,6 +122,10 @@ export function startLiveSession(
   let stopping = false;
   // A bad --resume id makes claude emit an error `result` and exit before `system/init`.
   let initSeen = false;
+  // Set by a `result`; the next turn's first `system/init` (claude emits one per turn) or
+  // `assistant` (fallback) clears it and reports onTurnStart — a queued message answered as its
+  // own turn, after the previous `result` already stopped typing.
+  let afterResult = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -174,8 +178,13 @@ export function startLiveSession(
     }
     // Pre-init on a resume, a `result` is claude's rejection, not a turn — the exit reports it.
     if (req.resume && !initSeen) return;
+    if (afterResult && (e?.type === "assistant" || (e?.type === "system" && e.subtype === "init"))) {
+      afterResult = false;
+      if (!stopping) cbs.onTurnStart?.();
+    }
     const summary = claudeTurnSummary(event);
     if (summary) {
+      afterResult = true;
       cbs.onTurnComplete(summary);
       resetIdle();
       return;

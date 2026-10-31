@@ -6,12 +6,13 @@ import type { ConverseResult } from "../src/index.js";
 import { buildTeamsBot, parseResumeArg, type BotEffects, type TeamsBotDeps } from "../src/chatops/bot.js";
 import { CHATOPS_COMMANDS } from "../src/chatops/commands.js";
 import { readFileSync } from "node:fs";
-import type { ResumableRun } from "../src/delegate-runs.js";
+import { recordDelegateSession, type ResumableRun } from "../src/delegate-runs.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { ConversationCatalog, chatopsConversationTurns, listChatopsConversations } from "../src/chatops/catalog.js";
 import { openDb } from "../src/db.js";
 import { MAX_DESK_TEXT } from "../src/chatops/desk.js";
 import { speakerLine } from "../src/converse.js";
+import { MEMORY_INTENT_PROMPT } from "../src/memory/tools.js";
 import { dbFile } from "../src/config.js";
 import { ProposalStore } from "../src/chatops/proposals.js";
 import { NoteProposalStore } from "../src/chatops/note-proposals.js";
@@ -142,7 +143,7 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     listOpenTodos: async () => [],
     cancelTodo: async () => false,
     appendMemories: async (additions) => { savedMemories.push(additions); },
-    deleteMemories: async (ids) => { forgotten.push(...ids); return ids.length; },
+    deleteMemories: async (ids) => { forgotten.push(...ids); return ids; },
     shareMemory: async () => { throw new Error("shareMemory not stubbed"); },
     conversations: new ConversationStore(dbFile(runsBeanDir)),
     cards: fakeCards as CardBuilders,
@@ -156,7 +157,7 @@ function makeDeps(overrides: Partial<TeamsBotDeps> & { converseResult?: Converse
     roles: { ...makeRoles({ dbPath: dbFile(runsBeanDir), surface: "discord", ownerId: "u1", ownerName: "Scen" }), roleOf: () => "owner" },
     ...overrides,
   };
-  return { deps, delegateCalls, saved, savedNotes, savedMemories, forgotten, savedSkills, queuedTodos };
+  return { deps, delegateCalls, saved, savedNotes, savedMemories, forgotten, savedSkills, queuedTodos, runsBeanDir };
 }
 
 const msg = { conversationId: "c1", text: "hi bean", fromId: "u1", fromName: "alice", direct: false };
@@ -957,21 +958,33 @@ test("queue-todo card action queues via deps.queueTodo; cancel-todo does not", a
 
 const rememberMsg = { ...msg, text: "remember that I prefer tabs over spaces" };
 
+/** A fake of the memory tools' intent check (one call per turn, on the first memory tool call):
+ * yes when the typed text says "remember" / "forget". undefined = not the intent check. */
+function intentCheck(a: Parameters<TeamsBotDeps["chat"]>[0]): { content: string; toolCalls: [] } | undefined {
+  if (a.messages[0]?.content !== MEMORY_INTENT_PROMPT) return undefined;
+  const typed = String(a.messages[1]?.content);
+  return { content: JSON.stringify({ remember: /\bremember\b/i.test(typed), forget: /\bforget\b/i.test(typed) }), toolCalls: [] };
+}
+
 // First model call remembers (a tool round), second is the confirming reply.
 function rememberDeps(args: object = { text: "Prefers tabs over spaces", quote: "I prefer tabs over spaces" }) {
   let call = 0;
-  const chat: TeamsBotDeps["chat"] = async () => {
+  let intentCalls = 0;
+  const chat: TeamsBotDeps["chat"] = async (a) => {
+    const intent = intentCheck(a);
+    if (intent) { intentCalls++; return intent; }
     call++;
     if (call === 1) return { content: "", toolCalls: [{ name: "remember", args }] };
     return { content: "Got it.", toolCalls: [] };
   };
-  return makeDeps({ chat });
+  return { ...makeDeps({ chat }), intentCalls: () => intentCalls };
 }
 
 test("explicit remember saves directly and posts a remembered card with a Forget button id", async () => {
-  const { deps, savedMemories } = rememberDeps();
+  const { deps, savedMemories, intentCalls } = rememberDeps();
   const effects = fx();
   await buildTeamsBot(deps).onMessage(rememberMsg, effects);
+  expect(intentCalls()).toBe(1);
   expect(savedMemories).toHaveLength(1);
   expect(savedMemories[0]![0]!.text).toBe("Prefers tabs over spaces");
   expect(effects.cards).toHaveLength(1);
@@ -998,7 +1011,7 @@ test("forget-memory deletes that id and is idempotent", async () => {
   await bot.onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "forget-memory", proposalId: "m1" } }, effects);
   expect(forgotten).toEqual(["m1"]);
   expect(effects.posted.some((p) => p.includes("prefers tabs"))).toBe(true);
-  const gone = makeDeps({ deleteMemories: async () => 0 });
+  const gone = makeDeps({ deleteMemories: async () => [] });
   const effects2 = fx();
   await buildTeamsBot(gone.deps).onCardAction({ conversationId: "c1", fromName: "bob", value: { beanAction: "forget-memory", proposalId: "m1" } }, effects2);
   expect(effects2.posted).toContain("Already forgotten.");
@@ -1064,12 +1077,10 @@ test("the running card's Cancel carries the run id, and a tap cancels that run",
 
 test("a second same-thread, same-CLI run starts fresh with a notice; the thread keeps the last completion", async () => {
   const result: ConverseResult = { ...delegateResult, proposedDelegate: { ...delegateResult.proposedDelegate! } };
-  const { deps, delegateCalls } = makeDeps({
-    converseResult: result,
-    loadProjects: async () => [{ name: "bean", path: "/p/bean" }, { name: "other", path: "/p/other" }],
-  });
+  const { deps, delegateCalls, runsBeanDir } = makeDeps({ converseResult: result });
   const bot = buildTeamsBot(deps);
   deps.conversations.setThreadSession("c1", "claude", "sess-0");
+  recordDelegateSession(dbFile(runsBeanDir), { surface: "teams", cli: "claude", sessionId: "sess-0", projectPath: "/p/bean", instruction: "earlier" });
   const confirm = async (): Promise<ReturnType<typeof fx>> => {
     const effects = fx();
     const id = await proposeThenGetId(deps, effects);
@@ -1079,9 +1090,7 @@ test("a second same-thread, same-CLI run starts fresh with a notice; the thread 
   await confirm();
   expect(delegateCalls[0]?.req.resume).toBe("sess-0");
   delegateCalls[0]?.cb.onSessionStart?.(1, "sess-0");
-  result.proposedDelegate!.projectPath = "/p/other";
   const second = await confirm();
-  expect(delegateCalls[1]?.req.projectPath).toBe("/p/other");
   expect(delegateCalls[1]?.req.resume).toBeUndefined();
   delegateCalls[1]?.cb.onSessionStart?.(2, "sess-new");
   // Reversed completions: the later run finishes first; the pointer ends on whichever finished last.
@@ -2142,7 +2151,10 @@ async function household() {
     appendMemories: (m) => appendMemories(file, m),
     deleteMemories: (ids, subject) => deleteMemories(file, ids, subject),
     shareMemory: (id, actor) => shareMemory(file, id, actor),
-    chat: async ({ messages, tools }) => {
+    chat: async (a) => {
+      const intent = intentCheck(a);
+      if (intent) return intent;
+      const { messages, tools } = a;
       prompts.push(messages.map((x) => String(x.content)).join("\n"));
       const latest = String(messages.at(-1)?.content ?? "");
       const drink = /I prefer (oat milk|rooibos|espresso)/.exec(latest)?.[1];

@@ -3,7 +3,7 @@ import { newId, type ChatItem } from "../../shared/chat-types.js";
 // A desktop chat thread's saved form — pure and node-free, so it tests without a DOM. Every save and
 // every restore passes through normalizeForSave: nothing transient (task ids, live session ids,
 // streaming flags, image bytes) reaches bean.db, and nothing restored can act — pending cards come
-// back "expired", running work "interrupted", memory rows without Undo. See
+// back "expired", running work "interrupted", memory and forget receipts without Undo. See
 // .memory/project-desktop-chat-history.md.
 
 export const THREAD_TEXT_MAX = 20_000;
@@ -57,6 +57,8 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
     }
     case "memory":
       return { ...it, state: it.state === "undone" ? "undone" : "kept" };
+    case "forgot": // only the receipt's text — never the deleted row's other fields
+      return { kind: "forgot", id: it.id, text: cap(it.text), state: it.state === "restored" ? "restored" : "kept" };
   }
 }
 
@@ -70,7 +72,7 @@ export function normalizeForSave(items: readonly ChatItem[]): ChatItem[] {
   return out;
 }
 
-const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "status", "memory"]);
+const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "status", "memory", "forgot"]);
 
 /** A saved transcript back into the window: well-formed items only, normalized again, fresh ids (a
  * restored `item-3` would collide with this load's counter), and user turns stripped of `source` —

@@ -2997,6 +2997,8 @@ button, input, textarea, select, a {
   background: var(--bean-accent);
 }
 .bean-chat-window .bean-status--details::before { content: none; }
+/* The forget receipt leads with its own 🧠 marker. */
+.bean-chat-window .bean-status--forgot::before { content: none; }
 .bean-chat-window .bean-status--done::before { background: var(--bean-orb-check-ink); }
 .bean-chat-window .bean-status--error { color: var(--bean-error); }
 .bean-chat-window .bean-status--error::before { background: var(--bean-error); }

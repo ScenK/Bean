@@ -58,17 +58,17 @@ export async function updateMemory(file: string, id: string, text: string): Prom
   openDb(file).prepare("UPDATE memories SET text = ? WHERE id = ?").run(text, id);
 }
 
-/** Deletes exactly these ids; idempotent (already-gone ids are ignored). Returns rows removed.
+/** Deletes exactly these ids; idempotent (already-gone ids are ignored). Returns the ids removed.
  * `subject` set = a non-owner speaker: only their own private rows go — never a shared row or
  * another member's (enforced here in SQL, not by the caller's id list). */
-export async function deleteMemories(file: string, ids: string[], subject?: string): Promise<number> {
-  if (ids.length === 0) return 0;
+export async function deleteMemories(file: string, ids: string[], subject?: string): Promise<string[]> {
+  if (ids.length === 0) return [];
   const inList = `id IN (${ids.map(() => "?").join(",")})`;
   const db = openDb(file);
   const res = subject === undefined
-    ? db.prepare(`DELETE FROM memories WHERE ${inList}`).run(...ids)
-    : db.prepare(`DELETE FROM memories WHERE ${inList} AND subject_id = ?`).run(...ids, subject);
-  return Number(res.changes);
+    ? db.prepare(`DELETE FROM memories WHERE ${inList} RETURNING id`).all(...ids)
+    : db.prepare(`DELETE FROM memories WHERE ${inList} AND subject_id = ? RETURNING id`).all(...ids, subject);
+  return res.map((r) => String(r.id));
 }
 
 /** Makes the author's private row household-shared (the receipt card's Share button). Only the

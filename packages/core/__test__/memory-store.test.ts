@@ -131,11 +131,29 @@ test("a Persona edit racing a concurrent appendMemories loses neither write", as
 
 test("deleteMemories removes exactly those ids, is idempotent, and keeps FTS in step", async () => {
   await appendMemories(file, [m("a", "one"), m("b", "two"), m("c", "three")]);
-  expect(await deleteMemories(file, ["a", "c"])).toBe(2);
-  expect(await deleteMemories(file, ["a", "c"])).toBe(0);
-  expect(await deleteMemories(file, [])).toBe(0);
+  expect((await deleteMemories(file, ["a", "c"])).sort()).toEqual(["a", "c"]);
+  expect(await deleteMemories(file, ["a", "c"])).toEqual([]);
+  expect(await deleteMemories(file, [])).toEqual([]);
   expect(await loadMemories(file)).toEqual([m("b", "two")]);
 });
+
+/** A fake intent classifier: answers `verdict` (a JSON string, or a thrown error) and records
+ * every request it sees. */
+function fakeClassifier(verdict: string | Error = '{"remember": true, "forget": true}') {
+  const calls: { messages: unknown[]; tools: unknown[] }[] = [];
+  return {
+    calls,
+    classifier: {
+      model: "intent-model",
+      chat: async (a: { messages: unknown[]; tools: unknown[] }) => {
+        calls.push(a);
+        await new Promise((r) => setTimeout(r, 5)); // slow enough for concurrent calls to overlap
+        if (verdict instanceof Error) throw verdict;
+        return { content: verdict, toolCalls: [] };
+      },
+    },
+  };
+}
 
 test("remember/forget_memory tools save only quoted facts and forget only known ids", async () => {
   await appendMemories(file, [m("keep", "uses vitest")]);
@@ -145,6 +163,7 @@ test("remember/forget_memory tools save only quoted facts and forget only known 
     memories: await loadMemories(file),
     projects: [],
     latestUserText: "remember that I prefer tabs over spaces, and forget that I use vitest",
+    classifier: fakeClassifier().classifier,
   });
   const [remember, forget] = t.tools;
   expect(await remember!.run({ text: "Prefers tabs over spaces", quote: "I prefer tabs over spaces" })).toMatch(/^Remembered/);
@@ -152,40 +171,121 @@ test("remember/forget_memory tools save only quoted facts and forget only known 
   expect(await remember!.run({ text: "prefers tabs over spaces", quote: "I prefer tabs over spaces" })).toBe("Already remembered.");
   expect(t.remembered.map((x) => x.text)).toEqual(["Prefers tabs over spaces"]);
   expect(await forget!.run({ ids: ["nope"] })).toMatch(/^error/);
-  expect(await forget!.run({ ids: ["keep"] })).toBe("Forgot 1 fact(s).");
+  expect(await forget!.run({ ids: ["keep"] })).toBe('Forgot: "uses vitest".');
+  expect(t.forgotten).toEqual([m("keep", "uses vitest")]);
   expect((await loadMemories(file)).map((x) => x.text)).toEqual(["Prefers tabs over spaces"]);
 });
 
 test("a private remember tells the model about the Share with everyone button; a shared one doesn't", async () => {
   const tools = (subjectId?: string) => makeMemoryTools({
-    append: (a) => appendMemories(file, a), forget: async () => 0, memories: [], projects: [],
+    append: (a) => appendMemories(file, a), forget: async () => [], memories: [], projects: [],
     latestUserText: "remember that I prefer tabs", ...(subjectId ? { subjectId } : {}),
+    classifier: fakeClassifier().classifier,
   }).tools[0]!;
   const args = { text: "Prefers tabs", quote: "I prefer tabs" };
   expect(await tools("mia").run(args)).toContain("Saved privately. If this updates a household fact shown in what you remember, say so and mention the Share with everyone button on the receipt.");
   expect(await tools().run(args)).toBe("Remembered: Prefers tabs");
 });
 
-test("memory tools are only offered when the typed message asks to remember or forget", () => {
-  const offered = (text: string) => makeMemoryTools({
-    append: async () => {}, forget: async () => 0, memories: [], projects: [], latestUserText: text,
-  }).tools.map((t) => t.spec.name);
-  expect(offered("summarize this page")).toEqual([]);
-  expect(offered("remember that I use tabs")).toEqual(["remember"]);
-  expect(offered("please keep in mind I'm on a Mac")).toEqual(["remember"]);
-  expect(offered("forget that I like tabs")).toEqual(["forget_memory"]);
-  expect(offered("I can't remember the command")).toEqual([]);
-  expect(offered("Forget the last draft and try again")).toEqual([]);
-  expect(offered("review the delete API docs")).toEqual([]);
-  expect(offered("note that the build is slow")).toEqual([]);
-  expect(offered("please delete that memory about tabs")).toEqual(["forget_memory"]);
-  expect(offered("Remember, I use zed")).toEqual(["remember"]);
-  expect(offered("please remember: the wifi is bean")).toEqual(["remember"]);
-  expect(offered("don't forget that I use zed")).toEqual(["remember"]);
-  expect(offered("记住，我喜欢用pnpm")).toEqual(["remember"]);
-  expect(offered("기억해: 저는 서울에 살아요")).toEqual(["remember"]);
-  expect(offered("覚えて、私はVimを使っています")).toEqual(["remember"]);
-  expect(offered("I can't remember, sorry")).toEqual([]);
+test("both memory tools are always offered; the classifier sees only its fixed prompt and the typed text", async () => {
+  const { calls, classifier } = fakeClassifier('{"remember": false, "forget": true}');
+  const t = makeMemoryTools({
+    append: async () => {}, forget: async (ids) => ids, memories: [m("x", "SECRET-MEMORY")], projects: [],
+    latestUserText: "忘掉这个", classifier,
+  });
+  expect(t.tools.map((x) => x.spec.name)).toEqual(["remember", "forget_memory"]);
+  expect(calls).toHaveLength(0); // lazy: an ordinary turn that calls no memory tool costs nothing
+  await t.tools[1]!.run({ ids: ["x"], note: "TOOL-ARG" });
+  expect(calls).toHaveLength(1);
+  const [system, user, ...rest] = calls[0]!.messages as { role: string; content: string }[];
+  expect(rest).toEqual([]);
+  expect(system!.role).toBe("system");
+  expect(user).toEqual({ role: "user", content: "忘掉这个" });
+  expect(calls[0]!.tools).toEqual([]);
+  expect(JSON.stringify(calls[0])).not.toMatch(/SECRET-MEMORY|TOOL-ARG/);
+  // The same fixed prompt every turn.
+  const again = fakeClassifier('{"remember": false, "forget": true}');
+  await makeMemoryTools({ append: async () => {}, forget: async () => [], memories: [], projects: [], latestUserText: "other", classifier: again.classifier })
+    .tools[1]!.run({ ids: [] });
+  expect((again.calls[0]!.messages as { content: string }[])[0]!.content).toBe(system!.content);
+});
+
+test("one classifier call per turn, even with both tools called concurrently", async () => {
+  const { calls, classifier } = fakeClassifier();
+  await appendMemories(file, [m("d", "dentist on Friday")]);
+  const t = makeMemoryTools({
+    append: (a) => appendMemories(file, a), forget: (ids) => deleteMemories(file, ids),
+    memories: await loadMemories(file), projects: [], latestUserText: "remember that I prefer tabs, and forget the dentist thing", classifier,
+  });
+  const [remember, forget] = t.tools;
+  const results = await Promise.all([
+    remember!.run({ text: "Prefers tabs", quote: "I prefer tabs" }),
+    forget!.run({ ids: ["d"] }),
+    forget!.run({ ids: ["d"] }),
+  ]);
+  expect(calls).toHaveLength(1);
+  expect(results[0]).toMatch(/^Remembered/);
+  expect(t.forgotten.map((x) => x.id)).toEqual(["d"]); // the second delete found nothing to remove
+  expect(results.slice(1).sort()).toEqual(['Forgot: "dentist on Friday".', expect.stringMatching(/^Nothing was removed/)].sort());
+});
+
+test.each([
+  ["a no", '{"remember": false, "forget": false}', /doesn't ask you/],
+  ["a malformed verdict", '{"remember": "yes", "forget": 1}', /couldn't confirm/],
+  ["non-JSON", "sure!", /couldn't confirm/],
+  ["a thrown call", new Error("boom"), /couldn't confirm/],
+])("%s means zero appends and zero deletes", async (_label, verdict, refusal) => {
+  let appends = 0;
+  let deletes = 0;
+  const t = makeMemoryTools({
+    append: async () => { appends++; }, forget: async (ids) => { deletes++; return ids; },
+    memories: [m("a", "uses vitest")], projects: [], latestUserText: "remember that I prefer tabs and forget that I use vitest",
+    classifier: fakeClassifier(verdict).classifier,
+  });
+  expect(await t.tools[0]!.run({ text: "Prefers tabs", quote: "I prefer tabs" })).toMatch(refusal);
+  expect(await t.tools[1]!.run({ ids: ["a"] })).toMatch(refusal);
+  expect([appends, deletes, t.remembered.length, t.forgotten.length]).toEqual([0, 0, 0, 0]);
+});
+
+test("a yes for one intent doesn't authorize the other", async () => {
+  let deletes = 0;
+  const t = makeMemoryTools({
+    append: async () => {}, forget: async (ids) => { deletes++; return ids; },
+    memories: [m("a", "uses vitest")], projects: [], latestUserText: "remember that I prefer tabs",
+    classifier: fakeClassifier('{"remember": true, "forget": false}').classifier,
+  });
+  expect(await t.tools[1]!.run({ ids: ["a"] })).toMatch(/doesn't ask you to forget/);
+  expect(deletes).toBe(0);
+  expect(await t.tools[0]!.run({ text: "Prefers tabs", quote: "I prefer tabs" })).toMatch(/^Remembered/);
+});
+
+test.each(["忘掉这个", "forget it", "forget the dentist thing", "你可以忘掉这个记忆"])(
+  "%s deletes the target when the classifier says yes",
+  async (text) => {
+    await appendMemories(file, [m("d", "dentist on Friday"), m("k", "uses zed")]);
+    const t = makeMemoryTools({
+      append: async () => {}, forget: (ids) => deleteMemories(file, ids),
+      memories: await loadMemories(file), projects: [], latestUserText: text,
+      classifier: fakeClassifier('{"remember": false, "forget": true}').classifier,
+    });
+    expect(await t.tools[1]!.run({ ids: ["d"] })).toBe('Forgot: "dentist on Friday".');
+    expect((await loadMemories(file)).map((x) => x.id)).toEqual(["k"]);
+  },
+);
+
+test("a non-owner's mixed forget names and returns only the rows SQL actually deleted", async () => {
+  await appendMemories(file, [m("s", "household wifi is bean"), { ...m("p", "mia likes oat milk"), subjectId: "mia" }]);
+  const t = makeMemoryTools({
+    append: async () => {}, forget: (ids) => deleteMemories(file, ids, "mia"),
+    memories: await loadMemories(file, "mia"), projects: [], latestUserText: "forget the wifi and my oat milk thing", subjectId: "mia",
+    classifier: fakeClassifier().classifier,
+  });
+  const res = await t.tools[1]!.run({ ids: ["s", "p"] });
+  expect(res).toContain('Forgot: "mia likes oat milk".');
+  expect(res).toContain("The other 1 weren't removed");
+  expect(res).not.toContain("household wifi is bean");
+  expect(t.forgotten.map((x) => x.id)).toEqual(["p"]);
+  expect((await loadMemories(file)).map((x) => x.id)).toEqual(["s"]);
 });
 
 test("a pre-scoping bean.db gains subject_id on open; old rows read as shared everywhere", async () => {
@@ -207,8 +307,8 @@ test("a pre-scoping bean.db gains subject_id on open; old rows read as shared ev
   expect(await loadMemories(file, null)).toEqual(all);
   expect(await loadMemories(file, "mia")).toEqual(all);
   // A member can't delete it; the owner (no subject) can.
-  expect(await deleteMemories(file, ["a"], "mia")).toBe(0);
-  expect(await deleteMemories(file, ["a"])).toBe(1);
+  expect(await deleteMemories(file, ["a"], "mia")).toEqual([]);
+  expect(await deleteMemories(file, ["a"])).toEqual(["a"]);
 });
 
 test("scoped recall and delete: private rows reach only their speaker", async () => {
@@ -217,8 +317,8 @@ test("scoped recall and delete: private rows reach only their speaker", async ()
   expect((await loadMemories(file, "max")).map((x) => x.id)).toEqual(["s"]);
   expect((await loadMemories(file, null)).map((x) => x.id)).toEqual(["s"]);
   expect((await loadMemories(file)).find((x) => x.id === "p")?.subjectId).toBe("mia");
-  expect(await deleteMemories(file, ["p", "s"], "max")).toBe(0);
-  expect(await deleteMemories(file, ["p", "s"], "mia")).toBe(1);
+  expect(await deleteMemories(file, ["p", "s"], "max")).toEqual([]);
+  expect(await deleteMemories(file, ["p", "s"], "mia")).toEqual(["p"]);
   expect((await loadMemories(file)).map((x) => x.id)).toEqual(["s"]);
 });
 

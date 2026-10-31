@@ -23,6 +23,9 @@ const transcript: ChatItem[] = [
   { kind: "offer", id: "old-12", offer: { instruction: "fix", projectPath: "/p" }, state: "pending" },
   { kind: "memory", id: "old-13", saved: [{ id: "m1", text: "likes tea" }], state: "saved" },
   { kind: "status", id: "old-14", text: "Claude ended", tone: "info", receipt: { sessionId: "abc", agent: "claude", label: "l" }, exiting: "bean-1" },
+  { kind: "forgot", id: "old-15", text: "lives in Seattle", row: { id: "m2", text: "lives in Seattle", createdAt: "2026-07-01T00:00:00.000Z", subjectId: "u1" }, state: "saved" },
+  { kind: "forgot", id: "old-16", text: "uses zed", row: { id: "m3", text: "uses zed", createdAt: "2026-07-01T00:00:00.000Z" }, state: "restored" },
+  { kind: "forgot", id: "old-17", text: "x", row: { id: "m4", text: "x", createdAt: "" }, state: "error", error: "boom" },
 ] as ChatItem[];
 
 
@@ -42,6 +45,13 @@ describe("normalizeForSave", () => {
     expect(reply.tail).toBeUndefined();
     expect(reply.footer).toBe("— turn interrupted");
     expect(find<"status">("old-14").exiting).toBeUndefined();
+  });
+
+  it("keeps a forget receipt's text only: kept without Undo (restored stays restored), no row snapshot", () => {
+    expect(find("old-15")).toEqual({ kind: "forgot", id: "old-15", text: "lives in Seattle", state: "kept" });
+    expect(find("old-16")).toEqual({ kind: "forgot", id: "old-16", text: "uses zed", state: "restored" });
+    expect(find("old-17")).toEqual({ kind: "forgot", id: "old-17", text: "x", state: "kept" });
+    expect(restoreItems(JSON.parse(JSON.stringify(saved))).filter((it) => it.kind === "forgot")).toHaveLength(3);
   });
 
   it("keeps delegate and live receipts, so Continue live still works", () => {

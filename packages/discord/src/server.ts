@@ -256,6 +256,8 @@ function effectsFor(channel: TextBasedChannel, triggeringMessageId?: string, voi
   return {
     reply,
     postResult: reply,
+    // Live sessions re-ping this for a whole turn; fire-and-forget, so it must catch.
+    sendTyping: () => { if ("sendTyping" in channel) channel.sendTyping().catch(() => {}); },
     post: async (text) => { await sendChunks(text, send, chunkGroups); },
     postCard: async (card) => {
       const { id } = await send(card as MessageCreateOptions);

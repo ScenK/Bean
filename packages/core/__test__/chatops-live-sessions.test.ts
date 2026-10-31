@@ -142,6 +142,19 @@ describe("LiveSessionRegistry", () => {
     expect(typingCount()).toBe(after + 1);
   });
 
+  it("an engine-reported turn start after a completed turn relights typing and keeps re-pinging", async () => {
+    const f = fakeStart();
+    const reg = new LiveSessionRegistry(f.startFn as never, { dir: tmp() });
+    const { sink, typingCount } = fakeSink();
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink });
+    f.cbs().onTurnComplete({ result: "done" });
+    const after = typingCount();
+    f.cbs().onTurnStart?.(); // a queued message answered as its own turn (claude's next system/init)
+    expect(typingCount()).toBe(after + 1);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(typingCount()).toBe(after + 2);
+  });
+
   it("open mode lets anyone steer; restricted gates to starter + co-drivers", () => {
     const reg = new LiveSessionRegistry(fakeStart().startFn as never, { dir: tmp() });
     const { sink } = fakeSink();

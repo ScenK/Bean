@@ -202,6 +202,46 @@ describe("ChatWindow agent mode", () => {
     expect(transcript[0]).toMatchObject({ role: "user", content: "hi bean", source: "typed" });
   });
 
+  it("remember X → forget X → close: close catch-up gets X as already handled, so it isn't re-saved", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    const x = { id: "x1", text: "Lives in Seattle", createdAt: "" };
+    bean.chat!.mockResolvedValueOnce({ reply: "Got it.", model: "m", remembered: [x] });
+    await send("remember that I live in Seattle");
+    bean.chat!.mockResolvedValueOnce({ reply: "Forgotten.", model: "m", forgotten: [x] });
+    await send("forget that");
+    await act(async () => { listeners.onReviewBeforeClose!(undefined); });
+    await flush();
+    expect(bean.rememberOnClose).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ rejected: ["Lives in Seattle"] }));
+  });
+
+  it("a forget turn shows one Forgot row per fact; Undo re-appends the identical row, and a failed append is retryable", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    const x = { id: "x1", text: "Lives in Seattle", createdAt: "2026-07-01T00:00:00.000Z", projectPath: "/p", subjectId: "u1" };
+    const y = { id: "y1", text: "Uses zed", createdAt: "2026-07-02T00:00:00.000Z" };
+    bean.chat!.mockResolvedValueOnce({ reply: "Forgotten.", model: "m", forgotten: [x, y] });
+    await send("forget where I live and my editor");
+    const rows = (): HTMLElement[] => [...root.querySelectorAll<HTMLElement>(".bean-status--forgot")];
+    expect(rows().map((r) => r.textContent)).toEqual(["🧠 Forgot — Lives in SeattleUndo", "🧠 Forgot — Uses zedUndo"]);
+
+    bean.appendMemories = vi.fn().mockRejectedValueOnce(new Error("UNIQUE constraint failed: memories.id")).mockResolvedValueOnce(undefined);
+    const undo = async (row: HTMLElement): Promise<void> => {
+      await act(async () => { row.querySelector("button")!.click(); });
+      await flush();
+    };
+    await undo(rows()[0]!);
+    expect(rows()[0]!.textContent).toContain("Couldn't restore: a memory with this id already exists");
+    await undo(rows()[0]!); // retry
+    expect(bean.appendMemories).toHaveBeenLastCalledWith([x]);
+    expect(rows()[0]!.textContent).toBe("🧠 Restored — Lives in Seattle");
+
+    // Restored → close catch-up may cite it again; the still-forgotten fact stays rejected.
+    await act(async () => { listeners.onReviewBeforeClose!(undefined); });
+    await flush();
+    expect(bean.rememberOnClose).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ rejected: ["Uses zed"] }));
+  });
+
   it("Bean's hand-off offer: Start runs the /claude handoff once with the ask line; Not now leaves Bean in charge", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();
