@@ -603,6 +603,41 @@ function memoryHandlersFor(over: Partial<Parameters<typeof buildMemoryHandlers>[
   return { handlers, appended, deleted, batches, existing, failures: () => failures };
 }
 
+test("a forget receipt's Undo: memory.append of result.forgotten restores the identical row; a second restore fails loud", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const core = await import("@bean/core");
+  const dir = await mkdtemp(join(tmpdir(), "bean-forgot-"));
+  try {
+    const file = join(dir, "bean.db");
+    const row: Memory = { id: "d", text: "dentist on Friday", projectPath: "/work/api", createdAt: "2026-07-03T00:00:00.000Z", subjectId: "u1" };
+    await core.appendMemories(file, [row]);
+    const handler = buildChatHandler({
+      loadSkills: async () => [], loadProjects: async () => [], loadPersona: async () => ({ name: "Bean", tags: [] }) as Persona,
+      converse: async ({ messages, tools }) => {
+        if (tools.length === 0) return { content: '{"remember": false, "forget": true}', toolCalls: [] };
+        return messages.some((m) => m.role === "tool")
+          ? { content: "Forgotten.", toolCalls: [] }
+          : { content: "", toolCalls: [{ id: "1", name: "forget_memory", args: { ids: ["d"] } }] };
+      },
+      getModel: () => "m", projectSkillsDir: "/b/ps", skillsDir: "/b/s", projectsFile: "/b/p.json",
+      personaFile: "/b/persona.json", projectPersonaFile: "/b/pp.json",
+      loadMemories: core.loadMemories, appendMemories: core.appendMemories, deleteMemories: core.deleteMemories,
+      dbFile: file,
+    });
+    const out = await handler({ history: [], message: "forget the dentist", source: "typed" });
+    expect(out.forgotten).toEqual([row]);
+    expect(await core.loadMemories(file)).toEqual([]);
+    const { handlers } = memoryHandlersFor({ loadMemories: core.loadMemories, appendMemories: core.appendMemories, dbFile: file });
+    await handlers.append(out.forgotten!);
+    expect(await core.loadMemories(file)).toEqual([row]);
+    await expect(handlers.append(out.forgotten!)).rejects.toThrow(/UNIQUE/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 const typed: ChatTurn[] = [{ role: "user", content: "I prefer pnpm", source: "typed" }];
 
 test("rememberOnClose extracts and appends in the background, then Undo deletes exactly that batch", async () => {

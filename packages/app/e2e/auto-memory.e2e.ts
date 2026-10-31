@@ -83,3 +83,46 @@ test("dream: a due close tidies memory in the background and Undo last dream res
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });
+
+// #571: a forget turn (model → forget_memory → intent classifier yes → reply) shows a Forgot
+// receipt per deleted fact; its Undo re-appends the row, so Persona lists the fact again.
+test("forget: a Forgot receipt row whose Undo brings the memory back in Persona", async () => {
+  const home = await makeBeanHome();
+  await appendMemories(dbFile(join(home.homeDir, ".bean")), [
+    { id: "f1", text: "Lives in Seattle", createdAt: "2026-08-01T00:00:00.000Z" },
+    { id: "k1", text: "Uses zed", createdAt: "2026-08-01T00:00:00.000Z" },
+  ]);
+  const stub = await startStubOpenAI();
+  stub.queue({ toolCall: { name: "forget_memory", args: { ids: ["f1"] } } }); // the chat turn
+  stub.queue({ content: '{"remember": false, "forget": true}' }); // the intent check
+  stub.queue({ content: "Forgotten." }); // the reply after the tool result
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  try {
+    const avatar = await app.firstWindow();
+    const open = async (kind: string) => {
+      const [win] = await Promise.all([
+        app.waitForEvent("window"),
+        avatar.evaluate((k) => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent(k), kind),
+      ]);
+      await win.waitForLoadState("domcontentloaded");
+      return win;
+    };
+    const chat = await open("chat");
+    await chat.locator(".bean-input--composer").fill("forget where I live");
+    await chat.locator(".bean-send").click();
+    await expect(chat.locator(".bean-bubble--bean")).toContainText("Forgotten.");
+
+    const row = chat.locator(".bean-status--forgot");
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText("Forgot — Lives in Seattle");
+    await row.getByRole("button", { name: "Undo" }).click();
+    await expect(row).toHaveText("🧠 Restored — Lives in Seattle");
+
+    const persona = await open("persona");
+    await expect(persona.locator(".bean-memory-input")).toHaveCount(2);
+    const texts = await persona.locator(".bean-memory-input").evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value).sort());
+    expect(texts).toEqual(["Lives in Seattle", "Uses zed"]);
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
+  }
+});

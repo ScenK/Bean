@@ -1,4 +1,4 @@
-import type { CliName, LiveCli, ProposedDelegate, ProposedLiveSession, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, TurnSource } from "@bean/core";
+import type { CliName, LiveCli, Memory, ProposedDelegate, ProposedLiveSession, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, TurnSource } from "@bean/core";
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 // Renderer copies of core's SUPPORTED_IMAGE_MIMES / MAX_IMAGES_PER_MESSAGE (converse.ts) —
@@ -58,7 +58,12 @@ export type ChatItem =
       receipt?: { sessionId: string; agent: LiveCli; label: string }; exiting?: string }
   // A per-turn memory capture's receipt: "🧠 Memory updated — … · Undo". Undo deletes exactly
   // `saved`'s ids; an undone row stays as a quiet record. `kept` = restored from history, no Undo.
-  | { kind: "memory"; id: string; saved: Array<{ id: string; text: string }>; state: "saved" | "undoing" | "undone" | "kept" };
+  | { kind: "memory"; id: string; saved: Array<{ id: string; text: string }>; state: "saved" | "undoing" | "undone" | "kept" }
+  // A forget_memory receipt, one per deleted fact: "🧠 Forgot — … · Undo". Undo re-appends `row`
+  // verbatim (same id, every field); a failed append (e.g. that id exists again) is `error` with
+  // Undo still offered. `row` never reaches history (chat-thread.ts): a restored receipt is `kept`
+  // (no Undo) unless it was `restored`.
+  | { kind: "forgot"; id: string; text: string; row?: Memory; state: "saved" | "undoing" | "restored" | "error" | "kept"; error?: string };
 
 /** The speaker of a reply/working bubble, or undefined for every other item. */
 export function itemAgent(it: ChatItem): AgentId | undefined {
