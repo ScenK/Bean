@@ -75,6 +75,7 @@ export function ChatPanel({
   model,
   status,
   prefillUrl,
+  refill,
   linkedNote,
   clis,
   projects,
@@ -121,6 +122,8 @@ export function ChatPanel({
   // editable text so the user can see it and add instructions before sending, rather than
   // silently riding along as hidden context on whatever they type next.
   prefillUrl?: string;
+  // Text the chat hands back to the composer (a Continue live the host rejected), above any draft.
+  refill?: { text: string };
   // The note this chat continues from (header chip; ✕ unlinks so saves become new notes).
   linkedNote?: LinkedNote;
   // Run-choice data for ProposalCard/DelegateCard's project/model/CLI pickers.
@@ -282,6 +285,15 @@ export function ChatPanel({
     el.setSelectionRange(el.value.length, el.value.length);
     resizeInput();
   }, [prefillUrl]);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!refill || !el) return;
+    el.value = el.value ? `${refill.text}\n${el.value}` : refill.text;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+    resizeInput();
+  }, [refill]);
 
   // A chat mounts with the composer focused — the window's first chat and every switched-to one.
   useEffect(() => { if (!hidden) inputRef.current?.focus(); }, [hidden]);

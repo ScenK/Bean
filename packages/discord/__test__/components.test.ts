@@ -244,9 +244,13 @@ test("Continue live: a button on finished/ended cards only when the custom_id fi
     .toContain("bean:resume-live:sess-1");
 
   const card = JSON.stringify(discordCards.liveSessionProposalCard({
-    proposalId: "live-1", projectName: "other", instruction: "Continue where you left off",
-    projects: [{ name: "bean", path: "/p/bean" }], models: [], skills: [], cli: "codex", clis: [], agent: "codex", continues: "fix the flaky test",
+    proposalId: "live-1", projectName: "other", instruction: "",
+    projects: [{ name: "bean", path: "/p/bean" }], models: [], skills: [{ name: "review" }], cli: "codex", clis: [], agent: "codex", continues: "fix the flaky test",
   }));
+  // No opening turn: no prompt to edit, no skill to frame it.
+  expect(card).toContain("on your next message here");
+  expect(card).not.toContain("bean:live-edit:");
+  expect(card).not.toContain("bean:live-skill:");
   // A resume's engine is frozen: an Agent fact, no CLI picker.
   expect(card).toContain("Agent");
   expect(card).not.toContain('bean:live-cli:');

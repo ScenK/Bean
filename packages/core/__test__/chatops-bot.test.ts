@@ -1572,7 +1572,9 @@ test("the resume-live button posts the card; Start resumes in the recorded folde
   deps.liveSessionProposals.update(proposalId, { projectPath: "/p/bean" }); // Discord picker edit
   await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId, projectPath: "/p/bean" } }, effects);
   expect(reqs).toEqual([expect.objectContaining({ projectPath: "/p/other", resume: "sess-1" })]);
-  expect(reqs[0]?.prompt).toContain("Continue where you left off");
+  // No opening turn: the channel's first message opens the session.
+  expect(reqs[0]?.prompt).toBe("");
+  expect(effects.posted.at(-1)).toContain("picks up where it left off on your next message");
 });
 
 test("a resumed Start without an authenticated starter id refuses", async () => {

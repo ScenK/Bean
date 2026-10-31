@@ -83,6 +83,28 @@ describe("LiveSessionRegistry", () => {
     expect(reg.start({ channelId: "c2", projectPath: "/p", instruction: "go", sink: fakeSink().sink })).toBe("started");
   });
 
+  it("a lazy resume (no instruction) sends no opening turn and no typing; claude's record moves on the first send", () => {
+    const reqs: LiveSessionRequest[] = [];
+    const sent: string[] = [];
+    let pid: number | undefined;
+    const startFn = (req: LiveSessionRequest): LiveSessionHandle => {
+      reqs.push(req);
+      return { get pid() { return pid; }, send: (t) => { sent.push(t); pid = 4242; return true; }, stop: () => {} };
+    };
+    const dir = tmp();
+    const reg = new LiveSessionRegistry(startFn as never, { dir });
+    const s = fakeSink();
+    reg.start({ channelId: "c", projectPath: "/p", instruction: "", resume: "s1", sink: s.sink });
+    expect(reqs[0]?.prompt).toBe("");
+    expect(s.typingCount()).toBe(0);
+    const record = () => JSON.parse(readFileSync(join(dir, "runs", readdirSync(join(dir, "runs"))[0]!), "utf8")).pid;
+    expect(record()).toBe(process.pid);
+    reg.send("c", "what changed?");
+    expect(sent).toEqual(["what changed?"]);
+    expect(s.typingCount()).toBe(1);
+    expect(record()).toBe(4242);
+  });
+
   it("start binds the channel; a second start on the same channel is refused", () => {
     const f = fakeStart();
     const reg = new LiveSessionRegistry(f.startFn as never, { dir: tmp() });

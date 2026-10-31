@@ -32,6 +32,7 @@ export type SteeringMode = "open" | "restricted";
 export interface LiveSessionStart {
   channelId: string;
   projectPath: string;
+  /** The opening turn. "" (a resume) = the session waits for the channel's first message. */
   instruction: string;
   /** The user's own ask for the session's `delegate_runs` row — never the composed skill prompt.
    * Absent = `instruction`. */
@@ -95,6 +96,9 @@ interface ActiveSession {
   handle: LiveSessionHandle;
   /** This session's run record (run-queue.ts), for crash cleanup. */
   runId: string;
+  /** claude's child pid the record was moved to (claude only — see trackPid). */
+  pid?: number;
+  cli: LiveCli;
   projectPath: string;
   starterId: string;
   steering: SteeringMode;
@@ -191,6 +195,7 @@ export class LiveSessionRegistry {
     const s: ActiveSession = {
       handle: undefined as unknown as LiveSessionHandle,
       runId,
+      cli: input.cli ?? "claude",
       projectPath: input.projectPath,
       starterId: input.starterId ?? "",
       // A restricted session with no owner would lock everyone out (no id can match ""), so
@@ -226,18 +231,24 @@ export class LiveSessionRegistry {
       undefined,
       this.opts.idleTimeoutMs,
     );
-    // The record was created against this process's own pid (nothing else to track before the
-    // child exists); switch it to the child's real pid so crash cleanup tracks *that child*, not
-    // this process — same reasoning as RunRegistry.start().
-    // Per-turn CLIs (codex, opencode) spawn one child per turn, so their record stays on this
-    // (bot) process for the whole session: a dead between-turns child's pid would get swept.
-    // ponytail: if the bot hard-crashes mid-turn, boot cleanup misses that one detached turn;
-    // per-turn pid tracking would need a multi-pid record.
-    if ((input.cli ?? "claude") === "claude" && typeof s.handle.pid === "number") {
-      updateRunPid(this.opts.dir, runId, s.handle.pid);
-    }
-    this.startTyping(s); // the opening instruction is already in flight
+    this.trackPid(s);
+    if (input.instruction) this.startTyping(s); // the opening instruction is already in flight
     return "started";
+  }
+
+  // The record was created against this process's own pid (nothing else to track before the
+  // child exists); switch it to the child's real pid so crash cleanup tracks *that child*, not
+  // this process — same reasoning as RunRegistry.start(). A lazy resume spawns claude on its first
+  // send, so this runs after start and after each send.
+  // Per-turn CLIs (codex, opencode) spawn one child per turn, so their record stays on this
+  // (bot) process for the whole session: a dead between-turns child's pid would get swept.
+  // ponytail: if the bot hard-crashes mid-turn, boot cleanup misses that one detached turn;
+  // per-turn pid tracking would need a multi-pid record.
+  private trackPid(s: ActiveSession): void {
+    const pid = s.handle.pid;
+    if (s.cli !== "claude" || typeof pid !== "number" || pid === s.pid) return;
+    s.pid = pid;
+    updateRunPid(this.opts.dir, s.runId, pid);
   }
 
   // A resume continues a session that already has its row (same rule as the desktop's live-tasks).
@@ -270,6 +281,7 @@ export class LiveSessionRegistry {
     const s = this.byChannel.get(channelId);
     if (!s) return true;
     if (!s.handle.send(text)) return false;
+    this.trackPid(s);
     this.startTyping(s);
     return true;
   }

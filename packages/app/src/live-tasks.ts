@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import {
   startLiveEngine, isLiveCli, recordRun, releaseRun, updateRunPid, killTree, killPendingGroups,
-  spawnEnv, BEAN_GIT_IDENTITY, TURN_QUEUE_FULL, RESUME_OPENING, dbFile, isLiveSessionId, recordDelegateSession,
+  spawnEnv, BEAN_GIT_IDENTITY, TURN_QUEUE_FULL, dbFile, isLiveSessionId, recordDelegateSession,
 } from "@bean/core";
 import type { CliName, LiveCli, LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest, LiveSessionSpawnFn, ResumableRun } from "@bean/core";
 
@@ -145,6 +145,8 @@ interface Session {
   cliId?: string;
   /** The user's ask (fresh sessions only) — the delegate_runs `instruction`, never the handoff. */
   ask?: string;
+  /** claude's child pid the run record was moved to (see trackPid). */
+  pid?: number;
 }
 
 // Distributive, so each event variant keeps its own fields.
@@ -184,7 +186,17 @@ export function createLiveTasks(deps: LiveTasksDeps) {
     s.handle?.stop(); // ended() fires from onExit once the process is gone
   };
 
-  /** Spawns a registered session; returns the reason it couldn't. */
+  // Copied from the chatops registry: claude is one long-lived child, so the record moves to
+  // its pid; codex/opencode spawn per turn, so it stays on this process (a dead between-turns
+  // child's pid would get swept). A lazy resume spawns claude on its first send.
+  const trackPid = (sessionId: string, s: Session): void => {
+    const pid = s.handle?.pid;
+    if (s.agent !== "claude" || sessions.get(sessionId) !== s || typeof pid !== "number" || pid === s.pid) return;
+    s.pid = pid;
+    updateRunPid(deps.dir, sessionId, pid);
+  };
+
+  /** Spawns a registered session (prompt "" = lazily, on the first send); returns the reason it couldn't. */
   const launch = (sessionId: string, s: Session, projectPath: string, prompt: string, handedOver: number): string | undefined => {
     const agent = s.agent;
     recordRun(deps.dir, sessionId, projectPath, process.pid);
@@ -221,12 +233,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       ended(sessionId, err instanceof Error ? err : new Error(String(err)));
       return `${LIVE_AGENT_NAMES[agent]} couldn't start.`;
     }
-    // Copied from the chatops registry: claude is one long-lived child, so the record moves to
-    // its pid; codex/opencode spawn per turn, so it stays on this process (a dead between-turns
-    // child's pid would get swept).
-    if (agent === "claude" && sessions.get(sessionId) === s && typeof s.handle.pid === "number") {
-      updateRunPid(deps.dir, sessionId, s.handle.pid);
-    }
+    trackPid(sessionId, s);
     return undefined;
   };
 
@@ -270,8 +277,9 @@ export function createLiveTasks(deps: LiveTasksDeps) {
 
     /** Continue live from a finished desktop delegate card. Only the session id comes from the
      * renderer: the CLI and project are the recorded run's (the CLI is frozen — no substitute, and a
-     * rejected id ends with RESUME_REJECTED, never a fresh session). No handoff: the agent already
-     * has its context. Claimed while it lives, so a double click can't put two writers on it. */
+     * rejected id ends with RESUME_REJECTED, never a fresh session). No handoff and no opening turn:
+     * the agent already has its context, and the user's first send opens it. Claimed while it lives,
+     * so a double click can't put two writers on it. */
     resume(owner: LiveOwner, rawId: unknown): LiveResumeResult {
       if (typeof rawId !== "string") return { error: "Invalid live session request." };
       let found: ResumableRun;
@@ -292,7 +300,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       const sessionId = deps.newId();
       const s: Session = { ...owner, agent: cli, seq: 0, stopping: false, resumeId: id };
       sessions.set(sessionId, s);
-      const err = launch(sessionId, s, projectPath, RESUME_OPENING, 0);
+      const err = launch(sessionId, s, projectPath, "", 0);
       return err ? { error: err } : { sessionId, agent: cli, projectPath };
     },
 
@@ -302,7 +310,9 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (!s || !owns(s, owner) || !s.handle || s.stopping) return "That agent session has ended.";
       if (typeof text !== "string" || !text.trim()) return "Nothing to send.";
       if (text.length > ASK_LIMIT) return `That message is too long (${text.length} of ${ASK_LIMIT} characters).`;
-      return s.handle.send(text) ? undefined : TURN_QUEUE_FULL;
+      if (!s.handle.send(text)) return TURN_QUEUE_FULL;
+      trackPid(sessionId as string, s);
+      return undefined;
     },
 
     stop(owner: LiveOwner, sessionId: unknown): void {

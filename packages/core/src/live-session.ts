@@ -19,7 +19,8 @@ export interface LiveSessionRequest {
   /** Engine; absent = claude. */
   cli?: LiveCli;
   projectPath: string;
-  /** The opening instruction — written to stdin as the first user turn. */
+  /** The opening instruction — the first user turn. "" = lazy (Continue live): nothing spawns
+   * until the first send(), which becomes the opening turn. */
   prompt: string;
   /** Literal --model value (clis.json); flag omitted when unset. */
   model?: string;
@@ -27,13 +28,9 @@ export interface LiveSessionRequest {
   resume?: string;
 }
 
-/** A resumed session that exited before claude's `system/init` event: the host rejected the
- * id (expired or removed), so no session ever ran. */
-/** The opening turn of a continued session (chatops card, desktop Continue live): the agent
- * already has its context, so no handoff — just ask where things stand. */
-export const RESUME_OPENING = "Continue where you left off — first, one line on where things stand.";
-
-export const RESUME_REJECTED = "Couldn't reopen that session (expired or removed on the host). Nothing was started.";
+/** A resumed session the host rejected (expired or removed id) — claude exits before
+ * `system/init`; nothing ran, so the turn that tried to open it was never answered. */
+export const RESUME_REJECTED = "Couldn't reopen that session (expired or removed on the host). Nothing was sent.";
 
 export function liveSessionCommand(req: LiveSessionRequest): { command: string; args: string[] } {
   const modelArgs = req.model ? ["--model", req.model] : [];
@@ -118,7 +115,8 @@ export function startLiveSession(
   idleTimeoutMs: number = LIVE_SESSION_IDLE_MS,
 ): LiveSessionHandle {
   const { command, args } = liveSessionCommand(req);
-  const child = spawnFn(command, args, req.projectPath);
+  // Unset until the opening turn: a lazy start (prompt "") spawns on the first send().
+  let child: ChildProcess | undefined;
 
   let exited = false;
   let stopping = false;
@@ -127,20 +125,30 @@ export function startLiveSession(
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const kill = (signal: NodeJS.Signals): void => {
+  const kill = (c: ChildProcess, signal: NodeJS.Signals): void => {
     try {
-      if (typeof child.pid === "number") process.kill(-child.pid, signal);
-      else child.kill(signal);
+      if (typeof c.pid === "number") process.kill(-c.pid, signal);
+      else c.kill(signal);
     } catch {
-      child.kill(signal);
+      c.kill(signal);
     }
+  };
+
+  const settle = (err?: Error): void => {
+    if (exited) return;
+    exited = true;
+    clearTimeout(idleTimer);
+    clearTimeout(killTimer);
+    cbs.onExit(err);
   };
 
   const beginStop = (): void => {
     if (exited || stopping) return;
     stopping = true;
-    kill("SIGTERM");
-    killTimer = setTimeout(() => kill("SIGKILL"), 5_000);
+    const c = child;
+    if (!c) { settle(); return; } // never spawned: nothing to wait for
+    kill(c, "SIGTERM");
+    killTimer = setTimeout(() => kill(c, "SIGKILL"), 5_000);
   };
 
   const resetIdle = (): void => {
@@ -149,7 +157,6 @@ export function startLiveSession(
     idleTimer = setTimeout(beginStop, idleTimeoutMs);
   };
 
-  let stdoutBuf = "";
   const handleLine = (line: string): void => {
     if (!line.trim() || exited) return;
     let event: unknown;
@@ -180,52 +187,60 @@ export function startLiveSession(
     }
   };
 
-  child.stdout?.on("data", (chunk: Buffer) => {
-    stdoutBuf += chunk.toString("utf8");
-    for (let i = stdoutBuf.indexOf("\n"); i !== -1; i = stdoutBuf.indexOf("\n")) {
-      handleLine(stdoutBuf.slice(0, i));
-      stdoutBuf = stdoutBuf.slice(i + 1);
-    }
-  });
+  // Spawns the child and writes the opening turn (with the git trailer instruction).
+  const open = (text: string): void => {
+    const c = spawnFn(command, args, req.projectPath);
+    child = c;
+    let stdoutBuf = "";
+    c.stdout?.on("data", (chunk: Buffer) => {
+      stdoutBuf += chunk.toString("utf8");
+      for (let i = stdoutBuf.indexOf("\n"); i !== -1; i = stdoutBuf.indexOf("\n")) {
+        handleLine(stdoutBuf.slice(0, i));
+        stdoutBuf = stdoutBuf.slice(i + 1);
+      }
+    });
 
-  // Must drain stderr even though we only use it for error-reporting context: an unread pipe
-  // fills its OS buffer once the child (or a hook/plugin under it) writes enough to it, which
-  // then blocks the child on its next write — silently hanging a session that looks "active"
-  // (same reasoning as delegate.ts's stderrBuf).
-  let stderrBuf = "";
-  child.stderr?.on("data", (chunk: Buffer) => {
-    stderrBuf = (stderrBuf + chunk.toString("utf8")).slice(-4000);
-  });
+    // Must drain stderr even though we only use it for error-reporting context: an unread pipe
+    // fills its OS buffer once the child (or a hook/plugin under it) writes enough to it, which
+    // then blocks the child on its next write — silently hanging a session that looks "active"
+    // (same reasoning as delegate.ts's stderrBuf).
+    let stderrBuf = "";
+    c.stderr?.on("data", (chunk: Buffer) => {
+      stderrBuf = (stderrBuf + chunk.toString("utf8")).slice(-4000);
+    });
 
-  const settle = (err?: Error): void => {
-    if (exited) return;
-    exited = true;
-    clearTimeout(idleTimer);
-    clearTimeout(killTimer);
-    cbs.onExit(err);
+    c.on("error", (err: Error) => settle(err));
+    c.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+      // code === null means a signal killed it — that's the EXPECTED shape of our own
+      // stop()/idle-timeout path (SIGTERM, or SIGKILL escalation), but NOT of an external kill
+      // (an operator's `kill -9`, an OOM reaper): only `stopping` tells them apart, so check it
+      // rather than treating every null code as a clean end.
+      if (req.resume && !initSeen && !stopping) { settle(new Error(RESUME_REJECTED)); return; }
+      if (stopping || code === 0) { settle(); return; }
+      const tail = stderrBuf.trim().split("\n").slice(-5).join("\n");
+      const reason = code === null ? `signal ${signal ?? "unknown"}` : `code ${code}`;
+      settle(new Error(`claude exited with ${reason}${tail ? ` - ${tail}` : ""}`));
+    });
+
+    c.stdin?.write(userTurnLine(text + GIT_TRAILER_INSTRUCTION));
   };
 
-  child.on("error", (err: Error) => settle(err));
-  child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
-    // code === null means a signal killed it — that's the EXPECTED shape of our own
-    // stop()/idle-timeout path (SIGTERM, or SIGKILL escalation), but NOT of an external kill
-    // (an operator's `kill -9`, an OOM reaper): only `stopping` tells them apart, so check it
-    // rather than treating every null code as a clean end.
-    if (req.resume && !initSeen && !stopping) { settle(new Error(RESUME_REJECTED)); return; }
-    if (stopping || code === 0) { settle(); return; }
-    const tail = stderrBuf.trim().split("\n").slice(-5).join("\n");
-    const reason = code === null ? `signal ${signal ?? "unknown"}` : `code ${code}`;
-    settle(new Error(`claude exited with ${reason}${tail ? ` - ${tail}` : ""}`));
-  });
-
-  child.stdin?.write(userTurnLine(req.prompt + GIT_TRAILER_INSTRUCTION));
+  if (req.prompt) open(req.prompt);
   resetIdle();
 
   return {
-    pid: child.pid,
+    get pid() { return child?.pid; },
     send: (text) => {
       if (exited || stopping) return true;
-      child.stdin?.write(userTurnLine(text));
+      if (child) child.stdin?.write(userTurnLine(text));
+      else {
+        try {
+          open(text);
+        } catch (err) {
+          settle(err instanceof Error ? err : new Error(String(err)));
+          return true;
+        }
+      }
       resetIdle();
       return true;
     },
