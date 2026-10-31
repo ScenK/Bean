@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { openDb } from "./db.js";
+import { cjkBigrams, ftsMatchQuery } from "./fts-text.js";
 import type { ActionTool } from "./converse.js";
 
 /** A saved note: conversation output parked for later. Unlike memories, notes are never
@@ -114,11 +115,17 @@ export async function saveNote(
       }
     }
     // The conflict update never touches archived_at or starred — those are lifecycle/view state, not edits.
-    db.prepare(
+    // RETURNING, not lastInsertRowid: the latter isn't set by the ON CONFLICT update path.
+    const title = draft.title.trim();
+    const { rowid } = db.prepare(
       "INSERT INTO notes (slug, title, body, project, updated, version, source) VALUES (?, ?, ?, ?, ?, ?, ?) " +
         "ON CONFLICT(slug) DO UPDATE SET title=excluded.title, body=excluded.body, project=excluded.project, " +
-        "updated=excluded.updated, version=excluded.version, source=excluded.source",
-    ).run(slug, draft.title.trim(), draft.body, draft.project ?? null, now().toISOString(), version, draft.source ?? "chat");
+        "updated=excluded.updated, version=excluded.version, source=excluded.source RETURNING rowid",
+    ).get(slug, title, draft.body, draft.project ?? null, now().toISOString(), version, draft.source ?? "chat") as { rowid: number };
+    // notes_search is maintained here, not by triggers (see db.ts migrateNoteSearch). Archived notes
+    // stay indexed — searchNotes filters them — so archive/restore never reindex.
+    db.prepare("DELETE FROM notes_search WHERE rowid = ?").run(rowid);
+    db.prepare("INSERT INTO notes_search (rowid, title, body) VALUES (?, ?, ?)").run(rowid, cjkBigrams(title), cjkBigrams(draft.body));
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -163,9 +170,11 @@ export async function purgeNote(file: string, slug: string): Promise<boolean> {
   const db = openDb(file);
   db.exec("BEGIN IMMEDIATE");
   try {
-    const row = db.prepare("SELECT archived_at FROM notes WHERE slug = ?").get(slug) as { archived_at: string | null } | undefined;
+    const row = db.prepare("SELECT rowid, archived_at FROM notes WHERE slug = ?").get(slug) as
+      { rowid: number; archived_at: string | null } | undefined;
     const purge = !!row?.archived_at;
     if (purge) {
+      db.prepare("DELETE FROM notes_search WHERE rowid = ?").run(row.rowid);
       db.prepare("DELETE FROM notes_history WHERE slug = ?").run(slug);
       db.prepare("DELETE FROM notes WHERE slug = ?").run(slug);
     }
@@ -177,17 +186,16 @@ export async function purgeNote(file: string, slug: string): Promise<boolean> {
   }
 }
 
-/** FTS5 search backing retrieve_note: an OR-of-prefix-words match over title+body, ranked by
- * bm25 — preserves the old word-match's "any shared word surfaces the note" contract (not a
- * whole-phrase match) while replacing its in-JS substring scoring. */
+/** FTS5 search backing retrieve_note: an OR-of-prefix-terms match over title+body (CJK runs as
+ * bigrams, see fts-text.ts), ranked by bm25 — preserves the old word-match's "any shared word
+ * surfaces the note" contract (not a whole-phrase match). */
 export async function searchNotes(file: string, query: string, limit = 5): Promise<Note[]> {
-  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return [];
+  const matchQuery = ftsMatchQuery(query);
+  if (!matchQuery) return [];
   const db = openDb(file);
-  const matchQuery = words.map((w) => `"${w.replace(/"/g, '""')}"*`).join(" OR ");
   const rows = db.prepare(
-    "SELECT n.slug, n.title, n.body, n.project, n.updated, n.version, n.source, n.starred FROM notes_fts f " +
-      "JOIN notes n ON n.rowid = f.rowid WHERE notes_fts MATCH ? AND n.archived_at IS NULL ORDER BY bm25(notes_fts) LIMIT ?",
+    "SELECT n.slug, n.title, n.body, n.project, n.updated, n.version, n.source, n.starred FROM notes_search f " +
+      "JOIN notes n ON n.rowid = f.rowid WHERE notes_search MATCH ? AND n.archived_at IS NULL ORDER BY bm25(notes_search) LIMIT ?",
   ).all(matchQuery, limit) as unknown as NoteRow[];
   return rows.map(toNote);
 }
@@ -203,7 +211,13 @@ export function retrieveNoteTool(searchNotesFn: (query: string) => Promise<Note[
         "Use when the user asks you to look up, recall, retrieve, or read back a saved note.",
       parameters: {
         type: "object",
-        properties: { query: { type: "string", description: "words from the note's title or topic to search for" } },
+        properties: {
+          query: {
+            type: "string",
+            description: "words from the note's title or topic to search for. Use key terms in the note's own " +
+              "language; if unsure which, include key terms in both languages.",
+          },
+        },
         required: ["query"],
       },
     },

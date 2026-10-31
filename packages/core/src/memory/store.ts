@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { openDb } from "../db.js";
+import { cjkBigrams, ftsMatchQuery } from "../fts-text.js";
 import type { Memory } from "./memory.js";
 
 interface MemoryRow { id: string; text: string; project_path: string | null; created_at: string; subject_id?: string | null }
@@ -264,16 +265,15 @@ export function selectRelevantMemories(
   const remaining = Math.max(0, limit - forced.length);
   if (remaining === 0 || rest.length === 0) return forced;
 
-  const words = latestUserText.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return [...forced, ...rest.slice(0, remaining)];
+  const matchQuery = ftsMatchQuery(latestUserText);
+  if (!matchQuery) return [...forced, ...rest.slice(0, remaining)];
 
   // ponytail: a throwaway :memory: db per call — sub-millisecond at this scale (verified
   // locally), simpler than threading a second persistent handle through converse()'s DI chain.
   const scratch = new DatabaseSync(":memory:");
   scratch.exec("CREATE VIRTUAL TABLE t USING fts5(id UNINDEXED, text)");
   const insert = scratch.prepare("INSERT INTO t (id, text) VALUES (?, ?)");
-  for (const m of rest) insert.run(m.id, m.text);
-  const matchQuery = words.map((w) => `"${w.replace(/"/g, '""')}"*`).join(" OR ");
+  for (const m of rest) insert.run(m.id, cjkBigrams(m.text));
   const ranked = scratch.prepare(
     "SELECT id FROM t WHERE t MATCH ? ORDER BY bm25(t) LIMIT ?",
   ).all(matchQuery, remaining) as unknown as { id: string }[];

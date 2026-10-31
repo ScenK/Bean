@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { parseFrontmatter } from "./frontmatter.js";
 import { isValidMemory } from "./memory/memory.js";
+import { cjkBigrams } from "./fts-text.js";
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -67,17 +68,9 @@ CREATE TABLE IF NOT EXISTS notes_history (
   source  TEXT NOT NULL,
   PRIMARY KEY (slug, version)
 );
-CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(title, body, content='notes', content_rowid='rowid');
-CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
-  INSERT INTO notes_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
-END;
-CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
-  INSERT INTO notes_fts(notes_fts, rowid, title, body) VALUES('delete', old.rowid, old.title, old.body);
-END;
-CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
-  INSERT INTO notes_fts(notes_fts, rowid, title, body) VALUES('delete', old.rowid, old.title, old.body);
-  INSERT INTO notes_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
-END;
+-- Note search lives in notes_search (FTS5 over CJK-bigrammed text, maintained by note-store.ts,
+-- not triggers). It's deliberately absent here: openDb() creates and backfills it, and drops the
+-- old trigger-backed notes_fts whenever it reappears (see .memory/safety-notes-fts-dropped.md).
 
 -- Images embedded in notes (note-images.ts). Raw BLOBs, referenced from a note body as
 -- bean-image:<id>; never deleted automatically (history versions may still reference them).
@@ -344,7 +337,40 @@ export function openDb(file: string): DatabaseSync {
   }
   cache.set(file, db);
   if (isNew) migrateFromFiles(db, dirname(file));
+  migrateNoteSearch(db);
   return db;
+}
+
+/** Note search moved from the trigger-backed notes_fts to notes_search (#572). Runs after
+ * migrateFromFiles so imported legacy notes get indexed. notes_search's presence is the "migrated"
+ * marker; any leftover notes_fts table or trigger means an older build opened this db since (its
+ * SCHEMA recreates them, its trigger then breaks every note UPDATE and the notes it wrote are
+ * missing from notes_search), so drop those and rebuild the index. Re-checked under BEGIN
+ * IMMEDIATE because the app and the bot servers can open the same file at once. */
+function migrateNoteSearch(db: DatabaseSync): void {
+  const stale = (): boolean =>
+    (db.prepare(
+      "SELECT count(*) AS n FROM sqlite_master WHERE name IN ('notes_fts', 'notes_ai', 'notes_ad', 'notes_au')",
+    ).get() as { n: number }).n > 0 ||
+    !db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'notes_search'").get();
+  if (!stale()) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (stale()) {
+      db.exec(
+        "DROP TRIGGER IF EXISTS notes_ai; DROP TRIGGER IF EXISTS notes_ad; DROP TRIGGER IF EXISTS notes_au; " +
+          "DROP TABLE IF EXISTS notes_fts; DROP TABLE IF EXISTS notes_search; " +
+          "CREATE VIRTUAL TABLE notes_search USING fts5(title, body);",
+      );
+      const insert = db.prepare("INSERT INTO notes_search (rowid, title, body) VALUES (?, ?, ?)");
+      const rows = db.prepare("SELECT rowid, title, body FROM notes").all() as unknown as { rowid: number; title: string; body: string }[];
+      for (const r of rows) insert.run(r.rowid, cjkBigrams(r.title), cjkBigrams(r.body));
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 /** Releases the cached handle for `file` — call in test teardown before removing the temp
