@@ -20,16 +20,6 @@ export interface TeamsConfig {
   allowGuestDms: boolean;
 }
 
-type DmRef = { conversation?: { conversationType?: string }; user?: { id?: string; aadObjectId?: string } };
-
-/** Outbox DM targets: the owner's personal conversations only — never a coworker's who once
- * DMed the bot. No owner configured = no targets. */
-export function ownerDmRefs<R extends DmRef>(refs: Record<string, R>, ownerId: string | undefined): R[] {
-  if (!ownerId) return [];
-  return Object.values(refs).filter((r) =>
-    r.conversation?.conversationType === "personal" && (r.user?.id === ownerId || r.user?.aadObjectId === ownerId));
-}
-
 type Delivered = { channel?: string; context?: boolean; displayBody?: string; body: string };
 
 /** Where one delivered outbox message is saved as chat history: a key + body, `"missing-id"`

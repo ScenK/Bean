@@ -2,7 +2,7 @@ import {
   beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
-  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, saveRoutine, createRoutine, RoutineProposalStore, memberTodoEligible, resolveTodoRoutine,
+  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, saveRoutine, createRoutine, RoutineProposalStore, memberTodoEligible, resolveTodoRoutine, ownerDmRefs,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, ConversationCatalog, type ConversationPlace, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeChatter, dmAllowed,
@@ -26,7 +26,7 @@ import { addressedToBot } from "./addressing.js";
 import { startDevtunnel } from "./devtunnel.js";
 import { bareChannelId, proactiveEffects, refFor, refScope } from "./proactive.js";
 import { parseQuote } from "./replied-to.js";
-import { deliveredAppend, loadTeamsConfig, ownerDmRefs, teamsConfigFile } from "./teams-config.js";
+import { deliveredAppend, loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 import { teamsText } from "./teams-text.js";
 
 const dir = beanDir();
@@ -307,20 +307,6 @@ app.post("/api/messages", (req, res) => {
         fx,
       );
       return;
-    }
-    // TEMP: confirm the real slash-picker payload on the tenant (is the command word in the text,
-    // does a mention entity named after the command carry it). stdout only; remove after the
-    // check, once sanitized fixtures are committed (#359, #533).
-    if ((a.recipient as { isTargeted?: unknown }).isTargeted !== undefined) {
-      console.log("teams targeted message:", JSON.stringify({
-        recipient: a.recipient,
-        conversationType: a.conversation.conversationType,
-        entities: (a.entities ?? []).map((e) => {
-          const m = e as { text?: string; mentioned?: { id?: string; name?: string } };
-          return { type: e.type, text: m.text, mentioned: m.mentioned };
-        }),
-        text: a.text,
-      }));
     }
     // A quote-reply's quoted message is context, never input: split it out of the typed words.
     const { text, repliedTo } = parseQuote(a, TurnContext.removeRecipientMention(a)?.trim() ?? a.text?.trim() ?? "");

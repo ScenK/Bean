@@ -52,6 +52,21 @@ const readJson = async (file: string): Promise<unknown> => {
   try { return JSON.parse(await readFile(file, "utf8")); } catch { return undefined; }
 };
 
+type DmRef = {
+  conversation?: { conversationType?: string };
+  user?: { id?: string; aadObjectId?: string };
+  bot?: { id?: string; isTargeted?: unknown };
+};
+
+/** Teams outbox DM targets: the owner's personal conversations only — never a coworker's who once
+ * DMed the bot. A ref stored from a targeted activity (a `/` picker pick in a shared chat, stored
+ * as `personal`) is not the owner's DM; a real 1:1 is never targeted. No owner = no targets. */
+export function ownerDmRefs<R extends DmRef>(refs: Record<string, R>, ownerId: string | undefined): R[] {
+  if (!ownerId) return [];
+  return Object.values(refs).filter((r) => r?.conversation?.conversationType === "personal" &&
+    r.bot?.isTargeted !== true && (r.user?.id === ownerId || r.user?.aadObjectId === ownerId));
+}
+
 /** Counts only: DMs go to the configured `ownerId` alone (0 = none set / owner's chat unknown). */
 export async function sinkRecipients(dir: string): Promise<{ discord?: number; teams?: number }> {
   const owner = (cfg: unknown): string | undefined => {
@@ -60,13 +75,9 @@ export async function sinkRecipients(dir: string): Promise<{ discord?: number; t
   };
   const discord = await readJson(join(dir, "discord.json"));
   const teamsOwner = owner(await readJson(join(dir, "teams.json")));
-  type Ref = { conversation?: { conversationType?: string }; user?: { id?: string; aadObjectId?: string } };
-  const teams = (await readJson(join(dir, "teams-conversations.json"))) as Record<string, Ref> | undefined;
+  const teams = (await readJson(join(dir, "teams-conversations.json"))) as Record<string, DmRef> | undefined;
   return {
     ...(discord && typeof discord === "object" ? { discord: owner(discord) ? 1 : 0 } : {}),
-    ...(teams && typeof teams === "object"
-      ? { teams: teamsOwner ? Object.values(teams).filter((r) => r?.conversation?.conversationType === "personal" &&
-        (r.user?.id === teamsOwner || r.user?.aadObjectId === teamsOwner)).length : 0 }
-      : {}),
+    ...(teams && typeof teams === "object" ? { teams: ownerDmRefs(teams, teamsOwner).length } : {}),
   };
 }
