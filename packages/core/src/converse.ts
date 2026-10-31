@@ -239,7 +239,13 @@ const PROPOSE_NOTE_ARCHIVE: ToolSpec = {
     "receipt has a Restore button); permanently deleting a note isn't available in chat.",
   parameters: {
     type: "object",
-    properties: { query: { type: "string", description: "words from the note's title or topic" } },
+    properties: {
+      query: {
+        type: "string",
+        description: "words from the note's title or topic. Use key terms in the note's own language; if " +
+          "unsure which, include key terms in both languages.",
+      },
+    },
     required: ["query"],
   },
 };

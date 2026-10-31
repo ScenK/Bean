@@ -12,10 +12,10 @@ column needs its own `ALTER TABLE` in `openDb()`, and that migration has two tra
   the re-check and the ALTER inside `BEGIN IMMEDIATE`/`COMMIT` (see the `notes.starred`
   migration in `db.ts`).
 
-Also: the `notes_fts`/`memories_fts` triggers are external-content FTS5 triggers that fire on
+Also: the `memories_fts` triggers are external-content FTS5 triggers that fire on
 **any** UPDATE of the base table, not just the indexed columns. Narrowing one to
 `AFTER UPDATE OF <cols>` means dropping and recreating it on every `openDb()` (same cross-process
 race, but this one corrupts an index rather than failing loudly) — not worth it: re-indexing an
-unchanged title/body is a no-op. Leave the triggers alone and let them fire. A test fixture that
+unchanged row is a no-op. Leave the triggers alone and let them fire. A test fixture that
 simulates an older schema must recreate the FTS table and its triggers too, or an UPDATE reports
 `database disk image is malformed`.

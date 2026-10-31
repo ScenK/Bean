@@ -1,5 +1,6 @@
 import { expect, test, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadNotes, loadNoteHistory, saveNote, archiveNote, restoreNote, purgeNote, starNote, openQuestionCount, retrieveNoteTool, searchNotes } from "../src/note-store.js";
@@ -150,7 +151,7 @@ test("purgeNote refuses a live note and removes an archived one's history and FT
   expect(await purgeNote(file, slug)).toBe(true);
   expect(await loadNotes(file, { includeArchived: true })).toEqual([]);
   expect(await loadNoteHistory(file, slug)).toEqual([]);
-  expect((openDb(file).prepare("SELECT COUNT(*) AS n FROM notes_fts WHERE notes_fts MATCH 'zebra'").get() as { n: number }).n).toBe(0);
+  expect((openDb(file).prepare("SELECT COUNT(*) AS n FROM notes_search WHERE notes_search MATCH 'zebra'").get() as { n: number }).n).toBe(0);
 });
 
 test("loadNotes returns [] for a fresh db; archive/restore/purge are no-ops on a missing slug", async () => {
@@ -251,4 +252,84 @@ test("a pre-star, pre-archive bean.db gains the starred and archived_at columns 
   expect((await searchNotes(file, "Old")).map((n) => n.slug)).toEqual(["old"]);
   expect(await archiveNote(file, "old")).toBe(true);
   expect(await loadNotes(file)).toEqual([]);
+});
+
+// The pre-#572 note search index, verbatim: trigger-maintained, external content.
+const OLD_NOTES_FTS =
+  "CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(title, body, content='notes', content_rowid='rowid');" +
+  "CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN " +
+  "INSERT INTO notes_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;" +
+  "CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN " +
+  "INSERT INTO notes_fts(notes_fts, rowid, title, body) VALUES('delete', old.rowid, old.title, old.body); END;" +
+  "CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN " +
+  "INSERT INTO notes_fts(notes_fts, rowid, title, body) VALUES('delete', old.rowid, old.title, old.body); " +
+  "INSERT INTO notes_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;";
+const tables = (): string[] =>
+  (openDb(file).prepare("SELECT name FROM sqlite_master WHERE name IN ('notes_fts', 'notes_ai', 'notes_search')").all() as
+    { name: string }[]).map((r) => r.name).sort();
+
+test("searchNotes finds a CJK word mid-run and ranks the CJK note first", async () => {
+  await saveNote(file, { title: "Health", body: "dentist appointment next week" }, t0);
+  const zh = await saveNote(file, { title: "看病记录", body: "我的牙医是张医生，在中山路。" }, t0);
+  expect((await searchNotes(file, "牙医"))[0]?.slug).toBe(zh);
+  expect((await searchNotes(file, "张医生 dentist")).map((n) => n.slug)).toContain(zh);
+  expect((await searchNotes(file, "病"))[0]?.slug).toBe(zh);
+  const tool = retrieveNoteTool((q) => searchNotes(file, q));
+  expect(await tool.run({ query: "牙医" })).toContain("# 看病记录");
+});
+
+test("notes_search follows edits, routine upserts, archive/restore and purge", async () => {
+  const slug = await saveNote(file, { title: "旅行", body: "去东京" }, t0);
+  await saveNote(file, { title: "旅行", body: "去大阪", slug }, t1);
+  expect(await searchNotes(file, "东京")).toEqual([]);
+  expect((await searchNotes(file, "大阪"))[0]?.slug).toBe(slug);
+  await saveNote(file, { title: "Digest", body: "第一版", slug: "routine-digest" }, t0, { upsert: true });
+  await saveNote(file, { title: "Digest", body: "第二版", slug: "routine-digest" }, t1, { upsert: true });
+  expect((await searchNotes(file, "二版")).map((n) => n.slug)).toEqual(["routine-digest"]);
+  expect(await searchNotes(file, "一版")).toEqual([]);
+  await archiveNote(file, slug, t1);
+  expect(await searchNotes(file, "大阪")).toEqual([]);
+  await restoreNote(file, slug);
+  expect((await searchNotes(file, "大阪"))[0]?.slug).toBe(slug);
+  await archiveNote(file, slug, t1);
+  await purgeNote(file, slug);
+  expect((openDb(file).prepare("SELECT count(*) AS n FROM notes_search").get() as { n: number }).n).toBe(1);
+});
+
+test("an old-schema bean.db gets notes_search backfilled and notes_fts dropped; reopening is idempotent", async () => {
+  await mkdir(dir, { recursive: true });
+  const legacy = new DatabaseSync(file);
+  legacy.exec(
+    "CREATE TABLE notes (slug TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, project TEXT, " +
+      "updated TEXT NOT NULL, version INTEGER NOT NULL, source TEXT NOT NULL);" + OLD_NOTES_FTS +
+      "INSERT INTO notes VALUES ('old', '旧笔记', '我的牙医是张医生', NULL, '2026-07-01T00:00:00.000Z', 1, 'chat');",
+  );
+  legacy.close();
+  expect((await searchNotes(file, "牙医")).map((n) => n.slug)).toEqual(["old"]);
+  expect(tables()).toEqual(["notes_search"]);
+  closeDb(file);
+  expect((await searchNotes(file, "牙医")).map((n) => n.slug)).toEqual(["old"]);
+  expect((openDb(file).prepare("SELECT count(*) AS n FROM notes_search").get() as { n: number }).n).toBe(1);
+});
+
+test("a new bean.db indexes legacy notes/*.md imported on first open", async () => {
+  await mkdir(join(dir, "notes"), { recursive: true });
+  await writeFile(join(dir, "notes", "zh.md"), "---\ntitle: 看病\nversion: 1\n---\n我的牙医是张医生");
+  expect((await searchNotes(file, "牙医")).map((n) => n.slug)).toEqual(["zh"]);
+});
+
+test("an older build recreating notes_fts can't break note saves once a new build reopens the db", async () => {
+  const slug = await saveNote(file, { title: "Before", body: "早期" }, t0);
+  closeDb(file);
+  // An older build opens the same file: its SCHEMA recreates the empty external-content index
+  // and triggers, then writes a note the new index never saw.
+  const old = new DatabaseSync(file);
+  old.exec(OLD_NOTES_FTS);
+  old.exec("INSERT INTO notes (slug, title, body, updated, version, source) VALUES ('from-old', '旧版', '旧版写的笔记', '2026-07-01', 1, 'chat')");
+  old.close();
+  await saveNote(file, { title: "Before", body: "后来", slug }, t1);
+  expect(await starNote(file, slug, true)).toBeUndefined();
+  expect(tables()).toEqual(["notes_search"]);
+  expect((await searchNotes(file, "旧版")).map((n) => n.slug)).toEqual(["from-old"]);
+  expect((await searchNotes(file, "后来")).map((n) => n.slug)).toEqual([slug]);
 });

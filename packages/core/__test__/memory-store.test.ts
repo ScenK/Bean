@@ -100,6 +100,29 @@ test("selectRelevantMemories ranks by relevance above the threshold and force-in
   expect(picked.length).toBeLessThanOrEqual(5);
 });
 
+test("selectRelevantMemories recalls an older Chinese memory from a Chinese question above the threshold", () => {
+  const memories = [
+    m("dentist", "我的牙医是张医生，在中山路"),
+    ...Array.from({ length: 25 }, (_, i) => m(`filler-${i}`, `最近的事情 ${i}`)),
+  ];
+  const picked = selectRelevantMemories(memories, "我的牙医叫什么？", undefined, 5, 20);
+  expect(picked[0]?.id).toBe("dentist");
+  // A one-character query matches mid-run; mixed text with no space still separates.
+  expect(selectRelevantMemories([...memories, m("mixed", "my dentist牙医 is nearby")], "dentist", undefined, 5, 20)[0]?.id)
+    .toBe("mixed");
+  expect(selectRelevantMemories(memories, "牙", undefined, 5, 20)[0]?.id).toBe("dentist");
+});
+
+test("selectRelevantMemories matches English against mixed-language memories and caps from the newest text", () => {
+  const memories = [
+    m("trip", "flying to 东京 for the conference in May"),
+    ...Array.from({ length: 25 }, (_, i) => m(`filler-${i}`, `unrelated filler fact ${i}`)),
+  ];
+  expect(selectRelevantMemories(memories, "when is the conference", undefined, 3, 20)[0]?.id).toBe("trip");
+  const oldChatter = Array.from({ length: 80 }, (_, i) => `chatter${i}`).join(" ");
+  expect(selectRelevantMemories(memories, `${oldChatter} 东京`, undefined, 3, 20)[0]?.id).toBe("trip");
+});
+
 test("a Persona edit racing a concurrent appendMemories loses neither write", async () => {
   await appendMemories(file, [m("a", "old text")]);
   await Promise.all([updateMemory(file, "a", "edited text"), appendMemories(file, [m("b", "auto-remembered")])]);
