@@ -65,4 +65,7 @@ Bean has two chat adapters over one shared brain:
   `🖥 (desk): <text>` echo via `fx.post` (not history; failure = `post-failed`, no turn), then acks
   ok and runs `onMessage` — or steers a running live session (`queue-full` when refused). The ack
   means "accepted", not "answered": the app times out at 15s and never resends (a lost ack may
-  have run the turn). A bot exit fails pending requests. Discord only so far; Teams follows.
+  have run the turn). A bot exit fails pending requests. Teams (#529) has no turn context
+  for a desk turn: every effect goes proactive on the stored `teams-conversations.json` ref
+  (`proactive.ts`'s `refFor` — bare channel id finds the ref, the full `;messageid=` id is the
+  send target, same as the outbox); a conversation with no stored ref fails the echo → `post-failed`.

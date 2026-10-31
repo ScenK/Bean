@@ -4,7 +4,7 @@ import {
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, saveRoutine, createRoutine, RoutineProposalStore, memberTodoEligible, resolveTodoRoutine,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, ConversationCatalog, type ConversationPlace, maybeCompact, NoteProposalStore, ProposalStore,
-  RunRegistry, parentActivitySink, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
+  RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeChatter, dmAllowed,
 } from "@bean/core";
 import {
@@ -24,6 +24,7 @@ import {
 } from "./cards.js";
 import { addressedToBot } from "./addressing.js";
 import { startDevtunnel } from "./devtunnel.js";
+import { bareChannelId, proactiveEffects, refFor, refScope } from "./proactive.js";
 import { parseQuote } from "./replied-to.js";
 import { deliveredAppend, loadTeamsConfig, ownerDmRefs, teamsConfigFile } from "./teams-config.js";
 import { teamsText } from "./teams-text.js";
@@ -43,11 +44,7 @@ try {
   conversationRefs = JSON.parse(await readFile(conversationRefsFile, "utf8")) as typeof conversationRefs;
 } catch { /* first run */ }
 
-// Teams channel conversation ids carry the thread: `19:...@thread.tacv2;messageid=<rootPost>`.
-// Sending to the bare id (no `;messageid=`) creates a NEW post in the channel; the full id
-// replies in that thread. Channel refs are stored under the bare id so a routine sink can
-// name the channel itself and get a fresh post per digest.
-const bareChannelId = (id: string): string => id.split(";")[0] ?? id;
+// Channel refs are keyed by the bare channel id (see proactive.ts's bareChannelId).
 // Refs saved before channel keys went bare are keyed `...;messageid=`: re-key them.
 for (const [key, ref] of Object.entries(conversationRefs)) {
   if (ref.conversation?.conversationType !== "channel" || !key.includes(";")) continue;
@@ -96,7 +93,8 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "teams", onActivity: p
 // otherwise a later "retry" in this conversation has no idea what it's retrying.
 // Hoisted out of the bot deps so the outbox loop's maybeCompact can reuse the same client.
 const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reasoningEffort);
-const conversations = new ConversationStore(dbFile(dir));
+// onChange tells the desktop app a history changed (a conversation id only, never text).
+const conversations = new ConversationStore(dbFile(dir), { onChange: parentSavedSink });
 // Hoisted (not inline in deps) so the /api/messages handler can check `has()` to capture
 // steer messages for a bound session, and the SIGTERM handler can kill them. Mirrors Discord.
 const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink, surface: "teams" });
@@ -250,9 +248,7 @@ function mentionedUsers(a: Activity): { id: string; name: string }[] {
 /** Admin scope: the bare channel id for channel posts (not the thread), the group chat's id for
  * group chats. Personal chats have none. */
 function scopeOf(a: Activity): string | undefined {
-  const c = a.conversation;
-  if (c.conversationType === "personal") return undefined;
-  return c.conversationType === "channel" ? bareChannelId(c.id) : c.id;
+  return refScope({ conversation: a.conversation });
 }
 
 /** The conversation catalog's kind and title (display only). A channel conversation id carrying
@@ -264,59 +260,23 @@ function placeOf(a: Activity): ConversationPlace {
   return { kind: "channel", title: c.name || "Teams chat" };
 }
 
-/** Effects bound to the incoming turn's conversation; posts after the turn ends go
- * through continueConversationAsync (proactive messages need a fresh context). */
+const proactive = (ref: Partial<ConversationReference>, fn: (ctx: TurnContext) => Promise<void>): Promise<void> =>
+  adapter.continueConversationAsync(teamsConfig.botAppId, ref, fn);
+
+/** Effects bound to the incoming turn's conversation: reply and postCard ride the live turn
+ * context; everything else (which may land after the turn ends) goes proactive. */
 function effectsFor(context: TurnContext): BotEffects {
   const ref: Partial<ConversationReference> = TurnContext.getConversationReference(context.activity);
   void rememberConversation(ref);
-  const proactive = async (fn: (ctx: TurnContext) => Promise<void>): Promise<void> => {
-    await adapter.continueConversationAsync(teamsConfig.botAppId, ref, fn);
-  };
   return {
+    ...proactiveEffects(ref, proactive),
     reply: async (text) => { await context.sendActivity({ type: ActivityTypes.Message, text: teamsText(text) }); },
-    post: async (text) => { await proactive(async (ctx) => { await ctx.sendActivity({ type: ActivityTypes.Message, text: teamsText(text) }); }); },
     postCard: async (card) => {
       const res = await context.sendActivity({
         type: ActivityTypes.Message,
         attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }],
       });
       return res?.id ?? "";
-    },
-    // Live-session streaming rides these (not postCard, which is adaptive-card-only on Teams):
-    // real text messages, posted proactively because turns stream in after the triggering
-    // turn's context is dead. postStream returns the activity id so editStream can revise it.
-    postStream: async (text) => {
-      let id = "";
-      await proactive(async (ctx) => {
-        const res = await ctx.sendActivity({ type: ActivityTypes.Message, text: teamsText(text) });
-        id = res?.id ?? "";
-      });
-      return id;
-    },
-    editStream: async (id, text) => {
-      await proactive(async (ctx) => {
-        await ctx.updateActivity({
-          id, type: ActivityTypes.Message, text: teamsText(text), conversation: ref.conversation,
-        } as Partial<Activity> as Activity);
-      });
-    },
-    // Live-session turn indicator: fire-and-forget proactive Typing (turns stream in after the
-    // triggering turn's context is dead, same reason as postStream). The registry re-pings it.
-    // No sendFile on purpose: Teams rejects large inline base64 activities, and hosting the
-    // file (public route + auth tokens + rate limiting) isn't worth it — core's fallback
-    // posts the saved file's path instead, and the user opens it locally.
-    sendTyping: () => {
-      proactive(async (ctx) => { await ctx.sendActivity({ type: ActivityTypes.Typing }); }).catch(() => {});
-    },
-    updateCard: async (activityId, card) => {
-      await proactive(async (ctx) => {
-        await ctx.updateActivity({
-          id: activityId,
-          type: ActivityTypes.Message,
-          conversation: ref.conversation,
-          attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }],
-        } as Partial<Activity> as Activity);
-      });
     },
   };
 }
@@ -427,6 +387,22 @@ app.post("/api/messages", (req, res) => {
   });
 });
 
+// Desk ingress: the desktop app sends a turn into a catalogued conversation (core's onDeskTurn
+// does the eligibility checks, then asks for the effects). No turn context, so every effect is
+// proactive on the stored ref; a conversation Bean never saw has none and fails the echo, which
+// refuses the turn (`post-failed`).
+process.on("message", (raw) => {
+  const req = parseDeskTurn(raw);
+  if (!req) return;
+  const effects = async () => {
+    const ref = refFor(conversationRefs, req.conversationId);
+    if (!ref) throw new Error("no conversation reference");
+    return { fx: proactiveEffects(ref, proactive), scopeId: refScope(ref) };
+  };
+  bot.onDeskTurn(req, effects, (r) => parentDeskAck(req.requestId, r))
+    .catch((err: unknown) => console.error("desk turn error:", err));
+});
+
 // Die with the desktop app that spawned us — see exitWhenOrphaned's doc comment.
 exitWhenOrphaned();
 
@@ -496,9 +472,9 @@ setInterval(() => {
     // targets one known conversation.
     // A channel target resolves via its bare id but is sent to exactly the id given: bare =
     // new post in the channel, `;messageid=` = reply in that thread (e.g. an interrupted run).
-    const known = msg.channel ? conversationRefs[msg.channel] ?? conversationRefs[bareChannelId(msg.channel)] : undefined;
+    const known = msg.channel ? refFor(conversationRefs, msg.channel) : undefined;
     const targets = msg.channel
-      ? (known?.conversation ? [{ ...known, conversation: { ...known.conversation, id: msg.channel } }] : [])
+      ? (known ? [known] : [])
       : ownerDmRefs(conversationRefs, teamsConfig.ownerId);
     // Thrown = retried later: the conversation may become known once someone messages the bot.
     if (targets.length === 0) {
