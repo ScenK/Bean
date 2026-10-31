@@ -8,6 +8,7 @@ import { ROUTINE_EXAMPLES, exampleRoutine } from "@bean/core/routine-examples";
 import { StepsEditor } from "./StepsEditor.js";
 import { remapStepMissing, stepProblemsText, withStepIds } from "./step-ids.js";
 import { intervalText, WATCH_MINUTES } from "./watch-status.js";
+import { destinations } from "./chat-sinks.js";
 
 // The describe-it builder: 2a (sentence → editable brief), 2b (building, cancellable), 2c
 // (review before enabling). The manual editor stays one link away ("Start from a blank form").
@@ -481,27 +482,6 @@ export function BuildPane(props: {
 }
 
 // --- 2c --------------------------------------------------------------------------------------
-
-function destinations(sinks: RoutineSinks, recipients: SinkRecipients | undefined): { on: string[]; off: string[] } {
-  const on: string[] = [];
-  const off: string[] = [];
-  for (const transport of ["discord", "teams"] as const) {
-    const label = transport === "discord" ? "Discord" : "Teams";
-    const sink = sinks.chatops?.find((c) => c.transport === transport);
-    if (!sink) { off.push(`no ${label}`); continue; }
-    if (sink.channel) { on.push(`${label} ${transport === "discord" ? "channel" : "conversation"} ${sink.channel}`); continue; }
-    const n = recipients?.[transport];
-    // Counts, never names — the desktop app can't look up who those ids are.
-    on.push(n === undefined
-      ? `${label} DM — ${transport === "discord" ? "discord.json isn't set up" : "no Teams chats known yet"}`
-      : n === 0
-        ? `${label} DM — dropped: ${transport === "discord" ? "no ownerId in discord.json" : "no ownerId in teams.json, or you haven't DMed the bot yet"}`
-        : `${label} DM to you — no channel set`);
-  }
-  if (sinks.note) on.push("Saved as a note on your Daily Dashboard"); else off.push("no note");
-  if (sinks.notify) on.push("Desktop notification"); else off.push("no desktop notification");
-  return { on, off };
-}
 
 export function ReviewPane(props: {
   routine: Routine;
