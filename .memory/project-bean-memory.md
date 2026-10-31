@@ -55,7 +55,12 @@ see `db.ts`'s `migrateFromFiles`.
   in `run()` by a typed-text-only intent classifier. Desktop shows a `🧠 Remembered — …` status
   line; chatops posts a Forget card (see [[project-chatops-memory-flow]]). A forget turn is marked
   handled in `captureTurn` and its `ConverseResult.forgotten` texts join the renderer's
-  `rejectedMemoriesRef`, so close catch-up never re-saves what was just forgotten.
+  `rejectedMemoriesRef`, so close catch-up never re-saves what was just forgotten. Each
+  forgotten row also gets a `kind: "forgot"` receipt (`🧠 Forgot — … · Undo`, class
+  `bean-status--forgot`): Undo re-appends the full deleted row via `memory.append` (same id, so
+  a plain INSERT — an id that exists again is a visible, retryable error), marks it `restored`
+  only after the append lands, and drops its text from `rejectedMemoriesRef`. History keeps only
+  the receipt's text (`kept`, no Undo) — never the row snapshot.
 - **Recall:** `converse()` ranks via `selectRelevantMemories()` — below 20 memories inject all;
   above, an FTS5 bm25 top-12 against the latest user message.
 - **Enabled-skills filter** lives in `buildChatHandler` (app `ipc.ts`), not in `converse()`.

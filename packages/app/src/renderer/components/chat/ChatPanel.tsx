@@ -105,6 +105,7 @@ export function ChatPanel({
   incognito,
   onToggleIncognito,
   onMemoryUndo,
+  onForgetUndo,
   mode,
   agentProject,
   live,
@@ -165,6 +166,7 @@ export function ChatPanel({
   incognito: boolean;
   onToggleIncognito: () => void;
   onMemoryUndo: (id: string) => void;
+  onForgetUndo: (id: string) => void;
   // Agent mode: who answers typed text, the project an agent would start in ("" = scratch), and
   // the window's running session (busy = a turn is in flight; the composer stays usable).
   mode: AgentId;
@@ -489,6 +491,18 @@ export function ChatPanel({
                 {it.state === "undone" || it.state === "kept" ? null : (
                   <button type="button" class="bean-status-action" disabled={it.state === "undoing"} onClick={() => onMemoryUndo(it.id)}>Undo</button>
                 )}
+              </div>
+            );
+          }
+          if (it.kind === "forgot") {
+            const tone = it.state === "error" ? "error" : it.state === "restored" ? "info" : "done";
+            return (
+              <div key={it.id} class={`bean-status bean-status--${tone} bean-status--forgot`}>
+                {it.state === "restored" ? `🧠 Restored — ${it.text}` : `🧠 Forgot — ${it.text}`}
+                {it.state === "error" ? ` · Couldn't restore: ${it.error ?? "unknown error"}` : null}
+                {it.state === "saved" || it.state === "undoing" || it.state === "error" ? (
+                  <button type="button" class="bean-status-action" disabled={it.state === "undoing"} onClick={() => onForgetUndo(it.id)}>Undo</button>
+                ) : null}
               </div>
             );
           }
