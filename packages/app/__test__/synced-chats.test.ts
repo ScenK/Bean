@@ -61,10 +61,21 @@ describe("buildSyncedChatHandlers", () => {
     const { h, deps } = handlers();
     const list = await h.list();
     expect(list).toEqual([
-      { surface: "discord", conversationId: "d1", kind: "dm", title: "DM", updatedAt: ROWS[0]!.updatedAt, live: false, resumable: false },
-      { surface: "teams", conversationId: "t1", kind: "post", title: "Standup", updatedAt: ROWS[1]!.updatedAt, live: true, liveCli: "claude", resumable: true },
+      { surface: "discord", conversationId: "d1", kind: "dm", title: "DM", updatedAt: ROWS[0]!.updatedAt, live: false, resumable: false, archived: false },
+      { surface: "teams", conversationId: "t1", kind: "post", title: "Standup", updatedAt: ROWS[1]!.updatedAt, live: true, liveCli: "claude", resumable: true, archived: false },
     ]);
     expect(deps.listConversations).toHaveBeenCalledWith("/db", expect.arrayContaining([expect.objectContaining({ surface: "teams", ownerId: "29:x" })]));
+  });
+
+  it("an archive lists read-only: send and resume refuse it before the bot", async () => {
+    const archive: ChatopsConversation = { ...ROWS[0]!, conversationId: "d1~a", archivedFrom: "d1" };
+    const { h, deps } = handlers({ listConversations: vi.fn(() => [archive]) });
+    expect(await h.list()).toEqual([expect.objectContaining({ conversationId: "d1~a", archived: true, resumable: false })]);
+    await expect(h.get("discord", "d1~a")).resolves.toEqual([{ role: "user", text: "hello" }]);
+    expect(await h.send("discord", "d1~a", "hi")).toEqual({ refused: "no-record" });
+    expect(await h.resume("discord", "d1~a")).toEqual({ refused: "no-record" });
+    expect(deps.deskTurn).not.toHaveBeenCalled();
+    expect(deps.deskResume).not.toHaveBeenCalled();
   });
 
   it("reads and sends only listed conversations", async () => {

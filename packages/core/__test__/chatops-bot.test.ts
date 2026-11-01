@@ -3156,7 +3156,7 @@ describe("desk turns (#528)", () => {
       await bot.onDeskResume({ conversationId }, async () => ({ fx: effects }), (r) => acks.push(r));
       return { acks, effects };
     };
-    return { bot, catalog, conversations, liveSessions, sent, reqs, subjects, chats: () => chats, run, resume };
+    return { dir, bot, catalog, conversations, liveSessions, sent, reqs, subjects, chats: () => chats, run, resume };
   }
 
   test("an unknown or ineligible conversation is refused without an echo or a turn", async () => {
@@ -3247,6 +3247,29 @@ describe("desk turns (#528)", () => {
     expect(d.liveSessions.canSteer("t1", "u1")).toBe(true);
     expect(d.liveSessions.canSteer("t1", "m1")).toBe(false);
     expect(d.catalog.get("t1")).toMatchObject({ ownerId: "u1", liveCli: "claude", liveSessionId: "sess-1" });
+  });
+
+  test("/new archives a catalogued conversation; desk turn and resume refuse the archive", async () => {
+    const d = deskBot({ found: ownRun });
+    bindOwner(d);
+    d.conversations.append("t1", { role: "user", content: speakerLine("Scen", "old") });
+    const reset = fx();
+    await d.bot.onCommand({ conversationId: "t1", text: "new", fromId: "u1", fromName: "Scen", direct: false }, reset);
+    expect(reset.posted).toEqual(["Fresh start — I've reset my context here. The earlier conversation stays in Bean's desktop history."]);
+    const archive = listChatopsConversations(dbFile(d.dir), [{ surface: "discord", ownerId: "u1" }])
+      .find((r) => r.archivedFrom === "t1");
+    expect(archive).toBeDefined();
+    expect(d.conversations.history(archive!.conversationId)).toEqual([{ role: "user", content: speakerLine("Scen", "old") }]);
+    // Even with a binding forged onto it, the archive is inert.
+    openDb(dbFile(d.dir)).prepare("UPDATE chatops_conversations SET live_cli = 'claude', live_session_id = 'sess-1' WHERE conversation_id = ?")
+      .run(archive!.conversationId);
+    const turn = await d.run({ conversationId: archive!.conversationId, text: "hi" });
+    expect(turn.acks).toEqual([{ refused: "no-record" }]);
+    expect(turn.effects.posted).toEqual([]);
+    const res = await d.resume(archive!.conversationId);
+    expect(res.acks).toEqual([{ refused: "no-record" }]);
+    expect(d.reqs).toEqual([]);
+    expect(d.chats()).toBe(0);
   });
 
   test("desk Continue live refuses a missing, forged or mismatched binding and never starts fresh", async () => {

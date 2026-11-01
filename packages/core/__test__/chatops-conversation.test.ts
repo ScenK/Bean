@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { ConversationCatalog, listChatopsConversations } from "../src/chatops/catalog.js";
-import { closeDb } from "../src/db.js";
+import { closeDb, openDb } from "../src/db.js";
 import { dbFile } from "../src/config.js";
 
 let dir: string;
@@ -98,19 +98,99 @@ test("a throwing onChange doesn't fail the write", () => {
   warn.mockRestore();
 });
 
-test("clear (/new) drops turns, thread sessions and the catalog's live binding", () => {
+const owner = [{ surface: "discord" as const, ownerId: "u1" }];
+
+test("clear (/new) of a catalogued conversation archives its turns and drops sessions and the live binding", () => {
+  const changed: string[] = [];
+  const s = new ConversationStore(file, { onChange: (id) => changed.push(id) });
+  const catalog = new ConversationCatalog(file, "discord", () => new Date("2026-10-01T00:00:00.000Z"));
+  s.append("c1", { role: "user", content: "a" });
+  s.append("c1", { role: "assistant", content: "b" });
+  s.setThreadSession("c1", "claude", "sess-d");
+  catalog.upsert({ conversationId: "c1", place: { kind: "thread", title: "bugs" }, ownerId: "u1", live: { cli: "claude", sessionId: "sess-l" } });
+  changed.length = 0;
+  const archiveId = s.clear("c1");
+  expect(archiveId).toMatch(/^c1~[0-9a-f-]{36}$/);
+  expect(changed).toEqual(["c1"]);
+  expect(s.history("c1")).toEqual([]);
+  expect(s.history(archiveId!)).toEqual([{ role: "user", content: "a" }, { role: "assistant", content: "b" }]);
+  expect(s.threadSession("c1", "claude")).toBeUndefined();
+  const rows = listChatopsConversations(file, owner);
+  expect(rows).toHaveLength(2);
+  const [fresh, archive] = rows;
+  expect(fresh).toMatchObject({ conversationId: "c1", title: "bugs" });
+  expect(fresh?.liveSessionId).toBeUndefined();
+  expect(fresh?.liveCli).toBeUndefined();
+  expect(fresh?.archivedFrom).toBeUndefined();
+  expect(archive).toEqual({
+    conversationId: archiveId, surface: "discord", kind: "thread", title: "bugs", ownerId: "u1",
+    liveCli: "claude", updatedAt: "2026-10-01T00:00:00.000Z", archivedFrom: "c1",
+  });
+  expect(catalog.get(archiveId!)?.archivedFrom).toBe("c1");
+});
+
+test("clear (/new) hard-deletes an uncatalogued, empty or just-reset conversation — no archive", () => {
+  const s = new ConversationStore(file);
+  const catalog = new ConversationCatalog(file, "discord");
+  s.append("member-dm", { role: "user", content: "a" });
+  expect(s.clear("member-dm")).toBeUndefined();
+  expect(s.history("member-dm")).toEqual([]);
+  catalog.upsert({ conversationId: "c1", place: { kind: "dm", title: "DM" }, ownerId: "u1" });
+  expect(s.clear("c1")).toBeUndefined();
+  s.append("c1", { role: "user", content: "a" });
+  expect(s.clear("c1")).toBeDefined();
+  expect(s.clear("c1")).toBeUndefined();
+  expect(listChatopsConversations(file, owner)).toHaveLength(2);
+});
+
+test("a failed clear (/new) leaves turns, sessions and bindings unchanged", () => {
   const s = new ConversationStore(file);
   const catalog = new ConversationCatalog(file, "discord");
   s.append("c1", { role: "user", content: "a" });
   s.setThreadSession("c1", "claude", "sess-d");
   catalog.upsert({ conversationId: "c1", place: { kind: "thread", title: "bugs" }, ownerId: "u1", live: { cli: "claude", sessionId: "sess-l" } });
-  s.clear("c1");
-  expect(s.history("c1")).toEqual([]);
-  expect(s.threadSession("c1", "claude")).toBeUndefined();
-  const [row] = listChatopsConversations(file, [{ surface: "discord", ownerId: "u1" }]);
-  expect(row).toMatchObject({ conversationId: "c1", title: "bugs" });
-  expect(row?.liveSessionId).toBeUndefined();
-  expect(row?.liveCli).toBeUndefined();
+  // Fails the last step (the live unbind), after the turns moved and the archive row was written.
+  openDb(file).exec("CREATE TRIGGER fail_unbind BEFORE UPDATE ON chatops_conversations BEGIN SELECT RAISE(ABORT, 'boom'); END");
+  expect(() => s.clear("c1")).toThrow(/boom/);
+  openDb(file).exec("DROP TRIGGER fail_unbind");
+  expect(s.history("c1")).toEqual([{ role: "user", content: "a" }]);
+  expect(s.threadSession("c1", "claude")).toBe("sess-d");
+  expect(listChatopsConversations(file, owner)).toEqual([expect.objectContaining({ conversationId: "c1", liveSessionId: "sess-l" })]);
+});
+
+test("listing prunes expired archives and their turns for every owner, keeping a still-referenced id", () => {
+  const s = new ConversationStore(file);
+  const at = (iso: string) => new ConversationCatalog(file, "discord", () => new Date(iso));
+  const teams = new ConversationCatalog(file, "teams", () => new Date("2026-10-30T00:00:00.000Z"));
+  // Turns first: append bumps a catalogued row's updated_at to the real clock.
+  s.append("old", { role: "user", content: "x" });
+  at("2026-01-01T00:00:00.000Z").upsert({ conversationId: "old", place: { kind: "dm", title: "DM" }, ownerId: "someone-else" });
+  const oldArchive = s.clear("old")!;
+  s.append("both", { role: "user", content: "y" });
+  // Same id catalogued on two surfaces: one copy expires, the other still references the turns.
+  at("2026-01-01T00:00:00.000Z").upsert({ conversationId: "both", place: { kind: "dm", title: "DM" }, ownerId: "u1" });
+  teams.upsert({ conversationId: "both", place: { kind: "dm", title: "DM" }, ownerId: "u1" });
+  const shared = s.clear("both")!;
+  const now = new Date("2026-11-01T00:00:00.000Z");
+  const rows = listChatopsConversations(file, owner, now);
+  expect(rows.map((r) => r.conversationId)).toEqual(["both"]);
+  expect(s.history(oldArchive)).toEqual([]);
+  expect(at(now.toISOString()).get(oldArchive)).toBeUndefined();
+  expect(s.history(shared)).toEqual([{ role: "user", content: "y" }]);
+  expect(listChatopsConversations(file, [{ surface: "teams", ownerId: "u1" }], now).map((r) => r.archivedFrom)).toEqual([undefined, "both"]);
+});
+
+test("a bean.db from before archived_from gains it on open", async () => {
+  closeDb(file);
+  const { DatabaseSync } = await import("node:sqlite");
+  const legacy = new DatabaseSync(file);
+  legacy.exec(`CREATE TABLE chatops_conversations (conversation_id TEXT NOT NULL, surface TEXT NOT NULL, kind TEXT NOT NULL,
+    title TEXT NOT NULL, owner_id TEXT NOT NULL, owner_alt_id TEXT, live_cli TEXT, live_session_id TEXT,
+    updated_at TEXT NOT NULL, PRIMARY KEY (conversation_id, surface))`);
+  legacy.exec("INSERT INTO chatops_conversations VALUES ('c1', 'discord', 'dm', 'DM', 'u1', NULL, NULL, NULL, '2026-10-30T00:00:00.000Z')");
+  legacy.close();
+  expect(listChatopsConversations(file, owner)).toEqual([expect.objectContaining({ conversationId: "c1" })]);
+  expect(new ConversationCatalog(file, "discord").get("c1")?.archivedFrom).toBeUndefined();
 });
 
 test("loadChatopsOwners reads each surface's configured owner, skipping missing ones", async () => {

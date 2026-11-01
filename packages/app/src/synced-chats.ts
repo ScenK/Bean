@@ -16,6 +16,8 @@ export interface SyncedChatListing {
   liveCli?: LiveCli;
   /** That session's id is recorded, so Continue live can reopen it (the id itself stays in main). */
   resumable: boolean;
+  /** An archive of earlier history `/new` left behind: read-only, never sent to or resumed. */
+  archived: boolean;
 }
 
 /** One transcript line, already mapped for display: the owner's lines lose their `[Name]:`
@@ -87,7 +89,7 @@ export function buildSyncedChatHandlers(deps: SyncedChatHandlerDeps) {
     list: async (): Promise<SyncedChatListing[]> => (await listed()).rows.map((r) => ({
       surface: r.surface, conversationId: r.conversationId, kind: r.kind, title: r.title, updatedAt: r.updatedAt,
       live: deps.liveIds(r.surface).has(r.conversationId), ...(r.liveCli ? { liveCli: r.liveCli } : {}),
-      resumable: !!r.liveSessionId,
+      resumable: !!r.liveSessionId, archived: !!r.archivedFrom,
     })),
     get: async (surface: unknown, conversationId: unknown): Promise<SyncedChatRow[]> => {
       const { row, ownerName } = await find(surface, conversationId);
@@ -97,6 +99,7 @@ export function buildSyncedChatHandlers(deps: SyncedChatHandlerDeps) {
       if (typeof text !== "string" || !text.trim()) throw new Error("empty message");
       if (text.length > MAX_DESK_TEXT) return { refused: "too-long" };
       const { row } = await find(surface, conversationId);
+      if (row.archivedFrom) return { refused: "no-record" };
       try {
         return await deps.deskTurn(row.surface, row.conversationId, text);
       } catch (err) {
@@ -106,7 +109,7 @@ export function buildSyncedChatHandlers(deps: SyncedChatHandlerDeps) {
     /** Continue live: only the conversation id goes to the bot, which re-derives the session. */
     resume: async (surface: unknown, conversationId: unknown): Promise<SyncedSendResult> => {
       const { row } = await find(surface, conversationId);
-      if (!row.liveSessionId) return { refused: "no-record" };
+      if (!row.liveSessionId || row.archivedFrom) return { refused: "no-record" };
       try {
         return await deps.deskResume(row.surface, row.conversationId);
       } catch (err) {

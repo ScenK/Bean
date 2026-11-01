@@ -94,6 +94,7 @@ CREATE INDEX IF NOT EXISTS chatops_turns_conv ON chatops_turns(conversation_id);
 -- Chatops conversations the owner can continue from the desktop (chatops/catalog.ts): the owner's
 -- DMs and channels where the owner started a live session. owner_id is the platform id the bot saw
 -- (Teams: the 29: id, owner_alt_id its AAD alias). live_* = the last live session bound here.
+-- archived_from set = an archive /new made (ConversationStore.clear): read-only, pruned by age.
 CREATE TABLE IF NOT EXISTS chatops_conversations (
   conversation_id TEXT NOT NULL,
   surface         TEXT NOT NULL,
@@ -104,6 +105,7 @@ CREATE TABLE IF NOT EXISTS chatops_conversations (
   live_cli        TEXT,
   live_session_id TEXT,
   updated_at      TEXT NOT NULL,
+  archived_from   TEXT,
   PRIMARY KEY (conversation_id, surface)
 );
 
@@ -324,6 +326,8 @@ export function openDb(file: string): DatabaseSync {
     // Channel memory capture (#463).
     ["chatops_chatty", "memory_off", "INTEGER NOT NULL DEFAULT 0"],
     ["chatops_chatty", "memory_noticed", "INTEGER NOT NULL DEFAULT 0"],
+    // /new archive (#600): the conversation a re-keyed history came from; NULL = a live row.
+    ["chatops_conversations", "archived_from", "TEXT"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");
