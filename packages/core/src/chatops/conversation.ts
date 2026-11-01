@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { openDb } from "../db.js";
 import type { ChatTurn } from "../converse.js";
@@ -55,16 +56,42 @@ export class ConversationStore {
     this.changed(conversationId);
   }
 
-  /** Deletes a conversation's entire history — backs the "/new" fresh-start command. Its
-   * resumable delegate sessions and its catalog live binding go too: a fresh start shouldn't
-   * resume the old agent. */
-  clear(conversationId: string): void {
-    this.db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ?").run(conversationId);
-    this.db.prepare("DELETE FROM thread_sessions WHERE conversation_id = ?").run(conversationId);
-    this.db.prepare("UPDATE chatops_conversations SET live_cli = NULL, live_session_id = NULL WHERE conversation_id = ?")
-      .run(conversationId);
+  /** Empties a conversation's history — backs the "/new" fresh-start command. A catalogued
+   * conversation (chatops/catalog.ts) with turns keeps them for the desktop: they move to a new
+   * archive id (`<id>~<uuid>`) with a copy of each catalog row marked `archived_from`, which no
+   * model read ever names. Anything else is hard-deleted. Its resumable delegate sessions and its
+   * catalog live binding go either way: a fresh start shouldn't resume the old agent. All or
+   * nothing. Returns the archive id when one was made. */
+  clear(conversationId: string): string | undefined {
+    const db = this.db;
+    let archiveId: string | undefined;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const has = (table: string): boolean =>
+        !!db.prepare(`SELECT 1 FROM ${table} WHERE conversation_id = ? LIMIT 1`).get(conversationId);
+      if (has("chatops_conversations") && has("chatops_turns")) {
+        archiveId = `${conversationId}~${randomUUID()}`;
+        db.prepare("UPDATE chatops_turns SET conversation_id = ? WHERE conversation_id = ?").run(archiveId, conversationId);
+        db.prepare(
+          "INSERT INTO chatops_conversations (conversation_id, surface, kind, title, owner_id, owner_alt_id, live_cli, live_session_id, updated_at, archived_from) " +
+            "SELECT ?, surface, kind, title, owner_id, owner_alt_id, live_cli, NULL, updated_at, conversation_id FROM chatops_conversations WHERE conversation_id = ?",
+        ).run(archiveId, conversationId);
+      } else {
+        db.prepare("DELETE FROM chatops_turns WHERE conversation_id = ?").run(conversationId);
+      }
+      db.prepare("DELETE FROM thread_sessions WHERE conversation_id = ?").run(conversationId);
+      // Bumped on archive so the fresh conversation lists above its archive.
+      db.prepare(
+        `UPDATE chatops_conversations SET live_cli = NULL, live_session_id = NULL${archiveId ? ", updated_at = ?" : ""} WHERE conversation_id = ?`,
+      ).run(...(archiveId ? [new Date().toISOString(), conversationId] : [conversationId]));
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
     this.clears.set(conversationId, this.clearCount(conversationId) + 1);
     this.changed(conversationId);
+    return archiveId;
   }
 
   /** Bumped by every clear() — lets a writer that awaited (compaction) tell the history it read

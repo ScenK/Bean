@@ -21,7 +21,16 @@ changed owner hides the old owner's rows instead of leaking them.
 **No backfill:** `chatops_turns` never stored surface, kind or speaker, so pre-#527 history
 can't be attributed to the owner safely; it shows up once the owner speaks there again.
 
-`/new` (`ConversationStore.clear`) unbinds the live session but keeps the row. History changes
+`/new` (`ConversationStore.clear`) re-keys rather than deletes (#600): in a catalogued
+conversation with turns it moves them to `<id>~<uuid>` and copies each catalog row there with
+`archived_from = <id>` (no live session id, old `updated_at`), then drops `thread_sessions` and
+unbinds/bumps the live row — one `BEGIN IMMEDIATE` transaction. Model reads filter by exact id, so
+the archive never reaches context. Uncatalogued (member DMs, channels) or empty → hard delete.
+Archives are read-only: `onDeskTurn`/`onDeskResume` and app main's `send`/`resume` refuse them
+(`no-record`). `listChatopsConversations` prunes archives older than
+`DESKTOP_CHAT_RETENTION_DAYS` for **every** owner, plus their turns unless a surviving row still
+references the id. A run in flight across `/new` posts its result into the **new** conversation
+(results append by the live id), not the archive. History changes
 signal through `ConversationStore`'s `onChange` (append / replaceOldest / clear) — the one place
 every writer (bot turns, delegate results, compaction, outbox notices) goes through; don't hook
 callers individually. New columns follow `convention-bean-db-column-additions.md`.

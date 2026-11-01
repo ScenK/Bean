@@ -1156,12 +1156,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     if (cmd === "new") {
       if (!(await permitted("fresh", "start a fresh conversation"))) return true;
-      deps.conversations.clear(conv);
+      const archived = deps.conversations.clear(conv);
       deps.noteProposals.forgetImages(conv);
       resets.set(conv, (resets.get(conv) ?? 0) + 1);
       // Also fence off pre-reset channel chatter so it can't leak back in as ambient.
       deps.conversations.setAmbientCutoff(conv, Date.now());
-      await fx.reply("Fresh start — I've cleared this conversation's context.");
+      await fx.reply(archived
+        ? "Fresh start — I've reset my context here. The earlier conversation stays in Bean's desktop history."
+        : "Fresh start — I've cleared this conversation's context.");
       return true;
     }
     if (routineCmd) {
@@ -1204,7 +1206,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       const text = req.text.trim();
       if (text.length > MAX_DESK_TEXT) return ack({ refused: "too-long" });
       const row = deps.catalog?.get(conv);
-      if (!row) return ack({ refused: "no-record" });
+      // An archive (`/new`'s copy of earlier history) is read-only.
+      if (!row || row.archivedFrom) return ack({ refused: "no-record" });
       // The id to act as is the one the catalog recorded, never one the request names, and it
       // must still be the configured owner (a changed owner config hides the old owner's rows).
       const owner = { fromId: row.ownerId, fromAltId: row.ownerAltId };
@@ -1244,7 +1247,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       const conv = req.conversationId;
       const catalog = deps.catalog;
       const row = catalog?.get(conv);
-      if (!catalog || !row) return ack({ refused: "no-record" });
+      if (!catalog || !row || row.archivedFrom) return ack({ refused: "no-record" });
       const owner = { fromId: row.ownerId, fromAltId: row.ownerAltId };
       if (deps.roles.roleOf(owner) !== "owner") return ack({ refused: "not-eligible" });
       if (deps.liveSessions.has(conv) || deskResuming.has(conv)) return ack({ refused: "channel-busy" });
