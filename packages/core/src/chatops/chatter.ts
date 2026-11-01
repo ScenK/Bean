@@ -229,7 +229,9 @@ export function makeChimeIn(deps: ChimeInDeps): ChimeIn {
         deps.chat({
           model: deps.model, tools: [], webSearch: false,
           messages: [
-            { role: "system", content: [composePersonaPrompt(persona), CHIME_INSTRUCTION, recall].filter(Boolean).join("\n\n") },
+            { role: "system", content: `${composePersonaPrompt(persona)}\n\n${CHIME_INSTRUCTION}` },
+            // Recall is user-role data, its own message, never persisted (only `block` is, below).
+            ...(recall ? [{ role: "user" as const, content: recall }] : []),
             { role: "user", content: block },
           ],
         }),

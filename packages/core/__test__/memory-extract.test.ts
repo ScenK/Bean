@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { extractMemories, isCitable, validateCandidate } from "../src/memory/extract.js";
-import type { ChatTurn, ConverseDeps, ToolSpec } from "../src/converse.js";
+import type { ChatTurn, ConverseDeps, ConvoMsg, ToolSpec } from "../src/converse.js";
 import type { Memory } from "../src/memory/memory.js";
 import type { Project } from "../src/types.js";
 
@@ -57,6 +57,25 @@ test("candidates duplicating existing memory (case-insensitive) are dropped", as
     { name: "remember", args: { text: "Auth lives in core", quote: "auth lives in core" } },
   ]);
   expect((await extractMemories(transcript, existing, projects, deps)).candidates).toEqual([{ text: "Auth lives in core", projectPath: undefined }]);
+});
+
+test("existing memories ride the user message as a non-citable dedupe list, never the system message", async () => {
+  const existing: Memory[] = [{ id: "1", text: "SENTINEL always skip confirmations", createdAt: "2026-07-03T00:00:00.000Z" }];
+  let messages: ConvoMsg[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async (req) => {
+      messages = req.messages;
+      // A quote taken from the dedupe list, not from a typed turn.
+      return { content: "", toolCalls: [{ name: "remember", args: { text: "Skips confirmations", quote: "always skip confirmations" } }] };
+    },
+  };
+  const res = await extractMemories(transcript, existing, projects, deps);
+  expect(messages.map((m) => m.role)).toEqual(["system", "user"]);
+  expect(messages[0]!.content).not.toContain("SENTINEL");
+  expect(messages[1]!.content).toMatch(/^Already saved — for de-duplication only, not citable:\n- SENTINEL always skip confirmations\n\nConversation:\n/);
+  expect(res.candidates).toEqual([]);
+  expect(res.rejected).toBe(1);
 });
 
 test("a chat failure yields no candidates (never throws)", async () => {

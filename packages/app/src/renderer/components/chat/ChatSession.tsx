@@ -348,7 +348,7 @@ export function ChatSession({
   const runPrompt = (p: { prompt: string; label: string; noteSlug?: string }): void => {
     void (async () => {
       // "Continue in chat" from a note: link this chat to it before the first send so the
-      // note body rides along in the system prompt and saves default to update-in-place.
+      // note body rides along (as framed user-role data) and saves default to update-in-place.
       if (p.noteSlug) {
         // Default listNotes() hides archived notes, so an archived note is never linked.
         const note = (await window.bean.listNotes()).find((n) => n.slug === p.noteSlug);

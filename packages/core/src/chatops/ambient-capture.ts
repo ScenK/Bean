@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ConverseDeps, ConvoMsg } from "../converse.js";
 import { speakerLabel as label, type Memory } from "../memory/memory.js";
-import { rememberToolSpec, validateCandidate } from "../memory/extract.js";
+import { existingBlock, rememberToolSpec, validateCandidate } from "../memory/extract.js";
 import { CHIME_FORCE_MS, CHIME_LULL_MS, type Chatter } from "./chatter.js";
 import { can, type Role, type Speaker } from "./roles.js";
 import { localDay } from "./turn-cap.js";
@@ -107,12 +107,8 @@ export function makeAmbientCapture(deps: AmbientCaptureDeps): AmbientCapture {
     b.calls++;
     const existing = await deps.loadMemories(null);
     const messages: ConvoMsg[] = [
-      {
-        role: "system",
-        content: `${CHANNEL_INSTRUCTIONS}\n\n${existing.length === 0 ? "Existing memory is empty."
-          : "Already remembered (do not repeat):\n" + existing.map((m) => `- ${m.text}`).join("\n")}`,
-      },
-      { role: "user", content: `Channel messages:\n${rows.map((r) => `${label(r.line.name)} (${r.citable ? "citable" : "not citable"}): ${r.text}`).join("\n")}` },
+      { role: "system", content: CHANNEL_INSTRUCTIONS },
+      { role: "user", content: `${existingBlock(existing)}\n\nChannel messages:\n${rows.map((r) => `${label(r.line.name)} (${r.citable ? "citable" : "not citable"}): ${r.text}`).join("\n")}` },
     ];
     const res = await deps.chat({ model: deps.model, messages, tools: [rememberToolSpec([], "Record one durable fact a speaker stated.")] });
     const seen = new Set(existing.map((m) => m.text.trim().toLowerCase()));

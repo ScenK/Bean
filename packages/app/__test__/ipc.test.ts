@@ -196,12 +196,14 @@ test("chat handler drops disabled skills and injects recalled memories", async (
   ];
   const projects: Project[] = [{ name: "api", path: "/work/api" }];
   let systemContent = "";
+  let userContent = "";
   const handler = buildChatHandler({
     loadSkills: async () => skills,
     loadProjects: async () => projects,
     loadPersona: async () => ({ name: "Bean", tags: ["Warm"] }) as Persona,
     converse: async ({ messages, tools }) => {
       systemContent = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
+      userContent = messages.filter((m) => m.role === "user").map((m) => String(m.content)).join("\n\n");
       const props = (tools[0]!.parameters as { properties: Record<string, { enum?: string[] }> }).properties;
       expect(props.skill?.enum).toEqual(["review-code"]); // "hidden" excluded
       return { content: "ok", toolCalls: [] };
@@ -216,18 +218,22 @@ test("chat handler drops disabled skills and injects recalled memories", async (
     dbFile: "/b/memory.json",
   });
   await handler({ history: [], message: "hi" });
-  expect(systemContent).toContain("What you remember (saved facts");
-  expect(systemContent).toContain("prefers pnpm");
+  // Recalled memories are user-role data, never system authority.
+  expect(userContent).toContain("What you remember (saved preferences and facts");
+  expect(userContent).toContain("prefers pnpm");
+  expect(systemContent).not.toContain("prefers pnpm");
 });
 
-test("chat handler passes the linked note through to converse (system prompt + proposal slug)", async () => {
+test("chat handler passes the linked note through to converse (framed user message + proposal slug)", async () => {
   let systemContent = "";
+  let noteContent = "";
   const handler = buildChatHandler({
     loadSkills: async () => [{ name: "review-code", description: "r", body: "BODY" }] as Skill[],
     loadProjects: async () => [{ name: "api", path: "/work/api" }] as Project[],
     loadPersona: async () => ({ name: "Bean", tags: ["Warm"] }) as Persona,
     converse: async ({ messages }) => {
       systemContent = messages[0]!.content;
+      noteContent = String(messages[1]!.content);
       return { content: "ok", toolCalls: [{ name: "propose_note", args: { title: "T2", body: "B2" } }] };
     },
     getModel: () => "m",
@@ -243,7 +249,10 @@ test("chat handler passes the linked note through to converse (system prompt + p
     history: [], message: "continue",
     linkedNote: { slug: "flaky", title: "Flaky tests", version: 3, body: "old note body" },
   });
-  expect(systemContent).toContain('continues from the note "Flaky tests" (v3)');
+  expect(systemContent).toContain("continues from a linked note");
+  expect(systemContent).not.toContain("Flaky tests");
+  expect(noteContent).toContain('[The linked note "Flaky tests" (v3) is the subject of this chat');
+  expect(noteContent).toContain("old note body");
   expect(out.proposedNote?.slug).toBe("flaky");
 });
 

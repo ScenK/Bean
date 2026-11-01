@@ -96,8 +96,14 @@ test("a burst gets one call after the lull; under 2 new messages gets none", asy
   expect(text).toContain("household uses pnpm");
   expect(text).not.toContain("PRIVATE");
   expect(text).not.toContain("secret-proj");
-  // Spoke: window + reply persisted, cutoff advanced.
+  // Recall is its own user-role message (never system), before the ambient block.
+  expect(req.messages.map((m) => m.role)).toEqual(["system", "user", "user"]);
+  expect(req.messages[0]!.content).not.toContain("household uses pnpm");
+  expect(req.messages[1]!.content).toContain("household uses pnpm");
+  expect(req.messages[2]!.content).not.toContain("household uses pnpm");
+  // Spoke: window + reply persisted (recall never is), cutoff advanced.
   expect(h.conversations.history("c").map((t) => t.role)).toEqual(["user", "assistant"]);
+  expect(JSON.stringify(h.conversations.history("c"))).not.toContain("household uses pnpm");
   expect(h.conversations.ambientCutoff("c")).toBeGreaterThan(0);
 });
 

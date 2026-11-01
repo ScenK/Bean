@@ -72,6 +72,22 @@ test("a member's un-addressed fact saves one shared Name:-prefixed row after the
   expect(h.chatter.claimMemoryNotice("s")).toBe(false);
 });
 
+test("the already-remembered list rides the user message, never the system message, and isn't citable", async () => {
+  const fromList: Call[] = [{ name: "remember", args: { text: "Deploys weekly", quote: "Mia: Deploys on Tuesdays" } }];
+  const h = harness((p) => (p.includes("hello everyone") ? fromList : deploy()));
+  h.say("mia", "fyi we deploy on Tuesdays");
+  await h.advance(30_000);
+  expect(h.saved).toHaveLength(1);
+  // Second batch: the model quotes the saved fact, which now stands only in the dedupe list.
+  h.say("mia", "hello everyone");
+  await h.advance(30_000);
+  const messages = h.chat.mock.calls[1]![0].messages;
+  expect(messages.map((m) => m.role)).toEqual(["system", "user"]);
+  expect(messages[0]!.content).not.toContain("Deploys on Tuesdays");
+  expect(messages[1]!.content).toMatch(/^Already saved — for de-duplication only, not citable:\n- Mia: Deploys on Tuesdays\n\nChannel messages:\n/);
+  expect(h.saved).toHaveLength(1);
+});
+
 test("the owner's fact is unprefixed; a steady stream is forced at 2 minutes; an addressed turn flushes", async () => {
   const h = harness(deploy);
   for (let i = 0; i < 5; i++) { h.say("u1", i === 0 ? "we deploy on Tuesdays" : `ok ${i}`); await h.advance(25_000); }
