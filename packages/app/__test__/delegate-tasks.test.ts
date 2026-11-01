@@ -25,6 +25,7 @@ function harness(opts: { cli?: CliName; dir?: string } = {}) {
   const reqs: DelegateRequest[] = [];
   let nextId = 0;
   const tasks = createDelegateTasks({
+    projectAllowed: async () => true,
     resolveCli: () => ({ cli: opts.cli ?? "claude" }),
     send: (e) => { sent.push(e); },
     newId: () => `task-${++nextId}`,
@@ -66,6 +67,7 @@ describe("createDelegateTasks", () => {
     const reqs: DelegateRequest[] = [];
     const sent: DelegateEvent[] = [];
     const tasks = createDelegateTasks({
+      projectAllowed: async () => true,
       resolveCli: () => ({ cli: "claude" }),
       send: (e) => { sent.push(e); },
       newId: () => "task-scratch",
@@ -79,9 +81,46 @@ describe("createDelegateTasks", () => {
     expect(sent[0]).toMatchObject({ type: "started", projectPath: "/home/.bean/workspace" });
   });
 
+  it("spawns only in a registered project or the scratch workspace; anything else fails with zero spawns", async () => {
+    const reqs: DelegateRequest[] = [];
+    const sent: DelegateEvent[] = [];
+    const registered = new Set(["/home/.bean/workspace", "/registered"]);
+    const tasks = createDelegateTasks({
+      projectAllowed: async (path) => registered.has(path),
+      resolveCli: () => ({ cli: "claude" }),
+      send: (e) => { sent.push(e); },
+      newId: (() => { let n = 0; return () => `t-${++n}`; })(),
+      dir: tmp(),
+      scratchPath: "/home/.bean/workspace",
+      run: (req) => { reqs.push(req); return { cancel: () => {} } satisfies DelegateHandle; },
+    });
+    await tasks.start({ projectPath: "/registered", prompt: "go", instruction: "i" });
+    await tasks.start({ projectPath: "", prompt: "go", instruction: "i" });
+    await tasks.start({ projectPath: "/etc", prompt: "go", instruction: "i", mountId: "m1" });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(reqs.map((r) => r.projectPath)).toEqual(["/registered", "/home/.bean/workspace"]);
+    expect(sent.at(-1)).toEqual({ taskId: "t-3", type: "failed", message: "That project isn't configured in Bean.", mountId: "m1" });
+  });
+
+  it("a registry read that throws refuses the run", async () => {
+    const sent: DelegateEvent[] = [];
+    const tasks = createDelegateTasks({
+      projectAllowed: async () => { throw new Error("bad json"); },
+      resolveCli: () => ({ cli: "claude" }),
+      send: (e) => { sent.push(e); },
+      newId: () => "t",
+      dir: tmp(),
+      run: () => { throw new Error("must not spawn"); },
+    });
+    await tasks.start({ projectPath: "/p", prompt: "go", instruction: "i" });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(sent).toEqual([{ taskId: "t", type: "failed", message: "That project isn't configured in Bean." }]);
+  });
+
   it("uses one resolved compatible CLI/model pair for a delegate request", async () => {
     const reqs: DelegateRequest[] = [];
     const tasks = createDelegateTasks({
+      projectAllowed: async () => true,
       resolveCli: () => ({ cli: "codex", model: "gpt-5.6-sol" }),
       send: () => {},
       newId: () => "task-pair",
@@ -105,6 +144,7 @@ describe("createDelegateTasks", () => {
   it("browser comes only from main's re-resolved skill, never a forged or absent name", async () => {
     const reqs: DelegateRequest[] = [];
     const tasks = createDelegateTasks({
+      projectAllowed: async () => true,
       resolveCli: () => ({ cli: "claude" }),
       send: () => {},
       newId: (() => { let n = 0; return () => `t-${++n}`; })(),
@@ -129,6 +169,7 @@ describe("createDelegateTasks", () => {
   it("emits a deferred failed event when no CLI is available", async () => {
     const sent: DelegateEvent[] = [];
     const tasks = createDelegateTasks({
+      projectAllowed: async () => true,
       resolveCli: () => undefined,
       send: (e) => { sent.push(e); },
       newId: () => "task-x",
@@ -270,6 +311,7 @@ describe("timeout racing Stop (real runDelegate)", () => {
       const sent: DelegateEvent[] = [];
       const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => true });
       const tasks = createDelegateTasks({
+        projectAllowed: async () => true,
         resolveCli: () => ({ cli: "claude" }),
         send: (e) => { sent.push(e); },
         newId: () => "task-1",
@@ -296,6 +338,7 @@ describe("delegate session receipts", () => {
     const sent: DelegateEvent[] = [];
     let captured: DelegateCallbacks | undefined;
     const tasks = createDelegateTasks({
+      projectAllowed: async () => true,
       resolveCli: () => ({ cli: "claude" }),
       send: (e) => { sent.push(e); },
       newId: () => "t1",

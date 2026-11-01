@@ -606,6 +606,10 @@ app.whenReady().then(async () => {
 
     // Shared by createDelegateTasks (chat window's delegate button) and the routine
     // delegate-step adapter below — one resolver, not two copies of this preference logic.
+    // A configured project's path or Bean's scratch workspace — the only cwds a chat delegate or
+    // live session may spawn in, whatever path the renderer sent.
+    const projectAllowed = async (path: string): Promise<boolean> =>
+      path === scratchDir(dir) || (await loadProjects(projectsFile(dir))).some((p) => p.path === path);
     const resolveDelegateCli = (model?: string) =>
       resolveDelegateSelection(cliModels, enabledClis(), runtime.getDelegateCli(), model);
 
@@ -613,6 +617,7 @@ app.whenReady().then(async () => {
       resolvedPath,
       dir,
       scratchPath: scratchDir(dir),
+      projectAllowed,
       resolveCli: resolveDelegateCli,
       skillBrowser: async (name) =>
         (await loadLayeredSkills(skillsDir(projectDir), skillsDir(dir))).find((s) => s.name === name)?.browser === true,
@@ -642,8 +647,7 @@ app.whenReady().then(async () => {
       enabledClis,
       scratchPath: scratchDir(dir),
       findResumable: (sessionId) => findDelegateRun(dbFile(dir), sessionId, undefined, "desktop"),
-      projectAllowed: async (path) =>
-        path === scratchDir(dir) || (await loadProjects(projectsFile(dir))).some((p) => p.path === path),
+      projectAllowed,
       newId: () => randomUUID(),
       send: (senderId, event) => {
         const id = `live:${event.sessionId}`;

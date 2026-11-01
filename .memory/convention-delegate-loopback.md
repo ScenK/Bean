@@ -44,3 +44,7 @@ Key contracts:
   the spawned harness is enabled and supports the model (or receives no `--model`). Only a
   model the user explicitly clicks may override that CLI preference: DelegateCard's implicit
   display default must not be sent as a requested model.
+- **The cwd is registry-checked in main:** `delegate-tasks` `start` spawns only when
+  `projectAllowed` (main's shared check, also used by live-tasks: Bean's scratch workspace or a
+  `projects.json` path, re-read per start) passes; anything else fails the card with zero spawns
+  (#588). The renderer's `projectPath` is never a trusted cwd — same rule as chatops cards.
