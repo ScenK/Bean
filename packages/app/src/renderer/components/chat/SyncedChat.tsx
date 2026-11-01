@@ -12,10 +12,11 @@ export const SURFACE_NAMES = { discord: "Discord", teams: "Teams" } as const;
 /** Sidebar/header key for a synced chat — never a UUID, so it can't collide with a desktop thread. */
 export const syncedKey = (l: { surface: string; conversationId: string }): string => `${l.surface}:${l.conversationId}`;
 
-/** The kind chip: DM, a thread's name, `#channel`, a Teams post's title — `· live` while a session runs. */
+/** The kind chip: DM, a thread's name, `#channel`, a Teams post's title — `· archived` for what
+ * `/new` left behind, else `· live` while a session runs. */
 export function kindChip(l: SyncedChatListing): string {
   const base = l.kind === "dm" ? "DM" : l.kind === "channel" ? `#${l.title}` : l.title;
-  return l.live ? `${base} · live` : base;
+  return l.archived ? `${base} · archived` : l.live ? `${base} · live` : base;
 }
 
 export const REFUSAL_TEXT: Record<DeskRefusal, string> = {
@@ -37,10 +38,11 @@ export const RESUME_REFUSAL_TEXT: Record<DeskRefusal, string> = {
   "cli-missing": "The bot can't find that agent's CLI — the session wasn't continued.",
 };
 
-/** Bot down → read-only; a live session → steer; otherwise a Bean turn (after a session ended,
- * the placeholder says so). */
+/** An archive → read-only whatever the bot does; bot down → read-only; a live session → steer;
+ * otherwise a Bean turn (after a session ended, the placeholder says so). */
 export function composerState(l: SyncedChatListing, botRunning: boolean, rows: SyncedChatRow[]): { readOnly: boolean; placeholder: string } {
   const surface = SURFACE_NAMES[l.surface];
+  if (l.archived) return { readOnly: true, placeholder: "Archived after /new — read only" };
   if (!botRunning) return { readOnly: true, placeholder: `Start the ${surface} bot to continue this chat` };
   if (l.live) return { readOnly: false, placeholder: "Steer the live session…" };
   if (l.liveCli || rows.some((r) => r.role === "agent")) return { readOnly: false, placeholder: "Session ended — Continue live, or message Bean" };
@@ -57,12 +59,14 @@ interface Props {
   version: number;
   /** A desk turn of ours is waiting for its line to land (the sidebar spinner). */
   onWorking: (working: boolean) => void;
+  /** `/new` archived this conversation's earlier history into another sidebar entry. */
+  hasArchive: boolean;
 }
 
 /** A Discord/Teams conversation shown in the chat window: its stored transcript, and desk turns
  * sent through the bot. Never saved to desktop history, no incognito, no memory capture — the
  * bot keeps its own (see .memory/project-desktop-chat-history.md → "Synced chats"). */
-export function SyncedChat({ listing, botRunning, version, onWorking }: Props) {
+export function SyncedChat({ listing, botRunning, version, onWorking, hasArchive }: Props) {
   const mountId = useMemo(() => crypto.randomUUID(), []);
   const surface = SURFACE_NAMES[listing.surface];
   const [rows, setRows] = useState<SyncedChatRow[]>([]);
@@ -153,7 +157,7 @@ export function SyncedChat({ listing, botRunning, version, onWorking }: Props) {
         <span class="bean-chat-name">{kindChip(listing)}</span>
       </div>
       <div class="bean-chat-scroll" ref={scrollRef}>
-        {rows.length === 0 && pending.length === 0 ? <div class="bean-panel-empty">Nothing here yet.</div> : null}
+        {rows.length === 0 && pending.length === 0 ? <div class="bean-panel-empty">{hasArchive ? "Fresh start — the earlier conversation is in the archived entry." : "Nothing here yet."}</div> : null}
         {rows.map((r, i) => {
           if (r.role === "user") {
             return (
@@ -192,7 +196,7 @@ export function SyncedChat({ listing, botRunning, version, onWorking }: Props) {
         {errors.map((e) => <div key={`e${e.id}`} class="bean-status bean-status--error">{e.text}</div>)}
       </div>
       <div class="bean-chat-input">
-        {!botRunning ? (
+        {listing.archived ? null : !botRunning ? (
           <div class="bean-status bean-status--info">The {surface} bot isn't running — start it in Settings to continue this chat here.</div>
         ) : listing.live ? (
           <div class="bean-agent-banner">

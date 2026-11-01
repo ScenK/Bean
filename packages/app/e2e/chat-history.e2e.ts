@@ -280,3 +280,42 @@ test("chat history: a synced Discord DM lists with its badge and opens read-only
     await Promise.allSettled([app.close(), home.cleanup()]);
   }
 });
+
+// #601: after the bot's `/new`, the archive joins the sidebar on its push (no reload), reads
+// `· archived` and stays read-only even with history; the live row shows the fresh start.
+test("chat history: a /new archive lists on push, read-only, and the live row says where it went", async () => {
+  const home = await makeBeanHome();
+  const beanDir = join(home.homeDir, ".bean");
+  await writeFile(join(beanDir, "discord.json"), JSON.stringify({ botToken: "t", ownerId: "u1" }));
+  const file = dbFile(beanDir);
+  new ConversationCatalog(file, "discord").upsert({ conversationId: "dm-1", place: { kind: "dm", title: "DM" }, ownerId: "u1" });
+  const store = new ConversationStore(file);
+  store.append("dm-1", { role: "user", content: speakerLine("Scen", "before the fresh start") });
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const chat = await openChat(app);
+    const rows = chat.locator(".bean-chat-sidebar-row", { hasText: "DM" });
+    await expect(rows).toHaveCount(1);
+    expect(store.clear("dm-1")).toBeTruthy();
+    // Stands in for the bot's history-change activity, which main forwards as this push.
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))!
+        .webContents.send("bean:synced-chat-event", { surface: "discord", conversationId: "dm-1" });
+    });
+    const archived = chat.locator(".bean-chat-sidebar-row", { hasText: "DM · archived" });
+    await expect(archived).toHaveCount(1);
+    await expect(rows).toHaveCount(2);
+
+    await archived.locator(".bean-chat-sidebar-open").click();
+    const synced = chat.locator(".bean-chat--synced");
+    await expect(synced.locator(".bean-bubble--user")).toHaveText(/before the fresh start/);
+    await expect(synced.locator(".bean-input--composer")).toBeDisabled();
+    await expect(synced.locator(".bean-input--composer")).toHaveAttribute("placeholder", "Archived after /new — read only");
+    await expect(synced.getByRole("button", { name: "Continue live" })).toHaveCount(0);
+
+    await rows.filter({ hasNotText: "archived" }).locator(".bean-chat-sidebar-open").click();
+    await expect(synced).toContainText("Fresh start — the earlier conversation is in the archived entry.");
+  } finally {
+    await Promise.allSettled([app.close(), home.cleanup()]);
+  }
+});

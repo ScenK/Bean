@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { groupThreads, mergeRows, withSaveAck } from "../src/renderer/components/chat/ChatSidebar.js";
-import { kindChip } from "../src/renderer/components/chat/SyncedChat.js";
+import { composerState, kindChip } from "../src/renderer/components/chat/SyncedChat.js";
 import type { ChatItem } from "../src/renderer/shared/chat-types.js";
 
 const now = new Date(2026, 9, 29, 15, 0);
@@ -46,4 +46,13 @@ test("the kind chip names a DM, a thread, a #channel and a running live session"
   expect(kindChip({ ...base, kind: "dm", title: "DM" })).toBe("DM");
   expect(kindChip({ ...base, kind: "thread", title: "bugs" })).toBe("bugs");
   expect(kindChip({ ...base, kind: "channel", title: "ops", live: true })).toBe("#ops · live");
+});
+
+test("an archive chips `· archived` (never with `· live`) and stays read-only with the bot up", () => {
+  const archive = { surface: "discord" as const, conversationId: "c~a", kind: "dm" as const, title: "DM", updatedAt: "", live: true, resumable: true, archived: true, archivedFrom: "c" };
+  expect(kindChip(archive)).toBe("DM · archived");
+  const rows = [{ role: "agent" as const, text: "done", agent: "claude" as const }];
+  expect(composerState(archive, true, rows)).toEqual({ readOnly: true, placeholder: "Archived after /new — read only" });
+  expect(composerState(archive, false, [])).toEqual({ readOnly: true, placeholder: "Archived after /new — read only" });
+  expect(composerState({ ...archive, archived: false, live: false, resumable: false }, true, [])).toEqual({ readOnly: false, placeholder: "Message Bean" });
 });
