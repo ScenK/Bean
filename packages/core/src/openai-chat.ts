@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { ConverseDeps, ConvoMsg, ToolCall } from "./converse.js";
 import type { ImageGenDeps } from "./image-gen.js";
+import { AGENT_RULES } from "./agent-rules.js";
 
 // Bean's brain talks to /v1/responses, NOT /v1/chat/completions. OpenAI rejects function
 // tools combined with any reasoning effort other than "none" on chat.completions for
@@ -43,6 +44,7 @@ interface ResponsesClient {
   responses: {
     create: (args: {
       model: string;
+      instructions?: string;
       input: ResponsesItem[];
       tools?: Array<{ type: "function"; name: string; description: string; parameters: object; strict: boolean } | { type: "web_search" }>;
       tool_choice?: "auto";
@@ -92,6 +94,9 @@ export function makeOpenAIConverseWithClient(client: ResponsesClient, reasoningE
   return async ({ model, messages, tools, webSearch }) => {
     const res = await client.responses.create({
       model,
+      // Bean's fixed runtime rules, on every brain call (converse, routine steps, memory,
+      // compaction, …) — this adapter is the one seam. A constant, so the prefix cache holds.
+      instructions: AGENT_RULES,
       input: messages.flatMap(toResponsesItems),
       // strict must be sent explicitly: Responses treats an omitted `strict` as true, and a
       // strict schema makes EVERY property required. That silently broke the optional

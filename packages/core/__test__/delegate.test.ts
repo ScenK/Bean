@@ -23,13 +23,14 @@ import {
   failedReason,
   type DelegateCallbacks,
 } from "../src/delegate.js";
+import { AGENT_RULES, REPO_PRECEDENCE } from "../src/agent-rules.js";
 
 // killTree's `ps` snapshot (kill-tree.ts): no descendants unless a test sets one.
 const ps = vi.hoisted(() => ({ out: "" }));
 vi.mock("node:child_process", async (orig) => ({ ...(await orig<typeof import("node:child_process")>()), execFileSync: () => ps.out }));
 
-// Every delegate prompt carries both contract suffixes.
-const GIT_TRAILER_INSTRUCTION = GIT_TRAILER + FAILED_SENTINEL_INSTRUCTION;
+// Every delegate prompt carries Bean's rules, the repo-precedence line and both contract suffixes.
+const GIT_TRAILER_INSTRUCTION = `\n\n${AGENT_RULES}\n\n${REPO_PRECEDENCE}` + GIT_TRAILER + FAILED_SENTINEL_INSTRUCTION;
 
 class FakeChild extends EventEmitter {
   stdout = new EventEmitter();

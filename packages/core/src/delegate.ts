@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import type { CliName } from "./launcher.js";
 import { escalateKill, killPendingGroups, killTree, signalGroups, treeGroups } from "./kill-tree.js";
 import { spawnEnv } from "./spawn-env.js";
+import { BEAN_GIT_IDENTITY, withCliRules } from "./agent-rules.js";
 
 export interface DelegateRequest {
   cli: CliName;
@@ -18,29 +19,8 @@ export interface DelegateRequest {
   browser?: boolean;
 }
 
-// Bean commits under its own identity, not the local user's — see .memory (git identity for delegate commits).
-export const BEAN_GIT_IDENTITY = {
-  GIT_AUTHOR_NAME: "Bean",
-  GIT_AUTHOR_EMAIL: "bean@localhost",
-  GIT_COMMITTER_NAME: "Bean",
-  GIT_COMMITTER_EMAIL: "bean@localhost",
-};
-
-// GIT_AUTHOR/COMMITTER env vars (see BEAN_GIT_IDENTITY) set the commit's identity fields, but
-// GitHub only renders a contributor badge for a name that also appears in the message body —
-// same reason Claude Code's own commits carry a Co-Authored-By trailer. The delegated CLI writes
-// the commit message itself, so the only way to get the trailer in is to ask for it in the prompt.
-export const GIT_TRAILER_INSTRUCTION =
-  "\n\nIf this task involves a git commit, append this trailer to the commit message: " +
-  `Co-Authored-By: ${BEAN_GIT_IDENTITY.GIT_AUTHOR_NAME} <${BEAN_GIT_IDENTITY.GIT_AUTHOR_EMAIL}>`;
-
-// A headless run that can't do its job still exits 0, so the model must say so in-band:
-// runDelegate turns a final answer whose first line starts with `FAILED:` into onError.
-export const FAILED_SENTINEL_INSTRUCTION =
-  "\n\nIf you could not fully complete the task — including when browser tools are missing or the " +
-  "browser isn't reachable, or when you would need to ask the user anything (permission, login, " +
-  "which browser) — your final message's first line must be `FAILED: <one-line reason>`. " +
-  "A headless run ends when you answer; there are no background retries.";
+// Moved to agent-rules.ts; re-exported for existing importers.
+export { BEAN_GIT_IDENTITY, GIT_TRAILER_INSTRUCTION, FAILED_SENTINEL_INSTRUCTION } from "./agent-rules.js";
 
 export const OPENCODE_BROWSER_REFUSAL = "This skill needs the browser; opencode can't — pick a claude or codex model.";
 
@@ -52,7 +32,7 @@ export function failedReason(result: string): string | undefined {
 }
 
 /** `codex exec [resume <id>]` argv, shared by delegate runs and codex live sessions (one spawn
- * per turn). `prompt` is passed as-is — callers append their own trailer/sentinel. */
+ * per turn). `prompt` is passed as-is — callers append their own rules (withCliRules). */
 export function codexExecArgs(req: { prompt: string; model?: string; resume?: string }): string[] {
   return [
     // `codex exec resume <id> <prompt>` accepts these flags too (not --sandbox; codex-cli 0.160).
@@ -76,7 +56,7 @@ export function codexExecArgs(req: { prompt: string; model?: string; resume?: st
 // Headless one-shot delegation, unlike launcher.ts's interactive TUI launches.
 export function delegateCommand(req: DelegateRequest): { command: string; args: string[] } {
   const modelArgs = req.model ? ["--model", req.model] : [];
-  const prompt = req.prompt + GIT_TRAILER_INSTRUCTION + FAILED_SENTINEL_INSTRUCTION;
+  const prompt = withCliRules(req.prompt, "delegate");
   const resume = req.resume;
   if (req.cli === "claude") {
     return {
@@ -102,7 +82,7 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
 }
 
 /** `opencode run [--session <id>]` argv, shared by delegate runs and opencode live sessions (one
- * spawn per turn). `prompt` is passed as-is — callers append their own trailer/sentinel. */
+ * spawn per turn). `prompt` is passed as-is — callers append their own rules (withCliRules). */
 export function opencodeRunArgs(req: { prompt: string; model?: string; resume?: string }): string[] {
   // --format json: the only opencode output that carries the session id (sessionID on every event).
   // `--` as in codexExecArgs: opencode's yargs otherwise parses a "-"-leading prompt as flags

@@ -5,7 +5,8 @@
 // falls back to a fresh run. See .memory/project-live-sessions.md.
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { BEAN_GIT_IDENTITY, GIT_TRAILER_INSTRUCTION } from "./delegate.js";
+import { BEAN_GIT_IDENTITY } from "./delegate.js";
+import { withCliRules } from "./agent-rules.js";
 import { escalateKill } from "./kill-tree.js";
 import { spawnEnv } from "./spawn-env.js";
 import {
@@ -106,7 +107,7 @@ export function startTurnLiveSession(
     armIdle();
     turns++;
     const first = turns === 1;
-    const prompt = first ? text + GIT_TRAILER_INSTRUCTION : text;
+    const prompt = first ? withCliRules(text, "live") : text;
     const startedAt = now();
     let sawSession = false;
     let mismatch = false;

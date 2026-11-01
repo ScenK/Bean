@@ -4,6 +4,7 @@ import type { ChildProcess } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CODEX_SIGNED_OUT, CODEX_THREAD_MISMATCH, startCodexLiveSession } from "../src/codex-live-session.js";
 import { killPendingGroups } from "../src/kill-tree.js";
+import { withCliRules } from "../src/agent-rules.js";
 import { TURN_QUEUE_LIMIT } from "../src/turn-live-session.js";
 import { RESUME_REJECTED, type TurnSummary } from "../src/live-session.js";
 
@@ -68,7 +69,7 @@ describe("startCodexLiveSession", () => {
     const h = harness();
     expect(h.spawned[0]!.args.slice(0, 4)).toEqual(["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"]);
     expect(h.spawned[0]!.args.at(-2)).toBe("--");
-    expect(h.spawned[0]!.args.at(-1)).toContain("Co-Authored-By: Bean");
+    expect(h.spawned[0]!.args.at(-1)).toBe(withCliRules("go", "live"));
     expect(h.spawned[0]!.args.at(-1)).not.toContain("FAILED:");
     await h.completeTurn("found it");
     expect(h.turns).toEqual([{ result: "found it", durationMs: 6100 }]);
@@ -195,7 +196,7 @@ describe("startCodexLiveSession", () => {
     h.handle.send("what changed?");
     expect(h.spawned).toHaveLength(1);
     expect(h.spawned[0]!.args.slice(-3, -1)).toEqual(["--", TID]);
-    expect(h.spawned[0]!.args.at(-1)).toMatch(/^what changed\?/);
+    expect(h.spawned[0]!.args.at(-1)).toBe(withCliRules("what changed?", "live"));
   });
 
   it("a lazy resume rejected on its first send is RESUME_REJECTED, never a fresh session", async () => {
