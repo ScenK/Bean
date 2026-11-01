@@ -34,6 +34,9 @@ export interface LiveStartRequest {
   ask: string;
   /** Recent chat items, oldest first; main keeps the tail (buildHandoff). */
   history?: HandoffItem[];
+  /** Short label for a composed `/skill` ask (`▶ name — rest`): the run log's instruction instead
+   * of the whole skill body. Trimmed; empty/absent = the ask; past LABEL_LIMIT is rejected. */
+  label?: string;
 }
 
 export type LiveStartResult = { sessionId: string; handedOver: number } | { error: string };
@@ -44,7 +47,9 @@ export const HANDOFF_ITEMS = 20;
 export const HANDOFF_CHARS = 8000;
 /** Per-item cap inside the handoff, so one long reply can't push out everything before it. */
 export const HANDOFF_ITEM_CHARS = 2000;
-export const ASK_LIMIT = 8000;
+/** Fits a composed `/skill` prompt (#597) — the largest local skills run ~17k characters. */
+export const ASK_LIMIT = 32000;
+export const LABEL_LIMIT = 2000;
 // Upper bound on what main even looks at; the handoff keeps far fewer.
 const HISTORY_MAX = 200;
 
@@ -143,7 +148,7 @@ interface Session {
   /** The CLI's session id once reported — claimed like resumeId, so Continue live can't put a
    * second writer on it while this child is still stopping. */
   cliId?: string;
-  /** The user's ask (fresh sessions only) — the delegate_runs `instruction`, never the handoff. */
+  /** The user's ask, or its `/skill` label (fresh sessions only) — the delegate_runs `instruction`, never the handoff. */
   ask?: string;
   /** claude's child pid the run record was moved to (see trackPid). */
   pid?: number;
@@ -248,6 +253,9 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (!req || !isLiveCli(req.agent) || typeof req.projectPath !== "string" || typeof req.ask !== "string") {
         return { error: "Invalid live session request." };
       }
+      const label = req.label === undefined ? "" : typeof req.label === "string" ? req.label.trim() : undefined;
+      if (label === undefined) return { error: "Invalid live session request." };
+      if (label.length > LABEL_LIMIT) return { error: `That label is too long (${label.length} of ${LABEL_LIMIT} characters).` };
       const agent = req.agent;
       if (!deps.enabledClis().includes(agent)) return { error: `${LIVE_AGENT_NAMES[agent]} isn't installed or is turned off in Settings.` };
       const handoff = buildHandoff(parseHistory(req.history), req.ask);
@@ -256,7 +264,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (refused) return { error: refused };
       // Registered before any await, so a window close during startup finds it and cancels the spawn.
       const sessionId = deps.newId();
-      const s: Session = { ...owner, agent, seq: 0, stopping: false, ask: req.ask.trim() };
+      const s: Session = { ...owner, agent, seq: 0, stopping: false, ask: label || req.ask.trim() };
       sessions.set(sessionId, s);
       const projectPath = req.projectPath || deps.scratchPath || "";
       let allowed = false;

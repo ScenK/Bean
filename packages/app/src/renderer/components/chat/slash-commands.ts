@@ -65,19 +65,24 @@ const sinkNames = (r: Routine): string => [
   ...(r.sinks.notify ? ["notification"] : []),
 ].join(", ") || "Dashboard";
 
-/** Every runnable entry for the mode. Agent mode lists agents only. Hidden/disabled skills and
- * notify-only watches (nothing to run) are left out. A terminal skill's caption is its delegate
+/** Every runnable entry for the mode. Agent mode lists agents and skills (any target — they run in
+ * the live session, captioned `→ <Agent>`), never sprouts. Hidden/disabled skills and notify-only
+ * watches (nothing to run) are left out. In Bean mode a terminal skill's caption is its delegate
  * destination, `<CLI> · <project>`. */
 export function slashEntries(mode: AgentId, c: SlashCatalogs): SlashEntry[] {
   const agents: AgentId[] = ["bean", ...c.agents];
   const raw: Omit<SlashEntry, "command">[] = agents.map((a) => ({ kind: "agent", name: a, slug: a, caption: AGENT_NAMES[a], description: "" }));
-  if (mode === "bean") {
-    for (const s of c.skills) {
-      if (s.hidden || s.enabled === false) continue;
-      const dest = s.target === "chat" || !c.delegate ? undefined : terminalDestination(s.name, c.delegate);
-      const caption = s.target === "chat" ? "chat" : dest ? `${dest.cli ?? "no coding agent"} · ${dest.projectName}` : "terminal";
-      raw.push({ kind: "skill", name: s.name, slug: slugify(s.name), caption, description: s.description });
+  for (const s of c.skills) {
+    if (s.hidden || s.enabled === false) continue;
+    if (mode !== "bean") {
+      raw.push({ kind: "skill", name: s.name, slug: slugify(s.name), caption: `→ ${AGENT_NAMES[mode]}`, description: s.description });
+      continue;
     }
+    const dest = s.target === "chat" || !c.delegate ? undefined : terminalDestination(s.name, c.delegate);
+    const caption = s.target === "chat" ? "chat" : dest ? `${dest.cli ?? "no coding agent"} · ${dest.projectName}` : "terminal";
+    raw.push({ kind: "skill", name: s.name, slug: slugify(s.name), caption, description: s.description });
+  }
+  if (mode === "bean") {
     for (const r of c.sprouts) {
       if (r.watch && r.steps.length === 0) continue;
       raw.push({
@@ -95,20 +100,21 @@ export function slashEntries(mode: AgentId, c: SlashCatalogs): SlashEntry[] {
 
 const rank = (k: SlashKind): number => (k === "agent" ? 0 : k === "skill" ? 1 : 2);
 
-/** The command a composer submission names, if any. Unknown bare `/foo` is undefined (Bean gets the
- * text); in agent mode only agent aliases resolve, everything else goes to the agent. Agent aliases
+/** The command a composer submission names, if any. Unknown bare `/foo` is undefined (Bean, or in
+ * agent mode the CLI, gets the text — so a Bean skill shadows a same-slug CLI-native command). Agent
+ * mode resolves agents and skills; `/sprout:` there is plain text for the CLI. Agent aliases
  * resolve whether or not the CLI is installed — that check is the caller's. */
 export function resolveSlash(text: string, mode: AgentId, c: SlashCatalogs): SlashResolution | undefined {
   const agent = parseSlash(text);
   if (agent) return { kind: "agent", name: agent.agent, rest: agent.rest };
-  if (mode !== "bean") return undefined;
   const m = /^\/(?:(skill|sprout):)?(\S+)(?:\s+([\s\S]*))?$/i.exec(text.trim());
   if (!m) return undefined;
   const of = m[1]?.toLowerCase() as "skill" | "sprout" | undefined;
+  if (mode !== "bean" && of === "sprout") return undefined;
   const slug = slugify(m[2]!);
   const rest = (m[3] ?? "").trim();
   const entries = slashEntries(mode, c);
-  for (const kind of of ? [of] : (["skill", "sprout"] as const)) {
+  for (const kind of of ? [of] : mode === "bean" ? (["skill", "sprout"] as const) : (["skill"] as const)) {
     const hits = entries.filter((e) => e.kind === kind && e.slug === slug);
     if (hits.length > 1) return { kind: "ambiguous", of: kind, slug, names: hits.map((e) => e.name) };
     if (hits[0]) return { kind, name: hits[0].name, rest };
@@ -123,7 +129,7 @@ export function resolveSlash(text: string, mode: AgentId, c: SlashCatalogs): Sla
  * stays the resolution precedence. The menu box is CSS-bounded and scrolls. */
 export function slashMenu(text: string, mode: AgentId, c: SlashCatalogs): SlashEntry[] {
   const m = /^\/(?:(skill|sprout):)?(\S*)$/i.exec(text);
-  if (!m || (m[1] && mode !== "bean")) return [];
+  if (!m || (m[1]?.toLowerCase() === "sprout" && mode !== "bean")) return [];
   const of = m[1]?.toLowerCase();
   const q = m[2]!.toLowerCase();
   const qSlug = slugify(q);

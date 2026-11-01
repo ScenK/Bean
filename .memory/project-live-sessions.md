@@ -4,12 +4,17 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
 
 - `core/live-session.ts` = multi-turn sibling of `delegate.ts`: a long-lived
   `claude -p --input-format stream-json --output-format stream-json --verbose
-  --dangerously-skip-permissions` process, user turns written as JSON lines to stdin, one
+  --dangerously-skip-permissions --chrome` process, user turns written as JSON lines to stdin, one
   `result` event per turn. The permissions bypass is a **deliberate spec decision** (true
   bypass, explicitly stronger than the desktop UI's "Auto" mode, which still prompts on
   dangerous actions) — do not "fix" it into a safer mode without re-checking the spec; the
   war-room use case (a whole channel steering a shell-capable agent on the host Mac) already
   accepted this risk in exchange for zero-friction streaming.
+- **Browser (#597):** claude live sessions always pass `--chrome` (desktop, Discord, Teams; fresh
+  and resumed), so anyone allowed to steer one drives the owner's logged-in Chrome. Bounded by
+  owner-only launch + `restricted` steering by default; war-room (`open`) widens it to the
+  channel — the same audience that already has a permission-bypassed shell (codex live sessions
+  already exposed browser/computer tools there). Web pages are a new prompt-injection source.
 - `chatops/live-sessions.ts` `LiveSessionRegistry` binds channelId → session. While bound,
   `bot.onMessage` routes the channel's messages straight to the session (bypassing
   `converse()` entirely) until someone says `stop` or the 30-minute idle timeout fires. The
@@ -230,7 +235,8 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   `resolvedPathSpawnFn` for claude — its stdin is `ignore`.
 - IPC `bean:live-start|send|stop` + push `bean:live-event` (`started`/`output`/`turn`/`ended`,
   each with `sessionId`, `agent`, per-session `seq`). Main checks the sender is the chat window,
-  the CLI is enabled, the project is configured or `scratchDir`, and sizes (`ASK_LIMIT`).
+  the CLI is enabled, the project is configured or `scratchDir`, and sizes (`ASK_LIMIT` 32000 —
+  fits a renderer-composed `/skill` prompt; optional `label` ≤2000 is the run-log instruction).
 - Handoff (`buildHandoff`, pure): last ≤20 user/reply items, ≤8k chars (≤2k per item), as `> `
   quoted context labeled non-instructions, then the ask; an oversized ask is rejected, never
   truncated; `count` is exactly what was sent. Memories/persona never go in.

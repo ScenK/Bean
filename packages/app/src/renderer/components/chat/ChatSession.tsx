@@ -505,13 +505,14 @@ export function ChatSession({
   };
 
   // The opening turn: the transcript so far is handed over (main quotes the tail), then the text.
-  const startSession = async (agent: LiveCli, text: string): Promise<void> => {
+  // `display` = the transcript's short label for a composed skill prompt (also main's run-log label).
+  const startSession = async (agent: LiveCli, text: string, display?: string): Promise<void> => {
     const l: LiveState = { key: newId(), agent, projectPath: agentProjectRef.current, turns: 0, busy: true, queued: [] };
     setLive(l);
     const history = handoffItems(itemsRef.current);
     const userId = newId();
-    setItems((prev) => [...prev, { kind: "user", id: userId, text, source: "live" }]);
-    const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask: text, history }, mountId)
+    setItems((prev) => [...prev, { kind: "user", id: userId, text, ...(display ? { display } : {}), source: "live" }]);
+    const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask: text, history, ...(display ? { label: display } : {}) }, mountId)
       .catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
     if ("error" in res) {
       // A crash during startup already reported itself through the ended event.
@@ -536,13 +537,15 @@ export function ChatSession({
     for (const q of cur.queued) await deliver(res.sessionId, agent, q);
   };
 
-  // Typed composer text in agent mode. Only this path reaches an agent — loopbacks, skill prompts
-  // and Save to notes call sendMessage directly, so they always stay Bean turns.
-  const sendToAgent = (agent: LiveCli, text: string): void => {
+  // Typed composer text in agent mode (or a `/skill` composed from it: `display` is its label,
+  // `typed` the command as typed, which a failed Continue live hands back). Only this path reaches
+  // an agent — loopbacks, Bean-mode skill prompts and Save to notes call sendMessage directly, so
+  // they always stay Bean turns.
+  const sendToAgent = (agent: LiveCli, text: string, display?: string, typed = text): void => {
     const l = liveRef.current;
-    if (!l || l.agent !== agent) { void startSession(agent, text); return; }
-    setItems((prev) => [...prev, { kind: "user", id: newId(), text, source: "live" }]);
-    if (!l.receipt) l.unopened?.push(text);
+    if (!l || l.agent !== agent) { void startSession(agent, text, display); return; }
+    setItems((prev) => [...prev, { kind: "user", id: newId(), text, ...(display ? { display } : {}), source: "live" }]);
+    if (!l.receipt) l.unopened?.push(typed);
     if (l.sessionId) void deliver(l.sessionId, agent, text);
     else l.queued.push(text);
   };
@@ -566,12 +569,21 @@ export function ChatSession({
     }
     if (slash?.kind === "skill") {
       const skill = skills.find((s) => s.name === slash.name)!;
+      const label = `▶ ${skill.name}${slash.rest ? ` — ${slash.rest}` : ""}`;
+      const live = modeRef.current;
+      if (isLiveAgent(live)) {
+        // Agent mode: any skill (chat or terminal target) runs in the live session — no card.
+        if (images?.length) { addStatus(`"${skill.name}" runs in ${AGENT_NAMES[live]} — it takes text only.`, "error"); return; }
+        if (skill.browser && live === "opencode") { addStatus(`"${skill.name}" needs the browser; opencode can't — switch to Claude Code or Codex.`, "error"); return; }
+        sendToAgent(live, composePrompt(skill, slash.rest), label, raw);
+        return;
+      }
       if (skill.target !== "chat") {
         if (images?.length) { addStatus(`"${skill.name}" runs as a background agent — it takes text only.`, "error"); return; }
         runTerminalSkill(skill, slash.rest);
         return;
       }
-      void sendMessage(composePrompt(skill, slash.rest), `▶ ${skill.name}${slash.rest ? ` — ${slash.rest}` : ""}`, false, images, "skill");
+      void sendMessage(composePrompt(skill, slash.rest), label, false, images, "skill");
       return;
     }
     if (slash?.kind === "sprout") {

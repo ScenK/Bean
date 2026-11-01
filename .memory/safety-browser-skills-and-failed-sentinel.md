@@ -12,7 +12,9 @@ hands an unattended agent the user's logged-in sessions, so:
   step's `Skill`, chatops `startRun` from its re-loaded skill, desktop via
   `DelegateStartRequest.skillName` → main's `skillBrowser()`. Never infer it from instruction
   text and never accept a renderer-, card-, or model-supplied boolean.
-- Live sessions, terminal launches and the routine builder deliberately don't get `--chrome`.
+- Terminal launches and the routine builder deliberately don't get `--chrome`. Claude **live
+  sessions always do** (#597, every surface) — they're steered turn by turn, so a `browser: true`
+  skill sent into one must find the browser; see project-live-sessions for the war-room exposure.
 
 **FAILED: sentinel.** A headless run that couldn't do its job still exits 0. Every delegate
 prompt ends with `FAILED_SENTINEL_INSTRUCTION`; on exit 0, a final result whose first line
