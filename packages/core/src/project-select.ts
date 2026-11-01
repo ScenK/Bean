@@ -8,9 +8,9 @@ import type { Project } from "./types.js";
 // than clicking "Run skill" on that same (unassigned) skill would.
 //
 // Priority: explicit multi-project assignment (Project.skills, set via the Skills panel's
-// "assign to projects" checkboxes) > legacy single defaultSkill badge > first configured project.
+// "assign to projects" checkboxes) > legacy single defaultSkill badge. No match = undefined: an
+// unlinked skill runs in the scratch workspace, never silently in whichever project is listed first.
 export function bestProjectForSkill(skillName: string, projects: Project[]): Project | undefined {
   return projects.find((p) => p.skills?.includes(skillName))
-    ?? projects.find((p) => p.defaultSkill === skillName)
-    ?? projects[0];
+    ?? projects.find((p) => p.defaultSkill === skillName);
 }

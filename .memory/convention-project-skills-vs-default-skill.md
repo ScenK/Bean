@@ -27,7 +27,8 @@ clicking "Run skill" on that same skill. Fixed by centralizing the resolution or
 barrel for core/main-process code and via the node-free `@bean/core/project-select` subpath
 for renderer code — same pattern as `persona.ts`/`@bean/core/persona`). **Any new surface that
 needs to pick a project for a skill name must call this helper, not re-derive the fallback
-chain.** Priority: `Project.skills` match → `Project.defaultSkill` match → `projects[0]`.
+chain.** Priority: `Project.skills` match → `Project.defaultSkill` match → none (`undefined` = scratch
+workspace; an unlinked skill never falls back to `projects[0]` — #586).
 Similarly, both the drop flow and the Skills panel's manual Run now build the initial prompt
 via the same `composePrompt()` (also exposed via `@bean/core/prompt` for the renderer) so the
 proposal textarea always starts from the same shape (skill body, then an optional `## Task`

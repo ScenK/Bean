@@ -35,7 +35,7 @@ export interface SlashCatalogs { agents: readonly LiveCli[]; skills: readonly Sk
 
 export interface SlashDestination { projectPath: string; projectName: string; model?: string; cli?: CliName }
 
-/** Where a `/` terminal skill runs as a delegate: the skill's project (bestProjectForSkill), else
+/** Where a `/` terminal skill runs as a delegate: the skill's linked project (bestProjectForSkill), else
  * the scratch workspace ("" — main maps it to the real path), on the skill's remembered model.
  * `cli` mirrors main's resolveDelegateSelection so the caption names the CLI that will run;
  * undefined = no enabled CLI (main reports that failure on the card). */
