@@ -13,7 +13,11 @@ are easy to break:
   error rows and no model work runs. Agent mode resolves agent aliases only.
 - A chat skill run keeps `source: "skill"` (no memory tools, `ipc.ts`). A sprout run gets one
   status row per invocation (`updateStatus` by id) so parallel runs don't cross.
-- A terminal skill (#495) runs as a tracked delegate straight from Enter (no confirm card step).
+- A terminal skill (#495, #585) opens a **pending** delegate card on Enter; its Start takes focus
+  (`autoFocus`, only the card a `/` send created — Bean-proposed/restored cards never do) so a
+  second Enter runs it, and a key-repeat Enter is ignored so a held key can't. The card's project
+  picker (assigned first, plus scratch `""`) and model (seeded once from model memory) can be
+  changed first; `confirmDelegate` saves the picked model per skill.
   Its menu caption `<CLI> · <project>` comes from `terminalDestination()`, which must mirror
   main's `resolveDelegateSelection` (a test pins the parity). No project → `""`, which
   `delegate-tasks.ts` maps to the real scratch path. Browser access stays main's re-derivation

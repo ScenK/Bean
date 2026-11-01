@@ -97,6 +97,7 @@ export function ChatPanel({
   onOfferStart,
   onOfferDismiss,
   onDelegateConfirm,
+  autoFocusDelegateId,
   onDelegateDismiss,
   onDelegateCancelTask,
   onContinueLive,
@@ -156,7 +157,9 @@ export function ChatPanel({
   onTodoDismiss: (id: string) => void;
   onOfferStart: (id: string) => void;
   onOfferDismiss: (id: string) => void;
-  onDelegateConfirm: (id: string, editedPrompt: string, model?: string) => void;
+  onDelegateConfirm: (id: string, editedPrompt: string, choice: { projectPath: string; model?: string }) => void;
+  /** The delegate card a `/` send just created — the only card that takes focus. */
+  autoFocusDelegateId?: string;
   onDelegateDismiss: (id: string) => void;
   onDelegateCancelTask: (id: string) => void;
   onContinueLive: (id: string) => void;
@@ -556,20 +559,23 @@ export function ChatPanel({
             );
           }
           if (it.kind === "delegate") {
-            // Same "assigned skills, else every project" fallback used for the sibling
-            // ProposalCard below — resolves the project chip to a name instead of a raw path.
-            const assignedDelegate = it.proposal.skillName
-              ? projects.filter((p) => p.skills?.includes(it.proposal.skillName!))
-              : [];
+            // Every project, the skill's assigned ones first.
+            const skillName = it.proposal.skillName;
+            const assignedFirst = skillName
+              ? [...projects].sort((a, b) => Number(!!b.skills?.includes(skillName)) - Number(!!a.skills?.includes(skillName)))
+              : projects;
             return (
               <DelegateCard
                 key={it.id}
                 item={it}
                 cliOptions={clis}
                 modelOptions={runModels}
-                projectOptions={assignedDelegate.length > 0 ? assignedDelegate : projects}
-                browser={skills.find((s) => s.name === it.proposal.skillName)?.browser === true}
-                onConfirm={(edited, model) => onDelegateConfirm(it.id, edited, model)}
+                projectOptions={assignedFirst}
+                lastUsedModel={skillName ? lastUsedModels[skillName] : undefined}
+                autoFocus={it.id === autoFocusDelegateId}
+                onReturnFocus={() => inputRef.current?.focus()}
+                browser={skills.find((s) => s.name === skillName)?.browser === true}
+                onConfirm={(edited, choice) => onDelegateConfirm(it.id, edited, choice)}
                 onDismiss={() => onDelegateDismiss(it.id)}
                 onCancelTask={() => onDelegateCancelTask(it.id)}
                 onContinueLive={canContinueLive(it, clis, !!live) ? () => onContinueLive(it.id) : undefined}

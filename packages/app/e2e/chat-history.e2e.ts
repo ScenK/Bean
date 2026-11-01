@@ -175,9 +175,22 @@ test("chat history: New chat in place, and a delegate keeps running in a chat sw
     await chat.locator(".bean-chat-sidebar-new").click();
     await expect(shown.locator(".bean-bubble")).toHaveCount(0);
 
+    // #585: ↵ opens a pending card whose Start takes focus; a held Enter presses nothing, a second ↵ runs it.
+    await shown.locator(".bean-input--composer").fill("/review");
+    await expect(shown.locator(".bean-slash-menu")).toContainText("review-pr"); // catalogs loaded
     await shown.locator(".bean-input--composer").fill("/review-pr now");
-    await shown.locator(".bean-send").click();
-    await expect(shown.locator(".bean-card", { hasText: "delegate" }).getByRole("button", { name: /stop|cancel/i })).toBeVisible();
+    await chat.keyboard.down("Enter");
+    const card = shown.locator(".bean-card", { hasText: "delegate" });
+    const start = card.getByRole("button", { name: "Delegate" });
+    await expect(start).toBeFocused();
+    await chat.keyboard.down("Enter"); // still held: a key-repeat, now on the focused Start
+    await chat.keyboard.up("Enter");
+    await chat.waitForTimeout(300);
+    await expect(start).toBeEnabled(); // still pending
+    await expect(card.getByRole("button", { name: /stop|cancel/i })).toHaveCount(0);
+    await chat.keyboard.press("Enter");
+    await expect(card.getByRole("button", { name: /stop|cancel/i })).toBeVisible();
+    await expect(shown.locator(".bean-input--composer")).toBeFocused();
     const reviewRow = chat.locator(".bean-chat-sidebar-row", { hasText: "review-pr" });
     await expect(reviewRow).toBeVisible();
 
@@ -216,11 +229,13 @@ test("chat history: closing the window counts tasks across chats and stops them 
     const stopButton = shown.locator(".bean-card", { hasText: "delegate" }).getByRole("button", { name: /stop|cancel/i });
     await shown.locator(".bean-input--composer").fill("/review-pr one");
     await shown.locator(".bean-send").click();
+    await shown.locator(".bean-card", { hasText: "delegate" }).getByRole("button", { name: "Delegate" }).click();
     await expect(stopButton).toBeVisible();
     await chat.locator(".bean-chat-sidebar-new").click();
     await expect(shown.locator(".bean-bubble")).toHaveCount(0);
     await shown.locator(".bean-input--composer").fill("/review-pr two");
     await shown.locator(".bean-send").click();
+    await shown.locator(".bean-card", { hasText: "delegate" }).getByRole("button", { name: "Delegate" }).click();
     await expect(stopButton).toBeVisible();
 
     const closed = chat.waitForEvent("close");

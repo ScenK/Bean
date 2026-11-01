@@ -229,9 +229,10 @@ describe("ChatWindow slash commands", () => {
     expect(bean.chat!.mock.calls[0]![0]).toMatchObject({ message: "/nope hi", source: "typed" });
   });
 
-  it("a terminal skill starts a tracked delegate at its caption's destination; a second Enter can't duplicate it", async () => {
+  it("a terminal skill opens a pending card at its caption's destination; Start (focused) runs it once", async () => {
     bean.listProjects!.mockResolvedValue([{ name: "Bean", path: "/p/bean", skills: ["deploy"] }]);
     bean.getModelMemory = vi.fn(async (name: string) => (name === "deploy" ? "sonnet" : undefined));
+    bean.setModelMemory = vi.fn(async () => {});
     bean.availableModels!.mockResolvedValue([{ id: "sonnet", label: "Sonnet", availableOn: ["claude"] }]);
     bean.getConfig = vi.fn(async () => ({ delegateCli: "claude" }));
     let started!: (taskId: string) => void;
@@ -242,17 +243,29 @@ describe("ChatWindow slash commands", () => {
     await key("Escape");
 
     await send("/deploy fix X");
-    await key("Enter"); // the composer is already empty
+    expect(bean.delegateStart).not.toHaveBeenCalled(); // pending: the user can still change where it runs
+    expect(root.textContent).toContain("project · Bean");
+    expect(root.textContent).toContain("Sonnet"); // the remembered model
+    const startButton = document.activeElement as HTMLButtonElement;
+    expect(startButton.closest(".bean-card-actions")).not.toBeNull(); // ↵ ↵ runs it
+    const held = new KeyboardEvent("keydown", { key: "Enter", repeat: true, bubbles: true, cancelable: true });
+    startButton.dispatchEvent(held);
+    expect(held.defaultPrevented).toBe(true); // a held Enter can't press Start
+
+    await act(async () => { startButton.click(); });
+    await flush();
+    expect(document.activeElement).toBe(composer());
     expect(bean.delegateStart).toHaveBeenCalledTimes(1);
     const req = bean.delegateStart!.mock.calls[0]![0];
     expect(req).toMatchObject({ projectPath: "/p/bean", skillName: "deploy", model: "sonnet", instruction: "deploy — fix X" });
     expect(req.prompt).toContain("## Task\nfix X");
     expect(Object.keys(req).sort()).toEqual(["instruction", "model", "projectPath", "prompt", "skillName"]); // no browser flag
+    expect(bean.setModelMemory).toHaveBeenCalledWith("deploy", "sonnet");
     expect(bean.chat).not.toHaveBeenCalled();
-    expect(root.textContent).toContain("project · Bean");
     expect(root.textContent).toContain("Starting...");
     const buttons = (): HTMLButtonElement[] => [...root.querySelectorAll<HTMLButtonElement>(".bean-card .bean-card-actions button")];
-    expect(buttons()[0]!.disabled).toBe(true); // Enter was the confirm — nothing left to re-click
+    expect(buttons()[0]!.disabled).toBe(true);
+    expect(root.querySelector(".bean-card .bean-chip-menu-trigger")).toBeNull(); // pickers locked once started
 
     await act(async () => { started("t1"); });
     await flush();
@@ -264,13 +277,45 @@ describe("ChatWindow slash commands", () => {
     expect(bean.chat!.mock.calls[0]![0]).toMatchObject({ source: "loopback" });
 
     await send("/deploy x");
-    expect(bean.delegateStart).toHaveBeenCalledTimes(2); // each Enter is its own run
+    expect(bean.delegateStart).toHaveBeenCalledTimes(1); // a new pending card, not a run
+    expect(root.querySelectorAll(".bean-card").length).toBe(2);
+  });
+
+  it("a terminal skill's card runs where the user picks — another project, then scratch", async () => {
+    bean.listProjects!.mockResolvedValue([{ name: "Other", path: "/p/other" }, { name: "Bean", path: "/p/bean", skills: ["deploy"] }]);
+    bean.delegateStart = vi.fn(async () => "t2");
+    await mount();
+    await send("/deploy");
+    const trigger = (): HTMLButtonElement => root.querySelector<HTMLButtonElement>(".bean-card .bean-chip-menu-trigger")!;
+    await act(async () => { trigger().click(); });
+    const rows = (): HTMLButtonElement[] => [...root.querySelectorAll<HTMLButtonElement>(".bean-chip-menu-row")];
+    expect(rows().map((r) => r.textContent)).toEqual(["✓ Bean", "Other", "No project — scratch"]); // assigned first
+    await act(async () => { rows()[2]!.click(); });
+    expect(trigger().className).toContain("bean-chip-menu-trigger--dashed");
+    expect(trigger().textContent).toContain("project · scratch");
+    await act(async () => { trigger().click(); });
+    await act(async () => { rows()[1]!.click(); });
+    await act(async () => { (document.activeElement as HTMLButtonElement).click(); });
+    await flush();
+    expect(bean.delegateStart!.mock.calls[0]![0]).toMatchObject({ projectPath: "/p/other", skillName: "deploy" });
+    expect(root.textContent).toContain("project · Other"); // the committed project
+  });
+
+  it("a Bean-proposed delegate card gets the project picker but never takes the composer's focus", async () => {
+    bean.listProjects!.mockResolvedValue([{ name: "Bean", path: "/p/bean" }]);
+    bean.chat!.mockResolvedValue({ reply: "On it?", model: "m", proposedDelegate: { projectPath: "/p/bean", instruction: "check", composedPrompt: "go" } });
+    await mount();
+    await send("check the repo");
+    expect(root.querySelector(".bean-card .bean-chip-menu-trigger")?.textContent).toContain("project · Bean");
+    expect(document.activeElement).toBe(composer());
   });
 
   it("a terminal skill with no project runs in scratch and shows main's no-CLI failure on the card", async () => {
     bean.delegateStart = vi.fn(async () => "t9");
     await mount();
     await send("/deploy");
+    await act(async () => { (document.activeElement as HTMLButtonElement).click(); });
+    await flush();
     expect(bean.delegateStart!.mock.calls[0]![0]).toMatchObject({ projectPath: "", skillName: "deploy" }); // scratch: main maps ""
     await act(async () => { listeners.onDelegateEvent!({ taskId: "t9", type: "failed", message: "No enabled delegate CLI found — enable one in Settings." }); });
     await flush();
