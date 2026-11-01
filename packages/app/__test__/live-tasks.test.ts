@@ -8,7 +8,7 @@ import {
   type CliName, type LiveSessionCallbacks, type LiveSessionRequest, type ResumableRun,
 } from "@bean/core";
 import {
-  ASK_LIMIT, HANDOFF_CHARS, HANDOFF_ITEMS, LIVE_CAP_REACHED, LIVE_SESSION_CAP, buildHandoff, createLiveTasks, liveSpawnFn,
+  ASK_LIMIT, LABEL_LIMIT, HANDOFF_CHARS, HANDOFF_ITEMS, LIVE_CAP_REACHED, LIVE_SESSION_CAP, buildHandoff, createLiveTasks, liveSpawnFn,
   type HandoffItem, type LiveEvent,
 } from "../src/live-tasks.js";
 import { liveBadgeAgent } from "../src/renderer/task-bubbles.js";
@@ -149,15 +149,20 @@ describe("createLiveTasks", () => {
     expect(await h.live.start(A, { agent: "bash", projectPath: "/proj", ask: "a" })).toEqual({ error: "Invalid live session request." });
     expect(await h.live.start(A, { agent: "claude", projectPath: "/etc", ask: "a" })).toEqual({ error: "That project isn't configured in Bean." });
     expect(await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "x".repeat(ASK_LIMIT + 1) })).toEqual({ error: expect.stringMatching(/too long/) });
+    expect(await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "a", label: 7 })).toEqual({ error: "Invalid live session request." });
+    expect(await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "a", label: "x".repeat(LABEL_LIMIT + 1) })).toEqual({ error: expect.stringMatching(/label is too long/) });
     expect(h.reqs).toHaveLength(0);
 
-    const res = await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "a" });
+    // A composed /skill prompt fits (#597): exactly ASK_LIMIT starts and sends.
+    expect(ASK_LIMIT).toBe(32000);
+    const res = await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "x".repeat(ASK_LIMIT) });
     const id = "sessionId" in res ? res.sessionId : "";
     expect(h.live.send(A, id, "x".repeat(ASK_LIMIT + 1))).toMatch(/too long/);
+    expect(h.live.send(A, id, "x".repeat(ASK_LIMIT))).toBeUndefined();
     expect(h.live.send(B, id, "not my window")).toBe("That agent session has ended.");
     h.live.stop(B, id);
     expect(h.stops()).toBe(0);
-    expect(h.sent).toEqual([]);
+    expect(h.sent).toEqual(["x".repeat(ASK_LIMIT)]);
   });
 
   it("surfaces a full next-turn queue", async () => {
@@ -250,6 +255,18 @@ describe("createLiveTasks CLI session ids", () => {
     expect(h.events.at(-1)!.e).toEqual({
       type: "session", sessionId: "s1", agent: "claude", mountId: "m1", seq: 2, receipt: { sessionId: "sess-a", agent: "claude", label: "claude · sess…" },
     });
+  });
+
+  it("records a /skill run's label instead of its composed body; an empty label falls back to the ask", async () => {
+    const h = harness();
+    await h.live.start(A, { agent: "claude", projectPath: "", ask: "# Review PR\n…long skill body…", label: "  ▶ review-pr — fix X " });
+    h.cbs[0]!.onSessionId!("sess-a");
+    expect(rows(h.dir)).toMatchObject({ run: { instruction: "▶ review-pr — fix X" } });
+
+    const h2 = harness();
+    await h2.live.start(A, { agent: "claude", projectPath: "", ask: "fix the bug", label: "   " });
+    h2.cbs[0]!.onSessionId!("sess-a");
+    expect(findDelegateRun(join(h2.dir, "bean.db"), "sess-a", () => true, "desktop")).toMatchObject({ run: { instruction: "fix the bug" } });
   });
 
   it("ignores an id its CLI can't continue", async () => {

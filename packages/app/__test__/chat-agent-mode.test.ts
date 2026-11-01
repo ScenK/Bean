@@ -410,4 +410,38 @@ describe("ChatWindow agent mode", () => {
     expect(chatCalls().map((c) => c.message)).toEqual(["first", "second"]);
     expect(ta.value).toBe("");
   });
+  it("agent mode: /skill runs its composed prompt in the live session — starts one, then steers it; no delegate card", async () => {
+    bean.listSkills!.mockResolvedValue([
+      { name: "Review PR", description: "review", body: "# Review PR\nCheck it.", target: "terminal" },
+      { name: "shop", description: "browse", body: "# Shop\nBuy it.", target: "chat", browser: true },
+    ]);
+    bean.availableClis!.mockResolvedValue(["claude", "opencode"]);
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await send("/claude");
+
+    await send("/review-pr fix X");
+    expect(bean.delegateStart).not.toHaveBeenCalled();
+    const req = bean.liveStart!.mock.calls[0]![0];
+    expect(req).toMatchObject({ agent: "claude", label: "▶ Review PR — fix X" });
+    expect(req.ask).toContain("# Review PR");
+    expect(req.ask).toContain("fix X");
+    expect(root.textContent).toContain("▶ Review PR — fix X");
+    expect(root.textContent).not.toContain("Check it.");
+
+    await live({ type: "turn", result: "done" });
+    await send("/skill:shop");
+    expect(bean.liveSend).toHaveBeenCalledWith("s1", expect.stringContaining("# Shop"), expect.any(String));
+    expect(bean.liveStart).toHaveBeenCalledTimes(1);
+
+    // opencode has no browser: a browser skill is refused before anything is sent.
+    await send("/opencode");
+    await send("/shop");
+    expect(root.textContent).toContain(`"shop" needs the browser; opencode can't`);
+    expect(bean.liveStart).toHaveBeenCalledTimes(1);
+    // An unknown /foo still goes to the CLI as typed.
+    await send("/compact");
+    expect(bean.liveStart).toHaveBeenLastCalledWith(expect.objectContaining({ agent: "opencode", ask: "/compact" }), expect.any(String));
+    expect(bean.liveStart!.mock.calls.at(-1)![0].label).toBeUndefined();
+  });
 });

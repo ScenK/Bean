@@ -10,7 +10,12 @@ are easy to break:
   kind sharing a slug are an error row, never a silent pick — a menu pick runs the row's
   `command` text, so it hits the same check.
 - Unknown bare `/foo` is plain text to Bean; unknown qualified / ambiguous / sprout-with-text are
-  error rows and no model work runs. Agent mode resolves agent aliases only.
+  error rows and no model work runs.
+- **Agent mode (#597)** resolves agents and skills (never sprouts; `/sprout:` and unknown `/foo`
+  go to the CLI as text, so a Bean skill shadows a same-slug CLI command). Any skill, chat or
+  terminal target, is composed in the renderer and sent into the live session (`sendToAgent` with
+  a `▶` `display` label, which main records as the run's instruction) — no card. Images and a
+  `browser: true` skill on opencode are refused inline.
 - A chat skill run keeps `source: "skill"` (no memory tools, `ipc.ts`). A sprout run gets one
   status row per invocation (`updateStatus` by id) so parallel runs don't cross.
 - A terminal skill (#495, #585) opens a **pending** delegate card on Enter; its Start takes focus

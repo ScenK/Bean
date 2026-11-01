@@ -43,6 +43,9 @@ export function liveSessionCommand(req: LiveSessionRequest): { command: string; 
       "--output-format", "stream-json",
       "--verbose",
       "--dangerously-skip-permissions",
+      // Always the browser (#597): live sessions are steered turn by turn, so a `browser: true`
+      // skill sent into one must find Claude in Chrome. Headless claude loads it only with the flag.
+      "--chrome",
       ...modelArgs,
       ...(req.resume ? ["--resume", req.resume] : []),
     ],

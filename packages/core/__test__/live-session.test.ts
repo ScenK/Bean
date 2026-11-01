@@ -6,7 +6,7 @@ import { claudeTurnSummary, liveSessionCommand, userTurnLine, startLiveSession, 
 import { withCliRules } from "../src/agent-rules.js";
 
 describe("liveSessionCommand", () => {
-  it("builds the multi-turn stream-json claude invocation with permissions bypassed", () => {
+  it("builds the multi-turn stream-json claude invocation with permissions bypassed and the browser on", () => {
     const { command, args } = liveSessionCommand({ projectPath: "/p", prompt: "hi" });
     expect(command).toBe("claude");
     expect(args).toEqual([
@@ -15,7 +15,12 @@ describe("liveSessionCommand", () => {
       "--output-format", "stream-json",
       "--verbose",
       "--dangerously-skip-permissions",
+      "--chrome",
     ]);
+  });
+
+  it("keeps --chrome on a resumed session", () => {
+    expect(liveSessionCommand({ projectPath: "/p", prompt: "", resume: "3f2a-uuid" }).args).toContain("--chrome");
   });
 
   it("appends --resume <id> when continuing a session", () => {

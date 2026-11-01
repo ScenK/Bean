@@ -61,15 +61,25 @@ describe("slash commands", () => {
     for (const e of slashMenu("/foo", "bean", clash)) expect(resolveSlash(e.command, "bean", clash)).toEqual(res);
   });
 
-  it("unknown bare stays text; unknown qualified is an error; agent mode only knows agents", () => {
+  it("unknown bare stays text; unknown qualified is an error; agent mode knows agents and skills, not sprouts", () => {
     expect(resolveSlash("/nope hi", "bean", catalogs)).toBeUndefined();
     expect(resolveSlash("/skill:nope", "bean", catalogs)).toEqual({ kind: "unknown", of: "skill", slug: "nope" });
     expect(resolveSlash("/sprout:pings", "bean", catalogs)).toEqual({ kind: "unknown", of: "sprout", slug: "pings" });
     expect(resolveSlash("see /review-code", "bean", catalogs)).toBeUndefined();
-    expect(resolveSlash("/review-code", "claude", catalogs)).toBeUndefined();
+    expect(resolveSlash("/review-code fix it", "claude", catalogs)).toEqual({ kind: "skill", name: "Review Code", rest: "fix it" });
+    expect(resolveSlash("/deploy", "claude", catalogs)).toEqual({ kind: "skill", name: "deploy", rest: "" });
+    expect(resolveSlash("/nightly", "claude", catalogs)).toEqual({ kind: "skill", name: "Nightly", rest: "" });
+    expect(resolveSlash("/paused-one", "claude", catalogs)).toBeUndefined(); // sprouts: the CLI gets the text
+    expect(resolveSlash("/sprout:nightly", "claude", catalogs)).toBeUndefined();
+    expect(resolveSlash("/compact", "claude", catalogs)).toBeUndefined();
+    expect(resolveSlash("/skill:nope", "claude", catalogs)).toEqual({ kind: "unknown", of: "skill", slug: "nope" });
     expect(resolveSlash("/bean", "claude", catalogs)).toEqual({ kind: "agent", name: "bean", rest: "" });
-    expect(slashMenu("/", "claude", catalogs).map((e) => e.name)).toEqual(["bean", "claude"]);
-    expect(slashMenu("/skill:", "claude", catalogs)).toEqual([]);
+    const menu = slashMenu("/", "claude", catalogs);
+    expect(menu.filter((e) => e.kind === "sprout")).toEqual([]);
+    expect(menu.find((e) => e.name === "deploy")).toMatchObject({ kind: "skill", caption: "→ Claude Code", command: "/deploy" });
+    expect(menu.find((e) => e.kind === "skill" && e.name === "claude")?.command).toBe("/skill:claude");
+    expect(slashMenu("/skill:", "claude", catalogs).map((e) => e.name)).toContain("Review Code");
+    expect(slashMenu("/sprout:", "claude", catalogs)).toEqual([]);
   });
 
   it("filters hidden/disabled skills and notify-only watches", () => {
