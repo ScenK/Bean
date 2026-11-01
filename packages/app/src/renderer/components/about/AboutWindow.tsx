@@ -63,7 +63,7 @@ export function AboutWindow() {
         <p class="bean-about-desc">{info?.description ?? ""}</p>
         <div class="bean-about-meta">
           <div>Author · {info?.author ?? "Scen.K"}</div>
-          <div>© {year} {info?.author ?? "Scen.K"} in San Antonio</div>
+          <div>© {year} {info?.author ?? "Scen.K"} · Camas, Washington</div>
         </div>
         {info && !info.isPackaged && (
           <div class="bean-about-update-msg">Updates aren't available in a dev build.</div>
