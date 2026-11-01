@@ -14,7 +14,7 @@ will fall back to the host's global git config identity.
 
 Env vars only set the commit's identity *fields* — GitHub only shows a contributor badge for a
 name that also appears in the message body. `delegateCommand()` therefore appends
-`GIT_TRAILER_INSTRUCTION` (exported for tests) to every delegated prompt, asking the CLI to add a
+`GIT_TRAILER_INSTRUCTION` (in `agent-rules.ts`, via `withCliRules`) to every delegated prompt, asking the CLI to add a
 `Co-Authored-By: Bean <bean@localhost>` trailer if it commits — the same mechanism Claude Code's
 own commits use for its own attribution. This does **not** change who authenticates the push or
 `gh pr create` call: that still runs on the local user's SSH key / `gh` token, since neither spawn

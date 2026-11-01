@@ -3,6 +3,7 @@ import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import { claudeTurnSummary, liveSessionCommand, userTurnLine, startLiveSession, LIVE_SESSION_IDLE_MS, RESUME_REJECTED } from "../src/live-session.js";
+import { withCliRules } from "../src/agent-rules.js";
 
 describe("liveSessionCommand", () => {
   it("builds the multi-turn stream-json claude invocation with permissions bypassed", () => {
@@ -74,8 +75,8 @@ describe("startLiveSession", () => {
     f.stdin.on("data", (c: Buffer) => written.push(c.toString("utf8")));
     startLiveSession({ projectPath: "/p", prompt: "investigate" }, { onOutput: () => {}, onTurnComplete: () => {}, onExit: () => {} }, () => f.child);
     const first = JSON.parse(written.join("").split("\n")[0]!);
-    expect(first.message.content[0].text).toContain("investigate");
-    expect(first.message.content[0].text).toContain("Co-Authored-By: Bean");
+    expect(first.message.content[0].text).toBe(withCliRules("investigate", "live"));
+    expect(first.message.content[0].text).not.toContain("FAILED:");
   });
 
   it("streams assistant tail lines and per-turn summaries, and send() writes further turns", () => {
@@ -191,8 +192,7 @@ describe("startLiveSession resume", () => {
     expect(spawn).toHaveBeenCalledWith("claude", expect.arrayContaining(["--resume", "s1"]), "/p");
     expect(h.pid).toBe(4242);
     const first = JSON.parse(written.join("").split("\n")[0]!);
-    expect(first.message.content[0].text).toContain("what changed?");
-    expect(first.message.content[0].text).toContain("Co-Authored-By: Bean");
+    expect(first.message.content[0].text).toBe(withCliRules("what changed?", "live"));
     h.send("and then?");
     expect(spawn).toHaveBeenCalledTimes(1);
   });

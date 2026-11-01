@@ -3,7 +3,8 @@
 // stdout, driven remotely from a chatops channel. Permissions are deliberately bypassed (true bypass).
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { BEAN_GIT_IDENTITY, GIT_TRAILER_INSTRUCTION, claudeTailLine, sessionIdOf } from "./delegate.js";
+import { BEAN_GIT_IDENTITY, claudeTailLine, sessionIdOf } from "./delegate.js";
+import { withCliRules } from "./agent-rules.js";
 import { spawnEnv } from "./spawn-env.js";
 
 /** CLIs that can host a live session, claude first (the default engine): claude (one long-lived
@@ -231,7 +232,7 @@ export function startLiveSession(
       settle(new Error(`claude exited with ${reason}${tail ? ` - ${tail}` : ""}`));
     });
 
-    c.stdin?.write(userTurnLine(text + GIT_TRAILER_INSTRUCTION));
+    c.stdin?.write(userTurnLine(withCliRules(text, "live")));
   };
 
   if (req.prompt) open(req.prompt);

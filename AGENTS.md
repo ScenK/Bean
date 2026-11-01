@@ -145,6 +145,9 @@ call paths and signatures.
     the output); `delegate.ts` is a tracked one-shot (stream, collect, cancel the process group);
     `live-session.ts` / `turn-live-session.ts` are multi-turn live sessions (agent mode in the
     desktop chat, live channels in chatops).
+  - Runtime agent rules live in `agent-rules.ts`: fixed, compiled-in constants (no loader, no
+    user override) sent to the brain as `instructions` and appended to delegate prompts and
+    live-session openings via `withCliRules`. Advisory only — enforcement stays in code.
   - `system-control.ts` — the model never writes AppleScript; it picks a verb from a closed union
     and each maps to a fixed, validated `execFile` argv. Keep it that way.
   - `chatops/` — only an explicit @mention, reply, or DM gets a turn; untagged channel chatter is
