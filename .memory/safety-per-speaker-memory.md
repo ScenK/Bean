@@ -31,5 +31,5 @@ preference as the owner's. The platform id gates capture (role); the name is onl
   the headless host (only the desktop triggers it).
 - **Recall is dated** (#352): `memoriesBlock()` suffixes every line with `(saved YYYY-MM-DD HH:MM UTC)`
   from `createdAt` (`(saved unknown)` if it doesn't parse), and both the default header and
-  `ROUTINE_MEMORY_HEADER` carry `MEMORY_CONFLICT_CLAUSE` (later-saved wins). It stays in the
-  trailing context message — never move it into the leading (cached) system message.
+  `ROUTINE_MEMORY_HEADER` carry `MEMORY_CONFLICT_CLAUSE` (later-saved wins). It rides its own
+  user-role message after history — never in any system message (safety-saved-text-never-system.md).

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { ActionTool } from "./converse.js";
 import { openDb } from "./db.js";
 import { formatSkillBody } from "./frontmatter.js";
+import { quoteFence } from "./prompt.js";
 import { isValidSkillName, loadLayeredSkills, serializeSkillWrite } from "./skill-library.js";
 import type { Routine, RunRecord } from "./routine-store.js";
 import type { RoutineRunResult } from "./routine-runner.js";
@@ -49,7 +50,7 @@ const RANK: Record<RunRecord["status"], number> = { failed: 0, "needs-attention"
 export const skillHash = (body: string): string => createHash("sha256").update(body).digest("hex");
 const hash = skillHash;
 // Recorded output can't close the quote it's shown in.
-const quote = (s: string): string => s.replaceAll("<<<", "< < <").replaceAll(">>>", "> > >");
+const quote = quoteFence;
 
 /** The trailing ```proposals fence the retro skill ends its report with. Matched anchored at the
  * LAST opener only — unanchored, the lazy body scan restarts at every opener (quadratic). */

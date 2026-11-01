@@ -169,9 +169,10 @@ export function validateCandidate(
  * provenance is recorded when the turn arrives (ChatTurn.source) and can't be inferred later. */
 export const isCitable = (t: ChatTurn): boolean => t.role === "user" && t.source === "typed";
 
-function existingBlock(existing: Memory[]): string {
+/** The existing-memory list for de-duplication — user-role data, never a citable source. */
+export function existingBlock(existing: Memory[]): string {
   if (existing.length === 0) return "Existing memory is empty.";
-  return "Already remembered (do not repeat):\n" + existing.map((m) => `- ${m.text}`).join("\n");
+  return "Already saved — for de-duplication only, not citable:\n" + existing.map((m) => `- ${m.text.replace(/\s*[\r\n]+\s*/g, " ")}`).join("\n");
 }
 
 /** What one extraction pass produced. `rejected` counts remember calls that failed validation;
@@ -198,8 +199,8 @@ export async function extractMemories(
 
   const lines = turns.map((t, i) => `${citableAt(t, i) ? "user (typed)" : `${t.role} (not citable)`}: ${t.content}`);
   const messages: ConvoMsg[] = [
-    { role: "system", content: `${EXTRACT_INSTRUCTIONS}\n\n${existingBlock(existing)}` },
-    { role: "user", content: `Conversation:\n${lines.join("\n")}` },
+    { role: "system", content: EXTRACT_INSTRUCTIONS },
+    { role: "user", content: `${existingBlock(existing)}\n\nConversation:\n${lines.join("\n")}` },
   ];
 
   let toolCalls: ToolCall[] = [];
