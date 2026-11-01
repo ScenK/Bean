@@ -491,6 +491,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     // A resume has no opening turn for a skill to frame.
     const picked = refusal || resume ? {} : await liveSkill(cli, p.proposal.skillName);
     if (picked.refusal) refusal = { refused: "no-record", text: picked.refusal };
+    // The claimed proposal is frozen, so this is the race-free registry check (Start's pre-claim
+    // check can go stale while the card sits). A resume keeps its recorded, maybe unregistered, folder.
+    if (!refusal && !resume && !(await registeredProject(p.proposal.projectPath))) {
+      refusal = { refused: "no-record", text: "That project isn't registered any more — this session wasn't started." };
+    }
     if (refusal) {
       await updateTo(deps.cards.liveSessionResultCard({ projectName: await projectLabel(resume?.projectPath ?? p.proposal.projectPath, !!resume), startedBy, outcome: "cancelled" }));
       if (!quiet) await fx.post(refusal.text);
@@ -570,6 +575,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       ? `War-room mode: anyone here can steer. Say \`stop\` to end it.${ready}`
       : `Restricted mode: only you steer. Add co-drivers with \`+driver @name\`, remove with \`-driver @name\`. Say \`stop\` to end it.${ready}`);
     return { ok: true };
+  }
+
+  // A live card's project is client-influenced (Teams' Start submit, Discord's select): only an
+  // exact registry match may become the cwd. No `__none__`/scratch here, unlike the delegate card.
+  async function registeredProject(path: string): Promise<string | undefined> {
+    return path ? (await deps.loadProjects()).find((pr) => pr.path === path)?.path : undefined;
   }
 
   // Shared by Start and the desk's Continue live. Re-checked at the launch point (the row or
@@ -1737,6 +1748,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           const { refusal } = await liveSkill(liveCliOf(peek.proposal, v), liveSkillNameOf(peek.proposal, v));
           if (refusal) {
             await fx.post(refusal);
+            return;
+          }
+          // Effective path: Teams submits it, Discord already wrote its select into the proposal.
+          if (!peek.proposal.resume && !(await registeredProject(v.projectPath || peek.proposal.projectPath))) {
+            await fx.post("That project isn't registered any more — pick another and press Start again.");
             return;
           }
         }
