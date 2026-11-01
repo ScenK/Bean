@@ -58,7 +58,7 @@ describe("slash commands", () => {
     expect(resolveSlash("/foo-bar", "bean", clash)).toEqual(res);
     expect(resolveSlash("/skill:Foo-Bar x", "bean", clash)).toEqual(res);
     // A menu pick runs the entry's command, which resolves the same way.
-    for (const e of slashMenu("/foo", "bean", clash).entries) expect(resolveSlash(e.command, "bean", clash)).toEqual(res);
+    for (const e of slashMenu("/foo", "bean", clash)) expect(resolveSlash(e.command, "bean", clash)).toEqual(res);
   });
 
   it("unknown bare stays text; unknown qualified is an error; agent mode only knows agents", () => {
@@ -68,8 +68,8 @@ describe("slash commands", () => {
     expect(resolveSlash("see /review-code", "bean", catalogs)).toBeUndefined();
     expect(resolveSlash("/review-code", "claude", catalogs)).toBeUndefined();
     expect(resolveSlash("/bean", "claude", catalogs)).toEqual({ kind: "agent", name: "bean", rest: "" });
-    expect(slashMenu("/", "claude", catalogs).entries.map((e) => e.name)).toEqual(["bean", "claude"]);
-    expect(slashMenu("/skill:", "claude", catalogs).entries).toEqual([]);
+    expect(slashMenu("/", "claude", catalogs).map((e) => e.name)).toEqual(["bean", "claude"]);
+    expect(slashMenu("/skill:", "claude", catalogs)).toEqual([]);
   });
 
   it("filters hidden/disabled skills and notify-only watches", () => {
@@ -110,15 +110,33 @@ describe("slash commands", () => {
     }
   });
 
-  it("menu: sections in order, prefix before description matches, captions, capped with +N more", () => {
+  it("menu: every entry, Skills > Sprouts > Switch to, prefix before description matches, captions", () => {
     const all = slashMenu("/", "bean", catalogs);
-    expect(all.entries.map((e) => e.kind)).toEqual([...all.entries.map((e) => e.kind)].sort((a, b) => ["agent", "skill", "sprout"].indexOf(a) - ["agent", "skill", "sprout"].indexOf(b)));
-    expect(all.entries).toHaveLength(8);
-    expect(all.more).toBe(slashEntries("bean", catalogs).length - 8);
-    const sprouts = slashMenu("/sprout:", "bean", catalogs).entries;
+    expect(all).toEqual([...slashEntries("bean", catalogs)].sort((a, b) =>
+      ["skill", "sprout", "agent"].indexOf(a.kind) - ["skill", "sprout", "agent"].indexOf(b.kind)));
+    // No cap: 20 skills all listed, skills first.
+    const many = { ...catalogs, skills: Array.from({ length: 20 }, (_, i) => skill(`s${i}`)) };
+    const big = slashMenu("/", "bean", many);
+    expect(big.filter((e) => e.kind === "skill")).toHaveLength(20);
+    expect(big.slice(0, 20).every((e) => e.kind === "skill")).toBe(true);
+    const sprouts = slashMenu("/sprout:", "bean", catalogs);
     expect(sprouts.map((e) => e.caption)).toEqual(["sprout → Discord, notification", "sprout → note · Paused · runs once"]);
     const ranked = slashMenu("/beta", "bean", { agents: [], skills: [skill("alpha", { description: "beta things" }), skill("Beta")], sprouts: [] });
-    expect(ranked.entries.map((e) => e.name)).toEqual(["Beta", "alpha"]); // prefix, then description
+    expect(ranked.map((e) => e.name)).toEqual(["Beta", "alpha"]); // prefix, then description
+  });
+
+  it("menu: the row a typed command resolves to leads, so Enter on the first row matches resolveSlash", () => {
+    const c = { ...catalogs, skills: [...catalogs.skills, skill("claude-review"), skill("night-owl")] };
+    // /claude: the agent alias wins resolution, so it (and its section) lead over the claude-review skill.
+    expect(slashMenu("/claude", "bean", c).map((e) => e.command)).toEqual(["/claude", "/skill:claude", "/claude-review"]);
+    expect(slashMenu("/c", "bean", c)[0]?.kind).toBe("skill"); // no exact match: plain section order
+    expect(slashMenu("/nightly", "bean", c)[0]?.name).toBe("Nightly");
+    expect(slashMenu("/sprout:nightly", "bean", c)[0]?.name).toBe("nightly");
+    for (const t of ["/claude", "/nightly", "/review-code", "/deploy", "/bean"]) {
+      const first = slashMenu(t, "bean", c)[0]!;
+      const res = resolveSlash(t, "bean", c);
+      expect(res && "name" in res ? res.name : undefined).toBe(first.name);
+    }
   });
 });
 

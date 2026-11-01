@@ -203,7 +203,7 @@ export function ChatPanel({
   const menu = slashText && !busy
     ? slashMenu(slashText, mode, { agents: liveAgents, skills, sprouts, delegate: { projects, clis, models: runModels, delegateCli, lastUsedModels } })
     : undefined;
-  const pickable = menu?.entries ?? [];
+  const pickable = menu ?? [];
   const activeEntry = pickable.length ? pickable[((slashIndex % pickable.length) + pickable.length) % pickable.length] : undefined;
   const onComposerInput = (value: string): void => {
     const next = /^\/\S*$/.test(value) ? value : "";
@@ -611,11 +611,11 @@ export function ChatPanel({
         {agentMode && incognito ? (
           <div class="bean-status bean-status--info">Off the record covers Bean only — {agentName} keeps its own transcript.</div>
         ) : null}
-        {menu && (menu.entries.length > 0 || menu.more > 0) ? (
+        {menu?.length ? (
           <div ref={slashMenuRef} class="bean-chip-menu-list bean-slash-menu" role="listbox" aria-label="Commands">
-            {menu.entries.map((e, i) => (
+            {menu.map((e, i) => (
               <>
-                {e.kind !== menu.entries[i - 1]?.kind ? <div class="bean-chip-menu-hint">{SECTION_TITLES[e.kind]}</div> : null}
+                {e.kind !== menu[i - 1]?.kind ? <div class="bean-chip-menu-hint">{SECTION_TITLES[e.kind]}</div> : null}
                 <button
                   type="button"
                   role="option"
@@ -632,7 +632,6 @@ export function ChatPanel({
                 </button>
               </>
             ))}
-            {menu.more > 0 ? <div class="bean-chip-menu-hint">+{menu.more} more</div> : null}
           </div>
         ) : null}
         {imageError ? <div class="bean-status bean-status--error">{imageError}</div> : null}

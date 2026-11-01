@@ -33,7 +33,7 @@ describe("agent-mode helpers", () => {
 
   it("lists only installed agents in the / popover", () => {
     const names = (text: string, agents: LiveCli[]): string[] =>
-      slashMenu(text, "bean", { agents, skills: [], sprouts: [] }).entries.map((e) => e.name);
+      slashMenu(text, "bean", { agents, skills: [], sprouts: [] }).map((e) => e.name);
     expect(names("/", ["claude"])).toEqual(["bean", "claude"]);
     expect(names("/c", ["claude", "codex"])).toEqual(["claude", "codex"]);
     expect(names("/claude fix", ["claude"])).toEqual([]);

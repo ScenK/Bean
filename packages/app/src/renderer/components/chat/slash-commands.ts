@@ -52,7 +52,8 @@ export type SlashResolution =
   | { kind: "ambiguous"; of: "skill" | "sprout"; slug: string; names: string[] }
   | { kind: "unknown"; of: "skill" | "sprout"; slug: string };
 
-export const SLASH_MENU_ROWS = 8;
+/** The `/` menu's section order (Bean mode) — display only; `rank()` is resolution precedence. */
+const MENU_ORDER: SlashKind[] = ["skill", "sprout", "agent"];
 export const SECTION_TITLES: Record<SlashKind, string> = { agent: "Switch to", skill: "Skills", sprout: "Sprouts" };
 
 export const slugify = (name: string): string =>
@@ -115,23 +116,26 @@ export function resolveSlash(text: string, mode: AgentId, c: SlashCatalogs): Sla
   return of ? { kind: "unknown", of, slug } : undefined;
 }
 
-/** The `/` menu for the text typed so far (`/`, `/rev`, `/sprout:ni`): prefix matches before
- * description matches, at most SLASH_MENU_ROWS rows in section order, plus how many more matched. */
-export function slashMenu(text: string, mode: AgentId, c: SlashCatalogs): { entries: SlashEntry[]; more: number } {
+/** The `/` menu for the text typed so far (`/`, `/rev`, `/sprout:ni`): every match, by section —
+ * Skills, Sprouts, Switch to — prefix matches before description matches. The row a typed command
+ * resolves to (its exact bare/qualified command) leads, with its section, so Enter on the first
+ * row still runs what `resolveSlash` would. This display order is separate from `rank()`, which
+ * stays the resolution precedence. The menu box is CSS-bounded and scrolls. */
+export function slashMenu(text: string, mode: AgentId, c: SlashCatalogs): SlashEntry[] {
   const m = /^\/(?:(skill|sprout):)?(\S*)$/i.exec(text);
-  if (!m || (m[1] && mode !== "bean")) return { entries: [], more: 0 };
+  if (!m || (m[1] && mode !== "bean")) return [];
   const of = m[1]?.toLowerCase();
   const q = m[2]!.toLowerCase();
   const qSlug = slugify(q);
   const scored = slashEntries(mode, c).flatMap((e) => {
     if (of && e.kind !== of) return [];
-    const score = e.slug.startsWith(qSlug) || e.name.toLowerCase().startsWith(q) ? 0
-      : q && e.description.toLowerCase().includes(q) ? 1 : -1;
+    // 0 = what resolveSlash picks for this text (a qualified slug, or the bare command), 1 = prefix, 2 = description.
+    const score = qSlug && (of ? e.slug === qSlug : e.command === `/${qSlug}`) ? 0
+      : e.slug.startsWith(qSlug) || e.name.toLowerCase().startsWith(q) ? 1
+      : q && e.description.toLowerCase().includes(q) ? 2 : -1;
     return score < 0 ? [] : [{ e, score }];
   });
-  const shown = [...scored].sort((a, b) => a.score - b.score).slice(0, SLASH_MENU_ROWS);
-  return {
-    entries: shown.sort((a, b) => rank(a.e.kind) - rank(b.e.kind) || a.score - b.score).map((s) => s.e),
-    more: scored.length - shown.length,
-  };
+  const exactKind = scored.find((s) => s.score === 0)?.e.kind;
+  const section = (k: SlashKind): number => (k === exactKind ? -1 : MENU_ORDER.indexOf(k));
+  return scored.sort((a, b) => section(a.e.kind) - section(b.e.kind) || a.score - b.score).map((s) => s.e);
 }
