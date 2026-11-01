@@ -703,9 +703,9 @@ export function ChatSession({
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "proposal" ? { ...it, state: "cancelled" } : it)));
   };
 
-  const startDelegate = async (id: string, projectPath: string, prompt: string, instruction: string, model?: string, skillName?: string): Promise<void> => {
+  const startDelegate = async (id: string, projectPath: string, prompt: string, instruction: string, model?: string, skillName?: string, cli?: CliName): Promise<void> => {
     if (pendingDelegateStartsRef.current.has(id)) return;
-    const start = window.bean.delegateStart({ projectPath, prompt, instruction, model, skillName }, mountId);
+    const start = window.bean.delegateStart({ projectPath, prompt, instruction, model, skillName, cli }, mountId);
     rememberProject(projectPath);
     pendingDelegateStartsRef.current.set(id, start);
     setItems((prev) => markDelegateStarting(prev, id));
@@ -722,12 +722,12 @@ export function ChatSession({
     }
   };
 
-  const confirmDelegate = async (id: string, editedPrompt: string, choice: { projectPath: string; model?: string }): Promise<void> => {
+  const confirmDelegate = async (id: string, editedPrompt: string, choice: { projectPath: string; model?: string; cli?: CliName }): Promise<void> => {
     const item = itemsRef.current.find(
       (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
     );
     if (!item || (item.state !== "pending" && item.state !== "starting")) return;
-    const { projectPath, model } = choice;
+    const { projectPath, model, cli } = choice;
     const { skillName } = item.proposal;
     if (skillName && model) {
       void window.bean.setModelMemory(skillName, model);
@@ -739,7 +739,7 @@ export function ChatSession({
       items.map((it) => (it.kind === "delegate" && it.id === id ? { ...it, proposal: { ...it.proposal, projectPath } } : it));
     itemsRef.current = commit(itemsRef.current);
     setItems(commit);
-    return startDelegate(id, projectPath, editedPrompt, item.proposal.instruction, model, skillName);
+    return startDelegate(id, projectPath, editedPrompt, item.proposal.instruction, model, skillName, cli);
   };
 
   // `/` terminal skill: adds a pending delegate card at the destination its menu caption named; the

@@ -4,7 +4,7 @@ import type { PickableModel } from "../../shared/ProposalCard.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { AgentAvatar } from "../../shared/AgentAvatar.js";
 import type { CliName, Project } from "@bean/core";
-import { resolveCliModelSelection } from "@bean/core/models";
+import { pickModel, resolveCliModelSelection } from "@bean/core/models";
 
 type DelegateItem = Extract<ChatItem, { kind: "delegate" }>;
 
@@ -40,6 +40,7 @@ export function DelegateCard({
   onDismiss,
   onCancelTask,
   cliOptions,
+  delegateCli,
   modelOptions,
   projectOptions,
   browser,
@@ -49,13 +50,15 @@ export function DelegateCard({
   onReturnFocus,
 }: {
   item: DelegateItem;
-  /** projectPath "" = scratch workspace (main maps it). model is set only when chosen. */
-  onConfirm: (editedPrompt: string, choice: { projectPath: string; model?: string }) => void;
+  /** projectPath "" = scratch workspace (main maps it). `cli` is the CLI the card shows; main runs
+   * exactly it or fails the task. `model` is unset when that CLI lists none (it runs its default). */
+  onConfirm: (editedPrompt: string, choice: { projectPath: string; model?: string; cli?: CliName }) => void;
   onDismiss: () => void;
   onCancelTask: () => void;
   cliOptions?: CliName[];
-  /** Configured models annotated with which enabled CLIs support each. The chosen model and
-   * compatible CLI are resolved as one pair in main before the delegate starts. */
+  /** Settings' delegate CLI preference ("" = auto) — with the remembered model, picks the default CLI. */
+  delegateCli?: string;
+  /** Configured models annotated with which enabled CLIs support each; the menu lists the chosen CLI's. */
   modelOptions?: PickableModel[];
   /** The project picker's rows (ChatPanel lists the skill's assigned projects first). "No project —
    * scratch" is always offered alongside them. */
@@ -64,7 +67,7 @@ export function DelegateCard({
   browser?: boolean;
   /** Set only when Continue live is offered (eligible receipt, CLI enabled, no live session). */
   onContinueLive?: () => void;
-  /** The skill's remembered model — seeds the picker once, so a late read never overwrites a pick. */
+  /** The skill's remembered model — a default only, so a late read never overwrites a pick. */
   lastUsedModel?: string;
   /** Only the card a `/` send just created: its Start takes focus so ↵ ↵ runs it. */
   autoFocus?: boolean;
@@ -75,33 +78,30 @@ export function DelegateCard({
   const [showDetail, setShowDetail] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const pending = item.state === "pending";
-  const [modelChoice, setModelChoice] = useState<string | undefined>(pending ? lastUsedModel : undefined);
+  const [modelChoice, setModelChoice] = useState<string | undefined>(undefined);
+  const [cliChoice, setCliChoice] = useState<CliName | undefined>(undefined);
   const [projectPath, setProjectPath] = useState(item.proposal.projectPath);
-  const seeded = useRef(pending && lastUsedModel !== undefined);
   const startRef = useRef<HTMLButtonElement>(null);
   const models = modelOptions ?? [];
-  // selection only answers "is any CLI enabled" (the confirm gate). The CLI/model pair the run
-  // actually uses is resolved in main from the Settings delegate preference, which this card
-  // can't see — so displaying selection.model here would lie (e.g. show "sonnet" while main
-  // starts opencode's default). Show/checkmark only the user's explicit pick; otherwise neutral.
-  const selection = resolveCliModelSelection(models, cliOptions ?? [], { model: modelChoice });
-  // A remembered model no enabled CLI supports anymore is dropped, not shown or sent.
-  const chosenModel = modelChoice && selection?.model === modelChoice ? modelChoice : undefined;
-  const explicitLabel = chosenModel ? (models.find((m) => m.id === chosenModel)?.label ?? chosenModel) : undefined;
+  const clis = cliOptions ?? [];
+  // The real pair the run uses: the user's CLI pick, else the one main's resolveDelegateSelection
+  // picks from Settings + the remembered model; then a model that CLI offers (pickModel keeps the
+  // pick/remembered model only while the CLI offers it). Sent as-is, so the chip never lies.
+  const preferred = clis.includes(delegateCli as CliName) ? delegateCli as CliName : clis[0];
+  const cli = cliChoice ?? resolveCliModelSelection(models, clis, {
+    ...(preferred ? { cli: preferred } : {}), ...(lastUsedModel ? { lastUsed: lastUsedModel } : {}),
+  })?.cli;
+  const cliModels = cli ? models.filter((m) => m.availableOn.includes(cli)) : [];
+  const model = cli ? pickModel(models, cli, modelChoice, lastUsedModel) : undefined;
+  const modelLabel = model ? (models.find((m) => m.id === model)?.label ?? model) : "default model";
   // Once started, the card shows the project the run committed to (confirmDelegate writes it back).
   const shownPath = pending ? projectPath : item.proposal.projectPath;
   const projectName = projectOptions?.find((p) => p.path === shownPath)?.name ?? (shownPath || "scratch");
 
-  useEffect(() => {
-    if (seeded.current || !pending || !lastUsedModel) return;
-    seeded.current = true;
-    setModelChoice((c) => c ?? lastUsedModel);
-  }, [lastUsedModel, pending]);
-
   useEffect(() => { if (autoFocus && pending) startRef.current?.focus(); }, []);
 
   const start = (): void => {
-    onConfirm(prompt, { projectPath, ...(chosenModel ? { model: chosenModel } : {}) });
+    onConfirm(prompt, { projectPath, ...(model ? { model } : {}), ...(cli ? { cli } : {}) });
     onReturnFocus?.();
   };
 
@@ -150,36 +150,52 @@ export function DelegateCard({
         )}
         {item.proposal.skillName ? <span class="bean-chip">skill · {item.proposal.skillName}</span> : null}
         {browser ? (
-          <span class="bean-chip">{chosenModel && selection?.cli === "codex" ? "🌐 uses your browser and computer" : "🌐 uses your browser"}</span>
+          <span class="bean-chip">{pending && cli === "codex" ? "🌐 uses your browser and computer" : "🌐 uses your browser"}</span>
         ) : null}
-        {pending && models.length > 0 ? (
-          <ChipMenu chipLabel={selection
-            ? <>{explicitLabel ?? "Bean picks model"}</>
-            : <>No CLI enabled · Settings</>}>
-            {(close) => (
-              <div class="bean-chip-menu-list">
-                {models.map((m) => {
-                  const available = m.availableOn.some((candidate) => cliOptions?.includes(candidate));
-                  return (
+        {pending && cli ? (
+          <>
+            <ChipMenu chipLabel={<>{cli}</>}>
+              {(close) => (
+                <div class="bean-chip-menu-list">
+                  {clis.map((c) => (
                     <button
-                      key={m.id}
+                      key={c}
                       type="button"
-                      disabled={!available}
-                      class={`bean-chip-menu-row bean-chip-menu-row--model${chosenModel === m.id ? " bean-chip-menu-row--on" : ""}${available ? "" : " bean-chip-menu-row--dimmed"}`}
-                      onClick={() => { if (available) { seeded.current = true; setModelChoice(m.id); close(); } }}
+                      class="bean-chip-menu-row"
+                      onClick={() => {
+                        setCliChoice(c);
+                        // A pick the new CLI doesn't offer is cleared, not carried back on a later switch.
+                        if (modelChoice && !models.some((m) => m.id === modelChoice && m.availableOn.includes(c))) setModelChoice(undefined);
+                        close();
+                      }}
                     >
-                      <span class="bean-chip-menu-row-title">{chosenModel === m.id ? "✓ " : ""}{m.label}</span>
-                      <span class="bean-chip-menu-caption">
-                        {m.availableOn.join("  /  ") || "no CLI support"}
-                      </span>
+                      {cli === c ? "✓ " : ""}{c}
                     </button>
-                  );
-                })}
-              </div>
+                  ))}
+                </div>
+              )}
+            </ChipMenu>
+            {cliModels.length > 0 ? (
+              <ChipMenu chipLabel={<>{modelLabel}</>}>
+                {(close) => (
+                  <div class="bean-chip-menu-list">
+                    {cliModels.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        class={`bean-chip-menu-row bean-chip-menu-row--model${model === m.id ? " bean-chip-menu-row--on" : ""}`}
+                        onClick={() => { setModelChoice(m.id); close(); }}
+                      >
+                        {model === m.id ? "✓ " : ""}{m.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </ChipMenu>
+            ) : (
+              <span class="bean-chip">{modelLabel}</span>
             )}
-          </ChipMenu>
-        ) : selection ? (
-          <span class="bean-chip">{explicitLabel ?? "Bean picks model"}</span>
+          </>
         ) : pending ? (
           <span class="bean-chip">no CLI enabled · Settings</span>
         ) : null}
@@ -214,14 +230,14 @@ export function DelegateCard({
           type="button"
           class="bean-btn"
           ref={startRef}
-          disabled={!pending || !selection}
+          disabled={!pending || !cli}
           onClick={start}
           // A held Enter (the one that sent the `/` command) must not press the new Start.
           onKeyDown={(e) => { if (e.key === "Enter" && e.repeat) e.preventDefault(); }}
         >
           {running || starting
             ? `${STATE_LABEL[item.state]} ${mmss}`
-            : pending && !selection ? "Enable a CLI in Settings" : STATE_LABEL[item.state]}
+            : pending && !cli ? "Enable a CLI in Settings" : STATE_LABEL[item.state]}
         </button>
         {pending ? <button type="button" class="bean-btn bean-btn--ghost" onClick={() => { onDismiss(); onReturnFocus?.(); }}>Dismiss</button> : null}
         {running ? <button type="button" class="bean-btn bean-btn--ghost" onClick={onCancelTask}>Cancel</button> : null}

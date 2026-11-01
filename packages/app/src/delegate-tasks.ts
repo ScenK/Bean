@@ -32,6 +32,9 @@ export interface DelegateStartRequest {
   // delegated CLI itself.
   instruction: string;
   model?: string; // literal configured model id (models.ts)
+  // The CLI the card showed. Set → that CLI or nothing: a resolve that lands elsewhere (disabled
+  // since render, or it no longer offers `model`) fails the task instead of running another CLI.
+  cli?: CliName;
   // The proposal's skill. Main re-resolves it to decide browser access — the renderer never
   // sends a trusted browser flag, so a forged or unknown name just grants nothing.
   skillName?: string;
@@ -44,7 +47,8 @@ export interface DelegateStartRequest {
 }
 
 export interface DelegateTasksDeps {
-  resolveCli: (model?: string) => CliModelSelection | undefined;
+  /** `cli` overrides the Settings preference (the routine adapter never passes it). */
+  resolveCli: (model?: string, cli?: CliName) => CliModelSelection | undefined;
   send: (event: DelegateEvent) => void;
   newId: () => string;
   // Finder-launched Electron gets launchd's minimal PATH; detectClis already resolves the
@@ -136,8 +140,11 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
       if (!(await deps.projectAllowed(req.projectPath).catch(() => false))) return fail("That project isn't configured in Bean.");
       // Runs on one project overlap freely: each agent isolates itself in its own worktree.
       const browser = req.skillName && deps.skillBrowser ? await deps.skillBrowser(req.skillName) : false;
-      const choice = deps.resolveCli(req.model);
+      const choice = deps.resolveCli(req.model, req.cli);
       if (!choice) return fail("No enabled delegate CLI found — enable one in Settings.");
+      if (req.cli && choice.cli !== req.cli) {
+        return fail(`${req.cli} is turned off in Settings${req.model ? ` or doesn't offer ${req.model}` : ""} — nothing was run.`);
+      }
       recordRun(deps.dir, taskId, req.projectPath, process.pid);
       // Set by onDone/onError if the delegate settles synchronously during spawn (e.g. an
       // immediate failure) — before `tasks.set` below has run, so emit()'s terminal-release

@@ -610,8 +610,8 @@ app.whenReady().then(async () => {
     // live session may spawn in, whatever path the renderer sent.
     const projectAllowed = async (path: string): Promise<boolean> =>
       path === scratchDir(dir) || (await loadProjects(projectsFile(dir))).some((p) => p.path === path);
-    const resolveDelegateCli = (model?: string) =>
-      resolveDelegateSelection(cliModels, enabledClis(), runtime.getDelegateCli(), model);
+    const resolveDelegateCli = (model?: string, cli?: CliName) =>
+      resolveDelegateSelection(cliModels, enabledClis(), cli ?? runtime.getDelegateCli(), model);
 
     const delegateTasks = createDelegateTasks({
       resolvedPath,
