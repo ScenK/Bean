@@ -46,8 +46,12 @@ async function compactOnce(
   deps: ConverseDeps,
 ): Promise<void> {
   if (conversations.turnCount(conversationId) <= COMPACT_THRESHOLD) return;
+  const clears = conversations.clearCount(conversationId);
   const oldest = conversations.oldest(conversationId, SUMMARIZE_COUNT);
   const summary = await summarizeTurns(oldest, deps);
+  // A "/new" landed while the summary was pending: the old summary must not overwrite the
+  // fresh conversation's first turns (seqs restart at 1, so they can't tell us).
+  if (conversations.clearCount(conversationId) !== clears) return;
   conversations.replaceOldest(conversationId, SUMMARIZE_COUNT, { role: "user", content: formatSummaryBlock(summary) });
 }
 

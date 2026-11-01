@@ -54,4 +54,6 @@ Group channels (Discord/Teams) balance "natural" against "predictable" with one 
   doesn't use this store at all; its `fetchRecent` reads the channel live.
 - **`/new`** (like the `cancel` text command) clears the conversation via
   `ConversationStore.clear()` and fences ambient with `setAmbientCutoff(now)`, so pre-reset
-  chatter can't leak back in.
+  chatter can't leak back in. Any writer that awaits between reading and rewriting history
+  (compaction's summary) must fence on `ConversationStore.clearCount()` — seqs restart at 1
+  after a clear, so they can't detect the reset.

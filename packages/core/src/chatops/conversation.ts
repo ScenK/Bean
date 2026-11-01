@@ -15,6 +15,8 @@ function toChatTurn(row: TurnRow): ChatTurn {
 export class ConversationStore {
   private db: DatabaseSync;
   private onChange?: (conversationId: string) => void;
+  // ponytail: in-process, like compact.ts's inFlight map — one bot process owns a conversation.
+  private clears = new Map<string, number>();
 
   /** `onChange` fires after every history write (append, replaceOldest, clear) — the one place
    * every writer (bot turns, delegate results, compaction, outbox notices) goes through. */
@@ -61,7 +63,14 @@ export class ConversationStore {
     this.db.prepare("DELETE FROM thread_sessions WHERE conversation_id = ?").run(conversationId);
     this.db.prepare("UPDATE chatops_conversations SET live_cli = NULL, live_session_id = NULL WHERE conversation_id = ?")
       .run(conversationId);
+    this.clears.set(conversationId, this.clearCount(conversationId) + 1);
     this.changed(conversationId);
+  }
+
+  /** Bumped by every clear() — lets a writer that awaited (compaction) tell the history it read
+   * from apart from a fresh one with reused seqs. */
+  clearCount(conversationId: string): number {
+    return this.clears.get(conversationId) ?? 0;
   }
 
   /** The CLI's own session id from this thread's last delegate run with that CLI, if any. */
