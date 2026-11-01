@@ -270,6 +270,7 @@ export function ChatWindow() {
           listing={syncedListing}
           botRunning={bots[syncedListing.surface] === true}
           version={syncedVersion}
+          hasArchive={synced.some((c) => c.surface === syncedListing.surface && c.archivedFrom === syncedListing.conversationId)}
           onWorking={(w) => {
             const key = syncedKey(syncedListing);
             setSyncedWorking((prev) => (w ? key : prev === key ? undefined : prev));

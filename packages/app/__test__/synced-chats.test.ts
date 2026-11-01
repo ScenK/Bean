@@ -70,7 +70,7 @@ describe("buildSyncedChatHandlers", () => {
   it("an archive lists read-only: send and resume refuse it before the bot", async () => {
     const archive: ChatopsConversation = { ...ROWS[0]!, conversationId: "d1~a", archivedFrom: "d1" };
     const { h, deps } = handlers({ listConversations: vi.fn(() => [archive]) });
-    expect(await h.list()).toEqual([expect.objectContaining({ conversationId: "d1~a", archived: true, resumable: false })]);
+    expect(await h.list()).toEqual([expect.objectContaining({ conversationId: "d1~a", archived: true, archivedFrom: "d1", resumable: false })]);
     await expect(h.get("discord", "d1~a")).resolves.toEqual([{ role: "user", text: "hello" }]);
     expect(await h.send("discord", "d1~a", "hi")).toEqual({ refused: "no-record" });
     expect(await h.resume("discord", "d1~a")).toEqual({ refused: "no-record" });

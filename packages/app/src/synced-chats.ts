@@ -18,6 +18,8 @@ export interface SyncedChatListing {
   resumable: boolean;
   /** An archive of earlier history `/new` left behind: read-only, never sent to or resumed. */
   archived: boolean;
+  /** The conversation an archive came from — the live row it sits beside. */
+  archivedFrom?: string;
 }
 
 /** One transcript line, already mapped for display: the owner's lines lose their `[Name]:`
@@ -89,7 +91,7 @@ export function buildSyncedChatHandlers(deps: SyncedChatHandlerDeps) {
     list: async (): Promise<SyncedChatListing[]> => (await listed()).rows.map((r) => ({
       surface: r.surface, conversationId: r.conversationId, kind: r.kind, title: r.title, updatedAt: r.updatedAt,
       live: deps.liveIds(r.surface).has(r.conversationId), ...(r.liveCli ? { liveCli: r.liveCli } : {}),
-      resumable: !!r.liveSessionId, archived: !!r.archivedFrom,
+      resumable: !!r.liveSessionId, archived: !!r.archivedFrom, ...(r.archivedFrom ? { archivedFrom: r.archivedFrom } : {}),
     })),
     get: async (surface: unknown, conversationId: unknown): Promise<SyncedChatRow[]> => {
       const { row, ownerName } = await find(surface, conversationId);
