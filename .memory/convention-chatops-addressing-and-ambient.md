@@ -57,3 +57,6 @@ Group channels (Discord/Teams) balance "natural" against "predictable" with one 
   chatter can't leak back in. Any writer that awaits between reading and rewriting history
   (compaction's summary) must fence on `ConversationStore.clearCount()` — seqs restart at 1
   after a clear, so they can't detect the reset.
+  It works during a live session too (the session keeps running;
+  a later session id isn't re-bound — the `resets` counter), so the live branch routes typed
+  `new` to `onCommand` like `stop`/`drivers` — never steer it to the agent (#603).

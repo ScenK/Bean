@@ -2899,6 +2899,25 @@ test("onCommand stop/drivers keep the steer/member gate; drivers with nothing li
   expect(deps.liveSessions.has("c1")).toBe(false);
 });
 
+test("typed /new during a live session resets like the native command and is never steered", async () => {
+  const { startFn, sent } = fakeLiveStartFn();
+  const { deps } = withRoles({
+    liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+  });
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  deps.liveSessions.start({ channelId: "c1", projectPath: "/p/bean", instruction: "go", starterId: "u1", steering: "restricted", sink: { post: async () => "m1", edit: async () => {} } });
+  const sentBefore = sent.length;
+  for (const text of ["/new", "new"]) {
+    deps.conversations.append("c1", { role: "user", content: "old context" });
+    await bot.onMessage({ ...owner, text }, effects);
+    expect(effects.posted.at(-1)).toBe("Fresh start — I've cleared this conversation's context.");
+    expect(deps.conversations.history("c1")).toEqual([]);
+  }
+  expect(sent.length).toBe(sentBefore);
+  expect(deps.liveSessions.has("c1")).toBe(true);
+});
+
 test("onCommand new while a delegate runs: its session is not stored afterwards", async () => {
   const { deps, delegateCalls } = makeDeps({ converseResult: delegateResult });
   const bot = buildTeamsBot(deps);

@@ -1339,7 +1339,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               return;
             }
           }
-          if (cmd === "stop" || cmd === "drivers") {
+          // `new` too: a typed reset clears context like Discord's native /new; the session keeps running.
+          if (cmd === "stop" || cmd === "drivers" || cmd === "new") {
             await onCommand(msg, fx);
             return;
           }
