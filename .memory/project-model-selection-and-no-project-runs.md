@@ -44,9 +44,10 @@ is already truthy (or mode is `"open"`) — it only takes the async scratch-dir-
 `""`. Existing `ipc.test.ts`/e2e assertions that call the handler and immediately check
 `spawnLaunch` depend on this; don't make the whole function unconditionally async or those break.
 
-**Delegate does NOT support no-project** — `ProposedDelegate.projectPath` is still required.
-Only the terminal-launch (`ProposalCard`/`RouteSuggestion`) path got the scratch-workspace
-treatment; delegate only gained the model chip.
+**Delegate no-project:** `ProposedDelegate.projectPath` stays a required string; `""` is the
+scratch sentinel, which `delegate-tasks.ts`'s `start` maps to the real scratch path. DelegateCard
+has the same project picker (incl. "No project — scratch") and model chip; a delegate confirm saves
+the model to model memory when the card has a `skillName`.
 
 Reusable UI piece: `packages/app/src/renderer/shared/ChipMenu.tsx` — the first "click a chip,
 get a floating popover" component in the renderer (previously all pickers were always-visible

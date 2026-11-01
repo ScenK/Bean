@@ -4,6 +4,7 @@ const hookState = vi.hoisted(() => ({ explicitModel: undefined as string | undef
 
 vi.mock("preact/hooks", () => ({
   useEffect: () => {},
+  useRef: <T,>(current: T) => ({ current }),
   useState: <T,>(initial: T) => [
     initial === undefined ? hookState.explicitModel : initial,
     () => {},
@@ -24,7 +25,7 @@ function nodes(value: unknown): TestVNode[] {
   return [node, ...nodes(node.props?.children)];
 }
 
-function clickConfirm(onConfirm: (prompt: string, model?: string) => void): void {
+function clickConfirm(onConfirm: (prompt: string, choice: { projectPath: string; model?: string }) => void, lastUsedModel?: string): void {
   const card = DelegateCard({
     item: {
       kind: "delegate",
@@ -34,6 +35,7 @@ function clickConfirm(onConfirm: (prompt: string, model?: string) => void): void
       tail: [],
     },
     onConfirm,
+    lastUsedModel,
     onDismiss: () => {},
     onCancelTask: () => {},
     cliOptions: ["claude", "codex"],
@@ -52,12 +54,24 @@ beforeEach(() => { hookState.explicitModel = undefined; });
 test("an untouched delegate card does not send its display-default model as an explicit choice", () => {
   const onConfirm = vi.fn();
   clickConfirm(onConfirm);
-  expect(onConfirm).toHaveBeenCalledWith("prompt", undefined);
+  expect(onConfirm).toHaveBeenCalledWith("prompt", { projectPath: "/p" });
 });
 
 test("a model the user explicitly selected is sent with the delegate request", () => {
   hookState.explicitModel = "gpt-5.6-sol";
   const onConfirm = vi.fn();
   clickConfirm(onConfirm);
-  expect(onConfirm).toHaveBeenCalledWith("prompt", "gpt-5.6-sol");
+  expect(onConfirm).toHaveBeenCalledWith("prompt", { projectPath: "/p", model: "gpt-5.6-sol" });
+});
+
+test("a pending card starts on the skill's remembered model and sends it", () => {
+  const onConfirm = vi.fn();
+  clickConfirm(onConfirm, "sonnet");
+  expect(onConfirm).toHaveBeenCalledWith("prompt", { projectPath: "/p", model: "sonnet" });
+});
+
+test("a remembered model no enabled CLI supports is dropped, not sent", () => {
+  const onConfirm = vi.fn();
+  clickConfirm(onConfirm, "retired-model");
+  expect(onConfirm).toHaveBeenCalledWith("prompt", { projectPath: "/p" });
 });

@@ -227,6 +227,7 @@ export function ChatSession({
   const [linkedNote, setLinkedNote] = useState<LinkedNote | undefined>(undefined);
   const [projects, setProjects] = useState<Project[]>([]);
   const [lastUsedModels, setLastUsedModels] = useState<Record<string, string>>({});
+  const [autoFocusDelegateId, setAutoFocusDelegateId] = useState<string | undefined>(undefined);
   // Full current skill list — passed to SkillCard so its "replaces existing" chip tracks
   // the user's live-edited name against real skills, not a stale server-computed flag.
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -414,7 +415,15 @@ export function ChatSession({
         }
         if (res.proposedSkill) next.push({ kind: "skill", id: newId(), skill: res.proposedSkill, state: "pending" });
         if (res.proposedTodo) next.push({ kind: "todo", id: newId(), todo: res.proposedTodo, state: "pending" });
-        if (res.proposedDelegate) next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
+        if (res.proposedDelegate) {
+          next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
+          const skillName = res.proposedDelegate.skillName;
+          if (skillName) {
+            void window.bean.getModelMemory(skillName).then((modelId) => {
+              if (modelId) setLastUsedModels((prev) => ({ ...prev, [skillName]: modelId }));
+            }, () => {});
+          }
+        }
         if (res.proposedLiveSession) next.push({ kind: "offer", id: newId(), offer: res.proposedLiveSession, state: "pending" });
         for (const m of res.remembered ?? []) next.push({ kind: "status", id: newId(), text: `🧠 Remembered — ${m.text}`, tone: "done" });
         for (const m of res.forgotten ?? []) next.push({ kind: "forgot", id: newId(), text: m.text, row: m, state: "saved" });
@@ -713,17 +722,28 @@ export function ChatSession({
     }
   };
 
-  const confirmDelegate = async (id: string, editedPrompt: string, model?: string): Promise<void> => {
+  const confirmDelegate = async (id: string, editedPrompt: string, choice: { projectPath: string; model?: string }): Promise<void> => {
     const item = itemsRef.current.find(
       (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.id === id,
     );
     if (!item || (item.state !== "pending" && item.state !== "starting")) return;
-    return startDelegate(id, item.proposal.projectPath, editedPrompt, item.proposal.instruction, model, item.proposal.skillName);
+    const { projectPath, model } = choice;
+    const { skillName } = item.proposal;
+    if (skillName && model) {
+      void window.bean.setModelMemory(skillName, model);
+      setLastUsedModels((prev) => ({ ...prev, [skillName]: model }));
+    }
+    // The card shows (and a restore keeps) the project the run committed to. itemsRef too: the
+    // start's task-id attach reads it after its await, possibly before the next render.
+    const commit = (items: ChatItem[]): ChatItem[] =>
+      items.map((it) => (it.kind === "delegate" && it.id === id ? { ...it, proposal: { ...it.proposal, projectPath } } : it));
+    itemsRef.current = commit(itemsRef.current);
+    setItems(commit);
+    return startDelegate(id, projectPath, editedPrompt, item.proposal.instruction, model, skillName);
   };
 
-  // `/` terminal skill: Enter is the confirm, so it starts a tracked delegate at once, at the
-  // destination its menu caption named. Everything is captured before the first await, and the
-  // card id is fresh per send — a second Enter can't restart this run (startDelegate claims by id).
+  // `/` terminal skill: adds a pending delegate card at the destination its menu caption named; the
+  // card's Start (a second Enter — it takes focus) runs it, after the user may change project/model.
   // Browser access is main's call from skillName alone (delegate-tasks.ts), never this text.
   const runTerminalSkill = (skill: Skill, rest: string): void => {
     const dest = terminalDestination(skill.name, { projects, clis, models: runModels, delegateCli, lastUsedModels });
@@ -732,10 +752,7 @@ export function ChatSession({
     const instruction = `${skill.name}${rest ? ` — ${rest}` : ""}`;
     const proposal = { projectPath: dest.projectPath, instruction, skillName: skill.name, composedPrompt: prompt };
     setItems((prev) => addDelegateProposal(prev, proposal, id));
-    // startDelegate attaches the task id to itemsRef after its await — mirror the card in now, or a
-    // start that resolves before the next render would attach to (and overwrite) a list without it.
-    itemsRef.current = addDelegateProposal(itemsRef.current, proposal, id);
-    void startDelegate(id, dest.projectPath, prompt, instruction, dest.model, skill.name);
+    setAutoFocusDelegateId(id);
   };
 
   const dismissDelegate = (id: string): void => {
@@ -1068,7 +1085,8 @@ export function ChatSession({
         onTodoDismiss={dismissTodo}
         onOfferStart={startOffer}
         onOfferDismiss={dismissOffer}
-        onDelegateConfirm={(id, edited, model) => void confirmDelegate(id, edited, model)}
+        onDelegateConfirm={(id, edited, choice) => void confirmDelegate(id, edited, choice)}
+        autoFocusDelegateId={autoFocusDelegateId}
         onDelegateDismiss={dismissDelegate}
         onDelegateCancelTask={cancelDelegateTask}
         onContinueLive={(id) => void continueLive(id)}
