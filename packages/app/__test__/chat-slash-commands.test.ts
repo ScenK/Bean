@@ -107,6 +107,8 @@ describe("slash commands", () => {
       });
       expect(dest.cli).toBe(resolveDelegateSelection(cliModels, clis, delegateCli, model)?.cli);
       expect(dest.model).toBe(model);
+      // The card sends that CLI explicitly; main resolves it back to the same one (no mismatch failure).
+      if (dest.cli) expect(resolveDelegateSelection(cliModels, clis, dest.cli, model)?.cli).toBe(dest.cli);
     }
   });
 
@@ -257,9 +259,9 @@ describe("ChatWindow slash commands", () => {
     expect(document.activeElement).toBe(composer());
     expect(bean.delegateStart).toHaveBeenCalledTimes(1);
     const req = bean.delegateStart!.mock.calls[0]![0];
-    expect(req).toMatchObject({ projectPath: "/p/bean", skillName: "deploy", model: "sonnet", instruction: "deploy — fix X" });
+    expect(req).toMatchObject({ projectPath: "/p/bean", skillName: "deploy", model: "sonnet", cli: "claude", instruction: "deploy — fix X" });
     expect(req.prompt).toContain("## Task\nfix X");
-    expect(Object.keys(req).sort()).toEqual(["instruction", "model", "projectPath", "prompt", "skillName"]); // no browser flag
+    expect(Object.keys(req).sort()).toEqual(["cli", "instruction", "model", "projectPath", "prompt", "skillName"]); // no browser flag
     expect(bean.setModelMemory).toHaveBeenCalledWith("deploy", "sonnet");
     expect(bean.chat).not.toHaveBeenCalled();
     expect(root.textContent).toContain("Starting...");

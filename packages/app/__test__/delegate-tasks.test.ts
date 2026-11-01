@@ -182,6 +182,35 @@ describe("createDelegateTasks", () => {
     expect(sent).toEqual([{ taskId: "task-x", type: "failed", message: "No enabled delegate CLI found — enable one in Settings." }]);
   });
 
+  it("an explicit cli runs exactly that CLI, or fails without spawning", async () => {
+    const models: CliModels[] = [...CLI_MODELS, { provider: "opencode", models: ["sonnet"] }];
+    let enabled: CliName[] = ["claude", "codex", "opencode"];
+    const reqs: DelegateRequest[] = [];
+    const sent: DelegateEvent[] = [];
+    let n = 0;
+    const tasks = createDelegateTasks({
+      projectAllowed: async () => true,
+      // main.ts's resolver: `cli` replaces the Settings preference ("claude" here).
+      resolveCli: (model, cli) => resolveDelegateSelection(models, enabled, cli ?? "claude", model),
+      send: (e) => { sent.push(e); },
+      newId: () => `task-${++n}`,
+      dir: tmp(),
+      run: (req) => { reqs.push(req); return { cancel: () => {} }; },
+    });
+    const go = { projectPath: "/p", prompt: "go", instruction: "do it" };
+    await tasks.start({ ...go, cli: "codex" }); // no model: codex's own
+    await tasks.start({ ...go, cli: "opencode", model: "sonnet" }); // shared id: the picked CLI wins
+    await tasks.start({ ...go, model: "sonnet" }); // omitted: Settings preference, as before
+    expect(reqs.map((r) => [r.cli, r.model])).toEqual([["codex", "gpt-5.6-sol"], ["opencode", "sonnet"], ["claude", "sonnet"]]);
+
+    enabled = ["claude", "opencode"]; // codex turned off after the card rendered
+    sent.length = 0;
+    await tasks.start({ ...go, cli: "codex", model: "gpt-5.6-sol" });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(reqs).toHaveLength(3);
+    expect(sent).toEqual([expect.objectContaining({ type: "failed", message: "codex is turned off in Settings or doesn't offer gpt-5.6-sol — nothing was run." })]);
+  });
+
   it("forwards output, done, and failed callbacks as events", async () => {
     const h = harness();
     const id = await h.tasks.start({ projectPath: "/p", prompt: "go", instruction: "do it" });

@@ -89,6 +89,19 @@ test("a CLI with no configured models remains selectable without passing another
   expect(resolveCliModelSelection(models, ["codex"], { cli: "codex" })).toEqual({ cli: "codex" });
 });
 
+test("switching CLI with a stale model: the pick moves to the new CLI's model, the remembered one never drags it back", () => {
+  const models = [
+    { id: "sonnet", label: "sonnet", availableOn: ["claude" as const] },
+    { id: "gpt-5.6-sol", label: "gpt-5.6-sol", availableOn: ["codex" as const] },
+  ];
+  // The card's pair after picking codex while sonnet (claude-only) is picked/remembered.
+  expect(pickModel(models, "codex", "sonnet", "sonnet")).toBe("gpt-5.6-sol");
+  // main resolves that pair with the picked CLI as the preference: still codex, not claude.
+  expect(resolveCliModelSelection(models, ["claude", "codex"], { cli: "codex", model: "gpt-5.6-sol" })).toEqual({ cli: "codex", model: "gpt-5.6-sol" });
+  // Whereas the stale model sent explicitly would have silently moved the run to claude.
+  expect(resolveCliModelSelection(models, ["claude", "codex"], { cli: "codex", model: "sonnet" })?.cli).toBe("claude");
+});
+
 test("stepAvailabilityProblem / pinnedStepSelection refuse instead of falling back", () => {
   const models = availableModels([...CLI_MODELS, { provider: "codex", models: ["gpt-5.5"] }], ["claude", "opencode"]);
   const enabled = ["claude", "opencode"] as const;

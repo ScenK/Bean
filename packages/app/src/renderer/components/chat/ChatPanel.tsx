@@ -157,7 +157,7 @@ export function ChatPanel({
   onTodoDismiss: (id: string) => void;
   onOfferStart: (id: string) => void;
   onOfferDismiss: (id: string) => void;
-  onDelegateConfirm: (id: string, editedPrompt: string, choice: { projectPath: string; model?: string }) => void;
+  onDelegateConfirm: (id: string, editedPrompt: string, choice: { projectPath: string; model?: string; cli?: CliName }) => void;
   /** The delegate card a `/` send just created — the only card that takes focus. */
   autoFocusDelegateId?: string;
   onDelegateDismiss: (id: string) => void;
@@ -569,6 +569,7 @@ export function ChatPanel({
                 key={it.id}
                 item={it}
                 cliOptions={clis}
+                delegateCli={delegateCli}
                 modelOptions={runModels}
                 projectOptions={assignedFirst}
                 lastUsedModel={skillName ? lastUsedModels[skillName] : undefined}

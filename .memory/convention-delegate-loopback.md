@@ -41,9 +41,13 @@ Key contracts:
   escalations (`killPendingGroups()`). Claude keeps the plain group kill.
 - The delegate CLI preference is user-picked in Settings (`delegateCli`, "" = first enabled).
   `resolveCliModelSelection()` resolves that preference together with any requested model, so
-  the spawned harness is enabled and supports the model (or receives no `--model`). Only a
-  model the user explicitly clicks may override that CLI preference: DelegateCard's implicit
-  display default must not be sent as a requested model.
+  the spawned harness is enabled and supports the model (or receives no `--model`). DelegateCard
+  shows and sends the real pair: `cli` (its CLI pick, else that Settings preference + the
+  remembered model as `lastUsed`) plus a model that CLI offers (`pickModel`). A request with
+  `cli` runs exactly that CLI — `delegate-tasks.ts` fails the task, nothing spawned, when the
+  resolve lands elsewhere (disabled since render). Never send a remembered model as an explicit
+  `model` next to a picked CLI: an explicit model moves the run to whichever CLI offers it.
+  Routine steps and the card-less path omit `cli` and keep the Settings preference.
 - **The cwd is registry-checked in main:** `delegate-tasks` `start` spawns only when
   `projectAllowed` (main's shared check, also used by live-tasks: Bean's scratch workspace or a
   `projects.json` path, re-read per start) passes; anything else fails the card with zero spawns
