@@ -1475,7 +1475,8 @@ button, input, textarea, select, a {
 .bean-memory-input { flex: 1; }
 .bean-memory-del { border: none; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; color: var(--bean-text-dim); }
 .bean-memory-del:hover { color: var(--bean-text); }
-.bean-memory-search { margin: 2px 0 4px; }
+/* flex: none — .bean-input is flex: 1, which stretches it tall in the column-flex .bean-persona. */
+.bean-memory-search { flex: none; margin: 2px 0 4px; }
 .bean-memory-date { font-size: 11px; color: var(--bean-text-dim); white-space: nowrap; }
 .bean-memory-private { font-size: 11px; }
 

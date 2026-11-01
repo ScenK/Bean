@@ -80,6 +80,10 @@ test("persona: a long memory list scrolls within the panel", async () => {
     await expect(persona.locator(".bean-memory-private")).toHaveCount(1);
     await persona.locator(".bean-memory-search").fill("FACT 5");
     await expect(persona.locator(".bean-memory-input")).toHaveCount(11); // 5 and 50–59
+    // A short list leaves spare height in the column-flex panel; the search box must not grow into it.
+    await persona.locator(".bean-memory-search").fill("no such memory");
+    await expect(persona.locator(".bean-memory-input")).toHaveCount(0);
+    expect(await persona.locator(".bean-memory-search").evaluate((el) => el.getBoundingClientRect().height)).toBeLessThan(48);
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
