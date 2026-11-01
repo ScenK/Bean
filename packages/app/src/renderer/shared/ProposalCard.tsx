@@ -53,7 +53,7 @@ export function ProposalCard({
   // derived from whichever model is picked instead of asked for separately (matches
   // RoutinesPanel/DelegateCard, which don't ask for a CLI up front either).
   const [cliChoice, setCliChoice] = useState<CliName | undefined>(undefined);
-  const [projectPath, setProjectPath] = useState<string | undefined>(run.projectPath);
+  const [projectPath, setProjectPath] = useState<string | undefined>(run.projectPath || undefined); // "" = no project too
   const [sourceUrl, setSourceUrl] = useState(run.sourceUrl ?? "");
   const [modelChoice, setModelChoice] = useState<string | undefined>(undefined);
   const done = state !== "pending";

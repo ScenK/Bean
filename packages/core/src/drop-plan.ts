@@ -16,7 +16,7 @@ export function planForDroppedSkill(
   const project = bestProjectForSkill(skillName, projects);
   return {
     skillName: skill?.name ?? skillName,
-    projectPath: project?.path ?? "",
+    ...(project ? { projectPath: project.path } : {}),
     composedPrompt: skill ? composePrompt(skill, "Handle the linked page.", droppedUrl) : droppedUrl,
     confidence: 0,
     target: skill?.target,

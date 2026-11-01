@@ -18,12 +18,12 @@ test("falls back to defaultSkill match when no skills array matches", () => {
   expect(bestProjectForSkill("write-tests", projects)?.path).toBe("/dev/api");
 });
 
-test("falls back to the first project when nothing matches", () => {
+test("an unlinked skill gets no project (scratch), not the first one", () => {
   const projects: Project[] = [
     { name: "api", path: "/dev/api" },
     { name: "web", path: "/dev/web" },
   ];
-  expect(bestProjectForSkill("nonexistent", projects)?.path).toBe("/dev/api");
+  expect(bestProjectForSkill("nonexistent", projects)).toBeUndefined();
 });
 
 test("skills array takes priority even when defaultSkill points elsewhere", () => {

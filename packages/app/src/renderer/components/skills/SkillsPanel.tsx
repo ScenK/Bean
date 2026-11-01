@@ -7,6 +7,14 @@ import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import { ProposalsInbox, type ProposalLists } from "./ProposalsInbox.js";
 
+/** The Run button's Plan-card seed. No linked project → projectPath omitted, so the card opens
+ * on "no project" (scratch). Same composePrompt() the drag-drop-onto-petal flow uses, so both
+ * paths hand the agent an identically-shaped prompt (skill body, "## Task" only with guidance). */
+export function runForSkill(skill: Skill, projects: Project[]): RouteSuggestion {
+  const projectPath = bestProjectForSkill(skill.name, projects)?.path;
+  return { skillName: skill.name, ...(projectPath ? { projectPath } : {}), composedPrompt: composePrompt(skill, ""), confidence: 1 };
+}
+
 type Mode = "view" | "edit" | "add" | "proposals";
 
 export function SkillsPanel({
@@ -82,7 +90,7 @@ export function SkillsPanel({
           <div class="bean-skills-row-chips">
             {chips.length > 0
               ? chips.map((n) => <span key={n} class="bean-skills-tag">{n}</span>)
-              : <span class="bean-skills-tag bean-skills-tag--general">general — all projects</span>}
+              : <span class="bean-skills-tag bean-skills-tag--general">general — no project</span>}
             {s.browser ? <span class="bean-skills-tag">🌐 uses your browser</span> : null}
           </div>
         </div>
@@ -215,15 +223,11 @@ export function SkillsPanel({
   };
 
   // A disabled skill is off everywhere, and "everywhere" includes this panel's own Run button.
-  const canRun = projects.length > 0 && selectedSkill?.enabled !== false;
+  const canRun = selectedSkill?.enabled !== false;
 
   const runSkill = (): void => {
     if (!selectedSkill || selectedSkill.enabled === false) return;
-    const projectPath = bestProjectForSkill(selectedSkill.name, projects)?.path;
-    if (!projectPath) return;
-    // Same composePrompt() the drag-drop-onto-petal flow uses, so both paths hand opencode
-    // an identically-shaped prompt (skill body first, "## Task" only when there's guidance).
-    onRunSkill({ skillName: selectedSkill.name, projectPath, composedPrompt: composePrompt(selectedSkill, ""), confidence: 1 });
+    onRunSkill(runForSkill(selectedSkill, projects));
   };
 
   return (
@@ -352,7 +356,7 @@ export function SkillsPanel({
                     })}
                   </div>
                   <div class="bean-skills-projects-hint">
-                    Tap to assign. Clear all chips to make this a general skill — available in every project.
+                    Tap to assign. Clear all chips to make this a general skill — it runs in a scratch workspace unless you pick a project.
                   </div>
                 </>
               )}
@@ -373,7 +377,7 @@ export function SkillsPanel({
                 type="button"
                 class="bean-btn"
                 disabled={!canRun}
-                title={selectedSkill.enabled === false ? "Skill is disabled — switch it on to run it" : !canRun ? "No projects configured" : undefined}
+                title={selectedSkill.enabled === false ? "Skill is disabled — switch it on to run it" : undefined}
                 onClick={runSkill}
               >
                 Run skill

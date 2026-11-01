@@ -20,16 +20,16 @@ test("matches the project whose defaultSkill equals the dropped skill", () => {
   expect(plan.confidence).toBe(0);
 });
 
-test("falls back to the first project when no defaultSkill matches", () => {
+test("omits projectPath (scratch) when no project is linked to the skill", () => {
   const plan = planForDroppedSkill("write-tests", "https://x", skills, projects);
   expect(plan.skillName).toBe("write-tests");
-  expect(plan.projectPath).toBe("/dev/api");
+  expect(plan).not.toHaveProperty("projectPath");
 });
 
 test("degrades gracefully when the skill name no longer matches any loaded skill", () => {
   const plan = planForDroppedSkill("nonexistent-skill", "https://x", skills, projects);
   expect(plan.skillName).toBe("nonexistent-skill");
-  expect(plan.projectPath).toBe("/dev/api");
+  expect(plan.projectPath).toBeUndefined();
   expect(plan.composedPrompt).toBe("https://x");
 });
 
