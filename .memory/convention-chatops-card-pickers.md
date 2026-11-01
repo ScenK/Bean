@@ -45,5 +45,10 @@ confirm accepts only a path in a fresh `loadProjects()` or `__none__` (→ the b
 `$HOME`) — `delegateProjectLabel` names it "No project (scratch)". The Discord delegate card now
 uses all 5 action rows (project, skill, cli, model, buttons): the next control needs a modal.
 
+**Project picker on the live card** (#557): registry-checked on the *effective* path
+(`v.projectPath || proposal.projectPath` — Discord's select writes the proposal, its Start carries
+none) before `claim()`, and again at launch in `startLiveSessionAction` on the frozen claimed
+proposal. No `__none__`/scratch on the live card. A resume keeps its recorded folder, registered or not.
+
 Related: [project-live-sessions.md](project-live-sessions.md),
 [project-config-driven-cli-models.md](project-config-driven-cli-models.md).

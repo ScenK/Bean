@@ -1820,6 +1820,7 @@ test("a fresh live card picks codex on Teams and resolves the model within that 
   const { deps, reqs } = resumeDeps();
   deps.detectClis = () => ["claude", "codex"];
   deps.cliModels = [{ provider: "claude", models: ["opus"] }, { provider: "codex", models: ["gpt-5.5"] }];
+  deps.loadProjects = async () => [{ name: "a", path: "/p/a" }, { name: "b", path: "/p/b" }];
   const bot = buildTeamsBot(deps);
   const effects = fx();
   await bot.proposeLiveSession({ conversationId: "c1", instruction: "go", proposedBy: "sam" }, effects);
@@ -1833,6 +1834,60 @@ test("a fresh live card picks codex on Teams and resolves the model within that 
   await start("gpt-5.5");
   await start("opus"); // a claude model on a codex session falls back to codex's own default
   expect(reqs.map((r) => [r.cli, r.model])).toEqual([["codex", "gpt-5.5"], ["codex", undefined]]);
+});
+
+// #557: the live card's project is client-influenced; only a registered path may become the cwd.
+const LIVE_PICK_AGAIN = "That project isn't registered any more — pick another and press Start again.";
+
+test("live Start refuses a forged Teams projectPath before claim; a registered retry starts", async () => {
+  const { deps, reqs } = resumeDeps();
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.proposeLiveSession({ conversationId: "c1", instruction: "go", proposedBy: "sam" }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  const start = (projectPath: string) => bot.onCardAction({
+    conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId, projectPath },
+  }, effects);
+  await start("/etc");
+  expect(reqs).toHaveLength(0);
+  expect(effects.posted.at(-1)).toBe(LIVE_PICK_AGAIN);
+  expect(deps.liveSessionProposals.get(proposalId)).toBeDefined();
+  await start("/p/bean");
+  expect(reqs).toEqual([expect.objectContaining({ projectPath: "/p/bean" })]);
+});
+
+test("live Start refuses an unregistered path a Discord select wrote into the proposal", async () => {
+  const { deps, reqs } = resumeDeps();
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.proposeLiveSession({ conversationId: "c1", instruction: "go", proposedBy: "sam" }, effects);
+  const proposalId = latestLiveProposalId(effects.cards);
+  deps.liveSessionProposals.update(proposalId, { projectPath: "/tmp/evil" }); // forged select value
+  for (const projectPath of [undefined, "", "__none__"]) {
+    await bot.onCardAction({
+      conversationId: "c1", fromId: "u", fromName: "sam",
+      value: { beanAction: "start-live", proposalId, ...(projectPath === undefined ? {} : { projectPath }) },
+    }, effects);
+    expect(effects.posted.at(-1)).toBe(LIVE_PICK_AGAIN);
+  }
+  expect(reqs).toHaveLength(0);
+  expect(deps.liveSessionProposals.get(proposalId)).toBeDefined();
+});
+
+test("live Start re-checks the registry at launch: a project removed after the pre-claim check refuses", async () => {
+  const { deps, reqs } = resumeDeps();
+  let calls = 0;
+  // Registered through the pre-claim check, gone by launch.
+  deps.loadProjects = async () => (calls++ < 1 ? [{ name: "bean", path: "/p/bean" }] : []);
+  const bot = buildTeamsBot(deps);
+  const effects = fx();
+  await bot.proposeLiveSession({ conversationId: "c1", instruction: "go", proposedBy: "sam" }, effects);
+  calls = 0; // the card's own loads are done; next is Start's pre-claim check
+  const proposalId = latestLiveProposalId(effects.cards);
+  await bot.onCardAction({ conversationId: "c1", fromId: "u", fromName: "sam", value: { beanAction: "start-live", proposalId } }, effects);
+  expect(reqs).toHaveLength(0);
+  expect(effects.posted.at(-1)).toBe("That project isn't registered any more — this session wasn't started.");
+  expect(deps.liveSessionProposals.get(proposalId)).toBeUndefined();
 });
 
 test("a refused send (codex queue full) replies and stays out of history", async () => {
