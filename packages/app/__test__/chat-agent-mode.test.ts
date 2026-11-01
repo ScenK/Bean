@@ -291,8 +291,12 @@ describe("ChatWindow agent mode", () => {
     expect(root.querySelector(".bean-agent-banner")?.textContent).toContain("Continuing");
     // Hidden while the session is live.
     expect([...root.querySelectorAll("button")].some((b) => b.textContent?.includes("Continue live"))).toBe(false);
+    // Lazy resume: main's `started` must not open a Working bubble before anything is sent.
+    await live({ type: "started", projectPath: "/p", handedOver: 0 });
+    expect(root.querySelector(".bean-bubble--working")).toBeNull();
 
     await send("now fix what you found");
+    expect(root.querySelector(".bean-bubble--working")).not.toBeNull();
     expect(bean.liveSend).toHaveBeenCalledWith("s1", "now fix what you found", expect.any(String));
   });
 

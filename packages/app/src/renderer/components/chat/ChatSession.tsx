@@ -651,6 +651,8 @@ export function ChatSession({
       setLive({ ...l, sessionId: e.sessionId });
     }
     if (!knownSessionsRef.current.has(e.sessionId)) return;
+    // A Continue live opens lazily — nothing runs until the first send (deliver opens the bubble).
+    if (e.type === "started" && liveRef.current?.continuing) return;
     if (e.type === "turn" || e.type === "ended") flushRef.current = true;
     if (e.type === "turn" && hiddenRef.current) onUnread();
     setItems((prev) => applyLiveEvent(prev, e, newId));
