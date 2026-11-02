@@ -1833,7 +1833,8 @@ test("a fresh live card picks codex on Teams and resolves the model within that 
   };
   await start("gpt-5.5");
   await start("opus"); // a claude model on a codex session falls back to codex's own default
-  expect(reqs.map((r) => [r.cli, r.model])).toEqual([["codex", "gpt-5.5"], ["codex", undefined]]);
+  await start("nope"); // so does a model no CLI offers
+  expect(reqs.map((r) => [r.cli, r.model])).toEqual([["codex", "gpt-5.5"], ["codex", undefined], ["codex", undefined]]);
 });
 
 // #557: the live card's project is client-influenced; only a registered path may become the cwd.
