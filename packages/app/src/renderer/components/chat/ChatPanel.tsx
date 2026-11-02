@@ -10,7 +10,7 @@ import { DelegateCard } from "./DelegateCard.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { imageFileGuard, insertDroppedPath, itemAgent, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
-import { HANDOFF_ITEMS, canContinueLive, handoffItems, isLiveAgent, offerAgent } from "./agent-mode.js";
+import { HANDOFF_ITEMS, agentModels, canContinueLive, handoffItems, isLiveAgent, offerAgent } from "./agent-mode.js";
 import { SECTION_TITLES, slashMenu, type SlashEntry } from "./slash-commands.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, Routine, RouteSuggestion, Skill } from "@bean/core";
 
@@ -109,9 +109,12 @@ export function ChatPanel({
   onForgetUndo,
   mode,
   agentProject,
+  agentModel,
   live,
+  offerLaunch,
   onPickAgent,
   onPickProject,
+  onPickModel,
   onEndAgent,
 }: {
   /** A chat kept mounted in the background while another one is shown. */
@@ -174,9 +177,15 @@ export function ChatPanel({
   // the window's running session (busy = a turn is in flight; the composer stays usable).
   mode: AgentId;
   agentProject: string;
-  live?: { agent: LiveCli; projectPath: string; busy: boolean; continuing?: boolean };
+  /** The model the next fresh start uses ("" = the agent's default) — already checked against clis.json. */
+  agentModel: string;
+  /** `model` = what the running session launched with (unset = the agent's default). */
+  live?: { agent: LiveCli; projectPath: string; model?: string; busy: boolean; continuing?: boolean };
+  /** What a hand-off offer's Start launches (the same function startOffer uses). */
+  offerLaunch: (offerPath: string) => { projectPath: string; model?: string };
   onPickAgent: (agent: AgentId) => void;
   onPickProject: (path: string) => void;
+  onPickModel: (model: string) => void;
   onEndAgent: () => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -199,6 +208,9 @@ export function ChatPanel({
   const liveAgents = clis.filter(isLiveAgent);
   const agentName = AGENT_NAMES[mode];
   const projectName = (path: string): string => projects.find((p) => p.path === path)?.name ?? "scratch";
+  const modelName = (id: string): string => runModels.find((m) => m.id === id)?.label ?? id;
+  // The chip names the running session's actual model, else the next start's; none = the default.
+  const chipModel = live ? live.model : agentModel;
   // The `/` menu: the composer text while it's a lone `/word` ("" = closed), and the picked row.
   const [slashText, setSlashText] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
@@ -546,12 +558,14 @@ export function ChatPanel({
             );
           }
           if (it.kind === "offer") {
+            const launch = offerLaunch(it.offer.projectPath);
             return (
               <LiveOfferCard
                 key={it.id}
                 offer={it.offer}
                 agent={offerAgent(clis)}
-                projectName={projectName(it.offer.projectPath)}
+                projectName={projectName(launch.projectPath)}
+                modelName={launch.model ? modelName(launch.model) : undefined}
                 state={it.state}
                 onStart={() => onOfferStart(it.id)}
                 onDismiss={() => onOfferDismiss(it.id)}
@@ -611,7 +625,7 @@ export function ChatPanel({
             <span class="bean-agent-banner-dot" aria-hidden="true">●</span>
             {live.continuing ? <span>Continuing</span> : null}
             <AgentAvatar agent={live.agent} size={16} />
-            <span>{AGENT_NAMES[live.agent]} · {projectName(live.projectPath)}</span>
+            <span>{AGENT_NAMES[live.agent]} · {projectName(live.projectPath)}{live.model ? ` · ${modelName(live.model)}` : ""}</span>
             <button type="button" class="bean-status-action" onClick={onEndAgent}>End</button>
           </div>
         ) : null}
@@ -696,7 +710,7 @@ export function ChatPanel({
             <ChipMenu
               disabled={busy}
               chipClass="bean-agent-chip"
-              chipLabel={<><AgentAvatar agent={mode} size={16} /> {agentName}{agentMode ? ` · ${projectName(live?.projectPath ?? agentProject)}` : ""}</>}
+              chipLabel={<><AgentAvatar agent={mode} size={16} /> {agentName}{agentMode ? ` · ${projectName(live?.projectPath ?? agentProject)}${chipModel ? ` · ${modelName(chipModel)}` : ""}` : ""}</>}
             >
               {(close) => (
                 <div class="bean-chip-menu-list">
@@ -720,6 +734,23 @@ export function ChatPanel({
                           onClick={() => { onPickProject(p.path); close(); }}
                         >
                           {p.name}
+                        </button>
+                      ))}
+                    </>
+                  ) : null}
+                  {isLiveAgent(mode) ? (
+                    <>
+                      <div class="bean-chip-menu-divider" />
+                      <div class="bean-chip-menu-hint">{live ? "Model · End session to change model" : "Model"}</div>
+                      {[{ id: "", label: "Agent default" }, ...agentModels(runModels, mode)].map((m) => (
+                        <button
+                          type="button"
+                          class={`bean-chip-menu-row bean-chip-menu-row--model${m.id === (chipModel ?? "") ? " bean-chip-menu-row--on" : ""}`}
+                          disabled={!!live}
+                          title={m.id || undefined}
+                          onClick={() => { onPickModel(m.id); close(); }}
+                        >
+                          {m.label}
                         </button>
                       ))}
                     </>
