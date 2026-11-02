@@ -25,6 +25,7 @@ const record = (dir: string, id: string): { pid: number } | undefined => {
 function harness(opts: {
   clis?: CliName[]; allowed?: (p: string) => Promise<boolean>; pid?: number; sendOk?: boolean;
   findResumable?: (id: string) => ResumableRun;
+  modelOffered?: (cli: string, model: string) => boolean;
   /** The child's pid once the first send spawns it (a lazy resume). */
   sendPid?: number;
 } = {}) {
@@ -41,6 +42,7 @@ function harness(opts: {
     projectAllowed: opts.allowed ?? (async (p) => p === "/proj" || p === "/scratch"),
     scratchPath: "/scratch",
     ...(opts.findResumable ? { findResumable: opts.findResumable } : {}),
+    ...(opts.modelOffered ? { modelOffered: opts.modelOffered } : {}),
     send: (owner, e) => { events.push({ owner, e }); },
     newId: () => `s${++n}`,
     engine: (req, c) => {
@@ -206,6 +208,19 @@ describe("createLiveTasks resume (Continue live)", () => {
     expect(h.live.resume(A, "sess-1")).toEqual({ sessionId: "s1", agent: "claude", projectPath: r.proj });
     expect(h.reqs[0]).toEqual({ cli: "claude", projectPath: r.proj, prompt: "", resume: "sess-1" });
     expect(h.events[0]!.e).toMatchObject({ type: "started", projectPath: r.proj, handedOver: 0 });
+  });
+
+  it("reapplies the run's recorded model while clis.json still offers it, else the CLI default (#613)", () => {
+    const file = join(tmp(), "bean.db");
+    const proj = tmp();
+    recordDelegateSession(file, { surface: "desktop", cli: "claude", sessionId: "sess-m", projectPath: proj, instruction: "x", model: "opus" });
+    const find = (id: string) => findDelegateRun(file, id, undefined, "desktop");
+    const offered = harness({ findResumable: find, modelOffered: (cli, m) => cli === "claude" && m === "opus" });
+    offered.live.resume(A, "sess-m");
+    expect(offered.reqs[0]).toEqual({ cli: "claude", projectPath: proj, prompt: "", model: "opus", resume: "sess-m" });
+    const dropped = harness({ findResumable: find, modelOffered: () => false });
+    dropped.live.resume(A, "sess-m");
+    expect(dropped.reqs[0]).not.toHaveProperty("model");
   });
 
   it("claude's run record moves to the child once the first send spawns it", () => {

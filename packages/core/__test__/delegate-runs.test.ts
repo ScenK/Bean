@@ -80,3 +80,25 @@ test("findDelegateRun returns the newest row and refuses ids that can't continue
   expect(findDelegateRun(file, "nope", exists, "desktop")).toEqual({ refusal: "I have no record of that run." });
   closeDb(file);
 });
+
+test("findDelegateRun returns the run's recorded model (#613); none recorded = no model", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "bean-dr-")), "bean.db");
+  recordDelegateSession(file, { ...row, sessionId: "m1", model: "opus" });
+  recordDelegateSession(file, { ...row, sessionId: "m2" });
+  expect(findDelegateRun(file, "m1", () => true, "desktop")).toEqual({ run: { ...row, sessionId: "m1", model: "opus" } });
+  expect(findDelegateRun(file, "m2", () => true, "desktop")).toEqual({ run: { ...row, sessionId: "m2" } });
+  closeDb(file);
+});
+
+test("a bean.db from before delegate_runs.model gains it on open; its rows resume on the default model", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "bean-dr-")), "bean.db");
+  const legacy = new DatabaseSync(file);
+  legacy.exec(`CREATE TABLE delegate_runs (id INTEGER PRIMARY KEY, started_at TEXT NOT NULL, surface TEXT NOT NULL,
+    cli TEXT NOT NULL, session_id TEXT NOT NULL, project_path TEXT NOT NULL, instruction TEXT NOT NULL)`);
+  legacy.exec("INSERT INTO delegate_runs VALUES (1, '2026-10-30T00:00:00.000Z', 'desktop', 'claude', 'old', '/p', 'fix it')");
+  legacy.close();
+  expect(findDelegateRun(file, "old", () => true, "desktop")).toEqual({ run: { ...row, sessionId: "old" } });
+  expect(recordDelegateSession(file, { ...row, sessionId: "new", model: "opus" })).toBe(true);
+  expect(findDelegateRun(file, "new", () => true, "desktop")).toEqual({ run: { ...row, sessionId: "new", model: "opus" } });
+  closeDb(file);
+});

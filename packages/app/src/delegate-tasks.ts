@@ -167,6 +167,7 @@ export function createDelegateTasks(deps: DelegateTasksDeps) {
           onSessionStart: (_pid, sessionId) => {
             recordDelegateSession(dbFile(deps.dir), {
               surface: "desktop", cli: choice.cli, sessionId, projectPath: req.projectPath, instruction: req.offRecord ? "" : req.instruction,
+              ...(choice.model ? { model: choice.model } : {}),
             });
             if (isValidSessionId(sessionId)) {
               receipt = { receipt: {

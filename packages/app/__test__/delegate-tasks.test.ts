@@ -368,7 +368,7 @@ describe("delegate session receipts", () => {
     let captured: DelegateCallbacks | undefined;
     const tasks = createDelegateTasks({
       projectAllowed: async () => true,
-      resolveCli: () => ({ cli: "claude" }),
+      resolveCli: () => ({ cli: "claude", model: "opus" }),
       send: (e) => { sent.push(e); },
       newId: () => "t1",
       dir,
@@ -385,9 +385,10 @@ describe("delegate session receipts", () => {
       receipt: { label: "claude · sess…", command: "cd '/it'\\''s/p' && claude --resume sess-1", sessionId: "sess-1", agent: "claude" },
     });
     const db = new DatabaseSync(join(dir, "bean.db"));
-    const rows = db.prepare("SELECT surface, instruction FROM delegate_runs").all();
+    const rows = db.prepare("SELECT surface, instruction, model FROM delegate_runs").all();
     db.close();
-    expect(rows.map((r) => ({ ...r }))).toEqual([{ surface: "desktop", instruction: "fix it" }]);
+    // The picked model is recorded so Continue live can reapply it (#613).
+    expect(rows.map((r) => ({ ...r }))).toEqual([{ surface: "desktop", instruction: "fix it", model: "opus" }]);
   });
 
   it("an off-the-record run records its session with no instruction text (#506)", async () => {

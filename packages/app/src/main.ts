@@ -647,6 +647,7 @@ app.whenReady().then(async () => {
       enabledClis,
       scratchPath: scratchDir(dir),
       findResumable: (sessionId) => findDelegateRun(dbFile(dir), sessionId, undefined, "desktop"),
+      modelOffered: (cli, model) => (cliModels.find((e) => e.provider === cli)?.models ?? []).includes(model),
       projectAllowed,
       newId: () => randomUUID(),
       send: (senderId, event) => {

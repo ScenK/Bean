@@ -11,6 +11,9 @@ export interface DelegateRunRow {
   projectPath: string;
   /** The user's instruction, never the composed skill prompt. */
   instruction: string;
+  /** The literal --model the run used; absent = the CLI's default (or a row from before #613).
+   * Continue live reapplies it only while clis.json still offers it for this CLI. */
+  model?: string;
 }
 
 // Session ids are untrusted subprocess output: the leading alphanumeric rules out option-like
@@ -61,8 +64,8 @@ export function recordDelegateSession(file: string, row: DelegateRunRow, now: ()
   }
   try {
     openDb(file)
-      .prepare("INSERT INTO delegate_runs (started_at, surface, cli, session_id, project_path, instruction) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(now().toISOString(), row.surface, row.cli, row.sessionId, row.projectPath, row.instruction);
+      .prepare("INSERT INTO delegate_runs (started_at, surface, cli, session_id, project_path, instruction, model) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(now().toISOString(), row.surface, row.cli, row.sessionId, row.projectPath, row.instruction, row.model || null);
     return true;
   } catch (err) {
     console.warn(`bean: couldn't record a ${row.surface} delegate session:`, err instanceof Error ? err.name : "error");
@@ -99,13 +102,16 @@ export function findDelegateRun(
 ): ResumableRun {
   if (!isValidSessionId(sessionId)) return { refusal: BAD_SESSION_ID };
   const row = openDb(file)
-    .prepare("SELECT surface, cli, session_id, project_path, instruction FROM delegate_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1")
-    .get(sessionId) as { surface: DelegateRunRow["surface"]; cli: CliName; session_id: string; project_path: string; instruction: string } | undefined;
+    .prepare("SELECT surface, cli, session_id, project_path, instruction, model FROM delegate_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1")
+    .get(sessionId) as { surface: DelegateRunRow["surface"]; cli: CliName; session_id: string; project_path: string; instruction: string; model: string | null } | undefined;
   if (!row) return { refusal: "I have no record of that run." };
   if (!isLiveSessionId(row.cli, row.session_id)) return { refusal: BAD_SESSION_ID };
   if (surface === "desktop") {
     if (row.surface !== "desktop") return { refusal: "I have no record of that run." };
   } else if (row.surface === "desktop") return { refusal: "That run started in Bean's desktop chat — continue it there." };
   if (!exists(row.project_path)) return { refusal: "That project folder no longer exists on this Mac." };
-  return { run: { surface: row.surface, cli: row.cli, sessionId: row.session_id, projectPath: row.project_path, instruction: row.instruction } };
+  return { run: {
+    surface: row.surface, cli: row.cli, sessionId: row.session_id, projectPath: row.project_path, instruction: row.instruction,
+    ...(row.model ? { model: row.model } : {}),
+  } };
 }

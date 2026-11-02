@@ -202,7 +202,8 @@ CREATE TABLE IF NOT EXISTS delegate_runs (
   cli          TEXT NOT NULL,
   session_id   TEXT NOT NULL,
   project_path TEXT NOT NULL,
-  instruction  TEXT NOT NULL
+  instruction  TEXT NOT NULL,
+  model        TEXT
 );
 
 -- Routine step attempts (step-attempts.ts): the full(er) output, harness and session behind each
@@ -328,6 +329,8 @@ export function openDb(file: string): DatabaseSync {
     ["chatops_chatty", "memory_noticed", "INTEGER NOT NULL DEFAULT 0"],
     // /new archive (#600): the conversation a re-keyed history came from; NULL = a live row.
     ["chatops_conversations", "archived_from", "TEXT"],
+    // The run's --model (#613), so Continue live reapplies it; NULL = the CLI's default.
+    ["delegate_runs", "model", "TEXT"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");
