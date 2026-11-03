@@ -119,13 +119,16 @@ interface ActiveSession {
    * a failed post/edit just leaves it dirty for the next tick. */
   buf: string;
   msgId: string | undefined;
+  /** The text last delivered to `msgId` — a seal or rollover whose text is unchanged skips its edit. */
+  sent: string;
   dirty: boolean;
   rendering: boolean;
   /** The currently in-flight flushSession() run, if any — teardown awaits this before its
    * own final flush so an in-progress send isn't silently dropped by the rendering guard. */
   inFlight?: Promise<void>;
-  /** Strictly increasing offsets into `buf`, each the end of a completed turn's message (pushed
-   * the moment the turn ends, so the next turn's output can never be edited into it). Rebased by
+  /** Strictly increasing offsets into `buf`, each the end of a finished message: a completed turn
+   * (pushed the moment the turn ends, so the next turn's output can never be edited into it), or
+   * in proseOnly mode the previous agent message when the next one arrives. Rebased by
    * consumePrefix whenever a delivered prefix leaves `buf`. */
   seals: number[];
   /** Repeats sink.typing() while a turn is in flight; cleared on turn complete / teardown. */
@@ -223,7 +226,7 @@ export class LiveSessionRegistry {
       coDrivers: new Set(),
       sink: input.sink,
       timer: setInterval(() => void this.flush(input.channelId), this.opts.throttleMs ?? DEFAULT_THROTTLE_MS),
-      buf: "", msgId: undefined, dirty: false, rendering: false, seals: [],
+      buf: "", msgId: undefined, sent: "", dirty: false, rendering: false, seals: [],
       onEnded: input.onEnded,
     };
     this.byChannel.set(input.channelId, s);
@@ -240,7 +243,10 @@ export class LiveSessionRegistry {
           if (!this.opts.proseOnly) append(line);
         },
         onText: (text) => {
-          if (this.opts.proseOnly) append(text);
+          if (!this.opts.proseOnly) return;
+          // One bubble per agent message: the previous message (if any is still unsealed) is final.
+          if (s.buf.length > (s.seals[s.seals.length - 1] ?? 0)) s.seals.push(s.buf.length);
+          append(text);
         },
         onTurnStart: () => this.startTyping(s),
         onSessionId: (id) => this.recordSession(input, id),
@@ -396,23 +402,26 @@ export class LiveSessionRegistry {
             const cut = s.buf.lastIndexOf("\n", MSG_LIMIT);
             const at = cut > 0 ? cut : MSG_LIMIT;
             const head = s.buf.slice(0, at);
-            if (s.msgId !== undefined) await s.sink.edit(s.msgId, head);
-            else await s.sink.post(head);
+            if (s.msgId === undefined) await s.sink.post(head);
+            else if (head !== s.sent) await s.sink.edit(s.msgId, head);
             s.msgId = undefined;
             consumePrefix(s, at);
           } else if (s.seals.length > 0) {
             // A completed turn: deliver exactly its content as that message's final text.
             const text = s.buf.slice(0, end);
-            if (s.msgId !== undefined) await s.sink.edit(s.msgId, text);
-            else if (text) await s.sink.post(text);
+            if (s.msgId === undefined) {
+              if (text) await s.sink.post(text);
+            } else if (text !== s.sent) await s.sink.edit(s.msgId, text);
             s.msgId = undefined;
             consumePrefix(s, end);
           } else {
             // The turn still running: s.buf is the CURRENT message's full cumulative content,
             // resent whole every tick (post the first time, edit thereafter) — never trimmed here.
-            if (s.buf) {
-              if (s.msgId !== undefined) await s.sink.edit(s.msgId, s.buf);
-              else s.msgId = await s.sink.post(s.buf);
+            const text = s.buf; // captured: output can append during the await
+            if (text) {
+              if (s.msgId !== undefined) await s.sink.edit(s.msgId, text);
+              else s.msgId = await s.sink.post(text);
+              s.sent = text;
             }
             break;
           }

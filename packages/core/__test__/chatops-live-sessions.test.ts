@@ -532,6 +532,86 @@ describe("LiveSessionRegistry", () => {
       expect(posts).toEqual(["a".repeat(1500), `${"b".repeat(1500)}\n${FOOTER}`, `t2\n${FOOTER}`]);
       expect(notices).toEqual(["Live session ended."]);
     });
+
+    describe("proseOnly (#620): one bubble per agent message", () => {
+      const prose = (d: { sink: LiveSessionSink }) => {
+        const f = fakeStart();
+        const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp(), proseOnly: true });
+        reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: d.sink });
+        return { reg, text: (t: string) => f.cbs().onText?.(t), cbs: f.cbs };
+      };
+
+      it("two messages before one tick become two posts in order, the footer on the last", async () => {
+        const s = fakeSink();
+        const { reg, text, cbs } = prose(s);
+        text("A");
+        text("B");
+        cbs().onTurnComplete(done);
+        await flushTicks(reg, 1001);
+        expect(s.posts).toEqual(["A", `B\n${FOOTER}`]);
+        expect(s.edits).toEqual([]);
+      });
+
+      it("a message arriving during an in-flight post gets its own bubble; the unchanged seal skips its edit", async () => {
+        const d = deferredSink({ post: 1 });
+        const { reg, text, cbs } = prose(d);
+        text("A");
+        await flushTicks(reg, 1001); // post "A" hangs
+        text("B");
+        d.release();
+        await settle();
+        await flushTicks(reg, 1001);
+        expect(d.posts).toEqual(["A", "B"]);
+        expect(d.edits).toEqual([]);
+        cbs().onTurnComplete(done);
+        await flushTicks(reg, 1001);
+        expect(d.edits).toEqual([["msg-2", `B\n${FOOTER}`]]);
+      });
+
+      it("a turn completing during a post puts the footer on that bubble", async () => {
+        const d = deferredSink({ post: 1 });
+        const { reg, text, cbs } = prose(d);
+        text("A");
+        await flushTicks(reg, 1001); // post "A" hangs
+        cbs().onTurnComplete(done);
+        d.release();
+        await settle();
+        await flushTicks(reg, 1001);
+        expect(d.posts).toEqual(["A"]);
+        expect(d.edits).toEqual([["msg-1", `A\n${FOOTER}`]]);
+      });
+
+      it("next-turn text before the flush starts its own bubble", async () => {
+        const s = fakeSink();
+        const { reg, text, cbs } = prose(s);
+        text("A");
+        cbs().onTurnComplete(done);
+        text("B");
+        await flushTicks(reg, 1001);
+        expect(s.posts).toEqual([`A\n${FOOTER}`, "B"]);
+        expect(s.edits).toEqual([]);
+      });
+
+      it("a tools-only turn posts its footer alone; a failed turn's footer lands on the last bubble", async () => {
+        const s = fakeSink();
+        const { reg, text, cbs } = prose(s);
+        cbs().onTurnComplete(done);
+        text("A");
+        text("B");
+        cbs().onTurnComplete({ result: "", failed: "boom" });
+        await flushTicks(reg, 1001);
+        expect(s.posts).toEqual([FOOTER, "A", "B\n— turn failed: boom"]);
+      });
+
+      it("a message over the limit rolls over, then the next message is its own bubble", async () => {
+        const s = fakeSink();
+        const { reg, text } = prose(s);
+        text("x".repeat(2500));
+        text("B");
+        await flushTicks(reg, 1001);
+        expect(s.posts).toEqual(["x".repeat(1900), "x".repeat(600), "B"]);
+      });
+    });
   });
 
   it("forceKillAll SIGKILLs every active session's process group immediately", () => {
