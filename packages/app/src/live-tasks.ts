@@ -153,7 +153,7 @@ interface Session {
   stopping: boolean;
   /** The delegate session this one continues (Continue live) — claimed while it lives. */
   resumeId?: string;
-  /** Literal --model (a resumed run's recorded one, still offered); unset = the CLI's default. */
+  /** Literal --model: allowlisted (fresh) or the resumed run's recorded one, still offered; unset = the CLI's default. */
   model?: string;
   /** The CLI's session id once reported — claimed like resumeId, so Continue live can't put a
    * second writer on it while this child is still stopping. */
@@ -162,8 +162,6 @@ interface Session {
   ask?: string;
   /** claude's child pid the run record was moved to (see trackPid). */
   pid?: number;
-  /** The allowlisted `--model` (fresh sessions only); unset = the CLI's default. */
-  model?: string;
 }
 
 // Distributive, so each event variant keeps its own fields.
