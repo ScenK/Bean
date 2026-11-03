@@ -257,6 +257,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       persona,
       memories,
       ownerIds,
+      pinOwnerMemories: true, // the desktop is the owner's own machine (#650)
       ...(memoryTools ? { memoryCategories: memoryCategories(memories) } : {}),
       deps: { chat: deps.converse, model: deps.getModel() },
       droppedUrl: req.droppedUrl,
@@ -494,6 +495,9 @@ export interface MemoryHandlerDeps {
   // (.memory/safety-memory-append-vs-replace.md).
   appendMemories: (file: string, additions: Memory[]) => Promise<void>;
   updateMemory: (file: string, id: string, text: string) => Promise<void>;
+  updateMemoryCategory: (file: string, id: string, category: string | null) => Promise<void>;
+  renameMemoryCategory: (file: string, from: string, to: string) => Promise<number>;
+  ownerSubjectIds?: () => Promise<string[]>;
   deleteMemories: (file: string, ids: string[]) => Promise<string[]>;
   extractMemories: (
     transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps, opts?: { latestTurn?: boolean; categorize?: boolean },
@@ -588,6 +592,9 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     list: (): Promise<Memory[]> => deps.loadMemories(deps.dbFile),
     append: (additions: Memory[]): Promise<void> => deps.appendMemories(deps.dbFile, additions),
     update: (id: string, text: string): Promise<void> => deps.updateMemory(deps.dbFile, id, text),
+    updateCategory: (id: string, category: string | null): Promise<void> => deps.updateMemoryCategory(deps.dbFile, id, category),
+    renameCategory: (from: string, to: string): Promise<number> => deps.renameMemoryCategory(deps.dbFile, from, to),
+    ownerIds: (): Promise<string[]> => deps.ownerSubjectIds?.() ?? Promise.resolve([]),
     delete: async (ids: string[]): Promise<number> => (await deps.deleteMemories(deps.dbFile, ids)).length,
     /** After a chat reply: capture this typed turn's facts (only it is citable; a few prior
      * turns are context). Skipped when the turn used the explicit remember/forget tools or errored. */
@@ -1048,6 +1055,8 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   ownerSubjectIds?: ChatHandlerDeps["ownerSubjectIds"];
   appendMemories: MemoryHandlerDeps["appendMemories"];
   updateMemory: MemoryHandlerDeps["updateMemory"];
+  updateMemoryCategory: MemoryHandlerDeps["updateMemoryCategory"];
+  renameMemoryCategory: MemoryHandlerDeps["renameMemoryCategory"];
   deleteMemories: MemoryHandlerDeps["deleteMemories"];
   extractMemories: MemoryHandlerDeps["extractMemories"];
   autoMemory: MemoryHandlerDeps["autoMemory"];
@@ -1275,6 +1284,9 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.handle(IPC.appendMemories, (_e, additions: Memory[]) => memoryHandlers.append(additions));
   ipcMain.handle(IPC.updateMemory, (_e, id: string, text: string) => memoryHandlers.update(id, text));
   ipcMain.handle(IPC.deleteMemories, (_e, ids: string[]) => memoryHandlers.delete(ids));
+  ipcMain.handle(IPC.updateMemoryCategory, (_e, id: string, category: string | null) => memoryHandlers.updateCategory(id, category));
+  ipcMain.handle(IPC.renameMemoryCategory, (_e, from: string, to: string) => memoryHandlers.renameCategory(from, to));
+  ipcMain.handle(IPC.memoryOwnerIds, () => memoryHandlers.ownerIds());
   // Fire-and-forget: the chat window is already closing. A failure already raised its bubble
   // (onMemoryFailure); this only logs it.
   ipcMain.on(IPC.chatIncognito, (e, on: unknown, mountId: unknown) => {

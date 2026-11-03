@@ -232,6 +232,32 @@ test("chat handler drops disabled skills and injects recalled memories", async (
   expect(systemContent).not.toContain("prefers pnpm");
 });
 
+test("chat handler pins the owner's You rows into every recall, whatever the memory size (#650)", async () => {
+  let userContent = "";
+  const handler = buildChatHandler({
+    loadSkills: async () => [],
+    loadProjects: async () => [],
+    loadPersona: async () => ({ name: "Bean", tags: [] }) as Persona,
+    converse: async ({ messages }) => {
+      userContent = messages.filter((m) => m.role === "user").map((m) => String(m.content)).join("\n\n");
+      return { content: "ok", toolCalls: [] };
+    },
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills",
+    skillsDir: "/b/skills",
+    projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json",
+    projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [
+      { id: "you", text: "goes by Scen", category: "You", createdAt: "2026-07-01T00:00:00.000Z" },
+      ...Array.from({ length: 30 }, (_, i) => ({ id: `f-${i}`, text: `unrelated filler ${i}`, createdAt: "2026-07-03T00:00:00.000Z" })),
+    ],
+    dbFile: "/b/memory.json",
+  });
+  await handler({ history: [], message: "what's the weather" });
+  expect(userContent).toContain("[you] (about the user) goes by Scen");
+});
+
 test("chat handler passes the linked note through to converse (framed user message + proposal slug)", async () => {
   let systemContent = "";
   let noteContent = "";

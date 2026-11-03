@@ -25,7 +25,7 @@ import {
 } from "./cards.js";
 import { addressedToBot } from "./addressing.js";
 import { startDevtunnel } from "./devtunnel.js";
-import { bareChannelId, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
+import { bareChannelId, capturePlace, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
 import { parseQuote } from "./replied-to.js";
 import { deliveredAppend, loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 import { teamsText } from "./teams-text.js";
@@ -336,7 +336,7 @@ app.post("/api/messages", (req, res) => {
           // Household memory capture (#463): the id gates (role), the name only labels a saved fact.
           // `text` already has any quote-reply split out (parseQuote). No receipt on Teams.
           fromId: a.from.id, fromAltId: a.from.aadObjectId, name: a.from.name ?? "someone",
-          text, at: Date.now(), bot: a.from.role === "bot",
+          text, at: Date.now(), bot: a.from.role === "bot", place: capturePlace({ conversation: a.conversation, bot: a.recipient }),
         });
       }
       return;

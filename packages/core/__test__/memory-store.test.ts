@@ -97,7 +97,7 @@ test("selectRelevantMemories ranks by relevance above the threshold and force-in
     m("roadmap", "the Q3 roadmap ships auth work first"),
     { ...m("scoped", "internal note about billing"), projectPath: "/work/billing" },
   ];
-  const picked = selectRelevantMemories(memories, "what's the roadmap say", "/work/billing", 5, 20);
+  const picked = selectRelevantMemories(memories, "what's the roadmap say", "/work/billing", { limit: 5, skipThreshold: 20 });
   expect(picked.some((mm) => mm.id === "scoped")).toBe(true);
   expect(picked.some((mm) => mm.id === "roadmap")).toBe(true);
   expect(picked.length).toBeLessThanOrEqual(5);
@@ -108,12 +108,12 @@ test("selectRelevantMemories recalls an older Chinese memory from a Chinese ques
     m("dentist", "我的牙医是张医生，在中山路"),
     ...Array.from({ length: 25 }, (_, i) => m(`filler-${i}`, `最近的事情 ${i}`)),
   ];
-  const picked = selectRelevantMemories(memories, "我的牙医叫什么？", undefined, 5, 20);
+  const picked = selectRelevantMemories(memories, "我的牙医叫什么？", undefined, { limit: 5, skipThreshold: 20 });
   expect(picked[0]?.id).toBe("dentist");
   // A one-character query matches mid-run; mixed text with no space still separates.
-  expect(selectRelevantMemories([...memories, m("mixed", "my dentist牙医 is nearby")], "dentist", undefined, 5, 20)[0]?.id)
+  expect(selectRelevantMemories([...memories, m("mixed", "my dentist牙医 is nearby")], "dentist", undefined, { limit: 5, skipThreshold: 20 })[0]?.id)
     .toBe("mixed");
-  expect(selectRelevantMemories(memories, "牙", undefined, 5, 20)[0]?.id).toBe("dentist");
+  expect(selectRelevantMemories(memories, "牙", undefined, { limit: 5, skipThreshold: 20 })[0]?.id).toBe("dentist");
 });
 
 test("selectRelevantMemories matches English against mixed-language memories and caps from the newest text", () => {
@@ -121,9 +121,26 @@ test("selectRelevantMemories matches English against mixed-language memories and
     m("trip", "flying to 东京 for the conference in May"),
     ...Array.from({ length: 25 }, (_, i) => m(`filler-${i}`, `unrelated filler fact ${i}`)),
   ];
-  expect(selectRelevantMemories(memories, "when is the conference", undefined, 3, 20)[0]?.id).toBe("trip");
+  expect(selectRelevantMemories(memories, "when is the conference", undefined, { limit: 3, skipThreshold: 20 })[0]?.id).toBe("trip");
   const oldChatter = Array.from({ length: 80 }, (_, i) => `chatter${i}`).join(" ");
-  expect(selectRelevantMemories(memories, `${oldChatter} 东京`, undefined, 3, 20)[0]?.id).toBe("trip");
+  expect(selectRelevantMemories(memories, `${oldChatter} 东京`, undefined, { limit: 3, skipThreshold: 20 })[0]?.id).toBe("trip");
+});
+
+test("selectRelevantMemories pins the newest 15 rows in pinCategory, ahead of and outside the ranked top-K", () => {
+  // 20 owner rows (oldest first), then 280 newer unrelated rows — 300 total, loadMemories' created_at order.
+  const memories = [
+    ...Array.from({ length: 20 }, (_, i) => ({ ...m(`you-${i}`, `owner preference ${i}`), category: "You" })),
+    ...Array.from({ length: 280 }, (_, i) => ({ ...m(`f-${i}`, `unrelated filler ${i}`), category: "Work" })),
+  ];
+  const picked = selectRelevantMemories(memories, "what's the weather", undefined, { pinCategory: "You" });
+  const pinned = picked.filter((mm) => mm.category === "You").map((mm) => mm.id);
+  expect(pinned).toEqual(Array.from({ length: 15 }, (_, i) => `you-${i + 5}`));
+  expect(picked.slice(0, 15).map((mm) => mm.id)).toEqual(pinned);
+  expect(picked).toHaveLength(15 + 12); // pinned rows don't eat the ranked limit
+  expect(pinned).not.toContain("you-4");
+  // Exact category only, and no pin without the option.
+  expect(selectRelevantMemories(memories, "what's the weather").some((mm) => mm.category === "You")).toBe(false);
+  expect(selectRelevantMemories(memories, "what's the weather", undefined, { pinCategory: "you" }).some((mm) => mm.category === "You")).toBe(false);
 });
 
 test("a Persona edit racing a concurrent appendMemories loses neither write", async () => {

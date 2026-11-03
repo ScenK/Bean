@@ -9,10 +9,10 @@ import type { ConverseDeps } from "../src/converse.js";
 import type { Memory } from "../src/memory/memory.js";
 
 const ROLES: Record<string, Role> = { u1: "owner", mia: "member", gus: "guest" };
-type Call = { name: string; args: { text: string; quote: string; category?: string } };
+type Call = { name: string; args: { text: string; quote: string; category?: string; sourceId?: string; sourceTitle?: string } };
 
-function harness(calls: (prompt: string) => Call[] = () => []) {
-  const chatter = makeChatter({ dbPath: join(mkdtempSync(join(tmpdir(), "bean-capture-")), "bean.db"), surface: "discord" });
+function harness(calls: (prompt: string) => Call[] = () => [], surface: "discord" | "teams" = "discord") {
+  const chatter = makeChatter({ dbPath: join(mkdtempSync(join(tmpdir(), "bean-capture-")), "bean.db"), surface });
   let clock = 1_800_000_000_000;
   const timers: { at: number; fn: () => void; dead: boolean }[] = [];
   const saved: Memory[] = [];
@@ -168,4 +168,26 @@ test("the daily call cap holds", async () => {
     await h.advance(30_000);
   }
   expect(h.chat).toHaveBeenCalledTimes(CAPTURE_DAILY_CALLS);
+});
+
+test("a capture records its source from the adapter: <surface>:<scopeId> plus the place title, never the model's args", async () => {
+  // The model tries to supply its own source; only the adapter's place and the scope count (#649).
+  const spoofed = (): Call[] => [{ name: "remember", args: { ...deploy()[0]!.args, sourceId: "teams:evil", sourceTitle: "Spoof" } }];
+  const d = harness(spoofed);
+  d.say("mia", "we deploy on Tuesdays", { place: { kind: "channel", title: "#eng" } });
+  await d.advance(30_000);
+  expect(d.saved).toMatchObject([{ text: "Mia: Deploys on Tuesdays", sourceId: "discord:s", sourceTitle: "#eng" }]);
+
+  const t = harness(spoofed, "teams");
+  t.say("mia", "we deploy on Tuesdays", { place: { kind: "channel", title: ` Weekend\n\tcrew ${"x".repeat(100)}` } });
+  await t.advance(30_000);
+  expect(t.saved[0]!.sourceId).toBe("teams:s");
+  expect(t.saved[0]!.sourceTitle).toBe(`Weekend crew ${"x".repeat(100)}`.slice(0, 80));
+
+  // No place from the adapter: the id still records, with no title.
+  const n = harness(deploy);
+  n.say("mia", "we deploy on Tuesdays");
+  await n.advance(30_000);
+  expect(n.saved[0]).toMatchObject({ sourceId: "discord:s" });
+  expect(n.saved[0]!.sourceTitle).toBeUndefined();
 });

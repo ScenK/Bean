@@ -132,6 +132,12 @@ declare global {
       appendMemories(additions: Memory[]): Promise<void>;
       updateMemory(id: string, text: string): Promise<void>;
       deleteMemories(ids: string[]): Promise<number>;
+      /** Per-row recategorize; null/empty uncategorizes. */
+      updateMemoryCategory(id: string, category: string | null): Promise<void>;
+      /** Renames a category on every row; returns rows changed. */
+      renameMemoryCategory(from: string, to: string): Promise<number>;
+      /** The owner's chatops ids, so Persona files owner-DM rows under the owner's sections. */
+      memoryOwnerIds(): Promise<string[]>;
       /** Fire-and-forget at chat close: main extracts + saves in the background. */
       rememberOnClose(transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[]; mountId: string }): void;
       setChatIncognito(on: boolean, mountId: string): void;
