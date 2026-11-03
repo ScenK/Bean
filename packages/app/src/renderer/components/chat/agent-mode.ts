@@ -1,4 +1,4 @@
-import type { CliName, LiveCli } from "@bean/core";
+import type { AvailableModel, CliName, LiveCli } from "@bean/core";
 import type { HandoffItem, LiveEvent } from "../../../live-tasks.js";
 import type { CloseTurn } from "../../../ipc.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
@@ -20,6 +20,40 @@ const TAIL_LINES = 30;
 /** The engine a hand-off offer starts: Claude Code when it's enabled, else the first enabled live agent. */
 export function offerAgent(enabled: readonly CliName[]): LiveCli | undefined {
   return enabled.includes("claude") ? "claude" : LIVE_AGENTS.find((a) => enabled.includes(a));
+}
+
+/** One agent's chip picks, remembered per agent (#612). `project`: undefined = keep the window's,
+ * "" = scratch. `model`: undefined or "" = the agent's own default. */
+export type AgentPick = { project?: string; model?: string };
+export type AgentPicks = Partial<Record<LiveCli, AgentPick>>;
+
+/** Model-memory keys. The model key is shared with chatops (bot.ts liveModelKey), so a pick on one
+ * surface is the next default on the other; the project key is desktop-only — chatops' global
+ * `live:project` is never read or written here. */
+export const liveModelKey = (cli: LiveCli): string => `live:model:${cli}`;
+export const liveProjectKey = (cli: LiveCli): string => `desktop:live:project:${cli}`;
+
+/** The models the chip offers an agent: clis.json's, for that CLI. */
+export const agentModels = (models: readonly AvailableModel[], agent: LiveCli): AvailableModel[] =>
+  models.filter((m) => m.availableOn.includes(agent));
+
+/** A picked/remembered model the agent still offers; anything stale is the agent default (undefined). */
+export const validModel = (models: readonly AvailableModel[], agent: LiveCli, model: string | undefined): string | undefined =>
+  model && agentModels(models, agent).some((m) => m.id === model) ? model : undefined;
+
+/** A remembered project to restore: a removed one becomes scratch; undefined = keep the window's. */
+export const validProject = (projects: readonly { path: string }[], project: string | undefined): string | undefined =>
+  project === undefined || project === "" || projects.some((p) => p.path === project) ? project : "";
+
+/** What a hand-off offer's Start launches — the card shows the same. A registered project in the
+ * offer wins, else the agent's remembered one (else scratch); the model is the agent's remembered one. */
+export function offerLaunch(
+  offerPath: string, agent: LiveCli, picks: AgentPicks, projects: readonly { path: string }[], models: readonly AvailableModel[],
+): { projectPath: string; model?: string } {
+  const pick = picks[agent];
+  const projectPath = projects.some((p) => p.path === offerPath) ? offerPath : validProject(projects, pick?.project) ?? "";
+  const model = validModel(models, agent, pick?.model);
+  return { projectPath, ...(model ? { model } : {}) };
 }
 
 /** Whether a delegate card or an ended live session's status row offers Continue live: its receipt

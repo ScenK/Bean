@@ -4,7 +4,8 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { ChatTurn, LiveCli } from "@bean/core";
 import {
-  AGENT_FINAL_CHARS, applyLiveEvent, canContinueLive, chatTurns, handoffLines, offerAgent, parseSlash, turnFooter,
+  AGENT_FINAL_CHARS, applyLiveEvent, canContinueLive, chatTurns, handoffLines, liveModelKey, liveProjectKey, offerAgent, offerLaunch,
+  parseSlash, turnFooter, validModel, validProject,
 } from "../src/renderer/components/chat/agent-mode.js";
 import { slashMenu } from "../src/renderer/components/chat/slash-commands.js";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
@@ -105,6 +106,37 @@ describe("canContinueLive", () => {
       : { sessionId: "s1", agent: "codex", seq: 3, type, reason: "stopped" });
     expect(applyLiveEvent([row], ev("session"), () => "n")).toEqual([row]);
     expect(applyLiveEvent([row], ev("ended"), () => "n")).toEqual([{ kind: "status", id: "r", text: "ended", tone: "info", receipt: row.receipt }]);
+  });
+});
+
+describe("per-agent picks helpers (#612)", () => {
+  const models = [
+    { id: "sonnet", label: "sonnet", availableOn: ["claude" as const] },
+    { id: "gpt-5", label: "gpt-5", availableOn: ["codex" as const, "opencode" as const] },
+  ];
+  const projects = [{ path: "/p" }, { path: "/q" }];
+
+  it("keys: the model key is chatops' live:model:<cli>, the project key is desktop-only", () => {
+    expect(liveModelKey("claude")).toBe("live:model:claude");
+    expect(liveProjectKey("codex")).toBe("desktop:live:project:codex");
+  });
+
+  it("a stale or other-CLI model is the default; a removed project is scratch; absent keeps", () => {
+    expect(validModel(models, "claude", "sonnet")).toBe("sonnet");
+    expect(validModel(models, "claude", "gpt-5")).toBeUndefined();
+    expect(validModel(models, "claude", "opus-old")).toBeUndefined();
+    expect(validModel(models, "claude", "")).toBeUndefined();
+    expect(validProject(projects, "/p")).toBe("/p");
+    expect(validProject(projects, "/gone")).toBe("");
+    expect(validProject(projects, "")).toBe("");
+    expect(validProject(projects, undefined)).toBeUndefined();
+  });
+
+  it("an offer's registered project wins, else the agent's remembered one, else scratch; model is the agent's", () => {
+    const picks = { claude: { project: "/q", model: "sonnet" } };
+    expect(offerLaunch("/p", "claude", picks, projects, models)).toEqual({ projectPath: "/p", model: "sonnet" });
+    expect(offerLaunch("/scratch-abs", "claude", picks, projects, models)).toEqual({ projectPath: "/q", model: "sonnet" });
+    expect(offerLaunch("/scratch-abs", "codex", picks, projects, models)).toEqual({ projectPath: "" });
   });
 });
 
@@ -443,5 +475,113 @@ describe("ChatWindow agent mode", () => {
     await send("/compact");
     expect(bean.liveStart).toHaveBeenLastCalledWith(expect.objectContaining({ agent: "opencode", ask: "/compact" }), expect.any(String));
     expect(bean.liveStart!.mock.calls.at(-1)![0].label).toBeUndefined();
+  });
+  describe("per-agent project + model (#612)", () => {
+    const models = [
+      { id: "sonnet", label: "sonnet", availableOn: ["claude"] },
+      { id: "anthropic/opus", label: "opus", availableOn: ["claude"] },
+      { id: "gpt-5", label: "gpt-5", availableOn: ["codex"] },
+    ];
+    const chip = (): HTMLElement => root.querySelector(".bean-agent-chip") as HTMLElement;
+    const openChip = async (): Promise<void> => { await act(async () => { chip().click(); }); await flush(); };
+    const modelRows = (): HTMLButtonElement[] => [...root.querySelectorAll<HTMLButtonElement>(".bean-chip-menu-row--model")];
+    const pickRow = async (label: string): Promise<void> => {
+      await openChip();
+      const row = [...root.querySelectorAll<HTMLButtonElement>(".bean-chip-menu-row")].find((b) => b.textContent?.trim().endsWith(label));
+      if (!row) throw new Error(`no row "${label}"`);
+      await act(async () => { row.click(); });
+      await flush();
+    };
+    const liveSets = (): string[][] => bean.setModelMemory!.mock.calls.filter((c) => /^(live|desktop):/.test(String(c[0]))) as string[][];
+    const mount = async (memory: Record<string, string>): Promise<void> => {
+      bean.availableClis = vi.fn(async () => ["claude", "codex"]);
+      bean.availableModels = vi.fn(async () => models);
+      bean.listProjects = vi.fn(async () => [{ name: "P", path: "/p" }, { name: "Q", path: "/q" }]);
+      bean.getModelMemory = vi.fn(async (k: string) => memory[k]);
+      bean.setModelMemory = vi.fn(async () => undefined);
+      await act(async () => { render(h(ChatWindow, {}), root); });
+      await flush();
+    };
+
+    it("first use: no model, no --model, chip names none; the chosen start is remembered (model, then project)", async () => {
+      await mount({});
+      await send("/claude go");
+      expect(bean.liveStart!.mock.calls[0]![0]).not.toHaveProperty("model");
+      expect(chip().textContent).toBe(" Claude Code · scratch ▾");
+      expect(liveSets()).toEqual([["live:model:claude", ""], ["desktop:live:project:claude", ""]]);
+    });
+
+    it("/claude <ask> in a new chat launches with Claude's remembered project and model; the chip and banner show them", async () => {
+      await mount({ "live:model:claude": "anthropic/opus", "desktop:live:project:claude": "/q" });
+      await send("/claude fix it");
+      expect(bean.liveStart).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude", projectPath: "/q", model: "anthropic/opus", ask: "fix it" }), expect.any(String));
+      expect(chip().textContent).toBe(" Claude Code · Q · opus ▾");
+      expect(root.querySelector(".bean-agent-banner")?.textContent).toContain("Claude Code · Q · opus");
+      // While it runs, model rows are disabled; the picked one stays highlighted.
+      await openChip();
+      expect(modelRows().map((b) => b.disabled)).toEqual([true, true, true]);
+      expect(root.textContent).toContain("End session to change model");
+      expect(modelRows().find((b) => b.classList.contains("bean-chip-menu-row--on"))?.textContent).toBe("opus");
+    });
+
+    it("a stale model is the default and a removed project is scratch", async () => {
+      await mount({ "live:model:claude": "opus-old", "desktop:live:project:claude": "/gone" });
+      await send("/claude go");
+      const req = bean.liveStart!.mock.calls[0]![0];
+      expect(req).toMatchObject({ projectPath: "" });
+      expect(req).not.toHaveProperty("model");
+    });
+
+    it("chip picks are per agent: claude → codex → claude keeps the unsent pick; re-picking the agent keeps it", async () => {
+      await mount({ "live:model:codex": "gpt-5" });
+      await pickRow("Claude Code");
+      await pickRow("P");
+      await pickRow("sonnet");
+      expect(chip().textContent).toBe(" Claude Code · P · sonnet ▾");
+      await openChip();
+      expect(modelRows().map((b) => b.textContent)).toEqual(["Agent default", "sonnet", "opus"]);
+      await openChip(); // the trigger toggles it closed
+      await pickRow("Codex");
+      // Codex has no remembered project: the window's stays; its own model comes back.
+      expect(chip().textContent).toBe(" Codex · P · gpt-5 ▾");
+      await pickRow("Claude Code");
+      expect(chip().textContent).toBe(" Claude Code · P · sonnet ▾");
+      await pickRow("Claude Code");
+      expect(chip().textContent).toBe(" Claude Code · P · sonnet ▾");
+      await send("go");
+      expect(bean.liveStart).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude", projectPath: "/p", model: "sonnet" }), expect.any(String));
+      expect(liveSets()).toEqual([["live:model:claude", "sonnet"], ["desktop:live:project:claude", "/p"]]);
+    });
+
+    it("an offer: a registered project wins, the card names the effective project and model, and its start isn't remembered", async () => {
+      await mount({ "live:model:claude": "sonnet", "desktop:live:project:claude": "/q" });
+      bean.chat!.mockResolvedValueOnce({ reply: "Hands-on.", model: "m", proposedLiveSession: { projectPath: "/p", instruction: "Do it" } });
+      await send("do it");
+      expect(root.textContent).toContain("This looks like a job for Claude Code in P on sonnet. Hand over this chat?");
+      await click("Start");
+      expect(bean.liveStart).toHaveBeenCalledWith(expect.objectContaining({ agent: "claude", projectPath: "/p", model: "sonnet", ask: "Do it" }), expect.any(String));
+      expect(liveSets()).toEqual([]);
+    });
+
+    it("an offer with an unregistered project uses Claude's remembered one", async () => {
+      await mount({ "desktop:live:project:claude": "/q" });
+      bean.chat!.mockResolvedValueOnce({ reply: "Hands-on.", model: "m", proposedLiveSession: { projectPath: "/scratch-abs", instruction: "Do it" } });
+      await send("do it");
+      expect(root.textContent).toContain("This looks like a job for Claude Code in Q. Hand over this chat?");
+      await click("Start");
+      expect(bean.liveStart!.mock.calls[0]![0]).toMatchObject({ projectPath: "/q" });
+      expect(bean.liveStart!.mock.calls[0]![0]).not.toHaveProperty("model");
+    });
+
+    it("a failed memory write doesn't fail the session", async () => {
+      await mount({});
+      bean.setModelMemory = vi.fn(async () => { throw new Error("disk full"); });
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      await send("/claude go");
+      await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
+      expect(root.querySelector(".bean-agent-banner")).not.toBeNull();
+      expect(bean.setModelMemory).toHaveBeenCalledTimes(1); // model failed → project not attempted
+      err.mockRestore();
+    });
   });
 });
