@@ -145,6 +145,9 @@ contextBridge.exposeInMainWorld("bean", {
   appendMemories: (additions: Memory[]): Promise<void> => ipcRenderer.invoke(IPC.appendMemories, additions),
   updateMemory: (id: string, text: string): Promise<void> => ipcRenderer.invoke(IPC.updateMemory, id, text),
   deleteMemories: (ids: string[]): Promise<number> => ipcRenderer.invoke(IPC.deleteMemories, ids),
+  updateMemoryCategory: (id: string, category: string | null): Promise<void> => ipcRenderer.invoke(IPC.updateMemoryCategory, id, category),
+  renameMemoryCategory: (from: string, to: string): Promise<number> => ipcRenderer.invoke(IPC.renameMemoryCategory, from, to),
+  memoryOwnerIds: (): Promise<string[]> => ipcRenderer.invoke(IPC.memoryOwnerIds),
   rememberOnClose: (transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[]; mountId: string }): void =>
     ipcRenderer.send(IPC.rememberOnClose, transcript, opts),
   setChatIncognito: (on: boolean, mountId: string): void => ipcRenderer.send(IPC.chatIncognito, on, mountId),

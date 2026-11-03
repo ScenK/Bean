@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { openDb } from "../db.js";
 import { cjkBigrams, ftsMatchQuery } from "../fts-text.js";
-import { sanitizeCategory, type Memory } from "./memory.js";
+import { OWNER_PIN_LIMIT, sanitizeCategory, type Memory } from "./memory.js";
 
 interface MemoryRow {
   id: string; text: string; project_path: string | null; created_at: string; subject_id?: string | null;
@@ -303,7 +303,7 @@ export function selectRelevantMemories(
   memories: Memory[],
   latestUserText: string,
   currentProjectPath?: string,
-  { limit = 12, skipThreshold = 20, pinCategory, pinLimit = 15 }: {
+  { limit = 12, skipThreshold = 20, pinCategory, pinLimit = OWNER_PIN_LIMIT }: {
     limit?: number; skipThreshold?: number; pinCategory?: string; pinLimit?: number;
   } = {},
 ): Memory[] {
