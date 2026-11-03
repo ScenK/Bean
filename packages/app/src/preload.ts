@@ -145,6 +145,9 @@ contextBridge.exposeInMainWorld("bean", {
   appendMemories: (additions: Memory[]): Promise<void> => ipcRenderer.invoke(IPC.appendMemories, additions),
   updateMemory: (id: string, text: string): Promise<void> => ipcRenderer.invoke(IPC.updateMemory, id, text),
   deleteMemories: (ids: string[]): Promise<number> => ipcRenderer.invoke(IPC.deleteMemories, ids),
+  updateMemoryCategory: (id: string, category: string | null): Promise<void> => ipcRenderer.invoke(IPC.updateMemoryCategory, id, category),
+  renameMemoryCategory: (from: string, to: string): Promise<number> => ipcRenderer.invoke(IPC.renameMemoryCategory, from, to),
+  memoryOwnerIds: (): Promise<string[]> => ipcRenderer.invoke(IPC.memoryOwnerIds),
   rememberOnClose: (transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[]; mountId: string }): void =>
     ipcRenderer.send(IPC.rememberOnClose, transcript, opts),
   setChatIncognito: (on: boolean, mountId: string): void => ipcRenderer.send(IPC.chatIncognito, on, mountId),
@@ -162,8 +165,8 @@ contextBridge.exposeInMainWorld("bean", {
     ipcRenderer.invoke(IPC.syncedChatResume, surface, conversationId, mountId),
   onSyncedChatEvent: (cb: (e: SyncedChatEvent) => void) =>
     ipcRenderer.on(IPC.syncedChatEvent, (_e, ev: SyncedChatEvent) => cb(ev)),
-  onMemoryUpdated: (cb: (saved: Array<{ id: string; text: string }>, mountId: string) => void) =>
-    ipcRenderer.on(IPC.memoryUpdated, (_e, saved: Array<{ id: string; text: string }>, mountId: string) => cb(saved, mountId)),
+  onMemoryUpdated: (cb: (saved: Array<{ id: string; text: string; category?: string }>, mountId: string) => void) =>
+    ipcRenderer.on(IPC.memoryUpdated, (_e, saved: Array<{ id: string; text: string; category?: string }>, mountId: string) => cb(saved, mountId)),
   getMemoryBatch: (): Promise<MemoryBatch | undefined> => ipcRenderer.invoke(IPC.getMemoryBatch),
   undoMemoryBatch: (): Promise<number> => ipcRenderer.invoke(IPC.undoMemoryBatch),
   getLastDream: (): Promise<DreamDigest | undefined> => ipcRenderer.invoke(IPC.getLastDream),

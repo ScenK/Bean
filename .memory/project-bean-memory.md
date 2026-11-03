@@ -61,11 +61,28 @@ see `db.ts`'s `migrateFromFiles`.
   a plain INSERT — an id that exists again is a visible, retryable error), marks it `restored`
   only after the append lands, and drops its text from `rejectedMemoriesRef`. History keeps only
   the receipt's text (`kept`, no Undo) — never the row snapshot.
+- **Category at capture (#648):** the remember tool spec always offers an optional English
+  `category` (byte-stable); the existing category list rides as framed user-role data
+  (`categoriesBlock` — next to `existingBlock` in extraction, appended to converse's recall via
+  `memoryCategories`), never the spec or a system message. Only owner paths keep it: desktop
+  extraction + remember (`categorize: true`), owner-DM `captureDm` + remember. Member DMs,
+  channels and channel capture drop whatever the model gave. Quote validation covers `text`
+  only, so a Chinese fact with an English category passes; `sanitizeCategory` normalizes it.
 - **Recall:** `converse()` ranks via `selectRelevantMemories()` — below 20 memories inject all;
   above, an FTS5 bm25 top-12 against the latest user message.
+- **"You" is the only reserved category (#650, `OWNER_CATEGORY`):** on owner paths only — desktop
+  `buildChatHandler` and the owner's chatops DM (`pinOwnerMemories`) — the newest 15 rows with
+  category exactly `You` are pinned ahead of the top-12 (outside it). Channels, member DMs,
+  chime-ins and routines never pin. Pinned rows ride the same user-role recall message; the
+  system message is untouched (cache-stable).
 - **Enabled-skills filter** lives in `buildChatHandler` (app `ipc.ts`), not in `converse()`.
-- **Edit surface:** Persona's MEMORY section, per-row `updateMemory`/`deleteMemories`/
-  `appendMemories` only — see [[safety-memory-append-vs-replace]].
+- **Edit surface:** Persona's MEMORY section, per-row `updateMemory`/`updateMemoryCategory`/
+  `deleteMemories`/`appendMemories` (+ one-statement `renameMemoryCategory`) only — see
+  [[safety-memory-append-vs-replace]]. Sections come from core's renderer-safe
+  `@bean/core/memory` `memorySections()` (#651): You ("N of `OWNER_PIN_LIMIT`" always on, older
+  You rows dimmed) → categories A–Z → Uncategorized → Channels (per `sourceId`) → Others (non-owner
+  🔒 rows + legacy uncategorized `Name:` rows) → Projects. Under 8 owner rows it's one flat list.
+  Only owner rows get the category input — a category on a channel/member row would join recall pinning.
 - **Dream (background consolidation, #177 PR 2):** `memory/dream.ts` `maybeDream()` is checked
   after each desktop auto-save (close batch or per-turn capture; no timer, no boot cost). Due when ≥24h
   since `lastDreamAt` **and** ≥5 memories created since (a `created_at` count — no counter). A

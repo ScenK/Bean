@@ -232,6 +232,32 @@ test("chat handler drops disabled skills and injects recalled memories", async (
   expect(systemContent).not.toContain("prefers pnpm");
 });
 
+test("chat handler pins the owner's You rows into every recall, whatever the memory size (#650)", async () => {
+  let userContent = "";
+  const handler = buildChatHandler({
+    loadSkills: async () => [],
+    loadProjects: async () => [],
+    loadPersona: async () => ({ name: "Bean", tags: [] }) as Persona,
+    converse: async ({ messages }) => {
+      userContent = messages.filter((m) => m.role === "user").map((m) => String(m.content)).join("\n\n");
+      return { content: "ok", toolCalls: [] };
+    },
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills",
+    skillsDir: "/b/skills",
+    projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json",
+    projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [
+      { id: "you", text: "goes by Scen", category: "You", createdAt: "2026-07-01T00:00:00.000Z" },
+      ...Array.from({ length: 30 }, (_, i) => ({ id: `f-${i}`, text: `unrelated filler ${i}`, createdAt: "2026-07-03T00:00:00.000Z" })),
+    ],
+    dbFile: "/b/memory.json",
+  });
+  await handler({ history: [], message: "what's the weather" });
+  expect(userContent).toContain("[you] (about the user) goes by Scen");
+});
+
 test("chat handler passes the linked note through to converse (framed user message + proposal slug)", async () => {
   let systemContent = "";
   let noteContent = "";
@@ -791,18 +817,20 @@ const turnReq = { history: [], message: "I live in Seattle", source: "typed" as 
 const reply = { reply: "Nice!" };
 
 test("captureTurn saves only the latest typed turn, after the reply, and close catch-up skips it", async () => {
-  const calls: { transcript: ChatTurn[]; opts?: { latestTurn?: boolean } }[] = [];
+  const calls: { transcript: ChatTurn[]; opts?: { latestTurn?: boolean; categorize?: boolean } }[] = [];
   const turnBatches: string[][] = [];
   const { handlers, appended, batches } = memoryHandlersFor({
     extractMemories: async (transcript, _ex, _p, _d, opts) => {
       calls.push({ transcript, opts });
-      return { candidates: transcript.some((t) => t.source === "typed") ? [{ text: "Lives in Seattle" }] : [], rejected: 0, failed: false };
+      return { candidates: transcript.some((t) => t.source === "typed") ? [{ text: "Lives in Seattle", category: "You" }] : [], rejected: 0, failed: false };
     },
     onTurnBatch: (pendingIds) => { turnBatches.push(pendingIds()); },
   });
   const saved = await handlers.captureTurn("m7", turnReq, reply);
   expect(saved.map((m) => m.text)).toEqual(["Lives in Seattle"]);
-  expect(calls[0]).toEqual({ transcript: [{ role: "user", content: "I live in Seattle", source: "typed" }], opts: { latestTurn: true } });
+  // The desktop is an owner path (#648): extraction categorizes and the row keeps the category.
+  expect(calls[0]).toEqual({ transcript: [{ role: "user", content: "I live in Seattle", source: "typed" }], opts: { latestTurn: true, categorize: true } });
+  expect(saved[0]?.category).toBe("You");
   expect(appended).toEqual([saved]);
   // Dream sees the still-undoable per-turn ids as pending.
   expect(turnBatches).toEqual([saved.map((m) => m.id)]);

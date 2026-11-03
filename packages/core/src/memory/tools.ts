@@ -17,6 +17,8 @@ export interface MemoryToolDeps {
   latestUserText: string;
   /** Saved facts are private to this speaker (chatops DM, or "just for me"); absent = shared. */
   subjectId?: string;
+  /** Owner path (desktop, owner DM): keep the model's category. Otherwise it's dropped. */
+  categorize?: boolean;
   /** Model for the intent check — one call per turn, made on the first tool call. */
   classifier: ConverseDeps;
 }
@@ -110,6 +112,7 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
       const m: Memory = {
         id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: new Date().toISOString(),
         ...(deps.subjectId ? { subjectId: deps.subjectId } : {}),
+        ...(deps.categorize && c.category ? { category: c.category } : {}),
       };
       await deps.append([m]);
       texts.add(c.text.toLowerCase());

@@ -7,7 +7,7 @@ import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
 import { stageImages } from "../stage-images.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
-import { extractMemories } from "../memory/extract.js";
+import { extractMemories, memoryCategories } from "../memory/extract.js";
 import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
 import { chatRoutineProblem, todoRunHint, type Routine } from "../routine-store.js";
@@ -336,22 +336,28 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // sees what the last one saved; never rejects. ponytail: one chain for every DM; per-speaker
   // chains if capture latency ever queues up.
   let captureChain: Promise<void> = Promise.resolve();
-  function captureDm(speakerId: string, recall: string | string[], transcript: ChatTurn[], projects: Project[], fx: BotEffects): Promise<void> {
+  // `owner` = the owner's own DM: facts keep the model's English category (#648); a member's don't.
+  function captureDm(
+    speakerId: string, recall: string | string[], transcript: ChatTurn[], projects: Project[], fx: BotEffects, owner: boolean,
+  ): Promise<void> {
     return captureChain = captureChain.then(async () => {
       if (!(await deps.autoMemoryEnabled?.())) return;
       const { candidates, rejected, failed } = await extractMemories(
-        transcript, await deps.loadMemories(recall), projects, { chat: deps.chat, model: deps.model }, { latestTurn: true },
+        transcript, await deps.loadMemories(recall), projects, { chat: deps.chat, model: deps.model }, { latestTurn: true, categorize: owner },
       );
       // Counts only — a rejected candidate's text may be exactly what validation refused to keep.
       if (rejected > 0) console.warn(`[memory] DM capture rejected ${rejected} candidate(s)`);
       if (failed) throw new Error("extraction model call failed");
       if (candidates.length === 0) return;
       const at = new Date().toISOString();
-      const batch: Memory[] = candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at, subjectId: speakerId }));
+      const batch: Memory[] = candidates.map((c) => ({
+        id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at, subjectId: speakerId,
+        ...(owner && c.category ? { category: c.category } : {}),
+      }));
       await deps.appendMemories(batch);
       for (const m of batch) {
         const projectName = m.projectPath ? projects.find((p) => p.path === m.projectPath)?.name : undefined;
-        await fx.postCard(deps.cards.rememberedCard({ memoryId: m.id, text: m.text, projectName, scope: "private" }));
+        await fx.postCard(deps.cards.rememberedCard({ memoryId: m.id, text: m.text, projectName, category: m.category, scope: "private" }));
       }
     }).catch((err: unknown) => {
       console.error(`[memory] DM capture failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1528,9 +1534,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // the chat-skill follow-up below reuses converseBase without these tools.
         const typed = msg.typedText ?? msg.text;
         const scope = saveScope(typed, msg.direct);
+        // Owner paths categorize (#648): the owner's DM only — a member's and any channel don't.
+        const ownerDm = isOwner && msg.direct;
         const memoryTools = makeMemoryTools({
           append: deps.appendMemories, forget: (ids) => deps.deleteMemories(ids, isOwner ? undefined : msg.fromId),
           memories, projects, latestUserText: typed, ...(scope === "private" ? { subjectId: msg.fromId } : {}),
+          categorize: ownerDm,
           classifier: { chat: deps.chat, model: deps.model },
         });
         // Delivery goes where it was asked: a Discord DM → this speaker's DM, anything else
@@ -1572,6 +1581,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           todoRoutines,
           webSearch: deps.webSearchEnabled?.() ?? false,
           speaker: msg.fromName,
+          pinOwnerMemories: ownerDm, // #650: the owner's DM only — never a channel or a member
           routineAuthoring,
         };
         const result = await converse({
@@ -1579,6 +1589,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           actions: [...converseBase.actions, ...(canMemory ? memoryTools.tools : []), ...(reminderTools?.tools ?? []), ...todoTools],
           sproutCatalog: sproutRoutines.map((r) => ({ name: r.name, description: r.description })),
           history: [...history, ...repliedHint], latestUserText: msg.text, latestUserImages: msg.images,
+          ...(ownerDm && canMemory ? { memoryCategories: memoryCategories(memories) } : {}),
         });
         turnFailed = result.error !== undefined;
         // History keeps only "[image attached]"; the bytes stay in bounded memory for a
@@ -1606,14 +1617,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           const nameFor = (path: string): string => projects.find((p) => p.path === path)?.name ?? path;
           for (const m of memoryTools.remembered) {
             await fx.postCard(deps.cards.rememberedCard({
-              memoryId: m.id, text: m.text, projectName: m.projectPath ? nameFor(m.projectPath) : undefined, scope,
+              memoryId: m.id, text: m.text, projectName: m.projectPath ? nameFor(m.projectPath) : undefined, category: m.category, scope,
             }));
           }
         }
         // Only the speaker's typed words are citable (never an audio transcript); a turn that
         // already remembered or forgot something explicitly is left alone.
         if (msg.direct && canMemory && !turnFailed && typed.trim() && memoryTools.remembered.length === 0 && memoryTools.forgotten.length === 0) {
-          capture = captureDm(msg.fromId, recall ?? msg.fromId, [...history, { role: "user", content: typed, source: "typed" }], projects, fx);
+          capture = captureDm(msg.fromId, recall ?? msg.fromId, [...history, { role: "user", content: typed, source: "typed" }], projects, fx, ownerDm);
         }
         for (const r of reminderTools?.set ?? []) {
           if (deps.cards.reminderCard) await fx.postCard(deps.cards.reminderCard({ reminderId: r.id, text: r.text, at: r.at }));

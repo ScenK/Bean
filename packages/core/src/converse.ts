@@ -1,8 +1,9 @@
 import { composePrompt, quoteFence } from "./prompt.js";
 import { composePersonaPrompt, type Persona } from "./persona.js";
 import type { Project, RouteSuggestion, Skill } from "./types.js";
-import { memoriesBlock, type Memory } from "./memory/memory.js";
+import { memoriesBlock, OWNER_CATEGORY, type Memory } from "./memory/memory.js";
 import { selectRelevantMemories } from "./memory/store.js";
+import { categoriesBlock } from "./memory/extract.js";
 import type { CliName } from "./launcher.js";
 import type { AvailableModel } from "./models.js";
 import { isLiveCli, type LiveCli } from "./live-session.js";
@@ -581,6 +582,12 @@ export interface ConverseInput {
   /** Desktop only: the owner's chatops ids (`ownerSubjectIds`), so recalled owner-DM facts read
    * as about the user rather than "a member". */
   ownerIds?: string[];
+  /** Owner paths only (desktop, the owner's DM): always recall the newest `You`-category rows,
+   * whatever the memory size (#650). Never on channels, chime-ins or routines. */
+  pinOwnerMemories?: boolean;
+  /** Owner paths offering the remember tool: categories already in use, so the model reuses one.
+   * Rides with the recall as user-role data (never the tool spec, which must stay byte-stable). */
+  memoryCategories?: string[];
   /** Offer propose_note / propose_skill (default true). Chatops turns them off by speaker role. */
   noteAvailable?: boolean;
   skillAuthoringAvailable?: boolean;
@@ -625,6 +632,8 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     webSearch = false,
     speaker,
     ownerIds,
+    pinOwnerMemories = false,
+    memoryCategories,
     noteAvailable = true,
     skillAuthoringAvailable = true,
     noteArchiveAvailable = false,
@@ -651,8 +660,11 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   if (actions.length > 0) contextParts.push(`Current date and time: ${now().toString()}`);
   // No per-chat "current project" signal exists here (LinkedNote doesn't carry one) — force-
   // include is left unused from this call site, but selectRelevantMemories still supports it.
-  const relevant = selectRelevantMemories(memories, latestUserText);
-  const recall = memoriesBlock(relevant, projects, speaker !== undefined ? { subject: "everyone here", speaker } : { ownerIds });
+  const relevant = selectRelevantMemories(memories, latestUserText, undefined, pinOwnerMemories ? { pinCategory: OWNER_CATEGORY } : {});
+  const recall = [
+    memoriesBlock(relevant, projects, speaker !== undefined ? { subject: "everyone here", speaker } : { ownerIds }),
+    memoryCategories ? categoriesBlock(memoryCategories) : "",
+  ].filter(Boolean).join("\n\n");
   const spokenText = speaker !== undefined ? speakerLine(speaker, latestUserText) : latestUserText;
   if (roleNote) contextParts.push(roleNote);
 

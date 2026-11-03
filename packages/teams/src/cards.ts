@@ -359,7 +359,7 @@ export function rememberedCard(input: RememberedCardInput): object {
     body: [
       { type: "TextBlock", weight: "bolder", text: "🧠 Got it — remembered" },
       { type: "TextBlock", text: `${input.projectName ? `(${input.projectName}) ` : ""}${input.text}`, wrap: true },
-      { type: "TextBlock", text: rememberedScopeLine(input.scope), isSubtle: true, wrap: true },
+      { type: "TextBlock", text: rememberedScopeLine(input.scope, input.category), isSubtle: true, wrap: true },
     ],
     actions: [
       { type: "Action.Submit", title: "Forget", data: { beanAction: "forget-memory", proposalId: input.memoryId } },

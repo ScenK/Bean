@@ -1,5 +1,5 @@
 import {
-  converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, type ImageGenDeps,
+  converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
   attachNoteImages, MAX_NOTE_IMAGE_BYTES, stageImages, type ImageAttachment,
   availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine, planSproutRun, type SproutRunBlock,
   listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash,
@@ -243,6 +243,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
           append: (m) => deps.appendMemories(deps.dbFile, m),
           forget: (ids) => deps.deleteMemories(deps.dbFile, ids),
           memories, projects, latestUserText: req.message,
+          categorize: true, // the desktop is the owner's own machine (#648)
           classifier: { chat: deps.converse, model: deps.getModel() },
         })
       : undefined;
@@ -256,6 +257,8 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       persona,
       memories,
       ownerIds,
+      pinOwnerMemories: true, // the desktop is the owner's own machine (#650)
+      ...(memoryTools ? { memoryCategories: memoryCategories(memories) } : {}),
       deps: { chat: deps.converse, model: deps.getModel() },
       droppedUrl: req.droppedUrl,
       actions,
@@ -492,9 +495,12 @@ export interface MemoryHandlerDeps {
   // (.memory/safety-memory-append-vs-replace.md).
   appendMemories: (file: string, additions: Memory[]) => Promise<void>;
   updateMemory: (file: string, id: string, text: string) => Promise<void>;
+  updateMemoryCategory: (file: string, id: string, category: string | null) => Promise<void>;
+  renameMemoryCategory: (file: string, from: string, to: string) => Promise<number>;
+  ownerSubjectIds?: () => Promise<string[]>;
   deleteMemories: (file: string, ids: string[]) => Promise<string[]>;
   extractMemories: (
-    transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps, opts?: { latestTurn?: boolean },
+    transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps, opts?: { latestTurn?: boolean; categorize?: boolean },
   ) => Promise<ExtractResult>;
   loadProjects: (file: string) => Promise<Project[]>;
   converse: ConverseDeps["chat"];
@@ -555,13 +561,15 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     ]);
     const { candidates, rejected, failed } = await deps.extractMemories(
       transcript, extra.length ? [...existing, ...extra] : existing, projects,
-      { chat: deps.converse, model: deps.getModel() }, latestTurn ? { latestTurn } : undefined,
+      { chat: deps.converse, model: deps.getModel() }, { latestTurn, categorize: true },
     );
     // Counts only — a rejected candidate's text may be exactly what validation refused to keep.
     if (rejected > 0) console.warn(`auto-remember: rejected ${rejected} candidate(s)`);
     if (failed) throw new Error("auto-remember: extraction model call failed");
     const at = new Date().toISOString();
-    return candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at }));
+    return candidates.map((c) => ({
+      id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at, ...(c.category ? { category: c.category } : {}),
+    }));
   };
   const remember = async (transcript: ChatTurn[], extra: Memory[]): Promise<Memory[]> => {
     const batch = await extract(transcript, extra, false);
@@ -584,6 +592,9 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     list: (): Promise<Memory[]> => deps.loadMemories(deps.dbFile),
     append: (additions: Memory[]): Promise<void> => deps.appendMemories(deps.dbFile, additions),
     update: (id: string, text: string): Promise<void> => deps.updateMemory(deps.dbFile, id, text),
+    updateCategory: (id: string, category: string | null): Promise<void> => deps.updateMemoryCategory(deps.dbFile, id, category),
+    renameCategory: (from: string, to: string): Promise<number> => deps.renameMemoryCategory(deps.dbFile, from, to),
+    ownerIds: (): Promise<string[]> => deps.ownerSubjectIds?.() ?? Promise.resolve([]),
     delete: async (ids: string[]): Promise<number> => (await deps.deleteMemories(deps.dbFile, ids)).length,
     /** After a chat reply: capture this typed turn's facts (only it is citable; a few prior
      * turns are context). Skipped when the turn used the explicit remember/forget tools or errored. */
@@ -1044,6 +1055,8 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   ownerSubjectIds?: ChatHandlerDeps["ownerSubjectIds"];
   appendMemories: MemoryHandlerDeps["appendMemories"];
   updateMemory: MemoryHandlerDeps["updateMemory"];
+  updateMemoryCategory: MemoryHandlerDeps["updateMemoryCategory"];
+  renameMemoryCategory: MemoryHandlerDeps["renameMemoryCategory"];
   deleteMemories: MemoryHandlerDeps["deleteMemories"];
   extractMemories: MemoryHandlerDeps["extractMemories"];
   autoMemory: MemoryHandlerDeps["autoMemory"];
@@ -1149,7 +1162,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
       const sender = e.sender;
       memoryHandlers.captureTurn(key, req, result).then((batch) => {
         if (batch.length > 0 && !sender.isDestroyed()) {
-          sender.send(IPC.memoryUpdated, batch.map(({ id, text }) => ({ id, text })), key);
+          sender.send(IPC.memoryUpdated, batch.map(({ id, text, category }) => ({ id, text, category })), key);
         }
       }).catch((err) => console.error("per-turn memory capture failed:", err));
       return result;
@@ -1271,6 +1284,9 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.handle(IPC.appendMemories, (_e, additions: Memory[]) => memoryHandlers.append(additions));
   ipcMain.handle(IPC.updateMemory, (_e, id: string, text: string) => memoryHandlers.update(id, text));
   ipcMain.handle(IPC.deleteMemories, (_e, ids: string[]) => memoryHandlers.delete(ids));
+  ipcMain.handle(IPC.updateMemoryCategory, (_e, id: string, category: string | null) => memoryHandlers.updateCategory(id, category));
+  ipcMain.handle(IPC.renameMemoryCategory, (_e, from: string, to: string) => memoryHandlers.renameCategory(from, to));
+  ipcMain.handle(IPC.memoryOwnerIds, () => memoryHandlers.ownerIds());
   // Fire-and-forget: the chat window is already closing. A failure already raised its bubble
   // (onMemoryFailure); this only logs it.
   ipcMain.on(IPC.chatIncognito, (e, on: unknown, mountId: unknown) => {
