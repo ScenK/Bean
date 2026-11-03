@@ -95,6 +95,8 @@ export const IPC = {
   setAvatarStatusHeight: "bean:set-avatar-status-height",
   taskStatus: "bean:task-status",
   dismissTask: "bean:dismiss-task",
+  openChatMount: "bean:open-chat-mount",
+  showChatMount: "bean:show-chat-mount",
   planFromDrop: "bean:plan-from-drop",
   getConfig: "bean:get-config",
   saveConfig: "bean:save-config",

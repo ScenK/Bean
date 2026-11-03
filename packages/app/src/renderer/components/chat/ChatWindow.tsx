@@ -34,6 +34,7 @@ export function ChatWindow() {
   // and threads with a reply or live turn that landed while hidden.
   const [working, setWorking] = useState<Record<string, string>>({});
   const [unread, setUnread] = useState<Set<string>>(new Set());
+  const [live, setLive] = useState<Record<string, string>>({}); // mount → thread with an open agent session
   const [closing, setClosing] = useState<{ title: string; stop: string } | null>(null);
   const [droppedUrl, setDroppedUrl] = useState<string | undefined>(undefined);
   // A per-turn memory receipt is tagged with the mount that asked. One for a chat switched away
@@ -147,6 +148,12 @@ export function ChatWindow() {
     // Progress for a chat that's gone is dropped, never shown in another one.
     window.bean.onChatImageProgress((from) => sessions.get(from)?.imageProgress());
     window.bean.onReviewBeforeClose(reviewBeforeClose);
+    // An avatar bubble's click: show the chat that owns that task, the way a sidebar pick would.
+    window.bean.onShowChatMount((mountId) => {
+      const thread = sessions.get(mountId)?.threadId();
+      if (thread !== undefined) openThreadRef.current(thread);
+      else if (mountId === shownRef.current) { setOverlayOpen(false); setSyncedShown(undefined); } // not saved yet, but on screen
+    });
   }, []);
 
   // ChatPanel's prefill effect fires on a change to `droppedUrl` — flipping it back to
@@ -179,6 +186,7 @@ export function ChatWindow() {
     if (thread !== undefined) evictedRef.current.set(mountId, thread);
     setMounts((prev) => prev.filter((m) => m.mountId !== mountId));
     setWorking(({ [mountId]: _, ...rest }) => rest);
+    setLive(({ [mountId]: _, ...rest }) => rest);
   };
   // The shown chat left for `target` (kept mounted, or evicted). A pick another mounted chat already
   // holds is shown as is; otherwise it mounts fresh (restoring the thread). Then every other hidden
@@ -208,6 +216,9 @@ export function ChatWindow() {
     if (fromSynced && target !== "new" && target === activeId) return;
     shownApi()?.open(target);
   };
+  // The mount-once listeners above need the current render's openThread (it reads synced/activeId).
+  const openThreadRef = useRef(openThread);
+  openThreadRef.current = openThread;
   const deleteThread = (id: string): void => {
     window.bean.chatThreadDelete(id).then(
       () => setThreads((prev) => prev.filter((t) => t.id !== id)),
@@ -235,6 +246,7 @@ export function ChatWindow() {
           busy={busy}
           working={new Set([...Object.values(working), ...(syncedWorking ? [syncedWorking] : [])])}
           unread={unread}
+          live={new Set(Object.values(live))}
           overlay={narrow}
           onNew={() => openThread("new")}
           onOpen={openThread}
@@ -255,6 +267,7 @@ export function ChatWindow() {
           onActive={(id) => { if (mountId === shownRef.current) setActiveId(id); }}
           onBusy={(b) => { if (mountId === shownRef.current) setBusy(b); }}
           onWorking={(thread) => setWorking(({ [mountId]: _, ...rest }) => (thread === undefined ? rest : { ...rest, [mountId]: thread }))}
+          onLive={(thread) => setLive(({ [mountId]: _, ...rest }) => (thread === undefined ? rest : { ...rest, [mountId]: thread }))}
           onUnread={() => {
             const thread = sessions.get(mountId)?.threadId();
             if (thread !== undefined && (mountId !== shownRef.current || syncedRef.current !== undefined)) setUnread((prev) => new Set(prev).add(thread));

@@ -71,6 +71,9 @@ contextBridge.exposeInMainWorld("bean", {
   onTaskStatus: (cb: (jobs: TaskJob[]) => void) =>
     ipcRenderer.on(IPC.taskStatus, (_e, jobs: TaskJob[]) => cb(jobs)),
   dismissTask: (id: string): void => ipcRenderer.send(IPC.dismissTask, id),
+  openChatMount: (mountId: string): void => ipcRenderer.send(IPC.openChatMount, mountId),
+  onShowChatMount: (cb: (mountId: string) => void) =>
+    ipcRenderer.on(IPC.showChatMount, (_e, mountId: string) => cb(mountId)),
   planFromDrop: (skillName: string, droppedUrl: string): void =>
     ipcRenderer.send(IPC.planFromDrop, skillName, droppedUrl),
   runInChat: (prompt: string, label: string, noteSlug?: string): void =>

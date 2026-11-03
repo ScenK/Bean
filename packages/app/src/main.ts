@@ -384,6 +384,14 @@ app.whenReady().then(async () => {
     }
     if (target) pendingDashboardTarget = target;
   };
+  // A live/delegate bubble's click: bring up the chat window on the chat that owns the task. A
+  // freshly opened window has no such mount (its tasks died with the old one), so it just opens.
+  ipcMain.on(IPC.openChatMount, (_e, mountId: unknown) => {
+    if (typeof mountId !== "string") return;
+    openComponent("chat");
+    const chat = componentWindows.get("chat");
+    if (chat && !chat.isDestroyed() && !chat.webContents.isLoading()) sendToWindow(chat, IPC.showChatMount, mountId);
+  });
   // "Run skill" (Skills panel) is the only caller of window.bean.proposeRun() — it opens the
   // single-purpose Plan popup (just the proposal card), not the multi-turn Chat window.
   // The plan is both stored (pulled by the fresh window on mount — race-proof) and pushed
@@ -626,6 +634,7 @@ app.whenReady().then(async () => {
           taskStatus.upsert(event.taskId, {
             kind: "delegate", name: event.projectPath ? basename(event.projectPath) : "delegate",
             line: "Starting…", detail: event.instruction, startedAt: Date.now(), state: "running",
+            ...(event.mountId ? { mountId: event.mountId } : {}),
           });
         } else if (event.type === "output") {
           const line = event.line.trim();
@@ -654,7 +663,7 @@ app.whenReady().then(async () => {
         if (event.type === "started") {
           taskStatus.upsert(id, {
             kind: "live", agent: event.agent, name: `${LIVE_AGENT_NAMES[event.agent]} · ${basename(event.projectPath) || "scratch"}`,
-            line: "Starting…", detail: event.projectPath, startedAt: Date.now(), state: "running",
+            line: "Starting…", detail: event.projectPath, startedAt: Date.now(), state: "running", mountId: event.mountId,
           });
         } else if (event.type === "output") {
           const line = event.line.trim();

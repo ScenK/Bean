@@ -199,6 +199,14 @@ test("chat history: New chat in place, and a delegate keeps running in a chat sw
     await expect(shown.locator(".bean-bubble--bean")).toContainText("First!");
     await expect(reviewRow.locator(".bean-chat-sidebar-spinner")).toBeVisible();
 
+    // The avatar's bubble for that delegate opens its (hidden) chat; then back to the first one.
+    const taskBubble = (await app.firstWindow()).locator('.bean-bubble[title="Open chat"]');
+    await taskBubble.click();
+    await expect(chat.locator(".bean-chat-sidebar-row--active")).toContainText("review-pr");
+    await expect(shown.locator(".bean-card", { hasText: "delegate" })).toBeVisible();
+    await firstRow.locator(".bean-chat-sidebar-open").click();
+    await expect(shown.locator(".bean-bubble--bean")).toContainText("First!");
+
     // The delegate finishes while its chat is hidden: the loopback summary runs there.
     stub.queue({ content: "Summary: the PR is clean." });
     await writeFile(flag, "", "utf8");
