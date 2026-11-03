@@ -16,7 +16,7 @@ import type { Skill, Project } from "../types.js";
 import type { Persona } from "../persona.js";
 import type { Memory } from "../memory/memory.js";
 import type { CliName } from "../launcher.js";
-import type { CliModels } from "../cli-models.js";
+import { cliOffersModel, type CliModels } from "../cli-models.js";
 import { OPENCODE_BROWSER_REFUSAL, type DelegateRequest } from "../delegate.js";
 import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type ResumableRun } from "../delegate-runs.js";
 import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
@@ -360,7 +360,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // The literal --model for a live session: kept only if that CLI's config offers it, else the
   // CLI's own default — a model from another provider never switches the engine.
   const liveModelFor = (cli: LiveCli, model: string | undefined): string | undefined =>
-    model && (deps.cliModels.find((e) => e.provider === cli)?.models ?? []).includes(model) ? model : undefined;
+    model && cliOffersModel(deps.cliModels, cli, model) ? model : undefined;
   // The last started fresh live session's card picks, in model memory beside the delegate's
   // `teams:*` keys: a new card opens on them. "" = no skill / the CLI's default model.
   const LIVE_PROJECT = "live:project", LIVE_CLI = "live:cli", LIVE_SKILL = "live:skill";

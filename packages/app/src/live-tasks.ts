@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import {
   startLiveEngine, isLiveCli, recordRun, releaseRun, updateRunPid, killTree, killPendingGroups,
-  spawnEnv, BEAN_GIT_IDENTITY, TURN_QUEUE_FULL, dbFile, isLiveSessionId, recordDelegateSession,
+  spawnEnv, BEAN_GIT_IDENTITY, TURN_QUEUE_FULL, dbFile, isLiveSessionId, recordDelegateSession, cliOffersModel,
 } from "@bean/core";
-import type { CliName, LiveCli, LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest, LiveSessionSpawnFn, ResumableRun } from "@bean/core";
+import type { CliModels, CliName, LiveCli, LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest, LiveSessionSpawnFn, ResumableRun } from "@bean/core";
 
 // Desktop live agent sessions: Claude Code / Codex / opencode streaming into the chat window.
 // The desktop sibling of chatops' LiveSessionRegistry, without its Discord-shaped parts
@@ -37,6 +37,9 @@ export interface LiveStartRequest {
   /** Short label for a composed `/skill` ask (`▶ name — rest`): the run log's instruction instead
    * of the whole skill body. Trimmed; empty/absent = the ask; past LABEL_LIMIT is rejected. */
   label?: string;
+  /** Literal `--model` for the agent; absent = the CLI's own default. Must be in that CLI's
+   * clis.json list — anything else is rejected, never swapped for another CLI. */
+  model?: string;
 }
 
 export type LiveStartResult = { sessionId: string; handedOver: number } | { error: string };
@@ -119,6 +122,8 @@ export function liveSpawnFn(agent: LiveCli, resolvedPath: string | undefined): L
 export interface LiveTasksDeps {
   /** Detected and not disabled in Settings. */
   enabledClis: () => CliName[];
+  /** clis.json — the allowlist for a requested model. */
+  cliModels: () => readonly CliModels[];
   /** A configured project's path, or Bean's scratch workspace. */
   projectAllowed: (path: string) => Promise<boolean>;
   /** The newest desktop `delegate_runs` row for a session id (findDelegateRun, surface "desktop"). */
@@ -157,6 +162,8 @@ interface Session {
   ask?: string;
   /** claude's child pid the run record was moved to (see trackPid). */
   pid?: number;
+  /** The allowlisted `--model` (fresh sessions only); unset = the CLI's default. */
+  model?: string;
 }
 
 // Distributive, so each event variant keeps its own fields.
@@ -263,13 +270,18 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (label.length > LABEL_LIMIT) return { error: `That label is too long (${label.length} of ${LABEL_LIMIT} characters).` };
       const agent = req.agent;
       if (!deps.enabledClis().includes(agent)) return { error: `${LIVE_AGENT_NAMES[agent]} isn't installed or is turned off in Settings.` };
+      const model = req.model;
+      if (model !== undefined && typeof model !== "string") return { error: "Invalid live session request." };
+      if (model !== undefined && !cliOffersModel(deps.cliModels(), agent, model)) {
+        return { error: `${LIVE_AGENT_NAMES[agent]} doesn't offer the model "${model.slice(0, 80)}" in clis.json.` };
+      }
       const handoff = buildHandoff(parseHistory(req.history), req.ask);
       if ("error" in handoff) return handoff;
       const refused = refusal(owner);
       if (refused) return { error: refused };
       // Registered before any await, so a window close during startup finds it and cancels the spawn.
       const sessionId = deps.newId();
-      const s: Session = { ...owner, agent, seq: 0, stopping: false, ask: label || req.ask.trim() };
+      const s: Session = { ...owner, agent, seq: 0, stopping: false, ask: label || req.ask.trim(), ...(model ? { model } : {}) };
       sessions.set(sessionId, s);
       const projectPath = req.projectPath || deps.scratchPath || "";
       let allowed = false;

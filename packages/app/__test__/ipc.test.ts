@@ -951,6 +951,31 @@ test("model memory handlers get/set through the injected store fns against the c
   expect(await handlers.get("summarize")).toBe("sonnet-4-5");
 });
 
+test("concurrent model memory sets on different keys both persist", async () => {
+  let disk: Record<string, string> = { keep: "x" };
+  const handlers = buildModelMemoryHandlers({
+    // Async load/save with a gap between them: unserialized, the second set reads before the first saves.
+    loadModelMemory: async () => { await new Promise((r) => setTimeout(r, 5)); return { ...disk }; },
+    saveModelMemory: async (_f, next) => { await new Promise((r) => setTimeout(r, 5)); disk = { ...next }; },
+    modelMemoryFile: "/b/model-memory.json",
+  });
+  await Promise.all([handlers.set("live:model:claude", "opus"), handlers.set("desktop:live:project:claude", "/p")]);
+  expect(disk).toEqual({ keep: "x", "live:model:claude": "opus", "desktop:live:project:claude": "/p" });
+});
+
+test("a failed model memory set doesn't block the next one", async () => {
+  let disk: Record<string, string> = {};
+  let fail = true;
+  const handlers = buildModelMemoryHandlers({
+    loadModelMemory: async () => ({ ...disk }),
+    saveModelMemory: async (_f, next) => { if (fail) { fail = false; throw new Error("disk full"); } disk = { ...next }; },
+    modelMemoryFile: "/b/model-memory.json",
+  });
+  await expect(handlers.set("a", "1")).rejects.toThrow("disk full");
+  await handlers.set("b", "2");
+  expect(disk).toEqual({ b: "2" });
+});
+
 test("launch handler with a real projectPath fires synchronously (no scratch-workspace detour)", () => {
   const child = fakeChild();
   const spawnLaunch = vi.fn<LaunchSpawnFn>(() => child as never);

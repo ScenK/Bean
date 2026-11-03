@@ -1022,6 +1022,9 @@ button, input, textarea, select, a {
 .bean-chip-menu-row--on:hover:not(:disabled) { background: var(--bean-accent); color: var(--bean-accent-ink); }
 .bean-chip-menu-row--dimmed { opacity: 0.55; cursor: default; }
 .bean-chip-menu-row--no-project { color: var(--bean-text-dim); }
+/* A model row while a live session runs (#612): unpickable, the picked one keeps its highlight. */
+.bean-chip-menu-row:disabled { cursor: default; }
+.bean-chip-menu-row:disabled:not(.bean-chip-menu-row--on) { color: var(--bean-text-dim); }
 .bean-chip-menu-row-title { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .bean-chip-menu-caption {
   font: 11px ui-monospace, monospace;

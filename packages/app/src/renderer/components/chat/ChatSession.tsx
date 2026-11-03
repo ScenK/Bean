@@ -2,7 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
 import { newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
-import { chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent } from "./agent-mode.js";
+import {
+  chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent,
+  LIVE_AGENTS, liveModelKey, liveProjectKey, offerLaunch, validModel, validProject, type AgentPick, type AgentPicks,
+} from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import { normalizeForSave, restoreItems, threadTitle } from "./chat-thread.js";
 import { withSaveAck } from "./ChatSidebar.js";
@@ -33,9 +36,10 @@ export const THREAD_SAVE_MS = 1000;
  * the `started` event (or liveStart's result); texts typed before it are `queued`. `continuing` =
  * resumed from a receipt (Continue live). `receipt` = the CLI's own session, from the `session` event.
  * `unopened` = texts sent to a continued session before its resume was accepted (it opens lazily, on
- * the first send) — handed back to the composer if the host rejects the id. */
+ * the first send) — handed back to the composer if the host rejects the id. `model` = the `--model` it
+ * launched with (unset = the agent's default, or a resumed session). */
 interface LiveState {
-  key: string; agent: LiveCli; projectPath: string; sessionId?: string; turns: number; busy: boolean; queued: string[];
+  key: string; agent: LiveCli; projectPath: string; model?: string; sessionId?: string; turns: number; busy: boolean; queued: string[];
   continuing?: boolean; receipt?: LiveReceipt; unopened?: string[];
 }
 
@@ -258,6 +262,18 @@ export function ChatSession({
   const [agentProject, setAgentProjectState] = useState("");
   const agentProjectRef = useRef("");
   const rememberProject = (path: string): void => { agentProjectRef.current = path; setAgentProjectState(path); };
+  // The agent's model for the next fresh start ("" = its own default).
+  const [agentModel, setAgentModelState] = useState("");
+  const agentModelRef = useRef("");
+  const setAgentModel = (m: string): void => { agentModelRef.current = m; setAgentModelState(m); };
+  // Each agent's last project + model (#612): seeded at mount from model memory, updated by chip picks,
+  // restored on a switch to that agent. Read synchronously — `/claude <ask>` restores and starts in one tick.
+  const [picks, setPicksState] = useState<AgentPicks>({});
+  const picksRef = useRef<AgentPicks>({});
+  const updatePick = (agent: LiveCli, patch: AgentPick): void => {
+    picksRef.current = { ...picksRef.current, [agent]: { ...picksRef.current[agent], ...patch } };
+    setPicksState(picksRef.current);
+  };
   const [live, setLiveState] = useState<LiveState | undefined>(undefined);
   // Text handed back to the composer (a rejected Continue live); a fresh object per hand-back.
   const [refill, setRefill] = useState<{ text: string } | undefined>(undefined);
@@ -314,6 +330,14 @@ export function ChatSession({
     window.bean.getModel().then(setModel);
     window.bean.listProjects().then(setProjects);
     refreshCatalogs();
+    // An absent key stays absent (project: keep the window's; model: default). A pick made before
+    // the read lands wins over it.
+    for (const cli of LIVE_AGENTS) {
+      void Promise.all([window.bean.getModelMemory(liveModelKey(cli)), window.bean.getModelMemory(liveProjectKey(cli))]).then(([model, project]) => {
+        const seeded: AgentPick = { ...(typeof model === "string" ? { model } : {}), ...(typeof project === "string" ? { project } : {}) };
+        updatePick(cli, { ...seeded, ...picksRef.current[cli] });
+      }, () => {});
+    }
     if (!restoreId) return;
     // A thread picked from history: restored inert (chat-thread.ts), its snapshot the baseline. The
     // linked-note chip comes back only if that note still exists.
@@ -485,14 +509,41 @@ export function ChatSession({
     if (next === modeRef.current) return;
     endSession(AGENT_NAMES[next]);
     setMode(next);
+    if (!isLiveAgent(next)) return;
+    // The agent's remembered picks, checked against what's configured now.
+    const pick = picksRef.current[next];
+    const project = validProject(projects, pick?.project);
+    if (project !== undefined) rememberProject(project);
+    setAgentModel(validModel(runModels, next, pick?.model) ?? "");
   };
 
   const pickProject = (path: string): void => {
+    const agent = modeRef.current;
+    if (isLiveAgent(agent)) updatePick(agent, { project: path });
     if (path === agentProjectRef.current) return;
     rememberProject(path);
     // A session is bound to its project: changing it means end + a fresh start on the next send.
     const l = liveRef.current;
     if (l) endSession(`${AGENT_NAMES[l.agent]} · ${projects.find((p) => p.path === path)?.name ?? "scratch"}`);
+  };
+
+  // A session runs on the model it started with: the chip's model rows are disabled meanwhile.
+  const pickModel = (model: string): void => {
+    const agent = modeRef.current;
+    if (!isLiveAgent(agent) || liveRef.current) return;
+    setAgentModel(model);
+    updatePick(agent, { model });
+  };
+
+  // After a fresh start the user chose: the next chat (and chatops' next live card, for the model)
+  // opens on these. Model then project, in order; a failed write never fails the session.
+  const persistPicks = async (agent: LiveCli, projectPath: string, model: string | undefined): Promise<void> => {
+    try {
+      await window.bean.setModelMemory(liveModelKey(agent), model ?? "");
+      await window.bean.setModelMemory(liveProjectKey(agent), projectPath);
+    } catch (err) {
+      console.error("couldn't remember the agent's picks:", err);
+    }
   };
 
   const deliver = async (sessionId: string, agent: LiveCli, text: string): Promise<void> => {
@@ -506,13 +557,15 @@ export function ChatSession({
 
   // The opening turn: the transcript so far is handed over (main quotes the tail), then the text.
   // `display` = the transcript's short label for a composed skill prompt (also main's run-log label).
-  const startSession = async (agent: LiveCli, text: string, display?: string): Promise<void> => {
-    const l: LiveState = { key: newId(), agent, projectPath: agentProjectRef.current, turns: 0, busy: true, queued: [] };
+  // `persist` = the user chose this start (chip/slash), so its picks are remembered once it starts.
+  const startSession = async (agent: LiveCli, text: string, display?: string, persist = false): Promise<void> => {
+    const model = validModel(runModels, agent, agentModelRef.current);
+    const l: LiveState = { key: newId(), agent, projectPath: agentProjectRef.current, ...(model ? { model } : {}), turns: 0, busy: true, queued: [] };
     setLive(l);
     const history = handoffItems(itemsRef.current);
     const userId = newId();
     setItems((prev) => [...prev, { kind: "user", id: userId, text, ...(display ? { display } : {}), source: "live" }]);
-    const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask: text, history, ...(display ? { label: display } : {}) }, mountId)
+    const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask: text, history, ...(display ? { label: display } : {}), ...(model ? { model } : {}) }, mountId)
       .catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
     if ("error" in res) {
       // A crash during startup already reported itself through the ended event.
@@ -520,6 +573,7 @@ export function ChatSession({
       return;
     }
     knownSessionsRef.current.add(res.sessionId);
+    if (persist) void persistPicks(agent, l.projectPath, model);
     const cur = liveRef.current;
     if (cur?.key !== l.key) { window.bean.liveStop(res.sessionId, mountId); return; } // ended while starting
     setLive({ ...cur, sessionId: res.sessionId, queued: [] });
@@ -543,7 +597,7 @@ export function ChatSession({
   // they always stay Bean turns.
   const sendToAgent = (agent: LiveCli, text: string, display?: string, typed = text): void => {
     const l = liveRef.current;
-    if (!l || l.agent !== agent) { void startSession(agent, text, display); return; }
+    if (!l || l.agent !== agent) { void startSession(agent, text, display, true); return; }
     setItems((prev) => [...prev, { kind: "user", id: newId(), text, ...(display ? { display } : {}), source: "live" }]);
     if (!l.receipt) l.unopened?.push(typed);
     if (l.sessionId) void deliver(l.sessionId, agent, text);
@@ -617,7 +671,10 @@ export function ChatSession({
     endSession(AGENT_NAMES[agent]); // an older offer's Start replaces whatever session is running
     setMode(agent);
     // Scratch is "" in the window's project state (main maps it back); core sends its real path.
-    rememberProject(projects.some((p) => p.path === item.offer.projectPath) ? item.offer.projectPath : "");
+    // The card showed this same launch; an offer start isn't remembered.
+    const launch = offerLaunch(item.offer.projectPath, agent, picksRef.current, projects, runModels);
+    rememberProject(launch.projectPath);
+    setAgentModel(launch.model ?? "");
     void startSession(agent, item.offer.instruction);
   };
 
@@ -1085,9 +1142,15 @@ export function ChatSession({
         onSend={onComposerSend}
         mode={mode}
         agentProject={agentProject}
-        live={live ? { agent: live.agent, projectPath: live.projectPath, busy: live.busy, continuing: live.continuing } : undefined}
+        agentModel={isLiveAgent(mode) ? validModel(runModels, mode, agentModel) ?? "" : ""}
+        live={live ? { agent: live.agent, projectPath: live.projectPath, model: live.model, busy: live.busy, continuing: live.continuing } : undefined}
+        offerLaunch={(offerPath) => {
+          const agent = offerAgent(clis);
+          return agent ? offerLaunch(offerPath, agent, picks, projects, runModels) : { projectPath: offerPath };
+        }}
         onPickAgent={switchMode}
         onPickProject={pickProject}
+        onPickModel={pickModel}
         onEndAgent={() => { endSession("Bean"); setMode("bean"); }}
         onConfirm={confirmProposal}
         onCancel={cancelProposal}

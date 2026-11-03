@@ -193,6 +193,17 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   - The CLI is frozen from the `delegate_runs` row on a resume (`resume.cli`), re-checked at Start;
     an undetected CLI refuses ("codex isn't installed…") — another CLI never substitutes. A live
     model is kept only if that CLI's `clis.json` list offers it, else the CLI's own default.
+    One membership rule: core `cliOffersModel` (dash-led values never pass) — chatops falls back,
+    desktop `start()` (#611) refuses with `{ error }` instead (optional `model`, no spawn).
+- **Desktop per-agent picks (#612)**: the composer's agent chip has a Model section (rows disabled
+  while a session runs — picking never ends one). `ChatSession` keeps each agent's `{project, model}`
+  in a ref seeded at mount from model memory: `live:model:<cli>` is **shared with chatops** (a pick
+  on either surface is the other's next default), `desktop:live:project:<cli>` is desktop-only —
+  never touch chatops' global `live:project`. Restored synchronously in `switchMode` (after its
+  same-agent guard) because `/claude <ask>` switches and starts in one tick; stale model → default,
+  removed project → scratch. Offers use `offerLaunch()` (registered offer project wins, else the
+  agent's remembered one) for both the card and Start. Only chip/slash fresh starts persist (model
+  then project, awaited in order; a failed write doesn't fail the session) — not offers, not resumes.
 - **Shared per-turn engine (#238)**: codex and opencode both run `core/turn-live-session.ts`
   `startTurnLiveSession(adapter, …)`; each CLI is a small `TurnAdapter` (`codexTurnAdapter`,
   `opencodeTurnAdapter`) — argv, event parse → `{sessionId, completed, failure, result, tail}`,
