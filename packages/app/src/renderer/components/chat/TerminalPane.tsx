@@ -83,13 +83,15 @@ const savedHeight = (): number | undefined => {
 
 type Strip = { kind: "exit"; text: string } | { kind: "error"; text: string };
 
-export function TerminalPane({ mountId, open, projectPath, projects }: {
+export function TerminalPane({ mountId, open, projectPath, projects, onShell }: {
   mountId: string;
   /** Unfolded. Fold state is per chat and never persisted. */
   open: boolean;
   /** Where the shell starts ("" = scratch); read at each (re)start. */
   projectPath: string;
   projects: Project[];
+  /** The shell started (true) or exited (false): a live shell keeps its chat mounted. */
+  onShell: (alive: boolean) => void;
 }) {
   const paneRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -99,6 +101,8 @@ export function TerminalPane({ mountId, open, projectPath, projects }: {
   const animatingRef = useRef(false);
   const openRef = useRef(open);
   openRef.current = open;
+  const onShellRef = useRef(onShell);
+  onShellRef.current = onShell;
   const projectRef = useRef(projectPath);
   projectRef.current = projectPath;
   const [visible, setVisible] = useState(false);
@@ -171,7 +175,7 @@ export function TerminalPane({ mountId, open, projectPath, projects }: {
     const res = await window.bean.terminalStart(path, t.term.cols, t.term.rows, mountId)
       .catch((err: unknown) => ({ error: `The terminal couldn't start: ${err instanceof Error ? err.message : String(err)}` }));
     if ("error" in res) setStrip({ kind: "error", text: res.error });
-    else setStartedIn(path);
+    else { setStartedIn(path); onShellRef.current(true); }
   };
 
   /** The pane reached its open size: fit once, start the shell the first time, take focus. */
@@ -192,6 +196,7 @@ export function TerminalPane({ mountId, open, projectPath, projects }: {
         else window.bean.terminalAck(e.data.length, mountId);
       } else if (e.type === "exit") {
         setStrip({ kind: "exit", text: `Shell exited (code ${e.code})` });
+        onShellRef.current(false);
       }
     });
     const themeWatch = new MutationObserver(() => { if (termRef.current) termRef.current.term.options.theme = terminalTheme(); });

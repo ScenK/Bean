@@ -18,3 +18,13 @@
   on `height` settles it); the shell starts on the first unfold with the fitted cols/rows.
 - jsdom (unit tests) has no `ResizeObserver` — the pane guards it rather than a test shim.
 - Height is a renderer view pref (`bean.chat.terminalHeight` in localStorage); fold state is never saved.
+
+**Lifecycle (#664).** A live shell (idle or busy) is `hasWork`: a hidden chat holding one stays
+mounted, marked in the sidebar by a dim `>_` (not the spinner — a dev server never finishes). An
+empty, thread-less chat with a shell can't be kept (no row to come back to), so leaving it goes
+through the leave card like an off-the-record chat. "Running" means the tty's foreground process
+group isn't the shell's (`foregroundCommand`: `ps -o tpgid=`, then its argv[0] basename) — never
+"the shell has a child", which a prompt's gitstatusd or a `cmd &` job makes always true. The close
+and leave cards ask main fresh at that moment (`terminalRunning`); an idle shell closes silently.
+Terminal output never enters `items`, so it's never saved to `desktop_chats`; a restored chat gets a
+fresh, folded terminal.

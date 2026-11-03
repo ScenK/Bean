@@ -128,7 +128,7 @@ function ipcHarness(given: Partial<RegisterDeps> = {}) {
   const chat = { id: 1, isDestroyed: () => false, send: vi.fn() }, other = { id: 2, isDestroyed: () => false, send: vi.fn() };
   const delegateTasks = { start: vi.fn(async () => "t1"), cancel: vi.fn(), cancelMount: vi.fn() };
   const liveTasks = { start: vi.fn(async () => ({ sessionId: "s1", handedOver: 0 })), send: vi.fn(), stop: vi.fn(), resume: vi.fn(), stopMount: vi.fn() };
-  const terminalTasks = { start: vi.fn(async () => ({ cwd: "/scratch" })), write: vi.fn(), resize: vi.fn(), ack: vi.fn(), stop: vi.fn(async () => {}) };
+  const terminalTasks = { start: vi.fn(async () => ({ cwd: "/scratch" })), write: vi.fn(), resize: vi.fn(), ack: vi.fn(), stop: vi.fn(async () => {}), runningCommand: vi.fn(async () => "pnpm") };
   const all: Partial<RegisterDeps> = { isChatSender: (s) => s === (chat as never), chatThreadHandlers: handlers, delegateTasks, liveTasks, terminalTasks, ...given };
   // Every other dep is a no-op: registration only stores handlers.
   const deps = new Proxy(all, { get: (t, k) => (k in t ? t[k as keyof typeof t] : vi.fn()) }) as RegisterDeps;
@@ -184,6 +184,9 @@ describe("chat thread IPC", () => {
     emit(IPC.terminalOpenLink, chat, "file:///etc/passwd", A);
     emit(IPC.terminalOpenLink, chat, "https://example.com", A);
     expect(terminalTasks.write.mock.calls).toEqual([[A, "ls\r"]]);
+    expect(await invoke(IPC.terminalRunning, other, A)).toBeUndefined();
+    expect(await invoke(IPC.terminalRunning, chat, A)).toBe("pnpm");
+    expect(terminalTasks.runningCommand.mock.calls).toEqual([[A]]);
     expect(openExternal.mock.calls).toEqual([["https://example.com/"]]);
     // A released mount is stale: its terminal stops and later calls are refused.
     emit(IPC.chatRelease, chat, A);

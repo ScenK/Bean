@@ -37,6 +37,8 @@ declare global {
       terminalAck(chars: number, mountId: string): void;
       /** Resolves once the shell and its jobs are gone. */
       terminalStop(mountId: string): Promise<void>;
+      /** The command in this chat's terminal's foreground right now (main re-checks); undefined = idle or none. */
+      terminalRunning(mountId: string): Promise<string | undefined>;
       /** http(s) only; anything else is ignored. */
       terminalOpenLink(url: string, mountId: string): void;
       onTerminalEvent(cb: (e: TerminalEvent) => void): void;

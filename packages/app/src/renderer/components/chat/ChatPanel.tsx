@@ -67,6 +67,7 @@ export function ChatPanel({
   mountId,
   terminalOpen,
   onToggleTerminal,
+  onShell,
   items,
   busy,
   model,
@@ -124,6 +125,7 @@ export function ChatPanel({
   mountId: string;
   terminalOpen: boolean;
   onToggleTerminal: () => void;
+  onShell: (alive: boolean) => void;
   items: ChatItem[];
   busy: boolean;
   model: string;
@@ -869,7 +871,7 @@ export function ChatPanel({
           </div>
         </div>
       </div>
-      <TerminalPane mountId={mountId} open={terminalOpen} projectPath={agentProject} projects={projects} />
+      <TerminalPane mountId={mountId} open={terminalOpen} projectPath={agentProject} projects={projects} onShell={onShell} />
       {preview ? <ImagePreview image={preview} onClose={() => setPreview(null)} /> : null}
     </div>
   );

@@ -67,6 +67,7 @@ export const IPC = {
   terminalResize: "bean:terminal-resize",
   terminalAck: "bean:terminal-ack",
   terminalStop: "bean:terminal-stop",
+  terminalRunning: "bean:terminal-running",
   terminalOpenLink: "bean:terminal-open-link",
   terminalEvent: "bean:terminal-event",
   availableClis: "bean:available-clis",

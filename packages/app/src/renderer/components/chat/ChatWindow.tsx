@@ -11,9 +11,10 @@ import type { SyncedChatListing } from "../../../synced-chats.js";
 
 /** The window-close card for the chats with running tasks (one entry per chat). */
 export function closeCard(busy: ChatTasks[]): { title: string; stop: string } {
-  const count = busy.reduce((n, t) => n + t.delegates + (t.live ? 1 : 0), 0);
+  const count = busy.reduce((n, t) => n + t.delegates + (t.live ? 1 : 0) + (t.terminal ? 1 : 0), 0);
   const only = busy.length === 1 ? busy[0] : undefined;
-  const name = only?.live ? AGENT_NAMES[only.live] : undefined;
+  if (only?.terminal && count === 1) return { title: `${only.terminal} is still running in the terminal — closing stops it.`, stop: "Stop & close" };
+  const name = only?.live && !only.terminal ? AGENT_NAMES[only.live] : undefined;
   if (only && name && only.delegates === 0) return { title: `${name} is still running — closing ends the session.`, stop: `End ${name} session & close` };
   if (only && name && only.delegates === 1) return { title: `A delegated task and a ${name} session are still running — closing stops both.`, stop: "Stop & close" };
   if (count === 1) return { title: "A delegated task is still running — closing will stop it.", stop: "Stop & close" };
@@ -37,6 +38,7 @@ export function ChatWindow() {
   const [working, setWorking] = useState<Record<string, string>>({});
   const [unread, setUnread] = useState<Set<string>>(new Set());
   const [live, setLive] = useState<Record<string, string>>({}); // mount → thread with an open agent session
+  const [shells, setShells] = useState<Set<string>>(new Set()); // mounts with a live terminal shell
   const [closing, setClosing] = useState<{ title: string; stop: string } | null>(null);
   const [droppedUrl, setDroppedUrl] = useState<ChatDrop | undefined>(undefined);
   // A per-turn memory receipt is tagged with the mount that asked. One for a chat switched away
@@ -149,7 +151,7 @@ export function ChatWindow() {
     window.bean.onMemoryUpdated((saved, from) => onMemoryUpdated(saved, from));
     // Progress for a chat that's gone is dropped, never shown in another one.
     window.bean.onChatImageProgress((from) => sessions.get(from)?.imageProgress());
-    window.bean.onReviewBeforeClose(reviewBeforeClose);
+    window.bean.onReviewBeforeClose(() => void reviewBeforeClose());
     // An avatar bubble's click: show the chat that owns that task, the way a sidebar pick would.
     window.bean.onShowChatMount((mountId) => {
       // An idle owner may be evicted by now (a finished task's bubble outlives it): its thread reopens.
@@ -176,8 +178,9 @@ export function ChatWindow() {
     await Promise.all([...sessions.values()].map((s) => s.closeOut()));
     window.bean.allowChatClose();
   };
-  const reviewBeforeClose = (): void => {
-    const busy = [...sessions.values()].map((s) => s.tasks()).filter((t) => t.delegates > 0 || t.live);
+  const reviewBeforeClose = async (): Promise<void> => {
+    const all = await Promise.all([...sessions.values()].map((s) => s.tasks()));
+    const busy = all.filter((t) => t.delegates > 0 || t.live || t.terminal);
     if (busy.length === 0) void closeAll();
     else setClosing(closeCard(busy));
   };
@@ -192,6 +195,7 @@ export function ChatWindow() {
     setMounts((prev) => prev.filter((m) => m.mountId !== mountId));
     setWorking(({ [mountId]: _, ...rest }) => rest);
     setLive(({ [mountId]: _, ...rest }) => rest);
+    setShells((prev) => { const s = new Set(prev); s.delete(mountId); return s; });
   };
   // The shown chat left for `target` (kept mounted, or evicted). A pick another mounted chat already
   // holds is shown as is; otherwise it mounts fresh (restoring the thread). Then every other hidden
@@ -279,6 +283,7 @@ export function ChatWindow() {
           working={new Set([...Object.values(working), ...(syncedWorking ? [syncedWorking] : [])])}
           unread={unread}
           live={new Set(Object.values(live))}
+          terminal={new Set([...shells].map((m) => sessions.get(m)?.threadId()).filter((t): t is string => t !== undefined))}
           overlay={narrow}
           onNew={() => openThread("new")}
           onOpen={openThread}
@@ -300,6 +305,7 @@ export function ChatWindow() {
           onBusy={(b) => { if (mountId === shownRef.current) setBusy(b); }}
           onWorking={(thread) => setWorking(({ [mountId]: _, ...rest }) => (thread === undefined ? rest : { ...rest, [mountId]: thread }))}
           onLive={(thread) => setLive(({ [mountId]: _, ...rest }) => (thread === undefined ? rest : { ...rest, [mountId]: thread }))}
+          onTerminal={(alive) => setShells((prev) => { const s = new Set(prev); if (alive) s.add(mountId); else s.delete(mountId); return s; })}
           onUnread={() => {
             const thread = sessions.get(mountId)?.threadId();
             if (thread !== undefined && (mountId !== shownRef.current || syncedRef.current !== undefined)) setUnread((prev) => new Set(prev).add(thread));
