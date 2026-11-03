@@ -2,7 +2,8 @@ import { createOrb } from "./orb.js";
 import { createTaskBubbles, liveBadgeAgent } from "./task-bubbles.js";
 import { h, render } from "preact";
 import { AgentAvatar } from "./shared/AgentAvatar.js";
-import type { AvatarMode, ComponentKind } from "../channels.js";
+import type { AvatarMode, ComponentKind, DroppedImage } from "../channels.js";
+import { imageFileGuard, readImageFile } from "./shared/chat-types.js";
 import { createDragPreparationGate } from "../drag-preparation.js";
 import { createDragWatchdog } from "../drag-watchdog.js";
 import { AVATAR_SIZE } from "../avatar-menu.js";
@@ -310,6 +311,23 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
     return e.dataTransfer?.getData("text/uri-list") || e.dataTransfer?.getData("text/plain") || undefined;
   };
 
+  // A drop that goes to chat (no tile chosen). Image files attach there exactly as a drop on the
+  // composer does; anything else is the path/URL as text. Files are taken now — dataTransfer
+  // empties once the event returns — and only attachable ones are read.
+  const dropToChat = (e: DragEvent, url: string): void => {
+    const files = [...(e.dataTransfer?.files ?? [])];
+    if (files.length === 0 || !files.every((f) => f.type.startsWith("image/"))) { void window.bean.openComponent("chat", url); return; }
+    // Counts only accepted files, as the composer does: a rejected GIF doesn't use up a slot.
+    let accepted = 0;
+    const toDropped = async (f: File): Promise<DroppedImage> => {
+      const img: DroppedImage = { path: window.bean.getPathForFile(f), mimeType: f.type, size: f.size };
+      if (imageFileGuard(f.type, f.size, accepted)) return img;
+      accepted += 1;
+      return readImageFile(f).then(({ attachment }) => ({ ...img, data: attachment.data }), () => img);
+    };
+    void Promise.all(files.map(toDropped)).then((images) => window.bean.openComponent("chat", images));
+  };
+
   const buildDragTiles = (): void => {
     // Two flags keep a skill out of the bloom: `enabled: false` (off everywhere) and
     // `quick-launch: false` (this surface only — the chat agent and chatops still see it).
@@ -474,7 +492,7 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
     const chosen = index !== undefined ? dragTiles[index] : undefined;
     closeBloom();
     if (url && chosen) chosen.run(url);
-    else if (url) void window.bean.openComponent("chat", url); // no tile chosen — plain fallback
+    else if (url) dropToChat(e, url); // no tile chosen — plain fallback
   });
 
   // Fallback path: a drop that lands on the bean before the bloom's own handler catches it.
@@ -485,7 +503,7 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
     if (mode === "drag") return; // the document-level backstop below handles a mid-collapse drop
     e.preventDefault();
     const url = dataUrl(e);
-    if (url) void window.bean.openComponent("chat", url);
+    if (url) dropToChat(e, url);
   });
 
   // Guard 4 (see .memory/safety-drag-mode-needs-watchdog.md): while a collapse is pending the
@@ -513,7 +531,7 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
     const chosen = index !== undefined ? dragTiles[index] : undefined;
     closeBloom();
     if (url && chosen) chosen.run(url);
-    else if (url) void window.bean.openComponent("chat", url);
+    else if (url) dropToChat(e, url);
   });
 
   // #bean is no-drag (see comment above), so dragging the visible body itself is done manually:

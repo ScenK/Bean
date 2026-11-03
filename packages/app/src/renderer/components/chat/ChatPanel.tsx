@@ -10,26 +10,16 @@ import { LiveOfferCard } from "./LiveOfferCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
-import { MAX_IMAGES_PER_MESSAGE, imageFileGuard, insertDroppedPath, itemAgent, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
+import { MAX_IMAGES_PER_MESSAGE, imageFileGuard, insertDroppedPath, readImageFile, itemAgent, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import {
   HANDOFF_ITEMS, agentModels, canContinueLive, handoffItems, imageLabel, isLiveAgent, mappedImageLabels, offerAgent, parseSlash, type ImageLabels,
 } from "./agent-mode.js";
 import { SECTION_TITLES, slashMenu, type SlashEntry } from "./slash-commands.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
+import type { ChatDrop, DroppedImage } from "../../../channels.js";
 
-/** Read a picked image into an attachment + full data URL for its composer thumbnail. */
-function readImageFile(file: File): Promise<{ attachment: ImageAttachment; dataUrl: string }> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error);
-    reader.onload = () => {
-      const dataUrl = String(reader.result);
-      const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-      resolve({ attachment: { data: base64, mimeType: file.type }, dataUrl });
-    };
-    reader.readAsDataURL(file);
-  });
-}
+/** An image to attach, wherever it came from; `path` = its file on disk, "" when it has none. */
+interface ImageSource { type: string; size: number; path: string; read: () => Promise<{ attachment: ImageAttachment; dataUrl: string }> }
 
 /**
  * Full-size preview for a chat image. Native `<dialog>`, so the backdrop, Esc-to-close and
@@ -132,8 +122,9 @@ export function ChatPanel({
   status: "idle" | "working" | "done" | "error";
   // A path/URL just dropped on the avatar's box (no skill chosen) — inserted as literal,
   // editable text so the user can see it and add instructions before sending, rather than
-  // silently riding along as hidden context on whatever they type next.
-  prefillUrl?: string;
+  // silently riding along as hidden context on whatever they type next. Image files attach the
+  // way a drop on the composer does.
+  prefillUrl?: ChatDrop;
   // Text the chat hands back to the composer (a Continue live the host rejected), above any draft.
   refill?: { text: string };
   // The note this chat continues from (header chip; ✕ unlinks so saves become new notes).
@@ -276,21 +267,30 @@ export function ChatPanel({
     }
   }, [mode, pendingImages.length]);
 
-  const attachImageFiles = (files: File[]): void => {
+  // A composer drop/paste and an avatar drop (DroppedImage) take the same path, so both attach alike.
+  const attachImageFiles = (files: File[]): void =>
+    attachImages(files.map((file) => ({ type: file.type, size: file.size, path: window.bean.getPathForFile(file), read: () => readImageFile(file) })));
+  const attachDroppedImages = (images: DroppedImage[]): void =>
+    attachImages(images.map(({ path, mimeType, size, data }) => ({
+      type: mimeType, size, path,
+      read: () => data === undefined
+        ? Promise.reject(new Error("not read"))
+        : Promise.resolve({ attachment: { data, mimeType }, dataUrl: `data:${mimeType};base64,${data}` }),
+    })));
+  const attachImages = (sources: ImageSource[]): void => {
     // Stale errors clear at the start of a new attempt — never on individual read success,
     // which would wipe a same-batch rejection message before the user can read it.
     setImageError(null);
     const agent = isLiveAgent(mode) ? mode : undefined;
-    for (const file of files) {
-      const problem = imageFileGuard(file.type, file.size, agent ? labelsInComposer() : pendingImages.length + reservedSlotsRef.current);
+    for (const src of sources) {
+      const problem = imageFileGuard(src.type, src.size, agent ? labelsInComposer() : pendingImages.length + reservedSlotsRef.current);
       if (problem) { setImageError(problem); continue; }
       // A Finder file is labeled with its own path — nothing is copied. A paste or a browser drag
       // has no path, so it is staged first.
-      const path = agent ? window.bean.getPathForFile(file) : "";
-      if (agent && path) { insertImageLabel(path, agent); continue; }
+      if (agent && src.path) { insertImageLabel(src.path, agent); continue; }
       reservedSlotsRef.current += 1;
       setImageReadsInFlight((n) => n + 1);
-      void readImageFile(file)
+      void src.read()
         .then((img) => {
           if (agent) stageIntoLabel(img.attachment, agent);
           else setPendingImages((prev) => [...prev, img]);
@@ -348,6 +348,7 @@ export function ChatPanel({
   useEffect(() => {
     const el = inputRef.current;
     if (!prefillUrl || !el) return;
+    if (Array.isArray(prefillUrl)) { attachDroppedImages(prefillUrl); return; }
     // Prepend so a drop never clobbers whatever the user was already typing.
     el.value = el.value ? `${prefillUrl} ${el.value}` : `${prefillUrl} `;
     el.focus();

@@ -5,6 +5,7 @@ import { useCliAvailability } from "../../shared/cli-availability.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { SyncedChat, syncedKey } from "./SyncedChat.js";
 import type { DesktopChatListing } from "@bean/core";
+import type { ChatDrop } from "../../../channels.js";
 import type { SyncedChatListing } from "../../../synced-chats.js";
 
 /** The window-close card for the chats with running tasks (one entry per chat). */
@@ -36,7 +37,7 @@ export function ChatWindow() {
   const [unread, setUnread] = useState<Set<string>>(new Set());
   const [live, setLive] = useState<Record<string, string>>({}); // mount → thread with an open agent session
   const [closing, setClosing] = useState<{ title: string; stop: string } | null>(null);
-  const [droppedUrl, setDroppedUrl] = useState<string | undefined>(undefined);
+  const [droppedUrl, setDroppedUrl] = useState<ChatDrop | undefined>(undefined);
   // A per-turn memory receipt is tagged with the mount that asked. One for a chat switched away
   // mid-capture follows its thread: shown at once if that thread is back on screen, otherwise held
   // until it's restored. ponytail: held for this window's lifetime only — a receipt for a chat never

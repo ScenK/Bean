@@ -1,4 +1,4 @@
-import type { CliName, LiveCli, Memory, ProposedDelegate, ProposedLiveSession, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, SproutRunPlan, TurnSource } from "@bean/core";
+import type { CliName, ImageAttachment, LiveCli, Memory, ProposedDelegate, ProposedLiveSession, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, SproutRunPlan, TurnSource } from "@bean/core";
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 // Renderer copies of core's SUPPORTED_IMAGE_MIMES / MAX_IMAGES_PER_MESSAGE (converse.ts) —
@@ -12,6 +12,20 @@ export function imageFileGuard(type: string, size: number, attachedCount = 0): s
   if (size > MAX_IMAGE_BYTES) return "Images must be 10 MB or smaller.";
   if (attachedCount >= MAX_IMAGES_PER_MESSAGE) return `At most ${MAX_IMAGES_PER_MESSAGE} images per message.`;
   return null;
+}
+
+/** Read a picked image into an attachment + full data URL for its composer thumbnail. */
+export function readImageFile(file: File): Promise<{ attachment: ImageAttachment; dataUrl: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+      resolve({ attachment: { data: base64, mimeType: file.type }, dataUrl });
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 /** Who wrote a reply/working bubble. Items without `agent` are Bean's. */

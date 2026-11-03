@@ -1469,6 +1469,20 @@ describe("dashboard targets", () => {
     expect(openComponentPayload("routines", { routine: "r" })).toBeUndefined();
   });
 
+  test("openComponent chat payload accepts avatar-dropped images, rejects malformed ones", () => {
+    const img = { path: "/tmp/a.png", mimeType: "image/png", size: 3, data: "AAAA" };
+    // data must be exactly `size` bytes of base64, so a lied-about size can't dodge the 10 MB guard.
+    expect(openComponentPayload("chat", [{ ...img, size: 0 }])).toBeUndefined();
+    expect(openComponentPayload("chat", [{ ...img, data: "AAAAAAAA" }])).toBeUndefined();
+    expect(openComponentPayload("chat", [{ ...img, size: -1, data: undefined }])).toBeUndefined();
+    const unread = { path: "/tmp/b.gif", mimeType: "image/gif", size: 3 };
+    expect(openComponentPayload("chat", [img, unread])).toEqual([img, unread]);
+    expect(openComponentPayload("chat", [])).toBeUndefined();
+    expect(openComponentPayload("chat", [{ ...img, size: "3" }])).toBeUndefined();
+    expect(openComponentPayload("chat", [{ ...img, data: 1 }])).toBeUndefined();
+    expect(openComponentPayload("dashboard", [img])).toBeUndefined();
+  });
+
   test("a notification click opens the run, the Routines panel, or Chat", () => {
     expect(notificationOpens({ open: "dashboard", target: { routine: "r", startedAt: at } })).toEqual({ kind: "dashboard", target: { routine: "r", startedAt: at } });
     expect(notificationOpens({ open: "dashboard", target: { routine: 1 } })).toEqual({ kind: "dashboard" });

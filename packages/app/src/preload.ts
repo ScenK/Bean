@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import { IPC, type Theme, type ComponentKind, type DashboardTarget, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type {
   RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
@@ -48,11 +48,11 @@ contextBridge.exposeInMainWorld("bean", {
   setTheme: (t: Theme): Promise<void> => ipcRenderer.invoke(IPC.setTheme, t),
   onThemeChanged: (cb: (t: Theme) => void) =>
     ipcRenderer.on(IPC.themeChanged, (_e, t: Theme) => cb(t)),
-  openComponent: (kind: ComponentKind, payload?: string | DashboardTarget): Promise<void> =>
+  openComponent: (kind: ComponentKind, payload?: ChatDrop | DashboardTarget): Promise<void> =>
     ipcRenderer.invoke(IPC.openComponent, kind, payload),
-  onComponentDroppedUrl: (cb: (url: string) => void) =>
-    ipcRenderer.on(IPC.componentDroppedUrl, (_e, url: string) => cb(url)),
-  getPendingDroppedUrl: (): Promise<string | undefined> => ipcRenderer.invoke(IPC.getPendingDroppedUrl),
+  onComponentDroppedUrl: (cb: (drop: ChatDrop) => void) =>
+    ipcRenderer.on(IPC.componentDroppedUrl, (_e, drop: ChatDrop) => cb(drop)),
+  getPendingDroppedUrl: (): Promise<ChatDrop | undefined> => ipcRenderer.invoke(IPC.getPendingDroppedUrl),
   onDashboardTarget: (cb: (t: DashboardTarget) => void) =>
     ipcRenderer.on(IPC.dashboardTarget, (_e, t: DashboardTarget) => cb(t)),
   getPendingDashboardTarget: (): Promise<DashboardTarget | undefined> => ipcRenderer.invoke(IPC.getPendingDashboardTarget),
