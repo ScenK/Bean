@@ -21,10 +21,10 @@ import type { DelegateEvent } from "../../../delegate-tasks.js";
 import type { LiveEvent, LiveReceipt, LiveStartResult } from "../../../live-tasks.js";
 import type { CloseTurn, InterruptedRunNotice } from "../../../ipc.js";
 
-// Leaving an off-the-record chat discards it, so a running delegate or live session asks Keep/Stop
-// first (`switchTo` = the pick). Any other chat with work stays mounted, hidden. `null` = no card.
+// Leaving an off-the-record chat discards it, so a running delegate, live session or terminal command
+// asks Keep/Stop first (`switchTo` = the pick). Any other chat with work stays mounted, hidden. `null` = no card.
 // Window close asks in the shell (ChatWindow), across every chat.
-type LeaveFlow = { switchTo: string } | null;
+type LeaveFlow = { switchTo: string; title: string } | null;
 
 // Transcript handed to rememberOnClose — see chatTurns (live steering and agent finals stay out).
 // Nothing typed since this window loaded = nothing new to remember (a restored chat's turns were
@@ -105,8 +105,16 @@ export function attachDelegateTaskId(
   return { items: next, loopbacks };
 }
 
-/** Running tasks in one chat, for the window-close card. */
-export interface ChatTasks { delegates: number; live?: LiveCli }
+/** Running tasks in one chat, for the window-close card. `terminal` is the command running in its
+ * shell's foreground (main's fresh check), only while one runs — an idle shell closes silently. */
+export interface ChatTasks { delegates: number; live?: LiveCli; terminal?: string }
+
+/** The leave card for a chat that's discarded on leaving (off the record, or empty), if it has work. */
+export function leaveTitle(t: ChatTasks): string | undefined {
+  const task = t.delegates > 0 || t.live !== undefined;
+  if (t.terminal) return `Leaving discards this chat and stops ${task ? "its task and " : ""}${t.terminal} in its terminal.`;
+  return task ? "Leaving discards this chat and stops its task." : undefined;
+}
 
 /** What the window shell (ChatWindow) routes to a mounted chat: the preload's `on*` bridges can't
  * unsubscribe, so the shell registers them once and calls the chat an event is tagged with (or the
@@ -126,14 +134,16 @@ export interface ChatSessionApi {
   open: (target: string) => void;
   /** An error row in this chat (a failed sidebar delete). */
   error: (text: string) => void;
-  /** Its running delegates and live session (the window-close count). */
-  tasks: () => ChatTasks;
+  /** Its running delegates, live session and terminal command (the window-close count). */
+  tasks: () => Promise<ChatTasks>;
   /** Stop them (window close's Stop & close). */
   stopTasks: () => Promise<void>;
   /** Window close: the final save and close-time memory. */
   closeOut: () => Promise<void>;
   /** A switch elsewhere: a hidden chat with nothing running evicts itself (onEvicted). */
   sweep: () => void;
+  /** Control+` while this chat is shown: fold/unfold its terminal pane. */
+  toggleTerminal: () => void;
 }
 
 export interface ChatSessionProps {
@@ -156,6 +166,8 @@ export interface ChatSessionProps {
   onWorking: (threadId: string | undefined) => void;
   /** Its thread while an agent (live) session is open — the sidebar's green bar; undefined = none. */
   onLive: (threadId: string | undefined) => void;
+  /** Its terminal has a live shell (the sidebar's `>_`), or no longer does. */
+  onTerminal: (alive: boolean) => void;
   /** A reply or live turn landed while hidden (the sidebar dot). */
   onUnread: () => void;
   /** This shown chat is leaving for the pick: `keep` = it stays mounted, hidden (work in flight);
@@ -170,7 +182,7 @@ export interface ChatSessionProps {
 /** One chat inside the chat window. A switch evicts it — final save, close-time memory, release —
  * and the shell mounts the next one with a new mount id; the window itself stays. */
 export function ChatSession({
-  mountId, restoreId, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onUnread, onSwitch, onEvicted, takeLateReceipts,
+  mountId, restoreId, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onTerminal, onUnread, onSwitch, onEvicted, takeLateReceipts,
 }: ChatSessionProps) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -265,6 +277,14 @@ export function ChatSession({
   const [agentProject, setAgentProjectState] = useState("");
   const agentProjectRef = useRef("");
   const rememberProject = (path: string): void => { agentProjectRef.current = path; setAgentProjectState(path); };
+  // This chat's terminal pane (TerminalPane): folded by default, never persisted.
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const toggleTerminal = (): void => setTerminalOpen((o) => !o);
+  // Its shell is running (idle or busy) — that alone keeps a hidden chat mounted.
+  const shellRef = useRef(false);
+  const onShell = (alive: boolean): void => { shellRef.current = alive; onTerminal(alive); };
+  // A discarding leave is awaiting main's terminal check: a second pick meanwhile is ignored.
+  const leavingRef = useRef(false);
   // The agent's model for the next fresh start ("" = its own default).
   const [agentModel, setAgentModelState] = useState("");
   const agentModelRef = useRef("");
@@ -1022,14 +1042,19 @@ export function ChatSession({
   };
 
   // Anything that keeps this chat mounted when it's switched away from: a Bean request in flight or
-  // queued (a loopback), a delegate starting or running, or a live session.
+  // queued (a loopback), a delegate starting or running, a live session, or a shell (a dev server
+  // never finishes — release would kill it).
   const hasWork = (): boolean => busyRef.current || queuedSendsRef.current.length > 0 || liveRef.current !== undefined
-    || hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size);
-  const tasks = (): ChatTasks => ({
-    delegates: Math.max(pendingDelegateStartsRef.current.size,
-      itemsRef.current.filter((it) => it.kind === "delegate" && (it.state === "starting" || it.state === "running")).length),
-    ...(liveRef.current ? { live: liveRef.current.agent } : {}),
-  });
+    || shellRef.current || hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size);
+  const tasks = async (): Promise<ChatTasks> => {
+    const terminal = shellRef.current ? await window.bean.terminalRunning(mountId).catch(() => undefined) : undefined;
+    return {
+      delegates: Math.max(pendingDelegateStartsRef.current.size,
+        itemsRef.current.filter((it) => it.kind === "delegate" && (it.state === "starting" || it.state === "running")).length),
+      ...(liveRef.current ? { live: liveRef.current.agent } : {}),
+      ...(terminal ? { terminal } : {}),
+    };
+  };
   // The sidebar spinner follows the same work, from state — a live session only while its turn runs
   // (the green bar says it's open; bar without spinner = waiting for you).
   const working = busy || live?.busy === true || hasActiveDelegates(items, 0);
@@ -1074,12 +1099,18 @@ export function ChatSession({
 
   // A sidebar row or New chat. A chat with work stays mounted, hidden; an idle one is evicted.
   const open = (target: string): void => {
-    if (evictingRef.current) return;
+    if (evictingRef.current || leavingRef.current) return;
     if (target === "new" ? !threadRef.current && itemsRef.current.length === 0 : target === threadRef.current?.id) return;
-    if (incognitoRef.current) {
-      const t = tasks();
-      if (t.delegates > 0 || t.live) setLeaveFlow({ switchTo: target });
-      else discard(target);
+    // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no
+    // sidebar row to come back to — kept hidden, it would be unreachable).
+    if (incognitoRef.current || (shellRef.current && !threadRef.current && itemsRef.current.length === 0)) {
+      leavingRef.current = true;
+      void tasks().then((t) => {
+        leavingRef.current = false;
+        const title = leaveTitle(t);
+        if (title) setLeaveFlow({ switchTo: target, title });
+        else discard(target);
+      });
       return;
     }
     if (hasWork()) { onSwitch(target, true); return; }
@@ -1114,6 +1145,8 @@ export function ChatSession({
     // The session dies with its chat anyway (main's stopMount/stopOwner); stopping now is just
     // sooner, and leaves its Continue live row in the transcript.
     endSession();
+    // Likewise the shell (release stops it): resolves once it and its jobs are gone.
+    if (shellRef.current) await window.bean.terminalStop(mountId).catch(() => undefined);
   };
 
   // Rendered into the shell's registry, so its once-registered listeners reach this chat. Removed
@@ -1140,6 +1173,7 @@ export function ChatSession({
     stopTasks,
     closeOut,
     sweep,
+    toggleTerminal,
   });
   useLayoutEffect(() => () => { sessions.delete(mountId); }, []);
 
@@ -1155,7 +1189,7 @@ export function ChatSession({
       {leaveFlow && !hidden ? (
         <div class="bean-memory-review">
           <div class="bean-memory-review-card">
-            <div class="bean-memory-review-title">Leaving discards this chat and stops its task.</div>
+            <div class="bean-memory-review-title">{leaveFlow.title}</div>
             <div class="bean-card-actions">
               <button type="button" class="bean-btn" onClick={() => setLeaveFlow(null)}>Keep working</button>
               <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void stopAndDiscard()}>Stop & switch</button>
@@ -1165,6 +1199,10 @@ export function ChatSession({
       ) : null}
       <ChatPanel
         hidden={hidden}
+        mountId={mountId}
+        terminalOpen={terminalOpen}
+        onToggleTerminal={toggleTerminal}
+        onShell={onShell}
         items={items}
         busy={busy || evicting}
         model={model}

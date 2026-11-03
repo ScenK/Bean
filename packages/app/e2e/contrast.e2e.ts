@@ -125,6 +125,13 @@ test("every component window clears WCAG AA text contrast in both themes", async
           });
           await win.locator(".bean-chat-row .bean-agent-avatar--bean").first().waitFor({ timeout: 1000 });
         }).toPass({ timeout: 10_000 });
+        // Open the chat's terminal pane (#663) so its shell output is scanned in both themes too.
+        await win.locator(".bean-input--composer").focus();
+        await win.keyboard.press("Control+Backquote");
+        await expect(win.locator(".bean-term .xterm-rows")).toBeVisible();
+        await win.keyboard.type("echo scanned");
+        await win.keyboard.press("Enter");
+        await expect(win.locator(".bean-term .xterm-rows")).toContainText("scanned");
       }
       await win.waitForTimeout(600);
       for (const theme of ["hearth", "graphite"]) {

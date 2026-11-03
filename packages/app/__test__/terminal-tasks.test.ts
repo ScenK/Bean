@@ -34,7 +34,7 @@ function harness(over: Partial<TerminalTasksDeps> = {}) {
     scratchPath: "/scratch",
     send: (_s, e) => { events.push(e); },
     shell: "/bin/zsh",
-    hasChild: async () => false,
+    foreground: async () => undefined,
     busyPollMs: 60_000,
     ...over,
   });
@@ -143,24 +143,24 @@ describe("terminal tasks", () => {
     expect(p.resumed).toBe(1);
   });
 
-  it("pushes busy when the shell gains and loses a child process", async () => {
+  it("pushes busy when a command takes and leaves the foreground", async () => {
     vi.useFakeTimers();
     try {
-      let child = false;
-      const { tasks, events } = harness({ hasChild: async () => child, busyPollMs: 1000 });
+      let child: string | undefined;
+      const { tasks, events } = harness({ foreground: async () => child, busyPollMs: 1000 });
       await tasks.start(A, "", 80, 24);
-      child = true;
+      child = "pnpm";
       await vi.advanceTimersByTimeAsync(1000);
       await vi.advanceTimersByTimeAsync(1000); // unchanged: no second push
-      child = false;
+      child = undefined;
       await vi.advanceTimersByTimeAsync(1000);
       expect(events.filter((e) => e.type === "busy")).toEqual([
         { mountId: "m1", type: "busy", busy: true },
         { mountId: "m1", type: "busy", busy: false },
       ]);
-      child = true;
-      expect(await tasks.isBusy("m1")).toBe(true);
-      expect(await tasks.isBusy("m2")).toBe(false);
+      child = "pnpm";
+      expect(await tasks.runningCommand("m1")).toBe("pnpm");
+      expect(await tasks.runningCommand("m2")).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }

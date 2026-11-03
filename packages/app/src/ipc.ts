@@ -1122,7 +1122,7 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
     cancelMount: (mountId: string) => void;
   };
   liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "resume" | "stopMount">;
-  terminalTasks: Pick<TerminalTasks, "start" | "write" | "resize" | "ack" | "stop">;
+  terminalTasks: Pick<TerminalTasks, "start" | "write" | "resize" | "ack" | "stop" | "runningCommand">;
   /** Whether an IPC sender is the chat window — the only window that may drive an agent session. */
   isChatSender: (sender: WebContents) => boolean;
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
@@ -1301,6 +1301,11 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.handle(IPC.terminalStop, async (e, mountId: unknown) => {
     const key = tryChatKey(e.sender, mountId);
     if (key !== undefined) await deps.terminalTasks.stop(key);
+  });
+  // The window-close card's fresh check: what runs in this chat's terminal right now.
+  ipcMain.handle(IPC.terminalRunning, (e, mountId: unknown) => {
+    const key = tryChatKey(e.sender, mountId);
+    return key === undefined ? undefined : deps.terminalTasks.runningCommand(key);
   });
   ipcMain.on(IPC.terminalOpenLink, (e, url: unknown, mountId: unknown) => {
     const href = tryChatKey(e.sender, mountId) === undefined ? undefined : terminalLink(url);

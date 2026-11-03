@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld("bean", {
   terminalResize: (cols: number, rows: number, mountId: string): void => ipcRenderer.send(IPC.terminalResize, cols, rows, mountId),
   terminalAck: (chars: number, mountId: string): void => ipcRenderer.send(IPC.terminalAck, chars, mountId),
   terminalStop: (mountId: string): Promise<void> => ipcRenderer.invoke(IPC.terminalStop, mountId),
+  terminalRunning: (mountId: string): Promise<string | undefined> => ipcRenderer.invoke(IPC.terminalRunning, mountId),
   terminalOpenLink: (url: string, mountId: string): void => ipcRenderer.send(IPC.terminalOpenLink, url, mountId),
   onTerminalEvent: (cb: (e: TerminalEvent) => void) =>
     ipcRenderer.on(IPC.terminalEvent, (_e, ev: TerminalEvent) => cb(ev)),
