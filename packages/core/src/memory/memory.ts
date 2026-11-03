@@ -8,6 +8,13 @@ export interface Memory {
   /** Chatops speaker (authenticated platform user id) this fact is private to; absent = shared
    * with the household. Desktop and routines only ever write shared facts. */
   subjectId?: string;
+  /** Owner-facing grouping (free text, sanitized by `sanitizeCategory`); absent = uncategorized.
+   * The exact value `You` is the owner's always-on profile. */
+  category?: string;
+  /** Where a channel capture came from, `<surface>:<scopeId>`, plus a title snapshot taken at
+   * capture. Set by the surface adapter, never the model. */
+  sourceId?: string;
+  sourceTitle?: string;
 }
 
 export interface MemoryCandidate {
@@ -23,7 +30,17 @@ export function isValidMemory(v: unknown): v is Memory {
   if (typeof m.createdAt !== "string" || m.createdAt.trim() === "") return false;
   if (m.projectPath !== undefined && typeof m.projectPath !== "string") return false;
   if (m.subjectId !== undefined && typeof m.subjectId !== "string") return false;
+  for (const k of ["category", "sourceId", "sourceTitle"]) if (m[k] !== undefined && typeof m[k] !== "string") return false;
   return true;
+}
+
+const CATEGORY_MAX = 30;
+/** The one place a category is normalized (every write goes through it): newlines and brackets
+ * stripped, whitespace collapsed, ≤30 chars; empty → null; "you" in any case → `You`. */
+export function sanitizeCategory(raw: string | null | undefined): string | null {
+  const c = (raw ?? "").replace(/[\r\n[\](){}<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, CATEGORY_MAX).trim();
+  if (!c) return null;
+  return c.toLowerCase() === "you" ? "You" : c;
 }
 
 /** When two recalled facts conflict, the later-saved one is current — shared by every recall header. */

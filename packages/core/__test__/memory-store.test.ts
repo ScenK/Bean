@@ -3,11 +3,14 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { loadMemories, appendMemories, updateMemory, deleteMemories, shareMemory, selectRelevantMemories } from "../src/memory/store.js";
+import {
+  loadMemories, appendMemories, updateMemory, deleteMemories, shareMemory, selectRelevantMemories,
+  updateMemoryCategory, renameMemoryCategory,
+} from "../src/memory/store.js";
 import { makeMemoryTools } from "../src/memory/tools.js";
-import { closeDb } from "../src/db.js";
+import { closeDb, openDb } from "../src/db.js";
 import { dbFile } from "../src/config.js";
-import type { Memory } from "../src/memory/memory.js";
+import { sanitizeCategory, type Memory } from "../src/memory/memory.js";
 
 let dir: string;
 let file: string;
@@ -362,4 +365,60 @@ test("shareMemory: only the author flips their private row to shared, text/proje
   expect(row).toEqual({ id: "mias", text: "wifi is now bean2", projectPath: "/p/home", createdAt: "2026-02-01T00:00:00.000Z" });
   await deleteMemories(file, ["mias"]);
   expect(await shareMemory(file, "mias", "mia")).toBe(0); // deleted row
+});
+
+test("sanitizeCategory: trims, collapses, strips newlines/brackets, caps at 30, normalizes You", () => {
+  expect(sanitizeCategory("  Work \n  [habits] ")).toBe("Work habits");
+  expect(sanitizeCategory("(){}<>[]\r\n  ")).toBeNull();
+  expect(sanitizeCategory(undefined)).toBeNull();
+  expect(sanitizeCategory("YOU")).toBe("You");
+  expect(sanitizeCategory(" you ")).toBe("You");
+  expect(sanitizeCategory("your stuff")).toBe("your stuff");
+  expect(sanitizeCategory("x".repeat(40))).toBe("x".repeat(30));
+});
+
+test("category and source round-trip, sanitized at write; per-row update and rename", async () => {
+  await appendMemories(file, [
+    { ...m("a", "prefers short answers"), category: " you " },
+    { ...m("b", "standup is 9am"), category: "Work" },
+    { ...m("c", "Mia: likes oat milk"), sourceId: "discord:123", sourceTitle: "#general" },
+    { ...m("d", "deploys on Tue"), category: "Work" },
+  ]);
+  const byId = async () => new Map((await loadMemories(file)).map((x) => [x.id, x]));
+  let rows = await byId();
+  expect(rows.get("a")).toEqual({ ...m("a", "prefers short answers"), category: "You" });
+  expect(rows.get("c")).toEqual({ ...m("c", "Mia: likes oat milk"), sourceId: "discord:123", sourceTitle: "#general" });
+
+  await updateMemoryCategory(file, "c", "[Friends]\n");
+  await updateMemoryCategory(file, "a", null);
+  rows = await byId();
+  expect(rows.get("c")?.category).toBe("Friends");
+  expect(rows.get("a")?.category).toBeUndefined();
+
+  expect(await renameMemoryCategory(file, "Work", "Job")).toBe(2);
+  expect(await renameMemoryCategory(file, "", "Job")).toBe(0);
+  rows = await byId();
+  expect([rows.get("b")?.category, rows.get("d")?.category]).toEqual(["Job", "Job"]);
+  expect(await renameMemoryCategory(file, "Job", "  ")).toBe(2); // empty → uncategorized
+  expect((await byId()).get("b")?.category).toBeUndefined();
+});
+
+test("an existing bean.db gains the category/source columns on memories and history; reopening is a no-op", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { mkdir } = await import("node:fs/promises");
+  await mkdir(dir, { recursive: true });
+  const legacy = new DatabaseSync(file);
+  legacy.exec(
+    "CREATE TABLE memories (id TEXT PRIMARY KEY, text TEXT NOT NULL, project_path TEXT, created_at TEXT NOT NULL, subject_id TEXT);" +
+      "CREATE TABLE memories_history (run_id TEXT NOT NULL, grp INTEGER NOT NULL, phase TEXT NOT NULL, memory_id TEXT NOT NULL," +
+      " text TEXT NOT NULL, project_path TEXT, created_at TEXT NOT NULL, at TEXT NOT NULL);" +
+      "INSERT INTO memories VALUES ('a', 'prefers tabs', NULL, '2026-07-01T00:00:00.000Z', NULL);",
+  );
+  legacy.close();
+
+  expect(await loadMemories(file)).toEqual([{ id: "a", text: "prefers tabs", createdAt: "2026-07-01T00:00:00.000Z" }]);
+  const cols = (t: string) => (openDb(file).prepare(`PRAGMA table_info(${t})`).all() as unknown as { name: string }[]).map((c) => c.name);
+  for (const t of ["memories", "memories_history"]) expect(cols(t)).toEqual(expect.arrayContaining(["category", "source_id", "source_title"]));
+  closeDb(file);
+  expect(() => openDb(file)).not.toThrow(); // a second opener finds the columns already there
 });

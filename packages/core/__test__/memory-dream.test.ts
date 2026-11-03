@@ -6,7 +6,7 @@ import { closeDb, openDb } from "../src/db.js";
 import { dbFile } from "../src/config.js";
 import {
   appendMemories, claimDreamLease, deleteMemories, dreamDetails, getMemoryMeta, loadMemories, restoreDreamRun,
-  updateMemory, type DreamDigest,
+  updateMemory, updateMemoryCategory, type DreamDigest,
 } from "../src/memory/store.js";
 import { maybeDream, planDream } from "../src/memory/dream.js";
 import { speakerLabel } from "../src/memory/memory.js";
@@ -192,4 +192,57 @@ test("an old digest is dropped with its pruned history, and only the current las
   expect(await getMemoryMeta(file, "lastDream")).toBeUndefined();
   expect(await restoreDreamRun(file, first.runId)).toEqual({ restored: 0, skipped: 0 });
   expect(await texts()).not.toContain("fact a");
+});
+
+test("planDream refuses merges across category or source", () => {
+  const mems: Memory[] = [
+    { ...m("y1", "likes tea"), category: "You" }, { ...m("y2", "likes green tea"), category: "You" },
+    { ...m("w1", "likes oolong"), category: "Work" }, m("u1", "drinks tea"),
+    { ...m("s1", "Mia: tea"), sourceId: "discord:1" }, { ...m("s2", "Mia: oolong"), sourceId: "discord:2" },
+  ];
+  const plan = planDream(mems, {
+    merges: [
+      { ids: ["y1", "w1"], mergedText: "likes tea and oolong" }, // two categories
+      { ids: ["y2", "u1"], mergedText: "drinks green tea" }, // category + uncategorized
+      { ids: ["s1", "s2"], mergedText: "Mia: tea, oolong" }, // two sources
+      { ids: ["y1", "y2"], mergedText: "likes tea, green mostly" },
+    ],
+    drops: [],
+  }, "run", "2026-09-01T00:00:00.000Z");
+  expect(plan.groups).toEqual([{ ids: ["y1", "y2"], text: "likes tea, green mostly", category: "You" }]);
+});
+
+test("a dream merge keeps category/source, undo restores them, and a recategorize since survives undo", async () => {
+  const src = { sourceId: "discord:42", sourceTitle: "#general" };
+  await appendMemories(file, [
+    { ...m("a", "Mia: fact a"), ...src, category: "Team" }, { ...m("b", "Mia: fact b"), ...src, category: "Team" },
+    { ...m("c", "fact c"), category: "You" }, { ...m("d", "fact d"), category: "You" }, m("e", "fact e"),
+  ]);
+  const chat = chatCalling([
+    { name: "merge_memories", args: { ids: ["a", "b"], mergedText: "Mia: facts a and b" } },
+    { name: "merge_memories", args: { ids: ["c", "d"], mergedText: "facts c and d" } },
+  ]);
+  const digest = (await maybeDream(deps(chat)))!;
+  const after = await loadMemories(file);
+  expect(after.find((x) => x.text === "Mia: facts a and b")).toMatchObject({ category: "Team", ...src });
+  const cd = after.find((x) => x.text === "facts c and d")!;
+  expect(cd.category).toBe("You");
+
+  await updateMemoryCategory(file, cd.id, "Hobbies"); // the user's newer decision
+  expect(await restoreDreamRun(file, digest.runId)).toEqual({ restored: 1, skipped: 1 });
+  const rows = new Map((await loadMemories(file)).map((x) => [x.id, x]));
+  expect(rows.get("a")).toEqual({ ...m("a", "Mia: fact a"), ...src, category: "Team" });
+  expect(rows.get("b")).toEqual({ ...m("b", "Mia: fact b"), ...src, category: "Team" });
+  expect(rows.get(cd.id)?.category).toBe("Hobbies");
+  expect(rows.has("c")).toBe(false);
+});
+
+test("a row recategorized mid-dream aborts the run", async () => {
+  await appendMemories(file, five());
+  const chat = chatCalling(
+    [{ name: "merge_memories", args: { ids: ["a", "b"], mergedText: "facts a and b" } }],
+    () => updateMemoryCategory(file, "a", "You"),
+  );
+  expect(await maybeDream(deps(chat))).toBeUndefined();
+  expect(await texts()).toEqual(["fact a", "fact b", "fact c", "fact d", "fact e"]);
 });

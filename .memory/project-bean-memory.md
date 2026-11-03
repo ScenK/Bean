@@ -73,12 +73,13 @@ see `db.ts`'s `migrateFromFiles`.
   expired` statement (10-min expiry, stale taken over) and the due-check is repeated under it; no
   transaction spans the model call. `proposeMemoryConsolidation()` sees each fact's saved date
   (newer wins) and may merge one id (a rewrite, e.g. relative → absolute date). `planDream()`
-  validates in code: disjoint groups, same-`projectPath` merges only, non-empty text, drops capped
+  validates in code: disjoint groups, same-`projectPath`/`category`/`source_id` merges only, non-empty text, drops capped
   at max(3, 20%), oldest 150 per run. `applyConsolidation()` is one `BEGIN IMMEDIATE`: lease still
   ours + every touched row unchanged, else abort with no partial mutation; before/after images go
-  to `memories_history` (pruned after 30 days). Merged rows keep the group's newest `created_at`
+  to `memories_history` (pruned after 30 days) — any new `memories` column must be carried through
+  apply/history/undo or a merge silently clears it (#646 added category/source). Merged rows keep the group's newest `created_at`
   so a dream never counts toward the next one's "5 new". **Undo last dream** (`restoreDreamRun`)
-  restores only groups whose after-image is still intact and reports the rest as kept edits. The
+  restores only groups whose after-image (text, project, category) is still intact and reports the rest as kept edits. The
   digest is a `memory:dream` bubble + Persona's "Last dream" row — never written into a transcript
   (it would be re-extracted).
 
