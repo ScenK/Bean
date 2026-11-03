@@ -76,8 +76,13 @@ see `db.ts`'s `migrateFromFiles`.
   chime-ins and routines never pin. Pinned rows ride the same user-role recall message; the
   system message is untouched (cache-stable).
 - **Enabled-skills filter** lives in `buildChatHandler` (app `ipc.ts`), not in `converse()`.
-- **Edit surface:** Persona's MEMORY section, per-row `updateMemory`/`deleteMemories`/
-  `appendMemories` only — see [[safety-memory-append-vs-replace]].
+- **Edit surface:** Persona's MEMORY section, per-row `updateMemory`/`updateMemoryCategory`/
+  `deleteMemories`/`appendMemories` (+ one-statement `renameMemoryCategory`) only — see
+  [[safety-memory-append-vs-replace]]. Sections come from core's renderer-safe
+  `@bean/core/memory` `memorySections()` (#651): You ("N of `OWNER_PIN_LIMIT`" always on, older
+  You rows dimmed) → categories A–Z → Uncategorized → Channels (per `sourceId`) → Others (non-owner
+  🔒 rows + legacy uncategorized `Name:` rows) → Projects. Under 8 owner rows it's one flat list.
+  Only owner rows get the category input — a category on a channel/member row would join recall pinning.
 - **Dream (background consolidation, #177 PR 2):** `memory/dream.ts` `maybeDream()` is checked
   after each desktop auto-save (close batch or per-turn capture; no timer, no boot cost). Due when ≥24h
   since `lastDreamAt` **and** ≥5 memories created since (a `created_at` count — no counter). A

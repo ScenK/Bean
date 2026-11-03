@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { PERSONA_TAGS, type Persona, type PersonaTag } from "@bean/core/persona";
 import type { DreamDigest, Memory, Project } from "@bean/core";
+import { memorySections, OWNER_CATEGORY, OWNER_PIN_LIMIT } from "@bean/core/memory";
 import type { MemoryBatch } from "../../../ipc.js";
 
 const ago = (iso: string): string => {
   const min = Math.round((Date.now() - Date.parse(iso)) / 60_000);
   return min < 1 ? "just now" : min < 60 ? `${min} min ago` : `${Math.round(min / 60)} h ago`;
 };
+
+/** Below this many owner rows, one flat list (category shown per row) beats a page of headings. */
+const FLAT_BELOW = 8;
 
 const SAMPLE_VOICE = "“Done — left two notes on the retry loop. Want me to open the PR?”";
 
@@ -20,6 +24,7 @@ export function PersonaPanel() {
   const [saveError, setSaveError] = useState<string | undefined>(undefined);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [ownerIds, setOwnerIds] = useState<string[]>([]);
   const [memError, setMemError] = useState<string | undefined>(undefined);
   const [query, setQuery] = useState("");
   const [batch, setBatch] = useState<MemoryBatch | undefined>(undefined);
@@ -29,13 +34,15 @@ export function PersonaPanel() {
   const justRef = useRef<HTMLDivElement>(null);
 
   const refresh = async (): Promise<void> => {
-    const [p, mem, projs, b, d] = await Promise.all([
+    const [p, mem, projs, b, d, owners] = await Promise.all([
       window.bean.getPersona(),
       window.bean.listMemories(),
       window.bean.listProjects(),
       window.bean.getMemoryBatch(),
       window.bean.getLastDream(),
+      window.bean.memoryOwnerIds(),
     ]);
+    setOwnerIds(owners);
     setDream(d);
     setPersona(p);
     setMemories(mem);
@@ -93,9 +100,20 @@ export function PersonaPanel() {
   const editMemory = (id: string, text: string): void =>
     setMemories((prev) => prev.map((m) => (m.id === id ? { ...m, text } : m)));
   const commitMemory = (m: Memory): void => { void run(() => window.bean.updateMemory(m.id, m.text)); };
-  const deleteMemory = (id: string): void => {
-    setMemories((prev) => prev.filter((m) => m.id !== id));
-    void run(() => window.bean.deleteMemories([id]));
+  const deleteMemory = (id: string): void => forget([id]);
+  const forget = (ids: string[]): void => {
+    setMemories((prev) => prev.filter((m) => !ids.includes(m.id)));
+    void run(() => window.bean.deleteMemories(ids));
+  };
+  const editCategory = (id: string, category: string): void =>
+    setMemories((prev) => prev.map((m) => (m.id === id ? { ...m, category } : m)));
+  // Main sanitizes; refresh so the row lands under the stored (normalized) heading.
+  const commitCategory = (m: Memory): void => {
+    void run(async () => { await window.bean.updateMemoryCategory(m.id, m.category?.trim() || null); await refresh(); });
+  };
+  const renameCategory = (from: string, to: string): void => {
+    if (to.trim() === from) return;
+    void run(async () => { await window.bean.renameMemoryCategory(from, to); await refresh(); });
   };
   const addMemory = (projectPath?: string): void => {
     const entry: Memory = { id: crypto.randomUUID(), text: "", projectPath, createdAt: new Date().toISOString() };
@@ -128,15 +146,32 @@ export function PersonaPanel() {
   const shown = needle ? memories.filter((m) => m.text.toLowerCase().includes(needle)) : memories;
   const batchIds = new Set(batch?.ids ?? []);
   const justRemembered = shown.filter((m) => batchIds.has(m.id));
-  const rest = shown.filter((m) => !batchIds.has(m.id));
-  const row = (m: Memory) => (
-    <div key={m.id} class="bean-memory-item">
+  const sections = memorySections(shown.filter((m) => !batchIds.has(m.id)), ownerIds);
+  const categories = [...new Set(memories.flatMap((m) => (m.category ? [m.category] : [])))].sort();
+  const youRows = memories.filter((m) => m.category === OWNER_CATEGORY);
+  const alwaysOn = new Set(youRows.slice(-OWNER_PIN_LIMIT).map((m) => m.id)); // loadMemories is oldest-first
+  // Headings only once the whole owner list (not the filtered view) is big enough to need them.
+  const flat = memorySections(memories, ownerIds).ownerCount < FLAT_BELOW;
+  const row = (m: Memory, withCategory = false) => (
+    <div key={m.id} data-memory-id={m.id} class={`bean-memory-item${m.category === OWNER_CATEGORY && !alwaysOn.has(m.id) ? " bean-memory-item--dim" : ""}`}>
       <input
         class="bean-input bean-memory-input"
         value={m.text}
         onInput={(e) => editMemory(m.id, (e.target as HTMLInputElement).value)}
         onBlur={() => commitMemory(m)}
       />
+      {withCategory ? (
+        <input
+          class="bean-input bean-memory-cat"
+          list="bean-memory-categories"
+          placeholder="Category"
+          aria-label="Category"
+          value={m.category ?? ""}
+          onInput={(e) => editCategory(m.id, (e.target as HTMLInputElement).value)}
+          onBlur={() => commitCategory(m)}
+          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+        />
+      ) : null}
       {m.subjectId ? <span class="bean-memory-private" title="Private to one chat member" aria-label="Private">🔒</span> : null}
       <span class="bean-memory-date" title={new Date(m.createdAt).toLocaleString()}>
         {new Date(m.createdAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
@@ -144,6 +179,29 @@ export function PersonaPanel() {
       <button type="button" class="bean-memory-del" onClick={() => deleteMemory(m.id)} aria-label="Delete">×</button>
     </div>
   );
+  const ownerRow = (m: Memory) => row(m, true);
+  const heading = (category: string) => {
+    if (category === OWNER_CATEGORY) {
+      return (
+        <div class="bean-memory-group-label">
+          You · {Math.min(youRows.length, OWNER_PIN_LIMIT)} of {OWNER_PIN_LIMIT} always on
+        </div>
+      );
+    }
+    if (category === "") return <div class="bean-memory-group-label">Uncategorized</div>;
+    return (
+      <input
+        key={category}
+        class="bean-memory-group-label bean-memory-cat-name"
+        aria-label={`Rename category ${category}`}
+        defaultValue={category}
+        onBlur={(e) => renameCategory(category, (e.target as HTMLInputElement).value)}
+        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+      />
+    );
+  };
+  const ownerGroups = sections.owner;
+  const hasYou = ownerGroups.some((g) => g.category === OWNER_CATEGORY);
 
   if (!persona) {
     return (
@@ -217,7 +275,7 @@ export function PersonaPanel() {
             <span class="bean-memory-group-label">Just remembered · {ago(batch.at)}</span>
             <button type="button" class="bean-btn bean-btn--ghost" onClick={undoBatch}>Undo</button>
           </div>
-          {justRemembered.map(row)}
+          {justRemembered.map(ownerRow)}
         </div>
       ) : null}
 
@@ -243,18 +301,60 @@ export function PersonaPanel() {
       ) : null}
       {dreamNote ? <div class="bean-memory-empty">{dreamNote}</div> : null}
 
-      <div class="bean-memory-group-label">About you</div>
-      {rest.filter((m) => !m.projectPath).length === 0 ? (
-        <div class="bean-memory-empty">{needle ? "No matches." : "Nothing yet."}</div>
+      <datalist id="bean-memory-categories">
+        {[OWNER_CATEGORY, ...categories.filter((c) => c !== OWNER_CATEGORY)].map((c) => <option key={c} value={c} />)}
+      </datalist>
+      {flat ? (
+        <>
+          <div class="bean-memory-group-label">About you</div>
+          {ownerGroups.length === 0 ? (
+            <div class="bean-memory-empty">{needle ? "No matches." : "Nothing yet."}</div>
+          ) : (
+            ownerGroups.flatMap((g) => g.rows).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(ownerRow)
+          )}
+        </>
       ) : (
-        rest.filter((m) => !m.projectPath).map(row)
+        <>
+          {hasYou ? null : (
+            <>
+              {heading(OWNER_CATEGORY)}
+              <div class="bean-memory-empty">
+                {needle ? "No matches." : "Facts here go into every chat — move the ones Bean should always know here"}
+              </div>
+            </>
+          )}
+          {ownerGroups.map((g) => (
+            <div key={g.category || "-"} class="bean-memory-section">
+              {heading(g.category)}
+              {g.rows.map(ownerRow)}
+            </div>
+          ))}
+        </>
       )}
       <button type="button" class="bean-btn bean-btn--ghost" onClick={() => addMemory(undefined)}>+ Add about you</button>
 
-      {projects.filter((p) => rest.some((m) => m.projectPath === p.path)).map((p) => (
+      {sections.channels.length > 0 ? <div class="bean-memory-group-label">Channels</div> : null}
+      {sections.channels.map((ch) => (
+        <details key={ch.sourceId} class="bean-memory-channel">
+          <summary>{ch.title} · {ch.rows.length}</summary>
+          {ch.rows.map((m) => row(m))}
+          <button type="button" class="bean-btn bean-btn--ghost" onClick={() => forget(ch.rows.map((m) => m.id))}>
+            Forget all from here
+          </button>
+        </details>
+      ))}
+
+      {sections.others.length > 0 ? (
+        <>
+          <div class="bean-memory-group-label">Others</div>
+          {sections.others.map((m) => row(m))}
+        </>
+      ) : null}
+
+      {projects.filter((p) => sections.projects.some((m) => m.projectPath === p.path)).map((p) => (
         <div key={p.path}>
           <div class="bean-memory-group-label">{p.name}</div>
-          {rest.filter((m) => m.projectPath === p.path).map(row)}
+          {sections.projects.filter((m) => m.projectPath === p.path).map((m) => row(m))}
         </div>
       ))}
     </div>

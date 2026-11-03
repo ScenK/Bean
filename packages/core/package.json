@@ -45,6 +45,10 @@
       "types": "./dist/sprout-trigger.d.ts",
       "default": "./dist/sprout-trigger.js"
     },
+    "./memory": {
+      "types": "./dist/memory/memory.d.ts",
+      "default": "./dist/memory/memory.js"
+    },
     "./project-select": {
       "types": "./dist/project-select.d.ts",
       "default": "./dist/project-select.js"
