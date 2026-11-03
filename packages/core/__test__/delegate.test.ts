@@ -9,6 +9,7 @@ import {
   claudeTailLine,
   claudeText,
   claudeResult,
+  NO_RESULT_NOTICE,
   codexTailLine,
   codexResult,
   opencodeTailLine,
@@ -324,6 +325,33 @@ describe("runDelegate", () => {
     child.stdout.emit("data", Buffer.from("not json at all\n"));
     child.emit("close", 0);
     expect(dones).toEqual(["not json at all"]);
+  });
+
+  it("claude: with no result event, falls back to the last assistant prose — never the raw stream JSON", () => {
+    const child = new FakeChild();
+    const { cbs, dones } = collect();
+    runDelegate({ cli: "claude", projectPath: "/p", prompt: "go" }, cbs, () => asChild(child));
+    child.stdout.emit("data", Buffer.from([
+      JSON.stringify({ type: "system", subtype: "init", session_id: "s1" }),
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Looking." }, { type: "tool_use", name: "Bash", input: { command: "cat ~/.secret" } }] } }),
+      JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", content: "SECRET-TOOL-OUTPUT" }] } }),
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Almost done." }] } }),
+    ].join("\n") + "\n"));
+    child.emit("close", 0);
+    expect(dones).toEqual(["Almost done."]);
+  });
+
+  it.each(["claude", "codex", "opencode"] as const)("%s: a JSON-only stream with no answer resolves a plain notice", (cli) => {
+    const child = new FakeChild();
+    const { cbs, dones } = collect();
+    runDelegate({ cli, projectPath: "/p", prompt: "go" }, cbs, () => asChild(child));
+    child.stdout.emit("data", Buffer.from([
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "ls" } }] } }),
+      JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "ls", aggregated_output: "TOOL-OUTPUT" } }),
+      JSON.stringify({ type: "tool_use", part: { tool: "bash", state: { output: "TOOL-OUTPUT" } } }),
+    ].join("\n") + "\n"));
+    child.emit("close", 0);
+    expect(dones).toEqual([NO_RESULT_NOTICE]);
   });
 
   it("claude: passes unparsable lines through as raw tail output", () => {
