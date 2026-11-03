@@ -17,7 +17,7 @@ import {
   isValidSessionId, resumeCommand, listSkillProposals, pruneStepAttempts, listStepAttempts, CLI_NAMES,
   modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
-  makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
+  makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory, deleteMemories, extractMemories,
   maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, type DreamDigest,
   loadReminders, updateReminders, fireDueReminders, enqueueOutbox, type Reminder, extractPageText,
   answerRoutineTrigger, sproutRunFacts, withFinishReply, type RoutineTrigger, type RoutineTriggerAnswer,
@@ -30,7 +30,7 @@ import {
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
   availableModels, pinnedStepSelection, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat, deleteDesktopChat, listDesktopChats,
   createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
-  listChatopsConversations, chatopsConversationTurns, loadChatopsOwners,
+  listChatopsConversations, chatopsConversationTurns, loadChatopsOwners, ownerSubjectIds,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
@@ -864,7 +864,8 @@ app.whenReady().then(async () => {
 
     ({ releaseChatSender } = registerIpc(ipcMain, {
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
-      loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories, restoreDreamRun, dreamDetails,
+      loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory, deleteMemories, extractMemories, restoreDreamRun, dreamDetails,
+      ownerSubjectIds: () => ownerSubjectIds(dbFile(dir), dir),
       getLastDream: async (file) => (await getMemoryMeta(file, "lastDream")) as DreamDigest | undefined,
       autoMemory: () => runtime.getAutoMemory(),
       onTurnBatch: (pendingIds) => {

@@ -130,6 +130,11 @@ test("remembered card offers Share with everyone only on a private fact", () => 
   expect(shared).not.toContain("share-memory");
 });
 
+test("remembered card shows the fact's category (#648)", () => {
+  expect(flatten(rememberedCard({ memoryId: "m-1", text: "prefers tabs", category: "You", scope: "private" })))
+    .toContain("Category: You · Saved for you — used in our DMs.");
+});
+
 test("reminder card shows the text, a Z-normalised DATE/TIME, and a Cancel carrying the reminder id", () => {
   const s = flatten(reminderCard({ reminderId: "r-1", text: "take out the bins", at: "2026-07-03T12:00:00.000+02:00" }));
   expect(s).toContain("⏰ Reminder set");

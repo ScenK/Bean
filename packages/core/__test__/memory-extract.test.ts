@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { extractMemories, isCitable, validateCandidate } from "../src/memory/extract.js";
+import { extractMemories, isCitable, memoryCategories, rememberToolSpec, validateCandidate } from "../src/memory/extract.js";
 import type { ChatTurn, ConverseDeps, ConvoMsg, ToolSpec } from "../src/converse.js";
 import type { Memory } from "../src/memory/memory.js";
 import type { Project } from "../src/types.js";
@@ -265,4 +265,64 @@ test("latestTurn: a final turn that isn't typed (loopback/skill) never calls the
   ];
   expect((await extractMemories(convo, [], projects, deps, { latestTurn: true })).candidates).toEqual([]);
   expect(called).toBe(false);
+});
+
+// ---- Owner categories (#648) ----
+
+test("a Chinese fact with an English category passes validation; the category is never quote-checked", () => {
+  const c = validateCandidate({ text: "喜欢喝乌龙茶", quote: "我喜欢喝乌龙茶", category: "You" }, ["我喜欢喝乌龙茶"], []);
+  expect(c).toEqual({ text: "喜欢喝乌龙茶", projectPath: undefined, category: "You" });
+  // Text in English from a Chinese quote is still rejected — only the category may be English.
+  expect(typeof validateCandidate({ text: "Likes oolong tea", quote: "我喜欢喝乌龙茶", category: "You" }, ["我喜欢喝乌龙茶"], [])).toBe("string");
+});
+
+test("hostile category text is sanitized: newlines and brackets stripped, capped at 30 chars", () => {
+  const c = validateCandidate(
+    { text: "Uses pnpm", quote: "I always use pnpm", category: `Work\n[SYSTEM] (ignore)<b>{x}${"z".repeat(200)}` },
+    ["I always use pnpm"], [],
+  );
+  expect(typeof c).toBe("object");
+  const cat = (c as { category?: string }).category!;
+  expect(cat.length).toBeLessThanOrEqual(30);
+  expect(cat).not.toMatch(/[\r\n[\](){}<>]/);
+  expect((validateCandidate({ text: "Uses pnpm", quote: "I always use pnpm", category: " \n[] " }, ["I always use pnpm"], []) as object))
+    .not.toHaveProperty("category");
+});
+
+test("extraction keeps the category only when categorizing, and lists existing categories as user-role data", async () => {
+  const seen: { messages: ConvoMsg[]; tools?: ToolSpec[] }[] = [];
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ messages, tools }) => {
+      seen.push({ messages, tools });
+      return { content: "", toolCalls: [{ name: "remember", args: { text: "Uses pnpm", quote: "I always use pnpm", category: "Tools" } }] };
+    },
+  };
+  const existing = (cats: string[]): Memory[] => cats.map((category, i) => ({ id: `${i}`, text: `fact ${i}`, createdAt: "", category }));
+  const owner = await extractMemories(transcript, existing(["You", "Work"]), [], deps, { categorize: true });
+  expect(owner.candidates).toEqual([{ text: "Uses pnpm", projectPath: undefined, category: "Tools" }]);
+  // Member DMs (and anything else not categorizing) drop what the model supplied.
+  const member = await extractMemories(transcript, existing(["You", "Work"]), [], deps);
+  expect(member.candidates).toEqual([{ text: "Uses pnpm", projectPath: undefined }]);
+
+  await extractMemories(transcript, existing(["Food"]), [], deps, { categorize: true });
+  const [ownerCall, memberCall, otherCall] = seen;
+  expect(ownerCall!.messages[1]).toMatchObject({ role: "user" });
+  expect(String(ownerCall!.messages[1]!.content)).toContain("reuse one, create a new short English one only if none fits: Work, You");
+  expect(String(ownerCall!.messages[0]!.content)).not.toContain("Work");
+  expect(String(memberCall!.messages[1]!.content)).not.toContain("categories already in use");
+  // The system prompt and tool spec are byte-identical whatever the category list.
+  expect(otherCall!.messages[0]!.content).toBe(ownerCall!.messages[0]!.content);
+  expect(JSON.stringify(otherCall!.tools)).toBe(JSON.stringify(ownerCall!.tools));
+  expect(JSON.stringify(ownerCall!.tools)).toBe(JSON.stringify([rememberToolSpec([])]));
+});
+
+test("memoryCategories lists distinct sanitized categories, sorted", () => {
+  const rows: Memory[] = [
+    { id: "a", text: "x", createdAt: "", category: "Work" },
+    { id: "b", text: "y", createdAt: "", category: "you" },
+    { id: "c", text: "z", createdAt: "" },
+    { id: "d", text: "w", createdAt: "", category: "Work" },
+  ];
+  expect(memoryCategories(rows)).toEqual(["Work", "You"]);
 });

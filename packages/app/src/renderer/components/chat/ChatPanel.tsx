@@ -560,7 +560,7 @@ export function ChatPanel({
             );
           }
           if (it.kind === "memory") {
-            const facts = it.saved.map((m) => m.text).join("; ");
+            const facts = it.saved.map((m) => (m.category ? `${m.text} (${m.category})` : m.text)).join("; ");
             return (
               <div key={it.id} class={`bean-status bean-status--${it.state === "undone" ? "info" : "done"}`}>
                 {it.state === "undone" ? `Forgot: ${facts}` : `Remembered: ${facts}`}

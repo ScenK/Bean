@@ -42,8 +42,8 @@ export function ChatWindow() {
   // until it's restored. ponytail: held for this window's lifetime only — a receipt for a chat never
   // reopened before the window closes stays in Persona's memory list, not in the chat.
   const evictedRef = useRef(new Map<string, string>()); // evicted mount id → its thread id
-  const lateRef = useRef(new Map<string, Array<Array<{ id: string; text: string }>>>()); // thread id → receipts
-  const onMemoryUpdated = (saved: Array<{ id: string; text: string }>, from: string): void => {
+  const lateRef = useRef(new Map<string, Array<Array<{ id: string; text: string; category?: string }>>>()); // thread id → receipts
+  const onMemoryUpdated = (saved: Array<{ id: string; text: string; category?: string }>, from: string): void => {
     const mounted = sessions.get(from);
     if (mounted) { mounted.memoryUpdated(saved); return; }
     const thread = evictedRef.current.get(from);
@@ -52,7 +52,7 @@ export function ChatWindow() {
     if (holder) { holder.memoryUpdated(saved); return; }
     lateRef.current.set(thread, [...(lateRef.current.get(thread) ?? []), saved]);
   };
-  const takeLateReceipts = (thread: string): Array<Array<{ id: string; text: string }>> => {
+  const takeLateReceipts = (thread: string): Array<Array<{ id: string; text: string; category?: string }>> => {
     const late = lateRef.current.get(thread) ?? [];
     lateRef.current.delete(thread);
     return late;

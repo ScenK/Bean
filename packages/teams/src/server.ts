@@ -1,7 +1,7 @@
 import {
   beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
   skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
+  loadLayeredSkills, loadProjects, loadPersona, loadMemories, ownerSubjectIds, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, saveRoutine, createRoutine, RoutineProposalStore, memberTodoEligible, resolveTodoRoutine, ownerDmRefs,
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, ConversationCatalog, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
@@ -25,7 +25,7 @@ import {
 } from "./cards.js";
 import { addressedToBot } from "./addressing.js";
 import { startDevtunnel } from "./devtunnel.js";
-import { bareChannelId, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
+import { bareChannelId, capturePlace, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
 import { parseQuote } from "./replied-to.js";
 import { deliveredAppend, loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 import { teamsText } from "./teams-text.js";
@@ -119,6 +119,7 @@ const bot = buildTeamsBot({
   loadProjects: () => loadProjects(projectsFile(dir)),
   loadPersona: () => loadPersona(personaFile(dir), personaFile(builtinDir)),
   loadMemories: (subject) => loadMemories(dbFile(dir), subject),
+  ownerSubjectIds: () => ownerSubjectIds(dbFile(dir), dir),
   loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
   saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),
   detectClis: clis,
@@ -335,7 +336,7 @@ app.post("/api/messages", (req, res) => {
           // Household memory capture (#463): the id gates (role), the name only labels a saved fact.
           // `text` already has any quote-reply split out (parseQuote). No receipt on Teams.
           fromId: a.from.id, fromAltId: a.from.aadObjectId, name: a.from.name ?? "someone",
-          text, at: Date.now(), bot: a.from.role === "bot",
+          text, at: Date.now(), bot: a.from.role === "bot", place: capturePlace({ conversation: a.conversation, bot: a.recipient }),
         });
       }
       return;
