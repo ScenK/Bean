@@ -13,8 +13,11 @@
   `sendFile`**: inline base64 exceeds Teams activity size limits, and hosting the file
   (public route + capability tokens + rate limiting — tried, then removed as overkill) isn't
   worth it; core's fallback posts the saved file's path and the user opens it locally.
-  Live-session-captured channels skip attachment downloads entirely (bridged agent takes
-  text only).
+  Live-session-captured channels (#629) download images only for a sender who may steer
+  (`canSteer` and not a member — Discord reuses `canTranscribe`, Teams mirrors it); core's
+  `steerLive` stages them under `<tmpdir>/bean-live-images/<conv hash>/` and sends
+  `[Image #N]: /abs/path` lines (N counts per session on the registry entry); history gets
+  `[image attached]`, never a path. Discord replies naming any attachment the agent didn't get.
 - **Ingest limits**: vision accepts only png/jpeg/webp (GIF excluded — animated GIFs are
   rejected by the API and detecting animation isn't worth it) — every surface filters on
   core's `SUPPORTED_IMAGE_MIMES` and caps at `MAX_IMAGES_PER_MESSAGE` (4) — the renderer

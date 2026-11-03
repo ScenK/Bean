@@ -114,6 +114,8 @@ interface ActiveSession {
   /** Extra user-ids the starter has granted steering to (restricted mode only). */
   coDrivers: Set<string>;
   sink: LiveSessionSink;
+  /** Images steered so far: `[Image #N]` labels keep counting for the session's life. */
+  images: number;
   timer: ReturnType<typeof setInterval>;
   /** Current turn's text not yet finalized into a full message — the source of truth;
    * a failed post/edit just leaves it dirty for the next tick. */
@@ -225,6 +227,7 @@ export class LiveSessionRegistry {
       steering: input.steering === "restricted" && !input.starterId ? "open" : (input.steering ?? "open"),
       coDrivers: new Set(),
       sink: input.sink,
+      images: 0,
       timer: setInterval(() => void this.flush(input.channelId), this.opts.throttleMs ?? DEFAULT_THROTTLE_MS),
       buf: "", msgId: undefined, sent: "", dirty: false, rendering: false, seals: [],
       onEnded: input.onEnded,
@@ -305,6 +308,15 @@ export class LiveSessionRegistry {
       clearInterval(s.typingTimer);
       s.typingTimer = undefined;
     }
+  }
+
+  /** Reserves `count` image numbers on this channel's session; returns the first (1-based), or
+   * undefined when there's no session. */
+  takeImageNumbers(channelId: string, count: number): number | undefined {
+    const s = this.byChannel.get(channelId);
+    if (!s) return undefined;
+    s.images += count;
+    return s.images - count + 1;
   }
 
   /** False when the session refused the text (a per-turn CLI's next-turn queue is full). */

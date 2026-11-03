@@ -338,11 +338,14 @@ app.post("/api/messages", (req, res) => {
     const direct = place.kind === "dm";
     // Role before any paid pre-work: a non-owner DM with guest DMs off gets core's one fixed
     // line (or a whoami answer), so its images are never downloaded.
-    const dmBlocked = direct && !dmAllowed(roles.roleOf({ fromId: a.from.id, fromAltId: a.from.aadObjectId }), roles);
+    const role = roles.roleOf({ fromId: a.from.id, fromAltId: a.from.aadObjectId, scopeId: direct ? undefined : scopeOf(a) });
+    const dmBlocked = direct && !dmAllowed(role, roles);
     // Downloaded only after the addressing gate: ambient channel images must not cost
-    // token-authenticated fetches for messages Bean immediately discards. Also skipped
-    // while a live session captures the conversation — the bridged agent only takes text.
-    const images = capturing || dmBlocked ? [] : await downloadImages(a);
+    // token-authenticated fetches for messages Bean immediately discards. In a captured
+    // conversation only someone who may steer the session (core's `steers`) pays for them;
+    // they're staged for the agent by path.
+    const canDownload = !dmBlocked && (!capturing || (role !== "member" && liveSessions.canSteer(a.conversation.id, a.from.id)));
+    const images = canDownload ? await downloadImages(a) : [];
     // An image-only message still gets a turn; pure empty messages stay ignored.
     // A blocked DM still reaches core (as "(image)") so its one refusal line is sent.
     if (!text && images.length === 0 && !dmBlocked) return;
@@ -356,7 +359,8 @@ app.post("/api/messages", (req, res) => {
     try {
       await bot.onMessage(
         {
-          conversationId: a.conversation.id, text: text || "(image)", repliedTo,
+          // A steer sends only what was typed: an image-only one is just its path lines.
+          conversationId: a.conversation.id, text: text || (capturing && images.length > 0 ? "" : "(image)"), repliedTo,
           images: images.length > 0 ? images : undefined,
           fromId: a.from.id, fromAltId: a.from.aadObjectId, fromName: a.from.name ?? "someone",
           scopeId: scopeOf(a), direct,

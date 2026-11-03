@@ -405,25 +405,31 @@ client.on("messageCreate", async (message) => {
       }
     }
     // Image attachments (supported vision formats, ≤10MB) ride along as vision input; an
-    // image-only message still gets a turn. Skipped while a live session captures the
-    // channel — the bridged agent only takes text, so downloading would silently drop them.
+    // image-only message still gets a turn. In a captured channel they're staged for the live
+    // agent by path — downloaded only for someone who may steer it (same gate as audio).
     const images: ImageAttachment[] = [];
-    for (const att of capturing || dmBlocked ? [] : message.attachments.values()) {
-      if (images.length >= MAX_IMAGES_PER_MESSAGE) break;
+    // While capturing, what the agent won't get is named back so a phone user knows.
+    const skipped: string[] = [];
+    for (const att of canTranscribe ? message.attachments.values() : []) {
+      if (att.contentType?.startsWith("audio/") && att.size <= 25 * 1024 * 1024) continue; // transcribed above
       const mime = att.contentType?.split(";")[0]?.trim() ?? "";
-      if (!(SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime) || att.size > 10 * 1024 * 1024) continue;
+      if (!(SUPPORTED_IMAGE_MIMES as readonly string[]).includes(mime)) { skipped.push(`${att.name} (unsupported type)`); continue; }
+      if (att.size > 10 * 1024 * 1024) { skipped.push(`${att.name} (over 10 MB)`); continue; }
+      if (images.length >= MAX_IMAGES_PER_MESSAGE) { skipped.push(`${att.name} (over the ${MAX_IMAGES_PER_MESSAGE}-image limit)`); continue; }
       try {
         const res = await fetch(att.url);
         // A CDN error page base64'd as image bytes would poison the vision call.
-        if (!res.ok) { console.error(`attachment fetch failed: ${res.status}`); continue; }
+        if (!res.ok) { console.error(`attachment fetch failed: ${res.status}`); skipped.push(`${att.name} (download failed)`); continue; }
         // The declared att.size is Discord's claim; the downloaded bytes are what we'd keep.
         const buf = Buffer.from(await res.arrayBuffer());
-        if (buf.byteLength > 10 * 1024 * 1024) continue;
+        if (buf.byteLength > 10 * 1024 * 1024) { skipped.push(`${att.name} (over 10 MB)`); continue; }
         images.push({ data: buf.toString("base64"), mimeType: mime });
       } catch (err) {
         console.error("attachment fetch failed:", err);
+        skipped.push(`${att.name} (download failed)`);
       }
     }
+    if (capturing && skipped.length > 0) await message.reply(`The agent didn't get: ${skipped.join(", ")}.`);
     // A blocked DM still reaches core (as "(image)") so its one refusal line is sent.
     if (!text && images.length === 0 && !forward && !dmBlocked) {
       if (transcribeFailed) await message.reply("I couldn't transcribe that voice message — try again, or type it out.");
@@ -432,7 +438,8 @@ client.on("messageCreate", async (message) => {
     // A top-level address in a plain text channel opens a session thread on that message; the
     // turn (and its cards, runs, results) then lives in the thread. Not while a live session
     // captures the channel — that session owns the channel's turns.
-    const turnText = text || (forward && images.length === 0 ? "(forwarded message)" : "(image)");
+    // A steer sends only what was typed: an image-only one is just its path lines.
+    const turnText = text || (capturing && images.length > 0 ? "" : forward && images.length === 0 ? "(forwarded message)" : "(image)");
     // The message this one replies to (or forwards) — resolved before the thread opens, since the
     // turn then runs under the thread's fresh, empty history. Context only (see core's repliedTo).
     const ref = message.reference;

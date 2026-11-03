@@ -1,9 +1,11 @@
-import { randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
 import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ImageAttachment, type ProposedLiveSession } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
+import { stageImages } from "../stage-images.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
 import { extractMemories } from "../memory/extract.js";
 import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
@@ -194,6 +196,9 @@ export interface TeamsBotDeps {
   webSearchEnabled?: () => boolean;
   /** Active chat-bridged agent sessions; while a channel is bound, its messages bypass converse. */
   liveSessions: LiveSessionRegistry;
+  /** Where a steer's images are staged for the agent to read by path, one subdir per
+   * conversation. Default `<os.tmpdir()>/bean-live-images`; files are left for the OS purge. */
+  liveImagesDir?: string;
   liveSessionProposals: LiveSessionProposalStore;
   /** Gates the propose_live_session tool (surface support, e.g. a live-capable CLI is present). */
   liveSessionsEnabled: () => boolean;
@@ -1183,10 +1188,22 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     return true;
   }
 
-  // Refused text (a per-turn CLI's next-turn queue is full) never reaches history.
-  function steerLive(conv: string, fromName: string, text: string): boolean {
-    if (!deps.liveSessions.send(conv, text)) return false;
-    deps.conversations.append(conv, { role: "user", content: speakerLine(fromName, text) });
+  // Refused text (a per-turn CLI's next-turn queue is full) never reaches history. Images are
+  // staged to files and the agent gets `[Image #N]: /abs/path` lines (all three CLIs read an
+  // image by path); history saves `[image attached]`, never a path.
+  async function steerLive(conv: string, fromName: string, text: string, images?: ImageAttachment[]): Promise<boolean> {
+    let agentText = text;
+    if (images?.length) {
+      const dir = join(deps.liveImagesDir ?? join(tmpdir(), "bean-live-images"), createHash("sha256").update(conv).digest("hex").slice(0, 16));
+      const paths = await stageImages(images, dir);
+      // The session ended while staging: nothing is steered; the files are left for the OS purge.
+      const first = deps.liveSessions.takeImageNumbers(conv, paths.length);
+      if (first === undefined) return true;
+      agentText = [text, ...paths.map((p, i) => `[Image #${first + i}]: ${p}`)].filter(Boolean).join("\n");
+    }
+    if (!deps.liveSessions.send(conv, agentText)) return false;
+    const saved = images?.length ? [text, "[image attached]"].filter(Boolean).join("\n") : text;
+    deps.conversations.append(conv, { role: "user", content: speakerLine(fromName, saved) });
     return true;
   }
 
@@ -1229,7 +1246,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // Re-checked after the echo's await: a session that ended meanwhile takes a normal turn.
         if (deps.liveSessions.has(conv)) {
           deps.conversations.setAmbientCutoff(conv, Date.now());
-          return ack(steerLive(conv, fromName, text) ? { ok: true } : { refused: "queue-full" });
+          return ack(await steerLive(conv, fromName, text) ? { ok: true } : { refused: "queue-full" });
         }
         ack({ ok: true });
         const direct = row.kind === "dm";
@@ -1353,7 +1370,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             return;
           }
           if (!steers(msg)) return;
-          if (!steerLive(conv, msg.fromName, msg.text)) await fx.reply(TURN_QUEUE_FULL);
+          if (!(await steerLive(conv, msg.fromName, msg.text, msg.images))) await fx.reply(TURN_QUEUE_FULL);
           return;
         }
         // Typed `stop` with nothing live stays a model turn, as it always was.
