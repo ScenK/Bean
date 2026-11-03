@@ -69,6 +69,7 @@ export { parseCron, isValidCron, nextRun } from "./cron.js";
 export type { CronSpec } from "./cron.js";
 export * from "./watch-window.js";
 export * from "./routine-scheduler.js";
+export * from "./sprout-trigger.js";
 export * from "./routine-host.js";
 export * from "./routine-steps.js";
 export * from "./watch-io.js";

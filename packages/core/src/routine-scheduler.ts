@@ -1,7 +1,7 @@
 // packages/core/src/routine-scheduler.ts
 import { nextRun } from "./cron.js";
 import { appendRunRecord, parallelSlots, watchEveryMinutes } from "./routine-store.js";
-import type { Routine, RoutineState, RoutineWatch, RunRecord } from "./routine-store.js";
+import type { Routine, RoutineState, RoutineWatch, RunRecord, RunStatus } from "./routine-store.js";
 import type { RoutineRunResult } from "./routine-runner.js";
 import type { TodoItem } from "./todo-store.js";
 import { watchDigest, watchSourceKey, watchTodoText } from "./watch.js";
@@ -45,6 +45,26 @@ export interface RoutineSchedulerDeps {
 }
 
 export interface WatchCheckResult { newItems: number; error?: string }
+
+/** Everything one trigger admitted, once all of it has finished: worst status wins
+ * (failed > needs-attention > ok). `runs` 0 = every admitted worker found the queue empty. */
+export interface TriggerOutcome { status: RunStatus; runs: number; ok: number; needsAttention: number; failed: number }
+
+export type TriggerResult =
+  | { status: "started"; done: Promise<TriggerOutcome> }
+  | { status: "refused"; reason: string }
+  | { status: "checked"; result: WatchCheckResult };
+
+/** Folds per-run statuses into one outcome. */
+export function triggerOutcome(statuses: RunStatus[]): TriggerOutcome {
+  const n = (st: RunStatus): number => statuses.filter((x) => x === st).length;
+  const failed = n("failed");
+  const needsAttention = n("needs-attention");
+  return {
+    status: failed > 0 ? "failed" : needsAttention > 0 ? "needs-attention" : "ok",
+    runs: statuses.length, ok: n("ok"), needsAttention, failed,
+  };
+}
 
 const TICK_MS = 30_000;
 export const ALARM_AFTER = 3;
@@ -138,11 +158,14 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     }).catch((err: unknown) => console.error(`bean: watch "${routine.name}" post-run check failed`, err));
   };
 
-  /** The single run (maxParallel 1, plain routines): one runRoutine call drains the queue. */
-  async function execute(routine: Routine): Promise<void> {
+  /** The single run (maxParallel 1, plain routines): one runRoutine call drains the queue.
+   * Resolves with the run's status (a throw before a record exists counts as failed). */
+  async function execute(routine: Routine): Promise<RunStatus[]> {
+    let status: RunStatus = "failed";
     try {
       await stamp(routine.name);
       const result = await deps.runRoutine(routine);
+      status = result.record.status;
       await appendAndPrune(routine.name, result.record);
       await deps.deliverDigest(routine, result);
     } catch (err) {
@@ -150,20 +173,23 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     } finally {
       release(routine, true);
     }
+    return [status];
   }
 
   /** A maxParallel worker: claim a todo, run it as its own run, repeat until nothing's pending.
-   * A lost claim ends the worker with no bubble, record or digest. */
-  async function worker(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>): Promise<void> {
-    let ran = false;
+   * A lost claim ends the worker with no bubble, record or digest. Resolves with one status per
+   * claimed todo. */
+  async function worker(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>): Promise<RunStatus[]> {
+    const statuses: RunStatus[] = [];
     try {
       for (let todo = await claim(routine.name); todo; todo = await claim(routine.name)) {
-        ran = true;
+        statuses.push("failed"); // replaced by the record's status once the run returns
         bump(routine.name, 1);
         try {
           let result: RoutineRunResult;
           try {
             result = await deps.runRoutine(routine, todo);
+            statuses[statuses.length - 1] = result.record.status;
             await appendAndPrune(routine.name, result.record, () => (inFlight.get(routine.name) ?? 0) > 1);
           } finally {
             bump(routine.name, -1);
@@ -176,23 +202,35 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     } catch (err) {
       console.error(`bean: routine "${routine.name}" claim failed`, err);
     } finally {
-      release(routine, ran);
+      release(routine, statuses.length > 0);
     }
+    return statuses;
   }
 
   /** Starts runs into the routine's free slots (maxParallel − live). The slots are taken
    * synchronously, before any await, so concurrent fills never overcommit. Resolves when the
-   * started runs end. */
-  async function fill(routine: Routine): Promise<void> {
+   * started runs end, with one status per run they made. */
+  async function fill(routine: Routine): Promise<RunStatus[]> {
     const slots = deps.claimTodo ? parallelSlots(routine) : 1;
     const free = slots - count(routine.name);
-    if (free <= 0) return;
+    if (free <= 0) return [];
     running.set(routine.name, count(routine.name) + free);
     if (slots === 1 || !deps.claimTodo) return execute(routine);
     const claim = deps.claimTodo;
     await stamp(routine.name).catch((err: unknown) => console.error(`bean: routine "${routine.name}" stamp failed`, err));
-    await Promise.all(Array.from({ length: free }, () => worker(routine, claim)));
+    return (await Promise.all(Array.from({ length: free }, () => worker(routine, claim)))).flat();
   }
+
+  /** Why a run can't start now (the same reasons Run now gives), or undefined. Synchronous, so a
+   * caller can fill() right after with no await in between. */
+  const refuseRun = (routine: Routine): string | undefined => {
+    if (routine.watch && routine.steps.length === 0) return "a notify-only watch has no steps to run — use Check now";
+    const slots = deps.claimTodo ? parallelSlots(routine) : 1;
+    const live = count(routine.name);
+    if (live >= slots) return slots > 1 ? `${live}/${slots} running` : "already running";
+    return undefined;
+  };
+  const noSuch = (name: string): string => `no sprout named "${name}"`;
 
   const pollDue = (routine: Routine & { watch: RoutineWatch }, state: RoutineState | undefined, at: Date): boolean =>
     !state?.lastPoll || new Date(state.lastPoll).getTime() + watchEveryMinutes(routine.watch) * 60_000 <= at.getTime();
@@ -362,6 +400,14 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     deps.onMissed?.(flagged);
   }
 
+  async function check(name: string, routine: Routine | undefined): Promise<WatchCheckResult> {
+    if (!routine?.watch) return { newItems: 0, error: `no watch sprout named "${name}"` };
+    if (!routine.enabled) return { newItems: 0, error: "enable the sprout first" };
+    const result = await poll(routine);
+    if (result.newItems > 0 && routine.steps.length > 0) void tick();
+    return result;
+  }
+
   return {
     start(): void {
       void markMissed();
@@ -393,11 +439,9 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     /** Refuses only when every slot is taken; otherwise fills the free ones. */
     async runNow(name: string): Promise<{ started: boolean; reason?: string }> {
       const routine = (await deps.loadRoutines()).find((r) => r.name === name);
-      if (!routine) return { started: false, reason: `no sprout named "${name}"` };
-      if (routine.watch && routine.steps.length === 0) return { started: false, reason: "a notify-only watch has no steps to run — use Check now" };
-      const slots = deps.claimTodo ? parallelSlots(routine) : 1;
-      const live = count(name);
-      if (live >= slots) return { started: false, reason: slots > 1 ? `${live}/${slots} running` : "already running" };
+      if (!routine) return { started: false, reason: noSuch(name) };
+      const reason = refuseRun(routine);
+      if (reason) return { started: false, reason };
       checking.delete(name); // an in-flight tick's due decision for it is now stale
       await fill(routine); // no await between the check above and fill's synchronous slot grab
       return { started: true };
@@ -405,12 +449,22 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     /** Poll a watch right now, ignoring its window (runNow doesn't poll). New todo-driven items
      * drain via a tick. */
     async checkNow(name: string): Promise<WatchCheckResult> {
+      return check(name, (await deps.loadRoutines()).find((r) => r.name === name));
+    },
+    /** Run or check (pick with `sproutTriggerAction`), answering as soon as the run is admitted:
+     * `done` resolves when every slot this call took has finished. A run also refuses a
+     * todo-driven sprout whose queue is empty (runNow would start a no-op drain). */
+    async trigger(name: string, action: "run" | "check"): Promise<TriggerResult> {
       const routine = (await deps.loadRoutines()).find((r) => r.name === name);
-      if (!routine?.watch) return { newItems: 0, error: `no watch sprout named "${name}"` };
-      if (!routine.enabled) return { newItems: 0, error: "enable the sprout first" };
-      const result = await poll(routine);
-      if (result.newItems > 0 && routine.steps.length > 0) void tick();
-      return result;
+      if (!routine) return { status: "refused", reason: noSuch(name) };
+      if (action === "check") return { status: "checked", result: await check(name, routine) };
+      if (routine.todoDriven && routine.steps.length > 0 && deps.hasPendingTodos && !(await deps.hasPendingTodos(name))) {
+        return { status: "refused", reason: "queue's empty now" };
+      }
+      const reason = refuseRun(routine);
+      if (reason) return { status: "refused", reason };
+      checking.delete(name);
+      return { status: "started", done: fill(routine).then(triggerOutcome) }; // fill takes its slots synchronously
     },
     /** Enable from review: check the source again, seed from THAT check (not the build-time
      * preview), optionally queue what's already there, then save enabled. */

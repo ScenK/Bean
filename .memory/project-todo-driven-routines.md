@@ -55,3 +55,10 @@ no todo is stranded `running` until restart. The panel reads the scheduler's liv
 tick still deciding) against the *saved* definition's slots: the Queue caption shows "2/3 running", and
 Run now stays enabled below full (one-at-a-time sprouts still disable while anything runs). `queue`
 counts are filled for every todo-driven sprout, cron included (`RoutineHandlerDeps.queueCounts`).
+
+Trigger (#633): the run-vs-check rule is `sproutTriggerAction` (node-free `@bean/core/sprout-trigger`;
+the panel and chat cards share it — don't re-derive it per surface). `scheduler.trigger(name, action)`
+answers `started`/`refused`/`checked` as soon as `fill()` has taken its slots; `done` folds every
+admitted run into one `TriggerOutcome` (failed > needs-attention > ok; `runs: 0` = workers found
+the queue empty). Unlike `runNow`, it refuses an empty todo queue ("queue's empty now").
+`runNow`/`checkNow` keep their old contracts (runNow still resolves at the run's end).
