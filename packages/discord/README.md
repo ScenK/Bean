@@ -19,7 +19,7 @@ endpoint.
    `{ "botToken": "<token>", "ownerId": "<your user id>", "ownerName": "<your name>" }`
    `ownerId` is the owner (full powers; sprout digests with no channel DM them). Everyone else
    is a guest (chat only) unless the owner runs `add-admin @name` in a channel; `admins` and
-   `whoami` list roles. `"memberIds": ["<user id>", ...]` makes household members (memory, notes,
+   `whoami` list roles. `"memberIds": ["<user id>", ...]` makes members (memory, notes,
    todos — everywhere, DMs included; no delegates, live sessions, skills or Mac control); restart
    to apply. `"allowGuestDms": true` lets guests DM Bean (default off). A legacy
    single-entry `allowedUserIds` is read as `ownerId`; several entries fail startup.
@@ -51,7 +51,7 @@ command (verbatim, not reworded by the model).
 
 ## Headless sprouts (no desktop app)
 
-Household container recipe and owner checklist: [`docs/headless.md`](../../docs/headless.md).
+Container recipe and owner checklist: [`docs/headless.md`](../../docs/headless.md).
 
 On a bot-only install (e.g. a Linux container) the bot can run your scheduled sprouts itself:
 

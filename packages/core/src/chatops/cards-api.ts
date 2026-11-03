@@ -116,7 +116,7 @@ export interface RememberedCardInput {
 }
 
 export function rememberedScopeLine(scope: RememberedCardInput["scope"]): string {
-  return scope === "private" ? "Saved for you — used in our DMs." : "Saved for the household.";
+  return scope === "private" ? "Saved for you — used in our DMs." : "Saved for everyone.";
 }
 
 /** Receipt for a reminder set_reminder saved directly; Cancel carries the reminder id. */

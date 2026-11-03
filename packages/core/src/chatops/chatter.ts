@@ -223,7 +223,7 @@ export function makeChimeIn(deps: ChimeInDeps): ChimeIn {
       // Shared rows only (the null above), and never a local project path.
       const shared = selectRelevantMemories(memories.filter((m) => !m.subjectId), window.map((m) => m.text).join("\n"))
         .map(({ projectPath: _, ...m }) => m);
-      const recall = memoriesBlock(shared, [], { ids: false, subject: "the household" });
+      const recall = memoriesBlock(shared, [], { ids: false, subject: "everyone here" });
       let timer: (() => void) | undefined;
       const res = await Promise.race([
         deps.chat({

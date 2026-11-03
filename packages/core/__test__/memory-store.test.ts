@@ -183,7 +183,7 @@ test("a private remember tells the model about the Share with everyone button; a
     classifier: fakeClassifier().classifier,
   }).tools[0]!;
   const args = { text: "Prefers tabs", quote: "I prefer tabs" };
-  expect(await tools("mia").run(args)).toContain("Saved privately. If this updates a household fact shown in what you remember, say so and mention the Share with everyone button on the receipt.");
+  expect(await tools("mia").run(args)).toContain("Saved privately. If this updates a shared fact shown in what you remember, say so and mention the Share with everyone button on the receipt.");
   expect(await tools().run(args)).toBe("Remembered: Prefers tabs");
 });
 
@@ -327,6 +327,7 @@ test("saveScope: DM private, channel shared; overrides only when unambiguous", a
   expect(saveScope("remember that I prefer espresso", true)).toBe("private");
   expect(saveScope("remember that I prefer espresso", false)).toBe("shared");
   expect(saveScope("remember that I prefer espresso for everyone", true)).toBe("shared");
+  expect(saveScope("remember this for the whole team", true)).toBe("shared");
   expect(saveScope("remember that I prefer espresso; this is not for everyone", true)).toBe("private");
   expect(saveScope("remember that I prefer espresso, just for me", false)).toBe("private");
   expect(saveScope("remember that I want mint tea, save it for everyone", true)).toBe("shared");

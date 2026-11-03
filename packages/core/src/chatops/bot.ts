@@ -995,7 +995,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const text = (await deps.loadMemories()).find((m) => m.id === memoryId)?.text;
     const gone = await deps.deleteMemories([memoryId], subject);
     if (gone.length > 0) await fx.post(`Forgot (by ${actor}): ${text ?? "that fact"}`);
-    else await fx.post(text === undefined ? "Already forgotten." : "Only the owner can forget household facts or another member's.");
+    else await fx.post(text === undefined ? "Already forgotten." : "Only the owner can forget shared facts or another member's.");
   }
 
   // Share button on a private remembered card. Same id-in-the-button, no-proposal-store shape as
@@ -1008,7 +1008,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     const text = (await deps.loadMemories(null)).find((m) => m.id === memoryId)?.text;
-    await fx.post(`Shared with the household (by ${actor}): ${text ?? "that fact"}. Only the owner can forget it now.`);
+    await fx.post(`Shared with everyone (by ${actor}): ${text ?? "that fact"}. Only the owner can forget it now.`);
   }
 
   // Cancel button on a reminder receipt: same idempotent, no-proposal-store shape as Forget.
@@ -1097,14 +1097,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     if (c.kind === "memory") {
       if (c.arg === "status") {
-        await fx.reply(chatter.memoryOn(scopeId) ? "Channel memory is on here — I remember household facts people share. `memory off` to stop."
+        await fx.reply(chatter.memoryOn(scopeId) ? "Channel memory is on here — I remember facts people share. `memory off` to stop."
           : "Channel memory is off here — I only remember what someone explicitly asks me to.");
         return;
       }
       if (!(await permittedFor(role, scopeId, fx)("channelMemory", "turn channel memory on or off"))) return;
       chatter.setMemoryOn(scopeId, c.arg === "on");
       await (fx.announce ?? fx.reply)(c.arg === "on"
-        ? `Channel memory is on${msg.channelName ? ` in ${msg.channelName}` : ""} — I'll remember household facts people share here.`
+        ? `Channel memory is on${msg.channelName ? ` in ${msg.channelName}` : ""} — I'll remember facts people share here.`
         : "Channel memory is off — I'll only remember what someone explicitly asks me to.");
       return;
     }
@@ -1174,7 +1174,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     const { role, scopeId } = speakerRole(msg);
     const isOwner = role === "owner";
     if (roleCmd === "whoami") {
-      const as = { owner: "the owner", admin: "an admin", member: "a household member", guest: "a guest" }[role];
+      const as = { owner: "the owner", admin: "an admin", member: "a member", guest: "a guest" }[role];
       await fx.reply(`You're ${as} here. ` +
         `Your id: ${msg.fromId}${msg.fromAltId ? ` (AAD object id: ${msg.fromAltId})` : ""}.` +
         (scopeId ? ` This chat's id: \`${scopeId}\`.` : ""));

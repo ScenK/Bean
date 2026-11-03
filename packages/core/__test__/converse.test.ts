@@ -948,7 +948,7 @@ describe("propose_routine", () => {
   it("never DMs someone outside the household, and never takes command steps", async () => {
     const stranger = { ...routine, sinks: { chatops: [{ transport: "discord", user: "999" }] } };
     expect((await conv({ latestUserText: "x", deps: call(JSON.stringify(stranger)), routineAuthoring: authoring })).proposedRoutine?.problem)
-      .toMatch(/isn't the owner or a household member/);
+      .toMatch(/isn't the owner or a member/);
     const shell = { ...routine, steps: [{ kind: "command", command: "rm -rf ~" }] };
     expect((await conv({ latestUserText: "x", deps: call(JSON.stringify(shell)), routineAuthoring: authoring })).proposedRoutine?.problem)
       .toMatch(/command steps/);

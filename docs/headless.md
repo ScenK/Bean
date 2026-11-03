@@ -1,6 +1,6 @@
-# Headless household Bean (container)
+# Headless Bean (container)
 
-Bean's Discord bot runs your household's chat, reminders and scheduled sprouts in a Linux
+Bean's Discord bot runs your group's chat, reminders and scheduled sprouts in a Linux
 container, with no desktop app. The recipe is the repo-root `Dockerfile`. This page is the owner's
 setup checklist.
 
@@ -44,7 +44,7 @@ volume before first start). Every path below is inside the container.
    only. Boot errors: `Bean config missing: /data/.bean/config.json`, or
    `openaiApiKey missing in ~/.bean/config.json`.
 
-3. **`/data/.bean/discord.json`**: bot token, owner, and household members.
+3. **`/data/.bean/discord.json`**: bot token, owner, and members.
    `{ "botToken": "...", "ownerId": "<your id>", "ownerName": "<your name>", "memberIds": ["<id>", "<id>"] }`.
    Bot setup (intents, invite scopes) is in `packages/discord/README.md`. The file is read at
    startup only: **restart the container after changing it** (`docker restart bean`). Boot error
@@ -54,9 +54,9 @@ volume before first start). Every path below is inside the container.
    that are desktop notifications on a Mac (a failing watch, `notify` sinks, sprouts missed
    while the bot was down) arrive as DMs to `ownerId`. Missed sprouts do not catch up.
 
-5. **Household delegate login.** Use a separate household subscription account, never your
+5. **Shared delegate login.** Use a separate, dedicated subscription account, never your
    personal login.
-   - Claude: on any machine, run `claude setup-token` while logged in as the household account.
+   - Claude: on any machine, run `claude setup-token` while logged in as that dedicated account.
      Pass the token as the `CLAUDE_CODE_OAUTH_TOKEN` secret (`-e` from your shell, or a
      compose/orchestrator secret). Never write it into an image or a committed file.
    - Codex: `docker exec -it bean sh -c 'mkdir -p "$CODEX_HOME" && codex login --device-auth'`. The login lands in
@@ -64,7 +64,7 @@ volume before first start). Every path below is inside the container.
    - Check: the boot line reports each CLI's auth, for example
      `@bean/discord headless routines on: TZ=America/Toronto, clis: claude, codex (auth claude=yes codex=no), 0 routine(s) (0 enabled), owner 111`.
 
-6. **Household-only MCPs.** Add only MCP servers meant for the household, in the container's
+6. **Shared-only MCPs.** Add only MCP servers meant for everyone who uses this Bean, in the container's
    CLI config (on the volume):
    - Claude: `docker exec -it bean claude mcp add --scope user <name> -- <command>` (writes
      `/data/.claude.json`).
@@ -98,7 +98,7 @@ Delegates run with permissions skipped, so a delegate can read anything on the v
 memories) and the CLI logins. Bean passes only an allowlisted environment to spawned CLIs, but
 the files are still readable. This is why members never get delegates, live sessions or
 skills. A channel admin (`add-admin`) can run delegates and skills, so on this install grant
-admin to no one: keep delegates owner-only. It is also why the delegate login is a separate household account and the container mounts
+admin to no one: keep delegates owner-only. It is also why the delegate login is a separate, dedicated account and the container mounts
 nothing personal.
 
 ## Lifecycle

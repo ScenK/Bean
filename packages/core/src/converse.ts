@@ -593,7 +593,7 @@ export interface ConverseInput {
 const SHARED_CHAT_NOTE =
   "This is a shared chat: several different people may talk to you. Each user turn starts with " +
   "the sender's display name in brackets, e.g. \"[Alex]: hi\" — address people by that name. " +
-  "Your saved memories are household facts, plus private facts about the person speaking to you " +
+  "Your saved memories are shared facts, plus private facts about the person speaking to you " +
   "in a DM, each marked with who it is about; never assume the speaker is your owner.";
 
 export async function converse(input: ConverseInput): Promise<ConverseResult> {
@@ -648,7 +648,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   // No per-chat "current project" signal exists here (LinkedNote doesn't carry one) — force-
   // include is left unused from this call site, but selectRelevantMemories still supports it.
   const relevant = selectRelevantMemories(memories, latestUserText);
-  const recall = memoriesBlock(relevant, projects, speaker !== undefined ? { subject: "the household", speaker } : {});
+  const recall = memoriesBlock(relevant, projects, speaker !== undefined ? { subject: "everyone here", speaker } : {});
   const spokenText = speaker !== undefined ? speakerLine(speaker, latestUserText) : latestUserText;
   if (roleNote) contextParts.push(roleNote);
 

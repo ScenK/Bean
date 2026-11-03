@@ -70,7 +70,7 @@ export function memoriesBlock(
   const ordered = [...memories].sort((a, b) => Number(Boolean(a.projectPath)) - Number(Boolean(b.projectPath)));
   const lines = ordered.map((m) => {
     const tag = ids ? `[${m.id}] ` : "";
-    const owner = m.subjectId ? (speaker?.replace(/[()\r\n]/g, "").trim() || "a household member") : subject;
+    const owner = m.subjectId ? (speaker?.replace(/[()\r\n]/g, "").trim() || "a member") : subject;
     const scope = m.projectPath ? `(project ${nameFor(m.projectPath)})` : `(about ${owner})`;
     return `- ${tag}${scope} ${m.text.replace(/\s*[\r\n]+\s*/g, " ")} ${savedSuffix(m.createdAt)}`;
   });

@@ -51,13 +51,13 @@ export const CAPTURE_DAILY_CALLS = 48;
 export const CAPTURE_DAILY_SAVES = 20;
 const MAX_LINES = 50;
 const MAX_LINE_CHARS = 1000;
-export const MEMORY_NOTICE = "I'll remember household facts people share here · `memory off` to stop";
+export const MEMORY_NOTICE = "I'll remember facts people share here · `memory off` to stop";
 
 const CHANNEL_INSTRUCTIONS =
   "You are reading a group chat that nobody addressed you in, deciding what — if anything — is " +
-  "worth remembering long-term for the household (everyone who uses Bean here). Call the remember " +
+  "worth remembering long-term for everyone who uses Bean here. Call the remember " +
   "tool once per fact worth keeping. Prefer a speaker's statements about themselves (stable " +
-  "preferences, routines, roles) and shared household or team facts (schedules, conventions, " +
+  "preferences, routines, roles) and shared facts (schedules, conventions, " +
   "decisions). Do NOT remember questions, hypotheticals, jokes or sarcasm, plans that may change, " +
   "one-off task details, small talk, facts about Bean, or anything already in the existing memory " +
   "list. Skip health details, credentials, account or ID numbers, and financial figures. Only lines " +

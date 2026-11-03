@@ -176,7 +176,7 @@ test("plain message: replies with converse text and records history", async () =
   ]);
 });
 
-test("shared chat: each turn names its speaker and shared memories are framed as the household's", async () => {
+test("shared chat: each turn names its speaker and shared memories are framed as everyone's", async () => {
   const seen: { role: string; content: string }[][] = [];
   const { deps } = makeDeps({
     loadMemories: async () => [{ id: "1", text: "prefers to be called Scen", createdAt: "" }],
@@ -193,7 +193,7 @@ test("shared chat: each turn names its speaker and shared memories are framed as
   // history keeps alice's turn attributed; the latest turn names bob (brackets stripped)
   expect(second.map((m) => m.content)).toContain("[alice]: hi bean");
   expect(second.at(-1)).toEqual({ role: "user", content: "[bob]: me too" });
-  expect(second.map((m) => m.content).join("\n")).toContain("(about the household) prefers to be called Scen");
+  expect(second.map((m) => m.content).join("\n")).toContain("(about everyone here) prefers to be called Scen");
 });
 
 test("onActivity brackets a converse turn with who/where, never the message text", async () => {
@@ -2103,9 +2103,9 @@ test("a member DM is admitted without allowGuestDms; a non-member DM's refusal p
   await bot.onMessage({ ...guest, direct: true }, effects);
   await bot.onMessage({ ...member, direct: true, text: "/cancel" }, effects);
   expect(effects.posted).toEqual([
-    "You're a household member here. Your id: mia.",
+    "You're a member here. Your id: mia.",
     "hello there",
-    "Hi! I only take direct messages from Scen's household. To be added, send Scen the id from `whoami`. Or mention me in a shared chat and I'll help there.",
+    "Hi! I only take direct messages from people Scen has added. To be added, send Scen the id from `whoami`. Or mention me in a shared chat and I'll help there.",
     "Sorry, I can't cancel runs for you. Sprouts and coding tasks are set up by Scen.",
   ]);
 });
@@ -2196,7 +2196,7 @@ test("whoami/admins work for guests; the DM gate answers once with no model call
   expect(effects.posted).toEqual([
     "You're a guest here. Your id: gus. This chat's id: `s1`.",
     "Owner: Scen. Admins here: Ana.",
-    "Hi! I only take direct messages from Scen's household. To be added, send Scen the id from `whoami`. Or mention me in a shared chat and I'll help there.",
+    "Hi! I only take direct messages from people Scen has added. To be added, send Scen the id from `whoami`. Or mention me in a shared chat and I'll help there.",
     "You're a guest here. Your id: gus.",
   ]);
 });
@@ -2383,8 +2383,8 @@ test("forget: a member removes only their own private facts; the owner removes a
     await bot.onCardAction({ conversationId: "c1", fromId: who, fromName: who, value: { beanAction: "forget-memory", proposalId: id } }, effects);
     return effects.posted;
   };
-  expect(await tap("max", "mias")).toContain("Only the owner can forget household facts or another member's.");
-  expect(await tap("max", "shared")).toContain("Only the owner can forget household facts or another member's.");
+  expect(await tap("max", "mias")).toContain("Only the owner can forget shared facts or another member's.");
+  expect(await tap("max", "shared")).toContain("Only the owner can forget shared facts or another member's.");
   expect((await h.loadMemories(h.file)).map((m) => m.id).sort()).toEqual(["mias", "shared"]);
   await tap("mia", "mias");
   await tap("u1", "shared");
@@ -2415,7 +2415,7 @@ test("share: the author's tap makes a private fact household-shared and dated in
   }
   // A forged payload text is ignored: the reply quotes the stored row.
   expect(await tap("mia", { text: "forged" })).toEqual([
-    "Shared with the household (by mia): wifi is now bean2. Only the owner can forget it now.",
+    "Shared with everyone (by mia): wifi is now bean2. Only the owner can forget it now.",
   ]);
   expect(await inChannel()).toBe(true);
   expect(await h.loadMemories(h.file, null)).toMatchObject([{ id: "mias", createdAt: "2026-02-01T09:30:00.000Z" }]);

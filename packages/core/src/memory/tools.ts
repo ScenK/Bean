@@ -53,7 +53,7 @@ async function classifyIntent(llm: ConverseDeps, text: string): Promise<MemoryIn
 }
 
 const PRIVATE_SCOPE = /\b(?:just|only)\s+(?:for|between)\s+(?:me|us)\b|\bkeep\s+(?:it|this|that)\s+private\b|\bprivately\b/i;
-const SHARED_SCOPE = /\bfor\s+(?:everyone|everybody|all\s+of\s+us|the\s+(?:whole\s+)?(?:household|family|house))\b/i;
+const SHARED_SCOPE = /\bfor\s+(?:everyone|everybody|all\s+of\s+us|the\s+(?:whole\s+)?(?:household|family|house|team))\b/i;
 
 // A negation within a few words of the sharing phrase ("not for everyone", "isn't for the family",
 // "don't share it for everyone") voids the override, so a doubtful DM stays private. The gap can't
@@ -115,7 +115,7 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
       texts.add(c.text.toLowerCase());
       remembered.push(m);
       return deps.subjectId
-        ? `Remembered: ${m.text}. Saved privately. If this updates a household fact shown in what you remember, say so and mention the Share with everyone button on the receipt.`
+        ? `Remembered: ${m.text}. Saved privately. If this updates a shared fact shown in what you remember, say so and mention the Share with everyone button on the receipt.`
         : `Remembered: ${m.text}`;
     },
   };
@@ -142,9 +142,9 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
       forgotten.push(...gone);
       const names = gone.map((m) => `"${m.text}"`).join("; ");
       // The surface's forget may refuse rows the speaker doesn't own (household or another member's).
-      if (gone.length === 0) return "Nothing was removed: already gone, or not yours to forget (only the owner removes household facts or another member's).";
+      if (gone.length === 0) return "Nothing was removed: already gone, or not yours to forget (only the owner removes shared facts or another member's).";
       return gone.length < ids.length
-        ? `Forgot: ${names}. The other ${ids.length - gone.length} weren't removed: already gone, or not yours to forget (only the owner removes household facts or another member's).`
+        ? `Forgot: ${names}. The other ${ids.length - gone.length} weren't removed: already gone, or not yours to forget (only the owner removes shared facts or another member's).`
         : `Forgot: ${names}.`;
     },
   };
