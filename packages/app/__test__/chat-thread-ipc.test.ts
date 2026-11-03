@@ -7,6 +7,8 @@ import { buildChatThreadHandlers, registerIpc, type RegisterDeps } from "../src/
 import { IPC } from "../src/channels.js";
 import type { Memory } from "@bean/core";
 
+vi.mock("electron", () => ({ shell: { openExternal: vi.fn(async () => {}) } }));
+
 const ID = "0b6c4a52-1f5e-4c55-9a3e-2c6f0d9e7a10";
 const OTHER = "9f1d7c2e-3b4a-4e6f-8a1b-5c2d3e4f5a6b";
 
@@ -126,13 +128,14 @@ function ipcHarness(given: Partial<RegisterDeps> = {}) {
   const chat = { id: 1, isDestroyed: () => false, send: vi.fn() }, other = { id: 2, isDestroyed: () => false, send: vi.fn() };
   const delegateTasks = { start: vi.fn(async () => "t1"), cancel: vi.fn(), cancelMount: vi.fn() };
   const liveTasks = { start: vi.fn(async () => ({ sessionId: "s1", handedOver: 0 })), send: vi.fn(), stop: vi.fn(), resume: vi.fn(), stopMount: vi.fn() };
-  const all: Partial<RegisterDeps> = { isChatSender: (s) => s === (chat as never), chatThreadHandlers: handlers, delegateTasks, liveTasks, ...given };
+  const terminalTasks = { start: vi.fn(async () => ({ cwd: "/scratch" })), write: vi.fn(), resize: vi.fn(), ack: vi.fn(), stop: vi.fn(async () => {}) };
+  const all: Partial<RegisterDeps> = { isChatSender: (s) => s === (chat as never), chatThreadHandlers: handlers, delegateTasks, liveTasks, terminalTasks, ...given };
   // Every other dep is a no-op: registration only stores handlers.
   const deps = new Proxy(all, { get: (t, k) => (k in t ? t[k as keyof typeof t] : vi.fn()) }) as RegisterDeps;
   const { releaseChatSender } = registerIpc(ipcMain as never, deps);
   const invoke = (ch: string, sender: unknown, ...args: unknown[]): unknown => handles.get(ch)!({ sender }, ...args);
   const emit = (ch: string, sender: unknown, ...args: unknown[]): unknown => ons.get(ch)!({ sender }, ...args);
-  return { handlers, row, chat, other, delegateTasks, liveTasks, releaseChatSender, invoke, emit };
+  return { handlers, row, chat, other, delegateTasks, liveTasks, terminalTasks, releaseChatSender, invoke, emit };
 }
 
 describe("chat thread IPC", () => {
@@ -159,6 +162,36 @@ describe("chat thread IPC", () => {
     emit(IPC.chatIncognito, chat, true, A);
     expect(row()).toBeUndefined();
     expect(invoke(IPC.chatThreadSave, chat, save(), A)).toBeUndefined();
+  });
+
+  it("terminal calls need the chat window and an attached mount; release and window close stop it", async () => {
+    const { chat, other, invoke, emit, terminalTasks, releaseChatSender } = ipcHarness();
+    const openExternal = vi.mocked((await import("electron")).shell.openExternal);
+    emit(IPC.chatAttach, chat, A);
+    emit(IPC.chatAttach, chat, B);
+    expect(await invoke(IPC.terminalStart, other, "", 80, 24, A)).toEqual({ error: expect.stringMatching(/chat window/) });
+    expect(await invoke(IPC.terminalStart, chat, "", 80, 24, "c0000000-0000-4000-8000-000000000003")).toEqual({ error: expect.stringMatching(/chat window/) });
+    emit(IPC.terminalWrite, other, "rm -rf ~\r", A);
+    emit(IPC.terminalResize, other, 100, 30, A);
+    emit(IPC.terminalAck, other, 10, A);
+    await invoke(IPC.terminalStop, other, A);
+    emit(IPC.terminalOpenLink, other, "https://example.com", A);
+    expect([terminalTasks.start, terminalTasks.write, terminalTasks.resize, terminalTasks.ack, terminalTasks.stop, openExternal]
+      .map((f) => f.mock.calls.length)).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(await invoke(IPC.terminalStart, chat, "/proj", 80, 24, A)).toEqual({ cwd: "/scratch" });
+    expect(terminalTasks.start.mock.calls).toEqual([[{ senderId: chat.id, mountId: A }, "/proj", 80, 24]]);
+    emit(IPC.terminalWrite, chat, "ls\r", A);
+    emit(IPC.terminalOpenLink, chat, "file:///etc/passwd", A);
+    emit(IPC.terminalOpenLink, chat, "https://example.com", A);
+    expect(terminalTasks.write.mock.calls).toEqual([[A, "ls\r"]]);
+    expect(openExternal.mock.calls).toEqual([["https://example.com/"]]);
+    // A released mount is stale: its terminal stops and later calls are refused.
+    emit(IPC.chatRelease, chat, A);
+    expect(terminalTasks.stop.mock.calls).toEqual([[A]]);
+    emit(IPC.terminalWrite, chat, "ls\r", A);
+    expect(terminalTasks.write.mock.calls).toHaveLength(1);
+    releaseChatSender(chat.id);
+    expect(terminalTasks.stop.mock.calls).toEqual([[A], [B]]);
   });
 
   it("two mounts in one window: separate threads, per-mount incognito, delete refuses both, release frees them", async () => {

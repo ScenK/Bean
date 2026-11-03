@@ -36,6 +36,7 @@
 - [safety-spawn-env-allowlist.md](safety-spawn-env-allowlist.md) — spawned delegates/commands get `spawnEnv()` (allowlist), never `...process.env` (a test enforces it); URL fetches steered by untrusted text use `safeFetch()` (private-address block after DNS + on each redirect, pinned lookup, time/byte caps).
 - [safety-bean-dir-private.md](safety-bean-dir-private.md) — `~/.bean` (API key, private memories) is forced to 0700 by `ensurePrivateBeanDir()` at startup in app, Discord and Teams — macOS accounts share `staff`, so a 0755 dir leaks it to other accounts. New entry points need the call; the chmod (not mkdir mode) is what fixes old installs.
 - [safety-notes-fts-dropped.md](safety-notes-fts-dropped.md) — note search is `notes_search` (CJK bigrams via `fts-text.ts`, written by note-store, no triggers); `openDb()` re-drops `notes_fts` + triggers and rebuilds on every open because an older build recreates them and breaks note UPDATEs — don't remove that, don't add `notes_search` to `SCHEMA`.
+- [safety-node-pty-terminal-host.md](safety-node-pty-terminal-host.md) — chat terminals' `node-pty` is the one native module: `spawn-helper` chmod (postinstall + afterPack), shipped not bundled (external + asarUnpack, `allowBuilds: false`), lazy-required; stop = SIGHUP to the kill-tree snapshot → SIGKILL, on release/window close/quit/update relaunch.
 
 ## convention — how we do things here
 

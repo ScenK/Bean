@@ -3,6 +3,8 @@ packages:
 allowBuilds:
   electron-winstaller: false
   esbuild: true
+  # Ships darwin prebuilds; its install script would node-gyp rebuild for the wrong ABI.
+  node-pty: false
 onlyBuiltDependencies:
   - esbuild
   - electron

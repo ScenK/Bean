@@ -4,7 +4,8 @@ import { cpSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 const watchMode = process.argv.includes("--watch");
 
 const common = { bundle: true, platform: "node", format: "esm", target: "node24",
-  external: ["electron"], sourcemap: true };
+  // node-pty is native: shipped as a real dependency (asarUnpack), never bundled.
+  external: ["electron", "node-pty"], sourcemap: true };
 
 // Main runs as ESM (Electron 28+ supports an ESM main entry).
 const mainOpts = { ...common, entryPoints: ["src/main.ts"], outfile: "dist/main.js" };

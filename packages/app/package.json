@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "postversion": "git push --follow-tags"
+    "postversion": "git push --follow-tags",
+    "postinstall": "node scripts/pty-spawn-helper.mjs"
   },
   "build": {
     "appId": "dev.scenk.bean",
@@ -59,6 +60,11 @@
         "LSUIElement": true
       }
     },
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/node-pty/**"
+    ],
+    "afterPack": "scripts/pty-spawn-helper.mjs",
     "afterSign": "scripts/after-sign.mjs"
   },
   "devDependencies": {
@@ -74,5 +80,8 @@
     "preact": "^11.1.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "node-pty": "1.1.0"
   }
 }

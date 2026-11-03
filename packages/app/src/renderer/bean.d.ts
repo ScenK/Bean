@@ -6,6 +6,7 @@ import type {
 import type { Theme, ComponentKind, DashboardTarget, ChatDrop, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
 import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
 import type { LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult } from "../live-tasks.js";
+import type { TerminalEvent, TerminalStartResult } from "../terminal-tasks.js";
 import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "../ipc.js";
@@ -28,6 +29,17 @@ declare global {
       /** Continue live from a finished delegate card: only the receipt's session id goes over. */
       liveResume(sessionId: string, mountId: string): Promise<LiveResumeResult>;
       onLiveEvent(cb: (e: LiveEvent) => void): void;
+      /** This chat's login shell: "" = Bean's scratch workspace; a project no longer configured opens there too. */
+      terminalStart(projectPath: string, cols: number, rows: number, mountId: string): Promise<TerminalStartResult>;
+      terminalWrite(data: string, mountId: string): void;
+      terminalResize(cols: number, rows: number, mountId: string): void;
+      /** Output chars the terminal has rendered — main pauses the shell past a watermark until acked. */
+      terminalAck(chars: number, mountId: string): void;
+      /** Resolves once the shell and its jobs are gone. */
+      terminalStop(mountId: string): Promise<void>;
+      /** http(s) only; anything else is ignored. */
+      terminalOpenLink(url: string, mountId: string): void;
+      onTerminalEvent(cb: (e: TerminalEvent) => void): void;
       availableClis(): Promise<CliName[]>;
       detectedClis(): Promise<CliName[]>;
       availableModels(): Promise<AvailableModel[]>;
