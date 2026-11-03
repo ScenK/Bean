@@ -193,6 +193,8 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   - The CLI is frozen from the `delegate_runs` row on a resume (`resume.cli`), re-checked at Start;
     an undetected CLI refuses ("codex isn't installed…") — another CLI never substitutes. A live
     model is kept only if that CLI's `clis.json` list offers it, else the CLI's own default.
+    One membership rule: core `cliOffersModel` (dash-led values never pass) — chatops falls back,
+    desktop `start()` (#611) refuses with `{ error }` instead (optional `model`, no spawn).
 - **Shared per-turn engine (#238)**: codex and opencode both run `core/turn-live-session.ts`
   `startTurnLiveSession(adapter, …)`; each CLI is a small `TurnAdapter` (`codexTurnAdapter`,
   `opencodeTurnAdapter`) — argv, event parse → `{sessionId, completed, failure, result, tail}`,

@@ -38,6 +38,11 @@ function harness(opts: {
   const live = createLiveTasks({
     dir,
     enabledClis: () => opts.clis ?? ["claude", "codex", "opencode"],
+    cliModels: () => [
+      { provider: "claude", models: ["opus", "--danger"] },
+      { provider: "codex", models: ["gpt-5.5"] },
+      { provider: "opencode", models: ["anthropic/claude-sonnet-4-5"] },
+    ],
     projectAllowed: opts.allowed ?? (async (p) => p === "/proj" || p === "/scratch"),
     scratchPath: "/scratch",
     ...(opts.findResumable ? { findResumable: opts.findResumable } : {}),
@@ -58,6 +63,28 @@ function harness(opts: {
 }
 
 describe("createLiveTasks", () => {
+  it("passes an allowlisted model to the engine for each CLI; none when omitted", async () => {
+    const h = harness();
+    const picks = [["claude", "opus"], ["codex", "gpt-5.5"], ["opencode", "anthropic/claude-sonnet-4-5"]] as const;
+    for (const [i, [agent, model]] of picks.entries()) {
+      expect(await h.live.start({ senderId: 1, mountId: `m${i}` }, { agent, projectPath: "/proj", ask: "go", model })).toMatchObject({ sessionId: `s${i + 1}` });
+    }
+    await h.live.start(B, { agent: "claude", projectPath: "/proj", ask: "go" });
+    expect(h.reqs.map((r) => [r.cli, r.model])).toEqual([...picks, ["claude", undefined]]);
+    expect(h.reqs.at(-1)).not.toHaveProperty("model");
+  });
+
+  it("rejects a non-string, unknown, dash-led or other-CLI model without spawning", async () => {
+    const h = harness();
+    for (const model of [42, "", "nope", "--danger", "gpt-5.5"]) {
+      const res = await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "go", model });
+      expect(res).toEqual({ error: typeof model === "string" ? `Claude Code doesn't offer the model "${model}" in clis.json.` : "Invalid live session request." });
+    }
+    expect(h.reqs).toHaveLength(0);
+    expect(h.events).toHaveLength(0);
+    expect(h.live.canStart(A)).toBe(true);
+  });
+
   it("starts, sends and stops a session, releasing its record only once the process exits", async () => {
     const h = harness();
     const res = await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "fix the bug" });

@@ -63,3 +63,9 @@ export async function loadCliModels(defaultFile: string, userFile: string): Prom
   }
   return merged;
 }
+
+/** The one membership rule for a picked model: `cli`'s clis.json list offers it verbatim. A
+ * dash-led value is never offered — it would read as a flag after `--model`. */
+export function cliOffersModel(cliModels: readonly CliModels[], cli: CliName, model: string): boolean {
+  return !model.startsWith("-") && (cliModels.find((e) => e.provider === cli)?.models ?? []).includes(model);
+}

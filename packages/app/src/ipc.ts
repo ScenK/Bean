@@ -424,13 +424,19 @@ export interface ModelMemoryHandlerDeps {
 }
 
 export function buildModelMemoryHandlers(deps: ModelMemoryHandlerDeps) {
+  // Sets queue on one chain: concurrent load-mutate-saves would otherwise drop each other's keys.
+  let writes: Promise<void> = Promise.resolve();
   return {
     get: async (skillName: string): Promise<string | undefined> =>
       (await deps.loadModelMemory(deps.modelMemoryFile))[skillName],
-    set: async (skillName: string, modelId: string): Promise<void> => {
-      const memory = await deps.loadModelMemory(deps.modelMemoryFile);
-      memory[skillName] = modelId;
-      await deps.saveModelMemory(deps.modelMemoryFile, memory);
+    set: (skillName: string, modelId: string): Promise<void> => {
+      const next = writes.then(async () => {
+        const memory = await deps.loadModelMemory(deps.modelMemoryFile);
+        memory[skillName] = modelId;
+        await deps.saveModelMemory(deps.modelMemoryFile, memory);
+      });
+      writes = next.catch(() => {}); // one failed write mustn't wedge the rest
+      return next;
     },
   };
 }

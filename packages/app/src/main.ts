@@ -645,6 +645,7 @@ app.whenReady().then(async () => {
       resolvedPath,
       dir,
       enabledClis,
+      cliModels: () => cliModels,
       scratchPath: scratchDir(dir),
       findResumable: (sessionId) => findDelegateRun(dbFile(dir), sessionId, undefined, "desktop"),
       projectAllowed,

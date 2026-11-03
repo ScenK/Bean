@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { loadCliModels } from "../src/cli-models.js";
+import { cliOffersModel, loadCliModels } from "../src/cli-models.js";
 
 async function dir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "bean-clis-"));
@@ -74,4 +74,12 @@ test("a user file can add a provider absent from defaults", async () => {
     { provider: "claude", models: ["sonnet"] },
     { provider: "opencode", models: ["github-copilot/gpt-5.5"] },
   ]);
+});
+
+test("cliOffersModel: only that CLI's listed models, never a dash-led value", () => {
+  const cm = [{ provider: "claude" as const, models: ["opus", "-x"] }, { provider: "codex" as const, models: ["gpt-5.5"] }];
+  expect(cliOffersModel(cm, "claude", "opus")).toBe(true);
+  expect(cliOffersModel(cm, "claude", "gpt-5.5")).toBe(false);
+  expect(cliOffersModel(cm, "claude", "-x")).toBe(false);
+  expect(cliOffersModel(cm, "opencode", "opus")).toBe(false);
 });
