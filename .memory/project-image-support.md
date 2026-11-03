@@ -13,8 +13,11 @@
   `sendFile`**: inline base64 exceeds Teams activity size limits, and hosting the file
   (public route + capability tokens + rate limiting — tried, then removed as overkill) isn't
   worth it; core's fallback posts the saved file's path and the user opens it locally.
-  Live-session-captured channels skip attachment downloads entirely (bridged agent takes
-  text only).
+  Live-session-captured channels (#629) download images only for a sender who may steer
+  (`canSteer` and not a member — Discord reuses `canTranscribe`, Teams mirrors it); core's
+  `steerLive` stages them under `<tmpdir>/bean-live-images/<conv hash>/` and sends
+  `[Image #N]: /abs/path` lines (N counts per session on the registry entry); history gets
+  `[image attached]`, never a path. Discord replies naming any attachment the agent didn't get.
 - **Ingest limits**: vision accepts only png/jpeg/webp (GIF excluded — animated GIFs are
   rejected by the API and detecting animation isn't worth it) — every surface filters on
   core's `SUPPORTED_IMAGE_MIMES` and caps at `MAX_IMAGES_PER_MESSAGE` (4) — the renderer
@@ -27,3 +30,12 @@
 - **Teams attachment downloads need the bot's bearer token** — inline-image `contentUrl`s sit
   on the SMBA endpoint and 401 on a plain fetch; `server.ts`'s `downloadImages()` gets the
   token via `credentialsFactory.createCredentials(...).getToken()`.
+- **Agent mode (#628): images are `[Image #N]` labels, never bytes.** The CLIs read an image from
+  an absolute path in the prompt. A Finder drop maps the label to the file's own path; a paste or
+  browser drag is written by core `stageImages()` (via `IPC.chatStageImage`, mount-checked) to a
+  private per-run `os.tmpdir()/bean-images-*` dir (0700, files 0600). The label map lives in
+  `ChatSession` (chat-scoped, never cleared, numbers never reused); only the text sent to the agent
+  (`withImagePaths`: deliver / queued / liveStart `ask`) gets the `[Image #N]: /path` lines — the
+  ChatItem, `typed` and the liveStart `label` stay label-only, so no path reaches `bean.db`. A
+  Bean-bound send holding mapped labels is refused inline; Bean-mode image turns hand over as
+  `[image attached — not handed over]`.

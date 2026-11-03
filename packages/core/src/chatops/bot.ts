@@ -1,9 +1,11 @@
-import { randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
 import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ImageAttachment, type ProposedLiveSession } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
+import { stageImages } from "../stage-images.js";
 import { makeMemoryTools, saveScope } from "../memory/tools.js";
 import { extractMemories } from "../memory/extract.js";
 import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
@@ -82,6 +84,10 @@ export interface IncomingMessage {
   /** The message this one replies to, if any. Context only: it never feeds `text`/`typedText`,
    * command parsing, remember citations, or the role check. */
   repliedTo?: RepliedMessage;
+  /** The live session (`LiveSessionRegistry.generation`) the surface saw capturing this
+   * conversation, before its downloads. If that session ended (or was replaced) meanwhile, the
+   * message is dropped — it was meant for that session, never for a Bean turn. */
+  liveRun?: string;
 }
 
 const NO_RUN_RECORD = "I have no record of that run.";
@@ -194,6 +200,9 @@ export interface TeamsBotDeps {
   webSearchEnabled?: () => boolean;
   /** Active chat-bridged agent sessions; while a channel is bound, its messages bypass converse. */
   liveSessions: LiveSessionRegistry;
+  /** Where a steer's images are staged for the agent to read by path, one subdir per
+   * conversation. Default `<os.tmpdir()>/bean-live-images`; files are left for the OS purge. */
+  liveImagesDir?: string;
   liveSessionProposals: LiveSessionProposalStore;
   /** Gates the propose_live_session tool (surface support, e.g. a live-capable CLI is present). */
   liveSessionsEnabled: () => boolean;
@@ -1183,10 +1192,28 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     return true;
   }
 
-  // Refused text (a per-turn CLI's next-turn queue is full) never reaches history.
-  function steerLive(conv: string, fromName: string, text: string): boolean {
-    if (!deps.liveSessions.send(conv, text)) return false;
-    deps.conversations.append(conv, { role: "user", content: speakerLine(fromName, text) });
+  // Refused text (a per-turn CLI's next-turn queue is full) never reaches history. Images are
+  // staged to files and the agent gets `[Image #N]: /abs/path` lines (all three CLIs read an
+  // image by path); history saves `[image attached]`, never a path.
+  // `stillSteers` re-checks the sender after the staging await.
+  async function steerLive(
+    conv: string, fromName: string, text: string, images?: ImageAttachment[], stillSteers: () => boolean = () => true,
+  ): Promise<boolean> {
+    let agentText = text;
+    if (images?.length) {
+      const run = deps.liveSessions.generation(conv);
+      const dir = join(deps.liveImagesDir ?? join(tmpdir(), "bean-live-images"), createHash("sha256").update(conv).digest("hex").slice(0, 16));
+      const paths = await stageImages(images, dir);
+      // The session ended, was replaced, or the sender lost steering while staging: nothing is
+      // steered; the files are left for the OS purge.
+      if (deps.liveSessions.generation(conv) !== run || !stillSteers()) return true;
+      const first = deps.liveSessions.takeImageNumbers(conv, paths.length);
+      if (first === undefined) return true;
+      agentText = [text, ...paths.map((p, i) => `[Image #${first + i}]: ${p}`)].filter(Boolean).join("\n");
+    }
+    if (!deps.liveSessions.send(conv, agentText)) return false;
+    const saved = images?.length ? [text, "[image attached]"].filter(Boolean).join("\n") : text;
+    deps.conversations.append(conv, { role: "user", content: speakerLine(fromName, saved) });
     return true;
   }
 
@@ -1229,7 +1256,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // Re-checked after the echo's await: a session that ended meanwhile takes a normal turn.
         if (deps.liveSessions.has(conv)) {
           deps.conversations.setAmbientCutoff(conv, Date.now());
-          return ack(steerLive(conv, fromName, text) ? { ok: true } : { refused: "queue-full" });
+          return ack(await steerLive(conv, fromName, text) ? { ok: true } : { refused: "queue-full" });
         }
         ack({ ok: true });
         const direct = row.kind === "dm";
@@ -1303,6 +1330,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     },
 
     async onMessage(msg: IncomingMessage, fx: BotEffects): Promise<void> {
+      // Captured for a session that has since ended or been replaced: not a Bean turn.
+      if (msg.liveRun !== undefined && deps.liveSessions.generation(msg.conversationId) !== msg.liveRun) return;
       // Set once the message reaches converse(); the finally reports the turn's end.
       let turnId: string | undefined;
       let turnFailed = false;
@@ -1353,7 +1382,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             return;
           }
           if (!steers(msg)) return;
-          if (!steerLive(conv, msg.fromName, msg.text)) await fx.reply(TURN_QUEUE_FULL);
+          if (!(await steerLive(conv, msg.fromName, msg.text, msg.images, () => steers(msg)))) await fx.reply(TURN_QUEUE_FULL);
           return;
         }
         // Typed `stop` with nothing live stays a model turn, as it always was.

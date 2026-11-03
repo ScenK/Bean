@@ -64,6 +64,7 @@ export const IPC = {
   setModelMemory: "bean:set-model-memory",
   chat: "bean:chat",
   chatImageProgress: "bean:chat-image-progress",
+  chatStageImage: "bean:chat-stage-image",
   listSkills: "bean:list-skills",
   listProjects: "bean:list-projects",
   saveProjects: "bean:save-projects",

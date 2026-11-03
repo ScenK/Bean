@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
-import { newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
+import { insertDroppedPath, newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
   chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent,
   LIVE_AGENTS, liveModelKey, liveProjectKey, offerLaunch, validModel, validProject, type AgentPick, type AgentPicks,
+  LABEL_LIMIT, imageLabel, nextImageNumber, withImagePaths,
 } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import { normalizeForSave, restoreItems, threadTitle } from "./chat-thread.js";
@@ -277,6 +278,15 @@ export function ChatSession({
     setPicksState(picksRef.current);
   };
   const [live, setLiveState] = useState<LiveState | undefined>(undefined);
+  // Agent-mode images (#628): `[Image #N]` → the file it stands for. Chat-scoped and never cleared on
+  // send, so a handed-back `typed` text still resolves; only the agent's text ever gets the paths.
+  const imageLabelsRef = useRef(new Map<number, { path: string; agent: LiveCli }>());
+  const labelImage = (path: string, composer: string, agent: LiveCli): string => {
+    const n = nextImageNumber(itemsRef.current, composer, imageLabelsRef.current);
+    imageLabelsRef.current.set(n, { path, agent });
+    return imageLabel(n);
+  };
+  const stageImage = (img: ImageAttachment): Promise<string> => window.bean.chatStageImage(img.data, img.mimeType, mountId);
   // Text handed back to the composer (a rejected Continue live); a fresh object per hand-back.
   const [refill, setRefill] = useState<{ text: string } | undefined>(undefined);
   const liveRef = useRef<LiveState | undefined>(undefined);
@@ -562,12 +572,15 @@ export function ChatSession({
   // `persist` = the user chose this start (chip/slash), so its picks are remembered once it starts.
   const startSession = async (agent: LiveCli, text: string, display?: string, persist = false): Promise<void> => {
     const model = validModel(runModels, agent, agentModelRef.current);
+    // The ask carries the image paths; the transcript and the run-log label stay label-only.
+    const ask = withImagePaths(text, imageLabelsRef.current);
+    const label = display ?? (ask !== text ? text.slice(0, LABEL_LIMIT) : undefined);
     const l: LiveState = { key: newId(), agent, projectPath: agentProjectRef.current, ...(model ? { model } : {}), turns: 0, busy: true, queued: [] };
     setLive(l);
     const history = handoffItems(itemsRef.current);
     const userId = newId();
     setItems((prev) => [...prev, { kind: "user", id: userId, text, ...(display ? { display } : {}), source: "live" }]);
-    const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask: text, history, ...(display ? { label: display } : {}), ...(model ? { model } : {}) }, mountId)
+    const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask, history, ...(label ? { label } : {}), ...(model ? { model } : {}) }, mountId)
       .catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
     if ("error" in res) {
       // A crash during startup already reported itself through the ended event.
@@ -602,8 +615,9 @@ export function ChatSession({
     if (!l || l.agent !== agent) { void startSession(agent, text, display, true); return; }
     setItems((prev) => [...prev, { kind: "user", id: newId(), text, ...(display ? { display } : {}), source: "live" }]);
     if (!l.receipt) l.unopened?.push(typed);
-    if (l.sessionId) void deliver(l.sessionId, agent, text);
-    else l.queued.push(text);
+    const toAgent = withImagePaths(text, imageLabelsRef.current);
+    if (l.sessionId) void deliver(l.sessionId, agent, toAgent);
+    else l.queued.push(toAgent);
   };
 
   // Commands parse here only — replies, streamed agent text, loopbacks and skill prompts never
@@ -628,8 +642,8 @@ export function ChatSession({
       const label = `▶ ${skill.name}${slash.rest ? ` — ${slash.rest}` : ""}`;
       const live = modeRef.current;
       if (isLiveAgent(live)) {
-        // Agent mode: any skill (chat or terminal target) runs in the live session — no card.
-        if (images?.length) { addStatus(`"${skill.name}" runs in ${AGENT_NAMES[live]} — it takes text only.`, "error"); return; }
+        // Agent mode: any skill (chat or terminal target) runs in the live session — no card. Its
+        // images are `[Image #N]` labels in the text (the composer stages them).
         if (skill.browser && live === "opencode") { addStatus(`"${skill.name}" needs the browser; opencode can't — switch to Claude Code or Codex.`, "error"); return; }
         sendToAgent(live, composePrompt(skill, slash.rest), label, raw);
         return;
@@ -654,12 +668,31 @@ export function ChatSession({
         return;
       }
       switchMode(agent);
+      // `/claude <ask>` with Bean image chips: stage them into labels instead of dropping them.
+      if (isLiveAgent(agent) && images?.length) { void sendWithImages(agent, slash.rest, images); return; }
       if (!slash.rest) return;
       text = slash.rest;
     }
     const agent = modeRef.current;
     if (isLiveAgent(agent)) sendToAgent(agent, text);
     else void sendMessage(text, undefined, false, images);
+  };
+
+  // Bean's pending image chips, carried into an agent: each is staged and appended as a label. No
+  // ask yet (a bare `/claude`) = the labels go back to the composer for one.
+  const sendWithImages = async (agent: LiveCli, rest: string, images: ImageAttachment[]): Promise<void> => {
+    let paths: string[];
+    try {
+      paths = await Promise.all(images.map(stageImage));
+    } catch {
+      addStatus(`Couldn't attach the image for ${AGENT_NAMES[agent]} — attach it again.`, "error");
+      if (rest) setRefill({ text: rest });
+      return;
+    }
+    let text = rest;
+    for (const path of paths) text = insertDroppedPath(text, labelImage(path, text, agent), text.length, text.length).value;
+    if (!rest) { setRefill({ text }); return; }
+    sendToAgent(agent, text.trimEnd());
   };
 
   // Start on Bean's hand-off offer: the same handoff as `/claude <ask>` (startSession), with the
@@ -1147,6 +1180,9 @@ export function ChatSession({
         delegateCli={delegateCli}
         onSlashOpen={refreshCatalogs}
         onSend={onComposerSend}
+        imageLabels={imageLabelsRef.current}
+        onImageLabel={labelImage}
+        onStageImage={stageImage}
         mode={mode}
         agentProject={agentProject}
         agentModel={isLiveAgent(mode) ? validModel(runModels, mode, agentModel) ?? "" : ""}

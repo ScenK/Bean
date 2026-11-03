@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getDesktopChat, saveDesktopChat, deleteDesktopChat, listDesktopChats, DESKTOP_CHAT_MAX_BYTES } from "@bean/core";
@@ -226,5 +226,19 @@ describe("chat thread IPC", () => {
     expect(() => invoke(IPC.chatThreadList, other)).toThrow(/chat window/);
     expect(() => invoke(IPC.chatThreadDelete, other, OTHER)).toThrow(/chat window/);
     expect(invoke(IPC.chatThreadList, chat)).toEqual([]);
+  });
+  it("chatStageImage stages to a private file and rejects a bad mime, an oversize payload and an unattached mount", async () => {
+    const { chat, other, invoke, emit } = ipcHarness();
+    emit(IPC.chatAttach, chat, A);
+    const data = Buffer.from("img").toString("base64");
+    await expect(invoke(IPC.chatStageImage, chat, data, "image/png", B)).rejects.toThrow(/unknown chat session/);
+    await expect(invoke(IPC.chatStageImage, other, data, "image/png", A)).rejects.toThrow(/chat window/);
+    await expect(invoke(IPC.chatStageImage, chat, data, "image/gif", A)).rejects.toThrow(/PNG, JPEG and WebP/);
+    await expect(invoke(IPC.chatStageImage, chat, "A".repeat(14_000_000), "image/png", A)).rejects.toThrow(/10 MB/);
+    const path = await invoke(IPC.chatStageImage, chat, data, "image/png", A) as string;
+    expect(path.startsWith(tmpdir())).toBe(true);
+    expect(path.endsWith(".png")).toBe(true);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(readFileSync(path, "utf8")).toBe("img");
   });
 });
