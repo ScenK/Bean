@@ -38,7 +38,7 @@ import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens,
   buildRoutineHandlers, buildSkillProposalHandlers, buildTodoHandlers, buildPendingUpdateStore, buildChatThreadHandlers, type ChatPromptPayload,
 } from "./ipc.js";
-import { IPC, type Theme, type ComponentKind, type DashboardTarget } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import {
   hasRequestedNotificationPermission, markNotificationPermissionRequested, notificationPermissionFile,
@@ -332,9 +332,9 @@ app.whenReady().then(async () => {
   let pendingDashboardTarget: DashboardTarget | undefined;
   // Desktop chat history: per-chat thread pins and incognito latches (ipc.ts).
   const chatThreadHandlers = buildChatThreadHandlers({ dbFile: dbFile(dir), saveDesktopChat, getDesktopChat, deleteDesktopChat, listDesktopChats });
-  const openComponent = (kind: ComponentKind, payload?: string | DashboardTarget): void => {
-    const droppedUrl = typeof payload === "string" ? payload : undefined;
-    const target = typeof payload === "object" && kind === "dashboard" ? payload : undefined;
+  const openComponent = (kind: ComponentKind, payload?: ChatDrop | DashboardTarget): void => {
+    const droppedUrl = typeof payload === "string" || Array.isArray(payload) ? payload : undefined;
+    const target = typeof payload === "object" && !Array.isArray(payload) && kind === "dashboard" ? payload : undefined;
     const existing = componentWindows.get(kind);
     if (existing && !existing.isDestroyed()) {
       if (existing.isMinimized()) existing.restore();

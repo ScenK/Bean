@@ -18,7 +18,7 @@ import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BrowserWindow, dialog, screen, shell, type IpcMain, type WebContents } from "electron";
-import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { createLiveTasks } from "./live-tasks.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
@@ -43,8 +43,8 @@ export function buildPlanStore(): { set: (run: RouteSuggestion) => void; get: ()
 // the push (IPC.componentDroppedUrl) can arrive before a fresh chat window's renderer has
 // mounted and subscribed, and gets silently dropped. The renderer pulls this on mount in
 // addition to subscribing to the push, so an already-open window still gets the live update.
-export function buildDroppedUrlStore(): { set: (url: string) => void; get: () => string | undefined } {
-  let pending: string | undefined;
+export function buildDroppedUrlStore(): { set: (drop: ChatDrop) => void; get: () => ChatDrop | undefined } {
+  let pending: ChatDrop | undefined;
   return {
     set: (url) => { pending = url; },
     get: () => { const u = pending; pending = undefined; return u; },
@@ -63,10 +63,21 @@ export function parseDashboardTarget(v: unknown): DashboardTarget | undefined {
   return iso ? { routine, startedAt } : undefined;
 }
 
-/** `openComponent`'s second argument, by kind: a dropped URL only for chat, a run target only for
- * the dashboard; anything else is dropped. */
-export function openComponentPayload(kind: ComponentKind, payload: unknown): string | DashboardTarget | undefined {
-  if (kind === "chat") return typeof payload === "string" ? payload : undefined;
+const isDroppedImage = (v: unknown): v is DroppedImage => {
+  if (typeof v !== "object" || v === null) return false;
+  const { path, mimeType, size, data } = v as Record<string, unknown>;
+  // `size` is what the chat guards on, so it must match the bytes actually carried.
+  return typeof path === "string" && typeof mimeType === "string" && typeof size === "number" && Number.isSafeInteger(size) && size >= 0
+    && (data === undefined || (typeof data === "string" && data.length === Math.ceil(size / 3) * 4));
+};
+
+/** `openComponent`'s second argument, by kind: a dropped URL or images only for chat, a run target
+ * only for the dashboard; anything else is dropped. */
+export function openComponentPayload(kind: ComponentKind, payload: unknown): ChatDrop | DashboardTarget | undefined {
+  if (kind === "chat") {
+    if (typeof payload === "string") return payload;
+    return Array.isArray(payload) && payload.length > 0 && payload.every(isDroppedImage) ? payload : undefined;
+  }
   if (kind === "dashboard") return parseDashboardTarget(payload);
   return undefined;
 }
@@ -1083,10 +1094,10 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   imageGen?: ChatHandlerDeps["imageGen"];
   sproutFacts?: ChatHandlerDeps["sproutFacts"];
   broadcast: (channel: string, payload: unknown) => void;
-  openComponent: (kind: ComponentKind, payload?: string | DashboardTarget) => void;
+  openComponent: (kind: ComponentKind, payload?: ChatDrop | DashboardTarget) => void;
   proposeRun: (suggestion: RouteSuggestion) => void;
   getPendingPlan: () => RouteSuggestion | undefined;
-  getPendingDroppedUrl: () => string | undefined;
+  getPendingDroppedUrl: () => ChatDrop | undefined;
   getPendingDashboardTarget: () => DashboardTarget | undefined;
   runInChat: (payload: ChatPromptPayload) => void;
   getPendingChatPrompt: () => ChatPromptPayload | undefined;

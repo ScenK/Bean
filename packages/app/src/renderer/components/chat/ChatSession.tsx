@@ -16,6 +16,7 @@ import { dataUrlToAttachment } from "../../shared/note-images.js";
 import type {
   AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
+import type { ChatDrop } from "../../../channels.js";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
 import type { LiveEvent, LiveReceipt, LiveStartResult } from "../../../live-tasks.js";
 import type { CloseTurn, InterruptedRunNotice } from "../../../ipc.js";
@@ -146,7 +147,7 @@ export interface ChatSessionProps {
   hidden: boolean;
   clis: CliName[];
   runModels: AvailableModel[];
-  prefillUrl?: string;
+  prefillUrl?: ChatDrop;
   setThreads: (update: (prev: DesktopChatListing[]) => DesktopChatListing[]) => void;
   onActive: (id: string | undefined) => void;
   /** Its switch-away save is in flight (the sidebar waits). */
