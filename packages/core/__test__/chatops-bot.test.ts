@@ -1527,6 +1527,76 @@ test("capturing a live-session message advances the ambient cutoff, so it isn't 
 // logic — a full adapter-level test isn't practical here since server.ts performs real config
 // loading and a live discord.js client login as top-level side effects on import, with no
 // existing harness in packages/discord/__test__/ to fake a Client/Message for it.
+// #629: a steer's images are staged for the agent by path; history never sees a path.
+function makeBotWithImageSession(steering: "open" | "restricted") {
+  const sent: string[] = [];
+  const startFn = (): LiveSessionHandle => ({ pid: 1, send: (t: string) => { sent.push(t); return true; }, stop: () => {} });
+  const imagesDir = mkdtempSync(join(tmpdir(), "bean-live-img-"));
+  const { deps } = makeDeps({
+    liveSessionsEnabled: () => true,
+    liveImagesDir: imagesDir,
+    liveSessions: new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) }),
+  });
+  const sink: LiveSessionSink = { post: async () => "m1", edit: async () => {} };
+  deps.liveSessions.start({ channelId: "c1", projectPath: "/p/bean", instruction: "go", sink, steering, starterId: "u" });
+  sent.length = 0; // drop the opening turn
+  return { bot: buildTeamsBot(deps), deps, sent, imagesDir };
+}
+const png = { data: Buffer.from("png-bytes").toString("base64"), mimeType: "image/png" };
+
+test("a steer with images sends [Image #N] path lines numbered across the session; history saves [image attached]", async () => {
+  const { bot, deps, sent, imagesDir } = makeBotWithImageSession("open");
+  const effects = fx();
+  await bot.onMessage({ conversationId: "c1", text: "what is this", images: [png, png], fromId: "u", fromName: "sam" }, effects);
+  await bot.onMessage({ conversationId: "c1", text: "", images: [png], fromId: "u", fromName: "sam" }, effects);
+  expect(effects.posted).toEqual([]);
+  const [first, second] = sent;
+  const lines = first!.split("\n");
+  expect(lines[0]).toBe("what is this");
+  expect(lines[1]).toMatch(/^\[Image #1\]: \/.+\.png$/);
+  expect(lines[2]).toMatch(/^\[Image #2\]: \/.+\.png$/);
+  expect(second).toMatch(/^\[Image #3\]: \/.+\.png$/); // image-only: just the path line
+  const path = second!.slice("[Image #3]: ".length);
+  expect(path.startsWith(imagesDir)).toBe(true);
+  expect(readFileSync(path, "utf8")).toBe("png-bytes");
+  expect(deps.conversations.history("c1").map((t) => t.content)).toEqual([
+    speakerLine("sam", "what is this\n[image attached]"),
+    speakerLine("sam", "[image attached]"),
+  ]);
+});
+
+test("images from a bystander (restricted) or a member never steer", async () => {
+  const { bot, deps, sent } = makeBotWithImageSession("restricted");
+  const effects = fx();
+  await bot.onMessage({ conversationId: "c1", text: "", images: [png], fromId: "x", fromName: "rando" }, effects);
+  deps.roles = { ...deps.roles, roleOf: () => "member" };
+  await bot.onMessage({ conversationId: "c1", text: "look", images: [png], fromId: "u", fromName: "sam" }, effects);
+  expect(sent).toEqual([]);
+  expect(deps.conversations.history("c1")).toEqual([]);
+});
+
+test("a session replaced, or a sender who lost steering, while images were staging is not steered", async () => {
+  const { bot, deps, sent } = makeBotWithImageSession("open");
+  const gen = vi.spyOn(deps.liveSessions, "generation").mockReturnValueOnce("run-1").mockReturnValueOnce("run-2");
+  await bot.onMessage({ conversationId: "c1", text: "look", images: [png], fromId: "u", fromName: "sam" }, fx());
+  gen.mockRestore();
+  vi.spyOn(deps.liveSessions, "canSteer").mockReturnValueOnce(true).mockReturnValueOnce(false);
+  await bot.onMessage({ conversationId: "c1", text: "look", images: [png], fromId: "u", fromName: "sam" }, fx());
+  expect(sent).toEqual([]);
+  expect(deps.conversations.history("c1")).toEqual([]);
+});
+
+test("a message captured for a session that has since ended or been replaced is dropped, not a Bean turn", async () => {
+  const { bot, deps, sent } = makeBotWithImageSession("open");
+  const effects = fx();
+  await bot.onMessage({ conversationId: "c1", text: "look", images: [png], fromId: "u", fromName: "sam", liveRun: "old-run" }, effects);
+  deps.liveSessions.stop("c1");
+  await bot.onMessage({ conversationId: "c1", text: "look", images: [png], fromId: "u", fromName: "sam", liveRun: "old-run" }, effects);
+  expect(sent).toEqual([]);
+  expect(effects.posted).toEqual([]);
+  expect(deps.conversations.history("c1")).toEqual([]);
+});
+
 test("onMessage captures plain, unaddressed-looking text for an active session — no @mention needed", async () => {
   const { bot, fx: effects, deps, chatCalls } = makeBotWithActiveLiveSession("c1");
   await bot.onMessage(
