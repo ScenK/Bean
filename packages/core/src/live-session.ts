@@ -3,7 +3,7 @@
 // stdout, driven remotely from a chatops channel. Permissions are deliberately bypassed (true bypass).
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { BEAN_GIT_IDENTITY, claudeTailLine, sessionIdOf } from "./delegate.js";
+import { BEAN_GIT_IDENTITY, claudeTailLine, claudeText, sessionIdOf } from "./delegate.js";
 import { withCliRules } from "./agent-rules.js";
 import { spawnEnv } from "./spawn-env.js";
 
@@ -78,6 +78,9 @@ export function claudeTurnSummary(event: unknown): TurnSummary | undefined {
 
 export interface LiveSessionCallbacks {
   onOutput: (line: string) => void;
+  /** One completed agent message's prose (trimmed, never blank, no tool lines); never while
+   * stopping. Prose-only surfaces (Discord) render this instead of onOutput. */
+  onText?: (text: string) => void;
   /** A turn began without a fresh send() (per-turn CLIs: a queued, merged turn) — relight typing. */
   onTurnStart?: () => void;
   onTurnComplete: (summary: TurnSummary) => void;
@@ -193,6 +196,8 @@ export function startLiveSession(
       resetIdle();
       return;
     }
+    const text = claudeText(event);
+    if (text && !stopping) cbs.onText?.(text);
     const tail = claudeTailLine(event);
     if (tail) {
       cbs.onOutput(tail);

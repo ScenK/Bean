@@ -53,7 +53,8 @@ test("agent chip: pick project + model, start, relaunch — the chip restores bo
     const argv = (await readFile(join(home.homeDir, "argv-claude.txt"), "utf8")).trim().split("\n");
     expect(argv[argv.indexOf("--model") + 1]).toBe("opus");
     // Saved after the start, model then project — wait for the project key before relaunching.
-    await expect.poll(async () => JSON.parse(await readFile(join(home.homeDir, ".bean", "model-memory.json"), "utf8").catch(() => "{}")) as Record<string, string>, { timeout: 15_000 })
+    // A read can land mid-write (writeFile truncates first), so a parse failure just polls again.
+    await expect.poll(async () => readFile(join(home.homeDir, ".bean", "model-memory.json"), "utf8").then((t) => JSON.parse(t) as Record<string, string>).catch(() => ({})), { timeout: 15_000 })
       .toMatchObject({ "live:model:claude": "opus", "desktop:live:project:claude": home.projectPath });
 
     await app.close();

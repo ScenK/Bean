@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   delegateCommand,
   claudeTailLine,
+  claudeText,
   claudeResult,
   NO_RESULT_NOTICE,
   codexTailLine,
@@ -195,6 +196,54 @@ describe("claudeTailLine", () => {
     expect(claudeTailLine({ type: "system", subtype: "init" })).toBeUndefined();
     expect(claudeTailLine({ type: "assistant", message: { content: [] } })).toBeUndefined();
     expect(claudeTailLine("not an object")).toBeUndefined();
+  });
+});
+
+describe("claudeText", () => {
+  it("joins one assistant event's text blocks, dropping tool blocks", () => {
+    const e = { type: "assistant", message: { content: [
+      { type: "text", text: " Let me look. " }, { type: "tool_use", name: "Bash" }, { type: "text", text: "Found it." },
+    ] } };
+    expect(claudeText(e)).toBe("Let me look.\n\nFound it.");
+    expect(claudeText({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash" }, { type: "text", text: "  " }] } })).toBeUndefined();
+    expect(claudeText({ type: "result", result: "x" })).toBeUndefined();
+  });
+});
+
+describe("runDelegate onText", () => {
+  const run = (cli: "claude" | "codex" | "opencode", lines: object[]): string[] => {
+    const child = new FakeChild();
+    const texts: string[] = [];
+    runDelegate({ cli, projectPath: "/p", prompt: "go" }, { ...collect().cbs, onText: (t) => texts.push(t) }, () => asChild(child));
+    child.stdout.emit("data", Buffer.from(lines.map((l) => JSON.stringify(l)).join("\n") + "\n"));
+    child.emit("close", 0);
+    return texts;
+  };
+
+  it("fires once per agent message with prose only, never a tool line", () => {
+    expect(run("claude", [
+      { type: "assistant", message: { content: [{ type: "text", text: "Checking." }, { type: "tool_use", name: "Bash" }] } },
+      { type: "assistant", message: { content: [{ type: "tool_use", name: "Read" }] } },
+      { type: "result", result: "done" },
+    ])).toEqual(["Checking."]);
+    expect(run("codex", [
+      { type: "item.completed", item: { type: "agent_message", text: " working " } },
+      { type: "item.completed", item: { type: "command_execution", command: "ls" } },
+      { type: "item.completed", item: { type: "agent_message", text: "  " } },
+    ])).toEqual(["working"]);
+    expect(run("opencode", [
+      { type: "tool_use", part: { tool: "bash" } },
+      { type: "text", part: { text: "all done" } },
+    ])).toEqual(["all done"]);
+  });
+
+  it("is silent after cancel", () => {
+    const child = new FakeChild();
+    const texts: string[] = [];
+    const h = runDelegate({ cli: "codex", projectPath: "/p", prompt: "go" }, { ...collect().cbs, onText: (t) => texts.push(t) }, () => asChild(child));
+    h.cancel();
+    child.stdout.emit("data", Buffer.from(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "late" } }) + "\n"));
+    expect(texts).toEqual([]);
   });
 });
 

@@ -26,7 +26,8 @@ function parseCodex(event: unknown): TurnEvent {
   if (e?.type === "turn.completed") return { completed: true };
   if (e?.type === "turn.failed") return { failure: typeof e.error?.message === "string" && e.error.message ? e.error.message : "turn failed" };
   if (e?.type === "error") return { failure: typeof e.message === "string" && e.message ? e.message : "error" };
-  return { result: codexResult(event), tail: codexLiveTail(event) };
+  const result = codexResult(event);
+  return { result, tail: codexLiveTail(event), text: result?.trim() || undefined };
 }
 
 export const codexTurnAdapter: TurnAdapter = {

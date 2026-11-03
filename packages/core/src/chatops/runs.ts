@@ -31,6 +31,9 @@ export interface RunRegistryOptions {
   botKind: "discord" | "teams";
   newId?: () => string;
   throttleMs?: number;
+  /** The running card's tail is the agent's latest prose (onText), never a `▸ tool` line. Set by
+   * Discord; Teams keeps the raw tail. */
+  proseOnly?: boolean;
   /** Run lifecycle for the desktop app's status bubbles (see activity.ts). */
   onActivity?: ChatopsActivitySink;
 }
@@ -130,7 +133,10 @@ export class RunRegistry {
     };
     run.handle = this.runDelegate(req, {
       onOutput: (line) => {
-        if (!run.released) latest = line;
+        if (!run.released && !this.opts.proseOnly) latest = line;
+      },
+      onText: (text) => {
+        if (!run.released && this.opts.proseOnly) latest = text;
       },
       onDone: (result) => {
         if (run.released) return;

@@ -144,6 +144,9 @@ export interface LiveSessionRegistryOptions {
   /** Records each fresh session's CLI id in bean.db's `delegate_runs` under this surface. Absent =
    * no rows (and no onSessionId). */
   surface?: "discord" | "teams";
+  /** Render the agent's prose (onText) instead of its tail lines (onOutput) — no `▸ tool` lines.
+   * Set by Discord; Teams and the desktop keep the tail. */
+  proseOnly?: boolean;
 }
 
 /** channelId → active live session. One session per channel; while bound, the bot routes
@@ -224,14 +227,20 @@ export class LiveSessionRegistry {
       onEnded: input.onEnded,
     };
     this.byChannel.set(input.channelId, s);
+    const append = (line: string): void => {
+      s.buf += (s.buf ? "\n" : "") + line;
+      s.dirty = true;
+    };
     // One session per channel, so the channel id doubles as the session's activity id.
     this.opts.onActivity?.({ type: "live", phase: "start", id: input.channelId, name: basename(input.projectPath) || "live session" });
     s.handle = this.startFn(
       { cli: input.cli, projectPath: input.projectPath, prompt: input.instruction, model: input.model, resume: input.resume },
       {
         onOutput: (line) => {
-          s.buf += (s.buf ? "\n" : "") + line;
-          s.dirty = true;
+          if (!this.opts.proseOnly) append(line);
+        },
+        onText: (text) => {
+          if (this.opts.proseOnly) append(text);
         },
         onTurnStart: () => this.startTyping(s),
         onSessionId: (id) => this.recordSession(input, id),

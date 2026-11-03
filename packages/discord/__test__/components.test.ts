@@ -245,7 +245,14 @@ test("running card clamps a long tail to Discord's 1024-char field limit, keepin
   }) as { embeds: { fields: { value: string }[] }[] };
   const value = card.embeds[0]!.fields[0]!.value;
   expect(value.length).toBeLessThanOrEqual(1024);
-  expect(value).toContain("END\n```");
+  expect(value.endsWith("END")).toBe(true);
+});
+
+test("running card's Progress is plain text, not a code fence", () => {
+  const card = discordCards.runningCard({
+    projectName: "bean", instruction: "search", startedBy: "scen", tail: "Checking the logs.", runId: "run-1",
+  }) as { embeds: { fields: { name: string; value: string }[] }[] };
+  expect(card.embeds[0]!.fields[0]).toEqual({ name: "Progress", value: "Checking the logs." });
 });
 
 test("delegate proposal has Edit prompt / Run / Cancel buttons, in that order", () => {

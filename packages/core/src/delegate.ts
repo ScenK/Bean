@@ -170,6 +170,9 @@ export function sessionIdOf(cli: CliName, event: unknown): string | undefined {
 
 export interface DelegateCallbacks {
   onOutput: (line: string) => void;
+  /** One completed agent message's prose (trimmed, never blank, no tool lines) — for surfaces
+   * that show the agent's words only (Discord). Fires alongside onOutput's tail lines. */
+  onText?: (text: string) => void;
   /** sessionId: the CLI's own session id when it reported one — pass it back as `resume`. */
   onDone: (result: string, sessionId?: string) => void;
   onError: (err: Error) => void;
@@ -332,7 +335,9 @@ export function runDelegate(
         result = r;
         return;
       }
-      lastText = claudeText(event) ?? lastText;
+      const text = claudeText(event);
+      if (text) callbacks.onText?.(text);
+      lastText = text ?? lastText;
       const tail = claudeTailLine(event);
       if (tail) callbacks.onOutput(tail);
       return;
@@ -341,6 +346,7 @@ export function runDelegate(
     const r = req.cli === "codex" ? codexResult(event) : opencodeResult(event);
     if (r !== undefined) {
       result = r;
+      if (r.trim()) callbacks.onText?.(r.trim());
     }
     const tail = req.cli === "codex" ? codexTailLine(event) : opencodeTailLine(event);
     if (tail) callbacks.onOutput(tail);

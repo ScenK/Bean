@@ -221,6 +221,21 @@ describe("LiveSessionRegistry", () => {
     expect(s.edits).toEqual([["msg-1", "line one\nline two"]]);
   });
 
+  it("proseOnly renders onText and drops onOutput; unset renders onOutput and drops onText", async () => {
+    for (const proseOnly of [true, false]) {
+      const f = fakeStart();
+      const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp(), ...(proseOnly ? { proseOnly } : {}) });
+      const s = fakeSink();
+      reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink: s.sink });
+      f.cbs().onOutput("Checking. · ▸ Bash");
+      f.cbs().onText?.("Checking.");
+      f.cbs().onOutput("▸ Read");
+      f.cbs().onTurnComplete({ result: "done", durationMs: 1000 });
+      await flushTicks(reg, 1001);
+      expect(s.posts).toEqual([proseOnly ? "Checking.\n— turn done (1.0s)" : "Checking. · ▸ Bash\n▸ Read\n— turn done (1.0s)"]);
+    }
+  });
+
   it("rolls over to a new message when the buffer exceeds the limit", async () => {
     const f = fakeStart();
     const reg = new LiveSessionRegistry(f.startFn as never, { throttleMs: 1000, dir: tmp() });

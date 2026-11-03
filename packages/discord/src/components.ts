@@ -99,9 +99,9 @@ const FIELD_VALUE_LIMIT = 1024;
 function clampField(text: string): string {
   return text.length <= FIELD_VALUE_LIMIT ? text : text.slice(0, FIELD_VALUE_LIMIT - 1) + "…";
 }
+// Plain text (the tail is the agent's prose, see proseOnly), so markdown renders.
 function clampTail(tail: string): string {
-  const max = FIELD_VALUE_LIMIT - "```\n\n```".length;
-  return tail.length <= max ? tail : "…" + tail.slice(-(max - 1));
+  return tail.length <= FIELD_VALUE_LIMIT ? tail : "…" + tail.slice(-(FIELD_VALUE_LIMIT - 1));
 }
 
 function runningCard(input: RunningCardInput): object {
@@ -109,7 +109,7 @@ function runningCard(input: RunningCardInput): object {
     embeds: [{
       title: `Running in ${input.projectName}… (started by ${input.startedBy})`,
       description: clampInstruction(input.instruction),
-      ...(input.tail ? { fields: [{ name: "Progress", value: `\`\`\`\n${clampTail(input.tail)}\n\`\`\`` }] } : {}),
+      ...(input.tail ? { fields: [{ name: "Progress", value: clampTail(input.tail) }] } : {}),
     }],
     // cancel-run carries the run id in the customId's id slot (self-contained, no adapter state).
     components: [row([{ type: BUTTON, style: 4, label: "Cancel run", custom_id: `bean:cancel-run:${input.runId}` }])],
