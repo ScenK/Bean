@@ -25,6 +25,8 @@ import type { CardBuilders } from "../src/chatops/cards-api.js";
 import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index.js";
 import { SkillProposalStore } from "../src/chatops/skill-proposals.js";
 import { RoutineProposalStore } from "../src/chatops/routine-proposals.js";
+import { SproutRunProposalStore } from "../src/chatops/sprout-run-proposals.js";
+import type { TriggerResult } from "../src/routine-scheduler.js";
 import type { Routine } from "../src/routine-store.js";
 import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-sessions.js";
 import { LiveSessionProposalStore } from "../src/chatops/live-session-proposals.js";
@@ -3391,5 +3393,124 @@ describe("desk turns (#528)", () => {
     bindOwner(gone);
     expect((await gone.resume("t1")).acks).toEqual([{ refused: "cli-missing" }]);
     expect(gone.reqs).toEqual([]);
+  });
+});
+
+describe("sprout runs from chat (#636)", () => {
+  const sched: Routine = { name: "pr-digest", enabled: true, cron: "0 7 * * *", steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
+  const watch: Routine = { name: "feed", enabled: false, watch: { kind: "feed", url: "https://x.test/rss" }, steps: [], sinks: {} };
+  function setup(opts: { sprouts?: boolean; seeded?: boolean } = {}) {
+    const offered: string[][] = [];
+    const triggered: unknown[][] = [];
+    const h = { target: "pr-digest", now: 0, result: { status: "started", done: new Promise(() => {}) } as TriggerResult };
+    const made = makeDeps({
+      chat: async ({ tools }) => {
+        const names = (tools ?? []).map((t) => t.name);
+        offered.push(names);
+        return names.includes("propose_sprout_run")
+          ? { content: "On it.", toolCalls: [{ name: "propose_sprout_run", args: { routine: h.target } }] }
+          : { content: "ok", toolCalls: [] };
+      },
+      cards: { ...fakeCards, sproutRunCard: (i: object) => ({ kind: "sprout-run", ...i }) } as CardBuilders,
+      routines: {
+        transport: "discord", load: async () => [sched, watch], save: async () => {}, create: async () => {},
+        notifyOwner: async () => {}, recipients: async () => [], proposals: new RoutineProposalStore(),
+        ...(opts.sprouts === false ? {} : {
+          sprouts: {
+            trigger: async (...a) => { triggered.push(a); return h.result; },
+            facts: async () => ({ pending: 0, seeded: opts.seeded ?? true }),
+            proposals: new SproutRunProposalStore(() => h.now),
+          },
+        }),
+      },
+    });
+    made.deps.roles = makeRoles({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-sr-"))), surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia"] });
+    made.deps.roles.addAdmins("s1", [{ id: "ada", name: "Ada" }]);
+    return { h, offered, triggered, bot: buildTeamsBot(made.deps) };
+  }
+  const say = (fromId = "u1", extra: object = {}) => ({ ...msg, scopeId: "s1", fromId, fromName: fromId, text: "run the pr digest", ...extra });
+  const tap = (beanAction: string, proposalId: string, fromId = "u1", conversationId = "c1") =>
+    ({ conversationId, scopeId: "s1", fromId, fromName: fromId, value: { beanAction, proposalId } });
+
+  test("owner: ask → card → tap → trigger with the channel as origin; the card updates in place; a replay is refused", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onMessage(say(), effects);
+    const card = effects.cards[0] as { kind: string; proposalId: string; plan: { action: string; routine: string } };
+    expect(card).toMatchObject({ kind: "sprout-run", plan: { routine: "pr-digest", action: "run" } });
+    await t.bot.onCardAction(tap("run-sprout", card.proposalId), effects);
+    expect(t.triggered).toEqual([["pr-digest", "run", { channel: "c1" }]]);
+    expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "sprout-run", result: "Started (by u1) — I'll post here when it finishes." });
+    await t.bot.onCardAction(tap("run-sprout", card.proposalId), effects);
+    expect(effects.posted.at(-1)).toBe("That sprout card expired — ask me again.");
+    expect(t.triggered).toHaveLength(1);
+  });
+
+  test("a DM run has no channel origin (the finish reply is the owner's DM); a refusal lands on the card", async () => {
+    const t = setup();
+    t.h.result = { status: "refused", reason: "already running" };
+    const effects = fx();
+    await t.bot.onMessage(say("u1", { conversationId: "dm-1", direct: true, scopeId: undefined }), effects);
+    const id = (effects.cards[0] as { proposalId: string }).proposalId;
+    await t.bot.onCardAction(tap("run-sprout", id, "u1", "dm-1"), effects);
+    expect(t.triggered).toEqual([["pr-digest", "run", {}]]);
+    expect(effects.updates.at(-1)?.card).toMatchObject({ result: "Didn't start: already running" });
+  });
+
+  test("admin, member and guest get no tool; a forged tap is refused before the claim", async () => {
+    const t = setup();
+    for (const who of ["ada", "mia", "zed"]) await t.bot.onMessage(say(who), fx());
+    for (const names of t.offered) expect(names).not.toContain("propose_sprout_run");
+    const owner = fx();
+    await t.bot.onMessage(say(), owner);
+    const id = (owner.cards[0] as { proposalId: string }).proposalId;
+    for (const who of ["ada", "mia", "zed"]) {
+      const forged = fx();
+      await t.bot.onCardAction(tap("run-sprout", id, who), forged);
+      expect(forged.posted[0] ?? "").toMatch(/Only Scen can confirm this|set up by Scen/);
+    }
+    // Another conversation can't use it either; the owner's own tap still works.
+    await t.bot.onCardAction(tap("run-sprout", id, "u1", "c2"), fx());
+    expect(t.triggered).toEqual([]);
+    await t.bot.onCardAction(tap("run-sprout", id), owner);
+    expect(t.triggered).toHaveLength(1);
+  });
+
+  test("an expired card is refused; Cancel never triggers", async () => {
+    const t = setup();
+    const effects = fx();
+    await t.bot.onMessage(say(), effects);
+    await t.bot.onMessage(say(), effects);
+    const [a, b] = effects.cards.map((c) => (c as { proposalId: string }).proposalId);
+    await t.bot.onCardAction(tap("cancel-sprout", a!), effects);
+    expect(effects.updates.at(-1)?.card).toMatchObject({ result: "Cancelled (by u1)" });
+    t.h.now = 11 * 60_000;
+    await t.bot.onCardAction(tap("run-sprout", b!), effects);
+    expect(effects.posted.at(-1)).toBe("That sprout card expired — ask me again.");
+    expect(t.triggered).toEqual([]);
+  });
+
+  test("a paused or unreviewed watch gets a text reply, no card", async () => {
+    for (const [seeded, line] of [[true, "feed is off — say `enable feed` first."], [false, "feed needs its first review in Bean's Sprouts panel."]] as const) {
+      const t = setup({ seeded });
+      t.h.target = "feed";
+      const effects = fx();
+      await t.bot.onMessage(say(), effects);
+      expect(effects.cards).toEqual([]);
+      expect(effects.posted.at(-1)).toBe(line);
+    }
+  });
+
+  test("a bot without trigger (not headless) never offers the tool, and the list doesn't promise runs", async () => {
+    const off = setup({ sprouts: false });
+    await off.bot.onMessage(say(), fx());
+    expect(off.offered[0]).not.toContain("propose_sprout_run");
+    const list = fx();
+    await off.bot.onMessage(say("u1", { text: "sprouts" }), list);
+    expect(list.posted.at(-1)).not.toContain("Ask me to run one.");
+    const on = setup();
+    const listed = fx();
+    await on.bot.onMessage(say("u1", { text: "sprouts" }), listed);
+    expect(listed.posted.at(-1)).toMatch(/Ask me to run one\.$/);
   });
 });

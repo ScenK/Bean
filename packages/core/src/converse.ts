@@ -570,7 +570,7 @@ export interface ConverseInput {
   /** false where confirming a run couldn't execute anything (chatops — no desktop, no terminal). */
   runAvailable?: boolean;
   todoRoutines?: string[];
-  /** Offer propose_sprout_run over these sprouts (desktop). Empty/absent = not offered. */
+  /** Offer propose_sprout_run over these sprouts (desktop; headless chatops owner). Empty/absent = not offered. */
   sproutCatalog?: SproutCatalogEntry[];
   /** Offer the built-in public web search (config `webSearch`). Per chat, not per turn: it
    * changes the leading system message, which must stay byte-stable for prompt caching. */

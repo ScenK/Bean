@@ -1,7 +1,7 @@
 // packages/core/src/sprout-trigger.ts
 // Node-free (exported as `@bean/core/sprout-trigger`) so the Sprouts panel, chat cards and the
 // scheduler all pick run vs check by the same rule.
-import type { Routine } from "./routine-store.js";
+import type { Routine, RunStatus } from "./routine-store.js";
 
 /** What triggering a saved sprout means right now. A watch drains through its queue, so with
  * nothing queued (or no steps at all) the useful action is checking its source; everything
@@ -62,4 +62,10 @@ export function sproutCheckText(result: { newItems: number; error?: string }, qu
   if (result.error) return result.error;
   if (result.newItems === 0) return "nothing new";
   return `${result.newItems} new — ${queuesNew ? "queued" : "sent"}`;
+}
+
+/** The one fixed line a chat posts when a run it started ends — never step output. */
+export function sproutFinishText(name: string, status: RunStatus): string {
+  if (status === "ok") return `${name} finished ✓`;
+  return status === "needs-attention" ? `${name} needs attention ⚠` : `${name} failed ✗ · see Dashboard`;
 }

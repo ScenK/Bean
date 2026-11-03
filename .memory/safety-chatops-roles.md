@@ -49,6 +49,12 @@ per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_ad
   to the proposer (`proposedById`, checked before `claim()`); a non-owner Save forces `enabled:false`
   and uses create-only `createRoutine` (`link`, `EEXIST`) after a case-insensitive name check;
   the owner gets an outbox DM (`notifyOwner`). The admin reply never claims the owner was notified.
+- **Run a sprout from chat (#636)**: `runRoutines` (owner) offers `propose_sprout_run` only when the
+  bot has `routines.sprouts` (headless Discord, where this process owns the scheduler — a desktop-spawned
+  bot has none, so never offer it there). `run-sprout`/`cancel-sprout` map to it in `cardActionNeeds`
+  (names deliberately don't end in `-routine`, which would mean admin). The card is also bound to its
+  conversation and asker before `claim()`; the action is frozen on the card. The finish reply is one
+  fixed outbox line from the scheduler host (`withFinishReply`), never step output.
 - **Chatty setting (#444)**: `chatops/chatter.ts`, `chatops_chatty` (missing row = off), scoped like
   admins (channel, never a thread). `chatty on|off` = `NEEDS.chatty` (admin); `chatty status`,
   addressed mute (`quiet|hush|mute|be quiet|stay quiet [for] <n><unit>`, whole message only, 30 min

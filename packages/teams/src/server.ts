@@ -19,7 +19,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   finishedCard, rememberedCard, reminderCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
-  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
+  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
 import { addressedToBot } from "./addressing.js";
@@ -158,7 +158,7 @@ const bot = buildTeamsBot({
   scratchPath,
   cards: {
     proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, rememberedCard, reminderCard,
-    skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
+    skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, routineProposalCard, routineResultCard,
     liveSessionProposalCard, liveSessionResultCard,
   },
   // Fired by the desktop app's reminder loop into the outbox; the drain below delivers them.
