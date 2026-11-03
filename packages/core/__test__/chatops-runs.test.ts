@@ -74,6 +74,36 @@ test("tail lines are throttled: only the latest line flushes per interval", asyn
   expect(ev.onTail).toHaveBeenCalledTimes(1);
 });
 
+test("proseOnly: the tail is the latest prose (onText), never a ▸ tool line; silent after release", async () => {
+  const { fn, calls } = fakeRun();
+  const reg = new RunRegistry(fn, { dir: tmp(), botKind: "discord", throttleMs: 5000, proseOnly: true });
+  const ev = events();
+  await reg.start(req, ev, meta);
+  calls[0]?.cb.onText?.("Checking the logs.");
+  calls[0]?.cb.onOutput("▸ Bash");
+  vi.advanceTimersByTime(5000);
+  expect(ev.onTail).toHaveBeenCalledTimes(1);
+  expect(ev.onTail).toHaveBeenCalledWith("Checking the logs.");
+  calls[0]?.cb.onOutput("▸ Read"); // tool-only stretch → no tail edit
+  vi.advanceTimersByTime(5000);
+  expect(ev.onTail).toHaveBeenCalledTimes(1);
+  calls[0]?.cb.onDone("result");
+  calls[0]?.cb.onText?.("late");
+  vi.advanceTimersByTime(5000);
+  expect(ev.onTail).toHaveBeenCalledTimes(1);
+});
+
+test("without proseOnly the tail ignores onText (Teams unchanged)", async () => {
+  const { fn, calls } = fakeRun();
+  const reg = new RunRegistry(fn, { dir: tmp(), botKind: "teams", throttleMs: 5000 });
+  const ev = events();
+  await reg.start(req, ev, meta);
+  calls[0]?.cb.onOutput("▸ Bash");
+  calls[0]?.cb.onText?.("prose");
+  vi.advanceTimersByTime(5000);
+  expect(ev.onTail).toHaveBeenCalledWith("▸ Bash");
+});
+
 test("error releases the run's record and reports the message", async () => {
   const { fn, calls } = fakeRun();
   const dir = tmp();

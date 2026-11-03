@@ -41,7 +41,7 @@ let stopRoutines: (() => Promise<void>) | undefined;
 // Re-scanned per call so a CLI installed after the bot started is picked up.
 const clis = (): CliName[] => detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
 const cliModels = await loadCliModels(clisFile(builtinDir), clisFile(dir));
-const runs = new RunRegistry(runDelegate, { dir, botKind: "discord", onActivity: parentActivitySink });
+const runs = new RunRegistry(runDelegate, { dir, botKind: "discord", onActivity: parentActivitySink, proseOnly: true });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this channel has no idea what it's retrying.
@@ -50,7 +50,7 @@ const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reas
 // onChange tells the desktop app a history changed (a conversation id only, never text).
 const conversations = new ConversationStore(dbFile(dir), { onChange: parentSavedSink });
 const noteProposals = new NoteProposalStore();
-const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink, surface: "discord" });
+const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink, surface: "discord", proseOnly: true });
 // Hoisted (not inline in deps) so the /live-session card's project/model dropdowns and the
 // edit-prompt modal can read and mutate the pending proposal before Start claims it.
 const liveSessionProposals = new LiveSessionProposalStore();

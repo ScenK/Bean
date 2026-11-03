@@ -103,6 +103,25 @@ describe("startLiveSession", () => {
     expect(JSON.parse(lines[lines.length - 1]!).message.content[0].text).toBe("next hint");
   });
 
+  it("onText carries an assistant message's prose without tool lines, and is silent while stopping", () => {
+    const f = fakeChild();
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const outputs: string[] = [];
+    const texts: string[] = [];
+    const handle = startLiveSession({ projectPath: "/p", prompt: "go" }, {
+      onOutput: (l) => outputs.push(l), onText: (t) => texts.push(t), onTurnComplete: () => {}, onExit: () => {},
+    }, () => f.child);
+    const say = (content: object[]): void => { f.stdout.write(JSON.stringify({ type: "assistant", message: { content } }) + "\n"); };
+    say([{ type: "text", text: "Checking." }, { type: "tool_use", name: "Bash" }]);
+    say([{ type: "tool_use", name: "Read" }]);
+    expect(outputs).toEqual(["Checking. · ▸ Bash", "▸ Read"]);
+    expect(texts).toEqual(["Checking."]);
+    handle.stop();
+    say([{ type: "text", text: "late" }]);
+    expect(texts).toEqual(["Checking."]);
+    killSpy.mockRestore();
+  });
+
   it("stop() SIGTERMs the process group and close then reports a clean exit", () => {
     const f = fakeChild();
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);

@@ -28,12 +28,14 @@ function parseOpencode(event: unknown): TurnEvent {
   const e = event as { type?: unknown; sessionID?: unknown; error?: unknown; part?: { reason?: unknown } } | null;
   // An error event carries a sessionID too, but it doesn't prove the turn ran.
   if (e?.type === "error") return { failure: opencodeFailure(e.error) };
+  const result = opencodeResult(event);
   return {
     ...(typeof e?.sessionID === "string" && e.sessionID ? { sessionId: e.sessionID } : {}),
     // A step ending "tool-calls" is followed by another; "stop" ends the turn.
     ...(e?.type === "step_finish" && e.part?.reason === "stop" ? { completed: true } : {}),
-    result: opencodeResult(event),
+    result,
     tail: opencodeTailLine(event),
+    text: result?.trim() || undefined,
   };
 }
 

@@ -30,6 +30,8 @@ export interface TurnEvent {
   result?: string;
   /** One running-tail line for chat. */
   tail?: string;
+  /** One completed agent message's prose (trimmed, non-blank) — LiveSessionCallbacks.onText. */
+  text?: string;
 }
 
 export interface TurnAdapter {
@@ -147,7 +149,9 @@ export function startTurnLiveSession(
       if (e.completed) completed = true;
       if (e.failure !== undefined) failure ??= e.failure;
       if (e.result !== undefined) result = e.result;
-      if (stopping || !e.tail) return;
+      if (stopping) return;
+      if (e.text) cbs.onText?.(e.text);
+      if (!e.tail) return;
       cbs.onOutput(e.tail);
       armIdle();
     };

@@ -28,6 +28,7 @@ function harness(opts: { resume?: string; idleMs?: number; prompt?: string } = {
     return child;
   };
   const outputs: string[] = [];
+  const texts: string[] = [];
   const turns: TurnSummary[] = [];
   const exits: (Error | undefined)[] = [];
   const ids: string[] = [];
@@ -36,7 +37,7 @@ function harness(opts: { resume?: string; idleMs?: number; prompt?: string } = {
   const handle = startCodexLiveSession(
     { cli: "codex", projectPath: "/p", prompt: opts.prompt ?? "go", ...(opts.resume ? { resume: opts.resume } : {}) },
     {
-      onOutput: (l) => outputs.push(l), onExit: (e) => exits.push(e), onSessionId: (id) => ids.push(id),
+      onOutput: (l) => outputs.push(l), onText: (t) => texts.push(t), onExit: (e) => exits.push(e), onSessionId: (id) => ids.push(id),
       onTurnStart: () => { hooks.turnStarts++; },
       onTurnComplete: (s) => { turns.push(s); hooks.onTurn?.(s); },
     },
@@ -56,7 +57,7 @@ function harness(opts: { resume?: string; idleMs?: number; prompt?: string } = {
     clock += 6100;
     await close(0, f);
   };
-  return { handle, spawned, last, emit, close, completeTurn, outputs, turns, exits, ids, hooks };
+  return { handle, spawned, last, emit, close, completeTurn, outputs, texts, turns, exits, ids, hooks };
 }
 
 let killSpy: ReturnType<typeof vi.spyOn>;
@@ -65,6 +66,28 @@ beforeEach(() => { killSpy = vi.spyOn(process, "kill").mockImplementation(() => 
 afterEach(() => { killPendingGroups(); killSpy.mockRestore(); vi.useRealTimers(); });
 
 describe("startCodexLiveSession", () => {
+  it("reports each agent message's prose via onText, without the ▸ shell line; silent while stopping", async () => {
+    const h = harness();
+    h.emit({ type: "thread.started", thread_id: TID });
+    h.emit({ type: "item.completed", item: { type: "agent_message", text: " Looking. " } });
+    h.emit({ type: "item.completed", item: { type: "command_execution", command: "ls" } });
+    await new Promise((r) => setImmediate(r));
+    expect(h.texts).toEqual(["Looking."]);
+    expect(h.outputs).toEqual(["Looking.", "▸ shell"]);
+    h.handle.stop();
+    h.emit({ type: "item.completed", item: { type: "agent_message", text: "late" } });
+    await new Promise((r) => setImmediate(r));
+    expect(h.texts).toEqual(["Looking."]);
+  });
+
+  it("onText is silent after a resume mismatch", async () => {
+    const h = harness({ resume: TID });
+    h.emit({ type: "thread.started", thread_id: "019a6b1e-0000-7f00-9a1b-2c3d4e5f6a7b" });
+    h.emit({ type: "item.completed", item: { type: "agent_message", text: "other session" } });
+    await new Promise((r) => setImmediate(r));
+    expect(h.texts).toEqual([]);
+  });
+
   it("runs a fresh turn, then resumes the emitted thread — `--` before the prompt, no FAILED sentinel", async () => {
     const h = harness();
     expect(h.spawned[0]!.args.slice(0, 4)).toEqual(["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"]);

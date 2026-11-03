@@ -206,7 +206,7 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   then project, awaited in order; a failed write doesn't fail the session) — not offers, not resumes.
 - **Shared per-turn engine (#238)**: codex and opencode both run `core/turn-live-session.ts`
   `startTurnLiveSession(adapter, …)`; each CLI is a small `TurnAdapter` (`codexTurnAdapter`,
-  `opencodeTurnAdapter`) — argv, event parse → `{sessionId, completed, failure, result, tail}`,
+  `opencodeTurnAdapter`) — argv, event parse → `{sessionId, completed, failure, result, tail, text}`,
   pre-spawn id check, resume-rejected stderr, mismatch notice, stop, end messages. The codex rules
   above (spawn after close, 4000-char merged queue `TURN_QUEUE_FULL`, bot-pid reservation, failed
   later turn stays bound, no fresh fallback) now hold for both. The registry dispatches by `cli`,
@@ -311,3 +311,9 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
 - Desk turns (#528) into a conversation with a running live session are plain steers (same
   `steerLive` path as typed text, starter/co-driver check against the catalog's owner id) —
   never keyword commands like `stop`/`+driver`; see project-teams-bot.md → Desk ingress.
+- **Discord is prose-only (#619)**: engines report each completed agent message's prose via
+  `onText` (claude `claudeText`, codex/opencode their result; gated like `tail`) beside the
+  `onOutput` tail. `proseOnly` on `LiveSessionRegistry`/`RunRegistry` (Discord's `server.ts` only)
+  renders `onText` instead of `onOutput`, so no `▸ tool` line reaches Discord; Teams and the
+  desktop keep the tail. Don't strip `▸` from tail strings instead — claude's tail joins prose and
+  tools in one line.

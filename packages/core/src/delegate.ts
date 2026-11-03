@@ -107,6 +107,17 @@ export function claudeTailLine(event: unknown): string | undefined {
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
+/** The prose of one claude `assistant` event: its text blocks joined, tool blocks excluded. */
+export function claudeText(event: unknown): string | undefined {
+  const e = event as { type?: unknown; message?: { content?: unknown } } | null;
+  if (e?.type !== "assistant" || !Array.isArray(e.message?.content)) return undefined;
+  const parts: string[] = [];
+  for (const block of e.message.content as { type?: unknown; text?: unknown }[]) {
+    if (block?.type === "text" && typeof block.text === "string" && block.text.trim()) parts.push(block.text.trim());
+  }
+  return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
 export function claudeResult(event: unknown): string | undefined {
   const e = event as { type?: unknown; result?: unknown } | null;
   return e?.type === "result" && typeof e.result === "string" ? e.result : undefined;
@@ -156,6 +167,9 @@ export function sessionIdOf(cli: CliName, event: unknown): string | undefined {
 
 export interface DelegateCallbacks {
   onOutput: (line: string) => void;
+  /** One completed agent message's prose (trimmed, never blank, no tool lines) — for surfaces
+   * that show the agent's words only (Discord). Fires alongside onOutput's tail lines. */
+  onText?: (text: string) => void;
   /** sessionId: the CLI's own session id when it reported one — pass it back as `resume`. */
   onDone: (result: string, sessionId?: string) => void;
   onError: (err: Error) => void;
@@ -317,6 +331,8 @@ export function runDelegate(
         result = r;
         return;
       }
+      const text = claudeText(event);
+      if (text) callbacks.onText?.(text);
       const tail = claudeTailLine(event);
       if (tail) callbacks.onOutput(tail);
       return;
@@ -325,6 +341,7 @@ export function runDelegate(
     const r = req.cli === "codex" ? codexResult(event) : opencodeResult(event);
     if (r !== undefined) {
       result = r;
+      if (r.trim()) callbacks.onText?.(r.trim());
     }
     const tail = req.cli === "codex" ? codexTailLine(event) : opencodeTailLine(event);
     if (tail) callbacks.onOutput(tail);
