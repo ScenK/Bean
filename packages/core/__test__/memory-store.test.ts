@@ -422,3 +422,25 @@ test("an existing bean.db gains the category/source columns on memories and hist
   closeDb(file);
   expect(() => openDb(file)).not.toThrow(); // a second opener finds the columns already there
 });
+
+test("the remember tool keeps the model's category only on an owner path (#648)", async () => {
+  const tool = (categorize?: boolean) => makeMemoryTools({
+    append: (a) => appendMemories(file, a), forget: async () => [], memories: [], projects: [],
+    latestUserText: "记住我喜欢喝乌龙茶", ...(categorize ? { categorize } : {}),
+    classifier: fakeClassifier().classifier,
+  });
+  const owner = tool(true);
+  await owner.tools[0]!.run({ text: "喜欢喝乌龙茶", quote: "我喜欢喝乌龙茶", category: "you" });
+  expect(owner.remembered[0]).toMatchObject({ text: "喜欢喝乌龙茶", category: "You" });
+  const member = makeMemoryTools({
+    append: (a) => appendMemories(file, a), forget: async () => [], memories: [], projects: [],
+    latestUserText: "remember that I prefer tabs", subjectId: "mia", classifier: fakeClassifier().classifier,
+  });
+  await member.tools[0]!.run({ text: "Prefers tabs", quote: "I prefer tabs", category: "You" });
+  expect(member.remembered[0]).not.toHaveProperty("category");
+  const rows = await loadMemories(file);
+  expect(rows.find((r) => r.text === "喜欢喝乌龙茶")?.category).toBe("You");
+  expect(rows.find((r) => r.text === "Prefers tabs")?.category).toBeUndefined();
+  // The spec is the same object shape either way — byte-stable for prompt caching.
+  expect(JSON.stringify(tool(true).tools.map((t) => t.spec))).toBe(JSON.stringify(tool().tools.map((t) => t.spec)));
+});

@@ -20,6 +20,8 @@ export interface Memory {
 export interface MemoryCandidate {
   text: string;
   projectPath?: string;
+  /** Sanitized English category the model picked; kept only on owner paths. */
+  category?: string;
 }
 
 export function isValidMemory(v: unknown): v is Memory {

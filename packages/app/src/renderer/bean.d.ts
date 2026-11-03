@@ -153,7 +153,7 @@ declare global {
       syncedChatResume(surface: string, conversationId: string, mountId: string): Promise<SyncedSendResult>;
       onSyncedChatEvent(cb: (e: SyncedChatEvent) => void): void;
       /** Tagged with the chat (mount) whose turn it captured. */
-      onMemoryUpdated(cb: (saved: Array<{ id: string; text: string }>, mountId: string) => void): void;
+      onMemoryUpdated(cb: (saved: Array<{ id: string; text: string; category?: string }>, mountId: string) => void): void;
       getMemoryBatch(): Promise<MemoryBatch | undefined>;
       undoMemoryBatch(): Promise<number>;
       getLastDream(): Promise<DreamDigest | undefined>;

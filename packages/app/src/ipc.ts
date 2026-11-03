@@ -1,5 +1,5 @@
 import {
-  converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, type ImageGenDeps,
+  converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
   attachNoteImages, MAX_NOTE_IMAGE_BYTES, stageImages, type ImageAttachment,
   availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine, planSproutRun, type SproutRunBlock,
   listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash,
@@ -243,6 +243,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
           append: (m) => deps.appendMemories(deps.dbFile, m),
           forget: (ids) => deps.deleteMemories(deps.dbFile, ids),
           memories, projects, latestUserText: req.message,
+          categorize: true, // the desktop is the owner's own machine (#648)
           classifier: { chat: deps.converse, model: deps.getModel() },
         })
       : undefined;
@@ -256,6 +257,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       persona,
       memories,
       ownerIds,
+      ...(memoryTools ? { memoryCategories: memoryCategories(memories) } : {}),
       deps: { chat: deps.converse, model: deps.getModel() },
       droppedUrl: req.droppedUrl,
       actions,
@@ -494,7 +496,7 @@ export interface MemoryHandlerDeps {
   updateMemory: (file: string, id: string, text: string) => Promise<void>;
   deleteMemories: (file: string, ids: string[]) => Promise<string[]>;
   extractMemories: (
-    transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps, opts?: { latestTurn?: boolean },
+    transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps, opts?: { latestTurn?: boolean; categorize?: boolean },
   ) => Promise<ExtractResult>;
   loadProjects: (file: string) => Promise<Project[]>;
   converse: ConverseDeps["chat"];
@@ -555,13 +557,15 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     ]);
     const { candidates, rejected, failed } = await deps.extractMemories(
       transcript, extra.length ? [...existing, ...extra] : existing, projects,
-      { chat: deps.converse, model: deps.getModel() }, latestTurn ? { latestTurn } : undefined,
+      { chat: deps.converse, model: deps.getModel() }, { latestTurn, categorize: true },
     );
     // Counts only — a rejected candidate's text may be exactly what validation refused to keep.
     if (rejected > 0) console.warn(`auto-remember: rejected ${rejected} candidate(s)`);
     if (failed) throw new Error("auto-remember: extraction model call failed");
     const at = new Date().toISOString();
-    return candidates.map((c) => ({ id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at }));
+    return candidates.map((c) => ({
+      id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at, ...(c.category ? { category: c.category } : {}),
+    }));
   };
   const remember = async (transcript: ChatTurn[], extra: Memory[]): Promise<Memory[]> => {
     const batch = await extract(transcript, extra, false);
@@ -1149,7 +1153,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
       const sender = e.sender;
       memoryHandlers.captureTurn(key, req, result).then((batch) => {
         if (batch.length > 0 && !sender.isDestroyed()) {
-          sender.send(IPC.memoryUpdated, batch.map(({ id, text }) => ({ id, text })), key);
+          sender.send(IPC.memoryUpdated, batch.map(({ id, text, category }) => ({ id, text, category })), key);
         }
       }).catch((err) => console.error("per-turn memory capture failed:", err));
       return result;

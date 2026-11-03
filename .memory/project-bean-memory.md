@@ -61,6 +61,13 @@ see `db.ts`'s `migrateFromFiles`.
   a plain INSERT — an id that exists again is a visible, retryable error), marks it `restored`
   only after the append lands, and drops its text from `rejectedMemoriesRef`. History keeps only
   the receipt's text (`kept`, no Undo) — never the row snapshot.
+- **Category at capture (#648):** the remember tool spec always offers an optional English
+  `category` (byte-stable); the existing category list rides as framed user-role data
+  (`categoriesBlock` — next to `existingBlock` in extraction, appended to converse's recall via
+  `memoryCategories`), never the spec or a system message. Only owner paths keep it: desktop
+  extraction + remember (`categorize: true`), owner-DM `captureDm` + remember. Member DMs,
+  channels and channel capture drop whatever the model gave. Quote validation covers `text`
+  only, so a Chinese fact with an English category passes; `sanitizeCategory` normalizes it.
 - **Recall:** `converse()` ranks via `selectRelevantMemories()` — below 20 memories inject all;
   above, an FTS5 bm25 top-12 against the latest user message.
 - **Enabled-skills filter** lives in `buildChatHandler` (app `ipc.ts`), not in `converse()`.

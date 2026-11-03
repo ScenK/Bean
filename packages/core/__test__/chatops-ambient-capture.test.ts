@@ -9,7 +9,7 @@ import type { ConverseDeps } from "../src/converse.js";
 import type { Memory } from "../src/memory/memory.js";
 
 const ROLES: Record<string, Role> = { u1: "owner", mia: "member", gus: "guest" };
-type Call = { name: string; args: { text: string; quote: string } };
+type Call = { name: string; args: { text: string; quote: string; category?: string } };
 
 function harness(calls: (prompt: string) => Call[] = () => []) {
   const chatter = makeChatter({ dbPath: join(mkdtempSync(join(tmpdir(), "bean-capture-")), "bean.db"), surface: "discord" });
@@ -51,7 +51,8 @@ function harness(calls: (prompt: string) => Call[] = () => []) {
   };
 }
 
-const deploy = (): Call[] => [{ name: "remember", args: { text: "Deploys on Tuesdays", quote: "we deploy on Tuesdays" } }];
+// The model offers a category; channel capture is never an owner path, so it's dropped (#648).
+const deploy = (): Call[] => [{ name: "remember", args: { text: "Deploys on Tuesdays", quote: "we deploy on Tuesdays", category: "You" } }];
 
 test("a member's un-addressed fact saves one shared Name:-prefixed row after the lull, with 🧠 and a one-time notice", async () => {
   const h = harness(deploy);
@@ -61,6 +62,7 @@ test("a member's un-addressed fact saves one shared Name:-prefixed row after the
   await h.advance(1_000);
   expect(h.saved).toMatchObject([{ text: "Mia: Deploys on Tuesdays" }]);
   expect(h.saved[0]!.subjectId).toBeUndefined();
+  expect(h.saved[0]!.category).toBeUndefined();
   expect(h.reacted).toEqual(["fyi we deploy on Tuesdays"]);
   expect(h.posts).toEqual([MEMORY_NOTICE]);
   // A second save in the channel: no second notice (persisted, so a new engine wouldn't either).

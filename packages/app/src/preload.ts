@@ -162,8 +162,8 @@ contextBridge.exposeInMainWorld("bean", {
     ipcRenderer.invoke(IPC.syncedChatResume, surface, conversationId, mountId),
   onSyncedChatEvent: (cb: (e: SyncedChatEvent) => void) =>
     ipcRenderer.on(IPC.syncedChatEvent, (_e, ev: SyncedChatEvent) => cb(ev)),
-  onMemoryUpdated: (cb: (saved: Array<{ id: string; text: string }>, mountId: string) => void) =>
-    ipcRenderer.on(IPC.memoryUpdated, (_e, saved: Array<{ id: string; text: string }>, mountId: string) => cb(saved, mountId)),
+  onMemoryUpdated: (cb: (saved: Array<{ id: string; text: string; category?: string }>, mountId: string) => void) =>
+    ipcRenderer.on(IPC.memoryUpdated, (_e, saved: Array<{ id: string; text: string; category?: string }>, mountId: string) => cb(saved, mountId)),
   getMemoryBatch: (): Promise<MemoryBatch | undefined> => ipcRenderer.invoke(IPC.getMemoryBatch),
   undoMemoryBatch: (): Promise<number> => ipcRenderer.invoke(IPC.undoMemoryBatch),
   getLastDream: (): Promise<DreamDigest | undefined> => ipcRenderer.invoke(IPC.getLastDream),

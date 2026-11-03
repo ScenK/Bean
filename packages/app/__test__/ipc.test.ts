@@ -791,18 +791,20 @@ const turnReq = { history: [], message: "I live in Seattle", source: "typed" as 
 const reply = { reply: "Nice!" };
 
 test("captureTurn saves only the latest typed turn, after the reply, and close catch-up skips it", async () => {
-  const calls: { transcript: ChatTurn[]; opts?: { latestTurn?: boolean } }[] = [];
+  const calls: { transcript: ChatTurn[]; opts?: { latestTurn?: boolean; categorize?: boolean } }[] = [];
   const turnBatches: string[][] = [];
   const { handlers, appended, batches } = memoryHandlersFor({
     extractMemories: async (transcript, _ex, _p, _d, opts) => {
       calls.push({ transcript, opts });
-      return { candidates: transcript.some((t) => t.source === "typed") ? [{ text: "Lives in Seattle" }] : [], rejected: 0, failed: false };
+      return { candidates: transcript.some((t) => t.source === "typed") ? [{ text: "Lives in Seattle", category: "You" }] : [], rejected: 0, failed: false };
     },
     onTurnBatch: (pendingIds) => { turnBatches.push(pendingIds()); },
   });
   const saved = await handlers.captureTurn("m7", turnReq, reply);
   expect(saved.map((m) => m.text)).toEqual(["Lives in Seattle"]);
-  expect(calls[0]).toEqual({ transcript: [{ role: "user", content: "I live in Seattle", source: "typed" }], opts: { latestTurn: true } });
+  // The desktop is an owner path (#648): extraction categorizes and the row keeps the category.
+  expect(calls[0]).toEqual({ transcript: [{ role: "user", content: "I live in Seattle", source: "typed" }], opts: { latestTurn: true, categorize: true } });
+  expect(saved[0]?.category).toBe("You");
   expect(appended).toEqual([saved]);
   // Dream sees the still-undoable per-turn ids as pending.
   expect(turnBatches).toEqual([saved.map((m) => m.id)]);
