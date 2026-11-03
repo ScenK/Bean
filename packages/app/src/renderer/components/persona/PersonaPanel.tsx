@@ -25,6 +25,7 @@ export function PersonaPanel() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [ownerIds, setOwnerIds] = useState<string[]>([]);
+  const [catDraft, setCatDraft] = useState<{ id: string; value: string } | undefined>(undefined);
   const [memError, setMemError] = useState<string | undefined>(undefined);
   const [query, setQuery] = useState("");
   const [batch, setBatch] = useState<MemoryBatch | undefined>(undefined);
@@ -105,11 +106,16 @@ export function PersonaPanel() {
     setMemories((prev) => prev.filter((m) => !ids.includes(m.id)));
     void run(() => window.bean.deleteMemories(ids));
   };
-  const editCategory = (id: string, category: string): void =>
-    setMemories((prev) => prev.map((m) => (m.id === id ? { ...m, category } : m)));
-  // Main sanitizes; refresh so the row lands under the stored (normalized) heading.
+  // Typing goes to a draft, not the row: changing the row's category regroups it, which would
+  // remount the focused input mid-word. The row moves only on commit (blur/Enter).
   const commitCategory = (m: Memory): void => {
-    void run(async () => { await window.bean.updateMemoryCategory(m.id, m.category?.trim() || null); await refresh(); });
+    if (catDraft?.id !== m.id) return;
+    const category = catDraft.value.trim();
+    setCatDraft(undefined);
+    if (category === (m.category ?? "")) return;
+    setMemories((prev) => prev.map((x) => (x.id === m.id ? { ...x, category } : x)));
+    // Main sanitizes; refresh so the row lands under the stored (normalized) heading.
+    void run(async () => { await window.bean.updateMemoryCategory(m.id, category || null); await refresh(); });
   };
   const renameCategory = (from: string, to: string): void => {
     if (to.trim() === from) return;
@@ -166,8 +172,8 @@ export function PersonaPanel() {
           list="bean-memory-categories"
           placeholder="Category"
           aria-label="Category"
-          value={m.category ?? ""}
-          onInput={(e) => editCategory(m.id, (e.target as HTMLInputElement).value)}
+          value={catDraft?.id === m.id ? catDraft.value : (m.category ?? "")}
+          onInput={(e) => setCatDraft({ id: m.id, value: (e.target as HTMLInputElement).value })}
           onBlur={() => commitCategory(m)}
           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
         />
@@ -338,7 +344,7 @@ export function PersonaPanel() {
         <details key={ch.sourceId} class="bean-memory-channel">
           <summary>{ch.title} · {ch.rows.length}</summary>
           {ch.rows.map((m) => row(m))}
-          <button type="button" class="bean-btn bean-btn--ghost" onClick={() => forget(ch.rows.map((m) => m.id))}>
+          <button type="button" class="bean-btn bean-btn--ghost" onClick={() => forget(memories.filter((m) => m.sourceId === ch.sourceId).map((m) => m.id))}>
             Forget all from here
           </button>
         </details>

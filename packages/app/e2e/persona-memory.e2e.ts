@@ -19,6 +19,7 @@ test("persona memory: categorized sections, move a row, rename a heading", async
     ...you,
     { id: "w1", text: "Uses zed at work", category: "Work", createdAt: at(20) },
     { id: "n1", text: "Likes tea", createdAt: at(21) },
+    { id: "c0", text: "Kim: deploys at noon", sourceId: "discord:42", sourceTitle: "old title", createdAt: at(19) },
     { id: "c1", text: "Sam: prefers rebase", sourceId: "discord:42", sourceTitle: "#eng", createdAt: at(22) },
     { id: "m1", text: "Alex's birthday is May 1", subjectId: "alex", createdAt: at(23) },
     { id: "l1", text: "Jo: ships on Fridays", createdAt: at(24) },
@@ -47,14 +48,16 @@ test("persona memory: categorized sections, move a row, rename a heading", async
     await expect(channel).toHaveCount(1);
     await expect(channel.locator("summary")).toContainText("#eng");
     await channel.locator("summary").click();
-    await expect(channel.locator(".bean-memory-input")).toHaveValue("Sam: prefers rebase");
+    await expect(channel.locator(".bean-memory-input")).toHaveCount(2);
     await expect(item("c1")).toHaveCount(1); // only under Channels
 
     await expect(item("m1").locator(".bean-memory-private")).toHaveText("🔒");
     await expect(item("l1").locator(".bean-memory-cat")).toHaveCount(0); // Others: no category input
 
     // Move "Likes tea" into a new category, then rename that heading.
-    await item("n1").locator(".bean-memory-cat").fill("Food");
+    // Typed key by key: each keystroke must keep focus (the row regroups only on commit).
+    await item("n1").locator(".bean-memory-cat").pressSequentially("Food");
+    await expect(item("n1").locator(".bean-memory-cat")).toBeFocused();
     await item("n1").locator(".bean-memory-cat").press("Enter");
     const foodHeading = persona.getByRole("textbox", { name: "Rename category Food" });
     await expect(foodHeading).toHaveValue("Food");
@@ -76,6 +79,10 @@ test("persona memory: categorized sections, move a row, rename a heading", async
     // Search keeps working across sections.
     await persona.getByRole("searchbox", { name: "Search memories" }).fill("rebase");
     await expect(persona.locator(".bean-memory-input")).toHaveCount(1);
+    // "Forget all from here" forgets the whole source, not just the rows the search shows.
+    await persona.locator(".bean-memory-channel summary").click(); // reopened window: the group starts collapsed
+    await persona.locator(".bean-memory-channel").getByRole("button", { name: "Forget all from here" }).click();
+    await expect.poll(async () => (await loadMemories(file)).filter((m) => m.sourceId === "discord:42").length).toBe(0);
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
