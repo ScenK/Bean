@@ -150,7 +150,10 @@ export function ChatWindow() {
     window.bean.onReviewBeforeClose(reviewBeforeClose);
     // An avatar bubble's click: show the chat that owns that task, the way a sidebar pick would.
     window.bean.onShowChatMount((mountId) => {
-      const thread = sessions.get(mountId)?.threadId();
+      // An idle owner may be evicted by now (a finished task's bubble outlives it): its thread reopens.
+      // ponytail: a mounted owner with no thread yet (a fresh runPrompt chat) can't be targeted — the
+      // switch flow keys on threads; add a mount-level switch if that case shows up in use.
+      const thread = sessions.get(mountId)?.threadId() ?? evictedRef.current.get(mountId);
       if (thread !== undefined) openThreadRef.current(thread);
       else if (mountId === shownRef.current) { setOverlayOpen(false); setSyncedShown(undefined); } // not saved yet, but on screen
     });

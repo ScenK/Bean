@@ -241,6 +241,12 @@ describe("ChatWindow switches chats in place", () => {
     await flush();
     expect(row().querySelector(".bean-chat-sidebar-spinner")).toBeNull(); // waiting for you
     expect(row().classList.contains("bean-chat-sidebar-row--live")).toBe(true);
+    // A queued follow-up's turn starts on its own: its output spins the row again.
+    await act(async () => { listeners.onLiveEvent!({ sessionId: "s1", agent: "claude", mountId: first, seq: 2, type: "output", line: "Edit y.ts" }); });
+    await flush();
+    expect(row().querySelector(".bean-chat-sidebar-spinner")).not.toBeNull();
+    await act(async () => { listeners.onLiveEvent!({ sessionId: "s1", agent: "claude", mountId: first, seq: 3, type: "turn", result: "done Y" }); });
+    await flush();
 
     await clickEl(otherRow());
     expect(shownChat().textContent).toContain("restored reply");
@@ -249,6 +255,19 @@ describe("ChatWindow switches chats in place", () => {
     await flush();
     expect(shownChat().textContent).toContain("done X");
     expect(root.querySelector(".bean-chat-sidebar-row--active")!.textContent).toContain("hello there");
+
+    // Session over, chat left (idle, so evicted): a lingering bubble still reopens its thread.
+    await act(async () => { listeners.onLiveEvent!({ sessionId: "s1", agent: "claude", mountId: first, seq: 4, type: "ended", reason: "stopped" }); });
+    await flush();
+    expect(row().classList.contains("bean-chat-sidebar-row--live")).toBe(false);
+    await clickEl(otherRow());
+    expect(bean.chatRelease).toHaveBeenCalledWith(first);
+    const thread = (bean.chatThreadSave!.mock.calls[0]![0] as { id: string }).id;
+    bean.chatThreadGet!.mockResolvedValueOnce({ id: thread, title: "hello there", items: [{ kind: "reply", id: "item-1", text: "back again" }], noteSlug: null });
+    await act(async () => { listeners.onShowChatMount!(first); });
+    await flush();
+    expect(bean.chatThreadGet).toHaveBeenLastCalledWith(thread, expect.any(String));
+    expect(shownChat().textContent).toContain("back again");
   });
 
   it("closing the window counts tasks across chats and stops them all", async () => {

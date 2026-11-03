@@ -675,6 +675,8 @@ export function ChatSession({
     const cur = liveRef.current;
     if (!cur || cur.sessionId !== e.sessionId) return;
     if (e.type === "turn") setLive({ ...cur, turns: cur.turns + 1, busy: false });
+    // Output means a turn runs — a queued follow-up starts right after the last turn's end.
+    if (e.type === "output" && !cur.busy) setLive({ ...cur, busy: true });
     if (e.type === "session") setLive({ ...cur, receipt: e.receipt });
     if (e.type !== "ended") return;
     setLive(undefined);
