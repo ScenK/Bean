@@ -13,6 +13,13 @@ preference as the owner's. The platform id gates capture (role); the name is onl
   speaker's (their DMs). Never rank first and filter after: the top-K cut would leak or starve.
   Chime-ins (`chatops/chatter.ts`) load `null` too, re-filter `subjectId` defensively, and strip
   `projectPath` — nobody addressed Bean there, so the recall is for whoever reads the channel.
+- **The owner is one subject across surfaces** (#647) — `ownerSubjectIds(dbFile, dir)` (`chatops/catalog.ts`):
+  each `discord.json`/`teams.json` `ownerId` plus the catalog `owner_id` whose `owner_alt_id` is that id
+  (Teams: AAD config vs the `29:` id rows carry). The owner's DM recalls and dedupes with
+  `loadMemories(file, [fromId, ...ownerIds])`; members keep their own id; writes still store `fromId`;
+  `shareMemory`'s author check is unchanged (reading isn't sharing). A missing config adds no id —
+  never fall back to all rows. Desktop passes the same ids as `ownerIds` so owner rows render
+  "about the user" and other private rows "a member" (chatops never passes it: there the speaker labels).
 - **Write scope** — `saveScope(typed, direct)` in `memory/tools.ts`: DM → private, channel →
   shared; "just for me" / "for everyone" override. The id is `msg.fromId` only (never a name).
 - **Delete** — `deleteMemories(file, ids, subject)`: non-owners pass their own id and the SQL

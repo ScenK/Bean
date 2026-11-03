@@ -145,9 +145,12 @@ export interface TeamsBotDeps {
   loadSkills: () => Promise<Skill[]>;
   loadProjects: () => Promise<Project[]>;
   loadPersona: () => Promise<Persona>;
-  /** Scoped like core's loadMemories: absent = all, `null` = household-shared only, an id =
-   * shared plus that speaker's private facts. */
-  loadMemories: (subject?: string | null) => Promise<Memory[]>;
+  /** Scoped like core's loadMemories: absent = all, `null` = household-shared only, an id (or
+   * list) = shared plus those speakers' private facts. */
+  loadMemories: (subject?: string | string[] | null) => Promise<Memory[]>;
+  /** Every id the owner's private facts live under, across surfaces (core `ownerSubjectIds`).
+   * The owner's DM recalls and dedupes against all of them; absent = just the speaker's id. */
+  ownerSubjectIds?: () => Promise<string[]>;
   loadModelMemory: () => Promise<Record<string, string>>;
   saveModelMemory: (m: Record<string, string>) => Promise<void>;
   detectClis: () => CliName[];
@@ -333,11 +336,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // sees what the last one saved; never rejects. ponytail: one chain for every DM; per-speaker
   // chains if capture latency ever queues up.
   let captureChain: Promise<void> = Promise.resolve();
-  function captureDm(speakerId: string, transcript: ChatTurn[], projects: Project[], fx: BotEffects): Promise<void> {
+  function captureDm(speakerId: string, recall: string | string[], transcript: ChatTurn[], projects: Project[], fx: BotEffects): Promise<void> {
     return captureChain = captureChain.then(async () => {
       if (!(await deps.autoMemoryEnabled?.())) return;
       const { candidates, rejected, failed } = await extractMemories(
-        transcript, await deps.loadMemories(speakerId), projects, { chat: deps.chat, model: deps.model }, { latestTurn: true },
+        transcript, await deps.loadMemories(recall), projects, { chat: deps.chat, model: deps.model }, { latestTurn: true },
       );
       // Counts only — a rejected candidate's text may be exactly what validation refused to keep.
       if (rejected > 0) console.warn(`[memory] DM capture rejected ${rejected} candidate(s)`);
@@ -1457,12 +1460,15 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // Members get recall, notes and todo queues (projects scope those), but no skill catalog.
         const canDelegate = can(role, "delegate");
         const canMemory = can(role, "memory");
+        // Recall is scoped before ranking: a channel sees shared facts only; a DM adds the
+        // speaker's private ones — for the owner, every id their facts live under, so Discord and
+        // Teams DMs share one owner (#647). Writes still store msg.fromId.
+        const recall = !msg.direct ? null
+          : isOwner ? [msg.fromId, ...(await deps.ownerSubjectIds?.() ?? [])] : msg.fromId;
         const [skills, projects, persona, memories, modelMemory, todoRoutines] = await Promise.all([
           canDelegate ? loadActiveSkills() : [],
           canDelegate || canMemory || can(role, "notes") ? deps.loadProjects() : [], deps.loadPersona(),
-          // Recall is scoped before ranking: a DM sees the speaker's private facts plus shared
-          // ones; a channel sees shared only.
-          canMemory ? deps.loadMemories(msg.direct ? msg.fromId : null) : [], deps.loadModelMemory(), can(role, "todos") ? deps.listTodoRoutines(!isOwner) : [],
+          canMemory ? deps.loadMemories(recall) : [], deps.loadModelMemory(), can(role, "todos") ? deps.listTodoRoutines(!isOwner) : [],
         ]);
         // Owner only: who a routine may DM, and the existing names a draft would replace. A channel
         // sink targets the channel, never the session thread (threads archive).
@@ -1607,7 +1613,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         // Only the speaker's typed words are citable (never an audio transcript); a turn that
         // already remembered or forgot something explicitly is left alone.
         if (msg.direct && canMemory && !turnFailed && typed.trim() && memoryTools.remembered.length === 0 && memoryTools.forgotten.length === 0) {
-          capture = captureDm(msg.fromId, [...history, { role: "user", content: typed, source: "typed" }], projects, fx);
+          capture = captureDm(msg.fromId, recall ?? msg.fromId, [...history, { role: "user", content: typed, source: "typed" }], projects, fx);
         }
         for (const r of reminderTools?.set ?? []) {
           if (deps.cards.reminderCard) await fx.postCard(deps.cards.reminderCard({ reminderId: r.id, text: r.text, at: r.at }));

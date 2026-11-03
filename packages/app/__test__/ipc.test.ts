@@ -214,13 +214,21 @@ test("chat handler drops disabled skills and injects recalled memories", async (
     projectsFile: "/b/projects.json",
     personaFile: "/b/persona.json",
     projectPersonaFile: "/b/project-persona.json",
-    loadMemories: async () => [{ id: "1", text: "prefers pnpm", createdAt: "2026-07-03T00:00:00.000Z" }],
+    loadMemories: async () => [
+      { id: "1", text: "prefers pnpm", createdAt: "2026-07-03T00:00:00.000Z" },
+      { id: "2", text: "drinks rooibos", createdAt: "2026-07-03T00:00:00.000Z", subjectId: "29:owner" },
+      { id: "3", text: "drinks espresso", createdAt: "2026-07-03T00:00:00.000Z", subjectId: "mia" },
+    ],
+    ownerSubjectIds: async () => ["disc-owner", "29:owner"],
     dbFile: "/b/memory.json",
   });
   await handler({ history: [], message: "hi" });
   // Recalled memories are user-role data, never system authority.
   expect(userContent).toContain("What you remember (saved preferences and facts");
   expect(userContent).toContain("prefers pnpm");
+  // Owner-DM rows read as about the user; other members' private rows as a member (#647).
+  expect(userContent).toContain("[2] (about the user) drinks rooibos");
+  expect(userContent).toContain("[3] (about a member) drinks espresso");
   expect(systemContent).not.toContain("prefers pnpm");
 });
 

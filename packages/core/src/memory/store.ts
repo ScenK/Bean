@@ -23,15 +23,18 @@ function toMemory(row: MemoryRow): Memory {
 // node:sqlite's DatabaseSync is synchronous under the hood — same convention as outbox.ts.
 /** `subject` scopes recall, filtered in SQL before any ranking: absent = every row (desktop and
  * Persona, the owner's own machine), `null` = household-shared only (channels, routines), an id =
- * shared plus that speaker's private rows (their DMs). */
-export async function loadMemories(file: string, subject?: string | null): Promise<Memory[]> {
+ * shared plus that speaker's private rows (their DMs), a list = shared plus any of those ids (the
+ * owner's DMs, via `ownerSubjectIds`; empty = shared only). */
+export async function loadMemories(file: string, subject?: string | string[] | null): Promise<Memory[]> {
   const db = openDb(file);
   const cols = "SELECT id, text, project_path, created_at, subject_id, category, source_id, source_title FROM memories";
-  const rows = (subject === undefined
+  const ids = subject === undefined ? undefined : subject === null ? [] : typeof subject === "string" ? [subject] : [...new Set(subject)];
+  const rows = (ids === undefined
     ? db.prepare(`${cols} ORDER BY created_at`).all()
-    : subject === null
+    : ids.length === 0
       ? db.prepare(`${cols} WHERE subject_id IS NULL ORDER BY created_at`).all()
-      : db.prepare(`${cols} WHERE subject_id IS NULL OR subject_id = ? ORDER BY created_at`).all(subject)) as unknown as MemoryRow[];
+      : db.prepare(`${cols} WHERE subject_id IS NULL OR subject_id IN (${ids.map(() => "?").join(", ")}) ORDER BY created_at`)
+        .all(...ids)) as unknown as MemoryRow[];
   return rows.map(toMemory);
 }
 

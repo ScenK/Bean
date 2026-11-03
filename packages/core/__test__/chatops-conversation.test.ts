@@ -206,3 +206,30 @@ test("loadChatopsOwners reads each surface's configured owner, skipping missing 
   await writeFile(join(dir, "teams.json"), "{not json");
   expect((await loadChatopsOwners(dir)).map((o) => o.surface)).toEqual(["discord"]);
 });
+
+test("ownerSubjectIds: config owners plus the catalog's id for an AAD-configured Teams owner; recall unions them", async () => {
+  const { writeFile } = await import("node:fs/promises");
+  const { ownerSubjectIds } = await import("../src/chatops/catalog.js");
+  const { appendMemories, loadMemories } = await import("../src/memory/store.js");
+  const at = "2026-07-03T00:00:00.000Z";
+  await appendMemories(file, [
+    { id: "s", text: "household wifi is bean", createdAt: at },
+    { id: "d", text: "owner said in Discord", createdAt: at, subjectId: "disc-owner" },
+    { id: "t", text: "owner said in Teams", createdAt: at, subjectId: "29:owner" },
+    { id: "m", text: "member fact", createdAt: at, subjectId: "disc-member" },
+  ]);
+  // Missing configs add nothing — never a fallback to every row.
+  expect(await ownerSubjectIds(file, dir)).toEqual([]);
+  expect((await loadMemories(file, [])).map((x) => x.id)).toEqual(["s"]);
+  new ConversationCatalog(file, "teams").upsert({ conversationId: "dm", place: { kind: "dm", title: "DM" }, ownerId: "29:owner", ownerAltId: "aad-1" });
+  // Another surface's alias never leaks across.
+  new ConversationCatalog(file, "discord").upsert({ conversationId: "x", place: { kind: "dm", title: "DM" }, ownerId: "disc-member", ownerAltId: "aad-1" });
+  await writeFile(join(dir, "discord.json"), JSON.stringify({ ownerId: "disc-owner" }));
+  await writeFile(join(dir, "teams.json"), JSON.stringify({ ownerId: "aad-1" }));
+  const ids = await ownerSubjectIds(file, dir);
+  expect(ids.sort()).toEqual(["29:owner", "aad-1", "disc-owner"]);
+  // A Discord DM (speaker id + owner ids) recalls the Teams-DM fact and vice versa; the member's row stays out.
+  expect((await loadMemories(file, ["disc-owner", ...ids])).map((x) => x.id).sort()).toEqual(["d", "s", "t"]);
+  expect((await loadMemories(file, ["29:owner", ...ids])).map((x) => x.id).sort()).toEqual(["d", "s", "t"]);
+  expect((await loadMemories(file, "disc-member")).map((x) => x.id).sort()).toEqual(["m", "s"]);
+});

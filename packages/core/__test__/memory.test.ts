@@ -42,6 +42,17 @@ test("recall lines carry the saved date, with and without ids, private and proje
   expect(memoriesBlock(mems, projects, { ids: false })).toContain("- (about the user) prefers pnpm (saved 2026-07-03 14:05 UTC)");
 });
 
+test("desktop recall: owner-id private rows are about the user, other private rows a member", () => {
+  const mems: Memory[] = [
+    { id: "o1", text: "likes tea", subjectId: "29:owner", createdAt: "2026-09-10T00:00:00Z" },
+    { id: "m1", text: "likes coffee", subjectId: "mia", createdAt: "2026-09-10T00:00:00Z" },
+  ];
+  const block = memoriesBlock(mems, [], { ownerIds: ["disc-owner", "29:owner"] });
+  expect(block).toContain("- [o1] (about the user) likes tea");
+  expect(block).toContain("- [m1] (about a member) likes coffee");
+  expect(memoriesBlock(mems, [])).toContain("- [o1] (about a member) likes tea");
+});
+
 test("a malformed createdAt renders (saved unknown) instead of throwing", () => {
   expect(memoriesBlock([{ ...good, createdAt: "not a date" }], [])).toContain("- [a1] (about the user) prefers pnpm (saved unknown)");
 });

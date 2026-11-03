@@ -578,6 +578,9 @@ export interface ConverseInput {
   /** Display name of whoever sent the latest turn — set on shared surfaces (chatops), where
    * many people talk to one Bean. Unset = the desktop chat, where the speaker is the owner. */
   speaker?: string;
+  /** Desktop only: the owner's chatops ids (`ownerSubjectIds`), so recalled owner-DM facts read
+   * as about the user rather than "a member". */
+  ownerIds?: string[];
   /** Offer propose_note / propose_skill (default true). Chatops turns them off by speaker role. */
   noteAvailable?: boolean;
   skillAuthoringAvailable?: boolean;
@@ -621,6 +624,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     sproutCatalog = [],
     webSearch = false,
     speaker,
+    ownerIds,
     noteAvailable = true,
     skillAuthoringAvailable = true,
     noteArchiveAvailable = false,
@@ -648,7 +652,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
   // No per-chat "current project" signal exists here (LinkedNote doesn't carry one) — force-
   // include is left unused from this call site, but selectRelevantMemories still supports it.
   const relevant = selectRelevantMemories(memories, latestUserText);
-  const recall = memoriesBlock(relevant, projects, speaker !== undefined ? { subject: "everyone here", speaker } : {});
+  const recall = memoriesBlock(relevant, projects, speaker !== undefined ? { subject: "everyone here", speaker } : { ownerIds });
   const spokenText = speaker !== undefined ? speakerLine(speaker, latestUserText) : latestUserText;
   if (roleNote) contextParts.push(roleNote);
 

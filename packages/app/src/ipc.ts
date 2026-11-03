@@ -183,6 +183,8 @@ export interface ChatHandlerDeps {
   loadProjects: (file: string) => Promise<Project[]>;
   loadPersona: (userFile: string, projectFile: string) => Promise<Persona>;
   loadMemories: (file: string) => Promise<Memory[]>;
+  /** The owner's chatops ids (core `ownerSubjectIds`), so recalled owner-DM facts read as about the user. */
+  ownerSubjectIds?: () => Promise<string[]>;
   appendMemories: (file: string, additions: Memory[]) => Promise<void>;
   deleteMemories: (file: string, ids: string[]) => Promise<string[]>;
   converse: ConverseDeps["chat"];
@@ -214,12 +216,13 @@ export interface ChatHandlerDeps {
 
 export function buildChatHandler(deps: ChatHandlerDeps) {
   return async (req: ChatRequest, senderId?: number, mountId?: string): Promise<ConverseResult> => {
-    const [skills, projects, persona, memories, routines] = await Promise.all([
+    const [skills, projects, persona, memories, routines, ownerIds] = await Promise.all([
       deps.loadSkills(deps.projectSkillsDir, deps.skillsDir),
       deps.loadProjects(deps.projectsFile),
       deps.loadPersona(deps.personaFile, deps.projectPersonaFile),
       deps.loadMemories(deps.dbFile),
       deps.loadRoutines?.() ?? Promise.resolve([] as Routine[]),
+      deps.ownerSubjectIds?.() ?? Promise.resolve([]),
     ]);
     const enabled = skills.filter((s) => s.enabled !== false);
     const todoRoutines = routines.filter((r) => r.todoDriven).map((r) => r.name);
@@ -252,6 +255,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       projects,
       persona,
       memories,
+      ownerIds,
       deps: { chat: deps.converse, model: deps.getModel() },
       droppedUrl: req.droppedUrl,
       actions,
@@ -1037,6 +1041,7 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   personaFile: string;
   projectPersonaFile: string;
   loadMemories: (file: string) => Promise<Memory[]>;
+  ownerSubjectIds?: ChatHandlerDeps["ownerSubjectIds"];
   appendMemories: MemoryHandlerDeps["appendMemories"];
   updateMemory: MemoryHandlerDeps["updateMemory"];
   deleteMemories: MemoryHandlerDeps["deleteMemories"];

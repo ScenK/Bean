@@ -2322,6 +2322,26 @@ test("a DM remember is private: recalled in that member's DM only, never another
   expect(await h.loadMemories(h.file, null)).toEqual([]);
 });
 
+test("the owner's DM recalls private facts under every owner id (the other surface's DM too); a member's DM and channels don't (#647)", async () => {
+  const h = await household();
+  await (await import("../src/memory/store.js")).appendMemories(h.file, [
+    { id: "t", text: "Owner said in Teams: prefers rooibos", createdAt: "2026-07-03T00:00:00.000Z", subjectId: "29:owner" },
+  ]);
+  h.deps.ownerSubjectIds = async () => ["u1", "29:owner"];
+  const bot = buildTeamsBot(h.deps);
+  const recalled = async (m: Parameters<typeof h.say>): Promise<boolean> => {
+    h.prompts.length = 0;
+    await bot.onMessage(h.say(...m), fx());
+    return h.prompts.some((p) => p.includes("prefers rooibos"));
+  };
+  expect(await recalled(["u1", true])).toBe(true);
+  expect(await recalled(["mia", true])).toBe(false);
+  expect(await recalled(["u1", false])).toBe(false);
+  // Writes still store the speaker's own id.
+  await bot.onMessage(h.say("u1", true, "remember that I prefer espresso"), fx());
+  expect((await h.loadMemories(h.file)).find((m) => m.text === "Prefers espresso")?.subjectId).toBe("u1");
+});
+
 test("DM auto-capture: a typed fact is saved private with a receipt; guests, channels, transcripts and autoMemory off save nothing", async () => {
   const h = await household();
   let auto = true;
@@ -3205,7 +3225,7 @@ describe("desk turns (#528)", () => {
       return { pid: 1, send: (t: string) => { sent.push(t); return opts.liveAccepts ?? true; }, stop: () => c.onExit(undefined) };
     };
     const liveSessions = new LiveSessionRegistry(startFn as never, { dir, surface: "discord" });
-    const subjects: (string | null | undefined)[] = [];
+    const subjects: (string | string[] | null | undefined)[] = [];
     let chats = 0;
     const conversations = new ConversationStore(file);
     const { deps } = makeDeps({
@@ -3248,7 +3268,7 @@ describe("desk turns (#528)", () => {
     const { acks, effects } = await d.run({ conversationId: "d1", text: "  hi from the desk ", fromId: "intruder" });
     expect(acks).toEqual([{ ok: true }]);
     expect(effects.posted).toEqual(["🖥 (desk): hi from the desk", "hello there"]);
-    expect(d.subjects).toEqual(["u1"]);
+    expect(d.subjects).toEqual([["u1"]]);
     expect(d.conversations.history("d1")).toEqual([
       { role: "user", content: speakerLine("Scen", "hi from the desk") },
       { role: "assistant", content: "hello there" },
