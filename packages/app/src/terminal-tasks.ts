@@ -22,7 +22,7 @@ export type PtyFactory = (file: string, args: string[], opts: PtySpawnOptions) =
 /** A main→renderer push on `bean:terminal-event`, tagged with the chat (mount) that owns it. */
 export type TerminalEvent = { mountId: string } & (
   | { type: "data"; data: string }
-  /** The shell has (or no longer has) a child process — something is running. */
+  /** Something other than the shell holds the terminal's foreground (or no longer does). */
   | { type: "busy"; busy: boolean }
   | { type: "exit"; code: number; signal?: number }
 );
@@ -48,9 +48,16 @@ export function accountShell(): string {
   }
 }
 
-/** Whether `pid` has a child process (pgrep exits 0 on a match, 1 on none). */
-export function hasChildProcess(pid: number): Promise<boolean> {
-  return new Promise((resolve) => execFile("pgrep", ["-P", String(pid)], (err) => resolve(!err)));
+/** What runs in the foreground of shell `pid`'s terminal: the command name of the tty's foreground
+ * process group when that isn't the shell's own, undefined while the shell has it (idle). A shell's
+ * background children (`cmd &`, a prompt's gitstatusd) don't count. */
+export async function foregroundCommand(pid: number): Promise<string | undefined> {
+  const ps = (args: string[]): Promise<string> =>
+    new Promise((resolve) => execFile("ps", args, (err, out) => resolve(err ? "" : String(out).trim())));
+  const tpgid = Number(await ps(["-o", "tpgid=", "-p", String(pid)]));
+  if (!Number.isInteger(tpgid) || tpgid <= 0 || tpgid === pid) return undefined;
+  const argv0 = (await ps(["-o", "command=", "-p", String(tpgid)])).split(/\s+/)[0] ?? "";
+  return argv0.split("/").pop()?.slice(0, 64) || "A command";
 }
 
 /** A link the terminal asked to open: http(s) only, normalized; anything else is refused. */
@@ -74,7 +81,8 @@ export interface TerminalTasksDeps {
   scratchPath: string;
   send: (senderId: number, event: TerminalEvent) => void;
   shell?: string;
-  hasChild?: (pid: number) => Promise<boolean>;
+  /** The shell's foreground command, undefined when idle (default: foregroundCommand). */
+  foreground?: (pid: number) => Promise<string | undefined>;
   busyPollMs?: number;
   /** SIGHUP → SIGKILL grace on stop. */
   killGraceMs?: number;
@@ -97,7 +105,7 @@ interface Terminal {
 
 export function createTerminalTasks(deps: TerminalTasksDeps) {
   const terms = new Map<string, Terminal>(); // mount id → its terminal
-  const hasChild = deps.hasChild ?? hasChildProcess;
+  const foreground = deps.foreground ?? foregroundCommand;
   let shutdown = false;
 
   const emit = (mountId: string, t: Terminal, body: TerminalEvent extends infer E ? E extends TerminalEvent ? Omit<E, "mountId"> : never : never): void => {
@@ -109,14 +117,15 @@ export function createTerminalTasks(deps: TerminalTasksDeps) {
     return t?.pty && !t.stopping ? t : undefined;
   };
 
-  const checkBusy = async (mountId: string, t: Terminal): Promise<boolean> => {
-    let busy = false;
-    try { busy = await hasChild(t.pty!.pid); } catch { /* treated as idle */ }
+  const checkBusy = async (mountId: string, t: Terminal): Promise<string | undefined> => {
+    let command: string | undefined;
+    try { command = await foreground(t.pty!.pid); } catch { /* treated as idle */ }
+    const busy = command !== undefined;
     if (terms.get(mountId) === t && busy !== t.busy) {
       t.busy = busy;
       emit(mountId, t, { type: "busy", busy });
     }
-    return busy;
+    return command;
   };
 
   const stop = (mountId: string): Promise<void> => {
@@ -219,10 +228,10 @@ export function createTerminalTasks(deps: TerminalTasksDeps) {
     /** Hang up the shell and its jobs; resolves once it's gone (the entry is held until then). */
     stop,
 
-    /** Fresh check for a close prompt: is something running in this chat's shell right now? */
-    async isBusy(mountId: string): Promise<boolean> {
+    /** Fresh check for a close prompt: the command running in this chat's shell right now, if any. */
+    async runningCommand(mountId: string): Promise<string | undefined> {
       const t = live(mountId);
-      return t ? checkBusy(mountId, t) : false;
+      return t ? checkBusy(mountId, t) : undefined;
     },
 
     /** before-quit / update relaunch: SIGKILL every tree now — stop()'s escalation would never fire

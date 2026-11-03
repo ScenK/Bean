@@ -298,6 +298,7 @@ button, input, textarea, select, a {
   animation: bean-spin 0.9s linear infinite;
 }
 .bean-chat-sidebar-dot { background: var(--bean-accent); }
+.bean-chat-sidebar-term { flex: none; font: 600 10px/1 ui-monospace, Menlo, monospace; color: var(--bean-text-dim); }
 .bean-chat-sidebar-time,
 .bean-chat-sidebar-meta {
   flex: none;
