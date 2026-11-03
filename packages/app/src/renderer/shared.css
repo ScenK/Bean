@@ -203,7 +203,15 @@ button, input, textarea, select, a {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  /* Run the list out over the sidebar's right padding and border so its 6px scrollbar's 4px pill
+     sits on the border line instead of floating a gutter inside it. The padding keeps rows where
+     they were; the stable gutter keeps them there whether or not the list overflows. */
+  margin-right: -13px;
+  padding-right: 7px;
+  scrollbar-gutter: stable;
 }
+.bean-chat-sidebar-list::-webkit-scrollbar { width: 6px; }
+.bean-chat-sidebar-list::-webkit-scrollbar-thumb { border-width: 1px; }
 .bean-chat-sidebar-group {
   display: flex;
   justify-content: space-between;

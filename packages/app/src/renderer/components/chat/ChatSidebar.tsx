@@ -11,13 +11,21 @@ export const SIDEBAR_INLINE_MIN = 640;
 /** Inline mode's remembered collapse toggle ("0" = collapsed). */
 export const SIDEBAR_OPEN_KEY = "bean.chat.sidebarOpen";
 
-/** Today (local calendar day) and Earlier, newest first as listed; empty groups dropped. */
+/** Today, then the two most recent earlier days with activity ("Nov 2", "Oct 31"), then Earlier —
+ * by local calendar day, in listed (newest-first) order; empty groups dropped. */
 export function groupThreads<T extends { updatedAt: string }>(threads: T[], now: Date): Array<{ label: string; threads: T[] }> {
-  const isToday = (iso: string): boolean => new Date(iso).toDateString() === now.toDateString();
-  return [
-    { label: "Today", threads: threads.filter((t) => isToday(t.updatedAt)) },
-    { label: "Earlier", threads: threads.filter((t) => !isToday(t.updatedAt)) },
-  ].filter((g) => g.threads.length > 0);
+  const groups: Array<{ label: string; threads: T[] }> = [];
+  const earlier: T[] = [];
+  let days = 0;
+  for (const t of threads) {
+    const d = new Date(t.updatedAt);
+    const label = d.toDateString() === now.toDateString() ? "Today" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const last = groups[groups.length - 1];
+    if (last?.label === label) last.threads.push(t);
+    else if (label === "Today" || days < 2) { groups.push({ label, threads: [t] }); if (label !== "Today") days++; }
+    else earlier.push(t);
+  }
+  return earlier.length > 0 ? [...groups, { label: "Earlier", threads: earlier }] : groups;
 }
 
 /** The list after a save ack: the active thread moves to the top with its new title, time and agents.

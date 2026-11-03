@@ -7,15 +7,25 @@ const now = new Date(2026, 9, 29, 15, 0);
 const at = (d: Date) => d.toISOString();
 const t = (id: string, updatedAt: string) => ({ id, title: id, updatedAt, agents: [] as string[] });
 
-test("groups into Today and Earlier by local day, dropping empty groups", () => {
+test("groups into Today, the two latest earlier active days, and Earlier, dropping empty groups", () => {
   const today = t("a", at(new Date(2026, 9, 29, 0, 5)));
   const yesterday = t("b", at(new Date(2026, 9, 28, 23, 55)));
   expect(groupThreads([today, yesterday], now)).toEqual([
     { label: "Today", threads: [today] },
-    { label: "Earlier", threads: [yesterday] },
+    { label: new Date(2026, 9, 28).toLocaleDateString(undefined, { month: "short", day: "numeric" }), threads: [yesterday] },
   ]);
-  expect(groupThreads([yesterday], now).map((g) => g.label)).toEqual(["Earlier"]);
   expect(groupThreads([], now)).toEqual([]);
+  const day = (d: number, h = 12) => t(`${d}-${h}`, at(new Date(2026, 9, d, h)));
+  const [y1, y2, d27, d24, d20] = [day(28, 18), day(28, 9), day(27), day(24), day(20)];
+  const label = (d: number) => new Date(2026, 9, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  expect(groupThreads([today, y1, y2, d27, d24, d20], now)).toEqual([
+    { label: "Today", threads: [today] },
+    { label: label(28), threads: [y1, y2] },
+    { label: label(27), threads: [d27] },
+    { label: "Earlier", threads: [d24, d20] },
+  ]);
+  // No chat today: still the two latest active days, then Earlier.
+  expect(groupThreads([d27, d24, d20], now).map((g) => g.label)).toEqual([label(27), label(24), "Earlier"]);
 });
 
 test("a save ack moves the active row to the top with its title, time and live agents", () => {
