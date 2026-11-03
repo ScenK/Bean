@@ -21,6 +21,22 @@ button, input, textarea, select, a {
   -webkit-app-region: no-drag;
 }
 
+/* Own the scrollbar. Unstyled, Chromium on macOS falls back to the fat legacy bar (track + 15px
+   thumb, always light — no color-scheme here) whenever a mouse is connected or "Show scroll bars"
+   is Always, and the overlay bar balloons on hover. Don't add scrollbar-width/-color anywhere:
+   since Chromium 121 either one silently disables these ::-webkit-scrollbar rules.
+   The thumb only shows while the pointer is over its scroller; the 10px gutter stays reserved
+   either way, so hovering never shifts layout. */
+::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: transparent padding-box;
+  border: 3px solid transparent; /* inset: a 4px pill inside the 10px gutter */
+  border-radius: 999px;
+}
+:hover::-webkit-scrollbar-thumb { background-color: color-mix(in oklch, var(--bean-text) 22%, transparent); }
+::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active { background-color: color-mix(in oklch, var(--bean-text) 40%, transparent); }
+
 .bean-single-column {
   flex: 1;
   overflow: auto;
