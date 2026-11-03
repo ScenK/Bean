@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { cliAuthPresent, headlessRoutinesOn, missedNotice, tzProblem, withFinishReply } from "../src/headless-routines.js";
+import { withFinishReply } from "@bean/core";
+import { cliAuthPresent, headlessRoutinesOn, missedNotice, tzProblem } from "../src/headless-routines.js";
 
 describe("headless routines boot checks", () => {
   it("is off unless BEAN_HEADLESS_ROUTINES=1", () => {

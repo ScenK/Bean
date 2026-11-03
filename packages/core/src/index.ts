@@ -45,6 +45,7 @@ export * from "./chatops/bot.js";
 export * from "./chatops/commands.js";
 export * from "./chatops/activity.js";
 export * from "./chatops/desk.js";
+export * from "./chatops/sprout-bridge.js";
 export * from "./chatops/cards-api.js";
 export * from "./chatops/conversation.js";
 export * from "./chatops/catalog.js";
