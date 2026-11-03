@@ -304,7 +304,8 @@ app.post("/api/messages", (req, res) => {
     // A live session bound to this conversation is its own authorization boundary: forward every
     // message (mention or not) so allowed drivers can steer/stop it — core's onMessage decides
     // who may. Mirrors the Discord surface's `capturing` bypass.
-    const capturing = liveSessions.has(a.conversation.id);
+    const liveRun = liveSessions.generation(a.conversation.id);
+    const capturing = liveRun !== undefined;
     if (!addressedToBot(a, `28:${teamsConfig.botAppId}`) && !capturing) {
       // Not for Bean — remember it as context for a later mention, but don't reply.
       if (!text) return;
@@ -361,7 +362,7 @@ app.post("/api/messages", (req, res) => {
         {
           // A steer sends only what was typed: an image-only one is just its path lines.
           conversationId: a.conversation.id, text: text || (capturing && images.length > 0 ? "" : "(image)"), repliedTo,
-          images: images.length > 0 ? images : undefined,
+          images: images.length > 0 ? images : undefined, liveRun,
           fromId: a.from.id, fromAltId: a.from.aadObjectId, fromName: a.from.name ?? "someone",
           scopeId: scopeOf(a), direct,
           mentions, mentionedIds: mentions.map((m) => m.id),

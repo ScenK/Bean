@@ -1575,11 +1575,25 @@ test("images from a bystander (restricted) or a member never steer", async () =>
   expect(deps.conversations.history("c1")).toEqual([]);
 });
 
-test("a session that ended while images were staging is not steered", async () => {
+test("a session replaced, or a sender who lost steering, while images were staging is not steered", async () => {
   const { bot, deps, sent } = makeBotWithImageSession("open");
-  vi.spyOn(deps.liveSessions, "takeImageNumbers").mockReturnValue(undefined);
+  const gen = vi.spyOn(deps.liveSessions, "generation").mockReturnValueOnce("run-1").mockReturnValueOnce("run-2");
+  await bot.onMessage({ conversationId: "c1", text: "look", images: [png], fromId: "u", fromName: "sam" }, fx());
+  gen.mockRestore();
+  vi.spyOn(deps.liveSessions, "canSteer").mockReturnValueOnce(true).mockReturnValueOnce(false);
   await bot.onMessage({ conversationId: "c1", text: "look", images: [png], fromId: "u", fromName: "sam" }, fx());
   expect(sent).toEqual([]);
+  expect(deps.conversations.history("c1")).toEqual([]);
+});
+
+test("a message captured for a session that has since ended or been replaced is dropped, not a Bean turn", async () => {
+  const { bot, deps, sent } = makeBotWithImageSession("open");
+  const effects = fx();
+  await bot.onMessage({ conversationId: "c1", text: "look", images: [png], fromId: "u", fromName: "sam", liveRun: "old-run" }, effects);
+  deps.liveSessions.stop("c1");
+  await bot.onMessage({ conversationId: "c1", text: "look", images: [png], fromId: "u", fromName: "sam", liveRun: "old-run" }, effects);
+  expect(sent).toEqual([]);
+  expect(effects.posted).toEqual([]);
   expect(deps.conversations.history("c1")).toEqual([]);
 });
 

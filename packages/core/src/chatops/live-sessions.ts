@@ -310,6 +310,13 @@ export class LiveSessionRegistry {
     }
   }
 
+  /** The running session's identity (its run id), or undefined when the channel has none. A
+   * caller that awaits between its checks and its send compares this to know it's still the same
+   * session — a replacement session may have a different starter and co-drivers. */
+  generation(channelId: string): string | undefined {
+    return this.byChannel.get(channelId)?.runId;
+  }
+
   /** Reserves `count` image numbers on this channel's session; returns the first (1-based), or
    * undefined when there's no session. */
   takeImageNumbers(channelId: string, count: number): number | undefined {

@@ -305,7 +305,8 @@ client.on("messageCreate", async (message) => {
     // A live session already running in this channel is itself the authorization boundary
     // for steering it (core's onMessage applies the starter/co-driver check). Outside one,
     // every addressed speaker gets a turn at their role (owner / admin / guest).
-    const capturing = liveSessions.has(message.channelId);
+    const liveRun = liveSessions.generation(message.channelId);
+    const capturing = liveRun !== undefined;
     const isDm = message.channel.type === ChannelType.DM;
     const scopeId = scopeOf(message.channel);
     // Role before any paid pre-work: a non-owner DM with guest DMs off gets core's one fixed
@@ -491,7 +492,7 @@ client.on("messageCreate", async (message) => {
     try {
       await bot.onMessage(
         {
-          conversationId: channel.id, text: turnText, typedText: heardAudio ? typed : undefined, repliedTo,
+          conversationId: channel.id, text: turnText, typedText: heardAudio ? typed : undefined, repliedTo, liveRun,
           images: images.length > 0 ? images : undefined,
           fromId: message.author.id, fromName: message.author.displayName, scopeId, direct: isDm,
           // Everyone @mentioned except Bean — feeds `+driver`/`-driver` and `add-admin`/`remove-admin`.
