@@ -222,6 +222,20 @@ export function ChatWindow() {
   // The mount-once listeners above need the current render's openThread (it reads synced/activeId).
   const openThreadRef = useRef(openThread);
   openThreadRef.current = openThread;
+  // `n` = New chat, only while nothing takes typing (the composer, a search box, an editor).
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== "n" || e.repeat || e.isComposing || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || busyRef.current) return;
+      const el = e.target;
+      if (el instanceof HTMLElement && (el.isContentEditable || el.closest("input, textarea, select"))) return;
+      e.preventDefault();
+      openThreadRef.current("new");
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   const deleteThread = (id: string): void => {
     window.bean.chatThreadDelete(id).then(
       () => setThreads((prev) => prev.filter((t) => t.id !== id)),

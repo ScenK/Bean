@@ -172,8 +172,16 @@ test("chat history: New chat in place, and a delegate keeps running in a chat sw
     await firstRow.locator(".bean-chat-sidebar-open").click();
     await expect(shown.locator(".bean-bubble--bean")).toContainText("First!");
     await expect(chat.locator(".bean-chat-sidebar-row")).toHaveCount(1);
-    await chat.locator(".bean-chat-sidebar-new").click();
+    // `n` opens a New chat, but only when it isn't typed into the composer.
+    await shown.locator(".bean-input--composer").focus();
+    await chat.keyboard.press("n");
+    await expect(shown.locator(".bean-input--composer")).toHaveValue("n");
+    await expect(shown.locator(".bean-bubble--bean")).toContainText("First!");
+    await shown.locator(".bean-input--composer").fill("");
+    await shown.locator(".bean-input--composer").blur();
+    await chat.keyboard.press("n");
     await expect(shown.locator(".bean-bubble")).toHaveCount(0);
+    await expect(chat.locator(".bean-chat-sidebar-row--active")).toHaveCount(0);
 
     // #585: ↵ opens a pending card whose Start takes focus; a held Enter presses nothing, a second ↵ runs it.
     await shown.locator(".bean-input--composer").fill("/review");
