@@ -39,6 +39,8 @@ declare global {
       chatRelease(mountId: string): void;
       chat(req: ChatRequest, mountId: string): Promise<ConverseResult>;
       onChatImageProgress(cb: (mountId: string) => void): void;
+      /** Writes a pasted/dragged image (base64) to a private temp file for an agent to read; its path. */
+      chatStageImage(data: string, mime: string, mountId: string): Promise<string>;
       getModel(): Promise<string>;
       getPathForFile(file: File): string;
       getTheme(): Promise<Theme>;

@@ -9,8 +9,10 @@ import { LiveOfferCard } from "./LiveOfferCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
-import { imageFileGuard, insertDroppedPath, itemAgent, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
-import { HANDOFF_ITEMS, agentModels, canContinueLive, handoffItems, isLiveAgent, offerAgent } from "./agent-mode.js";
+import { MAX_IMAGES_PER_MESSAGE, imageFileGuard, insertDroppedPath, itemAgent, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
+import {
+  HANDOFF_ITEMS, agentModels, canContinueLive, handoffItems, imageLabel, isLiveAgent, mappedImageLabels, offerAgent, parseSlash, type ImageLabels,
+} from "./agent-mode.js";
 import { SECTION_TITLES, slashMenu, type SlashEntry } from "./slash-commands.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, Routine, RouteSuggestion, Skill } from "@bean/core";
 
@@ -86,6 +88,9 @@ export function ChatPanel({
   delegateCli,
   onSlashOpen,
   onSend,
+  imageLabels,
+  onImageLabel,
+  onStageImage,
   onConfirm,
   onCancel,
   onNoteSave,
@@ -145,6 +150,12 @@ export function ChatPanel({
   delegateCli: string;
   onSlashOpen: () => void;
   onSend: (text: string, images?: ImageAttachment[]) => void;
+  /** Agent mode's `[Image #N]` → file map (chat-scoped, read-only here). */
+  imageLabels: ImageLabels;
+  /** Maps `path` to a fresh `[Image #N]` for `agent`; `composer` = the text it lands in (numbering). */
+  onImageLabel: (path: string, composer: string, agent: LiveCli) => string;
+  /** Writes a pasted/dragged image to a private temp file; its path. */
+  onStageImage: (img: ImageAttachment) => Promise<string>;
   onConfirm: (
     id: string,
     editedPrompt: string,
@@ -226,22 +237,61 @@ export function ChatPanel({
     if (next !== slashText) setSlashIndex(0);
     setSlashText(next);
   };
-  // Agents take text only — anything pending was meant for Bean.
-  useEffect(() => { if (agentMode) setPendingImages([]); }, [agentMode]);
+  // Agent mode (#628): an image is an `[Image #N]` label in the composer, mapped to a file the agent
+  // reads by path. Inserted at the cursor as it is when the label is ready.
+  const insertImageLabel = (path: string, agent: LiveCli): void => {
+    const el = inputRef.current;
+    if (!el) return;
+    const next = insertDroppedPath(el.value, onImageLabel(path, el.value, agent), el.selectionStart, el.selectionEnd);
+    el.value = next.value;
+    el.focus();
+    el.setSelectionRange(next.cursor, next.cursor);
+    resizeInput();
+  };
+  // The agent-mode cap counts the labels still in the composer, plus stages in flight.
+  const labelsInComposer = (): number => mappedImageLabels(inputRef.current?.value ?? "", imageLabels).length + reservedSlotsRef.current;
+  const stageIntoLabel = (img: ImageAttachment, agent: LiveCli): void => {
+    reservedSlotsRef.current += 1;
+    setImageReadsInFlight((n) => n + 1);
+    void onStageImage(img)
+      .then((path) => insertImageLabel(path, agent))
+      .catch(() => setImageError("Couldn't attach that image."))
+      .finally(() => {
+        reservedSlotsRef.current -= 1;
+        setImageReadsInFlight((n) => n - 1);
+      });
+  };
+
+  // Bean's pending chips carried into an agent (a mode switch) become labels.
+  useEffect(() => {
+    if (!isLiveAgent(mode) || pendingImages.length === 0) return;
+    const carried = pendingImages;
+    setPendingImages([]);
+    setImageError(null);
+    for (const img of carried) {
+      if (labelsInComposer() >= MAX_IMAGES_PER_MESSAGE) { setImageError(`At most ${MAX_IMAGES_PER_MESSAGE} images per message.`); break; }
+      stageIntoLabel(img.attachment, mode);
+    }
+  }, [mode, pendingImages.length]);
 
   const attachImageFiles = (files: File[]): void => {
     // Stale errors clear at the start of a new attempt — never on individual read success,
     // which would wipe a same-batch rejection message before the user can read it.
     setImageError(null);
-    if (agentMode) { setImageError(`${agentName} takes text only — switch to Bean to share an image.`); return; }
+    const agent = isLiveAgent(mode) ? mode : undefined;
     for (const file of files) {
-      const problem = imageFileGuard(file.type, file.size, pendingImages.length + reservedSlotsRef.current);
+      const problem = imageFileGuard(file.type, file.size, agent ? labelsInComposer() : pendingImages.length + reservedSlotsRef.current);
       if (problem) { setImageError(problem); continue; }
+      // A Finder file is labeled with its own path — nothing is copied. A paste or a browser drag
+      // has no path, so it is staged first.
+      const path = agent ? window.bean.getPathForFile(file) : "";
+      if (agent && path) { insertImageLabel(path, agent); continue; }
       reservedSlotsRef.current += 1;
       setImageReadsInFlight((n) => n + 1);
       void readImageFile(file)
         .then((img) => {
-          setPendingImages((prev) => [...prev, img]);
+          if (agent) stageIntoLabel(img.attachment, agent);
+          else setPendingImages((prev) => [...prev, img]);
         })
         .catch(() => setImageError("Couldn't read that image."))
         .finally(() => {
@@ -319,6 +369,15 @@ export function ChatPanel({
     const el = inputRef.current;
     // Type-ahead: while Bean answers the draft and images stay put — return before clearing.
     if (!el || busy || imageReadsInFlight > 0) return;
+    // An agent's image labels mean nothing to Bean: refuse a Bean-bound send that holds them.
+    const slashTo = parseSlash(el.value)?.agent;
+    const stray = (slashTo ? slashTo !== "bean" : isLiveAgent(mode)) ? [] : mappedImageLabels(el.value, imageLabels);
+    if (stray.length > 0) {
+      const one = stray.length === 1;
+      const agent = imageLabels.get(stray[0]!)?.agent;
+      setImageError(`${stray.map(imageLabel).join(", ")} ${one ? "was" : "were"} attached for ${agent ? AGENT_NAMES[agent] : "an agent"} — attach ${one ? "it" : "them"} again to show Bean.`);
+      return;
+    }
     // Image-only sends are allowed; converse still needs some text on the turn.
     const text = el.value.trim() || (pendingImages.length > 0 ? "(image)" : "");
     if (!text) return;

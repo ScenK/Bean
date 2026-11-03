@@ -91,13 +91,49 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
   });
 }
 
-/** What the renderer offers main for the opening turn's handoff (main keeps the tail). */
+/** What the renderer offers main for the opening turn's handoff (main keeps the tail). Bean-mode
+ * image bytes never reach an agent — the turn says one was there. */
 export function handoffItems(items: ChatItem[]): HandoffItem[] {
   return items.flatMap((it): HandoffItem[] => {
-    if (it.kind === "user") return [{ role: "user", text: it.text }];
+    if (it.kind === "user") return [{ role: "user", text: it.images?.length ? `${it.text}\n${IMAGE_NOT_HANDED}` : it.text }];
     if (it.kind !== "reply" || it.streaming) return [];
     return [{ role: "reply", text: it.text, ...(isLiveAgent(it.agent) ? { agent: it.agent } : {}) }];
   });
+}
+
+export const IMAGE_NOT_HANDED = "[image attached — not handed over]";
+/** Renderer copy of live-tasks' LABEL_LIMIT (main-only module). */
+export const LABEL_LIMIT = 2000;
+
+// Agent-mode images (#628): the transcript, the saved thread and `typed` hold only `[Image #N]`
+// labels; the chat-scoped label map (N → staged/dropped file path) is applied only to the text
+// sent to the agent, so no path is ever stored.
+export type ImageLabels = ReadonlyMap<number, { path: string; agent: LiveCli }>;
+export const imageLabel = (n: number): string => `[Image #${n}]`;
+
+/** The `[Image #N]` numbers in `text`, in order (repeats kept). */
+export const imageLabelNumbers = (text: string): number[] =>
+  [...text.matchAll(/\[Image #(\d{1,9})\]/g)].map((m) => Number(m[1]));
+
+/** The labels in `text` that the map knows, once each, in number order. */
+export const mappedImageLabels = (text: string, labels: ImageLabels): number[] =>
+  [...new Set(imageLabelNumbers(text))].filter((n) => labels.has(n)).sort((a, b) => a - b);
+
+/** The next label number: one past the highest in the chat's user turns, the composer and the map,
+ * so a number is never reused (not even one deleted from the composer before sending). */
+export function nextImageNumber(items: readonly ChatItem[], composer: string, labels: ImageLabels): number {
+  const seen = [
+    ...items.flatMap((it) => (it.kind === "user" ? imageLabelNumbers(`${it.text} ${it.display ?? ""}`) : [])),
+    ...imageLabelNumbers(composer), ...labels.keys(),
+  ];
+  return Math.max(0, ...seen) + 1;
+}
+
+/** What the agent gets: the label-only text, a blank line, then `[Image #N]: /abs/path` for each
+ * mapped label still in it. Unknown or hand-typed labels stay plain text. */
+export function withImagePaths(text: string, labels: ImageLabels): string {
+  const lines = mappedImageLabels(text, labels).map((n) => `${imageLabel(n)}: ${labels.get(n)!.path}`);
+  return lines.length ? `${text}\n\n${lines.join("\n")}` : text;
 }
 
 /** The newest `count` handed-over items, as the expandable lines under "Handed over N messages".

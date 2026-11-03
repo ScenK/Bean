@@ -5,7 +5,7 @@ import { act } from "preact/test-utils";
 import type { ChatTurn, LiveCli } from "@bean/core";
 import {
   AGENT_FINAL_CHARS, applyLiveEvent, canContinueLive, chatTurns, handoffLines, liveModelKey, liveProjectKey, offerAgent, offerLaunch,
-  parseSlash, turnFooter, validModel, validProject,
+  parseSlash, turnFooter, validModel, validProject, handoffItems, nextImageNumber, withImagePaths, mappedImageLabels, IMAGE_NOT_HANDED,
 } from "../src/renderer/components/chat/agent-mode.js";
 import { slashMenu } from "../src/renderer/components/chat/slash-commands.js";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
@@ -137,6 +137,29 @@ describe("per-agent picks helpers (#612)", () => {
     expect(offerLaunch("/p", "claude", picks, projects, models)).toEqual({ projectPath: "/p", model: "sonnet" });
     expect(offerLaunch("/scratch-abs", "claude", picks, projects, models)).toEqual({ projectPath: "/q", model: "sonnet" });
     expect(offerLaunch("/scratch-abs", "codex", picks, projects, models)).toEqual({ projectPath: "" });
+  });
+});
+
+describe("agent-mode image labels", () => {
+  const labels = new Map([[1, { path: "/a.png", agent: "claude" as const }], [3, { path: "/c.png", agent: "claude" as const }]]);
+
+  it("the agent text appends each mapped label still present once, in number order; unknown labels stay text", () => {
+    expect(withImagePaths("see [Image #3] and [Image #1], again [Image #3], [Image #2]", labels))
+      .toBe("see [Image #3] and [Image #1], again [Image #3], [Image #2]\n\n[Image #1]: /a.png\n[Image #3]: /c.png");
+    expect(withImagePaths("no images", labels)).toBe("no images");
+    expect(mappedImageLabels("[Image #2] [Image #3]", labels)).toEqual([3]);
+  });
+
+  it("the next number is one past the highest in the user turns, the composer and the map — never reused", () => {
+    const items: ChatItem[] = [{ kind: "user", id: "u", text: "[Image #5]" }, { kind: "reply", id: "r", text: "[Image #9]" }];
+    expect(nextImageNumber(items, "[Image #6]", labels)).toBe(7);
+    expect(nextImageNumber([], "", new Map())).toBe(1);
+    expect(nextImageNumber([], "", labels)).toBe(4); // #3 was deleted from the composer: still not reused
+  });
+
+  it("hand-off marks earlier Bean-mode image turns", () => {
+    expect(handoffItems([{ kind: "user", id: "u", text: "what is this", images: ["data:image/png;base64,AA"] }]))
+      .toEqual([{ role: "user", text: `what is this\n${IMAGE_NOT_HANDED}` }]);
   });
 });
 
@@ -582,6 +605,76 @@ describe("ChatWindow agent mode", () => {
       expect(root.querySelector(".bean-agent-banner")).not.toBeNull();
       expect(bean.setModelMemory).toHaveBeenCalledTimes(1); // model failed → project not attempted
       err.mockRestore();
+    });
+  });
+
+  describe("images (#628)", () => {
+    const png = (): File => new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "shot.png", { type: "image/png" });
+    const composer = (): HTMLTextAreaElement => root.querySelector("textarea.bean-input--composer") as HTMLTextAreaElement;
+    const drop = async (file: File): Promise<void> => {
+      const ev = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "dataTransfer", { value: { files: [file] } });
+      await act(async () => { composer().dispatchEvent(ev); });
+      await flush();
+    };
+    const mount = async (): Promise<void> => {
+      bean.chatStageImage = vi.fn(async () => "/tmp/bean-images-x/staged.png");
+      bean.getPathForFile = vi.fn(() => "");
+      await act(async () => { render(h(ChatWindow, {}), root); });
+      await flush();
+    };
+
+    it("a Finder drop labels the file's own path, a browser drag stages it; the agent gets the paths, the transcript only labels", async () => {
+      await mount();
+      await send("/claude");
+      bean.getPathForFile!.mockReturnValueOnce("/Users/me/finder.png");
+      await drop(png());
+      expect(bean.chatStageImage).not.toHaveBeenCalled();
+      await drop(png());
+      await vi.waitFor(() => expect(composer().value).toBe("[Image #1] [Image #2] "));
+      expect(bean.chatStageImage).toHaveBeenCalledWith(expect.any(String), "image/png", expect.any(String));
+      await send(`compare ${composer().value}`);
+      const req = bean.liveStart!.mock.calls[0]![0];
+      expect(req.ask).toBe("compare [Image #1] [Image #2]\n\n[Image #1]: /Users/me/finder.png\n[Image #2]: /tmp/bean-images-x/staged.png");
+      expect(req.label).toBe("compare [Image #1] [Image #2]");
+      await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
+      // A label deleted before sending isn't sent; numbers keep increasing.
+      await drop(png());
+      await vi.waitFor(() => expect(composer().value).toBe("[Image #3] "));
+      await send("and [Image #1] only");
+      expect(bean.liveSend).toHaveBeenLastCalledWith("s1", "and [Image #1] only\n\n[Image #1]: /Users/me/finder.png", expect.any(String));
+      expect(root.textContent).not.toContain("/Users/me/finder.png");
+      expect(root.textContent).not.toContain("/tmp/bean-images-x");
+      // Back in Bean mode a mapped label is refused inline; the text stays put.
+      await send("/bean");
+      await send("what about [Image #1]");
+      expect(root.textContent).toContain("[Image #1] was attached for Claude Code — attach it again to show Bean.");
+      expect(composer().value).toBe("what about [Image #1]");
+      expect(bean.chat).not.toHaveBeenCalled();
+    });
+
+    it("/claude <ask> carries pending Bean images as labels, and the hand-off marks earlier Bean image turns", async () => {
+      await mount();
+      await drop(png());
+      await send("what is this");
+      expect(bean.chat).toHaveBeenCalledTimes(1);
+      await drop(png());
+      await vi.waitFor(() => expect(root.querySelector(".bean-chat-pending-image")).not.toBeNull());
+      await send("/claude fix it");
+      await vi.waitFor(() => expect(bean.liveStart).toHaveBeenCalled());
+      const req = bean.liveStart!.mock.calls[0]![0];
+      expect(req.ask).toBe("fix it [Image #1]\n\n[Image #1]: /tmp/bean-images-x/staged.png");
+      expect(req.history[0].text).toBe(`what is this\n${IMAGE_NOT_HANDED}`);
+    });
+
+    it("a bare /claude hands pending Bean images back to the composer as labels", async () => {
+      await mount();
+      await drop(png());
+      await vi.waitFor(() => expect(root.querySelector(".bean-chat-pending-image")).not.toBeNull());
+      await send("/claude");
+      await vi.waitFor(() => expect(composer().value).toBe("[Image #1] "));
+      expect(root.querySelector(".bean-chat-pending-image")).toBeNull();
+      expect(bean.liveStart).not.toHaveBeenCalled();
     });
   });
 });

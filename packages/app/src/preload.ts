@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld("bean", {
   chatAttach: (mountId: string): void => ipcRenderer.send(IPC.chatAttach, mountId),
   chatRelease: (mountId: string): void => ipcRenderer.send(IPC.chatRelease, mountId),
   chat: (req: ChatRequest, mountId: string): Promise<ConverseResult> => ipcRenderer.invoke(IPC.chat, req, mountId),
+  chatStageImage: (data: string, mime: string, mountId: string): Promise<string> => ipcRenderer.invoke(IPC.chatStageImage, data, mime, mountId),
   onChatImageProgress: (cb: (mountId: string) => void) => ipcRenderer.on(IPC.chatImageProgress, (_e, mountId: string) => cb(mountId)),
   getModel: (): Promise<string> => ipcRenderer.invoke(IPC.getModel),
   // File/folder drags (Finder) populate dataTransfer.files, not text/uri-list — this is the

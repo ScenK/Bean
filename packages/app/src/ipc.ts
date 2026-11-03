@@ -1,6 +1,6 @@
 import {
   converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, type ImageGenDeps,
-  attachNoteImages, MAX_NOTE_IMAGE_BYTES, type ImageAttachment,
+  attachNoteImages, MAX_NOTE_IMAGE_BYTES, stageImages, type ImageAttachment,
   availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine,
   listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash,
   type SkillProposal, type ProposalOutcome,
@@ -14,7 +14,9 @@ import {
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { WatchCheckResult } from "@bean/core";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { BrowserWindow, dialog, screen, shell, type IpcMain, type WebContents } from "electron";
 import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
@@ -1125,6 +1127,16 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
       end?.(err instanceof Error ? err.message : String(err));
       throw err;
     }
+  });
+  // Agent-mode images: a paste or browser drag has no file on disk, so it's written to a private
+  // temp dir (one per app run) and the agent reads it by path. stageImages checks mime + size.
+  let stageDir: Promise<string> | undefined;
+  ipcMain.handle(IPC.chatStageImage, async (e, data: unknown, mime: unknown, mountId: unknown) => {
+    chatKey(e.sender, mountId);
+    if (typeof data !== "string" || typeof mime !== "string") throw new Error("malformed image");
+    stageDir ??= mkdtemp(join(tmpdir(), "bean-images-")).catch((err: unknown) => { stageDir = undefined; throw err; });
+    const [path] = await stageImages([{ data, mimeType: mime }], await stageDir);
+    return path;
   });
   ipcMain.handle(IPC.getModel, () => deps.getModel());
 
