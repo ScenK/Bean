@@ -4,6 +4,7 @@ import { ChatSidebar, SIDEBAR_INLINE_MIN, SIDEBAR_OPEN_KEY } from "./ChatSidebar
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { SyncedChat, syncedKey } from "./SyncedChat.js";
+import { isTerminalToggle } from "./TerminalPane.js";
 import type { DesktopChatListing } from "@bean/core";
 import type { ChatDrop } from "../../../channels.js";
 import type { SyncedChatListing } from "../../../synced-chats.js";
@@ -236,6 +237,19 @@ export function ChatWindow() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
+  }, []);
+  // Control+` folds/unfolds the shown chat's terminal — capture phase, so it wins over the shell's
+  // own keydown (xterm would send NUL) and works from the composer or the terminal alike.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.isComposing || !isTerminalToggle(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat || syncedRef.current !== undefined) return;
+      shownApi()?.toggleTerminal();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, []);
   const deleteThread = (id: string): void => {
     window.bean.chatThreadDelete(id).then(

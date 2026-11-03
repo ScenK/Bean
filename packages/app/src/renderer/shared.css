@@ -389,6 +389,87 @@ button, input, textarea, select, a {
 .bean-chat-state--error { background: var(--bean-error); }
 .bean-chat-meta-spacer { flex: 1; }
 .bean-chat-meta-divider { width: 1px; height: 16px; background: var(--bean-border); margin: 0 3px; }
+.bean-chat-term-toggle {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--bean-text-dim);
+  cursor: pointer;
+}
+.bean-chat-term-toggle:hover { background: var(--bean-surface-2); }
+.bean-chat-term-toggle--on { color: var(--bean-accent-text); }
+.bean-chat-term-toggle svg { display: block; width: 100%; height: 100%; }
+
+/* Terminal pane (TerminalPane.tsx): under the composer, inset like it, reading as part of the
+   chat column — surface fill, hairline border, the theme's own ANSI palette. */
+.bean-chat--term .bean-chat-scroll { min-height: 120px; }
+.bean-term {
+  position: relative;
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 0 14px 14px;
+  border: 1px solid var(--bean-border);
+  border-radius: 10px;
+  background: var(--bean-surface);
+  box-sizing: border-box;
+}
+.bean-term[hidden] { display: none; }
+/* Only fold/unfold animates (not drags): the pane's inline height flips between 0 and its size. */
+.bean-term:not(.bean-term--drag) { transition: height 160ms ease-out; }
+@media (prefers-reduced-motion: reduce) { .bean-term { transition: none !important; } }
+.bean-term--drag, .bean-term:has(> .bean-term-handle:hover) { border-color: var(--bean-control-border); }
+/* 6px hit strip over the top hairline. */
+.bean-term-handle {
+  position: absolute;
+  z-index: 1;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+  outline: none;
+}
+.bean-term-handle:focus-visible { box-shadow: 0 0 0 2px var(--bean-accent-text); border-radius: 3px; }
+.bean-term-head {
+  flex: none;
+  padding: 5px 10px 0;
+  font: 600 11px/1.45 ui-monospace, SFMono-Regular, monospace;
+  color: var(--bean-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bean-term-host {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 4px 6px 10px;
+  background: var(--bean-surface);
+  overflow: hidden;
+}
+.bean-term-host .xterm { height: 100%; }
+/* xterm.css paints the viewport #000 (v6 themes only the scrollable element); show the surface. */
+.bean-term-host .xterm .xterm-viewport { background-color: transparent; }
+/* xterm v6's scroll shadow and overview ruler would draw a frame inside ours. */
+.bean-term-host .xterm-scrollable-element > .shadow { display: none; }
+.bean-term-strip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--bean-border);
+  font-size: 12px;
+  color: var(--bean-text-dim);
+}
+.bean-term-strip--error { color: var(--bean-error); }
+.bean-term-strip-text { flex: 1; min-width: 0; }
+.bean-term-strip-btn { padding: 4px 10px; }
 .bean-chat-model { font: 11px ui-monospace, monospace; }
 .bean-bubble {
   max-width: 80%;

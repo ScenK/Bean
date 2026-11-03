@@ -134,6 +134,8 @@ export interface ChatSessionApi {
   closeOut: () => Promise<void>;
   /** A switch elsewhere: a hidden chat with nothing running evicts itself (onEvicted). */
   sweep: () => void;
+  /** Control+` while this chat is shown: fold/unfold its terminal pane. */
+  toggleTerminal: () => void;
 }
 
 export interface ChatSessionProps {
@@ -265,6 +267,9 @@ export function ChatSession({
   const [agentProject, setAgentProjectState] = useState("");
   const agentProjectRef = useRef("");
   const rememberProject = (path: string): void => { agentProjectRef.current = path; setAgentProjectState(path); };
+  // This chat's terminal pane (TerminalPane): folded by default, never persisted.
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const toggleTerminal = (): void => setTerminalOpen((o) => !o);
   // The agent's model for the next fresh start ("" = its own default).
   const [agentModel, setAgentModelState] = useState("");
   const agentModelRef = useRef("");
@@ -1140,6 +1145,7 @@ export function ChatSession({
     stopTasks,
     closeOut,
     sweep,
+    toggleTerminal,
   });
   useLayoutEffect(() => () => { sessions.delete(mountId); }, []);
 
@@ -1165,6 +1171,9 @@ export function ChatSession({
       ) : null}
       <ChatPanel
         hidden={hidden}
+        mountId={mountId}
+        terminalOpen={terminalOpen}
+        onToggleTerminal={toggleTerminal}
         items={items}
         busy={busy || evicting}
         model={model}
