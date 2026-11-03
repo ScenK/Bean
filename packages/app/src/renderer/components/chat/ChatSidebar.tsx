@@ -48,6 +48,8 @@ interface Props {
   /** Threads with work in flight (a spinner) and with a reply that landed while hidden (a dot). */
   working: Set<string>;
   unread: Set<string>;
+  /** Threads with an open agent (live) session: a quiet green bar on the row's left edge. */
+  live: Set<string>;
   overlay: boolean;
   onNew: () => void;
   onOpen: (id: string) => void;
@@ -62,7 +64,7 @@ export function rowTime(iso: string, now: Date): string {
   return agoText(iso, now).replace("just now", "now").replace(" ago", "");
 }
 
-export function ChatSidebar({ threads, synced, activeId, busy, working, unread, overlay, onNew, onOpen, onDelete }: Props) {
+export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, overlay, onNew, onOpen, onDelete }: Props) {
   const now = new Date();
   const rows = mergeRows(threads, synced);
   const marker = (key: string) => (working.has(key)
@@ -104,7 +106,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
               const title = t.title || "Untitled chat";
               const agents = t.agents.filter((a): a is AgentId => a in AGENT_NAMES);
               return (
-                <div key={t.id} class={`bean-chat-sidebar-row${active ? " bean-chat-sidebar-row--active" : ""}`}>
+                <div key={t.id} class={`bean-chat-sidebar-row${active ? " bean-chat-sidebar-row--active" : ""}${live.has(t.id) ? " bean-chat-sidebar-row--live" : ""}`}>
                   <button
                     type="button"
                     class="bean-chat-sidebar-open"
@@ -114,6 +116,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                   >
                     <span class="bean-chat-sidebar-line">
                       <span class="bean-chat-sidebar-title">{title}</span>
+                      {live.has(t.id) ? <span class="bean-sr-only">Agent session running</span> : null}
                       {active ? null : agents.map((a) => <AgentAvatar agent={a} size={12} />)}
                       {marker(t.id)}
                       <span class="bean-chat-sidebar-time">{rowTime(t.updatedAt, now)}</span>

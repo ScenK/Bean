@@ -6,7 +6,8 @@ import type { DashboardTarget } from "../channels.js";
 // clicking an expanded failure dismisses it — failures stay until then. A memory bubble is the
 // exception: its click opens Persona's "Just remembered" (where Undo lives) — never an undo itself,
 // so a misclick can't lose data. A finished routine likewise: one click dismisses it and opens that
-// run in the Dashboard, whose card is the lasting record of a failure.
+// run in the Dashboard, whose card is the lasting record of a failure. A chat's delegate or live
+// session opens that chat (dismissing it once finished) — the chat shows its detail and output.
 const ICONS = {
   delegate: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   routine: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/><path d="M12 7v5l3 3"/>',
@@ -45,6 +46,8 @@ export function liveBadgeAgent(jobs: readonly TaskJob[]): TaskJob["agent"] {
 const iconKey = (j: TaskJob): keyof typeof ICONS => (j.state === "running" ? j.kind : j.state);
 
 const opensRun = (j: TaskJob): boolean => j.kind === "routine" && j.state !== "running";
+// A chat's delegate or live session: the chat is where you answer it ("Waiting for you").
+const opensChat = (j: TaskJob): boolean => (j.kind === "live" || j.kind === "delegate") && j.mountId !== undefined;
 
 function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh: boolean, now: number): string {
   const running = j.state === "running";
@@ -66,7 +69,9 @@ function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh:
   // A finished routine doesn't expand, it navigates — the label keeps its name and result audible.
   const action = opensRun(j)
     ? `title="Open in Dashboard" aria-label="${esc(`${j.name} — ${j.line}. Open in Dashboard`)}"`
-    : `aria-expanded="${open}"`;
+    : opensChat(j)
+      ? `title="Open chat" aria-label="${esc(`${j.name} — ${j.line}. Open chat`)}"`
+      : `aria-expanded="${open}"`;
   return `
     <button type="button" class="bean-bubble bean-bubble--${j.state}${tail ? " bean-bubble--tail" : ""}${fresh ? " bean-bubble--new" : ""}" data-id="${esc(j.id)}" ${action}>
       <span class="bean-bubble-head">
@@ -86,6 +91,7 @@ export const MAX_VISIBLE = 4;
 export function createTaskBubbles(
   container: HTMLElement, onHeight: (h: number) => void, onDismiss: (id: string) => void, onOpenMemory: () => void = () => {},
   onOpenRun: (target: DashboardTarget) => void = () => {},
+  onOpenChat: (mountId: string) => void = () => {},
 ) {
   let jobs: TaskJob[] = [];
   let openId: string | undefined;
@@ -145,6 +151,11 @@ export function createTaskBubbles(
     if (job && opensRun(job)) {
       onDismiss(id);
       onOpenRun(job.runStartedAt ? { routine: job.name, startedAt: job.runStartedAt } : { routine: job.name });
+      return;
+    }
+    if (job?.mountId && opensChat(job)) {
+      if (job.state !== "running") onDismiss(id); // finished: the chat holds the result now
+      onOpenChat(job.mountId);
       return;
     }
     if (openId === id && jobs.find((j) => j.id === id)?.state === "failed") onDismiss(id);

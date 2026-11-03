@@ -208,6 +208,25 @@ button, input, textarea, select, a {
   border-radius: 8px;
 }
 .bean-chat-sidebar-row:hover { background: var(--bean-surface-2); }
+/* An open agent (live) session: a quiet green bar with a slow glow on the row's left edge — still
+   running, not ended. With no spinner beside it, the agent is waiting for you. */
+.bean-chat-sidebar-row--live { position: relative; }
+.bean-chat-sidebar-row--live::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--bean-orb-check-ink);
+  box-shadow: 0 0 6px color-mix(in oklch, var(--bean-orb-check-ink) 60%, transparent);
+  animation: bean-live-glow 2.6s ease-in-out infinite;
+}
+@keyframes bean-live-glow {
+  50% { box-shadow: 0 0 2px color-mix(in oklch, var(--bean-orb-check-ink) 30%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .bean-chat-sidebar-row--live::before { animation: none; } }
 /* The selected row is the only one that spends vertical space: it lifts into a card (as in Notes). */
 .bean-chat-sidebar-row--active,
 .bean-chat-sidebar-row--active:hover {

@@ -23,6 +23,8 @@ export interface TaskJob {
   /** A finished routine's run record `startedAt` — what its click opens in the Dashboard. The id is
    * reused per routine, so `start` and `finish` always set it rather than inheriting the last run's. */
   runStartedAt?: string;
+  /** The desktop chat (mount id) that owns a delegate or live session — what its click opens. */
+  mountId?: string;
 }
 
 // How long a finished (or user-stopped) bubble stays before it clears (the design said a minute;

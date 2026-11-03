@@ -61,6 +61,9 @@ declare global {
       setAvatarStatusHeight(height: number): void;
       onTaskStatus(cb: (jobs: TaskJob[]) => void): void;
       dismissTask(id: string): void;
+      /** Focus the chat window and show the chat (mount) that owns a bubble's task. */
+      openChatMount(mountId: string): void;
+      onShowChatMount(cb: (mountId: string) => void): void;
       planFromDrop(skillName: string, droppedUrl: string): void;
       runInChat(prompt: string, label: string, noteSlug?: string): void;
       getPendingChatPrompt(): Promise<{ prompt: string; label: string; noteSlug?: string } | undefined>;

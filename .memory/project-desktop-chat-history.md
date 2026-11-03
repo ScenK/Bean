@@ -62,7 +62,9 @@ a running task the Keep/Stop card asks first ("Leaving discards this chat and st
 **Window close** = one shell card over every chat's `tasks()` (`closeCard`: single-chat wording, else
 "Closing stops N tasks in M chats."); Stop & close `stopTasks` everywhere, then every chat `closeOut`s
 (save + remember) before `allowChatClose`; main's `closed` stops everything anyway. Sidebar: a spinner
-while a chat has work (`onWorking`, per mount → its thread), an unread dot when a reply or live turn
+while a chat has work (`onWorking`, per mount → its thread; a live session counts only mid-turn), a
+glowing green left bar while an agent session is open (`onLive`, `.bean-chat-sidebar-row--live`) — bar
+without spinner = waiting for you; an unread dot when a reply or live turn
 lands while hidden (`onUnread`), cleared when shown — held in the shell by thread, so it outlives
 eviction. During an eviction save the composer is blocked (ChatPanel `busy`); work that began some
 other way meanwhile keeps the chat mounted instead. New chat on an untouched empty chat does nothing;

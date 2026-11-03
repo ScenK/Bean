@@ -15,6 +15,12 @@ decision: there's no Stop/Pause button, and a routine has no pause state to back
   { routine, startedAt })`). `TaskJob.runStartedAt` is the run record's `startedAt`, carried on core's
   `finish` event; the bubble id is reused per routine, so `start` and `finish` set it explicitly
   (never inherit the previous run's). Absent = the run wasn't recorded (threw).
+- **A chat's delegate/live bubble opens its chat.** `TaskJob.mountId` (set by main from the
+  delegate/live event) makes the click call `openChatMount` → main focuses the chat window and pushes
+  `showChatMount` → `ChatWindow` opens that mount's thread like a sidebar pick (a hidden chat with
+  work is just shown). Running bubbles stay; finished ones dismiss on the click. An evicted owner reopens via
+  `evictedRef` (mount → thread); a mounted owner with no thread yet (fresh `runPrompt` chat) can't be
+  targeted — known gap. No mountId = the old expand behavior. Guard: the hidden-delegate step in `e2e/chat-history.e2e.ts`.
 - **Failures are sticky; done lingers 10s.** `finish(..., "failed")` keeps the bubble until the
   user clicks it open then clicks again (`bean:dismiss-task` → `dismiss()`); a user Stop passes
   `sticky=false`. Standalone errors go through `error(id, …)` with a stable id (`bot:discord`,

@@ -151,6 +151,8 @@ export interface ChatSessionProps {
   onBusy: (busy: boolean) => void;
   /** Its thread while it has work in flight (the sidebar spinner), undefined once idle. */
   onWorking: (threadId: string | undefined) => void;
+  /** Its thread while an agent (live) session is open — the sidebar's green bar; undefined = none. */
+  onLive: (threadId: string | undefined) => void;
   /** A reply or live turn landed while hidden (the sidebar dot). */
   onUnread: () => void;
   /** This shown chat is leaving for the pick: `keep` = it stays mounted, hidden (work in flight);
@@ -165,7 +167,7 @@ export interface ChatSessionProps {
 /** One chat inside the chat window. A switch evicts it — final save, close-time memory, release —
  * and the shell mounts the next one with a new mount id; the window itself stays. */
 export function ChatSession({
-  mountId, restoreId, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onUnread, onSwitch, onEvicted, takeLateReceipts,
+  mountId, restoreId, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onUnread, onSwitch, onEvicted, takeLateReceipts,
 }: ChatSessionProps) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -730,6 +732,8 @@ export function ChatSession({
     const cur = liveRef.current;
     if (!cur || cur.sessionId !== e.sessionId) return;
     if (e.type === "turn") setLive({ ...cur, turns: cur.turns + 1, busy: false });
+    // Output means a turn runs — a queued follow-up starts right after the last turn's end.
+    if (e.type === "output" && !cur.busy) setLive({ ...cur, busy: true });
     if (e.type === "session") setLive({ ...cur, receipt: e.receipt });
     if (e.type !== "ended") return;
     setLive(undefined);
@@ -992,9 +996,12 @@ export function ChatSession({
       itemsRef.current.filter((it) => it.kind === "delegate" && (it.state === "starting" || it.state === "running")).length),
     ...(liveRef.current ? { live: liveRef.current.agent } : {}),
   });
-  // The sidebar spinner follows the same work, from state.
-  const working = busy || live !== undefined || hasActiveDelegates(items, 0);
+  // The sidebar spinner follows the same work, from state — a live session only while its turn runs
+  // (the green bar says it's open; bar without spinner = waiting for you).
+  const working = busy || live?.busy === true || hasActiveDelegates(items, 0);
   useEffect(() => onWorking(working ? threadRef.current?.id : undefined), [working]);
+  const isLive = live !== undefined;
+  useEffect(() => onLive(isLive ? threadRef.current?.id : undefined), [isLive]);
 
   // Window close: write the thread one last time (main re-checks the incognito latch), hand off memory.
   const closeOut = async (): Promise<void> => {
