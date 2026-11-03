@@ -317,3 +317,9 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   renders `onText` instead of `onOutput`, so no `▸ tool` line reaches Discord; Teams and the
   desktop keep the tail. Don't strip `▸` from tail strings instead — claude's tail joins prose and
   tools in one line.
+- **One bubble per agent message (#620, proseOnly only)**: each `onText` first seals the current
+  segment iff one is unsealed (`buf.length > last seal`), so the previous message is final and the
+  newest stays the unsealed tail that `onTurnComplete`'s footer joins. Never push a seal equal to
+  the last one. `s.sent` (text last delivered to `msgId`) lets the seal/rollover branches skip an
+  edit whose text is unchanged. The 1900-char rollover is still the only split; stream mode
+  (Teams/desktop) never seals on text.
