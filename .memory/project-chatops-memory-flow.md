@@ -14,6 +14,9 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   insert, so a queued batch obeys them. Receipt: Discord 🧠 reaction (best-effort), Teams silent;
   the first save per scope posts `MEMORY_NOTICE` once (`memory_noticed`, atomic upsert). Daily cap
   48 calls / 20 saves per scope is in-process (a restart resets it).
+  Each row records its source (#649): `source_id` = `<chatter.surface>:<scopeId>`, `source_title`
+  = the adapter's `AmbientLine.place.title` (its catalog `placeOf`; Teams' `capturePlace` adds a
+  short id to an unnamed chat), one line ≤80 chars. Never from the model's tool args.
 
 - **DM auto-capture** (`captureDm` in `bot.ts`): after a DM reply, core's per-turn
   `extractMemories(..., { latestTurn: true })` runs on the speaker's `typedText` only (the audio

@@ -117,7 +117,7 @@ export interface ChatSessionApi {
   /** The thread this chat writes, once it has one. */
   threadId: () => string | undefined;
   /** A per-turn "Memory updated" receipt for this chat (the shell routes by mount and thread). */
-  memoryUpdated: (saved: Array<{ id: string; text: string }>) => void;
+  memoryUpdated: (saved: Array<{ id: string; text: string; category?: string }>) => void;
   imageProgress: () => void;
   runPrompt: (p: { prompt: string; label: string; noteSlug?: string }) => void;
   notices: (notices: InterruptedRunNotice[]) => void;
@@ -163,7 +163,7 @@ export interface ChatSessionProps {
   /** A hidden chat evicted itself (sweep): the shell unmounts it. */
   onEvicted: () => void;
   /** Receipts that landed after this thread's chat was switched away — shown again on restore. */
-  takeLateReceipts: (threadId: string) => Array<Array<{ id: string; text: string }>>;
+  takeLateReceipts: (threadId: string) => Array<Array<{ id: string; text: string; category?: string }>>;
 }
 
 /** One chat inside the chat window. A switch evicts it — final save, close-time memory, release —
@@ -461,7 +461,7 @@ export function ChatSession({
           }
         }
         if (res.proposedLiveSession) next.push({ kind: "offer", id: newId(), offer: res.proposedLiveSession, state: "pending" });
-        for (const m of res.remembered ?? []) next.push({ kind: "status", id: newId(), text: `🧠 Remembered — ${m.text}`, tone: "done" });
+        for (const m of res.remembered ?? []) next.push({ kind: "status", id: newId(), text: `🧠 Remembered — ${m.text}${m.category ? ` (${m.category})` : ""}`, tone: "done" });
         for (const m of res.forgotten ?? []) next.push({ kind: "forgot", id: newId(), text: m.text, row: m, state: "saved" });
         return next;
       });

@@ -15,6 +15,7 @@ export interface ChattyState {
 }
 
 export interface Chatter {
+  readonly surface: "discord" | "teams";
   get(scopeId: string): ChattyState;
   /** Turning it on also clears any mute. */
   setEnabled(scopeId: string, enabled: boolean): void;
@@ -42,6 +43,7 @@ export function makeChatter(opts: { dbPath: string; surface: "discord" | "teams"
   const db: DatabaseSync = openDb(opts.dbPath);
   const { surface } = opts;
   return {
+    surface,
     get(scopeId) {
       const row = db.prepare("SELECT enabled, muted_until FROM chatops_chatty WHERE surface = ? AND scope_id = ?")
         .get(surface, scopeId) as { enabled: number; muted_until: number | null } | undefined;

@@ -121,6 +121,9 @@ export const IPC = {
   appendMemories: "bean:append-memories",
   updateMemory: "bean:update-memory",
   deleteMemories: "bean:delete-memories",
+  updateMemoryCategory: "bean:update-memory-category",
+  renameMemoryCategory: "bean:rename-memory-category",
+  memoryOwnerIds: "bean:memory-owner-ids",
   rememberOnClose: "bean:remember-on-close",
   // main → chat window: a per-turn capture saved these facts (the Undo receipt row).
   memoryUpdated: "bean:memory-updated",

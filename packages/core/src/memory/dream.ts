@@ -16,7 +16,7 @@ const MAX_PER_RUN = 150;
 
 /** Code-side validation of the model's proposal — the model is only trusted to suggest:
  * merge groups must be disjoint and single-scope (a global fact never absorbs a project one, and
- * two projects never mix) and single-speaker (same `Name:` prefix), text non-empty, a rewrite must actually change the text, and drops
+ * two projects never mix), single-category, single-source and single-speaker (same `Name:` prefix), text non-empty, a rewrite must actually change the text, and drops
  * are capped at max(3, 20%) per run so a buggy run can't wipe memory. */
 export function planDream(memories: Memory[], result: ConsolidationResult, runId: string, at: string): DreamPlan {
   const byId = new Map(memories.map((m) => [m.id, m]));
@@ -27,12 +27,16 @@ export function planDream(memories: Memory[], result: ConsolidationResult, runId
     const text = merge.mergedText.trim();
     if (members.length === 0 || !text || members.some((m) => taken.has(m.id))) continue;
     if (new Set(members.map((m) => m.projectPath ?? "")).size > 1) continue;
+    // One category and one source per merge: the merged row can carry only one of each.
+    if (new Set(members.map((m) => m.category ?? "")).size > 1) continue;
+    if (new Set(members.map((m) => m.sourceId ?? "")).size > 1) continue;
     // A channel-captured fact is "Name: fact" (#463): never fold one speaker's into another's (or
     // the owner's unprefixed one), and the merged text must keep the prefix.
     if (new Set([...members.map((m) => m.text), text].map(speakerPrefix)).size > 1) continue;
     if (members.length === 1 && members[0]!.text === text) continue;
     members.forEach((m) => taken.add(m.id));
-    groups.push({ ids: members.map((m) => m.id), text, projectPath: members[0]!.projectPath });
+    const { projectPath, category, sourceId, sourceTitle } = members[0]!;
+    groups.push({ ids: members.map((m) => m.id), text, projectPath, category, sourceId, sourceTitle });
   }
   const dropCap = Math.max(3, Math.floor(memories.length * 0.2));
   let removed = 0;

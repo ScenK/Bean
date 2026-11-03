@@ -319,6 +319,14 @@ export function openDb(file: string): DatabaseSync {
     // Per-speaker memory (#281): the chatops speaker a fact is private to; NULL = household-shared,
     // so every pre-existing row reads as shared.
     ["memories", "subject_id", "TEXT"],
+    // Owner memory by category (#646): NULL = uncategorized / no recorded source. History carries
+    // them too so a dream merge and its undo keep them.
+    ["memories", "category", "TEXT"],
+    ["memories", "source_id", "TEXT"],
+    ["memories", "source_title", "TEXT"],
+    ["memories_history", "category", "TEXT"],
+    ["memories_history", "source_id", "TEXT"],
+    ["memories_history", "source_title", "TEXT"],
     // Member todos (#283): the non-owner chatops speaker who queued it; NULL = the owner's (desktop,
     // watch-created, legacy rows, or the owner on chat) — only NULL rows may reach delegate/command steps.
     ["todos", "created_by", "TEXT"],

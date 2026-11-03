@@ -3,11 +3,14 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { loadMemories, appendMemories, updateMemory, deleteMemories, shareMemory, selectRelevantMemories } from "../src/memory/store.js";
+import {
+  loadMemories, appendMemories, updateMemory, deleteMemories, shareMemory, selectRelevantMemories,
+  updateMemoryCategory, renameMemoryCategory,
+} from "../src/memory/store.js";
 import { makeMemoryTools } from "../src/memory/tools.js";
-import { closeDb } from "../src/db.js";
+import { closeDb, openDb } from "../src/db.js";
 import { dbFile } from "../src/config.js";
-import type { Memory } from "../src/memory/memory.js";
+import { sanitizeCategory, type Memory } from "../src/memory/memory.js";
 
 let dir: string;
 let file: string;
@@ -94,7 +97,7 @@ test("selectRelevantMemories ranks by relevance above the threshold and force-in
     m("roadmap", "the Q3 roadmap ships auth work first"),
     { ...m("scoped", "internal note about billing"), projectPath: "/work/billing" },
   ];
-  const picked = selectRelevantMemories(memories, "what's the roadmap say", "/work/billing", 5, 20);
+  const picked = selectRelevantMemories(memories, "what's the roadmap say", "/work/billing", { limit: 5, skipThreshold: 20 });
   expect(picked.some((mm) => mm.id === "scoped")).toBe(true);
   expect(picked.some((mm) => mm.id === "roadmap")).toBe(true);
   expect(picked.length).toBeLessThanOrEqual(5);
@@ -105,12 +108,12 @@ test("selectRelevantMemories recalls an older Chinese memory from a Chinese ques
     m("dentist", "我的牙医是张医生，在中山路"),
     ...Array.from({ length: 25 }, (_, i) => m(`filler-${i}`, `最近的事情 ${i}`)),
   ];
-  const picked = selectRelevantMemories(memories, "我的牙医叫什么？", undefined, 5, 20);
+  const picked = selectRelevantMemories(memories, "我的牙医叫什么？", undefined, { limit: 5, skipThreshold: 20 });
   expect(picked[0]?.id).toBe("dentist");
   // A one-character query matches mid-run; mixed text with no space still separates.
-  expect(selectRelevantMemories([...memories, m("mixed", "my dentist牙医 is nearby")], "dentist", undefined, 5, 20)[0]?.id)
+  expect(selectRelevantMemories([...memories, m("mixed", "my dentist牙医 is nearby")], "dentist", undefined, { limit: 5, skipThreshold: 20 })[0]?.id)
     .toBe("mixed");
-  expect(selectRelevantMemories(memories, "牙", undefined, 5, 20)[0]?.id).toBe("dentist");
+  expect(selectRelevantMemories(memories, "牙", undefined, { limit: 5, skipThreshold: 20 })[0]?.id).toBe("dentist");
 });
 
 test("selectRelevantMemories matches English against mixed-language memories and caps from the newest text", () => {
@@ -118,9 +121,26 @@ test("selectRelevantMemories matches English against mixed-language memories and
     m("trip", "flying to 东京 for the conference in May"),
     ...Array.from({ length: 25 }, (_, i) => m(`filler-${i}`, `unrelated filler fact ${i}`)),
   ];
-  expect(selectRelevantMemories(memories, "when is the conference", undefined, 3, 20)[0]?.id).toBe("trip");
+  expect(selectRelevantMemories(memories, "when is the conference", undefined, { limit: 3, skipThreshold: 20 })[0]?.id).toBe("trip");
   const oldChatter = Array.from({ length: 80 }, (_, i) => `chatter${i}`).join(" ");
-  expect(selectRelevantMemories(memories, `${oldChatter} 东京`, undefined, 3, 20)[0]?.id).toBe("trip");
+  expect(selectRelevantMemories(memories, `${oldChatter} 东京`, undefined, { limit: 3, skipThreshold: 20 })[0]?.id).toBe("trip");
+});
+
+test("selectRelevantMemories pins the newest 15 rows in pinCategory, ahead of and outside the ranked top-K", () => {
+  // 20 owner rows (oldest first), then 280 newer unrelated rows — 300 total, loadMemories' created_at order.
+  const memories = [
+    ...Array.from({ length: 20 }, (_, i) => ({ ...m(`you-${i}`, `owner preference ${i}`), category: "You" })),
+    ...Array.from({ length: 280 }, (_, i) => ({ ...m(`f-${i}`, `unrelated filler ${i}`), category: "Work" })),
+  ];
+  const picked = selectRelevantMemories(memories, "what's the weather", undefined, { pinCategory: "You" });
+  const pinned = picked.filter((mm) => mm.category === "You").map((mm) => mm.id);
+  expect(pinned).toEqual(Array.from({ length: 15 }, (_, i) => `you-${i + 5}`));
+  expect(picked.slice(0, 15).map((mm) => mm.id)).toEqual(pinned);
+  expect(picked).toHaveLength(15 + 12); // pinned rows don't eat the ranked limit
+  expect(pinned).not.toContain("you-4");
+  // Exact category only, and no pin without the option.
+  expect(selectRelevantMemories(memories, "what's the weather").some((mm) => mm.category === "You")).toBe(false);
+  expect(selectRelevantMemories(memories, "what's the weather", undefined, { pinCategory: "you" }).some((mm) => mm.category === "You")).toBe(false);
 });
 
 test("a Persona edit racing a concurrent appendMemories loses neither write", async () => {
@@ -362,4 +382,82 @@ test("shareMemory: only the author flips their private row to shared, text/proje
   expect(row).toEqual({ id: "mias", text: "wifi is now bean2", projectPath: "/p/home", createdAt: "2026-02-01T00:00:00.000Z" });
   await deleteMemories(file, ["mias"]);
   expect(await shareMemory(file, "mias", "mia")).toBe(0); // deleted row
+});
+
+test("sanitizeCategory: trims, collapses, strips newlines/brackets, caps at 30, normalizes You", () => {
+  expect(sanitizeCategory("  Work \n  [habits] ")).toBe("Work habits");
+  expect(sanitizeCategory("(){}<>[]\r\n  ")).toBeNull();
+  expect(sanitizeCategory(undefined)).toBeNull();
+  expect(sanitizeCategory("YOU")).toBe("You");
+  expect(sanitizeCategory(" you ")).toBe("You");
+  expect(sanitizeCategory("your stuff")).toBe("your stuff");
+  expect(sanitizeCategory("x".repeat(40))).toBe("x".repeat(30));
+});
+
+test("category and source round-trip, sanitized at write; per-row update and rename", async () => {
+  await appendMemories(file, [
+    { ...m("a", "prefers short answers"), category: " you " },
+    { ...m("b", "standup is 9am"), category: "Work" },
+    { ...m("c", "Mia: likes oat milk"), sourceId: "discord:123", sourceTitle: "#general" },
+    { ...m("d", "deploys on Tue"), category: "Work" },
+  ]);
+  const byId = async () => new Map((await loadMemories(file)).map((x) => [x.id, x]));
+  let rows = await byId();
+  expect(rows.get("a")).toEqual({ ...m("a", "prefers short answers"), category: "You" });
+  expect(rows.get("c")).toEqual({ ...m("c", "Mia: likes oat milk"), sourceId: "discord:123", sourceTitle: "#general" });
+
+  await updateMemoryCategory(file, "c", "[Friends]\n");
+  await updateMemoryCategory(file, "a", null);
+  rows = await byId();
+  expect(rows.get("c")?.category).toBe("Friends");
+  expect(rows.get("a")?.category).toBeUndefined();
+
+  expect(await renameMemoryCategory(file, "Work", "Job")).toBe(2);
+  expect(await renameMemoryCategory(file, "", "Job")).toBe(0);
+  rows = await byId();
+  expect([rows.get("b")?.category, rows.get("d")?.category]).toEqual(["Job", "Job"]);
+  expect(await renameMemoryCategory(file, "Job", "  ")).toBe(2); // empty → uncategorized
+  expect((await byId()).get("b")?.category).toBeUndefined();
+});
+
+test("an existing bean.db gains the category/source columns on memories and history; reopening is a no-op", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { mkdir } = await import("node:fs/promises");
+  await mkdir(dir, { recursive: true });
+  const legacy = new DatabaseSync(file);
+  legacy.exec(
+    "CREATE TABLE memories (id TEXT PRIMARY KEY, text TEXT NOT NULL, project_path TEXT, created_at TEXT NOT NULL, subject_id TEXT);" +
+      "CREATE TABLE memories_history (run_id TEXT NOT NULL, grp INTEGER NOT NULL, phase TEXT NOT NULL, memory_id TEXT NOT NULL," +
+      " text TEXT NOT NULL, project_path TEXT, created_at TEXT NOT NULL, at TEXT NOT NULL);" +
+      "INSERT INTO memories VALUES ('a', 'prefers tabs', NULL, '2026-07-01T00:00:00.000Z', NULL);",
+  );
+  legacy.close();
+
+  expect(await loadMemories(file)).toEqual([{ id: "a", text: "prefers tabs", createdAt: "2026-07-01T00:00:00.000Z" }]);
+  const cols = (t: string) => (openDb(file).prepare(`PRAGMA table_info(${t})`).all() as unknown as { name: string }[]).map((c) => c.name);
+  for (const t of ["memories", "memories_history"]) expect(cols(t)).toEqual(expect.arrayContaining(["category", "source_id", "source_title"]));
+  closeDb(file);
+  expect(() => openDb(file)).not.toThrow(); // a second opener finds the columns already there
+});
+
+test("the remember tool keeps the model's category only on an owner path (#648)", async () => {
+  const tool = (categorize?: boolean) => makeMemoryTools({
+    append: (a) => appendMemories(file, a), forget: async () => [], memories: [], projects: [],
+    latestUserText: "记住我喜欢喝乌龙茶", ...(categorize ? { categorize } : {}),
+    classifier: fakeClassifier().classifier,
+  });
+  const owner = tool(true);
+  await owner.tools[0]!.run({ text: "喜欢喝乌龙茶", quote: "我喜欢喝乌龙茶", category: "you" });
+  expect(owner.remembered[0]).toMatchObject({ text: "喜欢喝乌龙茶", category: "You" });
+  const member = makeMemoryTools({
+    append: (a) => appendMemories(file, a), forget: async () => [], memories: [], projects: [],
+    latestUserText: "remember that I prefer tabs", subjectId: "mia", classifier: fakeClassifier().classifier,
+  });
+  await member.tools[0]!.run({ text: "Prefers tabs", quote: "I prefer tabs", category: "You" });
+  expect(member.remembered[0]).not.toHaveProperty("category");
+  const rows = await loadMemories(file);
+  expect(rows.find((r) => r.text === "喜欢喝乌龙茶")?.category).toBe("You");
+  expect(rows.find((r) => r.text === "Prefers tabs")?.category).toBeUndefined();
+  // The spec is the same object shape either way — byte-stable for prompt caching.
+  expect(JSON.stringify(tool(true).tools.map((t) => t.spec))).toBe(JSON.stringify(tool().tools.map((t) => t.spec)));
 });

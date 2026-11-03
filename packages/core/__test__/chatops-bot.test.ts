@@ -2322,6 +2322,43 @@ test("a DM remember is private: recalled in that member's DM only, never another
   expect(await h.loadMemories(h.file, null)).toEqual([]);
 });
 
+test("the owner's DM recalls private facts under every owner id (the other surface's DM too); a member's DM and channels don't (#647)", async () => {
+  const h = await household();
+  await (await import("../src/memory/store.js")).appendMemories(h.file, [
+    { id: "t", text: "Owner said in Teams: prefers rooibos", createdAt: "2026-07-03T00:00:00.000Z", subjectId: "29:owner" },
+  ]);
+  h.deps.ownerSubjectIds = async () => ["u1", "29:owner"];
+  const bot = buildTeamsBot(h.deps);
+  const recalled = async (m: Parameters<typeof h.say>): Promise<boolean> => {
+    h.prompts.length = 0;
+    await bot.onMessage(h.say(...m), fx());
+    return h.prompts.some((p) => p.includes("prefers rooibos"));
+  };
+  expect(await recalled(["u1", true])).toBe(true);
+  expect(await recalled(["mia", true])).toBe(false);
+  expect(await recalled(["u1", false])).toBe(false);
+  // Writes still store the speaker's own id.
+  await bot.onMessage(h.say("u1", true, "remember that I prefer espresso"), fx());
+  expect((await h.loadMemories(h.file)).find((m) => m.text === "Prefers espresso")?.subjectId).toBe("u1");
+});
+
+test("only the owner's DM pins the owner's You rows past top-K; channels and a member's DM rank them as usual (#650)", async () => {
+  const h = await household();
+  await (await import("../src/memory/store.js")).appendMemories(h.file, [
+    { id: "you", text: "goes by Scen", category: "You", createdAt: "2026-07-01T00:00:00.000Z" },
+    ...Array.from({ length: 30 }, (_, i) => ({ id: `f-${i}`, text: `unrelated filler ${i}`, createdAt: "2026-07-03T00:00:00.000Z" })),
+  ]);
+  const bot = buildTeamsBot(h.deps);
+  const recalled = async (m: Parameters<typeof h.say>): Promise<boolean> => {
+    h.prompts.length = 0;
+    await bot.onMessage(h.say(...m), fx());
+    return h.prompts.some((p) => p.includes("goes by Scen"));
+  };
+  expect(await recalled(["u1", true])).toBe(true);
+  expect(await recalled(["u1", false])).toBe(false);
+  expect(await recalled(["mia", true])).toBe(false);
+});
+
 test("DM auto-capture: a typed fact is saved private with a receipt; guests, channels, transcripts and autoMemory off save nothing", async () => {
   const h = await household();
   let auto = true;
@@ -2340,6 +2377,43 @@ test("DM auto-capture: a typed fact is saved private with a receipt; guests, cha
   auto = false; // read per turn — no restart
   await bot.onMessage(h.say("u1", true, "I prefer rooibos"), fx());
   expect((await h.loadMemories(h.file)).map((m) => m.text)).toEqual(["Prefers oat milk"]);
+});
+
+test("owner DM captures and remembers keep the model's category; member DMs and channels store none (#648)", async () => {
+  const h = await household();
+  h.deps.autoMemoryEnabled = async () => true;
+  // The model always offers a category; only owner-DM paths may keep it.
+  const inner = h.deps.chat;
+  h.deps.chat = async (a) => {
+    const r = await inner(a);
+    return { ...r, toolCalls: r.toolCalls.map((c) => (c.name === "remember" ? { ...c, args: { ...(c.args as object), category: "You" } } : c)) };
+  };
+  const bot = buildTeamsBot(h.deps);
+  const owner = fx();
+  // The fake's remember toggle is left armed by a capture; a plain turn resets it.
+  const reset = (): Promise<void> => bot.onMessage(h.say("max", false), fx());
+  await bot.onMessage(h.say("u1", true, "I prefer rooibos"), owner); // auto-capture
+  await reset();
+  await bot.onMessage(h.say("u1", true, "remember that I prefer espresso"), owner); // explicit
+  const member = fx();
+  await bot.onMessage(h.say("mia", true, "I prefer oat milk"), member);
+  await reset();
+  await bot.onMessage(h.say("u1", false, "remember that I prefer oat milk"), fx()); // owner, channel
+  const rows = await h.loadMemories(h.file);
+  const cat = (subjectId: string | undefined, text: string) => rows.find((m) => m.subjectId === subjectId && m.text === text)?.category ?? null;
+  expect(cat("u1", "Prefers rooibos")).toBe("You");
+  expect(cat("u1", "Prefers espresso")).toBe("You");
+  expect(cat("mia", "Prefers oat milk")).toBeNull();
+  expect(cat(undefined, "Prefers oat milk")).toBeNull();
+  expect(owner.cards).toMatchObject([{ kind: "remembered", category: "You" }, { kind: "remembered", category: "You" }]);
+  expect(member.cards[0]).not.toHaveProperty("category", "You");
+  // The owner's DM turns carry the category list; a member's never do.
+  h.prompts.length = 0;
+  await bot.onMessage(h.say("u1", true), fx());
+  expect(h.prompts.some((p) => p.includes("categories already in use") && p.includes("You"))).toBe(true);
+  h.prompts.length = 0;
+  await bot.onMessage(h.say("mia", true), fx());
+  expect(h.prompts.some((p) => p.includes("categories already in use"))).toBe(false);
 });
 
 test("DM auto-capture skips a turn that already used remember", async () => {
@@ -3205,7 +3279,7 @@ describe("desk turns (#528)", () => {
       return { pid: 1, send: (t: string) => { sent.push(t); return opts.liveAccepts ?? true; }, stop: () => c.onExit(undefined) };
     };
     const liveSessions = new LiveSessionRegistry(startFn as never, { dir, surface: "discord" });
-    const subjects: (string | null | undefined)[] = [];
+    const subjects: (string | string[] | null | undefined)[] = [];
     let chats = 0;
     const conversations = new ConversationStore(file);
     const { deps } = makeDeps({
@@ -3248,7 +3322,7 @@ describe("desk turns (#528)", () => {
     const { acks, effects } = await d.run({ conversationId: "d1", text: "  hi from the desk ", fromId: "intruder" });
     expect(acks).toEqual([{ ok: true }]);
     expect(effects.posted).toEqual(["🖥 (desk): hi from the desk", "hello there"]);
-    expect(d.subjects).toEqual(["u1"]);
+    expect(d.subjects).toEqual([["u1"]]);
     expect(d.conversations.history("d1")).toEqual([
       { role: "user", content: speakerLine("Scen", "hi from the desk") },
       { role: "assistant", content: "hello there" },

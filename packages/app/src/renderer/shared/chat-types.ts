@@ -61,7 +61,7 @@ export type ChatItem =
       receipt?: { sessionId: string; agent: LiveCli; label: string }; exiting?: string }
   // A per-turn memory capture's receipt: "🧠 Memory updated — … · Undo". Undo deletes exactly
   // `saved`'s ids; an undone row stays as a quiet record. `kept` = restored from history, no Undo.
-  | { kind: "memory"; id: string; saved: Array<{ id: string; text: string }>; state: "saved" | "undoing" | "undone" | "kept" }
+  | { kind: "memory"; id: string; saved: Array<{ id: string; text: string; category?: string }>; state: "saved" | "undoing" | "undone" | "kept" }
   // A forget_memory receipt, one per deleted fact: "🧠 Forgot — … · Undo". Undo re-appends `row`
   // verbatim (same id, every field); a failed append (e.g. that id exists again) is `error` with
   // Undo still offered. `row` never reaches history (chat-thread.ts): a restored receipt is `kept`
