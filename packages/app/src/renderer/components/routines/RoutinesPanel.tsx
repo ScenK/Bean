@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/ho
 import type { Routine, RoutineBrief, RoutineChatopsSink, RoutineWatch, Skill, Project, TodoItem, WatchWindow } from "@bean/core";
 import { nextRun, parseCron } from "@bean/core/cron";
 import { watchWindowText } from "@bean/core/watch-window";
+import { sproutTriggerAction } from "@bean/core/sprout-trigger";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
@@ -532,7 +533,9 @@ export function RoutinesPanel() {
   // A saved watch with steps and nothing queued: Run now checks the watch instead (ignoring
   // its window), and anything new drains through the queue.
   // Keyed on the saved definition: Check now runs against it, not the unsaved draft.
-  const checkInsteadOfRun = emptyTodoQueue && Boolean(savedRoutine?.watch && savedRoutine.todoDriven && savedRoutine.steps.length > 0);
+  // The shared run-vs-check rule (sproutTriggerAction); notify-only watches have no Run now button.
+  const checkInsteadOfRun = emptyTodoQueue && Boolean(savedRoutine && savedRoutine.steps.length > 0
+    && sproutTriggerAction(savedRoutine, pendingCount) === "check");
   const savedWindow = savedRoutine?.watch?.window;
   const runNowNote = slots > 1 && runningCount >= slots ? slotsText
     : !emptyTodoQueue ? undefined

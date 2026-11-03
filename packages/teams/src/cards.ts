@@ -2,7 +2,7 @@ import type {
   ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
   NoteArchiveProposalCardInput, NoteArchiveResultCardInput,
   RememberedCardInput, ReminderCardInput,
-  SkillProposalCardInput, SkillResultCardInput, TodoProposalCardInput, TodoResultCardInput,
+  SkillProposalCardInput, SkillResultCardInput, SproutRunCardInput, TodoProposalCardInput, TodoResultCardInput,
   RoutineProposalCardInput, RoutineResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput,
 } from "@bean/core";
@@ -213,6 +213,32 @@ export function todoProposalCard(input: TodoProposalCardInput): object {
         data: { beanAction: "queue-todo", proposalId: input.proposalId },
       },
       { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-todo", proposalId: input.proposalId } },
+    ],
+  };
+}
+
+/** Sprout-run confirm card (#636), same contents as the desktop one; `result` set = tapped or
+ * cancelled, shown in place with no actions. */
+export function sproutRunCard({ proposalId, plan, result }: SproutRunCardInput): object {
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", size: "medium", weight: "bolder", text: `Sprout "${plan.routine}"`, wrap: true },
+      { type: "TextBlock", text: plan.actionLine, wrap: true },
+      { type: "TextBlock", text: `Results go to ${plan.resultsTo}`, wrap: true, isSubtle: true },
+      ...(plan.paused ? [{ type: "TextBlock", text: "Paused · runs once", wrap: true, isSubtle: true }] : []),
+      ...(result !== undefined ? [{ type: "TextBlock", weight: "bolder", text: result, wrap: true }] : []),
+    ],
+    actions: result !== undefined ? [] : [
+      {
+        type: "Action.Submit",
+        title: plan.action === "check" ? "Check now" : "Run",
+        style: "positive",
+        data: { beanAction: "run-sprout", proposalId },
+      },
+      { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-sprout", proposalId } },
     ],
   };
 }

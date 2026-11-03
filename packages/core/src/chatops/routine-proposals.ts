@@ -199,9 +199,10 @@ function stripQuotes(s: string): string {
   return s.slice(start, end);
 }
 
-export function routineListText(routines: Routine[], tz: string = localTimeZone()): string {
+/** `runnable` = this bot can run a sprout on request (headless): the list says so. */
+export function routineListText(routines: Routine[], tz: string = localTimeZone(), runnable = false): string {
   if (routines.length === 0) return "No sprouts yet — describe one and I'll draft it.";
   return routines
     .map((r) => `• **${r.name}** — ${r.enabled ? "on" : "off"} — ${describeSchedule(r, tz).replace(` (${tz})`, "")}`)
-    .join("\n") + `\nTimes are ${tz}. \`enable <name>\` / \`disable <name>\` to switch one.`;
+    .join("\n") + `\nTimes are ${tz}. \`enable <name>\` / \`disable <name>\` to switch one.${runnable ? " Ask me to run one." : ""}`;
 }

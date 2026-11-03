@@ -150,6 +150,17 @@ test("todo proposal message shows the routine/text and wires queue/cancel custom
   expect(s).toContain("bean:cancel-todo:todo-1");
 });
 
+test("sprout-run card: action line, destinations, Run/Cancel; tapped = result and no buttons", () => {
+  const plan = { routine: "pr-digest", action: "run" as const, actionLine: "Runs its steps once now", resultsTo: "Discord", paused: true, queuesNew: false };
+  const s = JSON.stringify(discordCards.sproutRunCard({ proposalId: "sprout-1", plan }));
+  for (const bit of ['Sprout \\"pr-digest\\"', "Runs its steps once now", "Discord", "Runs once", "bean:run-sprout:sprout-1", "bean:cancel-sprout:sprout-1", '"label":"Run"']) {
+    expect(s).toContain(bit);
+  }
+  const done = discordCards.sproutRunCard({ proposalId: "sprout-1", plan: { ...plan, action: "check" }, result: "nothing new" }) as { components: unknown[] };
+  expect(done.components).toEqual([]);
+  expect(JSON.stringify(done)).toContain("nothing new");
+});
+
 test("todo result message has no components and states the outcome", () => {
   const card = discordCards.todoResultCard({ routine: "morning-triage", queuedBy: "scen", outcome: "queued" }) as {
     components: unknown[];

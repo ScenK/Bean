@@ -41,6 +41,10 @@
       "types": "./dist/watch-window.d.ts",
       "default": "./dist/watch-window.js"
     },
+    "./sprout-trigger": {
+      "types": "./dist/sprout-trigger.d.ts",
+      "default": "./dist/sprout-trigger.js"
+    },
     "./project-select": {
       "types": "./dist/project-select.d.ts",
       "default": "./dist/project-select.js"

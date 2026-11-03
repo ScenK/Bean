@@ -5,6 +5,7 @@ import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
 import { SkillCard } from "./SkillCard.js";
 import { TodoCard } from "./TodoCard.js";
+import { SproutRunCard } from "./SproutRunCard.js";
 import { LiveOfferCard } from "./LiveOfferCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
@@ -14,7 +15,7 @@ import {
   HANDOFF_ITEMS, agentModels, canContinueLive, handoffItems, imageLabel, isLiveAgent, mappedImageLabels, offerAgent, parseSlash, type ImageLabels,
 } from "./agent-mode.js";
 import { SECTION_TITLES, slashMenu, type SlashEntry } from "./slash-commands.js";
-import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, Routine, RouteSuggestion, Skill } from "@bean/core";
+import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 
 /** Read a picked image into an attachment + full data URL for its composer thumbnail. */
 function readImageFile(file: File): Promise<{ attachment: ImageAttachment; dataUrl: string }> {
@@ -84,7 +85,6 @@ export function ChatPanel({
   runModels,
   lastUsedModels,
   skills,
-  sprouts,
   delegateCli,
   onSlashOpen,
   onSend,
@@ -99,6 +99,8 @@ export function ChatPanel({
   onSkillDismiss,
   onTodoQueue,
   onTodoDismiss,
+  onSproutTrigger,
+  onSproutDismiss,
   onOfferStart,
   onOfferDismiss,
   onDelegateConfirm,
@@ -144,8 +146,6 @@ export function ChatPanel({
   // Full current skill list — SkillCard uses it to live-recompute "replaces existing"
   // against the user's edited name, not just the model's originally-proposed one.
   skills: Skill[];
-  // The `/` menu's sprouts; onSlashOpen refreshes both catalogs each time the menu opens.
-  sprouts: Routine[];
   /** Settings' delegate CLI preference — a terminal skill's `/` caption names the CLI main picks. */
   delegateCli: string;
   onSlashOpen: () => void;
@@ -169,6 +169,8 @@ export function ChatPanel({
   onSkillDismiss: (id: string) => void;
   onTodoQueue: (id: string) => void;
   onTodoDismiss: (id: string) => void;
+  onSproutTrigger: (id: string) => void;
+  onSproutDismiss: (id: string) => void;
   onOfferStart: (id: string) => void;
   onOfferDismiss: (id: string) => void;
   onDelegateConfirm: (id: string, editedPrompt: string, choice: { projectPath: string; model?: string; cli?: CliName }) => void;
@@ -227,7 +229,7 @@ export function ChatPanel({
   const [slashIndex, setSlashIndex] = useState(0);
   // Hidden while Bean answers, like the chip — switching mid-turn isn't allowed.
   const menu = slashText && !busy
-    ? slashMenu(slashText, mode, { agents: liveAgents, skills, sprouts, delegate: { projects, clis, models: runModels, delegateCli, lastUsedModels } })
+    ? slashMenu(slashText, mode, { agents: liveAgents, skills, delegate: { projects, clis, models: runModels, delegateCli, lastUsedModels } })
     : undefined;
   const pickable = menu ?? [];
   const activeEntry = pickable.length ? pickable[((slashIndex % pickable.length) + pickable.length) % pickable.length] : undefined;
@@ -613,6 +615,18 @@ export function ChatPanel({
                 state={it.state}
                 onQueue={() => onTodoQueue(it.id)}
                 onDismiss={() => onTodoDismiss(it.id)}
+              />
+            );
+          }
+          if (it.kind === "sprout") {
+            return (
+              <SproutRunCard
+                key={it.id}
+                plan={it.plan}
+                state={it.state}
+                result={it.result}
+                onTrigger={() => onSproutTrigger(it.id)}
+                onDismiss={() => onSproutDismiss(it.id)}
               />
             );
           }

@@ -3,8 +3,8 @@ import {
   isWatchSeeded, listTodos, loadLayeredSkills, loadMemories, loadRoutines, loadRoutineStates, makeRoutineSteps, markNewItems,
   outboxDir, fireDueReminders, remindersFile, pinnedStepSelection, pollWatch, pruneStepAttempts, recoverInterruptedTodos, resolveDelegateSelection,
   retrieveNoteTool, routinesDir, routineStateFile, availableModels, saveRoutine, saveRoutineStates, searchNotes, seedWatch,
-  skillsDir, unseenIds,
-  type CliModels, type CliName, type RoutineHostDeps,
+  skillsDir, sproutRunFacts, unseenIds, withFinishReply,
+  type CliModels, type CliName, type Routine, type RoutineHostDeps, type SproutTrigger,
 } from "@bean/core";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -50,8 +50,12 @@ export interface HeadlessRoutineDeps {
 
 /** The bot server as a routine host (#279): one scheduler + routine host in this process, so it
  * alone owns .state.json. Desktop notices (watch alarm, `notify` sinks, missed runs) become owner
- * DMs through the outbox this same process drains. Returns the SIGTERM shutdown. */
-export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<() => Promise<void>> {
+ * DMs through the outbox this same process drains. Returns the SIGTERM shutdown, plus the bot's
+ * run-a-sprout hooks (trigger + planSproutRun's facts). */
+export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<{
+  shutdown: () => Promise<void>;
+  sprouts: { trigger: SproutTrigger; facts: (r: Routine) => Promise<{ pending: number; seeded: boolean }> };
+}> {
   const { dir } = deps;
   const ownerDm = (body: string, title?: string): Promise<void> =>
     enqueueOutbox(outboxDir(dir), { transport: "discord", body, ...(title ? { title } : {}) }, randomUUID)
@@ -130,7 +134,13 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
     }).catch((err: unknown) => console.error("bean: reminder loop failed", err));
   }, 30_000);
 
-  return async () => {
+  const sprouts = {
+    trigger: withFinishReply(scheduler.trigger, (msg) =>
+      enqueueOutbox(outboxDir(dir), { transport: "discord", ...msg }, randomUUID)),
+    facts: (r: Routine) => sproutRunFacts(dbFile(dir), r),
+  };
+
+  const shutdown = async (): Promise<void> => {
     clearInterval(reminderTimer);
     scheduler.stop();
     // A state write stuck on a dead disk must not hang shutdown past the container's grace period.
@@ -140,4 +150,5 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
     killAllDelegates();
     killAllCommands();
   };
+  return { shutdown, sprouts };
 }
