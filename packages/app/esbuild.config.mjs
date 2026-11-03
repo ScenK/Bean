@@ -4,7 +4,8 @@ import { cpSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 const watchMode = process.argv.includes("--watch");
 
 const common = { bundle: true, platform: "node", format: "esm", target: "node24",
-  external: ["electron"], sourcemap: true };
+  // node-pty is native: shipped as a real dependency (asarUnpack), never bundled.
+  external: ["electron", "node-pty"], sourcemap: true };
 
 // Main runs as ESM (Electron 28+ supports an ESM main entry).
 const mainOpts = { ...common, entryPoints: ["src/main.ts"], outfile: "dist/main.js" };
@@ -52,7 +53,7 @@ const componentHtml = (name) => `<!doctype html>
     <title>${name[0].toUpperCase()}${name.slice(1)}</title>
     <link rel="stylesheet" href="theme.css" />
     <link rel="stylesheet" href="orb.css" />
-    <link rel="stylesheet" href="shared.css" />
+    <link rel="stylesheet" href="shared.css" />${name === "chat" ? '\n    <link rel="stylesheet" href="xterm.css" />' : ""}
   </head>
   <body>
     <div id="root"></div>
@@ -71,6 +72,8 @@ function copyStaticAssets() {
   for (const f of ["theme.css", "orb.css", "avatar-box.css", "shared.css", "bubble-menu.css", "drag-bloom.css", "task-bubbles.css"]) {
     cpSync(`src/renderer/${f}`, `dist/renderer/${f}`);
   }
+  // The chat terminal pane's xterm layout rules (TerminalPane.tsx); its colors come from the theme.
+  cpSync("node_modules/@xterm/xterm/css/xterm.css", "dist/renderer/xterm.css");
 }
 
 if (!watchMode) {

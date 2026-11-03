@@ -58,6 +58,8 @@ interface Props {
   unread: Set<string>;
   /** Threads with an open agent (live) session: a quiet green bar on the row's left edge. */
   live: Set<string>;
+  /** Threads whose chat holds a live terminal shell: a calm `>_` (a dev server never finishes, so no spinner). */
+  terminal: Set<string>;
   overlay: boolean;
   onNew: () => void;
   onOpen: (id: string) => void;
@@ -72,7 +74,7 @@ export function rowTime(iso: string, now: Date): string {
   return agoText(iso, now).replace("just now", "now").replace(" ago", "");
 }
 
-export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, overlay, onNew, onOpen, onDelete }: Props) {
+export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, onNew, onOpen, onDelete }: Props) {
   const now = new Date();
   const rows = mergeRows(threads, synced);
   const marker = (key: string) => (working.has(key)
@@ -126,6 +128,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                       <span class="bean-chat-sidebar-title">{title}</span>
                       {live.has(t.id) ? <span class="bean-sr-only">Agent session running</span> : null}
                       {active ? null : agents.map((a) => <AgentAvatar agent={a} size={12} />)}
+                      {terminal.has(t.id) ? <span class="bean-chat-sidebar-term" role="img" aria-label="Terminal open">&gt;_</span> : null}
                       {marker(t.id)}
                       <span class="bean-chat-sidebar-time">{rowTime(t.updatedAt, now)}</span>
                     </span>

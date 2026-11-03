@@ -21,6 +21,7 @@ import { BrowserWindow, dialog, screen, shell, type IpcMain, type WebContents } 
 import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { createLiveTasks } from "./live-tasks.js";
+import { terminalLink, type TerminalTasks } from "./terminal-tasks.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import type { UpdateCheckOutcome } from "./updater.js";
 import type { buildSyncedChatHandlers } from "./synced-chats.js";
@@ -1121,6 +1122,7 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
     cancelMount: (mountId: string) => void;
   };
   liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "resume" | "stopMount">;
+  terminalTasks: Pick<TerminalTasks, "start" | "write" | "resize" | "ack" | "stop" | "runningCommand">;
   /** Whether an IPC sender is the chat window — the only window that may drive an agent session. */
   isChatSender: (sender: WebContents) => boolean;
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
@@ -1155,6 +1157,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     deps.chatThreadHandlers.release(mountId);
     deps.delegateTasks.cancelMount(mountId);
     deps.liveTasks.stopMount(mountId);
+    void deps.terminalTasks.stop(mountId); // never rejects; the entry is held until the shell is gone
   };
   ipcMain.on(IPC.chatAttach, (e, mountId: unknown) => {
     if (deps.isChatSender(e.sender) && !mounts.attach(e.sender.id, mountId)) console.error("chat attach refused");
@@ -1274,6 +1277,39 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.handle(IPC.liveResume, (e, sessionId: unknown, mountId: unknown) => {
     const o = liveOwner(e.sender, mountId);
     return o ? deps.liveTasks.resume(o, sessionId) : { error: notLive };
+  });
+  // A chat's terminal: every call names an attached mount of the chat window; payloads are
+  // validated in terminal-tasks. Refused fire-and-forget calls are dropped.
+  ipcMain.handle(IPC.terminalStart, (e, projectPath: unknown, cols: unknown, rows: unknown, mountId: unknown) => {
+    const key = tryChatKey(e.sender, mountId);
+    return key === undefined
+      ? { error: "Terminals run from the chat window." }
+      : deps.terminalTasks.start({ senderId: e.sender.id, mountId: key }, projectPath, cols, rows);
+  });
+  ipcMain.on(IPC.terminalWrite, (e, data: unknown, mountId: unknown) => {
+    const key = tryChatKey(e.sender, mountId);
+    if (key !== undefined) deps.terminalTasks.write(key, data);
+  });
+  ipcMain.on(IPC.terminalResize, (e, cols: unknown, rows: unknown, mountId: unknown) => {
+    const key = tryChatKey(e.sender, mountId);
+    if (key !== undefined) deps.terminalTasks.resize(key, cols, rows);
+  });
+  ipcMain.on(IPC.terminalAck, (e, chars: unknown, mountId: unknown) => {
+    const key = tryChatKey(e.sender, mountId);
+    if (key !== undefined) deps.terminalTasks.ack(key, chars);
+  });
+  ipcMain.handle(IPC.terminalStop, async (e, mountId: unknown) => {
+    const key = tryChatKey(e.sender, mountId);
+    if (key !== undefined) await deps.terminalTasks.stop(key);
+  });
+  // The window-close card's fresh check: what runs in this chat's terminal right now.
+  ipcMain.handle(IPC.terminalRunning, (e, mountId: unknown) => {
+    const key = tryChatKey(e.sender, mountId);
+    return key === undefined ? undefined : deps.terminalTasks.runningCommand(key);
+  });
+  ipcMain.on(IPC.terminalOpenLink, (e, url: unknown, mountId: unknown) => {
+    const href = tryChatKey(e.sender, mountId) === undefined ? undefined : terminalLink(url);
+    if (href) shell.openExternal(href).catch((err: unknown) => console.error("terminal link failed:", err));
   });
   ipcMain.handle(IPC.availableClis, () => deps.getAvailableClis());
   ipcMain.handle(IPC.detectedClis, () => deps.getDetectedClis());

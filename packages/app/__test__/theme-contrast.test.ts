@@ -86,6 +86,13 @@ describe.each(["hearth", "graphite"])("%s theme contrast", (theme) => {
     expect(contrast(t["--bean-accent-ink"]!, t["--bean-accent"]!)).toBeGreaterThanOrEqual(inkOnFill);
   });
 
+  // The terminal pane paints every ANSI color on --bean-surface (TerminalPane.tsx).
+  const ansi = Object.keys(t).filter((n) => n.startsWith("--bean-ansi-"));
+  test("all 16 ANSI tokens are defined", () => expect(ansi).toHaveLength(16));
+  test.each(ansi)("%s reads as terminal text on --bean-surface (>= 4.5:1)", (name) => {
+    expect(contrast(t[name]!, t["--bean-surface"]!)).toBeGreaterThanOrEqual(4.5);
+  });
+
   test("toggle knob (accent ink) is distinguishable from both track colors >= 3:1", () => {
     for (const track of ["--bean-accent", "--bean-control-border"]) {
       expect(contrast(t["--bean-accent-ink"]!, t[track]!), `knob on ${track}`).toBeGreaterThanOrEqual(3);

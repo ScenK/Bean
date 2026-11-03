@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { basename, join, dirname } from "node:path";
@@ -47,6 +48,7 @@ import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
 import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } from "./delegate-tasks.js";
 import { createLiveTasks, LIVE_AGENT_NAMES } from "./live-tasks.js";
+import { createTerminalTasks, type PtyFactory } from "./terminal-tasks.js";
 import { createRoutineBuilder } from "./routine-builder.js";
 import { createTaskStatus } from "./task-status.js";
 import { createKeepAwake, keepAwakeFile, keepAwakeTooltip, loadKeepAwake, saveKeepAwake, type KeepAwakeState } from "./keep-awake.js";
@@ -294,11 +296,14 @@ app.whenReady().then(async () => {
   // before-quit hook in this file is plain synchronous fire-and-forget; this matches that.
   let interruptAllDelegates: () => void = () => {};
   let forceKillLive: () => void = () => {};
+  let killAllTerminals: () => void = () => {};
   app.on("before-quit", () => {
     interruptAllDelegates();
     // Live agent sessions run permissions-bypassed in their own process groups: SIGKILL every
     // tree now (no outbox notice — the next boot's sweepDeadRuns clears their records silently).
     forceKillLive();
+    // Chat terminals' shells and their jobs, likewise.
+    killAllTerminals();
     // Delegates run in their own process group (detached) and would outlive us — routine steps
     // and builder agents included, and so do routine command steps. SIGKILL them now; cancel()'s
     // 5s escalation can't fire after exit.
@@ -684,6 +689,23 @@ app.whenReady().then(async () => {
     stopLiveOwner = liveTasks.stopOwner;
     forceKillLive = liveTasks.forceKillAll;
 
+    // node-pty is loaded on first use, not at boot: a broken native module fails that terminal's
+    // start, never the whole app. Packaged, it resolves from app.asar (spawn-helper unpacked).
+    const requireNative = createRequire(import.meta.url);
+    const spawnPty: PtyFactory = (file, args, opts) => (requireNative("node-pty") as typeof import("node-pty")).spawn(file, args, opts);
+    // Chat windows' terminals die with their chat: release (incl. the window's `closed`, which
+    // releases every chat it held), before-quit, and the update relaunch below.
+    const terminalTasks = createTerminalTasks({
+      spawn: spawnPty,
+      projectAllowed,
+      scratchPath: scratchDir(dir),
+      send: (senderId, event) => {
+        const owner = webContents.fromId(senderId);
+        if (owner && !owner.isDestroyed()) owner.send(IPC.terminalEvent, event);
+      },
+    });
+    killAllTerminals = terminalTasks.killAll;
+
     const chatopsRoot = app.isPackaged ? process.resourcesPath : dirname(projectBeanDir());
     const chatopsEnabledPath = chatopsEnabledFile(app.getPath("userData"));
     let chatopsSave: Promise<void> = Promise.resolve();
@@ -937,6 +959,7 @@ app.whenReady().then(async () => {
       modelMemoryFile: modelMemoryFile(dir),
       delegateTasks,
       liveTasks,
+      terminalTasks,
       isChatSender: (sender) => componentWindows.get("chat")?.webContents === sender,
       delegateAvailable: () => enabledClis().length > 0,
       // A live CLI is enabled and this chat could open a session now (#478, cap #517).
@@ -982,6 +1005,7 @@ app.whenReady().then(async () => {
         relaunch: () => {
           chatopsServers?.stopAll();
           forceKillLive();
+          killAllTerminals();
           app.relaunch();
         },
       }),

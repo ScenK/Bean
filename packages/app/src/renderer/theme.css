@@ -23,6 +23,24 @@
   /* Agent mascot fills (AgentAvatar) — graphics, 3:1 on every surface; the mascot's features are
      drawn in --bean-surface, so the same ratio holds inside the body. */
   --bean-agent-claude: oklch(0.56 0.15 33);
+  /* Terminal pane ANSI palette (TerminalPane): each 4.5:1 on --bean-surface, the pane's background.
+     Light theme, so "white" is a mid gray — xterm's minimumContrastRatio lifts anything else. */
+  --bean-ansi-black: oklch(0.3 0.02 60);
+  --bean-ansi-red: oklch(0.5 0.19 27);
+  --bean-ansi-green: oklch(0.5 0.13 145);
+  --bean-ansi-yellow: oklch(0.52 0.12 75);
+  --bean-ansi-blue: oklch(0.48 0.16 255);
+  --bean-ansi-magenta: oklch(0.5 0.19 335);
+  --bean-ansi-cyan: oklch(0.5 0.09 205);
+  --bean-ansi-white: oklch(0.5 0.012 70);
+  --bean-ansi-bright-black: oklch(0.45 0.015 60);
+  --bean-ansi-bright-red: oklch(0.54 0.2 35);
+  --bean-ansi-bright-green: oklch(0.53 0.15 140);
+  --bean-ansi-bright-yellow: oklch(0.55 0.13 85);
+  --bean-ansi-bright-blue: oklch(0.53 0.17 260);
+  --bean-ansi-bright-magenta: oklch(0.54 0.2 320);
+  --bean-ansi-bright-cyan: oklch(0.53 0.1 195);
+  --bean-ansi-bright-white: oklch(0.55 0.01 70);
 }
 
 :root[data-theme="graphite"] {
@@ -46,6 +64,23 @@
   --bean-orb-check: oklch(0.76 0.12 160 / 0.55);
   --bean-orb-check-ink: oklch(0.8 0.12 160);
   --bean-agent-claude: oklch(0.74 0.13 35);
+  /* Terminal pane ANSI palette: each 4.5:1 on --bean-surface; "black" is a gray on this dark surface. */
+  --bean-ansi-black: oklch(0.62 0.02 260);
+  --bean-ansi-red: oklch(0.7 0.16 25);
+  --bean-ansi-green: oklch(0.74 0.14 150);
+  --bean-ansi-yellow: oklch(0.8 0.13 85);
+  --bean-ansi-blue: oklch(0.72 0.13 250);
+  --bean-ansi-magenta: oklch(0.72 0.15 330);
+  --bean-ansi-cyan: oklch(0.76 0.1 205);
+  --bean-ansi-white: oklch(0.86 0.008 260);
+  --bean-ansi-bright-black: oklch(0.68 0.02 260);
+  --bean-ansi-bright-red: oklch(0.78 0.15 25);
+  --bean-ansi-bright-green: oklch(0.82 0.15 150);
+  --bean-ansi-bright-yellow: oklch(0.88 0.14 95);
+  --bean-ansi-bright-blue: oklch(0.8 0.12 250);
+  --bean-ansi-bright-magenta: oklch(0.8 0.14 330);
+  --bean-ansi-bright-cyan: oklch(0.84 0.1 205);
+  --bean-ansi-bright-white: oklch(0.97 0.005 260);
 }
 
 html, body {

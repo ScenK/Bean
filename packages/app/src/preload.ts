@@ -7,6 +7,7 @@ import type {
 } from "@bean/core";
 import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
 import type { LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult } from "./live-tasks.js";
+import type { TerminalEvent, TerminalStartResult } from "./terminal-tasks.js";
 import type { TaskJob } from "./task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "./ipc.js";
@@ -26,6 +27,16 @@ contextBridge.exposeInMainWorld("bean", {
   liveResume: (sessionId: string, mountId: string): Promise<LiveResumeResult> => ipcRenderer.invoke(IPC.liveResume, sessionId, mountId),
   onLiveEvent: (cb: (e: LiveEvent) => void) =>
     ipcRenderer.on(IPC.liveEvent, (_e, ev: LiveEvent) => cb(ev)),
+  terminalStart: (projectPath: string, cols: number, rows: number, mountId: string): Promise<TerminalStartResult> =>
+    ipcRenderer.invoke(IPC.terminalStart, projectPath, cols, rows, mountId),
+  terminalWrite: (data: string, mountId: string): void => ipcRenderer.send(IPC.terminalWrite, data, mountId),
+  terminalResize: (cols: number, rows: number, mountId: string): void => ipcRenderer.send(IPC.terminalResize, cols, rows, mountId),
+  terminalAck: (chars: number, mountId: string): void => ipcRenderer.send(IPC.terminalAck, chars, mountId),
+  terminalStop: (mountId: string): Promise<void> => ipcRenderer.invoke(IPC.terminalStop, mountId),
+  terminalRunning: (mountId: string): Promise<string | undefined> => ipcRenderer.invoke(IPC.terminalRunning, mountId),
+  terminalOpenLink: (url: string, mountId: string): void => ipcRenderer.send(IPC.terminalOpenLink, url, mountId),
+  onTerminalEvent: (cb: (e: TerminalEvent) => void) =>
+    ipcRenderer.on(IPC.terminalEvent, (_e, ev: TerminalEvent) => cb(ev)),
   availableClis: (): Promise<CliName[]> => ipcRenderer.invoke(IPC.availableClis),
   detectedClis: (): Promise<CliName[]> => ipcRenderer.invoke(IPC.detectedClis),
   availableModels: (): Promise<AvailableModel[]> => ipcRenderer.invoke(IPC.availableModels),

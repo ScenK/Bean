@@ -8,6 +8,7 @@ import { TodoCard } from "./TodoCard.js";
 import { SproutRunCard } from "./SproutRunCard.js";
 import { LiveOfferCard } from "./LiveOfferCard.js";
 import { DelegateCard } from "./DelegateCard.js";
+import { TerminalPane } from "./TerminalPane.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { MAX_IMAGES_PER_MESSAGE, imageFileGuard, insertDroppedPath, readImageFile, itemAgent, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
@@ -63,6 +64,10 @@ function ImagePreview({ image, onClose }: { image: { dataUrl: string; path?: str
 
 export function ChatPanel({
   hidden,
+  mountId,
+  terminalOpen,
+  onToggleTerminal,
+  onShell,
   items,
   busy,
   model,
@@ -116,6 +121,11 @@ export function ChatPanel({
 }: {
   /** A chat kept mounted in the background while another one is shown. */
   hidden?: boolean;
+  /** This chat's mount: its terminal pane's shell is keyed by it. */
+  mountId: string;
+  terminalOpen: boolean;
+  onToggleTerminal: () => void;
+  onShell: (alive: boolean) => void;
   items: ChatItem[];
   busy: boolean;
   model: string;
@@ -367,6 +377,12 @@ export function ChatPanel({
 
   // A chat mounts with the composer focused — the window's first chat and every switched-to one.
   useEffect(() => { if (!hidden) inputRef.current?.focus(); }, [hidden]);
+  // Folding the terminal hands focus back to the composer (the pane focuses its shell on open).
+  const termMounted = useRef(false);
+  useEffect(() => {
+    if (!termMounted.current) { termMounted.current = true; return; }
+    if (!terminalOpen && !hidden) inputRef.current?.focus();
+  }, [terminalOpen]);
 
   const submit = (): void => {
     const el = inputRef.current;
@@ -454,7 +470,7 @@ export function ChatPanel({
   const speaker = (it: ChatItem) => <span class="bean-sr-only">{AGENT_NAMES[itemAgent(it) ?? "bean"]}: </span>;
 
   return (
-    <div class="bean-chat" hidden={hidden}>
+    <div class={`bean-chat${terminalOpen ? " bean-chat--term" : ""}`} hidden={hidden}>
       {/* Pinned below the drag band, not inside it — no drag region here. */}
       <div class="bean-chat-meta">
         <AgentAvatar agent="bean" size={18} />
@@ -484,6 +500,16 @@ export function ChatPanel({
         >
           <span class="bean-switch" aria-hidden="true" />
           Off the record
+        </button>
+        <button
+          type="button"
+          class={`bean-chat-term-toggle${terminalOpen ? " bean-chat-term-toggle--on" : ""}`}
+          aria-expanded={terminalOpen}
+          aria-label="Terminal"
+          title="Terminal (⌃`)"
+          onClick={onToggleTerminal}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="m7 10 3 2-3 2" /><path d="M13 15h4" /></svg>
         </button>
       </div>
       <div class="bean-chat-scroll" ref={scrollRef} onScroll={onScroll}>
@@ -845,6 +871,7 @@ export function ChatPanel({
           </div>
         </div>
       </div>
+      <TerminalPane mountId={mountId} open={terminalOpen} projectPath={agentProject} projects={projects} onShell={onShell} />
       {preview ? <ImagePreview image={preview} onClose={() => setPreview(null)} /> : null}
     </div>
   );
