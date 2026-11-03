@@ -20,6 +20,7 @@ import {
   makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, deleteMemories, extractMemories,
   maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, type DreamDigest,
   loadReminders, updateReminders, fireDueReminders, enqueueOutbox, type Reminder, extractPageText,
+  answerRoutineTrigger, sproutRunFacts, withFinishReply, type RoutineTrigger, type RoutineTriggerAnswer,
   loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
   routinesDir, routineStateFile, outboxDir, claimOutbox, ackOutbox, runDelegate, killAllDelegates, killAllCommands,
@@ -693,8 +694,12 @@ app.whenReady().then(async () => {
       const chat = componentWindows.get("chat");
       if (chat && !chat.isDestroyed()) chat.webContents.send(IPC.syncedChatEvent, e);
     };
+    // A spawned bot's sprout-run tap (#637), answered once the scheduler below exists; before
+    // that (the bots autostart first) the bot is told the app isn't reachable.
+    let answerSproutTrigger: ((bot: ChatopsBot, req: RoutineTrigger) => Promise<RoutineTriggerAnswer>) | undefined;
     chatopsServers = createChatopsServers({
       repoRoot: chatopsRoot,
+      onRoutineTrigger: (bot, req) => answerSproutTrigger?.(bot, req) ?? Promise.resolve({ status: "refused", reason: "unavailable" }),
       resolvedPath,
       onActivity: (bot, e) => {
         applyChatopsActivity(taskStatus, bot, e);
@@ -800,6 +805,12 @@ app.whenReady().then(async () => {
           void notificationTransport.send({ title: `Sprout: ${routine.name}`, body: `Can't check for new items — ${error}`, meta: { open: "routines" } });
         }
       },
+    });
+    // The app hosts the scheduler, so it also posts the finish reply, to the asking conversation.
+    answerSproutTrigger = (bot, req) => answerRoutineTrigger(req, {
+      load: () => loadRoutines(routinesPath),
+      facts: (r) => sproutRunFacts(dbFile(dir), r),
+      trigger: withFinishReply(routineScheduler.trigger, (msg) => enqueueOutbox(outboxDir(dir), { transport: bot, ...msg }, randomUUID)),
     });
     const tools = detectTools(resolvedPath);
     const routineBuilder = createRoutineBuilder({
@@ -987,10 +998,7 @@ app.whenReady().then(async () => {
       getPendingChatPrompt: chatPromptStore.get,
       getPendingInterruptedRunNotices: interruptedRunStore.get,
       loadRoutines: () => loadRoutines(routinesPath),
-      sproutFacts: async (r) => ({
-        pending: (await listTodos(dbFile(dir), r.name)).filter((t) => t.status === "pending").length,
-        seeded: r.watch ? isWatchSeeded(dbFile(dir), r.name, watchSourceKey(r.watch)) : true,
-      }),
+      sproutFacts: (r) => sproutRunFacts(dbFile(dir), r),
       skillProposalHandlers: buildSkillProposalHandlers({
         loadSkills: loadLayeredSkills, projectSkillsDir: skillsDir(projectDir), skillsDir: skillsDir(dir), dbFile: dbFile(dir),
       }),

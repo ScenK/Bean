@@ -1,5 +1,6 @@
 import type { CliName } from "../launcher.js";
 import type { AvailableModel } from "../models.js";
+import type { SproutRunPlan } from "../sprout-trigger.js";
 
 export interface ProposalCardInput {
   proposalId: string;
@@ -87,6 +88,14 @@ export interface TodoProposalCardInput {
   proposalId: string;
   routine: string;
   text: string;
+}
+
+/** "Run the X sprout" (#636): the desktop card's contents. `result` set = tapped or cancelled —
+ * the card is updated in place with it and shows no buttons. */
+export interface SproutRunCardInput {
+  proposalId: string;
+  plan: SproutRunPlan;
+  result?: string;
 }
 
 export interface TodoResultCardInput {
@@ -209,6 +218,7 @@ export interface CardBuilders {
   noteArchiveResultCard: (input: NoteArchiveResultCardInput) => object;
   todoProposalCard: (input: TodoProposalCardInput) => object;
   todoResultCard: (input: TodoResultCardInput) => object;
+  sproutRunCard: (input: SproutRunCardInput) => object;
   rememberedCard: (input: RememberedCardInput) => object;
   /** Optional: only surfaces that wire `reminders` need it. */
   reminderCard?: (input: ReminderCardInput) => object;

@@ -1,7 +1,8 @@
 // packages/core/src/sprout-trigger.ts
 // Node-free (exported as `@bean/core/sprout-trigger`) so the Sprouts panel, chat cards and the
 // scheduler all pick run vs check by the same rule.
-import type { Routine } from "./routine-store.js";
+import type { Routine, RunStatus } from "./routine-store.js";
+import type { TriggerResult } from "./routine-scheduler.js";
 
 /** What triggering a saved sprout means right now. A watch drains through its queue, so with
  * nothing queued (or no steps at all) the useful action is checking its source; everything
@@ -62,4 +63,31 @@ export function sproutCheckText(result: { newItems: number; error?: string }, qu
   if (result.error) return result.error;
   if (result.newItems === 0) return "nothing new";
   return `${result.newItems} new — ${queuesNew ? "queued" : "sent"}`;
+}
+
+/** The one fixed line a chat posts when a run it started ends — never step output. */
+export function sproutFinishText(name: string, status: RunStatus): string {
+  if (status === "ok") return `${name} finished ✓`;
+  return status === "needs-attention" ? `${name} needs attention ⚠` : `${name} failed ✗ · see Dashboard`;
+}
+
+/** Run or check a sprout for a chat, finish reply going to `origin` (`channel` absent = the
+ * owner's DM). What a bot's `routines.sprouts.trigger` is. */
+export type SproutTrigger = (name: string, action: "run" | "check", origin: { channel?: string }) => Promise<TriggerResult>;
+
+/** Wraps the scheduler's trigger so a run started from chat posts one fixed line where it was
+ * asked once it ends (#636): a channel post, not an interaction follow-up (those expire). Used by
+ * whichever process hosts the scheduler — headless Discord, or the app for a bot it spawned. */
+export function withFinishReply(
+  trigger: (name: string, action: "run" | "check") => Promise<TriggerResult>,
+  enqueue: (msg: { channel?: string; body: string }) => Promise<unknown>,
+): SproutTrigger {
+  return async (name, action, origin) => {
+    const t = await trigger(name, action);
+    if (t.status === "started") {
+      void t.done.then((o) => enqueue({ ...origin, body: sproutFinishText(name, o.status) }))
+        .catch((err: unknown) => console.error(`bean: finish reply for "${name}" failed`, err));
+    }
+    return t;
+  };
 }

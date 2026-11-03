@@ -69,3 +69,8 @@ validates the name. The host freezes the card with `planSproutRun(routine, pendi
 `sprout-trigger.ts`): paused watch → "off", never-reviewed watch → "review", empty todo queue →
 "empty" (each surface words its own text reply, no card). Desktop: `buildChatHandler` sets
 `ConverseResult.sproutRun`; the chat card taps the existing `routinesRunNow`/`routinesCheckNow`.
+Chatops (#636): headless Discord's `startHeadlessRoutines` returns `sprouts` (`trigger` wrapped by
+`withFinishReply`, plus `facts` for `planSproutRun`); bot.ts posts the card (`sproutRunCard`, same
+contents as desktop) and words blocked sprouts itself ("say `enable X` first"). App-spawned bots
+(#637) trigger over IPC instead (`chatops/sprout-bridge.ts`); `withFinishReply` and
+`sproutRunFacts` live in core so both scheduler hosts share them.

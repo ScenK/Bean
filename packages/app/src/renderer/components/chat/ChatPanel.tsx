@@ -15,7 +15,7 @@ import {
   HANDOFF_ITEMS, agentModels, canContinueLive, handoffItems, imageLabel, isLiveAgent, mappedImageLabels, offerAgent, parseSlash, type ImageLabels,
 } from "./agent-mode.js";
 import { SECTION_TITLES, slashMenu, type SlashEntry } from "./slash-commands.js";
-import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, Routine, RouteSuggestion, Skill } from "@bean/core";
+import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 
 /** Read a picked image into an attachment + full data URL for its composer thumbnail. */
 function readImageFile(file: File): Promise<{ attachment: ImageAttachment; dataUrl: string }> {
@@ -85,7 +85,6 @@ export function ChatPanel({
   runModels,
   lastUsedModels,
   skills,
-  sprouts,
   delegateCli,
   onSlashOpen,
   onSend,
@@ -147,8 +146,6 @@ export function ChatPanel({
   // Full current skill list — SkillCard uses it to live-recompute "replaces existing"
   // against the user's edited name, not just the model's originally-proposed one.
   skills: Skill[];
-  // The `/` menu's sprouts; onSlashOpen refreshes both catalogs each time the menu opens.
-  sprouts: Routine[];
   /** Settings' delegate CLI preference — a terminal skill's `/` caption names the CLI main picks. */
   delegateCli: string;
   onSlashOpen: () => void;
@@ -232,7 +229,7 @@ export function ChatPanel({
   const [slashIndex, setSlashIndex] = useState(0);
   // Hidden while Bean answers, like the chip — switching mid-turn isn't allowed.
   const menu = slashText && !busy
-    ? slashMenu(slashText, mode, { agents: liveAgents, skills, sprouts, delegate: { projects, clis, models: runModels, delegateCli, lastUsedModels } })
+    ? slashMenu(slashText, mode, { agents: liveAgents, skills, delegate: { projects, clis, models: runModels, delegateCli, lastUsedModels } })
     : undefined;
   const pickable = menu ?? [];
   const activeEntry = pickable.length ? pickable[((slashIndex % pickable.length) + pickable.length) % pickable.length] : undefined;

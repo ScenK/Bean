@@ -20,6 +20,8 @@ const NEEDS = {
   chatty: "admin",
   // Turning channel memory capture on/off (#463); `memory status` is open to anyone.
   channelMemory: "admin",
+  // Running or checking a saved sprout now (propose_sprout_run and its card, #636).
+  runRoutines: "owner",
   systemControl: "owner", liveSession: "owner", skillWrites: "owner", routineWrites: "owner", manageAdmins: "owner",
 } as const satisfies Record<string, Role>;
 export type Capability = keyof typeof NEEDS;
@@ -159,6 +161,7 @@ export function cardActionNeeds(beanAction: string | undefined): Role {
   if (a.startsWith("live-") || a.endsWith("-live") || a === "save-skill" || a === "cancel-skill") return "owner";
   // Routine drafts are further bound to their proposer in bot.ts (handleRoutineAction).
   if (a.endsWith("-routine")) return needs("routineDrafts");
+  if (a === "run-sprout" || a === "cancel-sprout") return needs("runRoutines");
   if (["save-note", "cancel-note", "archive-note", "cancel-archive-note", "restore-note"].includes(a)) return needs("notes");
   if (a === "queue-todo" || a === "cancel-todo") return needs("todos");
   if (a === "forget-memory" || a === "share-memory") return needs("memory");

@@ -6,7 +6,8 @@ import {
   buildTeamsBot, exitWhenOrphaned, ConversationStore, ConversationCatalog, type ConversationPlace, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
-  makeRoles, makeChatter, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, parseChatterCommand, RoutineProposalStore, type Role,
+  makeRoles, makeChatter, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, parseChatterCommand, RoutineProposalStore, SproutRunProposalStore, type Role,
+  parentSproutTrigger, processParentPort, sproutRunFacts,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, MessageReferenceType, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -37,6 +38,10 @@ if (tzError) {
   process.exit(1);
 }
 let stopRoutines: (() => Promise<void>) | undefined;
+// Set by startHeadlessRoutines below (before login, so before any turn can use it).
+let headlessSprouts: Awaited<ReturnType<typeof startHeadlessRoutines>>["sprouts"] | undefined;
+// Spawned by the desktop app: the app owns the scheduler, so a sprout-run tap asks it over IPC (#637).
+const appSprouts = !headless && processParentPort.connected() ? parentSproutTrigger() : undefined;
 
 // Re-scanned per call so a CLI installed after the bot started is picked up.
 const clis = (): CliName[] => detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
@@ -140,6 +145,19 @@ const bot = buildTeamsBot({
       id, name: await client.users.fetch(id).then((u) => u.displayName, () => id),
     }))),
     proposals: new RoutineProposalStore(),
+    // Headless: this process owns the scheduler. App-spawned: the app does. Standalone without
+    // headless routines: nothing to trigger.
+    ...(headless ? {
+      sprouts: {
+        trigger: (name, action, origin) => headlessSprouts
+          ? headlessSprouts.trigger(name, action, origin)
+          : Promise.resolve({ status: "refused" as const, reason: "sprouts are still starting — try again in a moment" }),
+        facts: (r) => headlessSprouts ? headlessSprouts.facts(r) : Promise.resolve({ pending: 0, seeded: false }),
+        proposals: new SproutRunProposalStore(),
+      },
+    } : appSprouts ? {
+      sprouts: { trigger: appSprouts, facts: (r) => sproutRunFacts(dbFile(dir), r), proposals: new SproutRunProposalStore() },
+    } : {}),
   },
 });
 
@@ -825,10 +843,12 @@ setInterval(() => {
 
 // Before login: boot cleanup of stale run reservations must finish before a chat run can reserve.
 if (headless) {
-  stopRoutines = await startHeadlessRoutines({
+  const started = await startHeadlessRoutines({
     dir, builtinDir, converse: converseChat, model: beanConfig.model, clis, cliModels,
     delegateCli: beanConfig.delegateCli, routineDigestContext: beanConfig.routineDigestContext, ownerId: discordConfig.ownerId,
   });
+  stopRoutines = started.shutdown;
+  headlessSprouts = started.sprouts;
 }
 
 // Die with the desktop app that spawned us — see exitWhenOrphaned's doc comment. Discord
