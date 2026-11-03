@@ -128,6 +128,9 @@ export interface LiveTasksDeps {
   projectAllowed: (path: string) => Promise<boolean>;
   /** The newest desktop `delegate_runs` row for a session id (findDelegateRun, surface "desktop"). */
   findResumable?: (sessionId: string) => ResumableRun;
+  /** Whether clis.json still offers `model` for `cli` — a resumed run's recorded model is
+   * reapplied only then, else the CLI's default. Absent = never reapplied. */
+  modelOffered?: (cli: LiveCli, model: string) => boolean;
   /** Where a "" (no project) request runs — the renderer doesn't know Bean's scratch path. */
   scratchPath?: string;
   /** Push to the owning window (and the pet's status). */
@@ -150,6 +153,8 @@ interface Session {
   stopping: boolean;
   /** The delegate session this one continues (Continue live) — claimed while it lives. */
   resumeId?: string;
+  /** Literal --model: allowlisted (fresh) or the resumed run's recorded one, still offered; unset = the CLI's default. */
+  model?: string;
   /** The CLI's session id once reported — claimed like resumeId, so Continue live can't put a
    * second writer on it while this child is still stopping. */
   cliId?: string;
@@ -157,8 +162,6 @@ interface Session {
   ask?: string;
   /** claude's child pid the run record was moved to (see trackPid). */
   pid?: number;
-  /** The allowlisted `--model` (fresh sessions only); unset = the CLI's default. */
-  model?: string;
 }
 
 // Distributive, so each event variant keeps its own fields.
@@ -296,7 +299,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
     },
 
     /** Continue live from a finished desktop delegate card. Only the session id comes from the
-     * renderer: the CLI and project are the recorded run's (the CLI is frozen — no substitute, and a
+     * renderer: the CLI, project and model (while still offered) are the recorded run's (the CLI is frozen — no substitute, and a
      * rejected id ends with RESUME_REJECTED, never a fresh session). No handoff and no opening turn:
      * the agent already has its context, and the user's first send opens it. Claimed while it lives,
      * so a double click can't put two writers on it. */
@@ -309,7 +312,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
         found = { refusal: "I have no record of that run." };
       }
       if ("refusal" in found) return { error: found.refusal };
-      const { cli, projectPath } = found.run;
+      const { cli, projectPath, model } = found.run;
       if (!isLiveCli(cli)) return { error: "That run can't continue live." };
       if (!deps.enabledClis().includes(cli)) return { error: `${LIVE_AGENT_NAMES[cli]} isn't installed or is turned off in Settings.` };
       const id = found.run.sessionId;
@@ -318,7 +321,10 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       const refused = refusal(owner);
       if (refused) return { error: refused };
       const sessionId = deps.newId();
-      const s: Session = { ...owner, agent: cli, seq: 0, stopping: false, resumeId: id };
+      const s: Session = {
+        ...owner, agent: cli, seq: 0, stopping: false, resumeId: id,
+        ...(model && deps.modelOffered?.(cli, model) ? { model } : {}),
+      };
       sessions.set(sessionId, s);
       const err = launch(sessionId, s, projectPath, "", 0);
       return err ? { error: err } : { sessionId, agent: cli, projectPath };

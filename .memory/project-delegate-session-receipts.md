@@ -30,6 +30,10 @@ Desktop **live** sessions (#503) record too: the engines' `onSessionId` (once pe
 proving event and a matching resume id) → `live-tasks.ts` appends one desktop row for a fresh session
 (`instruction` = the user's ask, never the handoff; a resume adds none) and emits a `session` receipt.
 Chatops live sessions (#527) record the same way: `LiveSessionRegistry`'s `surface` option → one `discord`/`teams` row per fresh session (`instruction` = the card's ask, never the composed skill prompt; none on a resume or without `surface`). Not recorded: the routine builder's `startAgent` (internal tooling). `findDelegateRun` reads the table back for Continue live — chatops by default (desktop rows refused), the desktop card with `surface: "desktop"` (desktop rows only); see project-live-sessions.md.
+Model (#613): the desktop delegate row also records the run's literal `--model` (`model`, NULL = the
+CLI default; chatops/routine/live rows don't record one yet). The desktop card's Continue live passes it to
+the resumed live session only while clis.json still offers it for that CLI (`modelOffered`), else the CLI default.
+
 Recovery after a restart (no list UI by design):
 
 ```sh
