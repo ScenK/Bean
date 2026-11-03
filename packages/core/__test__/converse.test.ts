@@ -332,6 +332,23 @@ test("recalled memories ride a user-role message after history, labeled global v
   expect(captured[captured.length - 1]).toEqual({ role: "user", content: "hi" });
 });
 
+test("pinOwnerMemories recalls the owner's You rows past top-K; the system message stays byte-identical", async () => {
+  const runs: ConvoMsg[][] = [];
+  const deps: ConverseDeps = { model: "m", chat: async ({ messages }) => { runs.push(messages); return { content: "ok", toolCalls: [] }; } };
+  const memories = [
+    { id: "you-1", text: "goes by Scen", category: "You", createdAt: "2026-07-01T00:00:00.000Z" },
+    ...Array.from({ length: 40 }, (_, i) => ({ id: `f-${i}`, text: `unrelated filler ${i}`, createdAt: "2026-07-03T00:00:00.000Z" })),
+  ];
+  await conv({ latestUserText: "what's the weather", memories, deps, pinOwnerMemories: true });
+  await conv({ latestUserText: "what's the weather", memories, deps });
+  await conv({ latestUserText: "what's the weather", memories, deps, speaker: "Alex" }); // a channel: no pin
+  const recall = (msgs: ConvoMsg[]) => String(msgs[msgs.length - 2]?.content);
+  expect(recall(runs[0]!)).toContain("[you-1] (about the user) goes by Scen");
+  expect(recall(runs[1]!)).not.toContain("goes by Scen");
+  expect(recall(runs[2]!)).not.toContain("goes by Scen");
+  expect(runs[0]![0]).toEqual(runs[1]![0]);
+});
+
 test("no memory block is added when memories is empty", async () => {
   let captured: ConvoMsg[] = [];
   const deps: ConverseDeps = {
