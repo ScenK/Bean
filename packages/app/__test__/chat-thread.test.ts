@@ -47,6 +47,18 @@ describe("normalizeForSave", () => {
     expect(find<"status">("old-14").exiting).toBeUndefined();
   });
 
+  it("restores a sprout card inert: pending expires, a running one says it started", () => {
+    const plan = { routine: "r", action: "run" as const, actionLine: "Runs its steps once now", resultsTo: "a note", paused: false, queuesNew: false };
+    const [pending, running, done] = restoreItems(JSON.parse(JSON.stringify([
+      { kind: "sprout", id: "s1", plan, state: "pending" },
+      { kind: "sprout", id: "s2", plan, state: "running" },
+      { kind: "sprout", id: "s3", plan, state: "done", result: "Finished" },
+    ]))) as Extract<ChatItem, { kind: "sprout" }>[];
+    expect(pending!.state).toBe("expired");
+    expect(running).toMatchObject({ state: "done", result: "Started — see the Dashboard for how it went" });
+    expect(done).toMatchObject({ state: "done", result: "Finished" });
+  });
+
   it("keeps a forget receipt's text only: kept without Undo (restored stays restored), no row snapshot", () => {
     expect(find("old-15")).toEqual({ kind: "forgot", id: "old-15", text: "lives in Seattle", state: "kept" });
     expect(find("old-16")).toEqual({ kind: "forgot", id: "old-16", text: "uses zed", state: "restored" });

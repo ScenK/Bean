@@ -62,3 +62,15 @@ answers `started`/`refused`/`checked` as soon as `fill()` has taken its slots; `
 admitted run into one `TriggerOutcome` (failed > needs-attention > ok; `runs: 0` = workers found
 the queue empty). Unlike `runNow`, it refuses an empty todo queue ("queue's empty now").
 `runNow`/`checkNow` keep their old contracts (runNow still resolves at the run's end).
+
+Ask Bean to run a sprout (#634): converse's `propose_sprout_run` (offered when the caller passes
+`sproutCatalog` — names + bounded first-line descriptions only, so the spec stays byte-stable) only
+validates the name. The host freezes the card with `planSproutRun(routine, pending, seeded)` (core
+`sprout-trigger.ts`): paused watch → "off", never-reviewed watch → "review", empty todo queue →
+"empty" (each surface words its own text reply, no card). Desktop: `buildChatHandler` sets
+`ConverseResult.sproutRun`; the chat card taps the existing `routinesRunNow`/`routinesCheckNow`.
+Chatops (#636): headless Discord's `startHeadlessRoutines` returns `sprouts` (`trigger` wrapped by
+`withFinishReply`, plus `facts` for `planSproutRun`); bot.ts posts the card (`sproutRunCard`, same
+contents as desktop) and words blocked sprouts itself ("say `enable X` first"). App-spawned bots
+(#637) trigger over IPC instead (`chatops/sprout-bridge.ts`); `withFinishReply` and
+`sproutRunFacts` live in core so both scheduler hosts share them.

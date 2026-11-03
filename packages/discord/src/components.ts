@@ -1,7 +1,7 @@
 import type {
   CardBuilders, FinishedCardInput, RememberedCardInput, ReminderCardInput,
   NoteProposalCardInput, NoteResultCardInput, NoteArchiveProposalCardInput, NoteArchiveResultCardInput, ProposalCardInput, RunningCardInput,
-  SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, TodoProposalCardInput, TodoResultCardInput,
+  SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, SproutRunCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
 import { BROWSER_SKILL_NOTE, rememberedScopeLine } from "@bean/core";
@@ -185,6 +185,22 @@ function todoProposalCard(input: TodoProposalCardInput): object {
 function todoResultCard(input: TodoResultCardInput): object {
   const title = input.outcome === "queued" ? `Queued by ${input.queuedBy}` : "Cancelled";
   return { embeds: [{ title, description: input.routine }], components: [] };
+}
+
+// Same contents as the desktop card; once tapped (`result` set) it shows the outcome and no buttons.
+function sproutRunCard({ proposalId, plan, result }: SproutRunCardInput): object {
+  const fields = [
+    { name: "Results go to", value: clampField(plan.resultsTo) },
+    ...(plan.paused ? [{ name: "Paused", value: "Runs once — stays paused" }] : []),
+    ...(result !== undefined ? [{ name: "Result", value: clampField(result) }] : []),
+  ];
+  return {
+    embeds: [{ title: `Sprout "${plan.routine}"`.slice(0, 256), description: plan.actionLine.slice(0, 4096), fields }],
+    components: result !== undefined ? [] : [row([
+      { type: BUTTON, style: 3, label: plan.action === "check" ? "Check now" : "Run", custom_id: `bean:run-sprout:${proposalId}` },
+      { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-sprout:${proposalId}` },
+    ])],
+  };
 }
 
 function skillProposalCard(input: SkillProposalCardInput): object {
@@ -402,6 +418,6 @@ function liveSessionResultCard(input: LiveSessionResultCardInput): object {
 export const discordCards: CardBuilders = {
   proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard,
   rememberedCard, reminderCard,
-  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
+  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 };

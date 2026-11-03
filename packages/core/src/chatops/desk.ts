@@ -2,7 +2,8 @@
 // channel (see .memory/project-teams-bot.md → "Desk ingress"). Separate from
 // parseChatopsActivity: these carry a request/ack pair and a history-changed ping.
 // Privacy: text only ever goes app → bot. Nothing bot → app carries message text — an ack is a
-// request id plus ok or a fixed refusal code, and `saved` is a conversation id.
+// request id plus ok or a fixed refusal code, `saved` is a conversation id, and a sprout trigger
+// (sprout-bridge.ts) is a sprout name, run/check and the asking conversation's id.
 
 /** Why a bot refused a desk turn. A fixed set: the app maps each to its own UI line. */
 export const DESK_REFUSALS = [

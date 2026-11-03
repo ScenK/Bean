@@ -2,14 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import { availableModels, resolveDelegateSelection, type CliModels, type CliName, type Project, type Routine, type Skill } from "@bean/core";
+import { availableModels, resolveDelegateSelection, type CliModels, type CliName, type Project, type Skill } from "@bean/core";
 import {
   resolveSlash, slashEntries, slashMenu, slugify, terminalDestination, type SlashCatalogs, type SlashDelegate,
 } from "../src/renderer/components/chat/slash-commands.js";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
 
 const skill = (name: string, extra: Partial<Skill> = {}): Skill => ({ name, description: `${name} desc`, body: `# ${name}\nDo it.`, target: "chat", ...extra });
-const sprout = (name: string, extra: Partial<Routine> = {}): Routine => ({ name, enabled: true, cron: "0 9 * * *", steps: [{ kind: "chat", prompt: "x" }], sinks: { note: true }, ...extra } as Routine);
 
 const catalogs: SlashCatalogs = {
   agents: ["claude"],
@@ -19,13 +18,8 @@ const catalogs: SlashCatalogs = {
     skill("secret", { hidden: true }),
     skill("off", { enabled: false }),
     skill("quiet", { quickLaunch: false }),
-    skill("Nightly"), // shadows the sprout below on a bare /nightly
+    skill("Nightly"),
     skill("claude"), // shadowed by the agent alias
-  ],
-  sprouts: [
-    sprout("nightly", { sinks: { chatops: [{ transport: "discord" }], notify: true } }),
-    sprout("paused-one", { enabled: false }),
-    sprout("pings", { cron: undefined, watch: { kind: "feed", url: "https://x" }, steps: [] } as Partial<Routine>),
   ],
 };
 
@@ -36,12 +30,12 @@ describe("slash commands", () => {
     expect(resolveSlash("/Review-Code", "bean", catalogs)).toEqual({ kind: "skill", name: "Review Code", rest: "" });
   });
 
-  it("resolves agents > skills > sprouts on a bare name; qualifiers pick a kind", () => {
+  it("resolves agents > skills on a bare name; /skill: picks a skill; sprouts aren't commands", () => {
     expect(resolveSlash("/claude go", "bean", catalogs)).toEqual({ kind: "agent", name: "claude", rest: "go" });
     expect(resolveSlash("/skill:claude go", "bean", catalogs)).toEqual({ kind: "skill", name: "claude", rest: "go" });
     expect(resolveSlash("/nightly", "bean", catalogs)).toEqual({ kind: "skill", name: "Nightly", rest: "" });
-    expect(resolveSlash("/sprout:nightly", "bean", catalogs)).toEqual({ kind: "sprout", name: "nightly", rest: "" });
-    expect(resolveSlash("/paused-one now", "bean", catalogs)).toEqual({ kind: "sprout", name: "paused-one", rest: "now" });
+    expect(resolveSlash("/sprout:nightly", "bean", catalogs)).toBeUndefined(); // plain text to Bean
+    expect(resolveSlash("/sprout:pings", "bean", catalogs)).toBeUndefined();
   });
 
   it("menu commands are qualified where a higher kind shadows the slug", () => {
@@ -49,7 +43,7 @@ describe("slash commands", () => {
     expect(cmd("Review Code")).toBe("/review-code");
     expect(cmd("claude")).toBe("/claude");
     expect(slashEntries("bean", catalogs).filter((e) => e.kind === "skill" && e.name === "claude")[0]?.command).toBe("/skill:claude");
-    expect(cmd("nightly")).toBe("/sprout:nightly");
+    expect(cmd("Nightly")).toBe("/nightly");
   });
 
   it("never resolves a slug collision silently, typed or picked from the menu", () => {
@@ -61,33 +55,29 @@ describe("slash commands", () => {
     for (const e of slashMenu("/foo", "bean", clash)) expect(resolveSlash(e.command, "bean", clash)).toEqual(res);
   });
 
-  it("unknown bare stays text; unknown qualified is an error; agent mode knows agents and skills, not sprouts", () => {
+  it("unknown bare stays text; unknown /skill: is an error; agent mode knows agents and skills", () => {
     expect(resolveSlash("/nope hi", "bean", catalogs)).toBeUndefined();
     expect(resolveSlash("/skill:nope", "bean", catalogs)).toEqual({ kind: "unknown", of: "skill", slug: "nope" });
-    expect(resolveSlash("/sprout:pings", "bean", catalogs)).toEqual({ kind: "unknown", of: "sprout", slug: "pings" });
     expect(resolveSlash("see /review-code", "bean", catalogs)).toBeUndefined();
     expect(resolveSlash("/review-code fix it", "claude", catalogs)).toEqual({ kind: "skill", name: "Review Code", rest: "fix it" });
     expect(resolveSlash("/deploy", "claude", catalogs)).toEqual({ kind: "skill", name: "deploy", rest: "" });
     expect(resolveSlash("/nightly", "claude", catalogs)).toEqual({ kind: "skill", name: "Nightly", rest: "" });
-    expect(resolveSlash("/paused-one", "claude", catalogs)).toBeUndefined(); // sprouts: the CLI gets the text
     expect(resolveSlash("/sprout:nightly", "claude", catalogs)).toBeUndefined();
     expect(resolveSlash("/compact", "claude", catalogs)).toBeUndefined();
     expect(resolveSlash("/skill:nope", "claude", catalogs)).toEqual({ kind: "unknown", of: "skill", slug: "nope" });
     expect(resolveSlash("/bean", "claude", catalogs)).toEqual({ kind: "agent", name: "bean", rest: "" });
     const menu = slashMenu("/", "claude", catalogs);
-    expect(menu.filter((e) => e.kind === "sprout")).toEqual([]);
     expect(menu.find((e) => e.name === "deploy")).toMatchObject({ kind: "skill", caption: "→ Claude Code", command: "/deploy" });
     expect(menu.find((e) => e.kind === "skill" && e.name === "claude")?.command).toBe("/skill:claude");
     expect(slashMenu("/skill:", "claude", catalogs).map((e) => e.name)).toContain("Review Code");
     expect(slashMenu("/sprout:", "claude", catalogs)).toEqual([]);
   });
 
-  it("filters hidden/disabled skills and notify-only watches", () => {
+  it("filters hidden/disabled skills", () => {
     const names = slashEntries("bean", catalogs).map((e) => e.name);
     expect(names).toContain("quiet");
     expect(names).not.toContain("secret");
     expect(names).not.toContain("off");
-    expect(names).not.toContain("pings");
     expect(resolveSlash("/secret", "bean", catalogs)).toBeUndefined();
     expect(resolveSlash("/deploy fix it", "bean", catalogs)).toEqual({ kind: "skill", name: "deploy", rest: "fix it" });
   });
@@ -122,18 +112,18 @@ describe("slash commands", () => {
     }
   });
 
-  it("menu: every entry, Skills > Sprouts > Switch to, prefix before description matches, captions", () => {
+  it("menu: skills and agents only, Skills > Switch to, prefix before description matches, captions", () => {
     const all = slashMenu("/", "bean", catalogs);
     expect(all).toEqual([...slashEntries("bean", catalogs)].sort((a, b) =>
-      ["skill", "sprout", "agent"].indexOf(a.kind) - ["skill", "sprout", "agent"].indexOf(b.kind)));
+      ["skill", "agent"].indexOf(a.kind) - ["skill", "agent"].indexOf(b.kind)));
+    expect(new Set(all.map((e) => e.kind))).toEqual(new Set(["skill", "agent"]));
     // No cap: 20 skills all listed, skills first.
     const many = { ...catalogs, skills: Array.from({ length: 20 }, (_, i) => skill(`s${i}`)) };
     const big = slashMenu("/", "bean", many);
     expect(big.filter((e) => e.kind === "skill")).toHaveLength(20);
     expect(big.slice(0, 20).every((e) => e.kind === "skill")).toBe(true);
-    const sprouts = slashMenu("/sprout:", "bean", catalogs);
-    expect(sprouts.map((e) => e.caption)).toEqual(["sprout → Discord, notification", "sprout → note · Paused · runs once"]);
-    const ranked = slashMenu("/beta", "bean", { agents: [], skills: [skill("alpha", { description: "beta things" }), skill("Beta")], sprouts: [] });
+    expect(slashMenu("/sprout:", "bean", catalogs)).toEqual([]);
+    const ranked = slashMenu("/beta", "bean", { agents: [], skills: [skill("alpha", { description: "beta things" }), skill("Beta")] });
     expect(ranked.map((e) => e.name)).toEqual(["Beta", "alpha"]); // prefix, then description
   });
 
@@ -143,7 +133,6 @@ describe("slash commands", () => {
     expect(slashMenu("/claude", "bean", c).map((e) => e.command)).toEqual(["/claude", "/skill:claude", "/claude-review"]);
     expect(slashMenu("/c", "bean", c)[0]?.kind).toBe("skill"); // no exact match: plain section order
     expect(slashMenu("/nightly", "bean", c)[0]?.name).toBe("Nightly");
-    expect(slashMenu("/sprout:nightly", "bean", c)[0]?.name).toBe("nightly");
     for (const t of ["/claude", "/nightly", "/review-code", "/deploy", "/bean"]) {
       const first = slashMenu(t, "bean", c)[0]!;
       const res = resolveSlash(t, "bean", c);
@@ -178,7 +167,6 @@ describe("ChatWindow slash commands", () => {
       getTheme: vi.fn(async () => "light"),
       listProjects: vi.fn(async () => []),
       listSkills: vi.fn(async () => catalogs.skills),
-      routinesList: vi.fn(async () => catalogs.sprouts),
       availableClis: vi.fn(async () => ["claude"]),
       availableModels: vi.fn(async () => []),
       chat: vi.fn(async () => ({ reply: "ok", model: "m" })),
@@ -204,27 +192,14 @@ describe("ChatWindow slash commands", () => {
     expect(root.textContent).toContain("▶ Review Code — the auth diff");
   });
 
-  it("two parallel runs of one sprout each update only their own row; refusals and rejections show", async () => {
+  it("/sprout:x and a sprout's bare name are plain text to Bean — nothing runs, no error row", async () => {
+    bean.routinesList = vi.fn(async () => [{ name: "nightly-run", enabled: true, cron: "0 9 * * *", steps: [{ kind: "chat", prompt: "x" }], sinks: { note: true } }]);
     await mount();
-    const done: Array<(v: { started: boolean; reason?: string }) => void> = [];
-    bean.routinesRunNow!.mockImplementation(() => new Promise((r) => { done.push(r); }));
     await send("/sprout:nightly");
-    await send("/sprout:nightly");
-    expect(statuses()).toEqual(["🌱 Running nightly…", "🌱 Running nightly…"]);
-    await act(async () => { done[1]!({ started: false, reason: "already running" }); });
-    await flush();
-    expect(statuses()).toEqual(["🌱 Running nightly…", "🌱 nightly didn't run: already running"]);
-    await act(async () => { done[0]!({ started: true }); });
-    await flush();
-    expect(statuses()).toEqual(["🌱 nightly — Run finished · see Dashboard", "🌱 nightly didn't run: already running"]);
-
-    bean.routinesRunNow!.mockImplementation(async () => { throw new Error("ipc down"); });
-    await send("/paused-one");
-    expect(statuses().at(-1)).toBe("🌱 Couldn't run paused-one: ipc down");
-    await send("/paused-one now please");
-    expect(statuses().at(-1)).toContain("takes no text");
-    expect(bean.routinesRunNow).toHaveBeenCalledTimes(3);
-    expect(bean.chat).not.toHaveBeenCalled();
+    await send("/nightly-run");
+    expect(bean.routinesRunNow).not.toHaveBeenCalled();
+    expect(statuses()).toEqual([]);
+    expect(bean.chat!.mock.calls.map((c) => c[0].message)).toEqual(["/sprout:nightly", "/nightly-run"]);
   });
 
   it("unknown bare goes to Bean; unknown qualified and ambiguous are error rows with no model work", async () => {
@@ -337,25 +312,25 @@ describe("ChatWindow slash commands", () => {
 
   it("commands parse only from the composer — a pushed chat prompt is sent as is", async () => {
     await mount();
-    await act(async () => { listeners.onChatPrompt!({ prompt: "/sprout:nightly", label: "x" }); });
+    await act(async () => { listeners.onChatPrompt!({ prompt: "/review-code x", label: "x" }); });
     await flush();
-    expect(bean.routinesRunNow).not.toHaveBeenCalled();
-    expect(bean.chat!.mock.calls[0]![0]).toMatchObject({ message: "/sprout:nightly", source: "skill" });
+    expect(bean.chat!.mock.calls[0]![0]).toMatchObject({ message: "/review-code x", source: "skill" });
   });
 
   it("menu: refreshes catalogs on open, arrows + Enter run a row, Tab completes, Esc closes", async () => {
     await mount();
-    const before = bean.routinesList!.mock.calls.length;
+    const before = bean.listSkills!.mock.calls.length;
     await type("/");
-    expect(bean.routinesList!.mock.calls.length).toBe(before + 1);
+    expect(bean.listSkills!.mock.calls.length).toBe(before + 1);
     expect(root.querySelector(".bean-slash-menu")?.textContent).toContain("Switch to");
     expect(composer().placeholder).toBe("Message Bean · type / for skills");
 
-    await type("/sprout:");
+    await type("/skill:");
     await key("ArrowDown");
-    expect(root.querySelector(".bean-chip-menu-row--on")?.textContent).toContain("/paused-one");
+    await key("ArrowDown");
+    expect(root.querySelector(".bean-chip-menu-row--on")?.textContent).toContain("/quiet");
     await key("Enter");
-    expect(bean.routinesRunNow).toHaveBeenCalledWith("paused-one");
+    expect(bean.chat!.mock.calls[0]![0].message).toContain("# quiet");
     expect(composer().value).toBe("");
 
     await type("/rev");
@@ -370,6 +345,6 @@ describe("ChatWindow slash commands", () => {
     // IME composition: Enter belongs to the input method.
     await type("/rev");
     await key("Enter", { isComposing: true });
-    expect(bean.chat).not.toHaveBeenCalled();
+    expect(bean.chat).toHaveBeenCalledTimes(1); // only the /quiet pick above
   });
 });

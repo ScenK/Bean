@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { sproutTriggerAction } from "../src/sprout-trigger.js";
+import { planSproutRun, sproutCheckText, sproutFinishText, sproutTriggerAction } from "../src/sprout-trigger.js";
 import { createRoutineScheduler, triggerOutcome, type RoutineSchedulerDeps } from "../src/routine-scheduler.js";
 import type { Routine, RoutineRunResult, RoutineState, RunStatus, TodoItem } from "../src/index.js";
 
@@ -21,6 +21,41 @@ describe("sproutTriggerAction", () => {
     ["notify-only watch, stray pending", notifyWatch, 3, "check"],
   ])("%s → %s", (_label, r, pending, want) => {
     expect(sproutTriggerAction(r, pending)).toBe(want);
+  });
+});
+
+describe("planSproutRun", () => {
+  it("schedule sprout runs; a paused one says it runs once", () => {
+    expect(planSproutRun(schedule, 0, true)).toEqual({ plan: {
+      routine: "s", action: "run", actionLine: "Runs its steps once now", resultsTo: "the run history only", paused: false, queuesNew: false,
+    } });
+    const paused = planSproutRun({ ...schedule, enabled: false, sinks: { chatops: [{ transport: "discord" }, { transport: "discord", channel: "c" }], notify: true } }, 0, true);
+    expect(paused).toMatchObject({ plan: { paused: true, resultsTo: "Discord, a desktop notification" } });
+  });
+  it("todo sprout works through its queue; an empty one is blocked", () => {
+    expect(planSproutRun(todoSprout, 3, true)).toMatchObject({ plan: { action: "run", actionLine: "Works through 3 queued todos" } });
+    expect(planSproutRun(todoSprout, 0, true)).toEqual({ blocked: "empty" });
+  });
+  it("watch checks its source; paused or never-reviewed watches are blocked", () => {
+    const feed: Routine = { ...queueWatch, watch: { kind: "feed", url: "https://x.test/rss", window: { from: "20:00", to: "06:00" } } };
+    expect(planSproutRun(feed, 0, true)).toMatchObject({ plan: {
+      action: "check", actionLine: "Checks https://x.test/rss now, even outside its window", queuesNew: true,
+    } });
+    expect(planSproutRun(notifyWatch, 0, true)).toMatchObject({ plan: { action: "check", actionLine: "Checks its command now", queuesNew: false } });
+    expect(planSproutRun(queueWatch, 2, true)).toMatchObject({ plan: { action: "run", actionLine: "Works through 2 queued todos" } });
+    expect(planSproutRun({ ...queueWatch, enabled: false }, 0, true)).toEqual({ blocked: "off" });
+    expect(planSproutRun({ ...queueWatch, enabled: false }, 0, false)).toEqual({ blocked: "review" });
+  });
+  it("words a chat run's finish reply", () => {
+    expect(sproutFinishText("pr-digest", "ok")).toBe("pr-digest finished ✓");
+    expect(sproutFinishText("pr-digest", "needs-attention")).toBe("pr-digest needs attention ⚠");
+    expect(sproutFinishText("pr-digest", "failed")).toBe("pr-digest failed ✗ · see Dashboard");
+  });
+  it("words a check result", () => {
+    expect(sproutCheckText({ newItems: 3 }, true)).toBe("3 new — queued");
+    expect(sproutCheckText({ newItems: 1 }, false)).toBe("1 new — sent");
+    expect(sproutCheckText({ newItems: 0 }, true)).toBe("nothing new");
+    expect(sproutCheckText({ newItems: 0, error: "enable the sprout first" }, true)).toBe("enable the sprout first");
   });
 });
 

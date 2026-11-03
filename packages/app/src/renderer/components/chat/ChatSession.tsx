@@ -11,9 +11,10 @@ import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import { normalizeForSave, restoreItems, threadTitle } from "./chat-thread.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt } from "@bean/core/prompt";
+import { sproutCheckText } from "@bean/core/sprout-trigger";
 import { dataUrlToAttachment } from "../../shared/note-images.js";
 import type {
-  AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, Routine, RouteSuggestion, Skill, TurnSource,
+  AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
 import type { LiveEvent, LiveReceipt, LiveStartResult } from "../../../live-tasks.js";
@@ -238,7 +239,6 @@ export function ChatSession({
   // Full current skill list — passed to SkillCard so its "replaces existing" chip tracks
   // the user's live-edited name against real skills, not a stale server-computed flag.
   const [skills, setSkills] = useState<Skill[]>([]);
-  const [sprouts, setSprouts] = useState<Routine[]>([]);
   const [delegateCli, setDelegateCli] = useState("");
   // The `/` menu's catalogs — refreshed each time the menu opens. A terminal skill's caption names
   // its delegate destination, so its remembered model and the Settings CLI preference come too.
@@ -251,7 +251,6 @@ export function ChatSession({
         void window.bean.getModelMemory(k.name).then((m) => { if (m) setLastUsedModels((prev) => ({ ...prev, [k.name]: m })); }, () => {});
       }
     }, () => {});
-    window.bean.routinesList().then((r) => setSprouts(r ?? []), () => {});
     window.bean.getConfig().then((c) => setDelegateCli(c?.delegateCli ?? ""), () => {});
   };
   const itemsRef = useRef<ChatItem[]>([]);
@@ -451,6 +450,7 @@ export function ChatSession({
         }
         if (res.proposedSkill) next.push({ kind: "skill", id: newId(), skill: res.proposedSkill, state: "pending" });
         if (res.proposedTodo) next.push({ kind: "todo", id: newId(), todo: res.proposedTodo, state: "pending" });
+        if (res.sproutRun) next.push({ kind: "sprout", id: newId(), plan: res.sproutRun, state: "pending" });
         if (res.proposedDelegate) {
           next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
           const skillName = res.proposedDelegate.skillName;
@@ -483,23 +483,6 @@ export function ChatSession({
   const addStatus = (text: string, tone: "info" | "done" | "error", details?: string[], id = newId()): void => {
     setItems((prev) => [...prev, { kind: "status", id, text, tone, ...(details?.length ? { details } : {}) }]);
   };
-  const updateStatus = (id: string, text: string, tone: "info" | "done" | "error"): void => {
-    setItems((prev) => prev.map((it) => (it.kind === "status" && it.id === id ? { ...it, text, tone } : it)));
-  };
-
-  // `/sprout`: one row per invocation, so parallel runs of the same sprout each update their own.
-  // runNow resolves once the run is over (or refused up front).
-  const runSprout = (name: string): void => {
-    const rowId = newId();
-    addStatus(`🌱 Running ${name}…`, "info", undefined, rowId);
-    window.bean.routinesRunNow(name).then(
-      (r) => r.started
-        ? updateStatus(rowId, `🌱 ${name} — Run finished · see Dashboard`, "done")
-        : updateStatus(rowId, `🌱 ${name} didn't run: ${r.reason ?? "refused"}`, "error"),
-      (err: unknown) => updateStatus(rowId, `🌱 Couldn't run ${name}: ${err instanceof Error ? err.message : String(err)}`, "error"),
-    );
-  };
-
   // End the window's session (End, a switch, a project change, a close) and say where the chat goes
   // next. A session still starting is stopped once its id arrives (startSession). The row offers
   // Continue live, disabled until the child's `ended` event clears `exiting`.
@@ -629,12 +612,11 @@ export function ChatSession({
       onActive(threadRef.current.id);
     }
     let text = raw;
-    const slash = resolveSlash(raw, modeRef.current, { agents: clis.filter(isLiveAgent), skills, sprouts });
+    const slash = resolveSlash(raw, modeRef.current, { agents: clis.filter(isLiveAgent), skills });
     if (slash?.kind === "ambiguous" || slash?.kind === "unknown") {
-      const where = slash.of === "skill" ? "Skills" : "Sprouts";
       addStatus(slash.kind === "unknown"
-        ? `No ${slash.of} "${slash.slug}" — check the / menu.`
-        : `/${slash.slug} matches more than one ${slash.of}: ${slash.names.map((n) => `"${n}"`).join(", ")} — rename one in ${where}.`, "error");
+        ? `No skill "${slash.slug}" — check the / menu.`
+        : `/${slash.slug} matches more than one skill: ${slash.names.map((n) => `"${n}"`).join(", ")} — rename one in Skills.`, "error");
       return;
     }
     if (slash?.kind === "skill") {
@@ -654,11 +636,6 @@ export function ChatSession({
         return;
       }
       void sendMessage(composePrompt(skill, slash.rest), label, false, images, "skill");
-      return;
-    }
-    if (slash?.kind === "sprout") {
-      if (slash.rest || images?.length) { addStatus(`"${slash.name}" is a sprout — it takes no text. Send the command on its own.`, "error"); return; }
-      runSprout(slash.name);
       return;
     }
     if (slash?.kind === "agent") {
@@ -952,6 +929,29 @@ export function ChatSession({
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "todo" ? { ...it, state: "dismissed" } : it)));
   };
 
+  // Triggers exactly the action frozen on the card; Run now resolves only when the run ends.
+  const triggerSprout = async (id: string): Promise<void> => {
+    const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "sprout" }> => it.kind === "sprout" && it.id === id);
+    if (!item || item.state !== "pending") return;
+    const settle = (result: string): void =>
+      setItems((prev) => prev.map((it) => (it.id === id && it.kind === "sprout" ? { ...it, state: "done" as const, result } : it)));
+    setItems((prev) => prev.map((it) => (it.id === id && it.kind === "sprout" ? { ...it, state: "running" as const } : it)));
+    const { plan } = item;
+    try {
+      if (plan.action === "check") settle(sproutCheckText(await window.bean.routinesCheckNow(plan.routine), plan.queuesNew));
+      else {
+        const res = await window.bean.routinesRunNow(plan.routine);
+        settle(res.started ? "Finished" : res.reason ?? "Couldn't start");
+      }
+    } catch (err) {
+      settle(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const dismissSprout = (id: string): void => {
+    setItems((prev) => prev.map((it) => (it.id === id && it.kind === "sprout" && it.state === "pending" ? { ...it, state: "dismissed" } : it)));
+  };
+
   // Composer's 📝 button: an explicit ask, so the model drafts the confirm card even when it
   // wouldn't have offered on its own.
   const saveToNotes = (): void => {
@@ -1176,7 +1176,6 @@ export function ChatSession({
         runModels={runModels}
         lastUsedModels={lastUsedModels}
         skills={skills}
-        sprouts={sprouts}
         delegateCli={delegateCli}
         onSlashOpen={refreshCatalogs}
         onSend={onComposerSend}
@@ -1203,6 +1202,8 @@ export function ChatSession({
         onSkillDismiss={dismissSkill}
         onTodoQueue={(id) => void queueTodo(id)}
         onTodoDismiss={dismissTodo}
+        onSproutTrigger={(id) => void triggerSprout(id)}
+        onSproutDismiss={dismissSprout}
         onOfferStart={startOffer}
         onOfferDismiss={dismissOffer}
         onDelegateConfirm={(id, edited, choice) => void confirmDelegate(id, edited, choice)}

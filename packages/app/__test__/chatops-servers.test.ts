@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DeskResume, DeskTurn } from "@bean/core";
+import type { DeskResume, DeskTurn, RoutineTriggerAnswer, RoutineTriggerResult } from "@bean/core";
 import { createChatopsServers, parseTunnelEndpoint, type ChatopsBot, type ChatopsEvent, type SpawnedProcess } from "../src/chatops-servers.js";
 
 function fakeProcess() {
   const listeners: Record<string, ((arg: unknown) => void)[]> = {};
-  const outbox: Array<DeskTurn | DeskResume> = [];
+  const outbox: Array<DeskTurn | DeskResume | RoutineTriggerResult> = [];
   const proc: SpawnedProcess = {
     send: (msg) => { outbox.push(msg); return true; },
     stderr: { on: (event, cb) => { (listeners[event] ??= []).push(cb as (...args: unknown[]) => void); } },
@@ -347,7 +347,7 @@ describe("desk turns", () => {
   it("round-trips a turn to the bot's ack, ignoring acks for other requests", async () => {
     const { p, servers } = deskHarness();
     const done = servers.deskTurn("discord", "d1", "hi");
-    const sent = p.outbox[0]!;
+    const sent = p.outbox[0] as DeskTurn;
     expect(sent).toEqual({ type: "desk-turn", requestId: expect.any(String), conversationId: "d1", text: "hi" });
     p.emit("message", { type: "desk-ack", requestId: "someone-else", ok: true });
     p.emit("message", { type: "desk-ack", requestId: sent.requestId, refused: "queue-full" });
@@ -357,7 +357,7 @@ describe("desk turns", () => {
   it("a desk resume sends only the conversation id and settles on its ack", async () => {
     const { p, servers } = deskHarness();
     const done = servers.deskResume("discord", "t1");
-    const sent = p.outbox[0]!;
+    const sent = p.outbox[0] as DeskResume;
     expect(sent).toEqual({ type: "desk-resume", requestId: expect.any(String), conversationId: "t1" });
     p.emit("message", { type: "desk-ack", requestId: sent.requestId, refused: "channel-busy" });
     await expect(done).resolves.toEqual({ refused: "channel-busy" });
@@ -373,7 +373,7 @@ describe("desk turns", () => {
       await caught;
       expect(p.outbox).toHaveLength(1);
       // A late ack after the timeout is dropped, not delivered twice.
-      p.emit("message", { type: "desk-ack", requestId: p.outbox[0]!.requestId, ok: true });
+      p.emit("message", { type: "desk-ack", requestId: (p.outbox[0] as DeskTurn).requestId, ok: true });
     } finally {
       vi.useRealTimers();
     }
@@ -398,5 +398,49 @@ describe("desk turns", () => {
     p.emit("message", { type: "saved", conversationId: "d1" });
     p.emit("message", { type: "saved" });
     expect(saved).toEqual([["discord", "d1"]]);
+  });
+});
+
+describe("sprout triggers from a bot (#637)", () => {
+  function triggerHarness(onRoutineTrigger?: (bot: ChatopsBot, req: unknown) => Promise<RoutineTriggerAnswer>) {
+    const p = fakeProcess();
+    const seen: unknown[] = [];
+    const servers = createChatopsServers({
+      repoRoot: "/repo", resolvedPath: "/usr/bin", send: () => {}, existsFn: () => true, spawnFn: () => p.proc,
+      ...(onRoutineTrigger ? { onRoutineTrigger: (bot, req) => { seen.push([bot, req]); return onRoutineTrigger(bot, req); } } : {}),
+    });
+    servers.start("teams");
+    return { p, seen };
+  }
+  const settled = () => new Promise((r) => setTimeout(r, 0));
+
+  it("routes a valid request to the handler and answers the bot with the same request id", async () => {
+    const { p, seen } = triggerHarness(async () => ({ status: "started" }));
+    p.emit("message", { type: "routine-trigger", requestId: "q1", name: "digest", action: "run", origin: { channel: "c1" }, extra: "x" });
+    await settled();
+    expect(seen).toEqual([["teams", { type: "routine-trigger", requestId: "q1", name: "digest", action: "run", origin: { channel: "c1" } }]]);
+    expect(p.outbox).toEqual([{ type: "routine-trigger-result", requestId: "q1", status: "started" }]);
+  });
+
+  it("ignores malformed requests", async () => {
+    const { p, seen } = triggerHarness(async () => ({ status: "started" }));
+    p.emit("message", { type: "routine-trigger", requestId: "q1", name: "digest", action: "delete", origin: {} });
+    p.emit("message", { type: "routine-trigger", requestId: "q1", name: "", action: "run", origin: {} });
+    p.emit("message", { type: "routine-trigger", requestId: "q1", name: "digest", action: "run" });
+    await settled();
+    expect(seen).toEqual([]);
+    expect(p.outbox).toEqual([]);
+  });
+
+  it("answers unavailable when no handler is wired or it throws", async () => {
+    const bare = triggerHarness();
+    bare.p.emit("message", { type: "routine-trigger", requestId: "q1", name: "digest", action: "check", origin: {} });
+    const failing = triggerHarness(async () => { throw new Error("boom"); });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    failing.p.emit("message", { type: "routine-trigger", requestId: "q2", name: "digest", action: "run", origin: {} });
+    await settled();
+    err.mockRestore();
+    expect(bare.p.outbox).toEqual([{ type: "routine-trigger-result", requestId: "q1", status: "refused", reason: "unavailable" }]);
+    expect(failing.p.outbox).toEqual([{ type: "routine-trigger-result", requestId: "q2", status: "refused", reason: "unavailable" }]);
   });
 });
