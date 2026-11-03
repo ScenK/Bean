@@ -5,6 +5,7 @@ import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
 import { SkillCard } from "./SkillCard.js";
 import { TodoCard } from "./TodoCard.js";
+import { SproutRunCard } from "./SproutRunCard.js";
 import { LiveOfferCard } from "./LiveOfferCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
@@ -99,6 +100,8 @@ export function ChatPanel({
   onSkillDismiss,
   onTodoQueue,
   onTodoDismiss,
+  onSproutTrigger,
+  onSproutDismiss,
   onOfferStart,
   onOfferDismiss,
   onDelegateConfirm,
@@ -169,6 +172,8 @@ export function ChatPanel({
   onSkillDismiss: (id: string) => void;
   onTodoQueue: (id: string) => void;
   onTodoDismiss: (id: string) => void;
+  onSproutTrigger: (id: string) => void;
+  onSproutDismiss: (id: string) => void;
   onOfferStart: (id: string) => void;
   onOfferDismiss: (id: string) => void;
   onDelegateConfirm: (id: string, editedPrompt: string, choice: { projectPath: string; model?: string; cli?: CliName }) => void;
@@ -613,6 +618,18 @@ export function ChatPanel({
                 state={it.state}
                 onQueue={() => onTodoQueue(it.id)}
                 onDismiss={() => onTodoDismiss(it.id)}
+              />
+            );
+          }
+          if (it.kind === "sprout") {
+            return (
+              <SproutRunCard
+                key={it.id}
+                plan={it.plan}
+                state={it.state}
+                result={it.result}
+                onTrigger={() => onSproutTrigger(it.id)}
+                onDismiss={() => onSproutDismiss(it.id)}
               />
             );
           }

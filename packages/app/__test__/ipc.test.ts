@@ -316,6 +316,63 @@ test("buildChatHandler passes todo-driven routine names into converse", async ()
   expect(seenTools).toContain("propose_todo");
 });
 
+describe("chat handler sprout runs", () => {
+  const watch: Routine = {
+    name: "feed-watch", enabled: true, watch: { kind: "command", command: "x" }, todoDriven: true,
+    steps: [{ kind: "chat", instruction: "x" }], sinks: { note: true },
+  };
+  const daily: Routine = { name: "daily", description: "Morning brief", enabled: false, cron: "0 8 * * *", steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
+  const handlerFor = (routines: Routine[], name: string, facts = { pending: 0, seeded: true }) => {
+    let seenTools: string[] = [];
+    const handler = buildChatHandler({
+      loadSkills: async () => [] as Skill[],
+      loadProjects: async () => [] as Project[],
+      loadPersona: async () => ({ name: "Bean", tags: [] }) as unknown as Persona,
+      converse: async ({ tools }) => {
+        seenTools = tools.map((t) => t.name);
+        return { content: "Here you go", toolCalls: tools.some((t) => t.name === "propose_sprout_run") ? [{ name: "propose_sprout_run", args: { routine: name } }] : [] };
+      },
+      getModel: () => "m",
+      projectSkillsDir: "/b/ps", skillsDir: "/b/s", projectsFile: "/b/p.json", personaFile: "/b/pe.json", projectPersonaFile: "/b/pp.json",
+      loadMemories: async () => [], dbFile: "/b/bean.db",
+      loadRoutines: async () => routines,
+      sproutFacts: async () => facts,
+    });
+    return { run: () => handler({ history: [], message: "run it" }), tools: () => seenTools };
+  };
+
+  it("freezes the action onto a card", async () => {
+    const res = await handlerFor([daily, watch], "daily").run();
+    expect(res.proposedSproutRun).toBeUndefined();
+    expect(res.sproutRun).toMatchObject({ routine: "daily", action: "run", paused: true });
+    expect(res.reply).toBe("Here you go");
+    const check = await handlerFor([daily, watch], "feed-watch").run();
+    expect(check.sproutRun).toMatchObject({ action: "check", resultsTo: "a note" });
+  });
+
+  it("answers a paused or never-reviewed watch with text, not a card", async () => {
+    const off = await handlerFor([{ ...watch, enabled: false }], "feed-watch").run();
+    expect(off.sproutRun).toBeUndefined();
+    expect(off.reply).toBe("feed-watch is off — turn it on in Sprouts.");
+    const review = await handlerFor([{ ...watch, enabled: false }], "feed-watch", { pending: 0, seeded: false }).run();
+    expect(review.reply).toBe("feed-watch needs its first review in Bean's Sprouts panel.");
+  });
+
+  it("isn't offered without sproutFacts", async () => {
+    let seen: string[] = [];
+    const handler = buildChatHandler({
+      loadSkills: async () => [] as Skill[], loadProjects: async () => [] as Project[],
+      loadPersona: async () => ({ name: "Bean", tags: [] }) as unknown as Persona,
+      converse: async ({ tools }) => { seen = tools.map((t) => t.name); return { content: "ok", toolCalls: [] }; },
+      getModel: () => "m",
+      projectSkillsDir: "/b/ps", skillsDir: "/b/s", projectsFile: "/b/p.json", personaFile: "/b/pe.json", projectPersonaFile: "/b/pp.json",
+      loadMemories: async () => [], dbFile: "/b/bean.db", loadRoutines: async () => [daily],
+    });
+    await handler({ history: [], message: "run it" });
+    expect(seen).not.toContain("propose_sprout_run");
+  });
+});
+
 test("note image handlers accept raw bytes only and serve stored rows as data: URLs", async () => {
   const stored: Uint8Array[] = [];
   const saves: { body: string }[] = [];

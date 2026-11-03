@@ -1,7 +1,7 @@
 import {
   converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, type ImageGenDeps,
   attachNoteImages, MAX_NOTE_IMAGE_BYTES, stageImages, type ImageAttachment,
-  availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine,
+  availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine, planSproutRun, type SproutRunBlock,
   listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash,
   type SkillProposal, type ProposalOutcome,
   type Project, type RouteSuggestion, type Skill,
@@ -202,6 +202,8 @@ export interface ChatHandlerDeps {
   /** Its scratch workspace hosts delegates that aren't about a project (main.ts creates it). */
   beanDirPath?: string;
   loadRoutines?: () => Promise<Routine[]>;
+  /** A sprout's pending todos and whether its watch is seeded — enables propose_sprout_run. */
+  sproutFacts?: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
   /** Enables the generate_image action tool. getModel (not a value): imageModel may live
    * behind runtime config someday; onStart drives the 🎨 working indicator of the chat (mount) that asked. */
   imageGen?: {
@@ -259,8 +261,10 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       liveSessionAvailable: senderId !== undefined && mountId !== undefined && (deps.liveSessionAvailable?.(senderId, mountId) ?? false),
       liveSessionHost: "desktop",
       todoRoutines,
+      sproutCatalog: deps.sproutFacts ? routines.map((r) => ({ name: r.name, description: r.description })) : [],
       webSearch: deps.webSearch?.() ?? false,
     });
+    if (result.proposedSproutRun && deps.sproutFacts) await planSproutCard(result, routines, deps.sproutFacts);
     if (imageTool && imageTool.paths.length > 0) {
       result.generatedImages = await Promise.all(imageTool.paths.map(async (path) => ({
         path,
@@ -271,6 +275,26 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
     if (memoryTools && memoryTools.forgotten.length > 0) result.forgotten = memoryTools.forgotten;
     return result;
   };
+}
+
+const SPROUT_BLOCKED: Record<SproutRunBlock, (name: string) => string> = {
+  off: (name) => `${name} is off — turn it on in Sprouts.`,
+  review: (name) => `${name} needs its first review in Bean's Sprouts panel.`,
+  empty: (name) => `${name}'s queue is empty — queue a todo first.`,
+};
+
+/** Freezes the run-vs-check decision onto the card, or swaps the card for a fixed reply. */
+async function planSproutCard(
+  result: ConverseResult, routines: Routine[], facts: NonNullable<ChatHandlerDeps["sproutFacts"]>,
+): Promise<void> {
+  const name = result.proposedSproutRun!.routine;
+  delete result.proposedSproutRun;
+  const routine = routines.find((r) => r.name === name);
+  if (!routine) return; // converse already refused names outside the catalog
+  const { pending, seeded } = await facts(routine);
+  const out = planSproutRun(routine, pending, seeded);
+  if ("plan" in out) result.sproutRun = out.plan;
+  else result.reply = SPROUT_BLOCKED[out.blocked](name);
 }
 
 export interface ListSkillsHandlerDeps {
@@ -1039,6 +1063,7 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   liveSessionAvailable?: ChatHandlerDeps["liveSessionAvailable"];
   webSearch?: () => boolean;
   imageGen?: ChatHandlerDeps["imageGen"];
+  sproutFacts?: ChatHandlerDeps["sproutFacts"];
   broadcast: (channel: string, payload: unknown) => void;
   openComponent: (kind: ComponentKind, payload?: string | DashboardTarget) => void;
   proposeRun: (suggestion: RouteSuggestion) => void;

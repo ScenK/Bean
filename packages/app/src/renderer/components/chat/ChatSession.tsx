@@ -11,6 +11,7 @@ import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import { normalizeForSave, restoreItems, threadTitle } from "./chat-thread.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt } from "@bean/core/prompt";
+import { sproutCheckText } from "@bean/core/sprout-trigger";
 import { dataUrlToAttachment } from "../../shared/note-images.js";
 import type {
   AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, Routine, RouteSuggestion, Skill, TurnSource,
@@ -451,6 +452,7 @@ export function ChatSession({
         }
         if (res.proposedSkill) next.push({ kind: "skill", id: newId(), skill: res.proposedSkill, state: "pending" });
         if (res.proposedTodo) next.push({ kind: "todo", id: newId(), todo: res.proposedTodo, state: "pending" });
+        if (res.sproutRun) next.push({ kind: "sprout", id: newId(), plan: res.sproutRun, state: "pending" });
         if (res.proposedDelegate) {
           next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
           const skillName = res.proposedDelegate.skillName;
@@ -952,6 +954,29 @@ export function ChatSession({
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "todo" ? { ...it, state: "dismissed" } : it)));
   };
 
+  // Triggers exactly the action frozen on the card; Run now resolves only when the run ends.
+  const triggerSprout = async (id: string): Promise<void> => {
+    const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "sprout" }> => it.kind === "sprout" && it.id === id);
+    if (!item || item.state !== "pending") return;
+    const settle = (result: string): void =>
+      setItems((prev) => prev.map((it) => (it.id === id && it.kind === "sprout" ? { ...it, state: "done" as const, result } : it)));
+    setItems((prev) => prev.map((it) => (it.id === id && it.kind === "sprout" ? { ...it, state: "running" as const } : it)));
+    const { plan } = item;
+    try {
+      if (plan.action === "check") settle(sproutCheckText(await window.bean.routinesCheckNow(plan.routine), plan.queuesNew));
+      else {
+        const res = await window.bean.routinesRunNow(plan.routine);
+        settle(res.started ? "Finished" : res.reason ?? "Couldn't start");
+      }
+    } catch (err) {
+      settle(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const dismissSprout = (id: string): void => {
+    setItems((prev) => prev.map((it) => (it.id === id && it.kind === "sprout" && it.state === "pending" ? { ...it, state: "dismissed" } : it)));
+  };
+
   // Composer's 📝 button: an explicit ask, so the model drafts the confirm card even when it
   // wouldn't have offered on its own.
   const saveToNotes = (): void => {
@@ -1203,6 +1228,8 @@ export function ChatSession({
         onSkillDismiss={dismissSkill}
         onTodoQueue={(id) => void queueTodo(id)}
         onTodoDismiss={dismissTodo}
+        onSproutTrigger={(id) => void triggerSprout(id)}
+        onSproutDismiss={dismissSprout}
         onOfferStart={startOffer}
         onOfferDismiss={dismissOffer}
         onDelegateConfirm={(id, edited, choice) => void confirmDelegate(id, edited, choice)}

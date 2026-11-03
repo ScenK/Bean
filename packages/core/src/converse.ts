@@ -8,6 +8,7 @@ import type { AvailableModel } from "./models.js";
 import { isLiveCli, type LiveCli } from "./live-session.js";
 import { chatRoutineProblem, type Routine } from "./routine-store.js";
 import type { CliModels } from "./cli-models.js";
+import type { SproutRunPlan } from "./sprout-trigger.js";
 
 /** The raster formats OpenAI vision input accepts — every ingest surface must filter to
  * these (a bare image/* check lets HEIC/SVG/TIFF through and fails the whole turn at the
@@ -78,6 +79,11 @@ export interface RoutineAuthoring {
 }
 /** A queue item draft awaiting user confirmation — todos are never queued silently. */
 export interface ProposedTodo { routine: string; text: string; }
+/** A sprout the model asked to run or check; the host decides the action (planSproutRun). */
+export interface ProposedSproutRun { routine: string; }
+/** One sprout in propose_sprout_run's catalog — saved definition fields only, so the tool spec
+ * stays byte-stable while the sprouts don't change. */
+export interface SproutCatalogEntry { name: string; description?: string; }
 // A confirm-first background coding task that reports its final result back to this chat.
 export interface ProposedDelegate {
   projectPath: string;
@@ -112,7 +118,7 @@ export interface ProposedLiveSession {
  * propose_note from this chat targets it (update in place) by default. */
 export interface LinkedNote { slug: string; title: string; version: number; body: string; }
 export interface ConverseResult {
-  reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedNoteArchive?: ProposedNoteArchive; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo; proposedRoutine?: ProposedRoutine;
+  reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedNoteArchive?: ProposedNoteArchive; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo; proposedSproutRun?: ProposedSproutRun; proposedRoutine?: ProposedRoutine;
   /** Files produced by generate_image this turn — set by surface handlers (buildChatHandler
    * fills dataUrl for inline rendering), never by converse() itself; bots use sendFile instead. */
   generatedImages?: Array<{ path: string; dataUrl?: string }>;
@@ -122,6 +128,9 @@ export interface ConverseResult {
   /** Rows forget_memory actually deleted this turn (desktop handler) — the renderer keeps them
    * out of close-time catch-up so they aren't re-saved. */
   forgotten?: Memory[];
+  /** The confirm card for proposedSproutRun — set by the desktop handler (planSproutRun), never by
+   * converse() itself, which only validates the name. */
+  sproutRun?: SproutRunPlan;
   /** Set when the model call itself failed; `reply` then carries the user-facing explanation. */
   error?: string;
 }
@@ -305,6 +314,35 @@ function proposeTodoTool(todoRoutines: string[]): ToolSpec {
         text: { type: "string", description: "the task as one self-contained sentence or short paragraph" },
       },
       required: ["routine", "text"],
+    },
+  };
+}
+
+const SPROUT_LINE_MAX = 120;
+/** First line of a sprout's description, bounded so one long description can't bloat the spec. */
+const sproutLine = (e: SproutCatalogEntry): string => {
+  const line = (e.description ?? "").split("\n")[0]!.trim();
+  const short = line.length > SPROUT_LINE_MAX ? `${line.slice(0, SPROUT_LINE_MAX - 1)}…` : line;
+  return short ? `- ${e.name}: ${short}` : `- ${e.name}`;
+};
+
+// Enum-gated like propose_todo. Built from definitions only (no queue counts, no run state), so
+// it's byte-identical every turn while the sprouts are unchanged (prompt prefix caching).
+function proposeSproutRunTool(sprouts: SproutCatalogEntry[]): ToolSpec {
+  return {
+    name: "propose_sprout_run",
+    description:
+      "Run or check one of the user's sprouts right now — use when the user asks to run, start, " +
+      "trigger or check a sprout. Bean decides whether it runs the sprout's steps or checks its " +
+      "source, and the user confirms a card before anything starts. " +
+      "The user calls these sprouts; this tool's name and `routine` argument are internal — always say sprout.\n" +
+      `Sprouts:\n${sprouts.map(sproutLine).join("\n")}`,
+    parameters: {
+      type: "object",
+      properties: {
+        routine: { type: "string", enum: sprouts.map((e) => e.name), description: "which sprout" },
+      },
+      required: ["routine"],
     },
   };
 }
@@ -532,6 +570,8 @@ export interface ConverseInput {
   /** false where confirming a run couldn't execute anything (chatops — no desktop, no terminal). */
   runAvailable?: boolean;
   todoRoutines?: string[];
+  /** Offer propose_sprout_run over these sprouts (desktop). Empty/absent = not offered. */
+  sproutCatalog?: SproutCatalogEntry[];
   /** Offer the built-in public web search (config `webSearch`). Per chat, not per turn: it
    * changes the leading system message, which must stay byte-stable for prompt caching. */
   webSearch?: boolean;
@@ -578,6 +618,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     models = [],
     runAvailable = true,
     todoRoutines = [],
+    sproutCatalog = [],
     webSearch = false,
     speaker,
     noteAvailable = true,
@@ -652,6 +693,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     ...(skillAuthoringAvailable ? [proposeSkillTool()] : []),
     ...(noteArchiveAvailable ? [PROPOSE_NOTE_ARCHIVE] : []),
     ...(todoRoutines.length > 0 ? [proposeTodoTool(todoRoutines)] : []),
+    ...(sproutCatalog.length > 0 ? [proposeSproutRunTool(sproutCatalog)] : []),
     ...(routineAuthoring ? [proposeRoutineTool(routineAuthoring)] : []),
     ...actions.map((a) => a.spec),
   ];
@@ -828,6 +870,16 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       return { reply: content, model: deps.model, proposedTodo: { routine: args.routine, text } };
+    }
+
+    const sproutCall = toolCalls.find((c) => c.name === "propose_sprout_run");
+    if (sproutCall) {
+      const routine = (sproutCall.args as { routine?: unknown } | undefined)?.routine;
+      if (typeof routine !== "string" || !sproutCatalog.some((e) => e.name === routine)) {
+        reject(sproutCall, "unknown sprout.");
+        continue;
+      }
+      return { reply: content, model: deps.model, proposedSproutRun: { routine } };
     }
 
     const routineCall = toolCalls.find((c) => c.name === "propose_routine");

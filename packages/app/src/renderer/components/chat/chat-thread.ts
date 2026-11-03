@@ -51,6 +51,10 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
     case "todo":
     case "offer":
       return it.state === "pending" ? { ...it, state: "expired" } : it;
+    case "sprout":
+      // The run itself lives on in main; a restored card only can't say how it ended.
+      return it.state === "pending" ? { ...it, state: "expired" }
+        : it.state === "running" ? { ...it, state: "done", result: "Started — see the Dashboard for how it went" } : it;
     case "status": {
       const { exiting: _e, ...rest } = it; // the child is long gone
       return { ...rest, text: cap(it.text) };
@@ -72,7 +76,7 @@ export function normalizeForSave(items: readonly ChatItem[]): ChatItem[] {
   return out;
 }
 
-const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "status", "memory", "forgot"]);
+const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "status", "memory", "forgot"]);
 
 /** A saved transcript back into the window: well-formed items only, normalized again, fresh ids (a
  * restored `item-3` would collide with this load's counter), and user turns stripped of `source` —

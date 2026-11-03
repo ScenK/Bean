@@ -987,6 +987,10 @@ app.whenReady().then(async () => {
       getPendingChatPrompt: chatPromptStore.get,
       getPendingInterruptedRunNotices: interruptedRunStore.get,
       loadRoutines: () => loadRoutines(routinesPath),
+      sproutFacts: async (r) => ({
+        pending: (await listTodos(dbFile(dir), r.name)).filter((t) => t.status === "pending").length,
+        seeded: r.watch ? isWatchSeeded(dbFile(dir), r.name, watchSourceKey(r.watch)) : true,
+      }),
       skillProposalHandlers: buildSkillProposalHandlers({
         loadSkills: loadLayeredSkills, projectSkillsDir: skillsDir(projectDir), skillsDir: skillsDir(dir), dbFile: dbFile(dir),
       }),

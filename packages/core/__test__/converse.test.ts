@@ -867,6 +867,45 @@ describe("propose_todo", () => {
   });
 });
 
+describe("propose_sprout_run", () => {
+  const catalog = [
+    { name: "pr-digest", description: "Summarises open PRs\nsecond line never shown" },
+    { name: "bare" },
+    { name: "long", description: "x".repeat(300) },
+  ];
+  const specs: ToolSpec[] = [];
+  const capture: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => { const t = tools.find((x) => x.name === "propose_sprout_run"); if (t) specs.push(t); return { content: "ok", toolCalls: [] }; },
+  };
+
+  it("is offered only with a catalog, byte-identical across turns", async () => {
+    await conv({ latestUserText: "hi", deps: capture });
+    expect(specs).toHaveLength(0);
+    await conv({ latestUserText: "run the pr digest", deps: capture, sproutCatalog: catalog });
+    await conv({ latestUserText: "something else entirely", deps: capture, sproutCatalog: catalog,
+      history: [{ role: "user", content: "earlier" }, { role: "assistant", content: "reply" }] });
+    expect(specs).toHaveLength(2);
+    expect(JSON.stringify(specs[0])).toBe(JSON.stringify(specs[1]));
+    const desc = specs[0]!.description;
+    expect(desc).toContain("- pr-digest: Summarises open PRs");
+    expect(desc).not.toContain("second line");
+    expect(desc).toContain("- bare");
+    expect(desc).toContain(`- long: ${"x".repeat(119)}…`);
+    expect(desc).toMatch(/always say sprout/);
+    expect((specs[0]!.parameters as { properties: { routine: { enum: string[] } } }).properties.routine.enum).toEqual(["pr-digest", "bare", "long"]);
+  });
+
+  it("returns the proposal for a catalog name and refuses any other", async () => {
+    const ok = await conv({ latestUserText: "run it", deps: depsReturning("here", [{ name: "propose_sprout_run", args: { routine: "pr-digest" } }]), sproutCatalog: catalog });
+    expect(ok.proposedSproutRun).toEqual({ routine: "pr-digest" });
+    const bad = await conv({ latestUserText: "run it", deps: depsReturning("hm", [{ name: "propose_sprout_run", args: { routine: "nope" } }]), sproutCatalog: catalog });
+    expect(bad.proposedSproutRun).toBeUndefined();
+    const unoffered = await conv({ latestUserText: "run it", deps: depsReturning("hm", [{ name: "propose_sprout_run", args: { routine: "pr-digest" } }]) });
+    expect(unoffered.proposedSproutRun).toBeUndefined();
+  });
+});
+
 test("a failing chat call surfaces the real reason, not a blanket API-key blame", async () => {
   const deps: ConverseDeps = {
     model: "gpt-5.6-luna",
