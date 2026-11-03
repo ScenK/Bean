@@ -296,16 +296,27 @@ export async function dreamDetails(file: string, runId: string): Promise<{ befor
 
 /** Pure top-K relevance ranking for memoriesBlock(): small memory sets are still injected
  * wholesale (today's behavior); above `skipThreshold` an FTS5 bm25 rank against `latestUserText`
- * picks the top `limit`, always force-including memories scoped to `currentProjectPath`. */
+ * picks the top `limit`, always force-including memories scoped to `currentProjectPath`.
+ * `pinCategory` (owner paths only, #650): the newest `pinLimit` rows in exactly that category are
+ * included first and kept out of the ranked pool, so they don't count against `limit`. */
 export function selectRelevantMemories(
   memories: Memory[],
   latestUserText: string,
   currentProjectPath?: string,
-  limit = 12,
-  skipThreshold = 20,
+  { limit = 12, skipThreshold = 20, pinCategory, pinLimit = 15 }: {
+    limit?: number; skipThreshold?: number; pinCategory?: string; pinLimit?: number;
+  } = {},
 ): Memory[] {
   if (memories.length <= skipThreshold) return memories;
 
+  // loadMemories orders by created_at, so the tail is the newest.
+  const owned = pinCategory ? memories.filter((m) => m.category === pinCategory) : [];
+  const pinned = owned.slice(Math.max(0, owned.length - pinLimit));
+  const pinnedIds = new Set(pinned.map((m) => m.id));
+  return [...pinned, ...rankRelevant(memories.filter((m) => !pinnedIds.has(m.id)), latestUserText, currentProjectPath, limit)];
+}
+
+function rankRelevant(memories: Memory[], latestUserText: string, currentProjectPath: string | undefined, limit: number): Memory[] {
   const forced = currentProjectPath
     ? memories.filter((m) => m.projectPath === currentProjectPath)
     : [];

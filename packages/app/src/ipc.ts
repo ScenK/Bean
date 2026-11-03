@@ -257,6 +257,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       persona,
       memories,
       ownerIds,
+      pinOwnerMemories: true, // the desktop is the owner's own machine (#650)
       ...(memoryTools ? { memoryCategories: memoryCategories(memories) } : {}),
       deps: { chat: deps.converse, model: deps.getModel() },
       droppedUrl: req.droppedUrl,

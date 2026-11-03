@@ -1581,6 +1581,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           todoRoutines,
           webSearch: deps.webSearchEnabled?.() ?? false,
           speaker: msg.fromName,
+          pinOwnerMemories: ownerDm, // #650: the owner's DM only — never a channel or a member
           routineAuthoring,
         };
         const result = await converse({

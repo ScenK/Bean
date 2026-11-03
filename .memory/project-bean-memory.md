@@ -70,6 +70,11 @@ see `db.ts`'s `migrateFromFiles`.
   only, so a Chinese fact with an English category passes; `sanitizeCategory` normalizes it.
 - **Recall:** `converse()` ranks via `selectRelevantMemories()` — below 20 memories inject all;
   above, an FTS5 bm25 top-12 against the latest user message.
+- **"You" is the only reserved category (#650, `OWNER_CATEGORY`):** on owner paths only — desktop
+  `buildChatHandler` and the owner's chatops DM (`pinOwnerMemories`) — the newest 15 rows with
+  category exactly `You` are pinned ahead of the top-12 (outside it). Channels, member DMs,
+  chime-ins and routines never pin. Pinned rows ride the same user-role recall message; the
+  system message is untouched (cache-stable).
 - **Enabled-skills filter** lives in `buildChatHandler` (app `ipc.ts`), not in `converse()`.
 - **Edit surface:** Persona's MEMORY section, per-row `updateMemory`/`deleteMemories`/
   `appendMemories` only — see [[safety-memory-append-vs-replace]].

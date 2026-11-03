@@ -37,12 +37,14 @@ export function isValidMemory(v: unknown): v is Memory {
 }
 
 const CATEGORY_MAX = 30;
+/** The one reserved category: facts about the owner, pinned into every owner-path recall (#650). */
+export const OWNER_CATEGORY = "You";
 /** The one place a category is normalized (every write goes through it): newlines and brackets
  * stripped, whitespace collapsed, ≤30 chars; empty → null; "you" in any case → `You`. */
 export function sanitizeCategory(raw: string | null | undefined): string | null {
   const c = (raw ?? "").replace(/[\r\n[\](){}<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, CATEGORY_MAX).trim();
   if (!c) return null;
-  return c.toLowerCase() === "you" ? "You" : c;
+  return c.toLowerCase() === "you" ? OWNER_CATEGORY : c;
 }
 
 /** When two recalled facts conflict, the later-saved one is current — shared by every recall header. */

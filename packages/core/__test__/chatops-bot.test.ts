@@ -2342,6 +2342,23 @@ test("the owner's DM recalls private facts under every owner id (the other surfa
   expect((await h.loadMemories(h.file)).find((m) => m.text === "Prefers espresso")?.subjectId).toBe("u1");
 });
 
+test("only the owner's DM pins the owner's You rows past top-K; channels and a member's DM rank them as usual (#650)", async () => {
+  const h = await household();
+  await (await import("../src/memory/store.js")).appendMemories(h.file, [
+    { id: "you", text: "goes by Scen", category: "You", createdAt: "2026-07-01T00:00:00.000Z" },
+    ...Array.from({ length: 30 }, (_, i) => ({ id: `f-${i}`, text: `unrelated filler ${i}`, createdAt: "2026-07-03T00:00:00.000Z" })),
+  ]);
+  const bot = buildTeamsBot(h.deps);
+  const recalled = async (m: Parameters<typeof h.say>): Promise<boolean> => {
+    h.prompts.length = 0;
+    await bot.onMessage(h.say(...m), fx());
+    return h.prompts.some((p) => p.includes("goes by Scen"));
+  };
+  expect(await recalled(["u1", true])).toBe(true);
+  expect(await recalled(["u1", false])).toBe(false);
+  expect(await recalled(["mia", true])).toBe(false);
+});
+
 test("DM auto-capture: a typed fact is saved private with a receipt; guests, channels, transcripts and autoMemory off save nothing", async () => {
   const h = await household();
   let auto = true;
