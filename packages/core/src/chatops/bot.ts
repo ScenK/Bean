@@ -12,7 +12,7 @@ import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
 import { chatRoutineProblem, todoRunHint, type Routine } from "../routine-store.js";
 import type { TodoItem } from "../todo-store.js";
-import type { TriggerResult } from "../routine-scheduler.js";
+import type { SproutTriggerAnswer } from "./sprout-bridge.js";
 import { planSproutRun, sproutCheckText, type SproutRunBlock } from "../sprout-trigger.js";
 import type { SproutRunProposalStore } from "./sprout-run-proposals.js";
 import { cancelReminder } from "../reminders.js";
@@ -240,11 +240,12 @@ export interface TeamsBotDeps {
     notifyOwner: (text: string) => Promise<void>;
     recipients: () => Promise<{ id: string; name: string }[]>;
     proposals: RoutineProposalStore;
-    /** Run or check a sprout now (#636) — only where this process owns the scheduler (headless
-     * Discord). `trigger` answers at admission; the host posts the finish reply to `origin`
-     * (`channel` absent = the owner's DM). Absent = propose_sprout_run is never offered. */
+    /** Run or check a sprout now (#636) — where this process owns the scheduler (headless
+     * Discord) or asks the app that spawned it over IPC (#637, `parentSproutTrigger`). `trigger`
+     * answers at admission; the scheduler host posts the finish reply to `origin` (`channel`
+     * absent = the owner's DM). Absent = propose_sprout_run is never offered. */
     sprouts?: {
-      trigger: (name: string, action: "run" | "check", origin: { channel?: string }) => Promise<TriggerResult>;
+      trigger: (name: string, action: "run" | "check", origin: { channel?: string }) => Promise<SproutTriggerAnswer>;
       /** A sprout's pending todos and whether its watch is seeded, for planSproutRun. */
       facts: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
       proposals: SproutRunProposalStore;

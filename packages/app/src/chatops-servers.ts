@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { parseChatopsActivity, parseDeskAck, parseDeskSaved, type ChatopsActivity, type DeskAckResult, type DeskResume, type DeskTurn } from "@bean/core";
+import {
+  parseChatopsActivity, parseDeskAck, parseDeskSaved, parseRoutineTrigger,
+  type ChatopsActivity, type DeskAckResult, type DeskResume, type DeskTurn, type RoutineTrigger, type RoutineTriggerAnswer, type RoutineTriggerResult,
+} from "@bean/core";
 
 export type ChatopsBot = "discord" | "teams";
 /** `running` is the process; `enabled` is the user's switch — the two come apart while a crashed
@@ -24,8 +27,9 @@ export interface SpawnedProcess {
   on(event: "exit", cb: (code: number | null, signal: string | null) => void): void;
   /** IPC messages from the bot (process.send) — its activity for the status bubbles. */
   on(event: "message", cb: (msg: unknown) => void): void;
-  /** IPC to the bot (desk turns, desk resumes). The callback reports a send that never left this process. */
-  send(msg: DeskTurn | DeskResume, cb: (err: Error | null) => void): boolean;
+  /** IPC to the bot (desk turns, desk resumes, sprout-trigger answers). The callback reports a
+   * send that never left this process. */
+  send(msg: DeskTurn | DeskResume | RoutineTriggerResult, cb: (err: Error | null) => void): boolean;
   kill(): void;
 }
 
@@ -82,6 +86,9 @@ export interface ChatopsServersDeps {
   onActivity?: (bot: ChatopsBot, e: ChatopsActivity) => void;
   /** A bot's conversation history changed (a conversation id only, never text). */
   onSaved?: (bot: ChatopsBot, conversationId: string) => void;
+  /** A bot asks the app (the scheduler host) to run or check a sprout from a tapped card (#637).
+   * Absent, or throwing, answers `unavailable`. */
+  onRoutineTrigger?: (bot: ChatopsBot, req: RoutineTrigger) => Promise<RoutineTriggerAnswer>;
   spawnFn?: (command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => SpawnedProcess;
   existsFn?: (path: string) => boolean;
   nowFn?: () => number;
@@ -149,6 +156,20 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
       const ack = parseDeskAck(msg);
       if (ack) {
         pending[bot].get(ack.requestId)?.settle("ok" in ack ? { ok: true } : { refused: ack.refused });
+        return;
+      }
+      const trigger = parseRoutineTrigger(msg);
+      if (trigger) {
+        const unavailable: RoutineTriggerAnswer = { status: "refused", reason: "unavailable" };
+        void Promise.resolve()
+          .then(() => deps.onRoutineTrigger?.(bot, trigger) ?? unavailable)
+          .catch((err: unknown) => { console.error(`bean: ${bot} sprout trigger failed`, err); return unavailable; })
+          .then((a) => {
+            // Back to the process that asked: a bot that restarted meanwhile has no tap waiting.
+            try {
+              child.send({ type: "routine-trigger-result", requestId: trigger.requestId, ...a }, () => {});
+            } catch { /* channel closed — that bot is gone */ }
+          });
         return;
       }
       const saved = parseDeskSaved(msg);

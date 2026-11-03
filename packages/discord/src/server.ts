@@ -7,6 +7,7 @@ import {
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
   makeRoles, makeChatter, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, parseChatterCommand, RoutineProposalStore, SproutRunProposalStore, type Role,
+  parentSproutTrigger, processParentPort, sproutRunFacts,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, MessageReferenceType, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -39,6 +40,8 @@ if (tzError) {
 let stopRoutines: (() => Promise<void>) | undefined;
 // Set by startHeadlessRoutines below (before login, so before any turn can use it).
 let headlessSprouts: Awaited<ReturnType<typeof startHeadlessRoutines>>["sprouts"] | undefined;
+// Spawned by the desktop app: the app owns the scheduler, so a sprout-run tap asks it over IPC (#637).
+const appSprouts = !headless && processParentPort.connected() ? parentSproutTrigger() : undefined;
 
 // Re-scanned per call so a CLI installed after the bot started is picked up.
 const clis = (): CliName[] => detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
@@ -142,7 +145,8 @@ const bot = buildTeamsBot({
       id, name: await client.users.fetch(id).then((u) => u.displayName, () => id),
     }))),
     proposals: new RoutineProposalStore(),
-    // Headless only: the desktop app owns the scheduler otherwise, so there's nothing to trigger.
+    // Headless: this process owns the scheduler. App-spawned: the app does. Standalone without
+    // headless routines: nothing to trigger.
     ...(headless ? {
       sprouts: {
         trigger: (name, action, origin) => headlessSprouts
@@ -151,6 +155,8 @@ const bot = buildTeamsBot({
         facts: (r) => headlessSprouts ? headlessSprouts.facts(r) : Promise.resolve({ pending: 0, seeded: false }),
         proposals: new SproutRunProposalStore(),
       },
+    } : appSprouts ? {
+      sprouts: { trigger: appSprouts, facts: (r) => sproutRunFacts(dbFile(dir), r), proposals: new SproutRunProposalStore() },
     } : {}),
   },
 });

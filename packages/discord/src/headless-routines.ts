@@ -3,8 +3,8 @@ import {
   isWatchSeeded, listTodos, loadLayeredSkills, loadMemories, loadRoutines, loadRoutineStates, makeRoutineSteps, markNewItems,
   outboxDir, fireDueReminders, remindersFile, pinnedStepSelection, pollWatch, pruneStepAttempts, recoverInterruptedTodos, resolveDelegateSelection,
   retrieveNoteTool, routinesDir, routineStateFile, availableModels, saveRoutine, saveRoutineStates, searchNotes, seedWatch,
-  skillsDir, sproutFinishText, unseenIds, watchSourceKey,
-  type CliModels, type CliName, type Routine, type RoutineHostDeps, type TriggerResult,
+  skillsDir, sproutRunFacts, unseenIds, withFinishReply,
+  type CliModels, type CliName, type Routine, type RoutineHostDeps, type SproutTrigger,
 } from "@bean/core";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -35,24 +35,6 @@ export const missedNotice = (names: string[]): string =>
 export const clearedNotice = (paths: string[]): string =>
   `Cleared ${paths.length} stale run reservation(s) left by the last shutdown: ${paths.join(", ")}. Those runs were stopped.`;
 
-type Trigger = (name: string, action: "run" | "check", origin: { channel?: string }) => Promise<TriggerResult>;
-
-/** Wraps the scheduler's trigger so a run started from chat posts one fixed line where it was
- * asked once it ends (#636): a channel post, not an interaction follow-up (those expire). */
-export function withFinishReply(
-  trigger: (name: string, action: "run" | "check") => Promise<TriggerResult>,
-  enqueue: (msg: { channel?: string; body: string }) => Promise<unknown>,
-): Trigger {
-  return async (name, action, origin) => {
-    const t = await trigger(name, action);
-    if (t.status === "started") {
-      void t.done.then((o) => enqueue({ ...origin, body: sproutFinishText(name, o.status) }))
-        .catch((err: unknown) => console.error(`bean: finish reply for "${name}" failed`, err));
-    }
-    return t;
-  };
-}
-
 export interface HeadlessRoutineDeps {
   dir: string;
   builtinDir: string;
@@ -72,7 +54,7 @@ export interface HeadlessRoutineDeps {
  * run-a-sprout hooks (trigger + planSproutRun's facts). */
 export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<{
   shutdown: () => Promise<void>;
-  sprouts: { trigger: Trigger; facts: (r: Routine) => Promise<{ pending: number; seeded: boolean }> };
+  sprouts: { trigger: SproutTrigger; facts: (r: Routine) => Promise<{ pending: number; seeded: boolean }> };
 }> {
   const { dir } = deps;
   const ownerDm = (body: string, title?: string): Promise<void> =>
@@ -155,10 +137,7 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
   const sprouts = {
     trigger: withFinishReply(scheduler.trigger, (msg) =>
       enqueueOutbox(outboxDir(dir), { transport: "discord", ...msg }, randomUUID)),
-    facts: async (r: Routine) => ({
-      pending: (await listTodos(dbFile(dir), r.name)).filter((t) => t.status === "pending").length,
-      seeded: r.watch ? isWatchSeeded(dbFile(dir), r.name, watchSourceKey(r.watch)) : true,
-    }),
+    facts: (r: Routine) => sproutRunFacts(dbFile(dir), r),
   };
 
   const shutdown = async (): Promise<void> => {

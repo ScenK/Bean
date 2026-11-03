@@ -6,6 +6,7 @@ import {
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, ConversationCatalog, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeChatter, dmAllowed,
+  SproutRunProposalStore, parentSproutTrigger, processParentPort, sproutRunFacts,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -181,6 +182,11 @@ const bot = buildTeamsBot({
     // Owner only: a Teams digest DMs nobody else.
     recipients: async () => (teamsConfig.ownerId ? [{ id: teamsConfig.ownerId, name: teamsConfig.ownerName ?? "owner" }] : []),
     proposals: new RoutineProposalStore(),
+    // Spawned by the desktop app (its scheduler host): a sprout-run tap asks the app over IPC
+    // (#637). A standalone Teams server has no scheduler, so it never offers runs.
+    ...(processParentPort.connected() ? {
+      sprouts: { trigger: parentSproutTrigger(), facts: (r) => sproutRunFacts(dbFile(dir), r), proposals: new SproutRunProposalStore() },
+    } : {}),
   },
 });
 
