@@ -198,6 +198,12 @@ test("remembered card shows the fact and a Forget button carrying the memory id 
   expect(JSON.stringify(shared)).not.toContain("share-memory");
 });
 
+test("remembered card shows the fact's category in the footer (#648)", () => {
+  const s = JSON.stringify(discordCards.rememberedCard({ memoryId: "m", text: "uses vitest", category: "You", scope: "private" }));
+  expect(s).toContain("Category: You · Saved for you — used in our DMs.");
+  expect(JSON.stringify(discordCards.rememberedCard({ memoryId: "m", text: "uses vitest", scope: "private" }))).not.toContain("Category:");
+});
+
 test("live-session card renders project/skill/cli/model dropdowns, edit+start+cancel, defaults selected", () => {
   const card = discordCards.liveSessionProposalCard({
     proposalId: "live-1", projectName: "bean", instruction: "investigate the auth bug",

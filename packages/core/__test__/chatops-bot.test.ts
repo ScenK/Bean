@@ -176,7 +176,7 @@ test("plain message: replies with converse text and records history", async () =
   ]);
 });
 
-test("shared chat: each turn names its speaker and shared memories are framed as the household's", async () => {
+test("shared chat: each turn names its speaker and shared memories are framed as everyone's", async () => {
   const seen: { role: string; content: string }[][] = [];
   const { deps } = makeDeps({
     loadMemories: async () => [{ id: "1", text: "prefers to be called Scen", createdAt: "" }],
@@ -193,7 +193,7 @@ test("shared chat: each turn names its speaker and shared memories are framed as
   // history keeps alice's turn attributed; the latest turn names bob (brackets stripped)
   expect(second.map((m) => m.content)).toContain("[alice]: hi bean");
   expect(second.at(-1)).toEqual({ role: "user", content: "[bob]: me too" });
-  expect(second.map((m) => m.content).join("\n")).toContain("(about the household) prefers to be called Scen");
+  expect(second.map((m) => m.content).join("\n")).toContain("(about everyone here) prefers to be called Scen");
 });
 
 test("onActivity brackets a converse turn with who/where, never the message text", async () => {
@@ -2103,9 +2103,9 @@ test("a member DM is admitted without allowGuestDms; a non-member DM's refusal p
   await bot.onMessage({ ...guest, direct: true }, effects);
   await bot.onMessage({ ...member, direct: true, text: "/cancel" }, effects);
   expect(effects.posted).toEqual([
-    "You're a household member here. Your id: mia.",
+    "You're a member here. Your id: mia.",
     "hello there",
-    "Hi! I only take direct messages from Scen's household. To be added, send Scen the id from `whoami`. Or mention me in a shared chat and I'll help there.",
+    "Hi! I only take direct messages from people Scen has added. To be added, send Scen the id from `whoami`. Or mention me in a shared chat and I'll help there.",
     "Sorry, I can't cancel runs for you. Sprouts and coding tasks are set up by Scen.",
   ]);
 });
@@ -2196,7 +2196,7 @@ test("whoami/admins work for guests; the DM gate answers once with no model call
   expect(effects.posted).toEqual([
     "You're a guest here. Your id: gus. This chat's id: `s1`.",
     "Owner: Scen. Admins here: Ana.",
-    "Hi! I only take direct messages from Scen's household. To be added, send Scen the id from `whoami`. Or mention me in a shared chat and I'll help there.",
+    "Hi! I only take direct messages from people Scen has added. To be added, send Scen the id from `whoami`. Or mention me in a shared chat and I'll help there.",
     "You're a guest here. Your id: gus.",
   ]);
 });
@@ -2322,6 +2322,43 @@ test("a DM remember is private: recalled in that member's DM only, never another
   expect(await h.loadMemories(h.file, null)).toEqual([]);
 });
 
+test("the owner's DM recalls private facts under every owner id (the other surface's DM too); a member's DM and channels don't (#647)", async () => {
+  const h = await household();
+  await (await import("../src/memory/store.js")).appendMemories(h.file, [
+    { id: "t", text: "Owner said in Teams: prefers rooibos", createdAt: "2026-07-03T00:00:00.000Z", subjectId: "29:owner" },
+  ]);
+  h.deps.ownerSubjectIds = async () => ["u1", "29:owner"];
+  const bot = buildTeamsBot(h.deps);
+  const recalled = async (m: Parameters<typeof h.say>): Promise<boolean> => {
+    h.prompts.length = 0;
+    await bot.onMessage(h.say(...m), fx());
+    return h.prompts.some((p) => p.includes("prefers rooibos"));
+  };
+  expect(await recalled(["u1", true])).toBe(true);
+  expect(await recalled(["mia", true])).toBe(false);
+  expect(await recalled(["u1", false])).toBe(false);
+  // Writes still store the speaker's own id.
+  await bot.onMessage(h.say("u1", true, "remember that I prefer espresso"), fx());
+  expect((await h.loadMemories(h.file)).find((m) => m.text === "Prefers espresso")?.subjectId).toBe("u1");
+});
+
+test("only the owner's DM pins the owner's You rows past top-K; channels and a member's DM rank them as usual (#650)", async () => {
+  const h = await household();
+  await (await import("../src/memory/store.js")).appendMemories(h.file, [
+    { id: "you", text: "goes by Scen", category: "You", createdAt: "2026-07-01T00:00:00.000Z" },
+    ...Array.from({ length: 30 }, (_, i) => ({ id: `f-${i}`, text: `unrelated filler ${i}`, createdAt: "2026-07-03T00:00:00.000Z" })),
+  ]);
+  const bot = buildTeamsBot(h.deps);
+  const recalled = async (m: Parameters<typeof h.say>): Promise<boolean> => {
+    h.prompts.length = 0;
+    await bot.onMessage(h.say(...m), fx());
+    return h.prompts.some((p) => p.includes("goes by Scen"));
+  };
+  expect(await recalled(["u1", true])).toBe(true);
+  expect(await recalled(["u1", false])).toBe(false);
+  expect(await recalled(["mia", true])).toBe(false);
+});
+
 test("DM auto-capture: a typed fact is saved private with a receipt; guests, channels, transcripts and autoMemory off save nothing", async () => {
   const h = await household();
   let auto = true;
@@ -2340,6 +2377,43 @@ test("DM auto-capture: a typed fact is saved private with a receipt; guests, cha
   auto = false; // read per turn — no restart
   await bot.onMessage(h.say("u1", true, "I prefer rooibos"), fx());
   expect((await h.loadMemories(h.file)).map((m) => m.text)).toEqual(["Prefers oat milk"]);
+});
+
+test("owner DM captures and remembers keep the model's category; member DMs and channels store none (#648)", async () => {
+  const h = await household();
+  h.deps.autoMemoryEnabled = async () => true;
+  // The model always offers a category; only owner-DM paths may keep it.
+  const inner = h.deps.chat;
+  h.deps.chat = async (a) => {
+    const r = await inner(a);
+    return { ...r, toolCalls: r.toolCalls.map((c) => (c.name === "remember" ? { ...c, args: { ...(c.args as object), category: "You" } } : c)) };
+  };
+  const bot = buildTeamsBot(h.deps);
+  const owner = fx();
+  // The fake's remember toggle is left armed by a capture; a plain turn resets it.
+  const reset = (): Promise<void> => bot.onMessage(h.say("max", false), fx());
+  await bot.onMessage(h.say("u1", true, "I prefer rooibos"), owner); // auto-capture
+  await reset();
+  await bot.onMessage(h.say("u1", true, "remember that I prefer espresso"), owner); // explicit
+  const member = fx();
+  await bot.onMessage(h.say("mia", true, "I prefer oat milk"), member);
+  await reset();
+  await bot.onMessage(h.say("u1", false, "remember that I prefer oat milk"), fx()); // owner, channel
+  const rows = await h.loadMemories(h.file);
+  const cat = (subjectId: string | undefined, text: string) => rows.find((m) => m.subjectId === subjectId && m.text === text)?.category ?? null;
+  expect(cat("u1", "Prefers rooibos")).toBe("You");
+  expect(cat("u1", "Prefers espresso")).toBe("You");
+  expect(cat("mia", "Prefers oat milk")).toBeNull();
+  expect(cat(undefined, "Prefers oat milk")).toBeNull();
+  expect(owner.cards).toMatchObject([{ kind: "remembered", category: "You" }, { kind: "remembered", category: "You" }]);
+  expect(member.cards[0]).not.toHaveProperty("category", "You");
+  // The owner's DM turns carry the category list; a member's never do.
+  h.prompts.length = 0;
+  await bot.onMessage(h.say("u1", true), fx());
+  expect(h.prompts.some((p) => p.includes("categories already in use") && p.includes("You"))).toBe(true);
+  h.prompts.length = 0;
+  await bot.onMessage(h.say("mia", true), fx());
+  expect(h.prompts.some((p) => p.includes("categories already in use"))).toBe(false);
 });
 
 test("DM auto-capture skips a turn that already used remember", async () => {
@@ -2383,8 +2457,8 @@ test("forget: a member removes only their own private facts; the owner removes a
     await bot.onCardAction({ conversationId: "c1", fromId: who, fromName: who, value: { beanAction: "forget-memory", proposalId: id } }, effects);
     return effects.posted;
   };
-  expect(await tap("max", "mias")).toContain("Only the owner can forget household facts or another member's.");
-  expect(await tap("max", "shared")).toContain("Only the owner can forget household facts or another member's.");
+  expect(await tap("max", "mias")).toContain("Only the owner can forget shared facts or another member's.");
+  expect(await tap("max", "shared")).toContain("Only the owner can forget shared facts or another member's.");
   expect((await h.loadMemories(h.file)).map((m) => m.id).sort()).toEqual(["mias", "shared"]);
   await tap("mia", "mias");
   await tap("u1", "shared");
@@ -2415,7 +2489,7 @@ test("share: the author's tap makes a private fact household-shared and dated in
   }
   // A forged payload text is ignored: the reply quotes the stored row.
   expect(await tap("mia", { text: "forged" })).toEqual([
-    "Shared with the household (by mia): wifi is now bean2. Only the owner can forget it now.",
+    "Shared with everyone (by mia): wifi is now bean2. Only the owner can forget it now.",
   ]);
   expect(await inChannel()).toBe(true);
   expect(await h.loadMemories(h.file, null)).toMatchObject([{ id: "mias", createdAt: "2026-02-01T09:30:00.000Z" }]);
@@ -3205,7 +3279,7 @@ describe("desk turns (#528)", () => {
       return { pid: 1, send: (t: string) => { sent.push(t); return opts.liveAccepts ?? true; }, stop: () => c.onExit(undefined) };
     };
     const liveSessions = new LiveSessionRegistry(startFn as never, { dir, surface: "discord" });
-    const subjects: (string | null | undefined)[] = [];
+    const subjects: (string | string[] | null | undefined)[] = [];
     let chats = 0;
     const conversations = new ConversationStore(file);
     const { deps } = makeDeps({
@@ -3248,7 +3322,7 @@ describe("desk turns (#528)", () => {
     const { acks, effects } = await d.run({ conversationId: "d1", text: "  hi from the desk ", fromId: "intruder" });
     expect(acks).toEqual([{ ok: true }]);
     expect(effects.posted).toEqual(["🖥 (desk): hi from the desk", "hello there"]);
-    expect(d.subjects).toEqual(["u1"]);
+    expect(d.subjects).toEqual([["u1"]]);
     expect(d.conversations.history("d1")).toEqual([
       { role: "user", content: speakerLine("Scen", "hi from the desk") },
       { role: "assistant", content: "hello there" },

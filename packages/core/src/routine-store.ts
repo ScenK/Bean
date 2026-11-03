@@ -280,7 +280,7 @@ export function chatRoutineProblem(
   for (const s of r.sinks.chatops ?? []) {
     if (s.transport !== transport) return `only ${transport === "discord" ? "Discord" : "Teams"} delivery can be set up from this chat`;
     if (s.user !== undefined && !recipients.some((p) => p.id === s.user)) {
-      return `user ${s.user} isn't the owner or a household member — sprouts only DM the household`;
+      return `user ${s.user} isn't the owner or a member — sprouts only DM the owner and members`;
     }
     if (s.channel !== undefined && s.channel !== channelId) {
       return "sprouts from chat can only post in the channel they're drafted in — set other channels on the desktop";

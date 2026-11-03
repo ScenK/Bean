@@ -148,3 +148,15 @@ export async function loadChatopsOwners(dir: string): Promise<Array<{ surface: C
   }));
   return owners.flat();
 }
+
+/** Every platform id the owner's private memory rows may be stored under, across surfaces: each
+ * configured `ownerId` (`loadChatopsOwners`) plus the ids the catalog saw for it (Teams: config may
+ * hold the AAD id while the bot stored the `29:` id, which the catalog records as `owner_alt_id`).
+ * A missing config contributes nothing — never a fallback to every row. */
+export async function ownerSubjectIds(file: string, dir: string): Promise<string[]> {
+  const owners = await loadChatopsOwners(dir);
+  const stmt = openDb(file).prepare("SELECT DISTINCT owner_id FROM chatops_conversations WHERE surface = ? AND owner_alt_id = ?");
+  return [...new Set(owners.flatMap((o) => [
+    o.ownerId, ...(stmt.all(o.surface, o.ownerId) as unknown as { owner_id: string }[]).map((r) => r.owner_id),
+  ]))];
+}

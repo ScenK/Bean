@@ -2,14 +2,20 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { openDb } from "../db.js";
 import { cjkBigrams, ftsMatchQuery } from "../fts-text.js";
-import type { Memory } from "./memory.js";
+import { OWNER_PIN_LIMIT, sanitizeCategory, type Memory } from "./memory.js";
 
-interface MemoryRow { id: string; text: string; project_path: string | null; created_at: string; subject_id?: string | null }
+interface MemoryRow {
+  id: string; text: string; project_path: string | null; created_at: string; subject_id?: string | null;
+  category: string | null; source_id: string | null; source_title: string | null;
+}
 
 function toMemory(row: MemoryRow): Memory {
   return {
     id: row.id, text: row.text, projectPath: row.project_path ?? undefined, createdAt: row.created_at,
     ...(row.subject_id ? { subjectId: row.subject_id } : {}),
+    ...(row.category ? { category: row.category } : {}),
+    ...(row.source_id ? { sourceId: row.source_id } : {}),
+    ...(row.source_title ? { sourceTitle: row.source_title } : {}),
   };
 }
 
@@ -17,15 +23,18 @@ function toMemory(row: MemoryRow): Memory {
 // node:sqlite's DatabaseSync is synchronous under the hood — same convention as outbox.ts.
 /** `subject` scopes recall, filtered in SQL before any ranking: absent = every row (desktop and
  * Persona, the owner's own machine), `null` = household-shared only (channels, routines), an id =
- * shared plus that speaker's private rows (their DMs). */
-export async function loadMemories(file: string, subject?: string | null): Promise<Memory[]> {
+ * shared plus that speaker's private rows (their DMs), a list = shared plus any of those ids (the
+ * owner's DMs, via `ownerSubjectIds`; empty = shared only). */
+export async function loadMemories(file: string, subject?: string | string[] | null): Promise<Memory[]> {
   const db = openDb(file);
-  const cols = "SELECT id, text, project_path, created_at, subject_id FROM memories";
-  const rows = (subject === undefined
+  const cols = "SELECT id, text, project_path, created_at, subject_id, category, source_id, source_title FROM memories";
+  const ids = subject === undefined ? undefined : subject === null ? [] : typeof subject === "string" ? [subject] : [...new Set(subject)];
+  const rows = (ids === undefined
     ? db.prepare(`${cols} ORDER BY created_at`).all()
-    : subject === null
+    : ids.length === 0
       ? db.prepare(`${cols} WHERE subject_id IS NULL ORDER BY created_at`).all()
-      : db.prepare(`${cols} WHERE subject_id IS NULL OR subject_id = ? ORDER BY created_at`).all(subject)) as unknown as MemoryRow[];
+      : db.prepare(`${cols} WHERE subject_id IS NULL OR subject_id IN (${ids.map(() => "?").join(", ")}) ORDER BY created_at`)
+        .all(...ids)) as unknown as MemoryRow[];
   return rows.map(toMemory);
 }
 
@@ -40,11 +49,16 @@ export async function loadMemories(file: string, subject?: string | null): Promi
 export async function appendMemories(file: string, additions: Memory[]): Promise<void> {
   const db = openDb(file);
   const insert = db.prepare(
-    "INSERT INTO memories (id, text, project_path, created_at, subject_id) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO memories (id, text, project_path, created_at, subject_id, category, source_id, source_title) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   );
   db.exec("BEGIN");
   try {
-    for (const m of additions) insert.run(m.id, m.text, m.projectPath ?? null, m.createdAt, m.subjectId ?? null);
+    for (const m of additions) {
+      insert.run(
+        m.id, m.text, m.projectPath ?? null, m.createdAt, m.subjectId ?? null,
+        sanitizeCategory(m.category), m.sourceId ?? null, m.sourceTitle ?? null,
+      );
+    }
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -56,6 +70,20 @@ export async function appendMemories(file: string, additions: Memory[]): Promise
 // Persona panel is open) can't be lost the way a whole-list replace would lose it.
 export async function updateMemory(file: string, id: string, text: string): Promise<void> {
   openDb(file).prepare("UPDATE memories SET text = ? WHERE id = ?").run(text, id);
+}
+
+/** Per-row recategorize (null clears it). Never load+replace — a concurrent writer's row would be
+ * lost (.memory/safety-memory-append-vs-replace.md). */
+export async function updateMemoryCategory(file: string, id: string, category: string | null): Promise<void> {
+  openDb(file).prepare("UPDATE memories SET category = ? WHERE id = ?").run(sanitizeCategory(category), id);
+}
+
+/** Renames a category in one UPDATE, so rows appended mid-rename under the old name still move or
+ * keep it atomically. An empty `to` uncategorizes them. Returns rows changed. */
+export async function renameMemoryCategory(file: string, from: string, to: string): Promise<number> {
+  const old = sanitizeCategory(from);
+  if (old === null) return 0;
+  return Number(openDb(file).prepare("UPDATE memories SET category = ? WHERE category = ?").run(sanitizeCategory(to), old).changes);
 }
 
 /** Deletes exactly these ids; idempotent (already-gone ids are ignored). Returns the ids removed.
@@ -84,7 +112,11 @@ export async function shareMemory(file: string, id: string, actor: string): Prom
 
 /** One change a dream run makes: `ids` are replaced by one fact with `text` (a merge, or a
  * rewrite when there's a single id), or simply removed when `text` is absent (a drop). */
-export interface DreamGroup { ids: string[]; text?: string; projectPath?: string }
+export interface DreamGroup {
+  ids: string[]; text?: string; projectPath?: string;
+  /** Carried onto the merged row: planDream only merges within one category and source. */
+  category?: string; sourceId?: string; sourceTitle?: string;
+}
 export interface DreamDigest { runId: string; at: string; merged: number; rewritten: number; removed: number; undone?: boolean }
 export interface DreamPlan {
   runId: string;
@@ -155,22 +187,30 @@ export async function applyConsolidation(file: string, plan: DreamPlan, nowMs: n
     tx(db, () => {
       const lease = readMeta(db, "dreamLease") as { runId?: string; expires?: number } | undefined;
       if (lease?.runId !== plan.runId || (lease.expires ?? 0) < nowMs) throw new Abort();
-      const get = db.prepare("SELECT id, text, project_path, created_at FROM memories WHERE id = ?");
+      const get = db.prepare("SELECT text, project_path, category FROM memories WHERE id = ?");
       const byId = new Map(plan.expected.map((m) => [m.id, m]));
       for (const m of plan.expected) {
-        const row = get.get(m.id) as MemoryRow | undefined;
-        if (!row || row.text !== m.text || (row.project_path ?? undefined) !== m.projectPath) throw new Abort();
+        const row = get.get(m.id) as Pick<MemoryRow, "text" | "project_path" | "category"> | undefined;
+        // A recategorize mid-dream is the user's newer decision — don't merge it away.
+        if (!row || row.text !== m.text || (row.project_path ?? undefined) !== m.projectPath ||
+          (row.category ?? undefined) !== m.category) throw new Abort();
       }
       const at = plan.digest.at;
       const hist = db.prepare(
-        "INSERT INTO memories_history (run_id, grp, phase, memory_id, text, project_path, created_at, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO memories_history (run_id, grp, phase, memory_id, text, project_path, created_at, at, category, source_id, source_title) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
       const del = db.prepare("DELETE FROM memories WHERE id = ?");
-      const ins = db.prepare("INSERT INTO memories (id, text, project_path, created_at) VALUES (?, ?, ?, ?)");
+      const ins = db.prepare(
+        "INSERT INTO memories (id, text, project_path, created_at, category, source_id, source_title) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      );
       plan.groups.forEach((g, grp) => {
         const before = g.ids.map((id) => byId.get(id)).filter((m): m is Memory => m !== undefined);
         for (const m of before) {
-          hist.run(plan.runId, grp, "before", m.id, m.text, m.projectPath ?? null, m.createdAt, at);
+          hist.run(
+            plan.runId, grp, "before", m.id, m.text, m.projectPath ?? null, m.createdAt, at,
+            m.category ?? null, m.sourceId ?? null, m.sourceTitle ?? null,
+          );
           del.run(m.id);
         }
         if (g.text === undefined) return;
@@ -178,8 +218,9 @@ export async function applyConsolidation(file: string, plan: DreamPlan, nowMs: n
         // dream's ≥N-new trigger, and it keeps recall ordering stable.
         const createdAt = before.map((m) => m.createdAt).sort().at(-1) ?? at;
         const id = randomUUID();
-        ins.run(id, g.text, g.projectPath ?? null, createdAt);
-        hist.run(plan.runId, grp, "after", id, g.text, g.projectPath ?? null, createdAt, at);
+        const extra = [g.category ?? null, g.sourceId ?? null, g.sourceTitle ?? null] as const;
+        ins.run(id, g.text, g.projectPath ?? null, createdAt, ...extra);
+        hist.run(plan.runId, grp, "after", id, g.text, g.projectPath ?? null, createdAt, at, ...extra);
       });
       const cutoff = new Date(nowMs - HISTORY_KEEP_MS).toISOString();
       db.prepare("DELETE FROM memories_history WHERE at < ?").run(cutoff);
@@ -196,18 +237,22 @@ export async function applyConsolidation(file: string, plan: DreamPlan, nowMs: n
   }
 }
 
-interface HistoryRow { grp: number; phase: "before" | "after"; memory_id: string; text: string; project_path: string | null; created_at: string }
+interface HistoryRow {
+  grp: number; phase: "before" | "after"; memory_id: string; text: string; project_path: string | null; created_at: string;
+  category: string | null; source_id: string | null; source_title: string | null;
+}
 function historyGroups(db: DatabaseSync, runId: string): Map<number, HistoryRow[]> {
   const rows = db.prepare(
-    "SELECT grp, phase, memory_id, text, project_path, created_at FROM memories_history WHERE run_id = ? ORDER BY grp, rowid",
+    "SELECT grp, phase, memory_id, text, project_path, created_at, category, source_id, source_title " +
+      "FROM memories_history WHERE run_id = ? ORDER BY grp, rowid",
   ).all(runId) as unknown as HistoryRow[];
   const groups = new Map<number, HistoryRow[]>();
   for (const r of rows) groups.set(r.grp, [...(groups.get(r.grp) ?? []), r]);
   return groups;
 }
 
-/** Undo a dream run: each group is restored only if its after-image is still exactly what's in
- * memories — a row edited or deleted since is the user's newer decision, so that group is kept
+/** Undo a dream run: each group is restored only if its after-image (text, project, category) is
+ * still exactly what's in memories — a row edited, recategorized or deleted since is the user's newer decision, so that group is kept
  * and counted in `skipped`. */
 export async function restoreDreamRun(file: string, runId: string): Promise<{ restored: number; skipped: number }> {
   const db = openDb(file);
@@ -216,20 +261,24 @@ export async function restoreDreamRun(file: string, runId: string): Promise<{ re
     // dream could commit between the caller's read and this restore.
     const digest = readMeta(db, "lastDream") as DreamDigest | undefined;
     if (digest?.runId !== runId || digest.undone) return { restored: 0, skipped: 0 };
-    const get = db.prepare("SELECT text, project_path FROM memories WHERE id = ?");
+    const get = db.prepare("SELECT text, project_path, category FROM memories WHERE id = ?");
     const del = db.prepare("DELETE FROM memories WHERE id = ?");
-    const ins = db.prepare("INSERT OR IGNORE INTO memories (id, text, project_path, created_at) VALUES (?, ?, ?, ?)");
+    const ins = db.prepare(
+      "INSERT OR IGNORE INTO memories (id, text, project_path, created_at, category, source_id, source_title) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    );
     let restored = 0;
     let skipped = 0;
     for (const rows of historyGroups(db, runId).values()) {
       const after = rows.filter((r) => r.phase === "after");
       const intact = after.every((r) => {
-        const cur = get.get(r.memory_id) as { text: string; project_path: string | null } | undefined;
-        return cur !== undefined && cur.text === r.text && cur.project_path === r.project_path;
+        const cur = get.get(r.memory_id) as { text: string; project_path: string | null; category: string | null } | undefined;
+        return cur !== undefined && cur.text === r.text && cur.project_path === r.project_path && cur.category === r.category;
       });
       if (!intact) { skipped++; continue; }
       for (const r of after) del.run(r.memory_id);
-      for (const r of rows.filter((x) => x.phase === "before")) ins.run(r.memory_id, r.text, r.project_path, r.created_at);
+      for (const r of rows.filter((x) => x.phase === "before")) {
+        ins.run(r.memory_id, r.text, r.project_path, r.created_at, r.category, r.source_id, r.source_title);
+      }
       restored++;
     }
     writeMeta(db, "lastDream", { ...digest, undone: true });
@@ -247,16 +296,27 @@ export async function dreamDetails(file: string, runId: string): Promise<{ befor
 
 /** Pure top-K relevance ranking for memoriesBlock(): small memory sets are still injected
  * wholesale (today's behavior); above `skipThreshold` an FTS5 bm25 rank against `latestUserText`
- * picks the top `limit`, always force-including memories scoped to `currentProjectPath`. */
+ * picks the top `limit`, always force-including memories scoped to `currentProjectPath`.
+ * `pinCategory` (owner paths only, #650): the newest `pinLimit` rows in exactly that category are
+ * included first and kept out of the ranked pool, so they don't count against `limit`. */
 export function selectRelevantMemories(
   memories: Memory[],
   latestUserText: string,
   currentProjectPath?: string,
-  limit = 12,
-  skipThreshold = 20,
+  { limit = 12, skipThreshold = 20, pinCategory, pinLimit = OWNER_PIN_LIMIT }: {
+    limit?: number; skipThreshold?: number; pinCategory?: string; pinLimit?: number;
+  } = {},
 ): Memory[] {
   if (memories.length <= skipThreshold) return memories;
 
+  // loadMemories orders by created_at, so the tail is the newest.
+  const owned = pinCategory ? memories.filter((m) => m.category === pinCategory) : [];
+  const pinned = owned.slice(Math.max(0, owned.length - pinLimit));
+  const pinnedIds = new Set(pinned.map((m) => m.id));
+  return [...pinned, ...rankRelevant(memories.filter((m) => !pinnedIds.has(m.id)), latestUserText, currentProjectPath, limit)];
+}
+
+function rankRelevant(memories: Memory[], latestUserText: string, currentProjectPath: string | undefined, limit: number): Memory[] {
   const forced = currentProjectPath
     ? memories.filter((m) => m.projectPath === currentProjectPath)
     : [];

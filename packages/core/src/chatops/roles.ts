@@ -125,7 +125,7 @@ export function ownerOnlyRefusal(what: string, roles: Roles): string {
 }
 
 export const dmRefusal = (roles: Roles): string =>
-  `Hi! I only take direct messages from ${roles.ownerName}'s household. To be added, send ${roles.ownerName} ` +
+  `Hi! I only take direct messages from people ${roles.ownerName} has added. To be added, send ${roles.ownerName} ` +
   "the id from `whoami`. Or mention me in a shared chat and I'll help there.";
 
 /** A member asking for an admin/owner capability: not "ask to be made admin" — the owner sets those up. */
@@ -190,7 +190,7 @@ export function roleLine(role: Role, roles: Roles, scopeId: string | undefined):
       `sprout, or Mac control, reply exactly: "${ownerOnly}"`;
   }
   if (role === "member") {
-    return "The current speaker is a household member (not your owner): memories, notes, reminders and task " +
+    return "The current speaker is a member (not your owner): memories, notes, reminders and task " +
       "queues are open to them, but delegation, live sessions, skills, sprouts, images and Mac control are not. " +
       `If they ask for one of those, reply exactly: "${memberRefusal("do that", roles)}" Never claim you did it.`;
   }

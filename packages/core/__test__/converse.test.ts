@@ -332,6 +332,23 @@ test("recalled memories ride a user-role message after history, labeled global v
   expect(captured[captured.length - 1]).toEqual({ role: "user", content: "hi" });
 });
 
+test("pinOwnerMemories recalls the owner's You rows past top-K; the system message stays byte-identical", async () => {
+  const runs: ConvoMsg[][] = [];
+  const deps: ConverseDeps = { model: "m", chat: async ({ messages }) => { runs.push(messages); return { content: "ok", toolCalls: [] }; } };
+  const memories = [
+    { id: "you-1", text: "goes by Scen", category: "You", createdAt: "2026-07-01T00:00:00.000Z" },
+    ...Array.from({ length: 40 }, (_, i) => ({ id: `f-${i}`, text: `unrelated filler ${i}`, createdAt: "2026-07-03T00:00:00.000Z" })),
+  ];
+  await conv({ latestUserText: "what's the weather", memories, deps, pinOwnerMemories: true });
+  await conv({ latestUserText: "what's the weather", memories, deps });
+  await conv({ latestUserText: "what's the weather", memories, deps, speaker: "Alex" }); // a channel: no pin
+  const recall = (msgs: ConvoMsg[]) => String(msgs[msgs.length - 2]?.content);
+  expect(recall(runs[0]!)).toContain("[you-1] (about the user) goes by Scen");
+  expect(recall(runs[1]!)).not.toContain("goes by Scen");
+  expect(recall(runs[2]!)).not.toContain("goes by Scen");
+  expect(runs[0]![0]).toEqual(runs[1]![0]);
+});
+
 test("no memory block is added when memories is empty", async () => {
   let captured: ConvoMsg[] = [];
   const deps: ConverseDeps = {
@@ -948,7 +965,7 @@ describe("propose_routine", () => {
   it("never DMs someone outside the household, and never takes command steps", async () => {
     const stranger = { ...routine, sinks: { chatops: [{ transport: "discord", user: "999" }] } };
     expect((await conv({ latestUserText: "x", deps: call(JSON.stringify(stranger)), routineAuthoring: authoring })).proposedRoutine?.problem)
-      .toMatch(/isn't the owner or a household member/);
+      .toMatch(/isn't the owner or a member/);
     const shell = { ...routine, steps: [{ kind: "command", command: "rm -rf ~" }] };
     expect((await conv({ latestUserText: "x", deps: call(JSON.stringify(shell)), routineAuthoring: authoring })).proposedRoutine?.problem)
       .toMatch(/command steps/);
@@ -1052,4 +1069,20 @@ test("desktop propose_live_session is an offer to hand the chat over: no cli/mod
     .toEqual({ projectPath: "/work/api", instruction: "add OAuth login" });
   expect(await offer({ instruction: "spike a CLI" })).toEqual({ projectPath: "/scratch", instruction: "spike a CLI" });
   expect(await offer({ project: "/nope", instruction: "x" })).toBeUndefined();
+});
+
+test("memoryCategories ride in the user-role recall message; system message and tool specs stay byte-identical (#648)", async () => {
+  const seen: { messages: ConvoMsg[]; tools?: ToolSpec[] }[] = [];
+  const deps: ConverseDeps = { model: "m", chat: async ({ messages, tools }) => { seen.push({ messages, tools }); return { content: "ok", toolCalls: [] }; } };
+  await conv({ latestUserText: "hi", deps, memoryCategories: ["Work", "You"] });
+  await conv({ latestUserText: "hi", deps, memoryCategories: ["Food"] });
+  await conv({ latestUserText: "hi", deps });
+  const [a, b, c] = seen;
+  const recall = a!.messages.find((m) => m.role === "user" && String(m.content).includes("categories already in use"));
+  expect(String(recall?.content)).toContain("Work, You");
+  expect(a!.messages.filter((m) => m.role === "system").some((m) => String(m.content).includes("Work, You"))).toBe(false);
+  expect(b!.messages[0]!.content).toBe(a!.messages[0]!.content);
+  expect(c!.messages[0]!.content).toBe(a!.messages[0]!.content);
+  expect(JSON.stringify(b!.tools)).toBe(JSON.stringify(a!.tools));
+  expect(c!.messages.some((m) => String(m.content).includes("categories"))).toBe(false);
 });

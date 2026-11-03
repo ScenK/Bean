@@ -158,7 +158,7 @@ export function routineCardInput(
     steps: r.steps.map(describeStep),
     sinks: describeSinks(r, people, ownerName, p.channelId),
     ...(memberTodoEligible(r) && shared
-      ? { todoNote: "Household members can queue todos on this — one digest covers everyone's todos and goes to every destination above." }
+      ? { todoNote: "Members can queue todos on this — one digest covers everyone's todos and goes to every destination above." }
       : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };

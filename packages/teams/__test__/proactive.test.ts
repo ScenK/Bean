@@ -1,6 +1,6 @@
 import type { ConversationReference, TurnContext } from "botbuilder";
 import { expect, test } from "vitest";
-import { isDirect, placeOf, proactiveEffects, refFor, refScope, type ContinueConversation } from "../src/proactive.js";
+import { capturePlace, isDirect, placeOf, proactiveEffects, refFor, refScope, type ContinueConversation } from "../src/proactive.js";
 
 const CHANNEL = "19:abc@thread.tacv2";
 const POST = `${CHANNEL};messageid=1700`;
@@ -77,4 +77,10 @@ test("a real 1:1 DM is direct; a targeted personal conversation (a / pick in a s
   expect(refScope(picked)).toBeUndefined(); // the a: id isn't the shared chat's: unscoped
   // Only a strict true targets: a stray truthy value never demotes a real DM.
   expect(isDirect({ conversation, bot: { id: "28:bean", name: "Bean", isTargeted: "true" } as unknown as ConversationReference["bot"] })).toBe(true);
+});
+
+test("capturePlace titles an unnamed group chat with a short id; a named one keeps its name", () => {
+  const group = (name?: string) => ({ conversation: { id: "19:abcdef123456@thread.v2", conversationType: "groupChat", name } as ConversationReference["conversation"] });
+  expect(capturePlace(group())).toEqual({ kind: "channel", title: "Teams chat abcdef12" });
+  expect(capturePlace(group("Weekend crew"))).toEqual({ kind: "channel", title: "Weekend crew" });
 });

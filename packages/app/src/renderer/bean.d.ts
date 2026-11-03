@@ -132,6 +132,12 @@ declare global {
       appendMemories(additions: Memory[]): Promise<void>;
       updateMemory(id: string, text: string): Promise<void>;
       deleteMemories(ids: string[]): Promise<number>;
+      /** Per-row recategorize; null/empty uncategorizes. */
+      updateMemoryCategory(id: string, category: string | null): Promise<void>;
+      /** Renames a category on every row; returns rows changed. */
+      renameMemoryCategory(from: string, to: string): Promise<number>;
+      /** The owner's chatops ids, so Persona files owner-DM rows under the owner's sections. */
+      memoryOwnerIds(): Promise<string[]>;
       /** Fire-and-forget at chat close: main extracts + saves in the background. */
       rememberOnClose(transcript: CloseTurn[], opts: { incognito: boolean; rejected: string[]; mountId: string }): void;
       setChatIncognito(on: boolean, mountId: string): void;
@@ -153,7 +159,7 @@ declare global {
       syncedChatResume(surface: string, conversationId: string, mountId: string): Promise<SyncedSendResult>;
       onSyncedChatEvent(cb: (e: SyncedChatEvent) => void): void;
       /** Tagged with the chat (mount) whose turn it captured. */
-      onMemoryUpdated(cb: (saved: Array<{ id: string; text: string }>, mountId: string) => void): void;
+      onMemoryUpdated(cb: (saved: Array<{ id: string; text: string; category?: string }>, mountId: string) => void): void;
       getMemoryBatch(): Promise<MemoryBatch | undefined>;
       undoMemoryBatch(): Promise<number>;
       getLastDream(): Promise<DreamDigest | undefined>;
