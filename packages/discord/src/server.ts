@@ -351,7 +351,7 @@ client.on("messageCreate", async (message) => {
         }, {
           // Household memory capture (#463): the id gates (role), the name only labels a saved fact.
           fromId: message.author.id, name: message.member?.displayName ?? message.author.displayName,
-          text: message.content, at: message.createdTimestamp,
+          text: message.content, at: message.createdTimestamp, place: placeOf(channel),
           react: async () => { await message.react("🧠"); },
         });
       }

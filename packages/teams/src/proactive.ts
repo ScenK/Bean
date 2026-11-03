@@ -39,6 +39,14 @@ export function placeOf(ref: Partial<ConversationReference>): ConversationPlace 
   return { kind: "channel", title: c?.name || "Teams chat" };
 }
 
+/** `placeOf` for a captured fact's source title: an unnamed group chat gets a short id instead of
+ * the generic "Teams chat"/"Teams post" alone, so two unnamed chats stay tellable apart. */
+export function capturePlace(ref: Partial<ConversationReference>): ConversationPlace {
+  const place = placeOf(ref);
+  const id = ref.conversation?.id.replace(/^\d+:/, "").slice(0, 8);
+  return ref.conversation?.name || !id ? place : { ...place, title: `${place.title} ${id}` };
+}
+
 /** Admin scope for a ref'd conversation: bare channel id for a channel, the chat's id for a group
  * chat, none for a personal chat (same rule as the server's `scopeOf(activity)`). A targeted
  * `personal` conversation is shared but unscoped: its `a:` id isn't the shared chat's, and the
