@@ -49,11 +49,12 @@ test("chat: the / menu lists every skill, skills first, in a bounded box that sc
     const box = await menu.evaluate((el) => ({ height: el.getBoundingClientRect().height, scrolls: el.scrollHeight > el.clientHeight }));
     expect(box.height).toBeLessThanOrEqual(320 + 2 * 6 + 2 * 1); // .bean-slash-menu max-height + padding + border
     expect(box.scrolls).toBe(true);
-    // ↓ reaches the last skill (the row before the Sprouts heading) and keeps it in view.
+    await expect(menu.locator(".bean-chip-menu-hint")).toHaveText(["Skills", "Switch to"]); // no Sprouts section (#635)
+    // ↓ reaches the last skill (the row before the Switch to heading) and keeps it in view.
     const lastSkill = await menu.evaluate((el) => {
       const rows = [...el.querySelectorAll(".bean-chip-menu-row")];
-      const sprouts = [...el.querySelectorAll(".bean-chip-menu-hint")].find((h) => h.textContent === "Sprouts");
-      const before = rows.filter((r) => sprouts && r.compareDocumentPosition(sprouts) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const agents = [...el.querySelectorAll(".bean-chip-menu-hint")].find((h) => h.textContent === "Switch to");
+      const before = rows.filter((r) => agents && r.compareDocumentPosition(agents) & Node.DOCUMENT_POSITION_FOLLOWING);
       return { index: before.length - 1, text: before.at(-1)?.textContent ?? "" };
     });
     for (let i = 0; i < lastSkill.index; i++) await composer.press("ArrowDown");
