@@ -74,3 +74,14 @@ Bean has two chat adapters over one shared brain:
   for a desk turn: every effect goes proactive on the stored `teams-conversations.json` ref
   (`proactive.ts`'s `refFor` — bare channel id finds the ref, the full `;messageid=` id is the
   send target, same as the outbox); a conversation with no stored ref fails the echo → `post-failed`.
+- **Sprout triggers** (#637, `chatops/sprout-bridge.ts`): an app-spawned bot has no scheduler
+  (`BEAN_HEADLESS_ROUTINES` is cleared), so its sprout-run card tap sends `routine-trigger
+  {requestId, name, action, origin}` over the same IPC slot (still no message text bot → app). The app
+  (`chatops-servers.ts` → `main.ts`) re-resolves the name with `loadRoutines()` (gone = `missing`) and
+  re-plans with `planSproutRun` — a sprout whose plan changed since the card (paused, emptied, run ↔
+  check) is refused, never run as something the owner didn't confirm — then triggers and posts the
+  finish reply itself via the outbox (`withFinishReply`, transport = the asking bot). It answers
+  `routine-trigger-result` (started / one fixed refusal code / a check count). Bot side
+  (`parentSproutTrigger`): a reply settles only a request it is waiting on; app disconnect, a failed
+  send or 2 min silence → "Bean's desktop app isn't reachable"/"didn't answer". No resend. Taps
+  before the app's scheduler exists (bots autostart first) answer `unavailable`.

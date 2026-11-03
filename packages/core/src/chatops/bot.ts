@@ -12,6 +12,9 @@ import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
 import { chatRoutineProblem, todoRunHint, type Routine } from "../routine-store.js";
 import type { TodoItem } from "../todo-store.js";
+import type { SproutTriggerAnswer } from "./sprout-bridge.js";
+import { planSproutRun, sproutCheckText, type SproutRunBlock } from "../sprout-trigger.js";
+import type { SproutRunProposalStore } from "./sprout-run-proposals.js";
 import { cancelReminder } from "../reminders.js";
 import { availableModels } from "../models.js";
 import type { Skill, Project } from "../types.js";
@@ -237,8 +240,24 @@ export interface TeamsBotDeps {
     notifyOwner: (text: string) => Promise<void>;
     recipients: () => Promise<{ id: string; name: string }[]>;
     proposals: RoutineProposalStore;
+    /** Run or check a sprout now (#636) — where this process owns the scheduler (headless
+     * Discord) or asks the app that spawned it over IPC (#637, `parentSproutTrigger`). `trigger`
+     * answers at admission; the scheduler host posts the finish reply to `origin` (`channel`
+     * absent = the owner's DM). Absent = propose_sprout_run is never offered. */
+    sprouts?: {
+      trigger: (name: string, action: "run" | "check", origin: { channel?: string }) => Promise<SproutTriggerAnswer>;
+      /** A sprout's pending todos and whether its watch is seeded, for planSproutRun. */
+      facts: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
+      proposals: SproutRunProposalStore;
+    };
   };
 }
+
+const SPROUT_BLOCKED: Record<SproutRunBlock, (name: string) => string> = {
+  off: (name) => `${name} is off — say \`enable ${name}\` first.`,
+  review: (name) => `${name} needs its first review in Bean's Sprouts panel.`,
+  empty: (name) => `${name}'s queue is empty — queue a todo first.`,
+};
 
 const nameTaken = (name: string): string => `a sprout named "${name}" already exists — ask for a different name.`;
 
@@ -823,10 +842,47 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
   }
 
+  // Run/Check or Cancel on a sprout-run card. The role was checked before this (owner); the
+  // conversation and asker bindings are checked before the claim, so a refused tap leaves the
+  // card usable. A tap triggers exactly the action frozen on the card.
+  async function handleSproutAction(
+    kind: "run-sprout" | "cancel-sprout", proposalId: string | undefined, action: CardAction, fx: BotEffects,
+  ): Promise<void> {
+    const sprouts = deps.routines?.sprouts;
+    if (!proposalId || !sprouts) return;
+    const peek = sprouts.proposals.peek(proposalId);
+    if (peek && (peek.conversationId !== action.conversationId || ![action.fromId, action.fromAltId].includes(peek.proposedById))) {
+      await fx.post("Only whoever asked for that sprout run can confirm it, in the chat they asked in.");
+      return;
+    }
+    const pending = sprouts.proposals.claim(proposalId);
+    if (!pending) {
+      await fx.post("That sprout card expired — ask me again.");
+      return;
+    }
+    const { plan } = pending;
+    const settle = async (result: string): Promise<void> => {
+      if (pending.cardActivityId !== undefined) await fx.updateCard(pending.cardActivityId, deps.cards.sproutRunCard({ proposalId, plan, result }));
+    };
+    if (kind === "cancel-sprout") {
+      await settle(`Cancelled (by ${action.fromName})`);
+      return;
+    }
+    let result: string;
+    try {
+      const t = await sprouts.trigger(plan.routine, plan.action, pending.channel ? { channel: pending.channel } : {});
+      result = t.status === "started" ? `Started (by ${action.fromName}) — I'll post here when it finishes.`
+        : t.status === "checked" ? sproutCheckText(t.result, plan.queuesNew) : `Didn't start: ${t.reason}`;
+    } catch (err) {
+      result = `Couldn't start: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    await settle(result);
+  }
+
   async function runRoutineCommand(c: RoutineCommand): Promise<string> {
     const r = deps.routines!;
     const all = await r.load();
-    if (c.kind === "list") return routineListText(all);
+    if (c.kind === "list") return routineListText(all, undefined, r.sprouts !== undefined);
     // Exact name, else a unique case-insensitive match (phones capitalize the first letter).
     const loose = all.filter((x) => x.name.toLowerCase() === c.name.toLowerCase());
     const target = all.find((x) => x.name === c.name) ?? (loose.length === 1 ? loose[0] : undefined);
@@ -1420,6 +1476,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               cliModels: deps.cliModels,
             }
           : undefined;
+        // Owner only, and only where this process runs the scheduler (headless).
+        const sprouts = can(role, "runRoutines") ? deps.routines?.sprouts : undefined;
+        const sproutRoutines = sprouts && deps.routines ? await deps.routines.load() : [];
         const detected = deps.detectClis();
         let history = deps.conversations.history(msg.conversationId);
         if (fx.fetchRecent) {
@@ -1512,6 +1571,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const result = await converse({
           ...converseBase,
           actions: [...converseBase.actions, ...(canMemory ? memoryTools.tools : []), ...(reminderTools?.tools ?? []), ...todoTools],
+          sproutCatalog: sproutRoutines.map((r) => ({ name: r.name, description: r.description })),
           history: [...history, ...repliedHint], latestUserText: msg.text, latestUserImages: msg.images,
         });
         turnFailed = result.error !== undefined;
@@ -1638,6 +1698,25 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           deps.skillProposals.setCardActivityId(pending.id, activityId);
           return;
         }
+        if (result.proposedSproutRun) {
+          if (!(await permitted("runRoutines", "run sprouts")) || !sprouts) return;
+          const name = result.proposedSproutRun.routine;
+          const routine = sproutRoutines.find((r) => r.name === name);
+          if (!routine) return; // converse already refused names outside the catalog
+          const { pending, seeded } = await sprouts.facts(routine);
+          const out = planSproutRun(routine, pending, seeded);
+          if ("blocked" in out) {
+            await fx.post(SPROUT_BLOCKED[out.blocked](name));
+            return;
+          }
+          const p = sprouts.proposals.add({
+            plan: out.plan, conversationId: msg.conversationId, proposedById: msg.fromId,
+            ...(msg.direct ? {} : { channel: msg.conversationId }),
+          });
+          const activityId = await fx.postCard(deps.cards.sproutRunCard({ proposalId: p.id, plan: out.plan }));
+          sprouts.proposals.setCardActivityId(p.id, activityId);
+          return;
+        }
         if (result.proposedTodo) {
           if (!(await permitted("todos", "queue tasks"))) return;
           const todo = result.proposedTodo;
@@ -1740,6 +1819,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (beanAction === "save-routine" || beanAction === "cancel-routine" || beanAction === "toggle-routine") {
         await handleRoutineAction(beanAction, proposalId, action, role, fx);
+        return;
+      }
+      if (beanAction === "run-sprout" || beanAction === "cancel-sprout") {
+        await handleSproutAction(beanAction, proposalId, action, fx);
         return;
       }
       if (beanAction === "queue-todo" || beanAction === "cancel-todo") {

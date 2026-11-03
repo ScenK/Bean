@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { planSproutRun, sproutCheckText, sproutTriggerAction } from "../src/sprout-trigger.js";
+import { planSproutRun, sproutCheckText, sproutFinishText, sproutTriggerAction } from "../src/sprout-trigger.js";
 import { createRoutineScheduler, triggerOutcome, type RoutineSchedulerDeps } from "../src/routine-scheduler.js";
 import type { Routine, RoutineRunResult, RoutineState, RunStatus, TodoItem } from "../src/index.js";
 
@@ -45,6 +45,11 @@ describe("planSproutRun", () => {
     expect(planSproutRun(queueWatch, 2, true)).toMatchObject({ plan: { action: "run", actionLine: "Works through 2 queued todos" } });
     expect(planSproutRun({ ...queueWatch, enabled: false }, 0, true)).toEqual({ blocked: "off" });
     expect(planSproutRun({ ...queueWatch, enabled: false }, 0, false)).toEqual({ blocked: "review" });
+  });
+  it("words a chat run's finish reply", () => {
+    expect(sproutFinishText("pr-digest", "ok")).toBe("pr-digest finished ✓");
+    expect(sproutFinishText("pr-digest", "needs-attention")).toBe("pr-digest needs attention ⚠");
+    expect(sproutFinishText("pr-digest", "failed")).toBe("pr-digest failed ✗ · see Dashboard");
   });
   it("words a check result", () => {
     expect(sproutCheckText({ newItems: 3 }, true)).toBe("3 new — queued");
