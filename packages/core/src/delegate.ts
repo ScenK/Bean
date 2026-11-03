@@ -107,6 +107,20 @@ export function claudeTailLine(event: unknown): string | undefined {
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
+/** An assistant event's prose (text blocks only) — the fallback answer when claude emits no `result`. */
+export function claudeText(event: unknown): string | undefined {
+  const e = event as { type?: unknown; message?: { content?: unknown } } | null;
+  if (e?.type !== "assistant" || !Array.isArray(e.message?.content)) return undefined;
+  const text = (e.message.content as { type?: unknown; text?: unknown }[])
+    .filter((b) => b?.type === "text" && typeof b.text === "string" && b.text.trim())
+    .map((b) => (b.text as string).trim())
+    .join("\n\n");
+  return text || undefined;
+}
+
+/** Shown when a run exits 0 with no answer at all — never the raw stream JSON (tool calls/output). */
+export const NO_RESULT_NOTICE = "(The run finished without a result.)";
+
 export function claudeResult(event: unknown): string | undefined {
   const e = event as { type?: unknown; result?: unknown } | null;
   return e?.type === "result" && typeof e.result === "string" ? e.result : undefined;
@@ -230,8 +244,9 @@ export function runDelegate(
   let onCancelled: (() => void) | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
   let result: string | undefined;
+  let lastText: string | undefined; // claude's latest assistant prose, used only when no `result` arrives
   let sessionId: string | undefined;
-  let rawLines: string[] = [];
+  let rawLines: string[] = []; // non-JSON stdout only — stream JSON never becomes the result
   let stdoutBuf = "";
   let stderrBuf = "";
   let notice = "";
@@ -299,11 +314,11 @@ export function runDelegate(
 
   const handleLine = (line: string): void => {
     if (!line.trim() || settled || cancelling) return;
-    rawLines.push(line);
     let event: unknown;
     try {
       event = JSON.parse(line);
     } catch {
+      rawLines.push(line);
       callbacks.onOutput(line);
       return;
     }
@@ -317,6 +332,7 @@ export function runDelegate(
         result = r;
         return;
       }
+      lastText = claudeText(event) ?? lastText;
       const tail = claudeTailLine(event);
       if (tail) callbacks.onOutput(tail);
       return;
@@ -334,6 +350,7 @@ export function runDelegate(
     const cmd = delegateCommand({ ...req, resume });
     command = cmd.command;
     result = undefined;
+    lastText = undefined;
     sessionId = undefined;
     rawLines = [];
     stdoutBuf = "";
@@ -370,7 +387,7 @@ export function runDelegate(
       }
       if (stdoutBuf.trim()) handleLine(stdoutBuf);
       if (code === 0) {
-        const out = result ?? rawLines.join("\n");
+        const out = result ?? lastText ?? (rawLines.length > 0 ? rawLines.join("\n") : NO_RESULT_NOTICE);
         // Checked before the resume notice is prepended; never retried (a post may have gone out).
         const failed = failedReason(out);
         if (failed !== undefined) settle(() => callbacks.onError(new Error(failed)));
