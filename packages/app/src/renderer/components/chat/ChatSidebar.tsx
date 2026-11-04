@@ -1,4 +1,5 @@
 import type { DesktopChatListing } from "@bean/core";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import type { AgentId, ChatItem } from "../../shared/chat-types.js";
 import type { ChatThreadAck } from "../../../ipc.js";
@@ -56,7 +57,7 @@ interface Props {
   /** Threads with work in flight (a spinner) and with a reply that landed while hidden (a dot). */
   working: Set<string>;
   unread: Set<string>;
-  /** Threads with an open agent (live) session: a quiet green bar on the row's left edge. */
+  /** Threads with an open agent (live) session: a green wash and a breathing dot before the title. */
   live: Set<string>;
   /** Threads whose chat holds a live terminal shell: a calm `>_` (a dev server never finishes, so no spinner). */
   terminal: Set<string>;
@@ -77,23 +78,43 @@ export function rowTime(iso: string, now: Date): string {
 export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, onNew, onOpen, onDelete }: Props) {
   const now = new Date();
   const rows = mergeRows(threads, synced);
+  // Earlier starts folded each time the sidebar mounts; the open chat stays visible inside it.
+  const [earlierOpen, setEarlierOpen] = useState(false);
+  // A row that moved (a save ack lifts its thread to the top) slides from where it was (FLIP).
+  const listRef = useRef<HTMLDivElement>(null);
+  const tops = useRef(new Map<string, number>());
+  useLayoutEffect(() => {
+    const els = [...(listRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [])];
+    const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === false; // false in jsdom (no matchMedia)
+    const next = new Map(els.map((el) => [el.dataset.row!, el.offsetTop]));
+    for (const el of els) {
+      const was = tops.current.get(el.dataset.row!);
+      const dy = was === undefined ? 0 : was - el.offsetTop;
+      if (motion && dy !== 0) el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 260, easing: "cubic-bezier(0.2, 0, 0, 1)" });
+    }
+    tops.current = next;
+  });
   const marker = (key: string) => (working.has(key)
     ? <span class="bean-chat-sidebar-spinner" role="img" aria-label="Working" />
     : unread.has(key) ? <span class="bean-chat-sidebar-dot" role="img" aria-label="New reply" /> : null);
   return (
     <nav class={`bean-chat-sidebar${overlay ? " bean-chat-sidebar--overlay" : ""}`} aria-label="Chat history">
       <div class="bean-chat-sidebar-head">All chats · {rows.length}</div>
-      <div class="bean-chat-sidebar-list">
+      <div class="bean-chat-sidebar-list" ref={listRef}>
         {rows.length === 0 ? <div class="bean-chat-sidebar-empty">No saved chats yet.</div> : null}
         {groupThreads(rows, now).map((g) => (
           <>
-            <div class="bean-chat-sidebar-group"><span>{g.label}</span><span>{g.threads.length}</span></div>
-            {g.threads.map((row) => {
+            {g.label === "Earlier" ? (
+              <button type="button" class="bean-chat-sidebar-group bean-chat-sidebar-group--fold" aria-expanded={earlierOpen} onClick={() => setEarlierOpen(!earlierOpen)}>
+                <span><span class="bean-chat-sidebar-chevron" aria-hidden="true">{earlierOpen ? "▾" : "▸"}</span> {g.label}</span><span>{g.threads.length}</span>
+              </button>
+            ) : <div class="bean-chat-sidebar-group"><span>{g.label}</span><span>{g.threads.length}</span></div>}
+            {(g.label === "Earlier" && !earlierOpen ? g.threads.filter((row) => row.key === activeId) : g.threads).map((row) => {
               if (row.synced) {
                 const active = row.key === activeId;
                 const surface = SURFACE_NAMES[row.chat.surface];
                 return (
-                  <div key={row.key} class={`bean-chat-sidebar-row${active ? " bean-chat-sidebar-row--active" : ""}`}>
+                  <div key={row.key} data-row={row.key} class={`bean-chat-sidebar-row${active ? " bean-chat-sidebar-row--active" : ""}`}>
                     <button
                       type="button"
                       class="bean-chat-sidebar-open"
@@ -116,7 +137,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
               const title = t.title || "Untitled chat";
               const agents = t.agents.filter((a): a is AgentId => a in AGENT_NAMES);
               return (
-                <div key={t.id} class={`bean-chat-sidebar-row${active ? " bean-chat-sidebar-row--active" : ""}${live.has(t.id) ? " bean-chat-sidebar-row--live" : ""}`}>
+                <div key={t.id} data-row={t.id} class={`bean-chat-sidebar-row${active ? " bean-chat-sidebar-row--active" : ""}${live.has(t.id) ? " bean-chat-sidebar-row--live" : ""}`}>
                   <button
                     type="button"
                     class="bean-chat-sidebar-open"
@@ -125,8 +146,8 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                     onClick={() => { if (!active) onOpen(t.id); }}
                   >
                     <span class="bean-chat-sidebar-line">
+                      {live.has(t.id) ? <span class="bean-chat-sidebar-live" role="img" aria-label="Agent session running" /> : null}
                       <span class="bean-chat-sidebar-title">{title}</span>
-                      {live.has(t.id) ? <span class="bean-sr-only">Agent session running</span> : null}
                       {active ? null : agents.map((a) => <AgentAvatar agent={a} size={12} />)}
                       {terminal.has(t.id) ? <span class="bean-chat-sidebar-term" role="img" aria-label="Terminal open">&gt;_</span> : null}
                       {marker(t.id)}
