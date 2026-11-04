@@ -88,7 +88,7 @@ adapter.onTurnError = async (context, error) => {
 // Re-scanned per call so a CLI installed after the bot started is picked up.
 const clis = (): CliName[] => detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
 const cliModels = await loadCliModels(clisFile(builtinDir), clisFile(dir));
-const runs = new RunRegistry(runDelegate, { dir, botKind: "teams", onActivity: parentActivitySink });
+const runs = new RunRegistry(runDelegate, { dir, botKind: "teams", onActivity: parentActivitySink, proseOnly: true });
 // Kept as its own reference (not just inline in buildTeamsBot's deps) so the outbox delivery
 // loop below can append an interrupted-run notice to the same history bot.onMessage reads —
 // otherwise a later "retry" in this conversation has no idea what it's retrying.
@@ -98,7 +98,7 @@ const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reas
 const conversations = new ConversationStore(dbFile(dir), { onChange: parentSavedSink });
 // Hoisted (not inline in deps) so the /api/messages handler can check `has()` to capture
 // steer messages for a bound session, and the SIGTERM handler can kill them. Mirrors Discord.
-const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink, surface: "teams" });
+const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink, surface: "teams", proseOnly: true });
 const liveSessionProposals = new LiveSessionProposalStore();
 // Hosts delegates not tied to a project (a Jira ticket, research); spawn needs the cwd to exist.
 const scratchPath = scratchDir(dir);

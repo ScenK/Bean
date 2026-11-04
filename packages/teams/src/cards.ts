@@ -79,7 +79,7 @@ export function runningCard(input: RunningCardInput): object {
     body: [
       { type: "TextBlock", weight: "bolder", text: `Running in ${input.projectName}… (started by ${input.startedBy})` },
       { type: "TextBlock", text: input.instruction, wrap: true, isSubtle: true },
-      ...(input.tail ? [{ type: "TextBlock", text: input.tail, wrap: true, fontType: "monospace" }] : []),
+      ...(input.tail ? [{ type: "TextBlock", text: input.tail, wrap: true }] : []),
     ],
     actions: [
       { type: "Action.Submit", title: "Cancel run", data: { beanAction: "cancel-run", runId: input.runId } },

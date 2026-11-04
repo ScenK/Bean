@@ -18,6 +18,8 @@ export interface LiveReceipt { sessionId: string; agent: LiveCli; label: string 
 export type LiveEvent = { sessionId: string; agent: LiveCli; mountId: string; seq: number } & (
   | { type: "started"; projectPath: string; handedOver: number }
   | { type: "output"; line: string }
+  // One completed agent message's prose — shown in the bubble; `output` is only its tool steps.
+  | { type: "text"; text: string }
   | { type: "turn"; result: string; durationMs?: number; costUsd?: number; failed?: string }
   | { type: "session"; receipt: LiveReceipt }
   // stopped = End / window close; ended = idle timeout or a clean exit on its own; failed = crash.
@@ -221,6 +223,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
         { cli: agent, projectPath, prompt, ...(s.model ? { model: s.model } : {}), ...(s.resumeId ? { resume: s.resumeId } : {}) },
         {
           onOutput: (line) => { if (sessions.get(sessionId) === s && !s.stopping) emit(sessionId, s, { type: "output", line }); },
+          onText: (text) => { if (sessions.get(sessionId) === s && !s.stopping) emit(sessionId, s, { type: "text", text }); },
           onTurnComplete: (t) => {
             if (sessions.get(sessionId) !== s) return;
             emit(sessionId, s, {

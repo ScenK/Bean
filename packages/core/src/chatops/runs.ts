@@ -32,7 +32,7 @@ export interface RunRegistryOptions {
   newId?: () => string;
   throttleMs?: number;
   /** The running card's tail is the agent's latest prose (onText), never a `▸ tool` line. Set by
-   * Discord; Teams keeps the raw tail. */
+   * Discord and Teams; unset keeps the raw tail. */
   proseOnly?: boolean;
   /** Run lifecycle for the desktop app's status bubbles (see activity.ts). */
   onActivity?: ChatopsActivitySink;

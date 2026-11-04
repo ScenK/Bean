@@ -311,15 +311,16 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
 - Desk turns (#528) into a conversation with a running live session are plain steers (same
   `steerLive` path as typed text, starter/co-driver check against the catalog's owner id) —
   never keyword commands like `stop`/`+driver`; see project-teams-bot.md → Desk ingress.
-- **Discord is prose-only (#619)**: engines report each completed agent message's prose via
+- **Discord and Teams are prose-only (#619)**: engines report each completed agent message's prose via
   `onText` (claude `claudeText`, codex/opencode their result; gated like `tail`) beside the
-  `onOutput` tail. `proseOnly` on `LiveSessionRegistry`/`RunRegistry` (Discord's `server.ts` only)
-  renders `onText` instead of `onOutput`, so no `▸ tool` line reaches Discord; Teams and the
-  desktop keep the tail. Don't strip `▸` from tail strings instead — claude's tail joins prose and
-  tools in one line.
+  `onOutput` tail. `proseOnly` on `LiveSessionRegistry`/`RunRegistry` (both bots' `server.ts`)
+  renders `onText` instead of `onOutput`, so no `▸ tool` line reaches either chat (the Teams
+  running card's tail is plain text, not monospace). Don't strip `▸` from tail strings instead — claude's tail joins prose and tools in one line.
+  The desktop forwards `onText` as a `text` LiveEvent (bubble body) and keeps only the `▸` parts of
+  each tail line for the collapsed steps — prose never depends on the tail there.
 - **One bubble per agent message (#620, proseOnly only)**: each `onText` first seals the current
   segment iff one is unsealed (`buf.length > last seal`), so the previous message is final and the
   newest stays the unsealed tail that `onTurnComplete`'s footer joins. Never push a seal equal to
   the last one. `s.sent` (text last delivered to `msgId`) lets the seal/rollover branches skip an
   edit whose text is unchanged. The 1900-char rollover is still the only split; stream mode
-  (Teams/desktop) never seals on text.
+  (unset `proseOnly`) never seals on text.

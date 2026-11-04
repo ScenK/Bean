@@ -150,7 +150,7 @@ export interface LiveSessionRegistryOptions {
    * no rows (and no onSessionId). */
   surface?: "discord" | "teams";
   /** Render the agent's prose (onText) instead of its tail lines (onOutput) — no `▸ tool` lines.
-   * Set by Discord; Teams and the desktop keep the tail. */
+   * Set by Discord and Teams; unset keeps the tail. */
   proseOnly?: boolean;
 }
 
