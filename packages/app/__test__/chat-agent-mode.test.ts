@@ -68,11 +68,11 @@ describe("agent-mode helpers", () => {
     items = applyLiveEvent(items, ev({ type: "text", text: "Checking." }), id);
     items = applyLiveEvent(items, ev({ type: "output", line: "Checking. · ▸ Bash" }), id);
     items = applyLiveEvent(items, ev({ type: "output", line: "Checking." }), id);
-    expect(items[0]).toMatchObject({ text: "Checking.", tail: ["▸ Bash"], streaming: true });
+    expect(items[0]).toMatchObject({ text: "", display: "Checking.", tail: ["▸ Bash"], streaming: true });
     items = applyLiveEvent(items, ev({ type: "text", text: "Done." }), id);
     items = applyLiveEvent(items, ev({ type: "turn", result: "Done.", durationMs: 12_300, costUsd: 0.04 }), id);
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ kind: "reply", agent: "codex", text: "Checking.\n\nDone.", tail: ["▸ Bash"], streaming: false, footer: "— turn done (12.3s, $0.04)" });
+    expect(items[0]).toMatchObject({ kind: "reply", agent: "codex", text: "Done.", display: "Checking.\n\nDone.", tail: ["▸ Bash"], streaming: false, footer: "— turn done (12.3s, $0.04)" });
     // Next turn's output opens a new bubble; ending the session closes it.
     items = applyLiveEvent(items, ev({ type: "output", line: "▸ shell" }), id);
     items = applyLiveEvent(items, ev({ type: "ended", reason: "stopped" }), id);
