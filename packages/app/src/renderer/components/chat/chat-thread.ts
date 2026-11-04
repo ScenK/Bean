@@ -14,6 +14,8 @@ export const IMAGE_PLACEHOLDER = "[image attached]";
 const TITLE_MAX = 60;
 
 const cap = (s: string): string => (s.length > THREAD_TEXT_MAX ? `${s.slice(0, THREAD_TEXT_MAX)}…` : s);
+// A live agent's display is its progress prose ending in the final answer: keep the end.
+const capEnd = (s: string): string => (s.length > THREAD_TEXT_MAX ? `…${s.slice(-THREAD_TEXT_MAX)}` : s);
 const withPlaceholder = (text: string, had: boolean): string => (had ? `${text}\n${IMAGE_PLACEHOLDER}` : text);
 
 function normalizeItem(it: ChatItem): ChatItem | undefined {
@@ -29,7 +31,7 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
       return {
         ...rest,
         text: cap(withPlaceholder(it.text, !!images?.length)),
-        ...(it.display !== undefined ? { display: cap(it.display) } : {}),
+        ...(it.display !== undefined ? { display: capEnd(it.display) } : {}),
         ...(streaming ? { footer: "— turn interrupted" } : {}),
       };
     }

@@ -534,7 +534,7 @@ export function ChatPanel({
             return agentRow(it, i, (
               <div class="bean-bubble bean-bubble--bean">
                 {speaker(it)}
-                {it.streaming && !it.text ? <span class="bean-bubble--working">Working<span class="bean-dots"><span /><span /><span /></span></span> : null}
+                {it.streaming ? <span class="bean-bubble--working">Working<span class="bean-dots"><span /><span /><span /></span></span> : null}
                 {it.text || it.display ? <Markdown text={it.display ?? it.text} /> : null}
                 {it.tail?.length ? (
                   <details class="bean-agent-tail">

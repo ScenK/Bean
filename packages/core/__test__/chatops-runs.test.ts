@@ -93,7 +93,7 @@ test("proseOnly: the tail is the latest prose (onText), never a ▸ tool line; s
   expect(ev.onTail).toHaveBeenCalledTimes(1);
 });
 
-test("without proseOnly the tail ignores onText (Teams unchanged)", async () => {
+test("without proseOnly the tail ignores onText", async () => {
   const { fn, calls } = fakeRun();
   const reg = new RunRegistry(fn, { dir: tmp(), botKind: "teams", throttleMs: 5000 });
   const ev = events();

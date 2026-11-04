@@ -93,6 +93,9 @@ describe("normalizeForSave", () => {
   it("caps each text, the item count (oldest dropped) and the total size", () => {
     const long: ChatItem = { kind: "reply", id: "r", text: "x".repeat(THREAD_TEXT_MAX + 50) };
     expect((normalizeForSave([long])[0] as { text: string }).text).toHaveLength(THREAD_TEXT_MAX + 1);
+    // A reply's display (live progress prose + final answer) keeps its end, so the answer survives.
+    const prose: ChatItem = { kind: "reply", id: "p", text: "Done.", display: `${"x".repeat(THREAD_TEXT_MAX)}\n\nDone.` };
+    expect((normalizeForSave([prose])[0] as { display: string }).display.endsWith("Done.")).toBe(true);
     const many = Array.from({ length: THREAD_ITEMS_MAX + 20 }, (_, i): ChatItem => ({ kind: "status", id: `s${i}`, text: `${i}`, tone: "info" }));
     const capped = normalizeForSave(many);
     expect(capped).toHaveLength(THREAD_ITEMS_MAX);

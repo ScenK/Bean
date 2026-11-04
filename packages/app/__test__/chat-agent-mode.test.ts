@@ -64,12 +64,17 @@ describe("agent-mode helpers", () => {
   it("streams output into one bubble per turn and closes it on the turn result", () => {
     const ev = (e: Partial<LiveEvent> & { type: LiveEvent["type"] }): LiveEvent => ({ sessionId: "s1", agent: "codex", seq: 1, ...e } as LiveEvent);
     let items = applyLiveEvent([], ev({ type: "started", projectPath: "/p", handedOver: 0 }), id);
-    items = applyLiveEvent(items, ev({ type: "output", line: "Ran ls" }), id);
+    // Prose shows in the bubble; only `▸ tool` parts go to the collapsed steps.
+    items = applyLiveEvent(items, ev({ type: "text", text: "Checking." }), id);
+    items = applyLiveEvent(items, ev({ type: "output", line: "Checking. · ▸ Bash" }), id);
+    items = applyLiveEvent(items, ev({ type: "output", line: "Checking." }), id);
+    expect(items[0]).toMatchObject({ text: "", display: "Checking.", tail: ["▸ Bash"], streaming: true });
+    items = applyLiveEvent(items, ev({ type: "text", text: "Done." }), id);
     items = applyLiveEvent(items, ev({ type: "turn", result: "Done.", durationMs: 12_300, costUsd: 0.04 }), id);
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ kind: "reply", agent: "codex", text: "Done.", tail: ["Ran ls"], streaming: false, footer: "— turn done (12.3s, $0.04)" });
+    expect(items[0]).toMatchObject({ kind: "reply", agent: "codex", text: "Done.", display: "Checking.\n\nDone.", tail: ["▸ Bash"], streaming: false, footer: "— turn done (12.3s, $0.04)" });
     // Next turn's output opens a new bubble; ending the session closes it.
-    items = applyLiveEvent(items, ev({ type: "output", line: "more" }), id);
+    items = applyLiveEvent(items, ev({ type: "output", line: "▸ shell" }), id);
     items = applyLiveEvent(items, ev({ type: "ended", reason: "stopped" }), id);
     expect(items[1]).toMatchObject({ streaming: false, footer: "— turn interrupted" });
     expect(turnFooter({ failed: "boom" })).toBe("— turn failed: boom");

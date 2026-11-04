@@ -168,14 +168,27 @@ export function applyLiveEvent(items: ChatItem[], e: LiveEvent, newId: () => str
     items.map((it, i) => (i === open && it.kind === "reply" ? fn(it) : it));
   if (e.type === "started") return ensureStreaming(items, e.sessionId, e.agent, newId());
   if (e.type === "session") return items;
+  // The agent's messages show as `display`; `text` stays the turn's final result, so history
+  // (chatTurns) and saved chats never lose the answer behind long progress prose.
+  if (e.type === "text") {
+    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", display: e.text, agent: e.agent, session: e.sessionId, tail: [], streaming: true }];
+    return patch((it) => ({ ...it, display: it.display ? `${it.display}\n\n${e.text}` : e.text }));
+  }
   if (e.type === "output") {
-    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", agent: e.agent, session: e.sessionId, tail: [e.line], streaming: true }];
-    return patch((it) => ({ ...it, tail: [...(it.tail ?? []).slice(-(TAIL_LINES - 1)), e.line] }));
+    // Prose arrives as `text` events; the collapsed steps keep only the `▸ tool` parts.
+    const tools = e.line.split(" · ").filter((part) => part.startsWith("▸ "));
+    if (!tools.length) return items;
+    if (open < 0) return [...items, { kind: "reply", id: newId(), text: "", agent: e.agent, session: e.sessionId, tail: tools, streaming: true }];
+    return patch((it) => ({ ...it, tail: [...(it.tail ?? []), ...tools].slice(-TAIL_LINES) }));
   }
   if (e.type === "turn") {
     const done = { text: e.result, footer: turnFooter(e), streaming: false };
     if (open < 0) return [...items, { kind: "reply", id: newId(), agent: e.agent, session: e.sessionId, tail: [], ...done }];
-    return patch((it) => ({ ...it, ...done }));
+    // The final answer is usually the last streamed message already — don't show it twice.
+    return patch((it) => {
+      if (!it.display) return { ...it, ...done };
+      return { ...it, ...done, display: it.display.endsWith(e.result.trim()) ? it.display : `${it.display}\n\n${e.result}` };
+    });
   }
   // ended: no turn is coming for an open bubble, and the child is gone — Continue live may run.
   return items.map((it) => {
