@@ -226,31 +226,40 @@ button, input, textarea, select, a {
   color: var(--bean-text-dim);
   padding: 8px 10px;
 }
+.bean-chat-sidebar-group--fold {
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.bean-chat-sidebar-group--fold:hover { color: var(--bean-text); }
+.bean-chat-sidebar-group--fold:focus-visible { outline: 2px solid var(--bean-accent-text); outline-offset: -2px; }
+.bean-chat-sidebar-chevron { display: inline-block; width: 1em; }
 .bean-chat-sidebar-row {
   display: flex;
   align-items: center;
   border-radius: 8px;
 }
 .bean-chat-sidebar-row:hover { background: var(--bean-surface-2); }
-/* An open agent (live) session: a quiet green bar with a slow glow on the row's left edge — still
-   running, not ended. With no spinner beside it, the agent is waiting for you. */
-.bean-chat-sidebar-row--live { position: relative; }
-.bean-chat-sidebar-row--live::before {
-  content: "";
-  position: absolute;
-  left: 1px;
-  top: 7px;
-  bottom: 7px;
-  width: 3px;
-  border-radius: 2px;
+/* An open agent (live) session: a faint green wash on the row and a small breathing dot before the
+   title — still running, not ended. With no spinner beside it, the agent is waiting for you. */
+.bean-chat-sidebar-row--live { background: color-mix(in oklch, var(--bean-orb-check-ink) 9%, transparent); }
+.bean-chat-sidebar-row--live:hover { background: color-mix(in oklch, var(--bean-orb-check-ink) 14%, var(--bean-surface-2)); }
+.bean-chat-sidebar-live {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
   background: var(--bean-orb-check-ink);
-  box-shadow: 0 0 6px color-mix(in oklch, var(--bean-orb-check-ink) 60%, transparent);
-  animation: bean-live-glow 2.6s ease-in-out infinite;
+  animation: bean-live-breathe 2.4s ease-out infinite;
 }
-@keyframes bean-live-glow {
-  50% { box-shadow: 0 0 2px color-mix(in oklch, var(--bean-orb-check-ink) 30%, transparent); }
+@keyframes bean-live-breathe {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--bean-orb-check-ink) 55%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 5px color-mix(in oklch, var(--bean-orb-check-ink) 0%, transparent); }
 }
-@media (prefers-reduced-motion: reduce) { .bean-chat-sidebar-row--live::before { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .bean-chat-sidebar-live { animation: none; } }
 /* The selected row is the only one that spends vertical space: it lifts into a card (as in Notes). */
 .bean-chat-sidebar-row--active,
 .bean-chat-sidebar-row--active:hover {
@@ -259,6 +268,11 @@ button, input, textarea, select, a {
   background: color-mix(in oklch, var(--bean-accent) 10%, var(--bean-surface));
   border: 1px solid color-mix(in oklch, var(--bean-accent) 32%, transparent);
   box-shadow: 0 10px 22px -16px rgba(0, 0, 0, 0.55);
+}
+/* Selected and live: the card's own rounded border turns green, so the cue follows its corners. */
+.bean-chat-sidebar-row--active.bean-chat-sidebar-row--live {
+  background: color-mix(in oklch, var(--bean-orb-check-ink) 8%, color-mix(in oklch, var(--bean-accent) 8%, var(--bean-surface)));
+  border-color: color-mix(in oklch, var(--bean-orb-check-ink) 45%, transparent);
 }
 .bean-chat-sidebar-open {
   flex: 1;
