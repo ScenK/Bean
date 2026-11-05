@@ -149,7 +149,7 @@ test("every component window clears WCAG AA text contrast in both themes", async
           BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))!.setSize(500, 600);
         });
         await expect(win.locator(".bean-chat-sidebar")).toHaveCount(0);
-        await win.locator(".bean-chat-sidebar-toggle").click();
+        await win.getByRole("button", { name: "Show chat history" }).click();
         await expect(win.locator(".bean-chat-sidebar--overlay")).toBeVisible();
         for (const theme of ["hearth", "graphite"]) {
           await setTheme(win, theme);

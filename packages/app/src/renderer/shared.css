@@ -140,27 +140,10 @@ button, input, textarea, select, a {
 }
 /* A chat with work in flight stays mounted while another is shown (#517). */
 .bean-chat-window > .bean-chat[hidden] { display: none; }
-/* Right of the traffic lights (titleBarStyle hiddenInset), inside the drag band; on the
-   sidebar's divider while it's open. */
-.bean-chat-sidebar-toggle {
-  position: absolute;
-  top: 1px;
-  left: 78px;
-  z-index: 6;
-  width: 30px;
-  height: 30px;
-  padding: 6px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--bean-text-dim);
-  cursor: pointer;
-  -webkit-app-region: no-drag;
-}
-.bean-chat-sidebar-toggle:hover { background: var(--bean-surface-2); color: var(--bean-text); }
-/* Open reads as on, like the Terminal toggle (after :hover so hovering doesn't hide it). */
-.bean-chat-sidebar-toggle--open { left: 190px; color: var(--bean-accent-text); }
-.bean-chat-sidebar-toggle svg { width: 100%; height: 100%; }
+/* The shared list fold toggle; open, it sits just inside the 220px sidebar's divider like the split windows'
+   (above the narrow-window overlay, z-index 5). */
+.bean-chat-window > .bean-list-fold-toggle { z-index: 6; }
+.bean-chat-window > .bean-list-fold-toggle[aria-expanded="true"] { left: 180px; }
 /* Same list layout as Notes/Skills/Routines: mono labels, Notes-index rows. */
 .bean-chat-sidebar {
   flex: none;
@@ -849,7 +832,7 @@ button, input, textarea, select, a {
 .bean-skills--folded > .bean-skills-list { display: none; }
 .bean-list-fold-toggle {
   position: absolute;
-  top: 10px;
+  top: 2px;
   left: 78px;
   width: 30px;
   height: 30px;
@@ -866,6 +849,10 @@ button, input, textarea, select, a {
 }
 .bean-skills:not(.bean-skills--folded) > .bean-list-fold-toggle { left: max(78px, calc(33.33% - 20px)); }
 .bean-list-fold-toggle:hover { color: var(--bean-text); border-color: var(--bean-control-border); }
+/* Open reads as on, like the Terminal toggle (after :hover so hovering doesn't hide it). */
+.bean-list-fold-toggle[aria-expanded="true"] { color: var(--bean-accent-text); }
+/* Folded, it sits beside the traffic lights; 4px lines its icon up with them (checked by eye). */
+.bean-list-fold-toggle[aria-expanded="false"] { top: 4px; }
 .bean-skills-list {
   width: 33.33%;
   border-right: 1px solid var(--bean-border);

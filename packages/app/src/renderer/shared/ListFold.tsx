@@ -19,9 +19,10 @@ export function useListFold(key: string): [boolean, () => void] {
 }
 
 // Sits in the window's top drag strip by the list divider (right of the traffic lights when
-// folded), so there's always a way back.
-export function ListFoldToggle({ folded, onToggle, listId }: { folded: boolean; onToggle: () => void; listId: string }) {
-  const label = folded ? "Show list" : "Hide list";
+// folded), so there's always a way back. Shared by every split window and the chat history
+// sidebar so the control looks and behaves the same everywhere; `name` is what it shows/hides.
+export function ListFoldToggle({ folded, onToggle, listId, name = "list" }: { folded: boolean; onToggle: () => void; listId: string; name?: string }) {
+  const label = folded ? `Show ${name}` : `Hide ${name}`;
   return (
     <button
       type="button"
