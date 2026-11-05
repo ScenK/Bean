@@ -471,6 +471,40 @@ describe("handover (Continue in Discord)", () => {
     expect(await held).toMatchObject({ agent: "claude" });
   });
 
+  it("claude: two sends queued mid-turn keep it busy until both follow-up turns end", async () => {
+    const h = await started();
+    h.live.send(A, "s1", "one");
+    h.live.send(A, "s1", "two");
+    const turn = (result: string): void => { h.cbs[0]!.onTurnComplete({ result }); };
+    const refused = { error: "Wait for Claude Code to finish its turn first." };
+    turn("opening");
+    expect(await h.live.handover(A, "s1")).toEqual(refused);
+    h.cbs[0]!.onTurnStart!();
+    turn("one");
+    expect(await h.live.handover(A, "s1")).toEqual(refused); // "two" is still to come
+    h.cbs[0]!.onTurnStart!();
+    turn("two");
+    const held = h.live.handover(A, "s1");
+    h.cbs[0]!.onExit();
+    expect(await held).toMatchObject({ agent: "claude" });
+  });
+
+  it("codex: two sends queued mid-turn run as one merged turn, idle after it", async () => {
+    const h = harness();
+    await h.live.start(A, { agent: "codex", projectPath: "/proj", ask: "go" });
+    h.cbs[0]!.onTurnStart!();
+    h.cbs[0]!.onSessionId!("019a0000-0000-7000-8000-000000000000");
+    h.live.send(A, "s1", "one");
+    h.live.send(A, "s1", "two");
+    h.cbs[0]!.onTurnComplete({ result: "opening" });
+    h.cbs[0]!.onTurnStart!(); // the merged "one\n\ntwo" turn, started synchronously
+    expect(await h.live.handover(A, "s1")).toEqual({ error: "Wait for Codex to finish its turn first." });
+    h.cbs[0]!.onTurnComplete({ result: "merged" });
+    const held = h.live.handover(A, "s1");
+    h.cbs[0]!.onExit();
+    expect(await held).toMatchObject({ agent: "codex" });
+  });
+
   it("a per-turn CLI's send that starts its turn inside send() isn't counted as queued", async () => {
     const h = await started();
     h.cbs[0]!.onTurnComplete({ result: "first" });
