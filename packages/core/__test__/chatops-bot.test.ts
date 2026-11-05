@@ -3379,6 +3379,22 @@ describe("desk turns (#528)", () => {
     expect(d.conversations.history("t1").at(-1)).toEqual({ role: "user", content: speakerLine("Scen", "stop") });
   });
 
+  test("desk `stop` after the session ended is not a Bean turn", async () => {
+    const d = await withLive(true);
+    d.liveSessions.stop("t1");
+    const { acks, effects } = await d.run({ conversationId: "t1", text: "stop" });
+    expect(acks).toEqual([{ ok: true }]);
+    expect(d.chats()).toBe(0);
+    expect(effects.posted).toEqual(["🖥 (desk): stop", "No live session running here."]);
+  });
+
+  test("desk `new` while live still steers (only `stop` is a desk command)", async () => {
+    const d = await withLive(true);
+    await d.run({ conversationId: "t1", text: "new" });
+    expect(d.sent.at(-1)).toBe("new");
+    expect(d.liveSessions.has("t1")).toBe(true);
+  });
+
   test("a full live queue is acked queue-full and kept out of history", async () => {
     const d = await withLive(false);
     const before = d.conversations.history("t1").length;

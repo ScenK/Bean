@@ -1324,18 +1324,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           ...(direct ? {} : { scopeId: target.scopeId }),
           channelName: direct ? "DM" : row.title,
         };
+        // `stop` (typed, or the desk's End) ends the session as the platform command does, never
+        // reaching the agent as text. In a conversation that has had a session it is never a Bean
+        // turn either — the session may have ended while the echo was in flight. Saved as a line so
+        // the desk's pending bubble lands.
+        if (commandWord(text) === "stop" && (deps.liveSessions.has(conv) || row.liveCli)) {
+          deps.conversations.append(conv, { role: "user", content: speakerLine(fromName, text) });
+          ack({ ok: true });
+          await onCommand(msg, target.fx);
+          return;
+        }
         // Re-checked after the echo's await: a session that ended meanwhile takes a normal turn.
         if (deps.liveSessions.has(conv)) {
           deps.conversations.setAmbientCutoff(conv, Date.now());
-          // The live commands work from the desk as on the platform — `stop` ends the session
-          // rather than reaching the agent as text. Saved as a line so the desk sees it land.
-          const cmd = commandWord(text);
-          if (cmd === "stop" || cmd === "drivers" || cmd === "new") {
-            deps.conversations.append(conv, { role: "user", content: speakerLine(fromName, text) });
-            ack({ ok: true });
-            await onCommand(msg, target.fx);
-            return;
-          }
           return ack(await steerLive(conv, fromName, text) ? { ok: true } : { refused: "queue-full" });
         }
         ack({ ok: true });
