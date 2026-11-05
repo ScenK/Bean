@@ -1121,7 +1121,8 @@ export function RoutinesPanel() {
                   </div>
                 ) : (
                   <DestinationPicker
-                    key={i}
+                    // Per sprout: naming state must never follow the row index into another draft.
+                    key={`${creating ? "new" : selected ?? ""}:${i}`}
                     sink={c}
                     label={label}
                     room={room}

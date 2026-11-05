@@ -28,8 +28,9 @@ export function DestinationPicker(p: DestinationPickerProps) {
   const { sink, label, room } = p;
   const transport = sink.transport;
   const mine = p.destinations.filter((d) => d.surface === transport && d.label);
-  // The conversation an alias was just created for (editable inline), and the open "Name it".
-  const [fresh, setFresh] = useState<string | undefined>(undefined);
+  // The alias just created here (editable inline while the sink still shows it), and the open
+  // "Name it". The parent remounts this per sprout, so neither carries over to another draft.
+  const [fresh, setFresh] = useState<{ conversationId: string; alias: string } | undefined>(undefined);
   const [naming, setNaming] = useState<string | undefined>(undefined);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
@@ -56,7 +57,7 @@ export function DestinationPicker(p: DestinationPickerProps) {
       if (r.ok) {
         await p.reloadDestinations();
         p.onChange({ transport, alias: tidy(alias) });
-        setFresh(row.conversationId);
+        setFresh({ conversationId: row.conversationId, alias: tidy(alias) });
         setName(tidy(alias));
         return;
       }
@@ -65,14 +66,19 @@ export function DestinationPicker(p: DestinationPickerProps) {
     setError(`Couldn't find a free name for "${row.label}" — name it in Settings → ChatOps.`);
   };
 
+  // Only for the alias this picker just created and the sink still shows — never another row's.
+  const ownsAlias = fresh !== undefined && fresh.alias === sink.alias;
+  // Explicit (Enter / Rename), never on blur: a blur fired by clicking Save would rename the
+  // destination while Save writes the old alias.
   const renameFresh = async (): Promise<void> => {
     const next = tidy(name);
-    if (!fresh || next === sink.alias) return;
-    const r = await window.bean.destinationsName(transport, fresh, next);
+    if (!fresh || !ownsAlias || next === sink.alias) return;
+    const r = await window.bean.destinationsName(transport, fresh.conversationId, next);
     if (!r.ok) { setError(r.error); return; }
     setError("");
-    await p.reloadDestinations();
+    setFresh({ ...fresh, alias: next });
     p.onChange({ transport, alias: next });
+    await p.reloadDestinations();
   };
 
   const nameRaw = async (): Promise<void> => {
@@ -130,16 +136,18 @@ export function DestinationPicker(p: DestinationPickerProps) {
           onClick={p.onRemove}
         >×</button>
       </div>
-      {fresh && sink.alias !== undefined ? (
+      {ownsAlias ? (
         <div class="bean-routines-sink-row">
           <input
             class="bean-input bean-input--boxed"
             aria-label="Destination name"
             value={name}
             onInput={(e) => setName((e.target as HTMLInputElement).value)}
-            onBlur={() => void renameFresh()}
             onKeyDown={(e) => { if (e.key === "Enter") void renameFresh(); }}
           />
+          {tidy(name) !== sink.alias ? (
+            <button type="button" class="bean-btn" onClick={() => void renameFresh()}>Rename</button>
+          ) : null}
         </div>
       ) : null}
       {naming !== undefined && naming === rawId ? (

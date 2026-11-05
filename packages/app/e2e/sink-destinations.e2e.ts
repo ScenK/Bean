@@ -26,7 +26,7 @@ test("sink destinations: pick by name, save, reopen shows the name; an unknown n
   recordDestination(dbFile(beanDir), { surface: "discord", conversationId: "c1", kind: "channel", platformName: "general", parentName: "Guild" });
   const file = join(beanDir, "routines", "pick.json");
   await writeFile(file, sprout("pick", [{ transport: "discord" }]), "utf8");
-  await writeFile(join(beanDir, "routines", "ghost.json"), sprout("ghost", [{ transport: "discord", alias: "Gone" }]), "utf8");
+  await writeFile(join(beanDir, "routines", "ghost.json"), sprout("ghost", [{ transport: "discord" }, { transport: "discord", alias: "Gone" }]), "utf8");
   const chatops = async (): Promise<unknown> =>
     (JSON.parse(await readFile(file, "utf8")) as { sinks: { chatops?: unknown } }).sinks.chatops;
 
@@ -42,9 +42,14 @@ test("sink destinations: pick by name, save, reopen shows the name; an unknown n
     await name.fill("Team chat");
     await name.press("Enter");
     await expect(win.getByLabel("Discord destination")).toHaveValue("alias:Team chat");
+    // An uncommitted edit doesn't rename on Save's blur: the sprout and the destination agree.
+    await name.fill("Not committed");
     await win.getByRole("button", { name: "Save sprout" }).click();
     await expect.poll(chatops).toEqual([{ transport: "discord" }, { transport: "discord", alias: "Team chat" }]);
     expect(listDestinations(dbFile(beanDir)).find((d) => d.conversationId === "c1")?.alias).toBe("Team chat");
+    // Naming state stays with its sprout: another sprout's row shows no name field.
+    await win.locator(".bean-routines-row", { hasText: "ghost" }).click();
+    await expect(win.getByRole("textbox", { name: "Destination name" })).toHaveCount(0);
 
     await win.reload();
     await win.locator(".bean-routines-row", { hasText: "pick" }).click();
