@@ -29,6 +29,14 @@ export type AliasInUse = (alias: string) => readonly string[];
 
 export type AliasResult = { ok: true } | { ok: false; error: string };
 
+/** One row of the desktop send card's picker. `id` is opaque (main maps it back to the row);
+ * `detail` = "platform name · parent · kind" under the bold label. */
+export interface SendOption { id: string; surface: ChatopsSurface; label: string; detail: string }
+
+/** The desktop confirm card for propose_send: `pick` is set only for a confident match (else the
+ * picker starts empty); `options` are every labelled destination, the name's candidates first. */
+export interface SendCard { id: string; destination: string; body: string; pick?: string; options: SendOption[] }
+
 const THROTTLE_MS = 60 * 60 * 1000;
 
 const clean = (s: string | undefined): string | null => s?.replace(/\s+/g, " ").trim().slice(0, 100) || null;

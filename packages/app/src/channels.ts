@@ -177,6 +177,9 @@ export const IPC = {
   destinationsName: "bean:destinations-name",
   destinationsClear: "bean:destinations-clear",
   destinationsRetarget: "bean:destinations-retarget",
+  destinationsNameRaw: "bean:destinations-name-raw",
+  // propose_send card (#688): the proposal id + the picked option id; main holds the body and rows.
+  sendToDestination: "bean:send-to-destination",
   skillProposalsList: "bean:skill-proposals-list",
   skillProposalsApprove: "bean:skill-proposals-approve",
   skillProposalsReject: "bean:skill-proposals-reject",

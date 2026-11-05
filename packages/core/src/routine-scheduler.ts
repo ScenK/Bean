@@ -25,6 +25,9 @@ export interface RoutineSchedulerDeps {
   /** `todo` set = a maxParallel worker's run of that one (already claimed) todo. */
   runRoutine: (routine: Routine, todo?: TodoItem) => Promise<RoutineRunResult>;
   deliverDigest: (routine: Routine, result: RoutineRunResult) => Promise<void>;
+  /** Chat sinks that can't be delivered (an unknown destination name): the run is recorded
+   * needs-attention with these lines appended, before the record is saved. Absent = none. */
+  sinkProblems?: (routine: Routine) => string[];
   /** Drops the routine's step attempts whose run isn't in `keepRunIds` (evicted or interrupted). */
   pruneAttempts?: (routine: string, keepRunIds: string[]) => void;
   now?: () => Date;
@@ -66,6 +69,14 @@ export function triggerOutcome(statuses: RunStatus[]): TriggerOutcome {
   };
 }
 
+/** Appends undeliverable-sink lines to a run and raises an ok run to needs-attention. */
+export function withSinkProblems(result: RoutineRunResult, problems: string[]): RoutineRunResult {
+  if (problems.length === 0) return result;
+  const digest = `${result.digest}\n\n${problems.map((p) => `⚠ ${p}`).join("\n")}`;
+  const status: RunStatus = result.record.status === "ok" ? "needs-attention" : result.record.status;
+  return { ...result, digest, record: { ...result.record, digest, status } };
+}
+
 const TICK_MS = 30_000;
 export const ALARM_AFTER = 3;
 
@@ -95,6 +106,8 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   // than re-deriving it — a disk round-trip would also just re-observe the same stale due date.
   const missedNames = new Set<string>();
   let timer: ReturnType<typeof setInterval> | undefined;
+  const checkSinks = (routine: Routine, result: RoutineRunResult): RoutineRunResult =>
+    withSinkProblems(result, deps.sinkProblems?.(routine) ?? []);
 
   const scheduleBase = (state: RoutineState | undefined): Date => {
     const last = state?.lastRun ? new Date(state.lastRun) : undefined;
@@ -164,7 +177,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     let status: RunStatus = "failed";
     try {
       await stamp(routine.name);
-      const result = await deps.runRoutine(routine);
+      const result = checkSinks(routine, await deps.runRoutine(routine));
       status = result.record.status;
       await appendAndPrune(routine.name, result.record);
       await deps.deliverDigest(routine, result);
@@ -188,7 +201,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         try {
           let result: RoutineRunResult;
           try {
-            result = await deps.runRoutine(routine, todo);
+            result = checkSinks(routine, await deps.runRoutine(routine, todo));
             statuses[statuses.length - 1] = result.record.status;
             await appendAndPrune(routine.name, result.record, () => (inFlight.get(routine.name) ?? 0) > 1);
           } finally {
@@ -239,9 +252,11 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
    * one RunRecord is written per fire, so the Dashboard and run list show it. */
   async function fireNotify(routine: Routine, items: WatchItem[], at: string): Promise<void> {
     const digest = watchDigest(items);
-    const record = { startedAt: at, finishedAt: now().toISOString(), status: "ok" as const, digest, steps: [] };
-    await appendAndPrune(routine.name, record, () => count(routine.name) > 0);
-    await deps.deliverDigest(routine, { record, digest, results: [] });
+    const fired = checkSinks(routine, {
+      digest, results: [], record: { startedAt: at, finishedAt: now().toISOString(), status: "ok", digest, steps: [] },
+    });
+    await appendAndPrune(routine.name, fired.record, () => count(routine.name) > 0);
+    await deps.deliverDigest(routine, fired);
   }
 
   /** One poll: seed on first sight (fires nothing), otherwise diff against the seen-set.

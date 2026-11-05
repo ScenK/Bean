@@ -7,7 +7,7 @@ import {
   buildDroppedUrlStore, buildChatPromptStore, buildNotesHandlers,
   buildModelsHandler, buildModelMemoryHandlers, buildRoutineHandlers,
   buildPendingUpdateStore, buildUpdateHandlers, buildTodoHandlers,
-  parseDashboardTarget, openComponentPayload, notificationOpens,
+  parseDashboardTarget, openComponentPayload, notificationOpens, type ChatHandlerDeps,
 } from "../src/ipc.js";
 import type { ConfigView, ConfigUpdate } from "../src/channels.js";
 import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate, Routine, ChatTurn } from "@bean/core";
@@ -316,6 +316,36 @@ test("chat handler passes delegate availability and web search through to conver
   await handler({ history: [], message: "delegate this" });
   expect(seenTools).toContain("propose_delegate");
   expect(seenWebSearch).toBe(true);
+});
+
+test("chat handler offers propose_send only with proposeSend and turns the call into a send card", async () => {
+  const base = {
+    loadSkills: async () => [] as Skill[],
+    loadProjects: async () => [] as Project[],
+    loadPersona: async () => ({ name: "Bean", tags: ["Warm"] }) as Persona,
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills", skillsDir: "/b/skills", projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json", projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [], dbFile: "/b/memory.json",
+  };
+  const offered: string[][] = [];
+  const converse: ChatHandlerDeps["converse"] = async ({ tools }) => {
+    offered.push(tools.map((t) => t.name));
+    return tools.some((t) => t.name === "propose_send")
+      ? { content: "", toolCalls: [{ name: "propose_send", args: { destination: "ops", text: "hi" } }] }
+      : { content: "ok", toolCalls: [] };
+  };
+  await buildChatHandler({ ...base, converse } as ChatHandlerDeps)({ history: [], message: "post hi in ops" });
+  expect(offered[0]).not.toContain("propose_send");
+  const seen: string[] = [];
+  const out = await buildChatHandler({
+    ...base, converse,
+    proposeSend: (destination, body) => { seen.push(destination, body); return { id: "p1", destination, body, options: [] }; },
+  } as ChatHandlerDeps)({ history: [], message: "post hi in ops" });
+  expect(offered[1]).toContain("propose_send");
+  expect(seen).toEqual(["ops", "hi"]);
+  expect(out.sendCard).toEqual({ id: "p1", destination: "ops", body: "hi", options: [] });
+  expect(out.proposedSend).toBeUndefined();
 });
 
 test("buildChatHandler passes todo-driven routine names into converse", async () => {

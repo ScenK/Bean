@@ -741,6 +741,18 @@ button, input, textarea, select, a {
 /* LiveOfferCard: the hand-off question, then the ask line the agent gets. */
 .bean-offer-title { display: flex; align-items: center; gap: 6px; color: var(--bean-text); font-size: 13px; }
 .bean-offer-ask { color: var(--bean-text-dim); font-size: 12px; white-space: pre-wrap; }
+/* SendCard (propose_send): destination picker, the picked row, the body as it will post. */
+.bean-send-pick { display: flex; flex-direction: column; gap: 4px; }
+.bean-send-select {
+  font: 12px sans-serif;
+  color: var(--bean-text);
+  background: var(--bean-surface);
+  border: 1px solid var(--bean-border);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.bean-send-target { display: flex; flex-direction: column; gap: 2px; color: var(--bean-text); font-size: 13px; }
+.bean-send-body { min-height: 0; resize: none; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bean-btn {
   font: 600 12px sans-serif;
   color: var(--bean-accent-ink);
@@ -2368,6 +2380,7 @@ button, input, textarea, select, a {
   font-size: 12px;
 }
 .bean-routines-sink-group { display: flex; flex-direction: column; gap: 6px; }
+.bean-routines-sink-dest { display: flex; flex-direction: column; gap: 4px; }
 .bean-routines-sink-add {
   align-self: flex-start;
   background: none;

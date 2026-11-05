@@ -63,3 +63,17 @@ describe("destinations", () => {
     expect(off).toEqual(["no note", "no desktop notification"]);
   });
 });
+
+describe("alias sinks", () => {
+  it("aren't merged with the default DM; exact alias duplicates are", () => {
+    const out = cleanChatSinks({ chatops: [
+      { transport: "teams" }, { transport: "teams", alias: "Ops" }, { transport: "teams", alias: "Ops" }, { transport: "teams", alias: "Dev" },
+    ] });
+    expect(out.chatops).toEqual([{ transport: "teams" }, { transport: "teams", alias: "Ops" }, { transport: "teams", alias: "Dev" }]);
+  });
+
+  it("count as conversations in the footer and show by name in the review", () => {
+    expect(chatTargets([{ transport: "teams", alias: "Ops" }, { transport: "teams", channel: "c" }])).toEqual(["2 Teams conversations"]);
+    expect(destinations({ chatops: [{ transport: "discord", alias: "Ops" }] }, { discord: 1 }).on).toEqual(['Discord channel "Ops"']);
+  });
+});
