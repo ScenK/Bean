@@ -15,6 +15,11 @@ channel id). Not `chatops_conversations` — that one is the owner-only continua
   text/announcement channels on ready/guildCreate/channelCreate/Update; threads only when seen.
   Lost access or `channelDelete` → `forgetDestination`, which never deletes an aliased row.
   Every call is wrapped — a failed record must not fail a turn or throw a delivery into retry.
+- **Settings UI (#686):** `app/src/destinations.ts` (IPC `destinations*`) feeds core the sprout
+  references (`aliasUsers` over `loadRoutines`: a chat sink's `alias`, landing in #687) and a
+  "1:1 · <speaker>" hint from `ambientSpeakers` for rows with no platform name. The renderer
+  (`settings/DestinationsList.tsx`) disables Rename/Clear for referenced aliases; core still
+  refuses them, so the disabled button is UX only.
 - **Alias rules:** `alias` is `UNIQUE`, and `setAlias` also refuses a name that normalizes equal
   to another row's alias, platform name or label. Every alias op takes an injected `AliasInUse`
   (sprout references): a referenced alias can't be renamed or cleared, only `retargetAlias`ed to

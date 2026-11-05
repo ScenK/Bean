@@ -7,6 +7,7 @@ import { basename, join, dirname } from "node:path";
 import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./chatops-enabled-store.js";
 import { createChatopsServers } from "./chatops-servers.js";
 import { buildSyncedChatHandlers, type SyncedChatEvent } from "./synced-chats.js";
+import { buildDestinationHandlers } from "./destinations.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { applyChatopsActivity, clearBotJobs } from "./chatops-activity.js";
@@ -32,6 +33,7 @@ import {
   availableModels, pinnedStepSelection, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat, deleteDesktopChat, listDesktopChats,
   createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
   listChatopsConversations, chatopsConversationTurns, loadChatopsOwners, ownerSubjectIds,
+  listDestinations, destinationLabel, ambientSpeakers, setAlias, clearAlias, retargetAlias,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, CliName } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
@@ -1091,6 +1093,13 @@ app.whenReady().then(async () => {
         liveIds: (surface) => liveConvs[surface],
         deskTurn: (surface, id, text) => chatopsServers!.deskTurn(surface, id, text),
         deskResume: (surface, id) => chatopsServers!.deskResume(surface, id),
+      }),
+      destinationHandlers: buildDestinationHandlers({
+        dbFile: dbFile(dir),
+        loadRoutines: () => loadRoutines(routinesPath),
+        owners: () => loadChatopsOwners(dir),
+        listDestinations: (file) => listDestinations(file), destinationLabel, ambientSpeakers: (file, id) => ambientSpeakers(file, id),
+        setAlias, clearAlias, retargetAlias,
       }),
     }));
 

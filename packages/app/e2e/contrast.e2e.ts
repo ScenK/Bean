@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
-import { dbFile, saveDesktopChat } from "@bean/core";
+import { dbFile, recordDestination, saveDesktopChat, setAlias } from "@bean/core";
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
@@ -103,6 +103,10 @@ test("every component window clears WCAG AA text contrast in both themes", async
   const db = dbFile(join(home.homeDir, ".bean"));
   saveDesktopChat(db, { id: "11111111-1111-4111-8111-111111111111", title: "Plan the week", itemsJson: JSON.stringify([{ kind: "reply", agent: "claude", text: "ok" }]) });
   saveDesktopChat(db, { id: "22222222-2222-4222-8222-222222222222", title: "Older chat", itemsJson: "[]" }, new Date(Date.now() - 3 * 86_400_000));
+  // Settings → Destinations (#686): an unnamed row and a named one, so both row kinds are measured.
+  recordDestination(db, { surface: "discord", conversationId: "c1", kind: "channel", platformName: "general", parentName: "Guild" });
+  recordDestination(db, { surface: "teams", conversationId: "t1", kind: "channel", platformName: "Ops", parentName: "Team" });
+  setAlias(db, { surface: "teams", conversationId: "t1" }, "Ops room", () => []);
   const stub = await startStubOpenAI();
   const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
   try {

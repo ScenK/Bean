@@ -1502,6 +1502,54 @@ button, input, textarea, select, a {
 .bean-chatops-label-error {
   color: var(--bean-error);
 }
+/* Settings → Destinations (#686) */
+.bean-dest-empty {
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--bean-text-dim);
+}
+.bean-dest-group {
+  padding: 8px 14px 6px;
+  border-bottom: 1px solid var(--bean-border);
+  font: 700 10.5px ui-monospace, monospace;
+  letter-spacing: 0.05em;
+  color: var(--bean-text-dim);
+}
+.bean-dest-row { align-items: flex-start; }
+.bean-dest-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.bean-dest-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--bean-text);
+  overflow-wrap: anywhere;
+}
+.bean-dest-meta {
+  font: 11px ui-monospace, monospace;
+  color: var(--bean-text-dim);
+  overflow-wrap: anywhere;
+}
+.bean-dest-actions {
+  flex: none;
+  display: flex;
+  gap: 6px;
+}
+.bean-dest-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.bean-dest-input { flex: 1; min-width: 0; }
+.bean-dest-error {
+  font-size: 11.5px;
+  color: var(--bean-error);
+}
 
 .bean-settings-jumpbar {
   flex: none;

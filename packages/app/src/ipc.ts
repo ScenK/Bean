@@ -25,6 +25,7 @@ import { terminalLink, type TerminalTasks } from "./terminal-tasks.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import type { UpdateCheckOutcome } from "./updater.js";
 import type { buildSyncedChatHandlers } from "./synced-chats.js";
+import type { buildDestinationHandlers } from "./destinations.js";
 
 export { IPC };
 
@@ -1134,6 +1135,7 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   todoHandlers: ReturnType<typeof buildTodoHandlers>;
   chatThreadHandlers: ReturnType<typeof buildChatThreadHandlers>;
   syncedChatHandlers: ReturnType<typeof buildSyncedChatHandlers>;
+  destinationHandlers: ReturnType<typeof buildDestinationHandlers>;
 }
 
 /** `releaseChatSender` = a chat window is gone: release every chat it still had attached. */
@@ -1414,6 +1416,13 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.handle(IPC.chatopsStatus, () => chatopsHandlers.status());
   ipcMain.on(IPC.chatopsStart, (_e, bot: ChatopsBot) => chatopsHandlers.start(bot));
   ipcMain.on(IPC.chatopsStop, (_e, bot: ChatopsBot) => chatopsHandlers.stop(bot));
+  ipcMain.handle(IPC.destinationsList, () => deps.destinationHandlers.list());
+  ipcMain.handle(IPC.destinationsName, (_e, surface: unknown, conversationId: unknown, alias: unknown) =>
+    deps.destinationHandlers.name(surface, conversationId, alias));
+  ipcMain.handle(IPC.destinationsClear, (_e, surface: unknown, conversationId: unknown) =>
+    deps.destinationHandlers.clear(surface, conversationId));
+  ipcMain.handle(IPC.destinationsRetarget, (_e, alias: unknown, surface: unknown, conversationId: unknown) =>
+    deps.destinationHandlers.retarget(alias, surface, conversationId));
 
   const updateHandlers = buildUpdateHandlers(deps);
   ipcMain.handle(IPC.checkForUpdate, () => updateHandlers.check());

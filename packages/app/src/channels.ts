@@ -172,6 +172,11 @@ export const IPC = {
   chatopsStart: "bean:chatops-start",
   chatopsStop: "bean:chatops-stop",
   chatopsEvent: "bean:chatops-event",
+  // Settings → ChatOps → Destinations (destinations.ts): list seen conversations, name/clear/retarget aliases.
+  destinationsList: "bean:destinations-list",
+  destinationsName: "bean:destinations-name",
+  destinationsClear: "bean:destinations-clear",
+  destinationsRetarget: "bean:destinations-retarget",
   skillProposalsList: "bean:skill-proposals-list",
   skillProposalsApprove: "bean:skill-proposals-approve",
   skillProposalsReject: "bean:skill-proposals-reject",

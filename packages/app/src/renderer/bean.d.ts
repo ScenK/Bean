@@ -12,6 +12,8 @@ import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "../ipc.js";
 import type { RoutineBuildView } from "../routine-builder.js";
 import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "../synced-chats.js";
+import type { DestinationView } from "../destinations.js";
+import type { AliasResult } from "@bean/core";
 import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
 
 declare global {
@@ -184,6 +186,13 @@ declare global {
       onReviewBeforeClose(cb: () => void): void;
       allowChatClose(): void;
       chatopsStatus(): Promise<Record<ChatopsBot, ChatopsState>>;
+      /** Settings → ChatOps → Destinations: every conversation the bots have seen. */
+      destinationsList(): Promise<DestinationView[]>;
+      /** Name or rename a row; refused (ok: false) for a referenced alias or a taken name. */
+      destinationsName(surface: string, conversationId: string, alias: string): Promise<AliasResult>;
+      destinationsClear(surface: string, conversationId: string): Promise<AliasResult>;
+      /** Move `alias` to another row of the same platform. */
+      destinationsRetarget(alias: string, surface: string, conversationId: string): Promise<AliasResult>;
       chatopsStart(bot: ChatopsBot): void;
       chatopsStop(bot: ChatopsBot): void;
       onChatopsEvent(cb: (e: ChatopsEvent) => void): void;

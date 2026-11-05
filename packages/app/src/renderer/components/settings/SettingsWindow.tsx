@@ -4,6 +4,7 @@ import type { ConfigView } from "../../../channels.js";
 import type { Theme } from "../../../channels.js";
 import type { ChatopsBot, ChatopsState } from "../../../chatops-servers.js";
 import { PanelHeader } from "../../shared/Panel.js";
+import { DestinationsList } from "./DestinationsList.js";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -27,6 +28,7 @@ const SECTIONS = [
   { id: "model", label: "Model" },
   { id: "apps", label: "Apps" },
   { id: "chatbots", label: "Chat bots" },
+  { id: "destinations", label: "Destinations" },
   { id: "appearance", label: "Appearance" },
   { id: "data", label: "Data" },
 ];
@@ -356,6 +358,11 @@ export function SettingsWindow() {
               </label>
             </div>
           </div>
+        </section>
+
+        <section id="destinations" class="bean-settings-card">
+          <div class="bean-settings-card-header">DESTINATIONS</div>
+          <DestinationsList />
         </section>
 
         <section id="appearance" class="bean-settings-card">
