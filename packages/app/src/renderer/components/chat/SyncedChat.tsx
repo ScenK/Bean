@@ -49,6 +49,17 @@ export function composerState(l: SyncedChatListing, botRunning: boolean, rows: S
   return { readOnly: false, placeholder: "Message Bean" };
 }
 
+/** A live turn is in flight: the session runs and the transcript ends on a user line (the bot
+ * stores the steer at once, the agent's reply only when the turn completes). Its progress streams
+ * to the platform only, so without this the desk shows nothing for the whole turn.
+ * ponytail: transcript heuristic — a failed turn (no reply stored) stays lit until the next reply or
+ * session end, and a second queued turn goes dark once the first reply lands ([A, B, reply A]). The
+ * transcript can't tell that from a merged reply to both; the fix is a per-turn activity phase from
+ * the bot's typing state (LiveSessionRegistry.startTyping/stopTyping) pushed to the desk. */
+export function liveTurnRunning(l: SyncedChatListing, rows: SyncedChatRow[]): boolean {
+  return l.live && !l.archived && rows[rows.length - 1]?.role === "user";
+}
+
 const userCount = (rows: SyncedChatRow[], text: string): number =>
   rows.filter((r) => r.role === "user" && !r.name && r.text.trim() === text).length;
 
@@ -191,6 +202,13 @@ export function SyncedChat({ listing, botRunning, version, onWorking, hasArchive
           <div class="bean-chat-row">
             <span class="bean-chat-row-avatar"><AgentAvatar agent="bean" bob /></span>
             <div class="bean-bubble bean-bubble--bean bean-bubble--working">Sent to {surface}<span class="bean-dots"><span /><span /><span /></span></div>
+          </div>
+        ) : liveTurnRunning(listing, rows) ? (
+          <div class="bean-chat-row">
+            <span class="bean-chat-row-avatar"><AgentAvatar agent={listing.liveCli ?? "claude"} bob /></span>
+            <div class="bean-bubble bean-bubble--bean bean-bubble--working">
+              {AGENT_NAMES[listing.liveCli ?? "claude"]} is working — progress shows in {surface}<span class="bean-dots"><span /><span /><span /></span>
+            </div>
           </div>
         ) : null}
         {errors.map((e) => <div key={`e${e.id}`} class="bean-status bean-status--error">{e.text}</div>)}
