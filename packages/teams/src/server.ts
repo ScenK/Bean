@@ -6,11 +6,11 @@ import {
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, ConversationCatalog, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeChatter, dmAllowed,
-  SproutRunProposalStore, parentSproutTrigger, processParentPort, sproutRunFacts,
+  SproutRunProposalStore, parentSproutTrigger, processParentPort, sproutRunFacts, recordDestination,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
-  TurnContext,
+  TeamsInfo, TurnContext,
   type ConversationReference, type Activity,
 } from "botbuilder";
 import express from "express";
@@ -24,6 +24,7 @@ import {
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
 import { addressedToBot } from "./addressing.js";
+import { teamsDestinationRecorder, type TeamsChannelData } from "./destinations.js";
 import { startDevtunnel } from "./devtunnel.js";
 import { bareChannelId, capturePlace, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
 import { parseQuote } from "./replied-to.js";
@@ -65,6 +66,10 @@ async function rememberConversation(ref: Partial<ConversationReference>): Promis
   await mkdir(dirname(conversationRefsFile), { recursive: true });
   await writeFile(conversationRefsFile, JSON.stringify(conversationRefs, null, 2) + "\n", "utf8");
 }
+
+// Named-destination discovery (#685): every conversation Bean is addressed in or delivers to, with
+// the names channelData carries (the stored refs above don't keep them).
+const destinations = teamsDestinationRecorder((seen) => recordDestination(dbFile(dir), seen));
 
 // ConfigurationServiceClientCredentialFactory builds the app-id/password credentials;
 // ConfigurationBotFrameworkAuthentication just needs an (empty) options object plus that
@@ -379,6 +384,11 @@ app.post("/api/messages", (req, res) => {
       );
     } finally {
       clearInterval(typing);
+      // Awaited here, while the turn context is still live (the meeting lookup needs it).
+      if (!dmBlocked) {
+        await destinations.seen(TurnContext.getConversationReference(a), a.channelData as TeamsChannelData | undefined,
+          async (id) => (await TeamsInfo.getMeetingInfo(context, id)).details?.title);
+      }
     }
   });
 });
@@ -491,6 +501,7 @@ setInterval(() => {
           posted.id = (await context.sendActivity(teamsText(text)))?.id;
         });
         delivered = true;
+        destinations.delivered(ref);
         // Per-target, because a DM fanout has no msg.channel to append to.
         const save = ref.conversation?.id ? deliveredAppend(msg, ref.conversation, text, posted.id) : null;
         if (save === "missing-id") console.error(`outbox: teams post to ${ref.conversation?.id} returned no id; digest not saved`);

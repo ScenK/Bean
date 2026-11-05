@@ -7,17 +7,18 @@ import {
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
   makeRoles, makeChatter, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, parseChatterCommand, RoutineProposalStore, SproutRunProposalStore, type Role,
-  parentSproutTrigger, processParentPort, sproutRunFacts,
+  parentSproutTrigger, processParentPort, sproutRunFacts, recordDestination, forgetDestination,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, MessageReferenceType, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
-  type Interaction, type Message, type MessageCreateOptions, type MessageSnapshot, type TextBasedChannel,
+  type Guild, type Interaction, type Message, type MessageCreateOptions, type MessageSnapshot, type TextBasedChannel,
 } from "discord.js";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { basename } from "node:path";
 import { sendChunks } from "./chunk.js";
 import { discordCards } from "./components.js";
+import { discordDestinations } from "./destinations.js";
 import { deliverOutboxDm } from "./outbox-dm.js";
 import { resolveRepliedTo, type RefMessage } from "./replied-to.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
@@ -171,6 +172,18 @@ const client = new Client({
   ],
   partials: [Partials.Channel],
 });
+
+// Named-destination discovery (#685): postable guild channels, plus every conversation Bean is
+// addressed in or delivers to.
+const destinations = discordDestinations({
+  record: (seen) => recordDestination(dbFile(dir), seen),
+  forget: (key) => forgetDestination(dbFile(dir), key),
+});
+const syncGuild = (guild: Guild): void => { for (const channel of guild.channels.cache.values()) destinations.sync(channel); };
+client.on("guildCreate", syncGuild);
+client.on("channelCreate", (channel) => destinations.sync(channel));
+client.on("channelUpdate", (_old, channel) => destinations.sync(channel));
+client.on("channelDelete", (channel) => destinations.removed(channel));
 
 // Latest select-menu choices per proposal message id — Discord sends each select change
 // as its own interaction, so the values must be cached until the Run button is pressed.
@@ -357,6 +370,7 @@ client.on("messageCreate", async (message) => {
       }
       return;
     }
+    if (!dmBlocked) destinations.seen(message.channel, isDm ? message.author.displayName : undefined);
     let text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
     // A forward arrives with empty content; its snapshot is the thing to talk about.
     const forward = message.reference?.type === MessageReferenceType.Forward ? message.messageSnapshots.first() : undefined;
@@ -777,6 +791,7 @@ process.on("SIGTERM", () => {
 
 client.once("clientReady", async () => {
   console.log(`@bean/discord logged in as ${client.user?.tag} (clis: ${clis().join(", ") || "none"})`);
+  for (const guild of client.guilds.cache.values()) syncGuild(guild);
   // Every core keyword command, from the shared catalog; live-session too (core answers
   // "disabled" when no live-capable CLI is around).
   const commands = slashCommands();
@@ -832,12 +847,16 @@ setInterval(() => {
         fetchUser: (id) => client.users.fetch(id),
         groups: chunkGroups,
       });
+      if (dmChannelId) {
+        destinations.seen({ id: dmChannelId, type: ChannelType.DM }, client.users.cache.get(msg.userId ?? discordConfig.ownerId)?.displayName);
+      }
       if (msg.context && dmChannelId) appendDelivered(dmChannelId, msg.body);
       return;
     }
     const channel = await client.channels.fetch(msg.channel);
     if (!channel?.isTextBased() || !("send" in channel)) throw new Error(`channel ${msg.channel} not sendable`);
     await sendChunks(text, async (chunk): Promise<{ id: string }> => channel.send(chunk), chunkGroups);
+    destinations.seen(channel);
     if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body);
   }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: discord drain failed", err));
 }, OUTBOX_POLL_MS);

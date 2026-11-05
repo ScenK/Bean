@@ -62,6 +62,18 @@ export function recordDestination(file: string, seen: SeenDestination, now: () =
   }
 }
 
+/** Drops a conversation the bot can no longer post to (deleted, or lost access) — unless the owner
+ * named it: an aliased row is kept, name and all, so a sprout naming it fails visibly instead of
+ * silently losing its target. Never throws. */
+export function forgetDestination(file: string, key: DestinationKey): void {
+  try {
+    openDb(file).prepare("DELETE FROM chat_destinations WHERE surface = ? AND conversation_id = ? AND alias IS NULL")
+      .run(key.surface, key.conversationId);
+  } catch (err) {
+    console.warn(`bean: couldn't forget a ${key.surface} destination:`, err instanceof Error ? err.name : "error");
+  }
+}
+
 interface DbRow {
   surface: ChatopsSurface;
   conversation_id: string;

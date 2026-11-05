@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { closeDb } from "../src/db.js";
 import {
-  clearAlias, destinationLabel, listDestinations, matchDestination, recordDestination, retargetAlias, setAlias,
+  clearAlias, destinationLabel, forgetDestination, listDestinations, matchDestination, recordDestination, retargetAlias, setAlias,
   type Destination,
 } from "../src/destinations.js";
 
@@ -114,4 +114,13 @@ test("matcher: typo, unique token, ties and scope", () => {
   expect(matchDestination("#general", twoGeneral).pick).toBeUndefined();
   expect(matchDestination("ops", [general]).candidates).toEqual([]);
   expect(matchDestination("ops", [general, a]).candidates).not.toContain(greatest);
+});
+
+test("forget drops an un-aliased row but keeps an aliased one, name and all", () => {
+  const file = freshDb();
+  for (const id of ["1", "2"]) recordDestination(file, { surface: "discord", conversationId: id, kind: "channel", platformName: `c${id}` });
+  setAlias(file, { surface: "discord", conversationId: "1" }, "ops", unused);
+  forgetDestination(file, { surface: "discord", conversationId: "1" });
+  forgetDestination(file, { surface: "discord", conversationId: "2" });
+  expect(listDestinations(file)).toMatchObject([{ conversationId: "1", alias: "ops", platformName: "c1" }]);
 });
