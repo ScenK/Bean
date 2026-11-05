@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { groupThreads, mergeRows, withSaveAck } from "../src/renderer/components/chat/ChatSidebar.js";
-import { composerState, kindChip } from "../src/renderer/components/chat/SyncedChat.js";
+import { composerState, kindChip, liveTurnRunning } from "../src/renderer/components/chat/SyncedChat.js";
 import type { ChatItem } from "../src/renderer/shared/chat-types.js";
 
 const now = new Date(2026, 9, 29, 15, 0);
@@ -65,4 +65,14 @@ test("an archive chips `· archived` (never with `· live`) and stays read-only 
   expect(composerState(archive, true, rows)).toEqual({ readOnly: true, placeholder: "Archived after /new — read only" });
   expect(composerState(archive, false, [])).toEqual({ readOnly: true, placeholder: "Archived after /new — read only" });
   expect(composerState({ ...archive, archived: false, live: false, resumable: false }, true, [])).toEqual({ readOnly: false, placeholder: "Message Bean" });
+});
+
+test("a live turn is in flight while the transcript ends on a user line", () => {
+  const live = { surface: "discord" as const, conversationId: "c", kind: "thread" as const, title: "t", updatedAt: "", live: true, liveCli: "claude" as const, resumable: true, archived: false };
+  const user = { role: "user" as const, text: "go" };
+  const reply = { role: "agent" as const, text: "done", agent: "claude" as const };
+  expect(liveTurnRunning(live, [reply, user])).toBe(true);
+  expect(liveTurnRunning(live, [user, reply])).toBe(false);
+  expect(liveTurnRunning(live, [])).toBe(false);
+  expect(liveTurnRunning({ ...live, live: false }, [user])).toBe(false);
 });
