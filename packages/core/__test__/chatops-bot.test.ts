@@ -3658,7 +3658,7 @@ describe("desk continue, agent mode (#696)", () => {
     const a = agentBot();
     recordDelegateSession(a.file, { ...RUN, surface: "desktop" });
     await a.run();
-    expect(a.reqs).toEqual([expect.objectContaining({ resume: "sess-1", projectPath: "/p/bean", cli: "claude", prompt: "" })]);
+    expect(a.reqs).toEqual([expect.objectContaining({ resume: "sess-1", projectPath: "/p/bean", cli: "claude", prompt: "", model: "sonnet" })]);
     expect(a.liveSessions.canSteer("th1", "u1")).toBe(true);
     expect(a.liveSessions.canSteer("th1", "m1")).toBe(false);
     expect(a.thread.posted[0]).toBe("<@u1> Continued from Bean desktop · moving the claude session here");
@@ -3668,6 +3668,15 @@ describe("desk continue, agent mode (#696)", () => {
     await vi.waitFor(() => expect(a.thread.updates.at(-1)).toEqual({
       id: "act-1", card: expect.objectContaining({ outcome: "ended", resumeLiveId: "sess-1" }),
     }));
+  });
+
+  test("two concurrent moves of one session start it once; the stale one is partial", async () => {
+    const a = agentBot();
+    recordDelegateSession(a.file, { ...RUN, surface: "desktop" });
+    const acks = (await Promise.all([a.run(), a.run()])).flat();
+    expect(acks).toEqual(expect.arrayContaining([{ ok: true, threadId: "th1" }, { partial: true, threadId: "th1" }]));
+    expect(a.reqs).toHaveLength(1);
+    expect(a.thread.posted).toContain("I couldn't move that session here — it stays in Bean's desktop chat.");
   });
 
   test("a resume rejection ends the session visibly and never falls back to a fresh one", async () => {

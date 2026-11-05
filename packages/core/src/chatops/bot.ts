@@ -767,8 +767,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return partial(stays, err);
     }
     // One owner at a time: this surface's row becomes the session's newest, so the desktop's
-    // lookup refuses it and a plain (chatops) lookup resolves it here.
-    const moved = deps.recordDelegateRun?.({ ...run, surface: catalog.surface }) === true;
+    // lookup refuses it and a plain (chatops) lookup resolves it here. The desktop check is redone
+    // right before the write with no await between, so a concurrent move of the same session
+    // (which promoted it while this one awaited its thread) is refused, never started twice.
+    const still = deps.findDelegateRun?.(run.sessionId, "desktop");
+    const moved = !!still && "run" in still && deps.recordDelegateRun?.({ ...run, surface: catalog.surface }) === true;
     const now = moved ? deps.findDelegateRun?.(run.sessionId) : undefined;
     if (!now || "refusal" in now || now.run.surface !== catalog.surface) return partial(stays);
     const startedBy = deps.roles.ownerName;
@@ -779,7 +782,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       const pending: PendingLiveSession = {
         id: "desk", conversationId: threadId, proposedBy: startedBy, createdAt: Date.now(), cardActivityId,
         proposal: {
-          projectPath: run.projectPath, instruction: "", steering: "restricted",
+          // The recorded model; startLiveSessionAction keeps it only while clis.json still offers it.
+          projectPath: run.projectPath, instruction: "", steering: "restricted", ...(run.model ? { model: run.model } : {}),
           resume: { sessionId: run.sessionId, projectPath: run.projectPath, instruction: run.instruction, cli: run.cli },
         },
       };
