@@ -157,8 +157,9 @@ button, input, textarea, select, a {
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
-.bean-chat-sidebar-toggle--open { left: 190px; }
 .bean-chat-sidebar-toggle:hover { background: var(--bean-surface-2); color: var(--bean-text); }
+/* Open reads as on, like the Terminal toggle (after :hover so hovering doesn't hide it). */
+.bean-chat-sidebar-toggle--open { left: 190px; color: var(--bean-accent-text); }
 .bean-chat-sidebar-toggle svg { width: 100%; height: 100%; }
 /* Same list layout as Notes/Skills/Routines: mono labels, Notes-index rows. */
 .bean-chat-sidebar {
