@@ -106,14 +106,23 @@ export function attachDelegateTaskId(
   return { items: next, loopbacks };
 }
 
-/** Running tasks in one chat, for the window-close card. `terminal` is the command running in its
- * shell's foreground (main's fresh check), only while one runs — an idle shell closes silently. */
-export interface ChatTasks { delegates: number; live?: LiveCli; terminal?: string }
+/** Running tasks in one chat, for the window-close card. `terminal` is the command running in each
+ * busy tab's foreground (main's fresh check), set only while one runs — idle shells close silently. */
+export interface ChatTasks { delegates: number; live?: LiveCli; terminal?: string[] }
+
+/** Running commands for a card: "npm", "npm and vim", "npm, vim + 1 more". */
+export function commandList(cmds: string[]): string {
+  if (cmds.length <= 2) return cmds.join(" and ");
+  return `${cmds.slice(0, 2).join(", ")} + ${cmds.length - 2} more`;
+}
 
 /** The leave card for a chat that's discarded on leaving (off the record, or empty), if it has work. */
 export function leaveTitle(t: ChatTasks): string | undefined {
   const task = t.delegates > 0 || t.live !== undefined;
-  if (t.terminal) return `Leaving discards this chat and stops ${task ? "its task and " : ""}${t.terminal} in its terminal.`;
+  const cmds = t.terminal ?? [];
+  if (cmds.length > 0) {
+    return `Leaving discards this chat and stops ${task ? "its task and " : ""}${commandList(cmds)} in its terminal${cmds.length > 1 ? "s" : ""}.`;
+  }
   return task ? "Leaving discards this chat and stops its task." : undefined;
 }
 
@@ -1052,13 +1061,12 @@ export function ChatSession({
   const hasWork = (): boolean => busyRef.current || queuedSendsRef.current.length > 0 || liveRef.current !== undefined
     || shellRef.current > 0 || hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size);
   const tasks = async (): Promise<ChatTasks> => {
-    // ponytail: the first running command only, until the close card lists every tab (#675).
-    const terminal = shellRef.current > 0 ? (await window.bean.terminalRunning(mountId).catch(() => []))[0] : undefined;
+    const terminal = shellRef.current > 0 ? await window.bean.terminalRunning(mountId).catch(() => []) : [];
     return {
       delegates: Math.max(pendingDelegateStartsRef.current.size,
         itemsRef.current.filter((it) => it.kind === "delegate" && (it.state === "starting" || it.state === "running")).length),
       ...(liveRef.current ? { live: liveRef.current.agent } : {}),
-      ...(terminal ? { terminal } : {}),
+      ...(terminal.length > 0 ? { terminal } : {}),
     };
   };
   // The sidebar spinner follows the same work, from state — a live session only while its turn runs

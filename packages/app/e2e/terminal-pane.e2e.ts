@@ -1,6 +1,6 @@
 import { test, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { basename, join } from "node:path";
 import { launchBean } from "./fixtures/launch-app.js";
@@ -301,5 +301,62 @@ test("chat terminal tabs: a hidden chat with one surviving tab stays mounted aft
     await expect(row.locator(".bean-chat-sidebar-term")).toBeVisible();
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
+  }
+});
+
+/** Whether pid `pid` is alive (signal 0 probes without signalling). */
+const alive = (pid: number): boolean => {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+};
+
+// #675: the window-close card lists every tab's running command; Stop & close leaves no shell or child.
+test("chat terminal tabs: closing the window with two busy tabs names both, Stop & close kills every shell and command", async () => {
+  const home = await makeBeanHome({ autoMemory: false });
+  const app = await launchBean({ HOME: home.homeDir });
+  const sleeper = `sleep ${200_000 + (process.pid % 50_000)}`;
+  const tailed = join(tmpdir(), `bean-tab-tail-${process.pid}`);
+  const tailer = `tail -f ${tailed}`;
+  writeFileSync(tailed, "");
+  try {
+    const chat = await openChat(app);
+    const pane = chat.locator(".bean-chat:not([hidden]) .bean-term");
+    const tabs = pane.getByRole("tab");
+    const shownRows = pane.locator("[role=tabpanel]:not([hidden]) .xterm-rows");
+    const shellPid = async (n: number): Promise<number> => {
+      await chat.keyboard.type(`echo shell${n}-$$`);
+      await chat.keyboard.press("Enter");
+      await expect(shownRows).toContainText(new RegExp(`shell${n}-\\d+`));
+      return Number(new RegExp(`shell${n}-(\\d+)`).exec(await shownRows.innerText())![1]);
+    };
+
+    await chat.keyboard.press("Control+Backquote");
+    await expect.poll(() => focusedShell(chat)).toBe(true);
+    await promptShown(pane);
+    const pid1 = await shellPid(1);
+    await chat.keyboard.type(sleeper);
+    await chat.keyboard.press("Enter");
+    await chat.keyboard.press("Meta+t");
+    await expect(tabs).toHaveCount(2);
+    await expect.poll(() => focusedShell(chat)).toBe(true);
+    await promptShown(pane);
+    const pid2 = await shellPid(2);
+    await chat.keyboard.type(tailer);
+    await chat.keyboard.press("Enter");
+    await expect.poll(() => running(sleeper) && running(tailer)).toBe(true);
+    expect(alive(pid1) && alive(pid2)).toBe(true);
+
+    await closeChat(app);
+    await expect(chat.locator(".bean-memory-review-title"))
+      .toHaveText("sleep and tail are still running in this chat's terminals — closing stops them.");
+    const closed = chat.waitForEvent("close");
+    await chat.getByRole("button", { name: "Stop & close" }).click();
+    await closed;
+    await expect.poll(() => [running(sleeper), running(tailer), alive(pid1), alive(pid2)]).toEqual([false, false, false, false]);
+  } finally {
+    for (const cmd of [sleeper, tailer]) {
+      try { execFileSync("pkill", ["-fx", cmd]); } catch { /* already gone */ }
+    }
+    rmSync(tailed, { force: true });
+    await Promise.allSettled([app.close(), home.cleanup()]);
   }
 });
