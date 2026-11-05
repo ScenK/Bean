@@ -419,3 +419,50 @@ describe("main.ts live-session teardown", () => {
     expect(block("relaunch: () => {")).toContain("forceKillLive();");
   });
 });
+
+describe("handover (Continue in Discord)", () => {
+  const started = async () => {
+    const h = harness();
+    await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "go" });
+    h.cbs[0]!.onSessionId!("11111111-1111-4111-8111-111111111111");
+    return h;
+  };
+
+  it("refuses a busy session, then stops an idle one and waits for its exit", async () => {
+    const h = await started();
+    expect(await h.live.handover(A, "s1")).toEqual({ error: "Wait for Claude Code to finish its turn first." });
+    h.cbs[0]!.onTurnComplete({ result: "done" });
+    expect(await h.live.handover(B, "s1")).toEqual({ error: "That agent session has ended." });
+    let settled = false;
+    const held = h.live.handover(A, "s1").then((r) => { settled = true; return r; });
+    await Promise.resolve();
+    expect(h.stops()).toBe(1);
+    expect(settled).toBe(false); // not until the process is gone
+    expect(h.live.send(A, "s1", "more")).toBe("That agent session has ended.");
+    h.cbs[0]!.onExit();
+    expect(await held).toMatchObject({ cliId: "11111111-1111-4111-8111-111111111111", agent: "claude" });
+  });
+
+  it("refuses a resume of the handed-over id until release", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const h = harness({ findResumable: () => ({ run: { cli: "claude", sessionId: id, projectPath: "/proj" } }) as ResumableRun });
+    await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "go" });
+    h.cbs[0]!.onSessionId!(id);
+    h.cbs[0]!.onTurnComplete({ result: "done" });
+    const held = h.live.handover(A, "s1");
+    h.cbs[0]!.onExit();
+    const r = await held;
+    if ("error" in r) throw new Error(r.error);
+    expect(h.live.resume(B, id)).toEqual({ error: "That session is moving to Discord." });
+    r.release();
+    expect(h.live.resume(B, id)).toMatchObject({ agent: "claude" });
+  });
+
+  it("refuses a session that hasn't reported its CLI id", async () => {
+    const h = harness();
+    await h.live.start(A, { agent: "codex", projectPath: "/proj", ask: "go" });
+    h.cbs[0]!.onTurnComplete({ result: "done" });
+    expect(await h.live.handover(A, "s1")).toEqual({ error: "Codex hasn't reported its session yet." });
+    expect(h.stops()).toBe(0);
+  });
+});

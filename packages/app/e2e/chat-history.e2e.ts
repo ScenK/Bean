@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication, type Page } from "@playwright/t
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
-import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, listDesktopChats, speakerLine } from "@bean/core";
+import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, listDesktopChats, saveDesktopChat, speakerLine } from "@bean/core";
 import { join } from "node:path";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -331,6 +331,59 @@ test("chat history: a /new archive lists on push, read-only, and the live row sa
 
     await rows.filter({ hasNotText: "archived" }).locator(".bean-chat-sidebar-open").click();
     await expect(synced).toContainText("Fresh start — the earlier conversation is in the archived entry.");
+  } finally {
+    await Promise.allSettled([app.close(), home.cleanup()]);
+  }
+});
+
+// #697: Continue in Discord needs the app-spawned Discord bot — disabled (with the reason) without it.
+test("continue in Discord: the button is disabled while no Discord bot runs", async () => {
+  const home = await makeBeanHome();
+  const stub = await startStubOpenAI();
+  stub.queue({ content: "Hello there!" });
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  try {
+    const chat = await openChat(app);
+    await chat.locator(".bean-input--composer").fill("plan my week");
+    await chat.locator(".bean-send").click();
+    await expect(chat.locator(".bean-bubble--bean")).toContainText("Hello there!");
+    const button = chat.locator(".bean-chat:not([hidden]) .bean-chat-continue");
+    await expect(button).toBeDisabled();
+    await expect(button).toHaveAttribute("title", "Start the Discord bot in Settings first.");
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
+  }
+});
+
+// #697: a continued chat restores read-only with Open thread, which shows the thread's synced view —
+// and a synced chat has no Continue in Discord button.
+test("continue in Discord: a continued chat is read-only and Open thread shows the synced thread", async () => {
+  const home = await makeBeanHome();
+  const beanDir = join(home.homeDir, ".bean");
+  await writeFile(join(beanDir, "discord.json"), JSON.stringify({ botToken: "t", ownerId: "u1" }));
+  const file = dbFile(beanDir);
+  new ConversationCatalog(file, "discord").upsert({ conversationId: "th-1", place: { kind: "thread", title: "Week plan" }, ownerId: "u1" });
+  new ConversationStore(file).append("th-1", { role: "assistant", content: "Picked up from the desktop." });
+  saveDesktopChat(file, {
+    id: "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b", title: "plan my week",
+    itemsJson: JSON.stringify([
+      { kind: "user", id: "a", text: "plan my week" },
+      { kind: "reply", id: "b", text: "Sure" },
+      { kind: "continued", id: "c", surface: "discord", conversationId: "th-1", title: "Week plan" },
+    ]),
+  });
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const chat = await openChat(app);
+    await chat.locator(".bean-chat-sidebar-row", { hasText: "plan my week" }).locator(".bean-chat-sidebar-open").click();
+    const shown = chat.locator(".bean-chat:not([hidden]):not(.bean-chat--synced)");
+    await expect(shown.locator(".bean-chat-continued")).toContainText("This chat continues in Discord");
+    await expect(shown.locator(".bean-input--composer")).toHaveCount(0);
+    await expect(shown.locator(".bean-chat-continue")).toBeDisabled();
+    await shown.locator(".bean-chat-continued").getByRole("button", { name: "Open thread" }).click();
+    const synced = chat.locator(".bean-chat--synced");
+    await expect(synced.locator(".bean-bubble--bean")).toContainText("Picked up from the desktop.");
+    await expect(synced.locator(".bean-chat-continue")).toHaveCount(0);
   } finally {
     await Promise.allSettled([app.close(), home.cleanup()]);
   }

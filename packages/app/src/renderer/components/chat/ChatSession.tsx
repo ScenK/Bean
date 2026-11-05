@@ -3,13 +3,14 @@ import { ChatPanel } from "./ChatPanel.js";
 import { insertDroppedPath, newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
-  chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent,
+  HANDOFF_ITEMS, chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent,
   LIVE_AGENTS, liveModelKey, liveProjectKey, offerLaunch, validModel, validProject, type AgentPick, type AgentPicks,
   LABEL_LIMIT, imageLabel, nextImageNumber, withImagePaths,
 } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import type { TabShortcut } from "./TerminalPane.js";
-import { normalizeForSave, restoreItems, threadTitle } from "./chat-thread.js";
+import { continuedTo, normalizeForSave, restoreItems, threadTitle } from "./chat-thread.js";
+import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt } from "@bean/core/prompt";
 import { sproutCheckText } from "@bean/core/sprout-trigger";
@@ -48,6 +49,18 @@ interface LiveState {
 }
 
 type QueuedSend = { text: string; display?: string; source?: TurnSource };
+
+/** A desk-continue refusal code, in words. */
+export function continueRefusal(code: string): string {
+  switch (code) {
+    case "no-owner": return "The Discord bot has no owner set in discord.json.";
+    case "thread-failed": return "Couldn't open a thread there — Bean needs Create Public Threads and Send Messages in Threads in that channel.";
+    case "unsupported": return "The Discord bot can't take an agent session (live sessions are off).";
+    case "cli-missing": return "That agent's CLI isn't installed where the bot runs.";
+    case "no-record": return "The bot has no record of this agent session.";
+    default: return `The Discord bot refused (${code}).`;
+  }
+}
 
 export function markDelegateStarting(items: ChatItem[], id: string): ChatItem[] {
   return items.map((it) => (it.kind === "delegate" && it.id === id ? { ...it, state: "starting" as const } : it));
@@ -189,12 +202,16 @@ export interface ChatSessionProps {
   onEvicted: () => void;
   /** Receipts that landed after this thread's chat was switched away — shown again on restore. */
   takeLateReceipts: (threadId: string) => Array<Array<{ id: string; text: string; category?: string }>>;
+  /** The app-spawned Discord bot is running (Continue in Discord needs it). */
+  discordBot: boolean;
+  /** Show a Discord thread's synced view (after Continue in Discord, or Open thread). */
+  onOpenSynced: (conversationId: string) => void;
 }
 
 /** One chat inside the chat window. A switch evicts it — final save, close-time memory, release —
  * and the shell mounts the next one with a new mount id; the window itself stays. */
 export function ChatSession({
-  mountId, restoreId, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onTerminal, onUnread, onSwitch, onEvicted, takeLateReceipts,
+  mountId, restoreId, sessions, hidden, clis, runModels, prefillUrl, setThreads, onActive, onBusy, onWorking, onLive, onTerminal, onUnread, onSwitch, onEvicted, takeLateReceipts, discordBot, onOpenSynced,
 }: ChatSessionProps) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -642,6 +659,7 @@ export function ChatSession({
   // Commands parse here only — replies, streamed agent text, loopbacks and skill prompts never
   // pass through this path.
   const onComposerSend = (raw: string, images?: ImageAttachment[]): void => {
+    if (continuedTo(itemsRef.current)) return; // read-only: it lives in Discord now
     typedSinceLoadRef.current = true;
     if (!threadRef.current && !unsavableRef.current) {
       threadRef.current = { id: crypto.randomUUID(), title: threadTitle(raw) };
@@ -736,7 +754,7 @@ export function ChatSession({
     const receipt = item?.kind === "delegate" ? item.receipt : item?.kind === "status" && !item.exiting ? item.receipt : undefined;
     const sessionId = receipt?.sessionId;
     const agent = receipt?.agent;
-    if (!sessionId || !agent || hasLive()) return;
+    if (!sessionId || !agent || hasLive() || continuedTo(itemsRef.current)) return; // read-only once continued
     // A placeholder until main answers with the recorded project.
     const projectPath = item?.kind === "delegate" ? item.proposal.projectPath : agentProjectRef.current;
     // Not busy: no opening turn — it opens on the first send.
@@ -1219,6 +1237,36 @@ export function ChatSession({
   });
   useLayoutEffect(() => () => { sessions.delete(mountId); }, []);
 
+  // Continue in Discord (#697): main stops an agent session and waits for its exit before the bot
+  // resumes it; a plain chat carries its recent messages. On ok or partial the pointer is saved at
+  // once and the window switches to the thread's synced view.
+  const continued = continuedTo(items);
+  const continueDisabled = !discordBot ? "Start the Discord bot in Settings first."
+    : busy || evicting || live?.busy ? "Wait for the current turn to finish."
+    : incognito ? "Off-the-record chats stay on this Mac."
+    : continued ? "Already continued in Discord."
+    : live && !live.sessionId ? "The agent session is still starting."
+    : !threadRef.current || !items.some((it) => it.kind === "user" || it.kind === "reply") ? "Nothing to continue yet."
+    : undefined;
+  const continueChat = async (channelId: string, title: string): Promise<string | undefined> => {
+    const l = liveRef.current;
+    const res = await window.bean.deskContinue(
+      l?.sessionId ? { channelId, title, sessionId: l.sessionId } : { channelId, title, history: handoffItems(itemsRef.current) },
+      mountId,
+    ).catch((err: unknown) => ({ failed: err instanceof Error ? err.message : String(err) }));
+    if ("failed" in res) return res.failed;
+    if ("refused" in res) return continueRefusal(res.refused);
+    flushRef.current = true;
+    setItems((prev) => [
+      ...prev,
+      ...("partial" in res ? [{ kind: "status" as const, id: newId(), text: "The thread opened, but not everything carried over — see the thread.", tone: "error" as const }] : []),
+      { kind: "continued", id: newId(), surface: "discord", conversationId: res.threadId, title },
+    ]);
+    if (l) setMode("bean");
+    onOpenSynced(res.threadId);
+    return undefined;
+  };
+
   const stopAndDiscard = async (): Promise<void> => {
     const switchTo = leaveFlow?.switchTo;
     if (switchTo === undefined) return;
@@ -1300,6 +1348,17 @@ export function ChatSession({
         onUnlink={() => setLinkedNote(undefined)}
         incognito={incognito}
         onToggleIncognito={toggleIncognito}
+        continueButton={(
+          <ContinueDiscord
+            disabled={continueDisabled}
+            title={threadRef.current?.title ?? ""}
+            agent={live?.sessionId ? live.agent : undefined}
+            count={Math.min(handoffItems(items).filter((h) => h.text.trim()).length, HANDOFF_ITEMS)}
+            onContinue={continueChat}
+          />
+        )}
+        continued={continued ? { title: continued.title } : undefined}
+        onOpenContinued={continued ? () => onOpenSynced(continued.conversationId) : undefined}
         onMemoryUndo={(id) => void undoMemory(id)}
         onForgetUndo={(id) => void undoForget(id)}
       />

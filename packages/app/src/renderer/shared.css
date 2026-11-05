@@ -1789,6 +1789,25 @@ button, input, textarea, select, a {
   cursor: pointer;
 }
 .bean-chat-incognito:hover { background: var(--bean-surface-2); }
+/* Continue in Discord (ContinueDiscord.tsx): a text button like Off the record; accent while it can run. */
+.bean-chat-continue {
+  flex: none;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: var(--bean-accent-text);
+  cursor: pointer;
+}
+.bean-chat-continue:hover:not(:disabled) { background: var(--bean-surface-2); }
+.bean-chat-continue:disabled { color: var(--bean-text-dim); cursor: default; }
+.bean-continue-card { display: flex; flex-direction: column; gap: 10px; }
+.bean-continue-card .bean-memory-review-title { margin-bottom: 0; }
+/* A continued chat's read-only footer, where the composer was. */
+.bean-chat-continued { display: flex; align-items: center; gap: 10px; padding: 10px 14px 14px; font-size: 12px; color: var(--bean-text-dim); }
 .bean-chat-incognito--on { color: var(--bean-text); }
 .bean-switch {
   position: relative;
