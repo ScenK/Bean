@@ -29,6 +29,14 @@ export type AliasInUse = (alias: string) => readonly string[];
 
 export type AliasResult = { ok: true } | { ok: false; error: string };
 
+/** One row of the desktop send card's picker. `id` is opaque (main maps it back to the row);
+ * `detail` = "platform name · parent · kind" under the bold label. */
+export interface SendOption { id: string; surface: ChatopsSurface; label: string; detail: string }
+
+/** The desktop confirm card for propose_send: `pick` is set only for a confident match (else the
+ * picker starts empty); `options` are every labelled destination, the name's candidates first. */
+export interface SendCard { id: string; destination: string; body: string; pick?: string; options: SendOption[] }
+
 const THROTTLE_MS = 60 * 60 * 1000;
 
 const clean = (s: string | undefined): string | null => s?.replace(/\s+/g, " ").trim().slice(0, 100) || null;
@@ -59,6 +67,18 @@ export function recordDestination(file: string, seen: SeenDestination, now: () =
   } catch (err) {
     console.warn(`bean: couldn't record a ${seen.surface} destination:`, err instanceof Error ? err.name : "error");
     return false;
+  }
+}
+
+/** Drops a conversation the bot can no longer post to (deleted, or lost access) — unless the owner
+ * named it: an aliased row is kept, name and all, so a sprout naming it fails visibly instead of
+ * silently losing its target. Never throws. */
+export function forgetDestination(file: string, key: DestinationKey): void {
+  try {
+    openDb(file).prepare("DELETE FROM chat_destinations WHERE surface = ? AND conversation_id = ? AND alias IS NULL")
+      .run(key.surface, key.conversationId);
+  } catch (err) {
+    console.warn(`bean: couldn't forget a ${key.surface} destination:`, err instanceof Error ? err.name : "error");
   }
 }
 

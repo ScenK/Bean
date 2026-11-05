@@ -93,6 +93,7 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
     saveStates: (s) => saveRoutineStates(routineStateFile(dir), s),
     runRoutine: host.runOneRoutine,
     deliverDigest: host.deliverDigest,
+    sinkProblems: host.sinkProblems,
     pruneAttempts: (r, keep) => pruneStepAttempts(dbFile(dir), r, keep),
     hasPendingTodos: async (r) => (await listTodos(dbFile(dir), r)).some((t) => t.status === "pending"),
     claimTodo: (r) => claimTodo(dbFile(dir), r),

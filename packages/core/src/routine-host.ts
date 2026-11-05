@@ -13,7 +13,8 @@ import { saveNote } from "./note-store.js";
 import { listSkillProposals, RETRO_SKILL, saveSkillProposals, withProposalFooter } from "./retro.js";
 import { listStepAttempts, recordStepAttempt } from "./step-attempts.js";
 import { claimTodo, updateTodoStatus, type TodoItem, type TodoStatus } from "./todo-store.js";
-import { DEFAULT_GATE_ROUNDS, loadRoutines, loadRoutineStates, usesGates, type Routine } from "./routine-store.js";
+import { DEFAULT_GATE_ROUNDS, loadRoutines, loadRoutineStates, resolveSinkAlias, sinkAliasProblems, usesGates, type Routine } from "./routine-store.js";
+import { listDestinations } from "./destinations.js";
 import { resumeCommand } from "./delegate-runs.js";
 import { stepGroups } from "./routine-graph.js";
 import {
@@ -80,6 +81,8 @@ export interface RoutineHost {
   /** `todo` (already claimed): run just that todo, as its own bubble/record/digest. */
   runOneRoutine: (routine: Routine, todo?: TodoItem) => Promise<RoutineRunResult>;
   deliverDigest: (routine: Routine, result: RoutineRunResult) => Promise<void>;
+  /** Alias sinks that can't be delivered right now (unknown name, wrong platform). */
+  sinkProblems: (routine: Routine) => string[];
 }
 
 /** The glue between the scheduler and `runRoutine()` shared by every routine host (desktop
@@ -232,9 +235,19 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     }
     // A notify-only watch fire is always "ok", so the rule would mute it entirely — it doesn't apply there.
     const quiet = routine.sinks.chatopsOnlyOnProblems === true && result.record.status === "ok" && routine.steps.length > 0;
-    for (const sink of quiet ? [] : routine.sinks.chatops ?? []) {
+    const sinks = quiet ? [] : routine.sinks.chatops ?? [];
+    // Read at enqueue, so a retarget in Settings applies to the next digest.
+    const named = sinks.some((s) => s.alias !== undefined) ? listDestinations(dbFile(dir)) : [];
+    for (const sink of sinks) {
+      let channel = sink.channel;
+      if (sink.alias !== undefined) {
+        const resolved = resolveSinkAlias(sink, named);
+        // Unresolved: sinkProblems already marked the run; never fall back to the owner's DM.
+        if ("error" in resolved) continue;
+        channel = resolved.channel;
+      }
       await enqueueOutbox(outboxDir(dir), {
-        transport: sink.transport, channel: sink.channel, userId: sink.user,
+        transport: sink.transport, channel, userId: sink.user,
         title: `Sprout: ${routine.name}`,
         // A member DM says whose routine it is — they didn't set it up.
         body: sink.user ? `${result.digest}\n\n_Sent by Bean's owner's sprout "${routine.name}"._` : result.digest,
@@ -249,5 +262,8 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     }
   };
 
-  return { runOneRoutine, deliverDigest };
+  const sinkProblems = (routine: Routine): string[] =>
+    routine.sinks.chatops?.some((s) => s.alias !== undefined) ? sinkAliasProblems(routine, listDestinations(dbFile(dir))) : [];
+
+  return { runOneRoutine, deliverDigest, sinkProblems };
 }

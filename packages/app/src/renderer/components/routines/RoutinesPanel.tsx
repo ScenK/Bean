@@ -9,7 +9,9 @@ import { useCliAvailability } from "../../shared/cli-availability.js";
 import type { RoutineStateView } from "../../../ipc.js";
 import type { RoutineBuildView } from "../../../routine-builder.js";
 import { StepsEditor } from "./StepsEditor.js";
-import { chatTargets, cleanChatSinks } from "./chat-sinks.js";
+import { chatTargets, cleanChatSinks, isDmSink } from "./chat-sinks.js";
+import { DestinationPicker } from "./DestinationPicker.js";
+import type { DestinationView } from "../../../destinations.js";
 import { stepProblemsText } from "./step-ids.js";
 import { BuildPane, DescribePane, ExampleChips, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
 import { everyMinutes, failureCount, intervalText, needsReview, WATCH_MINUTES, watchRowSub, watchStatusLine, windowTooShortNote } from "./watch-status.js";
@@ -214,6 +216,11 @@ export function RoutinesPanel() {
   // assigned to a step that already references it, it just can't be newly picked.
   const enabledSkills = useMemo(() => skills.filter((s) => s.enabled !== false), [skills]);
   const [projects, setProjects] = useState<Project[]>([]);
+  // Named chat destinations for the sink pickers (Settings → ChatOps owns naming them).
+  const [chatDestinations, setChatDestinations] = useState<DestinationView[]>([]);
+  const reloadDestinations = async (): Promise<void> => {
+    setChatDestinations(await window.bean.destinationsList().catch(() => []));
+  };
   const { clis, models } = useCliAvailability();
   const [triggering, setTriggering] = useState(false);
   // The todo queue for a todo-driven routine — only loaded when there's a saved routine
@@ -240,7 +247,7 @@ export function RoutinesPanel() {
     setTodos(selected && draft.todoDriven ? await window.bean.todosList(selected) : []);
   };
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => { void refresh(); void reloadDestinations(); }, []);
   useEffect(() => {
     void Promise.all([window.bean.listSkills(), window.bean.listProjects()])
       .then(([sk, pr]) => { setSkills(sk); setProjects(pr); });
@@ -1088,7 +1095,7 @@ export function RoutinesPanel() {
             // Rows index the full list, so each row edits/removes only its own entry.
             const all = draft.sinks.chatops ?? [];
             const rows = all.map((c, i) => ({ c, i })).filter(({ c }) => c.transport === transport);
-            const dm = rows.some(({ c }) => c.channel === undefined && c.user === undefined);
+            const dm = rows.some(({ c }) => isDmSink(c));
             return (
               <div key={transport} class="bean-routines-sink-group">
                 <label class="bean-routines-sink-row">
@@ -1097,31 +1104,39 @@ export function RoutinesPanel() {
                     checked={dm}
                     onChange={(e) => setChatops((e.target as HTMLInputElement).checked
                       ? [...all, { transport }]
-                      : all.filter((c) => !(c.transport === transport && c.channel === undefined && c.user === undefined)))}
+                      : all.filter((c) => !(c.transport === transport && isDmSink(c))))}
                   />
                   Post to {label} (DM)
                 </label>
-                {rows.map(({ c, i }) => c.channel === undefined && c.user === undefined ? null : (
+                {rows.map(({ c, i }) => isDmSink(c) ? null : c.user !== undefined ? (
                   <div key={i} class="bean-routines-sink-row bean-routines-sink-suboption">
-                    {c.user !== undefined ? (
-                      <span>DM to user {c.user}</span>
-                    ) : (
-                      <input
-                        class="bean-input bean-input--boxed"
-                        aria-label={`${label} ${room} id`}
-                        placeholder={`${room} id`}
-                        value={c.channel}
-                        onInput={(e) => setChatops(all.map((x, j) => (j === i ? { ...x, channel: (e.target as HTMLInputElement).value } : x)))}
-                      />
-                    )}
+                    <span>DM to user {c.user}</span>
                     <button
                       type="button"
                       class="bean-skills-delete-link"
-                      aria-label={c.user !== undefined ? `Remove ${label} DM to user ${c.user}` : `Remove ${label} ${room}`}
+                      aria-label={`Remove ${label} DM to user ${c.user}`}
                       title="Remove"
                       onClick={() => setChatops(all.filter((_, j) => j !== i))}
                     >×</button>
                   </div>
+                ) : (
+                  <DestinationPicker
+                    // Per sprout: naming state must never follow the row index into another draft.
+                    key={`${creating ? "new" : selected ?? ""}:${i}`}
+                    sink={c}
+                    label={label}
+                    room={room}
+                    destinations={chatDestinations}
+                    routines={routines}
+                    onChange={(next) => setChatops(all.map((x, j) => (j === i ? next : x)))}
+                    onRemove={() => setChatops(all.filter((_, j) => j !== i))}
+                    onNamedRaw={(id, alias) => {
+                      setChatops(all.map((x) => (x.transport === transport && x.channel?.trim() === id ? { transport, alias } : x)));
+                      void refresh();
+                      void reloadDestinations();
+                    }}
+                    reloadDestinations={reloadDestinations}
+                  />
                 ))}
                 <button
                   type="button"

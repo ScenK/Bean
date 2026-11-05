@@ -1,4 +1,4 @@
-import type { CliName, ImageAttachment, LiveCli, Memory, ProposedDelegate, ProposedLiveSession, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, SproutRunPlan, TurnSource } from "@bean/core";
+import type { CliName, ImageAttachment, LiveCli, Memory, ProposedDelegate, ProposedLiveSession, ProposedNote, ProposedRun, ProposedSkill, ProposedTodo, SendCard, SproutRunPlan, TurnSource } from "@bean/core";
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 // Renderer copies of core's SUPPORTED_IMAGE_MIMES / MAX_IMAGES_PER_MESSAGE (converse.ts) —
@@ -68,6 +68,8 @@ export type ChatItem =
   // "Run the X sprout": the run-vs-check action is frozen in `plan` (main decided it); a tap
   // triggers exactly that. `result` = the outcome line once the tap settles.
   | { kind: "sprout"; id: string; plan: SproutRunPlan; state: "pending" | "running" | "done" | "dismissed" | "expired"; result?: string }
+  // A propose_send card: main holds the body and rows (`card.id`); Send hands back the picked option.
+  | { kind: "send"; id: string; card: SendCard; state: "pending" | "sending" | "sent" | "dismissed" | "expired" }
   // `details` expand under the row (e.g. the messages handed over to an agent). `receipt`: an ended
   // live session's CLI session, offered as Continue live; `exiting` = Bean's id for that session
   // while its child is still stopping (the button waits for its `ended` event).

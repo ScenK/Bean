@@ -486,6 +486,7 @@ export function ChatSession({
         if (res.proposedSkill) next.push({ kind: "skill", id: newId(), skill: res.proposedSkill, state: "pending" });
         if (res.proposedTodo) next.push({ kind: "todo", id: newId(), todo: res.proposedTodo, state: "pending" });
         if (res.sproutRun) next.push({ kind: "sprout", id: newId(), plan: res.sproutRun, state: "pending" });
+        if (res.sendCard) next.push({ kind: "send", id: newId(), card: res.sendCard, state: "pending" });
         if (res.proposedDelegate) {
           next.push(...addDelegateProposal([], res.proposedDelegate, newId()));
           const skillName = res.proposedDelegate.skillName;
@@ -983,6 +984,32 @@ export function ChatSession({
     }
   };
 
+  // Main re-resolves the picked row and posts the body it kept; the receipt names where it went.
+  const confirmSend = async (id: string, optionId: string): Promise<void> => {
+    const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "send" }> => it.kind === "send" && it.id === id);
+    if (!item || item.state !== "pending") return;
+    const setState = (state: "pending" | "sending" | "sent"): void =>
+      setItems((prev) => prev.map((it) => (it.id === id && it.kind === "send" ? { ...it, state } : it)));
+    setState("sending");
+    try {
+      const res = await window.bean.sendToDestination(item.card.id, optionId);
+      if (res.ok) {
+        setState("sent");
+        setItems((prev) => [...prev, { kind: "status", id: newId(), text: `Queued → ${res.label}`, tone: "done" }]);
+        return;
+      }
+      setState("pending");
+      setItems((prev) => [...prev, { kind: "status", id: newId(), text: `Couldn't send: ${res.error}`, tone: "error" }]);
+    } catch (err) {
+      setState("pending");
+      setItems((prev) => [...prev, { kind: "status", id: newId(), text: `Couldn't send: ${err instanceof Error ? err.message : String(err)}`, tone: "error" }]);
+    }
+  };
+
+  const dismissSend = (id: string): void => {
+    setItems((prev) => prev.map((it) => (it.id === id && it.kind === "send" && it.state === "pending" ? { ...it, state: "dismissed" } : it)));
+  };
+
   const dismissSprout = (id: string): void => {
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "sprout" && it.state === "pending" ? { ...it, state: "dismissed" } : it)));
   };
@@ -1260,6 +1287,8 @@ export function ChatSession({
         onTodoDismiss={dismissTodo}
         onSproutTrigger={(id) => void triggerSprout(id)}
         onSproutDismiss={dismissSprout}
+        onSendConfirm={(id, optionId) => void confirmSend(id, optionId)}
+        onSendDismiss={dismissSend}
         onOfferStart={startOffer}
         onOfferDismiss={dismissOffer}
         onDelegateConfirm={(id, edited, choice) => void confirmDelegate(id, edited, choice)}

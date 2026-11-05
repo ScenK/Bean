@@ -6,11 +6,11 @@ import {
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, ConversationCatalog, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeChatter, dmAllowed,
-  SproutRunProposalStore, parentSproutTrigger, processParentPort, sproutRunFacts,
+  SproutRunProposalStore, parentSproutTrigger, processParentPort, sproutRunFacts, recordDestination, listDestinations, SendProposalStore,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
-  TurnContext,
+  TeamsInfo, TurnContext,
   type ConversationReference, type Activity,
 } from "botbuilder";
 import express from "express";
@@ -20,12 +20,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   finishedCard, rememberedCard, reminderCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
-  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, routineProposalCard, routineResultCard,
+  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, sendCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
 import { addressedToBot } from "./addressing.js";
+import { teamsDestinationRecorder, type TeamsChannelData } from "./destinations.js";
 import { startDevtunnel } from "./devtunnel.js";
-import { bareChannelId, capturePlace, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
+import { bareChannelId, capturePlace, cardActionOf, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
 import { parseQuote } from "./replied-to.js";
 import { deliveredAppend, loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 import { teamsText } from "./teams-text.js";
@@ -65,6 +66,10 @@ async function rememberConversation(ref: Partial<ConversationReference>): Promis
   await mkdir(dirname(conversationRefsFile), { recursive: true });
   await writeFile(conversationRefsFile, JSON.stringify(conversationRefs, null, 2) + "\n", "utf8");
 }
+
+// Named-destination discovery (#685): every conversation Bean is addressed in or delivers to, with
+// the names channelData carries (the stored refs above don't keep them).
+const destinations = teamsDestinationRecorder((seen) => recordDestination(dbFile(dir), seen));
 
 // ConfigurationServiceClientCredentialFactory builds the app-id/password credentials;
 // ConfigurationBotFrameworkAuthentication just needs an (empty) options object plus that
@@ -160,7 +165,7 @@ const bot = buildTeamsBot({
   scratchPath,
   cards: {
     proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, rememberedCard, reminderCard,
-    skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, routineProposalCard, routineResultCard,
+    skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, sendCard, routineProposalCard, routineResultCard,
     liveSessionProposalCard, liveSessionResultCard,
   },
   // Fired by the desktop app's reminder loop into the outbox; the drain below delivers them.
@@ -171,6 +176,13 @@ const bot = buildTeamsBot({
   autoMemoryEnabled: () => loadConfig(configFile(dir), dir).then((c) => c.autoMemory, () => false),
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
   roles,
+  // Owner-DM sends by name (#689): Teams destinations only, delivered by this bot's own outbox drain.
+  send: {
+    transport: "teams",
+    destinations: () => listDestinations(dbFile(dir), "teams"),
+    enqueue: (msg) => enqueueOutbox(outboxDir(beanDir()), msg, () => randomUUID()),
+    proposals: new SendProposalStore(),
+  },
   chatter: makeChatter({ dbPath: dbFile(dir), surface: "teams" }),
   // Digests reach a channel/group chat via scopeOf's keys, or the owner's 1:1 (no channel).
   routines: {
@@ -182,6 +194,7 @@ const bot = buildTeamsBot({
     notifyOwner: async (body) => { await enqueueOutbox(outboxDir(beanDir()), { transport: "teams", body }, () => randomUUID()); },
     // Owner only: a Teams digest DMs nobody else.
     recipients: async () => (teamsConfig.ownerId ? [{ id: teamsConfig.ownerId, name: teamsConfig.ownerName ?? "owner" }] : []),
+    destinations: () => listDestinations(dbFile(dir), "teams"),
     proposals: new RoutineProposalStore(),
     // Spawned by the desktop app (its scheduler host): a sprout-run tap asks the app over IPC
     // (#637). A standalone Teams server has no scheduler, so it never offers runs.
@@ -288,22 +301,7 @@ app.post("/api/messages", (req, res) => {
     const fx = effectsFor(context);
     const value = a.value as Record<string, string> | undefined;
     if (value?.beanAction) {
-      await bot.onCardAction(
-        {
-          conversationId: a.conversation.id,
-          fromId: a.from.id, // session owner for live-session steering (restricted by default)
-          fromAltId: a.from.aadObjectId,
-          scopeId: scopeOf(a),
-          fromName: a.from.name ?? "someone",
-          place: placeOf({ conversation: a.conversation, bot: a.recipient }),
-          value: {
-            beanAction: value.beanAction, proposalId: value.proposalId, projectPath: value.projectPath, runId: value.runId,
-            cli: value.cli, model: value.model,
-            skillName: value.skillName, steering: value.steering, instruction: value.instruction,
-          },
-        },
-        fx,
-      );
+      await bot.onCardAction(cardActionOf(a, value), fx);
       return;
     }
     // A quote-reply's quoted message is context, never input: split it out of the typed words.
@@ -379,6 +377,11 @@ app.post("/api/messages", (req, res) => {
       );
     } finally {
       clearInterval(typing);
+      // Awaited here, while the turn context is still live (the meeting lookup needs it).
+      if (!dmBlocked) {
+        await destinations.seen(TurnContext.getConversationReference(a), a.channelData as TeamsChannelData | undefined,
+          async (id) => (await TeamsInfo.getMeetingInfo(context, id)).details?.title);
+      }
     }
   });
 });
@@ -491,6 +494,7 @@ setInterval(() => {
           posted.id = (await context.sendActivity(teamsText(text)))?.id;
         });
         delivered = true;
+        destinations.delivered(ref);
         // Per-target, because a DM fanout has no msg.channel to append to.
         const save = ref.conversation?.id ? deliveredAppend(msg, ref.conversation, text, posted.id) : null;
         if (save === "missing-id") console.error(`outbox: teams post to ${ref.conversation?.id} returned no id; digest not saved`);

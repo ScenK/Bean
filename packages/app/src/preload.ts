@@ -13,6 +13,8 @@ import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.j
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "./ipc.js";
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "./synced-chats.js";
+import type { DestinationView, NameRawResult, SendResult } from "./destinations.js";
+import type { AliasResult } from "@bean/core";
 import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
 
 contextBridge.exposeInMainWorld("bean", {
@@ -186,6 +188,17 @@ contextBridge.exposeInMainWorld("bean", {
   onReviewBeforeClose: (cb: () => void) => ipcRenderer.on(IPC.reviewBeforeClose, () => cb()),
   allowChatClose: (): void => ipcRenderer.send(IPC.allowChatClose),
   chatopsStatus: (): Promise<Record<ChatopsBot, ChatopsState>> => ipcRenderer.invoke(IPC.chatopsStatus),
+  destinationsList: (): Promise<DestinationView[]> => ipcRenderer.invoke(IPC.destinationsList),
+  destinationsName: (surface: string, conversationId: string, alias: string): Promise<AliasResult> =>
+    ipcRenderer.invoke(IPC.destinationsName, surface, conversationId, alias),
+  destinationsClear: (surface: string, conversationId: string): Promise<AliasResult> =>
+    ipcRenderer.invoke(IPC.destinationsClear, surface, conversationId),
+  destinationsRetarget: (alias: string, surface: string, conversationId: string): Promise<AliasResult> =>
+    ipcRenderer.invoke(IPC.destinationsRetarget, alias, surface, conversationId),
+  destinationsNameRaw: (surface: string, conversationId: string, alias: string): Promise<NameRawResult> =>
+    ipcRenderer.invoke(IPC.destinationsNameRaw, surface, conversationId, alias),
+  sendToDestination: (proposalId: string, optionId: string): Promise<SendResult> =>
+    ipcRenderer.invoke(IPC.sendToDestination, proposalId, optionId),
   chatopsStart: (bot: ChatopsBot): void => ipcRenderer.send(IPC.chatopsStart, bot),
   chatopsStop: (bot: ChatopsBot): void => ipcRenderer.send(IPC.chatopsStop, bot),
   onChatopsEvent: (cb: (e: ChatopsEvent) => void) =>
