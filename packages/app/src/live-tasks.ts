@@ -179,6 +179,10 @@ interface Session {
   pid?: number;
   /** A turn is running (the opening one, or a send) — Continue in Discord waits for idle. */
   busy?: boolean;
+  /** A send was accepted while a turn ran: its follow-up turn is still to come, so the current
+   * turn's end doesn't make the session idle. ponytail: one flag, not a count — claude answering
+   * two queued sends as two turns leaves a gap before the second; count them if that shows up. */
+  queued?: boolean;
   /** Settles the hand-over waiting on this session's exit (Continue in Discord). */
   onEnded?: () => void;
 }
@@ -248,9 +252,13 @@ export function createLiveTasks(deps: LiveTasksDeps) {
         {
           onOutput: (line) => { if (sessions.get(sessionId) === s && !s.stopping) { s.busy = true; emit(sessionId, s, { type: "output", line }); } },
           onText: (text) => { if (sessions.get(sessionId) === s && !s.stopping) { s.busy = true; emit(sessionId, s, { type: "text", text }); } },
+          // Per-turn CLIs start a queued (merged) turn right after the last one's end; claude reports it
+          // when the next turn's first event lands.
+          onTurnStart: () => { if (sessions.get(sessionId) === s) { s.busy = true; s.queued = false; } },
           onTurnComplete: (t) => {
             if (sessions.get(sessionId) !== s) return;
-            s.busy = false;
+            s.busy = s.queued === true;
+            s.queued = false;
             emit(sessionId, s, {
               type: "turn", result: t.result,
               ...(t.durationMs !== undefined ? { durationMs: t.durationMs } : {}),
@@ -366,7 +374,10 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (!s || !owns(s, owner) || !s.handle || s.stopping) return "That agent session has ended.";
       if (typeof text !== "string" || !text.trim()) return "Nothing to send.";
       if (text.length > ASK_LIMIT) return `That message is too long (${text.length} of ${ASK_LIMIT} characters).`;
+      // Read first: a per-turn CLI with no turn running starts this one inside send() (onTurnStart).
+      const wasBusy = s.busy === true;
       if (!s.handle.send(text)) return TURN_QUEUE_FULL;
+      if (wasBusy) s.queued = true;
       s.busy = true;
       trackPid(sessionId as string, s);
       return undefined;

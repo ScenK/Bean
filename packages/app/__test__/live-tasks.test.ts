@@ -458,6 +458,33 @@ describe("handover (Continue in Discord)", () => {
     expect(h.live.resume(B, id)).toMatchObject({ agent: "claude" });
   });
 
+  it("a send accepted mid-turn keeps the session busy past that turn's end until its follow-up ends", async () => {
+    const h = await started();
+    expect(h.live.send(A, "s1", "and then this")).toBeUndefined(); // queued behind the opening turn
+    h.cbs[0]!.onTurnComplete({ result: "first" });
+    expect(await h.live.handover(A, "s1")).toEqual({ error: "Wait for Claude Code to finish its turn first." });
+    h.cbs[0]!.onTurnStart!(); // the follow-up starts (before any output)
+    expect(await h.live.handover(A, "s1")).toEqual({ error: "Wait for Claude Code to finish its turn first." });
+    h.cbs[0]!.onTurnComplete({ result: "second" });
+    const held = h.live.handover(A, "s1");
+    h.cbs[0]!.onExit();
+    expect(await held).toMatchObject({ agent: "claude" });
+  });
+
+  it("a per-turn CLI's send that starts its turn inside send() isn't counted as queued", async () => {
+    const h = await started();
+    h.cbs[0]!.onTurnComplete({ result: "first" });
+    // Simulates turn-live-session: an idle send() spawns the turn and reports onTurnStart synchronously.
+    const handle = h.cbs[0]!;
+    const origSend = h.sent.push.bind(h.sent);
+    h.sent.push = (...t: string[]) => { handle.onTurnStart!(); return origSend(...t); };
+    expect(h.live.send(A, "s1", "next")).toBeUndefined();
+    h.cbs[0]!.onTurnComplete({ result: "next done" });
+    const held = h.live.handover(A, "s1");
+    h.cbs[0]!.onExit();
+    expect(await held).toMatchObject({ agent: "claude" });
+  });
+
   it("refuses a session that hasn't reported its CLI id", async () => {
     const h = harness();
     await h.live.start(A, { agent: "codex", projectPath: "/proj", ask: "go" });

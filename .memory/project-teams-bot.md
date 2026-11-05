@@ -96,7 +96,11 @@ Bean has two chat adapters over one shared brain:
   serializes per mount. Agent mode goes through `liveTasks.handover`: refused while a turn runs, stops
   the session, waits for its `ended` (onExit), then holds the CLI id (resume refused) until the ack. On
   ok/partial the chat saves a `{ kind: "continued" }` pointer (kept by `chat-thread.ts`) and switches to
-  the thread's synced view; a chat holding one is read-only (Open thread, no composer, no Continue live).
+  the thread's synced view; a chat holding one is read-only (Open thread, no composer, no Continue live,
+  pending cards expired). "Idle" = no turn running *and* no send accepted mid-turn (its follow-up turn
+  is still to come — `onTurnStart` re-marks busy). A pending request counts as the chat's work: it stays
+  mounted and a window close awaits the ack, so the pointer is never lost. A refused agent move leaves a
+  status row with the stopped session's receipt (Continue live here).
 - **Sprout triggers** (#637, `chatops/sprout-bridge.ts`): an app-spawned bot has no scheduler
   (`BEAN_HEADLESS_ROUTINES` is cleared), so its sprout-run card tap sends `routine-trigger
   {requestId, name, action, origin}` over the same IPC slot (still no message text bot → app). The app

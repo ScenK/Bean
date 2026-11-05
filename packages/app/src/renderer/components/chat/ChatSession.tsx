@@ -50,6 +50,16 @@ interface LiveState {
 
 type QueuedSend = { text: string; display?: string; source?: TurnSource };
 
+/** A chat continued in Discord starts no work here any more: every card still awaiting a tap expires. */
+export const expirePending = (items: readonly ChatItem[]): ChatItem[] =>
+  items.map((it) => ("state" in it && it.state === "pending" ? { ...it, state: "expired" } as ChatItem : it));
+
+/** The rows a successful Continue in Discord appends: a `partial` note, then the pointer. */
+export const continuedRows = (threadId: string, title: string, partial: boolean): ChatItem[] => [
+  ...(partial ? [{ kind: "status" as const, id: newId(), text: "The thread opened, but not everything carried over — see the thread.", tone: "error" as const }] : []),
+  { kind: "continued", id: newId(), surface: "discord", conversationId: threadId, title },
+];
+
 /** A desk-continue refusal code, in words. */
 export function continueRefusal(code: string): string {
   switch (code) {
@@ -453,7 +463,7 @@ export function ChatSession({
     text: string, display?: string, queueIfBusy = false, images?: ImageAttachment[], source: TurnSource = "typed",
   ): Promise<void> => {
     const message = text.trim();
-    if (!message) return;
+    if (!message || continuedTo(itemsRef.current)) return; // read-only: no turn, so no new cards
     if (busyRef.current) {
       if (queueIfBusy) queuedSendsRef.current.push({ text: message, display, source });
       return;
@@ -1103,7 +1113,11 @@ export function ChatSession({
   // Anything that keeps this chat mounted when it's switched away from: a Bean request in flight or
   // queued (a loopback), a delegate starting or running, a live session, or a shell (a dev server
   // never finishes — release would kill it).
+  // A Continue in Discord request awaiting the bot's ack: the chat stays mounted and a close waits
+  // for it, so a thread the bot opens always gets its pointer saved here.
+  const continuingRef = useRef<Promise<unknown> | undefined>(undefined);
   const hasWork = (): boolean => busyRef.current || queuedSendsRef.current.length > 0 || liveRef.current !== undefined
+    || continuingRef.current !== undefined
     || shellRef.current > 0 || hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size);
   const tasks = async (): Promise<ChatTasks> => {
     const terminal = shellRef.current > 0 ? await window.bean.terminalRunning(mountId).catch(() => []) : [];
@@ -1123,6 +1137,7 @@ export function ChatSession({
 
   // Window close: write the thread one last time (main re-checks the incognito latch), hand off memory.
   const closeOut = async (): Promise<void> => {
+    await continuingRef.current;
     await saveThread();
     rememberNow();
   };
@@ -1249,21 +1264,36 @@ export function ChatSession({
     : !threadRef.current || !items.some((it) => it.kind === "user" || it.kind === "reply") ? "Nothing to continue yet."
     : undefined;
   const continueChat = async (channelId: string, title: string): Promise<string | undefined> => {
+    if (continuingRef.current) return "Already continuing.";
     const l = liveRef.current;
-    const res = await window.bean.deskContinue(
+    const request = window.bean.deskContinue(
       l?.sessionId ? { channelId, title, sessionId: l.sessionId } : { channelId, title, history: handoffItems(itemsRef.current) },
       mountId,
     ).catch((err: unknown) => ({ failed: err instanceof Error ? err.message : String(err) }));
+    continuingRef.current = request;
+    let res: Awaited<typeof request>;
+    try {
+      res = await request;
+      const r = res;
+      const moved = !("failed" in r) && !("refused" in r);
+      // The session was stopped for a move that didn't happen: Continue live picks it up here.
+      const stranded = !moved && l?.receipt && liveRef.current === undefined ? l.receipt : undefined;
+      const note: ChatItem | undefined = l && moved ? { kind: "status", id: newId(), text: `${AGENT_NAMES[l.agent]} moved to Discord.`, tone: "info" }
+        : l && stranded ? { kind: "status", id: newId(), text: `${AGENT_NAMES[l.agent]} stopped — it didn't move to Discord.`, tone: "info", receipt: stranded }
+        : undefined;
+      const pointer = moved ? continuedRows(r.threadId, title, "partial" in r) : [];
+      const apply = (items: ChatItem[]): ChatItem[] => [...(moved ? expirePending(items) : items), ...(note ? [note] : []), ...pointer];
+      // The ref first: a close waiting on this request saves what it reads there.
+      itemsRef.current = apply(itemsRef.current);
+      setItems(apply);
+    } finally {
+      continuingRef.current = undefined;
+    }
+    flushRef.current = true;
     if ("failed" in res) return res.failed;
     if ("refused" in res) return continueRefusal(res.refused);
-    flushRef.current = true;
-    setItems((prev) => [
-      ...prev,
-      ...("partial" in res ? [{ kind: "status" as const, id: newId(), text: "The thread opened, but not everything carried over — see the thread.", tone: "error" as const }] : []),
-      { kind: "continued", id: newId(), surface: "discord", conversationId: res.threadId, title },
-    ]);
     if (l) setMode("bean");
-    onOpenSynced(res.threadId);
+    if (!hiddenRef.current) onOpenSynced(res.threadId);
     return undefined;
   };
 
