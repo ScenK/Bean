@@ -28,7 +28,10 @@ through the leave card like an off-the-record chat. "Running" means the tty's fo
 group isn't the shell's (`foregroundCommands`: `ps -o pid=,tpgid=`, then the groups' argv[0]
 basenames, sanitized) — never "the shell has a child", which a prompt's gitstatusd or a `cmd &` job
 makes always true. The close
-and leave cards ask main fresh at that moment (`terminalRunning`); an idle shell closes silently.
+and leave cards ask main fresh at that moment (`terminalRunning`, one command per busy tab); an idle
+shell closes silently. Each command counts as a task (#675): one chat's terminals alone are named
+("npm and vim", then "npm, vim + 1 more" — `commandList`); mixed with other work or across several
+chats the card falls back to "Closing stops N tasks in M chats."
 Terminal output never enters `items`, so it's never saved to `desktop_chats`; a restored chat gets a
 fresh, folded terminal.
 
