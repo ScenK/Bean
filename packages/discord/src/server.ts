@@ -5,7 +5,7 @@ import {
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine, createRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, ConversationCatalog, type ConversationPlace, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, parseDeskContinue, type DeskAckResult, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
+  LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, recordDelegateSession, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
   makeRoles, makeChatter, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, parseChatterCommand, RoutineProposalStore, SproutRunProposalStore, type Role,
   parentSproutTrigger, processParentPort, sproutRunFacts, recordDestination, forgetDestination, listDestinations, SendProposalStore,
 } from "@bean/core";
@@ -125,7 +125,8 @@ const bot = buildTeamsBot({
   // Always on for Discord (no `liveSessions` opt-in) when a live-capable CLI (claude, codex or opencode)
   // is both detected and not in config's disabledClis list.
   liveSessionsEnabled: () => clis().some(isLiveCli),
-  findDelegateRun: (sessionId) => findDelegateRun(dbFile(dir), sessionId),
+  findDelegateRun: (sessionId, surface) => findDelegateRun(dbFile(dir), sessionId, undefined, surface),
+  recordDelegateRun: (row) => recordDelegateSession(dbFile(dir), row),
   scratchPath,
   cards: discordCards,
   reminders: { file: remindersFile(dir), transport: "discord" },

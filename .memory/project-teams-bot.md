@@ -75,7 +75,7 @@ Bean has two chat adapters over one shared brain:
   (`proactive.ts`'s `refFor` — bare channel id finds the ref, the full `;messageid=` id is the
   send target, same as the outbox); a conversation with no stored ref fails the echo → `post-failed`.
 - **Desk continue** (#695, `desk-continue`): app → bot `{ mode: "chat", channelId, title, tail,
-  count }` (agent mode `sessionId`, refused `unsupported` until #696); mixed or over-cap payloads
+  count }` or `{ mode: "agent", channelId, title, sessionId }`; mixed or over-cap payloads
   are dropped. `bot.onDeskContinue` takes the owner from config (never the request), asks the
   surface's `openThread` (Discord: GuildText + CreatePublicThreads + SendMessagesInThreads, OneDay,
   **no channel fallback**), catalogs it, saves the tail once as a framed `> `-quoted user turn
@@ -83,6 +83,13 @@ Bean has two chat adapters over one shared brain:
   messages carried over` with `allowedMentions: { users: [owner] }`. Ack is ok + `threadId`,
   `partial` + `threadId` (thread made, a later step failed), or a fixed refusal — still no text.
   `DeskContinueResult` is its own type so turn/resume consumers never see `partial`.
+  **Agent mode** (#696) moves an idle desktop CLI session: `findDelegateRun(id, "desktop")` must
+  pass *before* the thread opens; then a `delegate_runs` row for this surface is appended
+  (`recordDelegateRun` must return true and a plain lookup must resolve it here) — the newest row
+  is the one owner, so the desktop's lookup now refuses it. The thread is bound (`live_cli`/
+  `live_session_id`), a live card posted and kept (its idle end offers Continue live), and the
+  session resumes restricted with the config owner as starter. Any failure after the thread exists
+  posts the reason there and acks `partial`; it never starts fresh — recovery is Continue live.
 - **Sprout triggers** (#637, `chatops/sprout-bridge.ts`): an app-spawned bot has no scheduler
   (`BEAN_HEADLESS_ROUTINES` is cleared), so its sprout-run card tap sends `routine-trigger
   {requestId, name, action, origin}` over the same IPC slot (still no message text bot → app). The app

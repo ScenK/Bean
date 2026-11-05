@@ -26,7 +26,7 @@ import type { Memory } from "../memory/memory.js";
 import type { CliName } from "../launcher.js";
 import { cliOffersModel, type CliModels } from "../cli-models.js";
 import { OPENCODE_BROWSER_REFUSAL, type DelegateRequest } from "../delegate.js";
-import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type ResumableRun } from "../delegate-runs.js";
+import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type DelegateRunRow, type ResumableRun } from "../delegate-runs.js";
 import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
 import { TURN_QUEUE_FULL } from "../turn-live-session.js";
 import type { CardBuilders } from "./cards-api.js";
@@ -223,8 +223,12 @@ export interface TeamsBotDeps {
   liveSessionProposals: LiveSessionProposalStore;
   /** Gates the propose_live_session tool (surface support, e.g. a live-capable CLI is present). */
   liveSessionsEnabled: () => boolean;
-  /** delegate_runs lookup behind Continue live (server injects the db path). Omit = no record. */
-  findDelegateRun?: (sessionId: string) => ResumableRun;
+  /** delegate_runs lookup behind Continue live (server injects the db path). Omit = no record.
+   * `surface: "desktop"` looks up only desktop rows (desk-continue's agent mode, #696). */
+  findDelegateRun?: (sessionId: string, surface?: "desktop") => ResumableRun;
+  /** Appends a delegate_runs row (recordDelegateSession); false = not written. Desk-continue moves
+   * a desktop session here by appending this surface's row. Omit = nothing can move. */
+  recordDelegateRun?: (row: DelegateRunRow) => boolean;
   /** Working dir for delegates not tied to a project (must exist); omit to require a project. */
   scratchPath?: string;
   /** Enables the generate_image action tool; omit to disable image generation. */
@@ -348,7 +352,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
    * fallback — a failure refuses `thread-failed` with nothing written) and returns its effects and
    * the owner's mention. The thread is catalogued as the configured owner's, a plain chat's tail is
    * saved once as a framed user-role turn (no memory capture), and a first post mentions the owner.
-   * `ack` once: ok + threadId, `partial` + threadId when a step after the thread failed, or a refusal. */
+   * Agent mode (#696) moves an idle desktop CLI session in: a `delegate_runs` row for this surface
+   * makes the thread its only owner, then it resumes restricted to the owner under a kept live card.
+   * `ack` once: ok + threadId, `partial` + threadId when a step after the thread failed (the reason
+   * is posted there; never a fresh session), or a refusal. */
   onDeskContinue: (
     req: DeskContinueBody,
     openThread: (ownerId: string) => Promise<{ threadId: string; fx: BotEffects; mention: string }>,
@@ -735,6 +742,54 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       resume: { sessionId: run.sessionId, projectPath: run.projectPath, instruction: run.instruction, cli: run.cli },
     }, conversationId, proposedBy, fx);
     return undefined;
+  }
+
+  // Desk-continue agent mode (#696), once the thread is open: hand the desktop session to this
+  // surface, bind it to the thread, and resume it restricted to the owner under a kept live card
+  // (its idle end offers Continue live). A failure from here posts its reason in the thread and is
+  // `partial` — never a fresh session; once moved, recovery is the thread's Continue live.
+  async function moveDeskSession(
+    catalog: ConversationCatalog, run: DelegateRunRow & { cli: LiveCli },
+    t: { threadId: string; title: string; ownerId: string; fx: BotEffects; mention: string },
+  ): Promise<DeskContinueResult> {
+    const { threadId, ownerId, fx } = t;
+    const place: ConversationPlace = { kind: "thread", title: t.title };
+    const partial = async (reason: string, err?: unknown): Promise<DeskContinueResult> => {
+      if (err !== undefined) console.warn("bean: desk continue step failed:", err instanceof Error ? err.name : "error");
+      await fx.post(reason).catch(logRunEffectError);
+      return { partial: true, threadId };
+    };
+    const stays = "I couldn't move that session here — it stays in Bean's desktop chat.";
+    try {
+      catalog.upsert({ conversationId: threadId, place, ownerId });
+      await fx.post(`${t.mention} Continued from Bean desktop · moving the ${run.cli} session here`);
+    } catch (err) {
+      return partial(stays, err);
+    }
+    // One owner at a time: this surface's row becomes the session's newest, so the desktop's
+    // lookup refuses it and a plain (chatops) lookup resolves it here.
+    const moved = deps.recordDelegateRun?.({ ...run, surface: catalog.surface }) === true;
+    const now = moved ? deps.findDelegateRun?.(run.sessionId) : undefined;
+    if (!now || "refusal" in now || now.run.surface !== catalog.surface) return partial(stays);
+    const startedBy = deps.roles.ownerName;
+    try {
+      catalog.upsert({ conversationId: threadId, place, ownerId, live: { cli: run.cli, sessionId: run.sessionId } });
+      const projectName = await projectLabel(run.projectPath, true);
+      const cardActivityId = await fx.postCard(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started" }));
+      const pending: PendingLiveSession = {
+        id: "desk", conversationId: threadId, proposedBy: startedBy, createdAt: Date.now(), cardActivityId,
+        proposal: {
+          projectPath: run.projectPath, instruction: "", steering: "restricted",
+          resume: { sessionId: run.sessionId, projectPath: run.projectPath, instruction: run.instruction, cli: run.cli },
+        },
+      };
+      // Not quiet: a refusal is posted in the thread, which is where the owner now looks.
+      const result = await startLiveSessionAction(pending, startedBy, ownerId, fx, { place });
+      return "ok" in result ? { ok: true, threadId } : { partial: true, threadId };
+    } catch (err) {
+      if (deps.liveSessions.has(threadId)) return { ok: true, threadId };
+      return partial("The session moved here but didn't start — use Continue live to reopen it.", err);
+    }
   }
 
   async function handleNoteAction(
@@ -1551,7 +1606,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       const ownerId = deps.roles.ownerId;
       if (!ownerId) return ack({ refused: "no-owner" });
       if (!catalog) return ack({ refused: "no-record" });
-      if (req.mode !== "chat") return ack({ refused: "unsupported" }); // agent mode: #696
+      // Agent mode: the session must be the desktop's, resumable (id shape, folder still there),
+      // on a live CLI that's installed here — all checked before any thread exists.
+      let run: (DelegateRunRow & { cli: LiveCli }) | undefined;
+      if (req.mode === "agent") {
+        if (!deps.liveSessionsEnabled() || !deps.recordDelegateRun) return ack({ refused: "unsupported" });
+        const found = deps.findDelegateRun?.(req.sessionId, "desktop");
+        if (!found || "refusal" in found || !isLiveCli(found.run.cli)) return ack({ refused: "no-record" });
+        if (!liveClis().includes(found.run.cli)) return ack({ refused: "cli-missing" });
+        run = { ...found.run, cli: found.run.cli };
+      }
       let thread: { threadId: string; fx: BotEffects; mention: string };
       try {
         thread = await openThread(ownerId);
@@ -1560,6 +1624,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         return ack({ refused: "thread-failed" });
       }
       const { threadId, fx, mention } = thread;
+      // `run` is always set in agent mode (checked above).
+      if (req.mode === "agent") return ack(run ? await moveDeskSession(catalog, run, { threadId, title: req.title, ownerId, fx, mention }) : { partial: true, threadId });
       try {
         catalog.upsert({ conversationId: threadId, place: { kind: "thread", title: req.title }, ownerId });
         deps.conversations.append(threadId, { role: "user", content: formatCarriedBlock(req.tail, req.count) });
