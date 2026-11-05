@@ -262,7 +262,8 @@ describe("ChatWindow switches chats in place", () => {
     expect(row().classList.contains("bean-chat-sidebar-row--live")).toBe(false);
     await clickEl(otherRow());
     expect(bean.chatRelease).toHaveBeenCalledWith(first);
-    const thread = (bean.chatThreadSave!.mock.calls[0]![0] as { id: string }).id;
+    // Find it by title: on a slow run the restored chat's save can land first.
+    const thread = bean.chatThreadSave!.mock.calls.map((c) => c[0] as { id: string; title: string }).find((t) => t.title === "hello there")!.id;
     bean.chatThreadGet!.mockResolvedValueOnce({ id: thread, title: "hello there", items: [{ kind: "reply", id: "item-1", text: "back again" }], noteSlug: null });
     await act(async () => { listeners.onShowChatMount!(first); });
     await flush();
