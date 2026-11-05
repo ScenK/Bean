@@ -3,6 +3,7 @@ import { ChatSession, commandList, type ChatSessionApi, type ChatTasks } from ".
 import { ChatSidebar, SIDEBAR_INLINE_MIN, SIDEBAR_OPEN_KEY } from "./ChatSidebar.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
+import { ListFoldToggle } from "../../shared/ListFold.js";
 import { SyncedChat, syncedKey } from "./SyncedChat.js";
 import { isTerminalToggle, tabShortcut } from "./TerminalPane.js";
 import type { DesktopChatListing } from "@bean/core";
@@ -270,16 +271,7 @@ export function ChatWindow() {
 
   return (
     <div class="bean-dashboard bean-chat-window">
-      <button
-        type="button"
-        class={`bean-chat-sidebar-toggle${sidebarOpen ? " bean-chat-sidebar-toggle--open" : ""}`}
-        aria-expanded={sidebarOpen}
-        aria-label={sidebarOpen ? "Hide chat history" : "Show chat history"}
-        title="Chat history"
-        onClick={toggleSidebar}
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" /></svg>
-      </button>
+      <ListFoldToggle folded={!sidebarOpen} onToggle={toggleSidebar} listId="bean-chat-sidebar" name="chat history" />
       {sidebarOpen ? (
         <ChatSidebar
           threads={threads}

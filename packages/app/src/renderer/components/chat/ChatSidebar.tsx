@@ -98,7 +98,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
     ? <span class="bean-chat-sidebar-spinner" role="img" aria-label="Working" />
     : unread.has(key) ? <span class="bean-chat-sidebar-dot" role="img" aria-label="New reply" /> : null);
   return (
-    <nav class={`bean-chat-sidebar${overlay ? " bean-chat-sidebar--overlay" : ""}`} aria-label="Chat history">
+    <nav id="bean-chat-sidebar" class={`bean-chat-sidebar${overlay ? " bean-chat-sidebar--overlay" : ""}`} aria-label="Chat history">
       <div class="bean-chat-sidebar-head">All chats · {rows.length}</div>
       <div class="bean-chat-sidebar-list" ref={listRef}>
         {rows.length === 0 ? <div class="bean-chat-sidebar-empty">No saved chats yet.</div> : null}
