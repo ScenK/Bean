@@ -8,6 +8,7 @@ import type { CliName } from "./launcher.js";
 import type { AvailableModel } from "./models.js";
 import { isLiveCli, type LiveCli } from "./live-session.js";
 import { chatRoutineProblem, type Routine } from "./routine-store.js";
+import type { Destination, SendCard } from "./destinations.js";
 import type { CliModels } from "./cli-models.js";
 import type { SproutRunPlan } from "./sprout-trigger.js";
 
@@ -77,11 +78,16 @@ export interface RoutineAuthoring {
   recipients: { id: string; name: string }[];
   channelId?: string;
   cliModels?: CliModels[];
+  /** Named chat destinations: an alias sink is checked as the conversation it names. */
+  destinations?: Destination[];
 }
 /** A queue item draft awaiting user confirmation — todos are never queued silently. */
 export interface ProposedTodo { routine: string; text: string; }
 /** A sprout the model asked to run or check; the host decides the action (planSproutRun). */
 export interface ProposedSproutRun { routine: string; }
+/** propose_send: the destination exactly as the user named it (resolved by the surface, never an
+ * id from the model) and the message to post. */
+export interface ProposedSend { destination: string; text: string; }
 /** One sprout in propose_sprout_run's catalog — saved definition fields only, so the tool spec
  * stays byte-stable while the sprouts don't change. */
 export interface SproutCatalogEntry { name: string; description?: string; }
@@ -119,7 +125,7 @@ export interface ProposedLiveSession {
  * propose_note from this chat targets it (update in place) by default. */
 export interface LinkedNote { slug: string; title: string; version: number; body: string; }
 export interface ConverseResult {
-  reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedNoteArchive?: ProposedNoteArchive; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo; proposedSproutRun?: ProposedSproutRun; proposedRoutine?: ProposedRoutine;
+  reply: string; model?: string; proposedRun?: ProposedRun; proposedNote?: ProposedNote; proposedNoteArchive?: ProposedNoteArchive; proposedDelegate?: ProposedDelegate; proposedLiveSession?: ProposedLiveSession; proposedSkill?: ProposedSkill; proposedTodo?: ProposedTodo; proposedSproutRun?: ProposedSproutRun; proposedRoutine?: ProposedRoutine; proposedSend?: ProposedSend;
   /** Files produced by generate_image this turn — set by surface handlers (buildChatHandler
    * fills dataUrl for inline rendering), never by converse() itself; bots use sendFile instead. */
   generatedImages?: Array<{ path: string; dataUrl?: string }>;
@@ -132,6 +138,9 @@ export interface ConverseResult {
   /** The confirm card for proposedSproutRun — set by the desktop handler (planSproutRun), never by
    * converse() itself, which only validates the name. */
   sproutRun?: SproutRunPlan;
+  /** The confirm card for proposedSend — set by the desktop handler (matched destinations), never
+   * by converse() itself. */
+  sendCard?: SendCard;
   /** Set when the model call itself failed; `reply` then carries the user-facing explanation. */
   error?: string;
 }
@@ -271,6 +280,25 @@ const PROPOSE_NOTE_ARCHIVE: ToolSpec = {
       },
     },
     required: ["query"],
+  },
+};
+
+// Static: destination names never ride in the spec (an enum would change whenever a conversation
+// is seen or named, busting the prompt cache) — the surface matches the spoken name server-side.
+const PROPOSE_SEND: ToolSpec = {
+  name: "propose_send",
+  description:
+    "Send a message to one of the user's Discord or Teams conversations (a channel, thread, group " +
+    "chat or DM) when they ask you to post, send or tell something there. Bean finds the " +
+    "conversation and shows a card where the user checks the destination and confirms; nothing " +
+    "is sent until they do.",
+  parameters: {
+    type: "object",
+    properties: {
+      destination: { type: "string", description: "the conversation's name exactly as the user said it — don't correct or expand it" },
+      text: { type: "string", description: "the message exactly as it should be posted" },
+    },
+    required: ["destination", "text"],
   },
 };
 
@@ -597,6 +625,8 @@ export interface ConverseInput {
   roleNote?: string;
   /** Offer propose_routine (chatops, owner only). */
   routineAuthoring?: RoutineAuthoring;
+  /** Offer propose_send (default false — the desktop; the surface resolves the name). */
+  sendAvailable?: boolean;
 }
 
 // Constant per surface (not per speaker) so the leading system message stays cache-stable.
@@ -639,6 +669,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     noteArchiveAvailable = false,
     roleNote,
     routineAuthoring,
+    sendAvailable = false,
   } = input;
   // The leading system message must stay byte-stable for the life of a chat: OpenAI prompt
   // caching is exact-prefix, so anything per-turn here (a clock, per-message memory ranking)
@@ -711,6 +742,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     ...(todoRoutines.length > 0 ? [proposeTodoTool(todoRoutines)] : []),
     ...(sproutCatalog.length > 0 ? [proposeSproutRunTool(sproutCatalog)] : []),
     ...(routineAuthoring ? [proposeRoutineTool(routineAuthoring)] : []),
+    ...(sendAvailable ? [PROPOSE_SEND] : []),
     ...actions.map((a) => a.spec),
   ];
   const actionByName = new Map(actions.map((a) => [a.spec.name, a]));
@@ -912,7 +944,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       // An invalid draft still reaches the card, which shows the reason instead of a Save button.
-      const problem = chatRoutineProblem(parsed, routineAuthoring.transport, routineAuthoring.recipients, routineAuthoring.cliModels, routineAuthoring.channelId);
+      const problem = chatRoutineProblem(parsed, routineAuthoring.transport, routineAuthoring.recipients, routineAuthoring.cliModels, routineAuthoring.channelId, routineAuthoring.destinations);
       return {
         reply: content,
         model: deps.model,
@@ -920,6 +952,17 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
           routine: parsed as Routine, updating: routineAuthoring.existing.some((e) => e.toLowerCase() === name.toLowerCase()), ...(problem ? { problem } : {}),
         },
       };
+    }
+
+    const sendCall = toolCalls.find((c) => c.name === "propose_send");
+    if (sendCall) {
+      const args = (sendCall.args ?? {}) as { destination?: unknown; text?: unknown };
+      const destination = typeof args.destination === "string" ? args.destination.trim() : "";
+      if (!destination || typeof args.text !== "string" || !args.text.trim()) {
+        reject(sendCall, "a send needs a destination name and a message.");
+        continue;
+      }
+      return { reply: content, model: deps.model, proposedSend: { destination, text: args.text } };
     }
 
     const actionCalls = toolCalls.filter((c) => actionByName.has(c.name));

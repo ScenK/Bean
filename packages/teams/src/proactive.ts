@@ -1,4 +1,4 @@
-import type { BotEffects, ConversationPlace } from "@bean/core";
+import type { BotEffects, CardAction, ConversationPlace } from "@bean/core";
 import { ActivityTypes, type Activity, type ConversationReference, type TurnContext } from "botbuilder";
 import { teamsText } from "./teams-text.js";
 
@@ -55,6 +55,26 @@ export function refScope(ref: Partial<ConversationReference>): string | undefine
   const c = ref.conversation;
   if (!c || c.conversationType === "personal") return undefined;
   return c.conversationType === "channel" ? bareChannelId(c.id) : c.id;
+}
+
+/** A card submit's CardAction. Teams merges every `Input.*` into the submit, so only these value
+ * fields are copied (an unlisted field never reaches core); `direct` is the real-DM flag (#689). */
+export function cardActionOf(a: Activity, value: Record<string, string | undefined>): CardAction {
+  const ref = { conversation: a.conversation, bot: a.recipient };
+  return {
+    conversationId: a.conversation.id,
+    fromId: a.from.id, // session owner for live-session steering (restricted by default)
+    fromAltId: a.from.aadObjectId,
+    scopeId: refScope(ref),
+    fromName: a.from.name ?? "someone",
+    place: placeOf(ref),
+    direct: isDirect(ref),
+    value: {
+      beanAction: value.beanAction, proposalId: value.proposalId, projectPath: value.projectPath, runId: value.runId,
+      cli: value.cli, model: value.model,
+      skillName: value.skillName, steering: value.steering, instruction: value.instruction, destination: value.destination,
+    },
+  };
 }
 
 /** Every effect posted proactively on `ref` — for work with no turn context (a desk turn) and for

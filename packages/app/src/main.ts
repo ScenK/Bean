@@ -7,6 +7,7 @@ import { basename, join, dirname } from "node:path";
 import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./chatops-enabled-store.js";
 import { createChatopsServers } from "./chatops-servers.js";
 import { buildSyncedChatHandlers, type SyncedChatEvent } from "./synced-chats.js";
+import { buildDestinationHandlers, buildSendHandlers } from "./destinations.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { applyChatopsActivity, clearBotJobs } from "./chatops-activity.js";
@@ -32,8 +33,9 @@ import {
   availableModels, pinnedStepSelection, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat, deleteDesktopChat, listDesktopChats,
   createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
   listChatopsConversations, chatopsConversationTurns, loadChatopsOwners, ownerSubjectIds,
+  listDestinations, destinationLabel, matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool, Transport, CliName } from "@bean/core";
+import type { RouteSuggestion, ActionTool, Transport, CliName, Routine } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import {
   registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens,
@@ -782,7 +784,13 @@ app.whenReady().then(async () => {
       path: resolvedPath,
     });
 
-    const { runOneRoutine, deliverDigest } = createRoutineHost({
+    // User-facing saves (editor, builder) refuse a chat sink naming an unknown destination.
+    const saveKnownSinks = async (r: Routine, models?: CliModels[]): Promise<void> => {
+      const problem = sinkAliasProblems(r, listDestinations(dbFile(dir)))[0];
+      if (problem) throw new Error(problem);
+      await saveRoutine(routinesPath, r, models);
+    };
+    const { runOneRoutine, deliverDigest, sinkProblems } = createRoutineHost({
       dir,
       converse: runtime.converse,
       getModel: () => runtime.getModel(),
@@ -811,6 +819,7 @@ app.whenReady().then(async () => {
       runRoutine: runOneRoutine,
       pruneAttempts: (r, keep) => pruneStepAttempts(dbFile(dir), r, keep),
       deliverDigest,
+      sinkProblems,
       hasPendingTodos: async (r) => (await listTodos(dbFile(dir), r)).some((t) => t.status === "pending"),
       claimTodo: (r) => claimTodo(dbFile(dir), r),
       pollWatch: (w) => pollWatch(w, watchPoll),
@@ -837,7 +846,7 @@ app.whenReady().then(async () => {
     const tools = detectTools(resolvedPath);
     const routineBuilder = createRoutineBuilder({
       loadRoutines: () => loadRoutines(routinesPath),
-      saveRoutine: (r) => saveRoutine(routinesPath, r),
+      saveRoutine: (r) => saveKnownSinks(r),
       loadSkills: () => loadLayeredSkills(skillsDir(projectDir), skillsDir(dir)),
       saveSkill: (name, md) => saveSkill(skillsDir(dir), name, md),
       pollWatch: (w) => pollWatch(w, watchPoll),
@@ -884,7 +893,12 @@ app.whenReady().then(async () => {
       taskStatus.finish("memory:dream", "done", `🌙 Tidied memory: ${parts} · click to review`);
     };
 
+    const sendHandlers = buildSendHandlers({
+      dbFile: dbFile(dir), listDestinations: (file) => listDestinations(file), destinationLabel, matchDestination,
+      enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID), newId: randomUUID,
+    });
     ({ releaseChatSender } = registerIpc(ipcMain, {
+      proposeSend: sendHandlers.propose, sendHandlers,
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
       loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory, deleteMemories, extractMemories, restoreDreamRun, dreamDetails,
       ownerSubjectIds: () => ownerSubjectIds(dbFile(dir), dir),
@@ -1031,7 +1045,7 @@ app.whenReady().then(async () => {
         loadRoutines: () => loadRoutines(routinesPath),
         // Model check only when enabling/enabled: pausing must never be blocked by a model that
         // has since left clis.json (the run itself refuses either way).
-        saveRoutine: (r) => saveRoutine(routinesPath, r, r.enabled ? cliModels : undefined),
+        saveRoutine: (r) => saveKnownSinks(r, r.enabled ? cliModels : undefined),
         deleteRoutine: (name) => deleteRoutine(routinesPath, name),
         loadStates: () => loadRoutineStates(routineStatePath),
         isRunning: (name) => routineScheduler.isRunning(name),
@@ -1091,6 +1105,14 @@ app.whenReady().then(async () => {
         liveIds: (surface) => liveConvs[surface],
         deskTurn: (surface, id, text) => chatopsServers!.deskTurn(surface, id, text),
         deskResume: (surface, id) => chatopsServers!.deskResume(surface, id),
+      }),
+      destinationHandlers: buildDestinationHandlers({
+        dbFile: dbFile(dir),
+        loadRoutines: () => loadRoutines(routinesPath),
+        saveRoutine: (r) => saveRoutine(routinesPath, r),
+        owners: () => loadChatopsOwners(dir),
+        listDestinations: (file) => listDestinations(file), destinationLabel, ambientSpeakers: (file, id) => ambientSpeakers(file, id),
+        setAlias, clearAlias, retargetAlias,
       }),
     }));
 

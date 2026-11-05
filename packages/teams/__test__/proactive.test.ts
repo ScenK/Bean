@@ -1,6 +1,6 @@
 import type { ConversationReference, TurnContext } from "botbuilder";
 import { expect, test } from "vitest";
-import { capturePlace, isDirect, placeOf, proactiveEffects, refFor, refScope, type ContinueConversation } from "../src/proactive.js";
+import { capturePlace, cardActionOf, isDirect, placeOf, proactiveEffects, refFor, refScope, type ContinueConversation } from "../src/proactive.js";
 
 const CHANNEL = "19:abc@thread.tacv2";
 const POST = `${CHANNEL};messageid=1700`;
@@ -83,4 +83,17 @@ test("capturePlace titles an unnamed group chat with a short id; a named one kee
   const group = (name?: string) => ({ conversation: { id: "19:abcdef123456@thread.v2", conversationType: "groupChat", name } as ConversationReference["conversation"] });
   expect(capturePlace(group())).toEqual({ kind: "channel", title: "Teams chat abcdef12" });
   expect(capturePlace(group("Weekend crew"))).toEqual({ kind: "channel", title: "Weekend crew" });
+});
+
+test("cardActionOf (#689): the send card's destination reaches core; direct only for a real DM", () => {
+  const act = (conversation: object, recipient: object = {}) => cardActionOf(
+    { conversation, recipient, from: { id: "29:u", aadObjectId: "aad", name: "Scen" } } as never,
+    { beanAction: "send-confirm", proposalId: "send-1", destination: "3", injected: "x" },
+  );
+  const dm = act({ id: DM, conversationType: "personal" });
+  expect(dm).toMatchObject({ direct: true, fromAltId: "aad", value: { beanAction: "send-confirm", proposalId: "send-1", destination: "3" } });
+  expect(JSON.stringify(dm.value)).not.toContain("injected");
+  expect(act({ id: "a:pick", conversationType: "personal" }, { isTargeted: true }).direct).toBe(false);
+  expect(act({ id: "19:g@thread.v2", conversationType: "groupChat" }).direct).toBe(false);
+  expect(act({ id: CHANNEL, conversationType: "channel" })).toMatchObject({ direct: false, scopeId: CHANNEL });
 });
