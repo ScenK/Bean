@@ -6,7 +6,7 @@ import {
   buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore, ConversationStore, ConversationCatalog, maybeCompact, NoteProposalStore, ProposalStore,
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, loadCliModels, clisFile,
   LiveSessionProposalStore, LiveSessionRegistry, isLiveCli, findDelegateRun, imagesDir, makeOpenAIImageGen, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeChatter, dmAllowed,
-  SproutRunProposalStore, parentSproutTrigger, processParentPort, sproutRunFacts, recordDestination, listDestinations,
+  SproutRunProposalStore, parentSproutTrigger, processParentPort, sproutRunFacts, recordDestination, listDestinations, SendProposalStore,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -20,13 +20,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   finishedCard, rememberedCard, reminderCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
-  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, routineProposalCard, routineResultCard,
+  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, sendCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 } from "./cards.js";
 import { addressedToBot } from "./addressing.js";
 import { teamsDestinationRecorder, type TeamsChannelData } from "./destinations.js";
 import { startDevtunnel } from "./devtunnel.js";
-import { bareChannelId, capturePlace, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
+import { bareChannelId, capturePlace, cardActionOf, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
 import { parseQuote } from "./replied-to.js";
 import { deliveredAppend, loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 import { teamsText } from "./teams-text.js";
@@ -165,7 +165,7 @@ const bot = buildTeamsBot({
   scratchPath,
   cards: {
     proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, rememberedCard, reminderCard,
-    skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, routineProposalCard, routineResultCard,
+    skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, sendCard, routineProposalCard, routineResultCard,
     liveSessionProposalCard, liveSessionResultCard,
   },
   // Fired by the desktop app's reminder loop into the outbox; the drain below delivers them.
@@ -176,6 +176,13 @@ const bot = buildTeamsBot({
   autoMemoryEnabled: () => loadConfig(configFile(dir), dir).then((c) => c.autoMemory, () => false),
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
   roles,
+  // Owner-DM sends by name (#689): Teams destinations only, delivered by this bot's own outbox drain.
+  send: {
+    transport: "teams",
+    destinations: () => listDestinations(dbFile(dir), "teams"),
+    enqueue: (msg) => enqueueOutbox(outboxDir(beanDir()), msg, () => randomUUID()),
+    proposals: new SendProposalStore(),
+  },
   chatter: makeChatter({ dbPath: dbFile(dir), surface: "teams" }),
   // Digests reach a channel/group chat via scopeOf's keys, or the owner's 1:1 (no channel).
   routines: {
@@ -294,22 +301,7 @@ app.post("/api/messages", (req, res) => {
     const fx = effectsFor(context);
     const value = a.value as Record<string, string> | undefined;
     if (value?.beanAction) {
-      await bot.onCardAction(
-        {
-          conversationId: a.conversation.id,
-          fromId: a.from.id, // session owner for live-session steering (restricted by default)
-          fromAltId: a.from.aadObjectId,
-          scopeId: scopeOf(a),
-          fromName: a.from.name ?? "someone",
-          place: placeOf({ conversation: a.conversation, bot: a.recipient }),
-          value: {
-            beanAction: value.beanAction, proposalId: value.proposalId, projectPath: value.projectPath, runId: value.runId,
-            cli: value.cli, model: value.model,
-            skillName: value.skillName, steering: value.steering, instruction: value.instruction,
-          },
-        },
-        fx,
-      );
+      await bot.onCardAction(cardActionOf(a, value), fx);
       return;
     }
     // A quote-reply's quoted message is context, never input: split it out of the typed words.

@@ -7,7 +7,7 @@ import {
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
   makeRoles, makeChatter, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, parseChatterCommand, RoutineProposalStore, SproutRunProposalStore, type Role,
-  parentSproutTrigger, processParentPort, sproutRunFacts, recordDestination, forgetDestination, listDestinations,
+  parentSproutTrigger, processParentPort, sproutRunFacts, recordDestination, forgetDestination, listDestinations, SendProposalStore,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, MessageReferenceType, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -134,6 +134,13 @@ const bot = buildTeamsBot({
   autoMemoryEnabled: () => loadConfig(configFile(dir), dir).then((c) => c.autoMemory, () => false),
   imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
   roles,
+  // Owner-DM sends by name (#689): Discord destinations only, delivered by this bot's own outbox drain.
+  send: {
+    transport: "discord",
+    destinations: () => listDestinations(dbFile(dir), "discord"),
+    enqueue: (msg) => enqueueOutbox(outboxDir(beanDir()), msg, () => randomUUID()),
+    proposals: new SendProposalStore(),
+  },
   chatter: makeChatter({ dbPath: dbFile(dir), surface: "discord" }),
   routines: {
     transport: "discord",
@@ -704,6 +711,16 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         await interaction.editReply(await liveSessionCardFor(payload, pending.proposal));
         return;
       }
+      // The send card's destination pick goes through core, which refuses it outside the owner's DM
+      // before it touches the pending proposal (Send then uses the stored pick).
+      if (action === "send-pick") {
+        if (!interaction.channel) return;
+        await bot.onCardAction({
+          conversationId: interaction.channelId, fromId: interaction.user.id, fromName: interaction.user.displayName,
+          direct: interaction.channel.isDMBased(), value: { beanAction: action, proposalId: payload, destination: interaction.values[0] },
+        }, effectsFor(interaction.channel));
+        return;
+      }
       const sel = selections.get(interaction.message.id) ?? {};
       if (action === "cli") sel.cli = interaction.values[0];
       if (action === "model") sel.model = interaction.values[0];
@@ -745,6 +762,7 @@ client.on("interactionCreate", async (interaction: Interaction) => {
         scopeId: scopeOf(interaction.channel),
         fromName: interaction.user.displayName,
         place: placeOf(interaction.channel),
+        direct: interaction.channel.isDMBased(),
         value: {
           beanAction: action, proposalId: payload, cli: sel.cli, model: sel.model, skillName: sel.skillName,
           projectPath: sel.projectPath,

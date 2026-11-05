@@ -350,3 +350,19 @@ test("note archive cards: Archive/Cancel on the proposal, Restore with the note 
   // A slug too long for the 100-char custom_id gets no (truncated, useless) button.
   expect(JSON.stringify(discordCards.noteArchiveResultCard({ title: "G", by: "mia", outcome: "archived", noteId: "x".repeat(90) }))).not.toContain("restore-note");
 });
+
+test("send card (#689): 24 options + the hoisted pick, ids as values, Send/Cancel; a result drops the controls", () => {
+  const options = Array.from({ length: 30 }, (_, i) => ({ id: String(i), label: `room-${i}`, detail: "Home · channel" }));
+  const card = discordCards.sendCard!({ proposalId: "send-1", body: "Deploy done.", options, pick: "29" }) as {
+    components: { components: { custom_id: string; options?: { value: string; default: boolean }[] }[] }[];
+  };
+  const select = card.components[0]!.components[0]!;
+  expect(select.custom_id).toBe("bean:send-pick:send-1");
+  expect(select.options).toHaveLength(25);
+  expect(select.options![0]).toMatchObject({ value: "29", default: true });
+  const s = JSON.stringify(card);
+  for (const bit of ["Deploy done.", "Posts as Bean", "bean:send-confirm:send-1", "bean:send-cancel:send-1"]) expect(s).toContain(bit);
+  const done = discordCards.sendCard!({ proposalId: "send-1", body: "Deploy done.", options: [], result: "Queued → ops" }) as { components: unknown[] };
+  expect(done.components).toEqual([]);
+  expect(JSON.stringify(done)).toContain("Queued → ops");
+});

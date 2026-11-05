@@ -2,7 +2,7 @@ import type {
   ProposalCardInput, RunningCardInput, FinishedCardInput, NoteProposalCardInput, NoteResultCardInput,
   NoteArchiveProposalCardInput, NoteArchiveResultCardInput,
   RememberedCardInput, ReminderCardInput,
-  SkillProposalCardInput, SkillResultCardInput, SproutRunCardInput, TodoProposalCardInput, TodoResultCardInput,
+  SkillProposalCardInput, SkillResultCardInput, SproutRunCardInput, SendCardInput, TodoProposalCardInput, TodoResultCardInput,
   RoutineProposalCardInput, RoutineResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput,
 } from "@bean/core";
@@ -239,6 +239,35 @@ export function sproutRunCard({ proposalId, plan, result }: SproutRunCardInput):
         data: { beanAction: "run-sprout", proposalId },
       },
       { type: "Action.Submit", title: "Cancel", data: { beanAction: "cancel-sprout", proposalId } },
+    ],
+  };
+}
+
+/** Owner-DM send card (#689). The ChoiceSet's value (an opaque option id) merges into the Send
+ * submit as `destination`; core re-checks it against the proposal. Cancel submits no inputs. */
+export function sendCard({ proposalId, body, options, pick, result }: SendCardInput): object {
+  return {
+    $schema: SCHEMA,
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      { type: "TextBlock", size: "medium", weight: "bolder", text: "Send a message", wrap: true },
+      { type: "TextBlock", text: body, wrap: true },
+      ...(result !== undefined ? [{ type: "TextBlock", weight: "bolder", text: result, wrap: true }] : [{
+        type: "Input.ChoiceSet",
+        id: "destination",
+        label: "Destination",
+        isRequired: true,
+        errorMessage: "Pick a destination",
+        placeholder: "Pick a destination",
+        ...(pick ? { value: pick } : {}),
+        choices: options.map((o) => ({ title: o.detail ? `${o.label} — ${o.detail}` : o.label, value: o.id })),
+      }]),
+      { type: "TextBlock", text: "Posts as Bean · Missing one? Name it in Bean's Settings → ChatOps.", wrap: true, isSubtle: true },
+    ],
+    actions: result !== undefined ? [] : [
+      { type: "Action.Submit", title: "Send", style: "positive", data: { beanAction: "send-confirm", proposalId } },
+      { type: "Action.Submit", title: "Cancel", associatedInputs: "none", data: { beanAction: "send-cancel", proposalId } },
     ],
   };
 }

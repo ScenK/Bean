@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ChatopsActivitySink } from "./activity.js";
-import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ImageAttachment, type ProposedLiveSession } from "../converse.js";
+import { converse, speakerLine, type ChatTurn, type ConverseDeps, type ImageAttachment, type ProposedLiveSession, type ProposedSend } from "../converse.js";
 import { makeGenerateImageTool, type ImageGenDeps } from "../image-gen.js";
 import { composePrompt } from "../prompt.js";
 import { stageImages } from "../stage-images.js";
@@ -11,11 +11,13 @@ import { extractMemories, memoryCategories } from "../memory/extract.js";
 import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
 import { chatRoutineProblem, todoRunHint, type Routine } from "../routine-store.js";
-import type { Destination } from "../destinations.js";
+import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
+import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
 import type { SproutTriggerAnswer } from "./sprout-bridge.js";
 import { planSproutRun, sproutCheckText, type SproutRunBlock } from "../sprout-trigger.js";
 import type { SproutRunProposalStore } from "./sprout-run-proposals.js";
+import type { SendProposalStore } from "./send-proposals.js";
 import { cancelReminder } from "../reminders.js";
 import { availableModels } from "../models.js";
 import type { Skill, Project } from "../types.js";
@@ -109,7 +111,15 @@ export interface CardAction {
   /** The tapped card's conversation as the surface sees it — feeds the owner's conversation
    * catalog when a live session starts. Absent = not catalogued. */
   place?: ConversationPlace;
-  value: { beanAction?: string; proposalId?: string; projectPath?: string; runId?: string; cli?: string; model?: string; skillName?: string; steering?: string; instruction?: string };
+  /** The tapped card is in a real 1:1 DM with the bot — derived by the adapter (Teams `isDirect`,
+   * Discord `isDMBased()`), never from an absent `scopeId`. Send actions refuse unless true. */
+  direct?: boolean;
+  value: {
+    beanAction?: string; proposalId?: string; projectPath?: string; runId?: string; cli?: string; model?: string; skillName?: string;
+    steering?: string; instruction?: string;
+    /** A send card's picked option id (Teams' ChoiceSet, Discord's select) — re-checked against the proposal. */
+    destination?: string;
+  };
 }
 
 export interface BotEffects {
@@ -225,6 +235,14 @@ export interface TeamsBotDeps {
    * outbox transport. Teams targets are always the asking conversation (its outbox can't DM
    * a specific user); Discord DMs target the speaker. */
   reminders?: { file: string; transport: "discord" | "teams" };
+  /** Owner-DM sends (#689): propose_send is offered only in the owner's real DM with the bot,
+   * resolving names among this surface's destinations. Absent = never offered. */
+  send?: {
+    transport: "discord" | "teams";
+    destinations: () => Destination[];
+    enqueue: (msg: Pick<OutboxMessage, "transport" | "channel" | "body">) => Promise<unknown>;
+    proposals: SendProposalStore;
+  };
   /** Owner / admin / guest — required, no permissive default (see .memory/safety-chatops-roles.md). */
   roles: Roles;
   /** Owner routine management (#285): propose_routine plus the `routines` / `enable <name>` /
@@ -265,6 +283,11 @@ const SPROUT_BLOCKED: Record<SproutRunBlock, (name: string) => string> = {
   review: (name) => `${name} needs its first review in Bean's Sprouts panel.`,
   empty: (name) => `${name}'s queue is empty — queue a todo first.`,
 };
+
+const SEND_KIND: Record<Destination["kind"], string> = { channel: "channel", thread: "thread", group: "group chat", meeting: "meeting chat", dm: "DM" };
+const SEND_EXPIRED = "That send card expired — ask me again.";
+/** The longest body a send card shows in full (Discord's embed description caps at 4096). */
+export const MAX_SEND_CHARS = 4000;
 
 const nameTaken = (name: string): string => `a sprout named "${name}" already exists — ask for a different name.`;
 
@@ -853,6 +876,118 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     } catch (err) {
       await fx.post(`Couldn't save the skill: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  // Owner-DM send cards (#689): only this surface's labelled destinations, so a Discord card never
+  // lists Teams rows and vice versa. Option ids are opaque; the proposal maps them back to rows.
+  function sendRows(send: NonNullable<TeamsBotDeps["send"]>): Array<{ row: Destination; label: string }> {
+    const rows = send.destinations().filter((r) => r.surface === send.transport);
+    return rows.flatMap((row) => {
+      const label = destinationLabel(row, rows);
+      return label ? [{ row, label }] : [];
+    });
+  }
+  const sameKey = (a: DestinationKey, b: DestinationKey): boolean => a.surface === b.surface && a.conversationId === b.conversationId;
+
+  // The caller has checked owner + real DM. The card is ordered pick → aliased → most recently
+  // seen (Discord shows the first 25, so the pick is never cut), pre-picked only on a confident match.
+  async function postSendCard(proposed: ProposedSend, msg: IncomingMessage, fx: BotEffects): Promise<void> {
+    const send = deps.send;
+    if (!send || !deps.cards.sendCard) return;
+    // The card must show everything Send posts, so a body too long to preview is refused.
+    if (proposed.text.length > MAX_SEND_CHARS) {
+      await fx.post(`That message is too long to confirm on a card (over ${MAX_SEND_CHARS} characters) — shorten it and ask again.`);
+      return;
+    }
+    const all = sendRows(send);
+    if (all.length === 0) {
+      await fx.post("I don't know any conversations to send to yet — mention me in one once, and it shows up in Bean's Settings → ChatOps.");
+      return;
+    }
+    const { pick } = matchDestination(proposed.destination, all.map((e) => e.row));
+    const rank = (row: Destination): number => (pick && sameKey(row, pick) ? 0 : row.alias ? 1 : 2);
+    const ordered = [...all].sort((a, b) => rank(a.row) - rank(b.row) || b.row.lastSeen.localeCompare(a.row.lastSeen));
+    const rows = new Map<string, DestinationKey>();
+    const options = ordered.map(({ row, label }, i) => {
+      const id = String(i);
+      rows.set(id, { surface: row.surface, conversationId: row.conversationId });
+      return { id, label, detail: [row.platformName, row.parentName, SEND_KIND[row.kind]].filter(Boolean).join(" · ") };
+    });
+    const pickId = pick ? [...rows].find(([, key]) => sameKey(key, pick))?.[0] : undefined;
+    const p = send.proposals.add({
+      conversationId: msg.conversationId, proposedById: msg.fromId, body: proposed.text, rows, ...(pickId ? { pick: pickId } : {}),
+    });
+    const activityId = await fx.postCard(deps.cards.sendCard({ proposalId: p.id, body: proposed.text, options, ...(pickId ? { pick: pickId } : {}) }));
+    send.proposals.setCardActivityId(p.id, activityId);
+  }
+
+  // Send / Cancel / (Discord) a destination pick on a send card. The role was checked before this
+  // (owner); the real-DM flag and the proposer/conversation binding are checked before the pending
+  // proposal is touched, so a refused tap leaves it unchanged. Send re-resolves the row now and
+  // posts the body frozen on the card.
+  async function handleSendAction(
+    kind: "send-confirm" | "send-cancel" | "send-pick", action: CardAction, fx: BotEffects,
+  ): Promise<void> {
+    const send = deps.send;
+    const { proposalId, destination } = action.value;
+    if (!send || !proposalId) return;
+    // Privacy is never inferred: a missing flag (or a shared chat) refuses.
+    if (action.direct !== true) {
+      await fx.post("I only send from your DM with me — ask me there.");
+      return;
+    }
+    const peek = send.proposals.peek(proposalId);
+    if (!peek) {
+      if (kind !== "send-pick") await fx.post(SEND_EXPIRED);
+      return;
+    }
+    if (peek.conversationId !== action.conversationId || ![action.fromId, action.fromAltId].includes(peek.proposedById)) {
+      await fx.post("Only whoever asked for that send can confirm it, in the chat they asked in.");
+      return;
+    }
+    if (kind === "send-pick") {
+      if (destination) send.proposals.setPick(proposalId, destination);
+      return;
+    }
+    const settle = async (p: { cardActivityId?: string; body: string }, result: string): Promise<void> => {
+      if (p.cardActivityId !== undefined && deps.cards.sendCard) {
+        await fx.updateCard(p.cardActivityId, deps.cards.sendCard({ proposalId, body: p.body, options: [], result }));
+      } else await fx.post(result);
+    };
+    if (kind === "send-cancel") {
+      const p = send.proposals.claim(proposalId);
+      if (!p) await fx.post(SEND_EXPIRED);
+      else await settle(p, `Cancelled (by ${action.fromName})`);
+      return;
+    }
+    // Teams submits its ChoiceSet (empty = nothing picked); Discord's select already set the pick.
+    const pick = destination ?? peek.pick;
+    if (!pick) {
+      await fx.post("Pick a destination first.");
+      return;
+    }
+    const key = peek.rows.get(pick);
+    if (!key || key.surface !== send.transport) {
+      await fx.post("That destination wasn't on this card.");
+      return;
+    }
+    const now = sendRows(send).find((e) => sameKey(e.row, key));
+    if (!now) {
+      await fx.post("That conversation isn't known any more — pick another.");
+      return;
+    }
+    const p = send.proposals.claim(proposalId);
+    if (!p) {
+      await fx.post(SEND_EXPIRED);
+      return;
+    }
+    try {
+      await send.enqueue({ transport: key.surface, channel: key.conversationId, body: p.body });
+    } catch (err) {
+      await settle(p, `Couldn't queue it: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    await settle(p, `Queued → ${now.label}`);
   }
 
   // Run/Check or Cancel on a sprout-run card. The role was checked before this (owner); the
@@ -1552,6 +1687,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const scope = saveScope(typed, msg.direct);
         // Owner paths categorize (#648): the owner's DM only — a member's and any channel don't.
         const ownerDm = isOwner && msg.direct;
+        // Sending by name: the owner's real DM only — never a shared chat, a member's DM or a targeted pick.
+        const sendHere = ownerDm && deps.send !== undefined && deps.cards.sendCard !== undefined;
         const memoryTools = makeMemoryTools({
           append: deps.appendMemories, forget: (ids) => deps.deleteMemories(ids, isOwner ? undefined : msg.fromId),
           memories, projects, latestUserText: typed, ...(scope === "private" ? { subjectId: msg.fromId } : {}),
@@ -1599,6 +1736,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           speaker: msg.fromName,
           pinOwnerMemories: ownerDm, // #650: the owner's DM only — never a channel or a member
           routineAuthoring,
+          sendAvailable: sendHere,
         };
         const result = await converse({
           ...converseBase,
@@ -1659,20 +1797,31 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               latestUserText: run.composedPrompt,
             });
             deps.conversations.append(msg.conversationId, { role: "user", content: speakerLine(msg.fromName, run.composedPrompt) });
-            // Nested proposals from the skill prompt are deliberately ignored — one hop only.
+            // Nested proposals from the skill prompt are deliberately ignored — one hop only —
+            // except a send card, under the same owner-DM gate as the first hop.
+            const sendCard = sendHere ? followup.proposedSend : undefined;
             // A pure tool-use second hop leaves reply empty; never answer with silence.
             const text = followup.reply.trim() ||
-              `The ${run.skillName} skill didn't produce a reply — try asking me directly instead.`;
-            deps.conversations.append(msg.conversationId, { role: "assistant", content: text });
-            // reply, not post: this is the turn's answer, so surface extras (Discord voice
-            // replies) apply to it too.
-            await fx.reply(text);
+              (sendCard ? "" : `The ${run.skillName} skill didn't produce a reply — try asking me directly instead.`);
+            if (text) {
+              deps.conversations.append(msg.conversationId, { role: "assistant", content: text });
+              // reply, not post: this is the turn's answer, so surface extras (Discord voice
+              // replies) apply to it too.
+              await fx.reply(text);
+            }
             await deliverImages(); // the follow-up hop can call generate_image too
+            if (sendCard) await postSendCard(sendCard, msg, fx);
             return;
           }
           // Backstop only: terminal-target propose_run isn't offered from chatops, so this
           // can't fire from a well-behaved model — but if it does, point at what works.
           await fx.post(DESKTOP_ONLY);
+          return;
+        }
+        if (result.proposedSend) {
+          // Backstop: converse() already refuses an un-offered tool.
+          if (!sendHere) return;
+          await postSendCard(result.proposedSend, msg, fx);
           return;
         }
         if (result.proposedLiveSession) {
@@ -1856,6 +2005,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       if (beanAction === "run-sprout" || beanAction === "cancel-sprout") {
         await handleSproutAction(beanAction, proposalId, action, fx);
+        return;
+      }
+      if (beanAction === "send-confirm" || beanAction === "send-cancel" || beanAction === "send-pick") {
+        await handleSendAction(beanAction, action, fx);
         return;
       }
       if (beanAction === "queue-todo" || beanAction === "cancel-todo") {

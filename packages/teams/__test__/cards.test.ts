@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import {
   finishedCard, rememberedCard, reminderCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, proposalCard, runningCard,
   skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, routineProposalCard, routineResultCard,
-  liveSessionProposalCard, liveSessionResultCard,
+  liveSessionProposalCard, liveSessionResultCard, sendCard,
 } from "../src/cards.js";
 
 const models = [
@@ -246,4 +246,20 @@ test("invalid routine draft shows the reason and Cancel only", () => {
 test("routine result card is a one-line receipt", () => {
   expect(flatten(routineResultCard({ name: "standup", by: "Scen", outcome: "saved", enabled: false }))).toContain("Sprout saved (by Scen) — off");
   expect(flatten(routineResultCard({ name: "standup", by: "Scen", outcome: "failed", problem: "nope" }))).toContain("standup: nope");
+});
+
+test("send card (#689): required destination ChoiceSet pre-picked, Cancel submits no inputs; a result drops the controls", () => {
+  const card = sendCard({ proposalId: "send-1", body: "Deploy done.", options: [{ id: "0", label: "ops", detail: "General · Eng · channel" }], pick: "0" }) as {
+    body: Record<string, unknown>[]; actions: Record<string, unknown>[];
+  };
+  expect(card.body.find((b) => b.type === "Input.ChoiceSet")).toMatchObject({
+    id: "destination", isRequired: true, value: "0", choices: [{ title: "ops — General · Eng · channel", value: "0" }],
+  });
+  expect(card.actions).toEqual([
+    expect.objectContaining({ data: { beanAction: "send-confirm", proposalId: "send-1" } }),
+    expect.objectContaining({ associatedInputs: "none", data: { beanAction: "send-cancel", proposalId: "send-1" } }),
+  ]);
+  const done = sendCard({ proposalId: "send-1", body: "Deploy done.", options: [], result: "Queued → ops" }) as { actions: unknown[] };
+  expect(done.actions).toEqual([]);
+  expect(flatten(done)).toContain("Queued → ops");
 });
