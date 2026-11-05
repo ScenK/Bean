@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { parseDeskAck, parseDeskResume, parseDeskSaved, parseDeskTurn } from "../src/chatops/desk.js";
+import { MAX_CONTINUE_TAIL, MAX_CONTINUE_TITLE, parseDeskAck, parseDeskContinue, parseDeskResume, parseDeskSaved, parseDeskTurn } from "../src/chatops/desk.js";
 
 test("parseDeskTurn keeps only the three fields of a well-formed turn", () => {
   expect(parseDeskTurn({ type: "desk-turn", requestId: "r1", conversationId: "c1", text: "hi", fromId: "x" }))
@@ -40,4 +40,37 @@ test("parseDeskResume carries only a request and conversation id — never a ses
   for (const bad of [null, { type: "desk-resume", requestId: "r1" }, { type: "desk-turn", requestId: "r1", conversationId: "c1" }, { type: "desk-resume", requestId: "", conversationId: "c1" }]) {
     expect(parseDeskResume(bad)).toBeUndefined();
   }
+});
+
+test("parseDeskContinue keeps one mode's fields and drops mixed, oversized or malformed payloads", () => {
+  const chat = { type: "desk-continue", requestId: "r1", mode: "chat", channelId: "c1", title: " Plans ", tail: "> User: hi", count: 1 };
+  const agent = { type: "desk-continue", requestId: "r1", mode: "agent", channelId: "c1", title: "Fix", sessionId: "0b5c6f1e-1111-4222-8333-444455556666" };
+  expect(parseDeskContinue({ ...chat, ownerId: "forged" }))
+    .toEqual({ type: "desk-continue", requestId: "r1", mode: "chat", channelId: "c1", title: "Plans", tail: "> User: hi", count: 1 });
+  expect(parseDeskContinue({ ...agent, cli: "codex" }))
+    .toEqual({ type: "desk-continue", requestId: "r1", mode: "agent", channelId: "c1", title: "Fix", sessionId: agent.sessionId });
+  for (const bad of [
+    null, { ...chat, type: "desk-turn" }, { ...chat, mode: "other" }, { ...chat, mode: undefined },
+    { ...chat, sessionId: agent.sessionId }, { ...agent, tail: "x" }, { ...agent, count: 1 },
+    { ...chat, title: "  " }, { ...chat, title: "t".repeat(MAX_CONTINUE_TITLE + 1) },
+    { ...chat, tail: "" }, { ...chat, tail: "x".repeat(MAX_CONTINUE_TAIL + 1) },
+    { ...chat, count: 0 }, { ...chat, count: 1.5 }, { ...chat, count: "1" }, { ...chat, count: 201 },
+    { ...chat, channelId: "" }, { ...chat, requestId: "r".repeat(201) },
+    { ...agent, sessionId: "../etc" }, { ...agent, sessionId: undefined },
+  ]) expect(parseDeskContinue(bad)).toBeUndefined();
+});
+
+test("parseDeskAck keeps a thread id and a partial outcome, and nothing else", () => {
+  expect(parseDeskAck({ type: "desk-ack", requestId: "r1", ok: true, threadId: "t1", tail: "secret" }))
+    .toEqual({ type: "desk-ack", requestId: "r1", ok: true, threadId: "t1" });
+  expect(parseDeskAck({ type: "desk-ack", requestId: "r1", partial: true, threadId: "t1", error: "secret" }))
+    .toEqual({ type: "desk-ack", requestId: "r1", partial: true, threadId: "t1" });
+  expect(parseDeskAck({ type: "desk-ack", requestId: "r1", refused: "thread-failed", threadId: "t1" }))
+    .toEqual({ type: "desk-ack", requestId: "r1", refused: "thread-failed" });
+  for (const bad of [
+    { type: "desk-ack", requestId: "r1", partial: true }, { type: "desk-ack", requestId: "r1", partial: "yes", threadId: "t1" },
+    { type: "desk-ack", requestId: "r1", ok: true, threadId: "" }, { type: "desk-ack", requestId: "r1", ok: true, threadId: 7 },
+    { type: "desk-ack", requestId: "r1", ok: true, partial: true, threadId: "t1" },
+    { type: "desk-ack", requestId: "r1", partial: true, threadId: "t1", refused: "no-owner" },
+  ]) expect(parseDeskAck(bad)).toBeUndefined();
 });

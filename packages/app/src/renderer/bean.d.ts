@@ -12,6 +12,7 @@ import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "../ipc.js";
 import type { RoutineBuildView } from "../routine-builder.js";
 import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "../synced-chats.js";
+import type { DeskContinueReply, DeskContinueRequest } from "../desk-continue.js";
 import type { DestinationView, NameRawResult, SendResult } from "../destinations.js";
 import type { AliasResult } from "@bean/core";
 import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
@@ -175,6 +176,9 @@ declare global {
       /** Continue live: asks the bot to reopen the conversation's ended live session. */
       syncedChatResume(surface: string, conversationId: string, mountId: string): Promise<SyncedSendResult>;
       onSyncedChatEvent(cb: (e: SyncedChatEvent) => void): void;
+      /** Continue in Discord: opens a thread under a Discord channel and carries this chat (or its
+       * agent session) over. The bot's ack, or why there was none. */
+      deskContinue(req: DeskContinueRequest, mountId: string): Promise<DeskContinueReply>;
       /** Tagged with the chat (mount) whose turn it captured. */
       onMemoryUpdated(cb: (saved: Array<{ id: string; text: string; category?: string }>, mountId: string) => void): void;
       getMemoryBatch(): Promise<MemoryBatch | undefined>;

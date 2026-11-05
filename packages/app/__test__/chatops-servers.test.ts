@@ -363,6 +363,15 @@ describe("desk turns", () => {
     await expect(done).resolves.toEqual({ refused: "channel-busy" });
   });
 
+  it("a desk continue sends its body and keeps the thread id of a partial ack", async () => {
+    const { p, servers } = deskHarness();
+    const done = servers.deskContinue("discord", { mode: "chat", channelId: "c1", title: "Plans", tail: "User: hi", count: 1 });
+    const sent = p.outbox[0] as { requestId: string };
+    expect(sent).toEqual({ type: "desk-continue", requestId: expect.any(String), mode: "chat", channelId: "c1", title: "Plans", tail: "User: hi", count: 1 });
+    p.emit("message", { type: "desk-ack", requestId: sent.requestId, partial: true, threadId: "t9", text: "secret" });
+    await expect(done).resolves.toEqual({ partial: true, threadId: "t9" });
+  });
+
   it("times out without resending", async () => {
     vi.useFakeTimers();
     try {

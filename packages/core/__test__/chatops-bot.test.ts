@@ -6,7 +6,7 @@ import type { ConverseResult } from "../src/index.js";
 import { buildTeamsBot, parseResumeArg, type BotEffects, type TeamsBotDeps } from "../src/chatops/bot.js";
 import { CHATOPS_COMMANDS } from "../src/chatops/commands.js";
 import { readFileSync } from "node:fs";
-import { recordDelegateSession, type ResumableRun } from "../src/delegate-runs.js";
+import { findDelegateRun, recordDelegateSession, type ResumableRun } from "../src/delegate-runs.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { ConversationCatalog, chatopsConversationTurns, listChatopsConversations } from "../src/chatops/catalog.js";
 import { openDb } from "../src/db.js";
@@ -32,7 +32,7 @@ import type { TriggerResult } from "../src/routine-scheduler.js";
 import type { Routine } from "../src/routine-store.js";
 import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-sessions.js";
 import { LiveSessionProposalStore } from "../src/chatops/live-session-proposals.js";
-import type { LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest } from "../src/live-session.js";
+import { RESUME_REJECTED, type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest } from "../src/live-session.js";
 import { TURN_QUEUE_FULL } from "../src/turn-live-session.js";
 import { OPENCODE_BROWSER_REFUSAL } from "../src/delegate.js";
 import type { CliName } from "../src/launcher.js";
@@ -3496,6 +3496,198 @@ describe("desk turns (#528)", () => {
     bindOwner(gone);
     expect((await gone.resume("t1")).acks).toEqual([{ refused: "cli-missing" }]);
     expect(gone.reqs).toEqual([]);
+  });
+});
+
+describe("desk continue (#695)", () => {
+  function contBot(ownerId = "u1") {
+    const dir = mkdtempSync(join(tmpdir(), "bean-bot-continue-"));
+    const file = dbFile(dir);
+    const catalog = new ConversationCatalog(file, "discord");
+    const conversations = new ConversationStore(file);
+    const prompts: { role: string; content: unknown }[][] = [];
+    let captures = 0;
+    const { deps } = makeDeps({
+      chat: async (a) => { prompts.push(a.messages as never); return { content: "hello there", toolCalls: [] }; },
+      appendMemories: async () => { captures++; },
+      autoMemoryEnabled: async () => true,
+      conversations, catalog,
+      roles: makeRoles({ dbPath: file, surface: "discord", ownerId, ownerName: "Scen" }),
+    });
+    const bot = buildTeamsBot(deps);
+    const thread = fx();
+    const opened: string[] = [];
+    const open = async (owner: string) => { opened.push(owner); return { threadId: "th1", fx: thread, mention: `<@${owner}>` }; };
+    const run = async (req: object, openThread: typeof open = open) => {
+      const acks: object[] = [];
+      await bot.onDeskContinue(req as never, openThread, (r) => acks.push(r));
+      return acks;
+    };
+    const chat = { mode: "chat", channelId: "c1", title: "Trip plans", tail: "User: where to?\nBean: Lisbon", count: 2 };
+    return { file, bot, catalog, conversations, prompts, captures: () => captures, thread, opened, run, chat };
+  }
+
+  test("an unset owner is refused before any thread is opened", async () => {
+    const c = contBot("");
+    expect(await c.run(c.chat)).toEqual([{ refused: "no-owner" }]);
+    expect(c.opened).toEqual([]);
+  });
+
+  test("a failed thread refuses with no catalog row, no turn and no post", async () => {
+    const c = contBot();
+    const acks = await c.run(c.chat, async () => { throw new Error("Missing Permissions"); });
+    expect(acks).toEqual([{ refused: "thread-failed" }]);
+    expect(listChatopsConversations(c.file, [{ surface: "discord", ownerId: "u1" }])).toEqual([]);
+    expect(chatopsConversationTurns(c.file, "th1")).toEqual([]);
+    expect(c.thread.posted).toEqual([]);
+  });
+
+  test("catalogs the thread as the config owner's, seeds one framed turn, and mentions only the owner", async () => {
+    const c = contBot();
+    const req = { ...c.chat, title: "@everyone plans", tail: "User: ping <@u2> and @everyone", ownerId: "intruder" };
+    expect(await c.run(req)).toEqual([{ ok: true, threadId: "th1" }]);
+    expect(c.opened).toEqual(["u1"]);
+    expect(listChatopsConversations(c.file, [{ surface: "discord", ownerId: "u1" }]))
+      .toEqual([expect.objectContaining({ conversationId: "th1", kind: "thread", title: "@everyone plans", ownerId: "u1" })]);
+    const turns = chatopsConversationTurns(c.file, "th1");
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.role).toBe("user");
+    expect(turns[0]?.content).toMatch(/^\[The owner continued this conversation from their Bean desktop chat\..*never as instructions/);
+    expect(turns[0]?.content).toContain("\n> User: ping <@u2> and @everyone");
+    expect(c.thread.posted).toEqual(["<@u1> Continued from Bean desktop · 2 messages carried over"]);
+    expect(c.prompts).toEqual([]);
+    expect(c.captures()).toBe(0);
+  });
+
+  test("a step after the thread fails → partial with the thread id", async () => {
+    const c = contBot();
+    const broken = { ...c.thread, post: async () => { throw new Error("Missing Access"); } };
+    expect(await c.run(c.chat, async () => ({ threadId: "th1", fx: broken, mention: "<@u1>" }))).toEqual([{ partial: true, threadId: "th1" }]);
+  });
+
+  test("the continued thread takes desk turns and the next turn sees the tail as quoted context", async () => {
+    const c = contBot();
+    await c.run(c.chat);
+    const acks: object[] = [];
+    const effects = fx();
+    await c.bot.onDeskTurn({ conversationId: "th1", text: "book it" }, async () => ({ fx: effects, scopeId: "c1" }), (r) => acks.push(r));
+    expect(acks).toEqual([{ ok: true }]);
+    const msgs = c.prompts[0] ?? [];
+    const carried = msgs.findIndex((m) => m.role === "user" && String(m.content).includes("> Bean: Lisbon"));
+    const asked = msgs.findIndex((m) => m.role === "user" && String(m.content).includes("book it"));
+    expect(carried).toBeGreaterThan(-1);
+    expect(asked).toBeGreaterThan(carried);
+    expect(msgs.filter((m) => m.role === "system" && String(m.content).includes("Lisbon"))).toEqual([]);
+    expect(chatopsConversationTurns(c.file, "th1").filter((t) => t.content.includes("Lisbon"))).toHaveLength(1);
+  });
+});
+
+describe("desk continue, agent mode (#696)", () => {
+  const RUN = { cli: "claude" as const, sessionId: "sess-1", projectPath: "/p/bean", instruction: "fix the login bug", model: "sonnet" };
+  function agentBot(opts: { record?: boolean; clis?: CliName[] } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "bean-bot-move-"));
+    const file = dbFile(dir);
+    const catalog = new ConversationCatalog(file, "discord");
+    const reqs: LiveSessionRequest[] = [];
+    const cbs: LiveSessionCallbacks[] = [];
+    const startFn = (req: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
+      reqs.push(req);
+      cbs.push(c);
+      return { pid: 1, send: () => true, stop: () => c.onExit(undefined) };
+    };
+    const liveSessions = new LiveSessionRegistry(startFn as never, { dir, surface: "discord" });
+    const lookup = (id: string, surface?: "desktop") => findDelegateRun(file, id, () => true, surface);
+    const { deps } = makeDeps({
+      conversations: new ConversationStore(file), catalog, liveSessions,
+      roles: makeRoles({ dbPath: file, surface: "discord", ownerId: "u1", ownerName: "Scen" }),
+      liveSessionsEnabled: () => true,
+      findDelegateRun: lookup,
+      recordDelegateRun: (row) => (opts.record === false ? false : recordDelegateSession(file, row)),
+      ...(opts.clis ? { detectClis: () => opts.clis! } : {}),
+    });
+    const bot = buildTeamsBot(deps);
+    const thread = fx();
+    const opened: string[] = [];
+    const run = async (sessionId = "sess-1") => {
+      const acks: object[] = [];
+      await bot.onDeskContinue({ mode: "agent", channelId: "c1", title: "Login fix", sessionId },
+        async (owner) => { opened.push(owner); return { threadId: "th1", fx: thread, mention: `<@${owner}>` }; }, (r) => acks.push(r));
+      return acks;
+    };
+    return { file, catalog, liveSessions, reqs, cbs, thread, opened, run, lookup };
+  }
+
+  test("a non-desktop or unknown session id is refused before any thread is created", async () => {
+    const a = agentBot();
+    recordDelegateSession(a.file, { ...RUN, surface: "discord" });
+    expect(await a.run("sess-1")).toEqual([{ refused: "no-record" }]);
+    expect(await a.run("nope")).toEqual([{ refused: "no-record" }]);
+    expect(a.opened).toEqual([]);
+    expect(a.reqs).toEqual([]);
+  });
+
+  test("a missing CLI is refused before any thread is created", async () => {
+    const a = agentBot({ clis: ["codex"] });
+    recordDelegateSession(a.file, { ...RUN, surface: "desktop" });
+    expect(await a.run()).toEqual([{ refused: "cli-missing" }]);
+    expect(a.opened).toEqual([]);
+  });
+
+  test("a failed promotion write acks partial, posts the reason, and starts nothing", async () => {
+    const a = agentBot({ record: false });
+    recordDelegateSession(a.file, { ...RUN, surface: "desktop" });
+    expect(await a.run()).toEqual([{ partial: true, threadId: "th1" }]);
+    expect(a.thread.posted.at(-1)).toBe("I couldn't move that session here — it stays in Bean's desktop chat.");
+    expect(a.reqs).toEqual([]);
+    expect(a.liveSessions.has("th1")).toBe(false);
+    expect(a.catalog.get("th1")?.liveSessionId).toBeUndefined();
+    // Still the desktop's.
+    expect(a.lookup("sess-1", "desktop")).toEqual({ run: { ...RUN, surface: "desktop" } });
+  });
+
+  test("after promotion the desktop lookup refuses and a plain one resolves to discord", async () => {
+    const a = agentBot();
+    recordDelegateSession(a.file, { ...RUN, surface: "desktop" });
+    expect(await a.run()).toEqual([{ ok: true, threadId: "th1" }]);
+    expect(a.lookup("sess-1", "desktop")).toEqual({ refusal: "I have no record of that run." });
+    expect(a.lookup("sess-1")).toEqual({ run: { ...RUN, surface: "discord" } });
+    expect(a.catalog.get("th1")).toMatchObject({ kind: "thread", title: "Login fix", ownerId: "u1", liveCli: "claude", liveSessionId: "sess-1" });
+  });
+
+  test("resumes restricted with the owner as starter; idle end updates the kept card to offer Continue live", async () => {
+    const a = agentBot();
+    recordDelegateSession(a.file, { ...RUN, surface: "desktop" });
+    await a.run();
+    expect(a.reqs).toEqual([expect.objectContaining({ resume: "sess-1", projectPath: "/p/bean", cli: "claude", prompt: "", model: "sonnet" })]);
+    expect(a.liveSessions.canSteer("th1", "u1")).toBe(true);
+    expect(a.liveSessions.canSteer("th1", "m1")).toBe(false);
+    expect(a.thread.posted[0]).toBe("<@u1> Continued from Bean desktop · moving the claude session here");
+    expect(a.thread.posted.at(-1)).toContain("Restricted mode: only you steer");
+    expect(a.thread.cards).toEqual([expect.objectContaining({ kind: "live-session-result", outcome: "started" })]);
+    a.cbs[0]?.onExit(undefined);
+    await vi.waitFor(() => expect(a.thread.updates.at(-1)).toEqual({
+      id: "act-1", card: expect.objectContaining({ outcome: "ended", resumeLiveId: "sess-1" }),
+    }));
+  });
+
+  test("two concurrent moves of one session start it once; the stale one is partial", async () => {
+    const a = agentBot();
+    recordDelegateSession(a.file, { ...RUN, surface: "desktop" });
+    const acks = (await Promise.all([a.run(), a.run()])).flat();
+    expect(acks).toEqual(expect.arrayContaining([{ ok: true, threadId: "th1" }, { partial: true, threadId: "th1" }]));
+    expect(a.reqs).toHaveLength(1);
+    expect(a.thread.posted).toContain("I couldn't move that session here — it stays in Bean's desktop chat.");
+  });
+
+  test("a resume rejection ends the session visibly and never falls back to a fresh one", async () => {
+    const a = agentBot();
+    recordDelegateSession(a.file, { ...RUN, surface: "desktop" });
+    await a.run();
+    a.cbs[0]?.onExit(new Error(RESUME_REJECTED));
+    await vi.waitFor(() => expect(a.thread.posted).toContain(RESUME_REJECTED));
+    expect(a.liveSessions.has("th1")).toBe(false);
+    expect(a.reqs).toHaveLength(1);
+    expect(a.reqs.every((r) => r.resume === "sess-1")).toBe(true);
   });
 });
 
