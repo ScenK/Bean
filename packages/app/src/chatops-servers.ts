@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   parseChatopsActivity, parseDeskAck, parseDeskSaved, parseRoutineTrigger,
-  type ChatopsActivity, type DeskAckResult, type DeskResume, type DeskTurn, type RoutineTrigger, type RoutineTriggerAnswer, type RoutineTriggerResult,
+  type ChatopsActivity, type DeskAckResult, type DeskContinue, type DeskContinueBody, type DeskContinueResult, type DeskResume, type DeskTurn, type RoutineTrigger, type RoutineTriggerAnswer, type RoutineTriggerResult,
 } from "@bean/core";
 
 export type ChatopsBot = "discord" | "teams";
@@ -29,7 +29,7 @@ export interface SpawnedProcess {
   on(event: "message", cb: (msg: unknown) => void): void;
   /** IPC to the bot (desk turns, desk resumes, sprout-trigger answers). The callback reports a
    * send that never left this process. */
-  send(msg: DeskTurn | DeskResume | RoutineTriggerResult, cb: (err: Error | null) => void): boolean;
+  send(msg: DeskTurn | DeskResume | DeskContinue | RoutineTriggerResult, cb: (err: Error | null) => void): boolean;
   kill(): void;
 }
 
@@ -107,7 +107,7 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
   const enabled = new Set<ChatopsBot>();
   const attempts = new Map<ChatopsBot, number>();
   // Desk turns awaiting their ack, per bot (an ack only settles its own bot's requests).
-  const pending: Record<ChatopsBot, Map<string, { settle: (r: DeskAckResult | Error) => void }>> = { discord: new Map(), teams: new Map() };
+  const pending: Record<ChatopsBot, Map<string, { settle: (r: DeskAckResult | DeskContinueResult | Error) => void }>> = { discord: new Map(), teams: new Map() };
   // Set once by stopAll() at quit. A retry timer can outlive the kill it was scheduled by, and
   // respawning then would recreate exactly the launchd orphan stopAll() exists to prevent —
   // see .memory/safety-chatops-servers-must-die-with-the-app.md.
@@ -155,7 +155,8 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
       }
       const ack = parseDeskAck(msg);
       if (ack) {
-        pending[bot].get(ack.requestId)?.settle("ok" in ack ? { ok: true } : { refused: ack.refused });
+        const { type: _type, requestId, ...result } = ack;
+        pending[bot].get(requestId)?.settle(result);
         return;
       }
       const trigger = parseRoutineTrigger(msg);
@@ -208,16 +209,19 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
 
   // One desk request (turn or resume) and its ack: rejects when the bot isn't running, exits, or
   // doesn't ack in time.
-  const deskRequest = (bot: ChatopsBot, msg: (requestId: string) => DeskTurn | DeskResume): Promise<DeskAckResult> => {
+  // An ack settles only its own request id, so its shape is the one that request's kind answers.
+  const deskRequest = <R extends DeskAckResult | DeskContinueResult = DeskAckResult>(
+    bot: ChatopsBot, msg: (requestId: string) => DeskTurn | DeskResume | DeskContinue,
+  ): Promise<R> => {
     const child = procs.get(bot);
     if (!child) return Promise.reject(new Error(`${bot} bot is not running`));
     const requestId = randomUUID();
-    return new Promise<DeskAckResult>((resolve, reject) => {
+    return new Promise<R>((resolve, reject) => {
       const timer = setTimeout(() => settle(new Error(`${bot} bot didn't answer`)), DESK_ACK_TIMEOUT_MS);
-      const settle = (r: DeskAckResult | Error): void => {
+      const settle = (r: DeskAckResult | DeskContinueResult | Error): void => {
         if (!pending[bot].delete(requestId)) return;
         clearTimeout(timer);
-        if (r instanceof Error) reject(r); else resolve(r);
+        if (r instanceof Error) reject(r); else resolve(r as R);
       };
       pending[bot].set(requestId, { settle });
       try {
@@ -263,6 +267,12 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
      * live). Same ack contract as deskTurn. */
     deskResume(bot: ChatopsBot, conversationId: string): Promise<DeskAckResult> {
       return deskRequest(bot, (requestId) => ({ type: "desk-resume", requestId, conversationId }));
+    },
+
+    /** Continue in Discord (#695): asks the bot to open a thread under a channel and carry this
+     * chat over. Same ack contract as deskTurn; ok and `partial` carry the new thread's id. */
+    deskContinue(bot: ChatopsBot, body: DeskContinueBody): Promise<DeskContinueResult> {
+      return deskRequest<DeskContinueResult>(bot, (requestId) => ({ type: "desk-continue", requestId, ...body }));
     },
 
     stopAll(): void {

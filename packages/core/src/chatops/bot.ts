@@ -30,11 +30,11 @@ import { BAD_SESSION_ID, isLiveSessionId, isValidSessionId, resumeCommand, type 
 import { LIVE_CLIS, isLiveCli, type LiveCli } from "../live-session.js";
 import { TURN_QUEUE_FULL } from "../turn-live-session.js";
 import type { CardBuilders } from "./cards-api.js";
-import { formatAmbientBlock, formatRepliedBlock, REPLIED_UNAVAILABLE, type AmbientMessage, type RepliedMessage } from "./ambient.js";
+import { formatAmbientBlock, formatCarriedBlock, formatRepliedBlock, REPLIED_UNAVAILABLE, type AmbientMessage, type RepliedMessage } from "./ambient.js";
 import { memoryUpdatesFor, resolveCliModel } from "./resolve.js";
 import type { ConversationStore } from "./conversation.js";
 import type { ConversationCatalog, ConversationPlace } from "./catalog.js";
-import { MAX_DESK_TEXT, type DeskAckResult, type DeskRefusal } from "./desk.js";
+import { MAX_DESK_TEXT, type DeskAckResult, type DeskContinueBody, type DeskContinueResult, type DeskRefusal } from "./desk.js";
 import { maybeCompact } from "./compact.js";
 import { MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposalStore } from "./proposals.js";
 import type { NoteProposalStore } from "./note-proposals.js";
@@ -343,6 +343,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     req: { conversationId: string },
     effects: () => Promise<{ fx: BotEffects }>,
     ack: (r: DeskAckResult) => void,
+  ) => Promise<void>;
+  /** The owner's desk Continue in Discord (#695): `openThread` opens a thread for `req` (no
+   * fallback — a failure refuses `thread-failed` with nothing written) and returns its effects and
+   * the owner's mention. The thread is catalogued as the configured owner's, a plain chat's tail is
+   * saved once as a framed user-role turn (no memory capture), and a first post mentions the owner.
+   * `ack` once: ok + threadId, `partial` + threadId when a step after the thread failed, or a refusal. */
+  onDeskContinue: (
+    req: DeskContinueBody,
+    openThread: (ownerId: string) => Promise<{ threadId: string; fx: BotEffects; mention: string }>,
+    ack: (r: DeskContinueResult) => void,
   ) => Promise<void>;
 } {
   const chimeIn = deps.chatter && makeChimeIn({
@@ -1533,6 +1543,33 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       } finally {
         deskResuming.delete(conv);
       }
+    },
+
+    async onDeskContinue(req, openThread, ack): Promise<void> {
+      const catalog = deps.catalog;
+      // The owner is the configured one now, never anyone the request names.
+      const ownerId = deps.roles.ownerId;
+      if (!ownerId) return ack({ refused: "no-owner" });
+      if (!catalog) return ack({ refused: "no-record" });
+      if (req.mode !== "chat") return ack({ refused: "unsupported" }); // agent mode: #696
+      let thread: { threadId: string; fx: BotEffects; mention: string };
+      try {
+        thread = await openThread(ownerId);
+      } catch (err) {
+        console.warn("bean: desk continue thread failed:", err instanceof Error ? err.name : "error");
+        return ack({ refused: "thread-failed" });
+      }
+      const { threadId, fx, mention } = thread;
+      try {
+        catalog.upsert({ conversationId: threadId, place: { kind: "thread", title: req.title }, ownerId });
+        deps.conversations.append(threadId, { role: "user", content: formatCarriedBlock(req.tail, req.count) });
+        // Neither the title nor the tail goes in the post: the only mention is the owner's.
+        await fx.post(`${mention} Continued from Bean desktop · ${req.count} message${req.count === 1 ? "" : "s"} carried over`);
+      } catch (err) {
+        console.warn("bean: desk continue step failed:", err instanceof Error ? err.name : "error");
+        return ack({ partial: true, threadId });
+      }
+      ack({ ok: true, threadId });
     },
 
     onAmbient(conversationId, scopeId, fx, line) {

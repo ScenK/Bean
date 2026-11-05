@@ -74,6 +74,15 @@ Bean has two chat adapters over one shared brain:
   for a desk turn: every effect goes proactive on the stored `teams-conversations.json` ref
   (`proactive.ts`'s `refFor` — bare channel id finds the ref, the full `;messageid=` id is the
   send target, same as the outbox); a conversation with no stored ref fails the echo → `post-failed`.
+- **Desk continue** (#695, `desk-continue`): app → bot `{ mode: "chat", channelId, title, tail,
+  count }` (agent mode `sessionId`, refused `unsupported` until #696); mixed or over-cap payloads
+  are dropped. `bot.onDeskContinue` takes the owner from config (never the request), asks the
+  surface's `openThread` (Discord: GuildText + CreatePublicThreads + SendMessagesInThreads, OneDay,
+  **no channel fallback**), catalogs it, saves the tail once as a framed `> `-quoted user turn
+  (`formatCarriedBlock`; no memory capture), and posts `<@owner> Continued from Bean desktop · N
+  messages carried over` with `allowedMentions: { users: [owner] }`. Ack is ok + `threadId`,
+  `partial` + `threadId` (thread made, a later step failed), or a fixed refusal — still no text.
+  `DeskContinueResult` is its own type so turn/resume consumers never see `partial`.
 - **Sprout triggers** (#637, `chatops/sprout-bridge.ts`): an app-spawned bot has no scheduler
   (`BEAN_HEADLESS_ROUTINES` is cleared), so its sprout-run card tap sends `routine-trigger
   {requestId, name, action, origin}` over the same IPC slot (still no message text bot → app). The app

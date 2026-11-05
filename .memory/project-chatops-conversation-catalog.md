@@ -1,13 +1,16 @@
 # Chatops conversation catalog (#527)
 
 `bean.db`'s `chatops_conversations` (core `chatops/catalog.ts`) lists the chatops conversations
-the owner can continue from the desktop (epic #526). Only the bot writes it, on two events:
+the owner can continue from the desktop (epic #526). Only the bot writes it, on three events:
 
 - a **DM turn whose speaker is the owner** (kind `dm`, title "DM");
 - a **live session the owner started** (card tap with `role === "owner"`; kind/title from the
   surface's `CardAction.place`), bound to that session's CLI. A fresh session's id lands only
   after `LiveSessionRegistry` wrote its `delegate_runs` row (a failed write leaves it unset); a
   resume binds its known id up front. A `/new` after launch fences out a late id.
+- a **desk-continue** (#695, Continue in Discord): the thread the bot just opened, kind `thread`,
+  owner = the configured owner id (`Roles.ownerId`; unset refuses `no-owner`). Written only after
+  the thread exists — a failed `threads.create` writes nothing (`thread-failed`).
 
 Never catalogued: a member's DM, a member-started session (even with the owner as co-driver),
 an owner turn in a channel without a live session. Eligibility is about the owner's own
