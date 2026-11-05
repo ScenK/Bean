@@ -16,7 +16,7 @@ channel id). Not `chatops_conversations` — that one is the owner-only continua
   Lost access or `channelDelete` → `forgetDestination`, which never deletes an aliased row.
   Every call is wrapped — a failed record must not fail a turn or throw a delivery into retry.
 - **Settings UI (#686):** `app/src/destinations.ts` (IPC `destinations*`) feeds core the sprout
-  references (`aliasUsers` over `loadRoutines`: a chat sink's `alias`, landing in #687) and a
+  references (`aliasUsers` over `loadRoutines`: a chat sink's `alias`) and a
   "1:1 · <speaker>" hint from `ambientSpeakers` for rows with no platform name. The renderer
   (`settings/DestinationsList.tsx`) disables Rename/Clear for referenced aliases; core still
   refuses them, so the disabled button is UX only.
@@ -29,3 +29,13 @@ channel id). Not `chatops_conversations` — that one is the owner-only continua
 - **Matching is server-side** (`matchDestination(query, rows)`): exact → normalized → all query
   tokens → substring → edit distance (pick ≥ 0.75 and ≥ 0.05 over the runner-up). Several hits at
   a stage = no pick. Callers pass only in-scope rows; the model never supplies an id.
+- **Sprout sinks (#687):** `RoutineChatopsSink.alias` (exclusive with `channel`/`user`) is resolved
+  by `resolveSinkAlias` at enqueue (`deliverDigest` reads `listDestinations` per digest, so a
+  retarget applies to the next run). Unknown alias / wrong platform: the scheduler's
+  `sinkProblems` dep marks the run needs-attention with `⚠` lines in the digest *before* the
+  record is saved, and the sink posts nowhere — never fall back to the owner DM (an alias-less
+  sink means DM). User saves (editor, builder) refuse an unknown alias in `main.ts`
+  (`saveKnownSinks`); `chatRoutineProblem` resolves via the bot's `routines.destinations` first.
+  Editor (`DestinationPicker.tsx`): picking an unnamed row names it immediately (label, `" 2"` on
+  a clash); a raw id with a known row gets "Name it" (`destinationsNameRaw`), which rewrites that
+  id → alias in every sprout using it.

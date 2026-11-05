@@ -177,6 +177,7 @@ export const IPC = {
   destinationsName: "bean:destinations-name",
   destinationsClear: "bean:destinations-clear",
   destinationsRetarget: "bean:destinations-retarget",
+  destinationsNameRaw: "bean:destinations-name-raw",
   skillProposalsList: "bean:skill-proposals-list",
   skillProposalsApprove: "bean:skill-proposals-approve",
   skillProposalsReject: "bean:skill-proposals-reject",

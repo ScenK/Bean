@@ -6,12 +6,15 @@ import { isValidCron, nextRun } from "./cron.js";
 import { describeWatchWindowError, type WatchWindow } from "./watch-window.js";
 import { CLI_NAMES, type CliName } from "./launcher.js";
 import type { CliModels } from "./cli-models.js";
+import type { Destination } from "./destinations.js";
 import { describeContinueErrors, describeEdgeError, describeGroupErrors } from "./routine-graph.js";
 
 // Absent/empty channel = DM the user directly (the default); a non-empty channel targets a
 // specific discord channel id or teams conversation id instead.
 // `user` (Discord only, exclusive with `channel`): DM that Discord user id instead of the owner.
-export interface RoutineChatopsSink { transport: "teams" | "discord"; channel?: string; user?: string }
+// `alias` (exclusive with both): a named `chat_destinations` row, resolved to its id at enqueue —
+// renaming the target is one retarget in Settings, not an edit per sprout.
+export interface RoutineChatopsSink { transport: "teams" | "discord"; channel?: string; user?: string; alias?: string }
 /** `chatopsOnlyOnProblems`: the chatops sinks post only when a run isn't `ok` (failed /
  * needs-attention); note, notify and run history still get every run. Absent = every run. */
 export interface RoutineSinks { chatops?: RoutineChatopsSink[]; chatopsOnlyOnProblems?: boolean; note?: boolean; notify?: boolean }
@@ -242,6 +245,10 @@ export function describeRoutineError(v: unknown, cliModels?: CliModels[]): strin
       if (typeof cs !== "object" || cs === null) return `${at} is malformed`;
       if (cs.transport !== "teams" && cs.transport !== "discord") return `${at} needs transport "teams" or "discord"`;
       if (cs.channel !== undefined && !str(cs.channel)) return `${at} has an invalid channel`;
+      if (cs.alias !== undefined) {
+        if (!str(cs.alias) || !cs.alias.trim()) return `${at} has an invalid destination name`;
+        if (cs.channel !== undefined || cs.user !== undefined) return `${at} can't have a destination name and a channel or user`;
+      }
       if (cs.user !== undefined) {
         if (!str(cs.user) || !cs.user.trim()) return `${at} has an invalid user`;
         if (cs.channel !== undefined) return `${at} can't have both a channel and a user`;
@@ -264,7 +271,7 @@ export function isValidRoutine(v: unknown): v is Routine {
  * channel, which would bypass the recipient check. */
 export function chatRoutineProblem(
   v: unknown, transport: RoutineChatopsSink["transport"], recipients: { id: string }[],
-  cliModels?: CliModels[], channelId?: string,
+  cliModels?: CliModels[], channelId?: string, destinations: readonly Destination[] = [],
 ): string | null {
   const error = describeRoutineError(v, cliModels);
   if (error) return error;
@@ -277,7 +284,11 @@ export function chatRoutineProblem(
   if (r.steps.some((s) => s.kind === "command") || r.watch?.kind === "command") {
     return "command steps and command watches can't be set up from chat — add them on the desktop";
   }
-  for (const s of r.sinks.chatops ?? []) {
+  for (const sink of r.sinks.chatops ?? []) {
+    // A named destination is checked as the conversation it names.
+    const resolved = sink.alias === undefined ? undefined : resolveSinkAlias(sink, destinations);
+    if (resolved && "error" in resolved) return resolved.error;
+    const s = resolved ? { transport: sink.transport, channel: resolved.channel } as RoutineChatopsSink : sink;
     if (s.transport !== transport) return `only ${transport === "discord" ? "Discord" : "Teams"} delivery can be set up from this chat`;
     if (s.user !== undefined && !recipients.some((p) => p.id === s.user)) {
       return `user ${s.user} isn't the owner or a member — sprouts only DM the owner and members`;
@@ -287,6 +298,30 @@ export function chatRoutineProblem(
     }
   }
   return null;
+}
+
+const SURFACE = { discord: "Discord", teams: "Teams" } as const;
+
+/** A chat sink's alias → the conversation it names now, or why it can't be delivered. Never a
+ * fallback: an unresolved alias posts nowhere (not to the owner's DM). */
+export function resolveSinkAlias(
+  sink: RoutineChatopsSink, destinations: readonly Destination[],
+): { channel: string } | { error: string } {
+  const row = destinations.find((d) => d.alias === sink.alias);
+  if (!row) return { error: `chat destination "${sink.alias}" isn't known — pick it again in the sprout's editor` };
+  if (row.surface !== sink.transport) {
+    return { error: `chat destination "${sink.alias}" is a ${SURFACE[row.surface]} conversation, but this sink posts to ${SURFACE[sink.transport]}` };
+  }
+  return { channel: row.conversationId };
+}
+
+/** Every alias sink of `routine` that can't be delivered, as user-facing lines. */
+export function sinkAliasProblems(routine: Routine, destinations: readonly Destination[]): string[] {
+  return (routine.sinks.chatops ?? []).flatMap((s) => {
+    if (s.alias === undefined) return [];
+    const r = resolveSinkAlias(s, destinations);
+    return "error" in r ? [r.error] : [];
+  });
 }
 
 /** A step that runs a CLI or shell with the todo text as its input — owner-only (#283). */

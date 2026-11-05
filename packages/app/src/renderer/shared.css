@@ -2368,6 +2368,7 @@ button, input, textarea, select, a {
   font-size: 12px;
 }
 .bean-routines-sink-group { display: flex; flex-direction: column; gap: 6px; }
+.bean-routines-sink-dest { display: flex; flex-direction: column; gap: 4px; }
 .bean-routines-sink-add {
   align-self: flex-start;
   background: none;

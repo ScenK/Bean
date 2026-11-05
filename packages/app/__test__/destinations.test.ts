@@ -10,10 +10,10 @@ import { aliasUsers, buildDestinationHandlers } from "../src/destinations.js";
 
 const sprout = (name: string, alias?: string): Routine => ({
   name, enabled: true, cron: "0 9 * * *", steps: [{ kind: "chat", instruction: "x" }],
-  sinks: { chatops: [{ transport: "discord", ...(alias ? { alias } : {}) } as never] },
+  sinks: { chatops: [{ transport: "discord", ...(alias ? { alias } : {}) }] },
 });
 
-function setup(routines: Routine[] = []) {
+function setup(routines: Routine[] = [], saved: Routine[] = []) {
   const file = join(mkdtempSync(join(tmpdir(), "bean-app-dest-")), "bean.db");
   recordDestination(file, { surface: "discord", conversationId: "d1", kind: "channel", platformName: "ops", parentName: "Guild" });
   recordDestination(file, { surface: "discord", conversationId: "d2", kind: "channel", platformName: "ops-2", parentName: "Guild" });
@@ -21,6 +21,7 @@ function setup(routines: Routine[] = []) {
   const h = buildDestinationHandlers({
     dbFile: file,
     loadRoutines: async () => routines,
+    saveRoutine: async (r) => { saved.push(r); },
     owners: async () => [{ ownerName: "Scen" }],
     listDestinations: (f) => listDestinations(f),
     destinationLabel,
@@ -71,4 +72,21 @@ test("malformed renderer input is rejected before it reaches the store", async (
   await expect(h.name("slack", "d1", "x")).rejects.toThrow("malformed");
   await expect(h.clear("discord", 5)).rejects.toThrow("malformed");
   await expect(h.retarget(7, "discord", "d1")).rejects.toThrow("malformed");
+});
+
+test("Name it on a raw id names the conversation and rewrites that id to the alias in every sprout using it", async () => {
+  const raw = (name: string, channel: string): Routine => ({
+    name, enabled: true, cron: "0 9 * * *", steps: [{ kind: "chat", instruction: "x" }],
+    sinks: { note: true, chatops: [{ transport: "discord" }, { transport: "discord", channel }, { transport: "teams", channel }] },
+  });
+  const saved: Routine[] = [];
+  const { file, h } = setup([raw("a", "d1"), raw("b", "d2"), raw("c", "d1")], saved);
+  expect(await h.nameRaw("discord", "d1", "  Ops   room ")).toEqual({ ok: true, alias: "Ops room", sprouts: ["a", "c"] });
+  expect(listDestinations(file).find((r) => r.conversationId === "d1")?.alias).toBe("Ops room");
+  expect(saved.map((r) => r.name)).toEqual(["a", "c"]);
+  // Only the matching platform's raw id changes; the DM and the Teams sink stay as they were.
+  expect(saved[0]?.sinks).toEqual({ note: true, chatops: [
+    { transport: "discord" }, { transport: "discord", alias: "Ops room" }, { transport: "teams", channel: "d1" },
+  ] });
+  expect(await h.nameRaw("discord", "nope", "X")).toMatchObject({ ok: false });
 });

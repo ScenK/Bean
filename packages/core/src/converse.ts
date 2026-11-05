@@ -8,6 +8,7 @@ import type { CliName } from "./launcher.js";
 import type { AvailableModel } from "./models.js";
 import { isLiveCli, type LiveCli } from "./live-session.js";
 import { chatRoutineProblem, type Routine } from "./routine-store.js";
+import type { Destination } from "./destinations.js";
 import type { CliModels } from "./cli-models.js";
 import type { SproutRunPlan } from "./sprout-trigger.js";
 
@@ -77,6 +78,8 @@ export interface RoutineAuthoring {
   recipients: { id: string; name: string }[];
   channelId?: string;
   cliModels?: CliModels[];
+  /** Named chat destinations: an alias sink is checked as the conversation it names. */
+  destinations?: Destination[];
 }
 /** A queue item draft awaiting user confirmation — todos are never queued silently. */
 export interface ProposedTodo { routine: string; text: string; }
@@ -912,7 +915,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
         continue;
       }
       // An invalid draft still reaches the card, which shows the reason instead of a Save button.
-      const problem = chatRoutineProblem(parsed, routineAuthoring.transport, routineAuthoring.recipients, routineAuthoring.cliModels, routineAuthoring.channelId);
+      const problem = chatRoutineProblem(parsed, routineAuthoring.transport, routineAuthoring.recipients, routineAuthoring.cliModels, routineAuthoring.channelId, routineAuthoring.destinations);
       return {
         reply: content,
         model: deps.model,

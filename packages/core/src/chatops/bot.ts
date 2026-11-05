@@ -11,6 +11,7 @@ import { extractMemories, memoryCategories } from "../memory/extract.js";
 import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
 import { chatRoutineProblem, todoRunHint, type Routine } from "../routine-store.js";
+import type { Destination } from "../destinations.js";
 import type { TodoItem } from "../todo-store.js";
 import type { SproutTriggerAnswer } from "./sprout-bridge.js";
 import { planSproutRun, sproutCheckText, type SproutRunBlock } from "../sprout-trigger.js";
@@ -242,6 +243,9 @@ export interface TeamsBotDeps {
     create: (routine: Routine) => Promise<void>;
     notifyOwner: (text: string) => Promise<void>;
     recipients: () => Promise<{ id: string; name: string }[]>;
+    /** Named chat destinations, so a draft's alias sink is checked as the conversation it names.
+     * Absent = an alias sink is refused as unknown. */
+    destinations?: () => Destination[];
     proposals: RoutineProposalStore;
     /** Run or check a sprout now (#636) — where this process owns the scheduler (headless
      * Discord) or asks the app that spawned it over IPC (#637, `parentSproutTrigger`). `trigger`
@@ -958,7 +962,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       await fx.post(`Couldn't save the sprout: ${problem}`);
     };
     // Re-validated at save: the household or clis.json may have changed while the card sat.
-    const problem = pending.proposal.problem ?? chatRoutineProblem(routine, r.transport, recipients, deps.cliModels, pending.channelId);
+    const problem = pending.proposal.problem ?? chatRoutineProblem(routine, r.transport, recipients, deps.cliModels, pending.channelId, r.destinations?.());
     if (problem) {
       await fail(problem);
       return;
@@ -1497,6 +1501,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
               recipients: await deps.routines.recipients(),
               ...(msg.direct || !msg.scopeId ? {} : { channelId: msg.scopeId }),
               cliModels: deps.cliModels,
+              ...(deps.routines.destinations ? { destinations: deps.routines.destinations() } : {}),
             }
           : undefined;
         // Owner only, and only where this process runs the scheduler (headless).

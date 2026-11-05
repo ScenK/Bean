@@ -7,7 +7,7 @@ import {
   RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
   makeRoles, makeChatter, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, parseChatterCommand, RoutineProposalStore, SproutRunProposalStore, type Role,
-  parentSproutTrigger, processParentPort, sproutRunFacts, recordDestination, forgetDestination,
+  parentSproutTrigger, processParentPort, sproutRunFacts, recordDestination, forgetDestination, listDestinations,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, MessageReferenceType, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -146,6 +146,7 @@ const bot = buildTeamsBot({
     recipients: () => Promise.all([discordConfig.ownerId, ...discordConfig.memberIds].map(async (id) => ({
       id, name: await client.users.fetch(id).then((u) => u.displayName, () => id),
     }))),
+    destinations: () => listDestinations(dbFile(dir), "discord"),
     proposals: new RoutineProposalStore(),
     // Headless: this process owns the scheduler. App-spawned: the app does. Standalone without
     // headless routines: nothing to trigger.

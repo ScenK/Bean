@@ -1421,6 +1421,8 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     deps.destinationHandlers.name(surface, conversationId, alias));
   ipcMain.handle(IPC.destinationsClear, (_e, surface: unknown, conversationId: unknown) =>
     deps.destinationHandlers.clear(surface, conversationId));
+  ipcMain.handle(IPC.destinationsNameRaw, (_e, surface: unknown, conversationId: unknown, alias: unknown) =>
+    deps.destinationHandlers.nameRaw(surface, conversationId, alias));
   ipcMain.handle(IPC.destinationsRetarget, (_e, alias: unknown, surface: unknown, conversationId: unknown) =>
     deps.destinationHandlers.retarget(alias, surface, conversationId));
 
