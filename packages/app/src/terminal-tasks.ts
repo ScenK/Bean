@@ -27,7 +27,8 @@ export type TerminalEvent = { mountId: string; tabId: string } & (
   | { type: "exit"; code: number; signal?: number }
 );
 
-export type TerminalStartResult = { cwd: string } | { error: string };
+/** `shell` is the shell's display name (an idle tab's title). */
+export type TerminalStartResult = { cwd: string; shell: string } | { error: string };
 
 /** Largest single write (a paste) main accepts; the renderer chunks anything bigger. */
 export const WRITE_LIMIT = 64 * 1024;
@@ -228,8 +229,9 @@ export function createTerminalTasks(deps: TerminalTasksDeps) {
         t.settle();
         return { error: "Stopped before it started." };
       }
+      const shell = deps.shell ?? accountShell();
       try {
-        t.pty = deps.spawn(deps.shell ?? accountShell(), ["-l"], {
+        t.pty = deps.spawn(shell, ["-l"], {
           name: "xterm-256color", cols, rows, cwd,
           env: spawnEnv({
             TERM: "xterm-256color", COLORTERM: "truecolor", PWD: cwd,
@@ -256,7 +258,7 @@ export function createTerminalTasks(deps: TerminalTasksDeps) {
       });
       ensurePoll();
       if (stale) emit(t, { type: "data", data: STALE_PROJECT_NOTICE });
-      return { cwd };
+      return { cwd, shell: commandName(shell) };
     },
 
     /** Keystrokes/paste. False = refused (no such tab, wrong shape, or past WRITE_LIMIT). */

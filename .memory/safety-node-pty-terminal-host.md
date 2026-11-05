@@ -17,9 +17,10 @@ breaks rules the rest of the app gets for free. All four of these are load-beari
 - **Loaded lazily** (`createRequire` in main.ts's factory), so a broken native module fails one
   terminal's start, never app boot.
 - **Kill:** interactive shells ignore SIGTERM — stop sends SIGHUP to the `killTree` snapshot (so
-  `cmd &` jobs in their own groups die too) and escalates to SIGKILL. Exit paths: chat release
-  (the window's `closed` releases every chat), `before-quit`, and the updater's relaunch hook
+  `cmd &` jobs in their own groups die too) and escalates to SIGKILL, per tab. Exit paths: chat
+  release stops every tab (the window's `closed` releases every chat), `before-quit`, and the updater's relaunch hook
   (`app.relaunch()` skips before-quit; not on a rolled-back install). Every start re-checks the
   cwd with `projectAllowed` after its await; a refused/stale project opens the scratch workspace.
 
-Verify packaged changes with a real `pnpm dist:mac` and spawn from inside `Bean.app`.
+Verify packaged changes with a real `pnpm dist:mac` and spawn from inside `Bean.app` (tabs: four
+shells, all gone after window close and after quit).

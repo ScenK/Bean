@@ -8,6 +8,7 @@ import {
   LABEL_LIMIT, imageLabel, nextImageNumber, withImagePaths,
 } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
+import type { TabShortcut } from "./TerminalPane.js";
 import { normalizeForSave, restoreItems, threadTitle } from "./chat-thread.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt } from "@bean/core/prompt";
@@ -105,14 +106,23 @@ export function attachDelegateTaskId(
   return { items: next, loopbacks };
 }
 
-/** Running tasks in one chat, for the window-close card. `terminal` is the command running in its
- * shell's foreground (main's fresh check), only while one runs — an idle shell closes silently. */
-export interface ChatTasks { delegates: number; live?: LiveCli; terminal?: string }
+/** Running tasks in one chat, for the window-close card. `terminal` is the command running in each
+ * busy tab's foreground (main's fresh check), set only while one runs — idle shells close silently. */
+export interface ChatTasks { delegates: number; live?: LiveCli; terminal?: string[] }
+
+/** Running commands for a card: "npm", "npm and vim", "npm, vim + 1 more". */
+export function commandList(cmds: string[]): string {
+  if (cmds.length <= 2) return cmds.join(" and ");
+  return `${cmds.slice(0, 2).join(", ")} + ${cmds.length - 2} more`;
+}
 
 /** The leave card for a chat that's discarded on leaving (off the record, or empty), if it has work. */
 export function leaveTitle(t: ChatTasks): string | undefined {
   const task = t.delegates > 0 || t.live !== undefined;
-  if (t.terminal) return `Leaving discards this chat and stops ${task ? "its task and " : ""}${t.terminal} in its terminal.`;
+  const cmds = t.terminal ?? [];
+  if (cmds.length > 0) {
+    return `Leaving discards this chat and stops ${task ? "its task and " : ""}${commandList(cmds)} in its terminal${cmds.length > 1 ? "s" : ""}.`;
+  }
   return task ? "Leaving discards this chat and stops its task." : undefined;
 }
 
@@ -144,6 +154,8 @@ export interface ChatSessionApi {
   sweep: () => void;
   /** Control+` while this chat is shown: fold/unfold its terminal pane. */
   toggleTerminal: () => void;
+  /** A terminal tab shortcut while this chat is shown. */
+  terminalShortcut: (s: TabShortcut) => void;
 }
 
 export interface ChatSessionProps {
@@ -280,9 +292,11 @@ export function ChatSession({
   // This chat's terminal pane (TerminalPane): folded by default, never persisted.
   const [terminalOpen, setTerminalOpen] = useState(false);
   const toggleTerminal = (): void => setTerminalOpen((o) => !o);
-  // Its shell is running (idle or busy) — that alone keeps a hidden chat mounted.
-  const shellRef = useRef(false);
-  const onShell = (alive: boolean): void => { shellRef.current = alive; onTerminal(alive); };
+  // How many of its tabs hold a running shell (idle or busy) — any keeps a hidden chat mounted.
+  const shellRef = useRef(0);
+  const onShells = (count: number): void => { shellRef.current = count; onTerminal(count > 0); };
+  // The pane's tab-shortcut handler (Cmd+T / Cmd+1…4 / Cmd+Shift+[ ]), set by TerminalPane.
+  const terminalShortcutRef = useRef<((s: TabShortcut) => void) | null>(null);
   // A discarding leave is awaiting main's terminal check: a second pick meanwhile is ignored.
   const leavingRef = useRef(false);
   // The agent's model for the next fresh start ("" = its own default).
@@ -1045,15 +1059,14 @@ export function ChatSession({
   // queued (a loopback), a delegate starting or running, a live session, or a shell (a dev server
   // never finishes — release would kill it).
   const hasWork = (): boolean => busyRef.current || queuedSendsRef.current.length > 0 || liveRef.current !== undefined
-    || shellRef.current || hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size);
+    || shellRef.current > 0 || hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size);
   const tasks = async (): Promise<ChatTasks> => {
-    // ponytail: the first running command only, until the close card lists every tab (#675).
-    const terminal = shellRef.current ? (await window.bean.terminalRunning(mountId).catch(() => []))[0] : undefined;
+    const terminal = shellRef.current > 0 ? await window.bean.terminalRunning(mountId).catch(() => []) : [];
     return {
       delegates: Math.max(pendingDelegateStartsRef.current.size,
         itemsRef.current.filter((it) => it.kind === "delegate" && (it.state === "starting" || it.state === "running")).length),
       ...(liveRef.current ? { live: liveRef.current.agent } : {}),
-      ...(terminal ? { terminal } : {}),
+      ...(terminal.length > 0 ? { terminal } : {}),
     };
   };
   // The sidebar spinner follows the same work, from state — a live session only while its turn runs
@@ -1104,7 +1117,7 @@ export function ChatSession({
     if (target === "new" ? !threadRef.current && itemsRef.current.length === 0 : target === threadRef.current?.id) return;
     // Discarded on leaving: off the record, or an empty chat holding a shell (no thread, so no
     // sidebar row to come back to — kept hidden, it would be unreachable).
-    if (incognitoRef.current || (shellRef.current && !threadRef.current && itemsRef.current.length === 0)) {
+    if (incognitoRef.current || (shellRef.current > 0 && !threadRef.current && itemsRef.current.length === 0)) {
       leavingRef.current = true;
       void tasks().then((t) => {
         leavingRef.current = false;
@@ -1146,8 +1159,8 @@ export function ChatSession({
     // The session dies with its chat anyway (main's stopMount/stopOwner); stopping now is just
     // sooner, and leaves its Continue live row in the transcript.
     endSession();
-    // Likewise the shell (release stops it): resolves once it and its jobs are gone.
-    if (shellRef.current) await window.bean.terminalStop(mountId).catch(() => undefined);
+    // Likewise every tab's shell (release stops them): resolves once they and their jobs are gone.
+    if (shellRef.current > 0) await window.bean.terminalStop(mountId).catch(() => undefined);
   };
 
   // Rendered into the shell's registry, so its once-registered listeners reach this chat. Removed
@@ -1175,6 +1188,7 @@ export function ChatSession({
     closeOut,
     sweep,
     toggleTerminal,
+    terminalShortcut: (sc) => terminalShortcutRef.current?.(sc),
   });
   useLayoutEffect(() => () => { sessions.delete(mountId); }, []);
 
@@ -1203,7 +1217,9 @@ export function ChatSession({
         mountId={mountId}
         terminalOpen={terminalOpen}
         onToggleTerminal={toggleTerminal}
-        onShell={onShell}
+        onTerminalOpen={setTerminalOpen}
+        onShells={onShells}
+        terminalShortcut={terminalShortcutRef}
         items={items}
         busy={busy || evicting}
         model={model}
