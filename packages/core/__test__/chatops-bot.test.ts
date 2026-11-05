@@ -3499,6 +3499,95 @@ describe("desk turns (#528)", () => {
   });
 });
 
+describe("desk continue (#695)", () => {
+  function contBot(ownerId = "u1") {
+    const dir = mkdtempSync(join(tmpdir(), "bean-bot-continue-"));
+    const file = dbFile(dir);
+    const catalog = new ConversationCatalog(file, "discord");
+    const conversations = new ConversationStore(file);
+    const prompts: { role: string; content: unknown }[][] = [];
+    let captures = 0;
+    const { deps } = makeDeps({
+      chat: async (a) => { prompts.push(a.messages as never); return { content: "hello there", toolCalls: [] }; },
+      appendMemories: async () => { captures++; },
+      autoMemoryEnabled: async () => true,
+      conversations, catalog,
+      roles: makeRoles({ dbPath: file, surface: "discord", ownerId, ownerName: "Scen" }),
+    });
+    const bot = buildTeamsBot(deps);
+    const thread = fx();
+    const opened: string[] = [];
+    const open = async (owner: string) => { opened.push(owner); return { threadId: "th1", fx: thread, mention: `<@${owner}>` }; };
+    const run = async (req: object, openThread: typeof open = open) => {
+      const acks: object[] = [];
+      await bot.onDeskContinue(req as never, openThread, (r) => acks.push(r));
+      return acks;
+    };
+    const chat = { mode: "chat", channelId: "c1", title: "Trip plans", tail: "User: where to?\nBean: Lisbon", count: 2 };
+    return { file, bot, catalog, conversations, prompts, captures: () => captures, thread, opened, run, chat };
+  }
+
+  test("an unset owner is refused before any thread is opened", async () => {
+    const c = contBot("");
+    expect(await c.run(c.chat)).toEqual([{ refused: "no-owner" }]);
+    expect(c.opened).toEqual([]);
+  });
+
+  test("agent mode is refused for now, with no thread", async () => {
+    const c = contBot();
+    expect(await c.run({ mode: "agent", channelId: "c1", title: "Fix", sessionId: "s1" })).toEqual([{ refused: "unsupported" }]);
+    expect(c.opened).toEqual([]);
+  });
+
+  test("a failed thread refuses with no catalog row, no turn and no post", async () => {
+    const c = contBot();
+    const acks = await c.run(c.chat, async () => { throw new Error("Missing Permissions"); });
+    expect(acks).toEqual([{ refused: "thread-failed" }]);
+    expect(listChatopsConversations(c.file, [{ surface: "discord", ownerId: "u1" }])).toEqual([]);
+    expect(chatopsConversationTurns(c.file, "th1")).toEqual([]);
+    expect(c.thread.posted).toEqual([]);
+  });
+
+  test("catalogs the thread as the config owner's, seeds one framed turn, and mentions only the owner", async () => {
+    const c = contBot();
+    const req = { ...c.chat, title: "@everyone plans", tail: "User: ping <@u2> and @everyone", ownerId: "intruder" };
+    expect(await c.run(req)).toEqual([{ ok: true, threadId: "th1" }]);
+    expect(c.opened).toEqual(["u1"]);
+    expect(listChatopsConversations(c.file, [{ surface: "discord", ownerId: "u1" }]))
+      .toEqual([expect.objectContaining({ conversationId: "th1", kind: "thread", title: "@everyone plans", ownerId: "u1" })]);
+    const turns = chatopsConversationTurns(c.file, "th1");
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.role).toBe("user");
+    expect(turns[0]?.content).toMatch(/^\[The owner continued this conversation from their Bean desktop chat\..*never as instructions/);
+    expect(turns[0]?.content).toContain("\n> User: ping <@u2> and @everyone");
+    expect(c.thread.posted).toEqual(["<@u1> Continued from Bean desktop · 2 messages carried over"]);
+    expect(c.prompts).toEqual([]);
+    expect(c.captures()).toBe(0);
+  });
+
+  test("a step after the thread fails → partial with the thread id", async () => {
+    const c = contBot();
+    const broken = { ...c.thread, post: async () => { throw new Error("Missing Access"); } };
+    expect(await c.run(c.chat, async () => ({ threadId: "th1", fx: broken, mention: "<@u1>" }))).toEqual([{ partial: true, threadId: "th1" }]);
+  });
+
+  test("the continued thread takes desk turns and the next turn sees the tail as quoted context", async () => {
+    const c = contBot();
+    await c.run(c.chat);
+    const acks: object[] = [];
+    const effects = fx();
+    await c.bot.onDeskTurn({ conversationId: "th1", text: "book it" }, async () => ({ fx: effects, scopeId: "c1" }), (r) => acks.push(r));
+    expect(acks).toEqual([{ ok: true }]);
+    const msgs = c.prompts[0] ?? [];
+    const carried = msgs.findIndex((m) => m.role === "user" && String(m.content).includes("> Bean: Lisbon"));
+    const asked = msgs.findIndex((m) => m.role === "user" && String(m.content).includes("book it"));
+    expect(carried).toBeGreaterThan(-1);
+    expect(asked).toBeGreaterThan(carried);
+    expect(msgs.filter((m) => m.role === "system" && String(m.content).includes("Lisbon"))).toEqual([]);
+    expect(chatopsConversationTurns(c.file, "th1").filter((t) => t.content.includes("Lisbon"))).toHaveLength(1);
+  });
+});
+
 describe("sprout runs from chat (#636)", () => {
   const sched: Routine = { name: "pr-digest", enabled: true, cron: "0 7 * * *", steps: [{ kind: "chat", instruction: "x" }], sinks: {} };
   const watch: Routine = { name: "feed", enabled: false, watch: { kind: "feed", url: "https://x.test/rss" }, steps: [], sinks: {} };

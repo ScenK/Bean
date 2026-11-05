@@ -4,7 +4,7 @@ import {
   loadLayeredSkills, loadProjects, loadPersona, loadMemories, ownerSubjectIds, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
   detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine, createRoutine,
   buildTeamsBot, exitWhenOrphaned, ConversationStore, ConversationCatalog, type ConversationPlace, maybeCompact, NoteProposalStore, ProposalStore,
-  RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, type DeskAckResult, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
+  RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, parseDeskContinue, type DeskAckResult, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
   LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
   makeRoles, makeChatter, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, parseChatterCommand, RoutineProposalStore, SproutRunProposalStore, type Role,
   parentSproutTrigger, processParentPort, sproutRunFacts, recordDestination, forgetDestination, listDestinations, SendProposalStore,
@@ -19,6 +19,7 @@ import { basename } from "node:path";
 import { sendChunks } from "./chunk.js";
 import { discordCards } from "./components.js";
 import { discordDestinations } from "./destinations.js";
+import { openContinueThread, ownerOnly } from "./desk-continue.js";
 import { deliverOutboxDm } from "./outbox-dm.js";
 import { resolveRepliedTo, type RefMessage } from "./replied-to.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
@@ -781,7 +782,22 @@ client.on("error", (err) => console.error("client error:", err));
 // does the eligibility checks, then asks for the channel). A DM, thread or channel id all fetch
 // to their channel; anything unsendable fails the echo, which refuses the turn.
 // A desk-resume (Continue live) reopens the conversation's ended live session the same way.
+// A desk-continue (Continue in Discord, #695) opens a thread under the picked channel — never the
+// channel itself — and core catalogs it and carries the desktop chat over.
 process.on("message", (raw) => {
+  const cont = parseDeskContinue(raw);
+  if (cont) {
+    const openThread = async (ownerId: string) => {
+      const thread = await openContinueThread(await client.channels.fetch(cont.channelId), client.user, cont.title);
+      return {
+        threadId: thread.id, mention: `<@${ownerId}>`,
+        fx: { ...effectsFor(thread), post: async (text: string) => { await thread.send(ownerOnly(ownerId, text)); } },
+      };
+    };
+    bot.onDeskContinue(cont, openThread, (r) => parentDeskAck(cont.requestId, r))
+      .catch((err: unknown) => console.error("desk continue error:", err));
+    return;
+  }
   const req = parseDeskTurn(raw) ?? parseDeskResume(raw);
   if (!req) return;
   const effects = async () => {

@@ -44,6 +44,8 @@ export interface Speaker {
 
 export interface Roles {
   ownerName: string;
+  /** The configured owner's platform id; absent = setup mode (no owner). */
+  ownerId?: string;
   /** Config `allowGuestDms`: false = non-owner DMs get one fixed line and nothing else. */
   allowGuestDms: boolean;
   roleOf(who: Speaker): Role;
@@ -76,6 +78,7 @@ export function makeRoles(opts: RolesOptions): Roles {
     ).get(surface, scopeId, id) !== undefined);
   return {
     ownerName: opts.ownerName || "the owner",
+    ...(opts.ownerId ? { ownerId: opts.ownerId } : {}),
     allowGuestDms: opts.allowGuestDms ?? false,
     roleOf({ fromId, fromAltId, scopeId }) {
       const ids = [fromId, fromAltId].filter((x): x is string => !!x);
