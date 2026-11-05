@@ -34,6 +34,7 @@ export * from "./agent-rules.js";
 export * from "./delegate.js";
 export * from "./delegate-runs.js";
 export * from "./desktop-chats.js";
+export * from "./destinations.js";
 export * from "./step-attempts.js";
 export * from "./retro.js";
 export * from "./drop-plan.js";
