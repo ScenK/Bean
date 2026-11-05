@@ -158,6 +158,41 @@ describe("ChatWindow synced chats", () => {
     expect(composer().placeholder).toBe("Steer the live session…");
   });
 
+  it("End: the live banner sends `stop` once, keeps the draft, and goes away when the session ends", async () => {
+    await mount();
+    await openRow("Standup");
+    const end = (): HTMLButtonElement | undefined =>
+      [...synced().querySelectorAll(".bean-agent-banner button")].find((b) => /End/.test(b.textContent ?? "")) as HTMLButtonElement | undefined;
+    expect(synced().querySelector(".bean-agent-banner")!.textContent).toContain("Claude Code · live in Teams");
+    const mountId = bean.chatAttach!.mock.calls.at(-1)![0];
+    const ta = composer();
+    await act(async () => { ta.value = "draft"; ta.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => { end()!.click(); end()!.click(); });
+    await flush();
+    expect(bean.syncedChatSend).toHaveBeenCalledTimes(1);
+    expect(bean.syncedChatSend).toHaveBeenCalledWith("teams", "t1", "stop", mountId);
+    expect(end()?.textContent).toBe("Ending…");
+    expect(composer().value).toBe("draft");
+
+    bean.syncedChatList!.mockResolvedValue([dm, { ...post, live: false, resumable: true }]);
+    await act(async () => { listeners.onSyncedChatEvent!({ surface: "teams", conversationId: "t1" }); });
+    await flush();
+    expect(end()).toBeUndefined();
+    expect(synced().textContent).toContain("Continue live");
+  });
+
+  it("a refused End comes back so it can be tried again", async () => {
+    bean.syncedChatSend!.mockResolvedValueOnce({ refused: "post-failed" });
+    await mount();
+    await openRow("Standup");
+    const end = (): HTMLButtonElement => synced().querySelector(".bean-agent-banner button") as HTMLButtonElement;
+    await act(async () => { end().click(); });
+    await flush();
+    expect(synced().querySelector(".bean-status--error")?.textContent).toBe("Couldn't post the message there — nothing was sent.");
+    expect(end().textContent).toBe("End");
+    expect(end().disabled).toBe(false);
+  });
+
   it("a refused Continue live becomes an error row and the button comes back", async () => {
     bean.syncedChatResume = vi.fn(async () => ({ refused: "channel-busy" }));
     bean.syncedChatList!.mockResolvedValue([dm, { ...post, live: false, resumable: true }]);

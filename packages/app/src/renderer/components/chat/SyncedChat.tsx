@@ -127,21 +127,36 @@ export function SyncedChat({ listing, botRunning, version, onWorking, hasArchive
   const sendable = (value: string): boolean => !readOnly && value.trim().length > 0 && value.length <= MAX_DESK_TEXT;
   const over = text.length > MAX_DESK_TEXT;
 
-  const send = async (value: string): Promise<void> => {
-    if (!sendable(value)) return;
+  /** `keepDraft`: End sends `stop` without clearing what's typed. False when it wasn't sent. */
+  const send = async (value: string, keepDraft = false): Promise<boolean> => {
+    if (!sendable(value)) return false;
     const trimmed = value.trim();
     const id = ++seq.current;
     setPending((p) => [...p, { id, text: trimmed, seen: userCount(rowsRef.current, trimmed) }]);
-    setText("");
+    if (!keepDraft) setText("");
     const r = await window.bean.syncedChatSend(listing.surface, listing.conversationId, trimmed, mountId)
       .catch((err: unknown) => ({ failed: err instanceof Error ? err.message : String(err) }));
-    if ("ok" in r) return;
+    if ("ok" in r) return true;
     setPending((p) => p.filter((x) => x.id !== id));
     setErrors((e) => [...e, {
       id,
       text: "refused" in r ? REFUSAL_TEXT[r.refused]
         : `Not confirmed by the ${surface} bot (${r.failed}). Check ${surface} before sending again.`,
     }]);
+    return false;
+  };
+
+  // End = the platform's own `stop` command sent as a desk turn (the bot runs it, never steers it).
+  // Disabled until the session drops out of the listing, so a second click can't reach Bean as a
+  // plain `stop` turn once nothing is live.
+  const [ending, setEndingState] = useState(false);
+  const endingRef = useRef(false); // stops a second click before the re-render
+  const setEnding = (v: boolean): void => { endingRef.current = v; setEndingState(v); };
+  useEffect(() => { if (!listing.live) setEnding(false); }, [listing.live]);
+  const end = async (): Promise<void> => {
+    if (endingRef.current) return;
+    setEnding(true);
+    if (!(await send("stop", true))) setEnding(false);
   };
 
   const continueLive = async (): Promise<void> => {
@@ -219,7 +234,11 @@ export function SyncedChat({ listing, botRunning, version, onWorking, hasArchive
         ) : listing.live ? (
           <div class="bean-agent-banner">
             <span class="bean-agent-banner-dot" aria-hidden="true">●</span>
-            <span>Live session running — your messages steer it</span>
+            <AgentAvatar agent={listing.liveCli ?? "claude"} size={16} />
+            <span>{AGENT_NAMES[listing.liveCli ?? "claude"]} · live in {surface}</span>
+            <button type="button" class="bean-status-action" disabled={ending} onClick={() => void end()}>
+              {ending ? "Ending…" : "End"}
+            </button>
           </div>
         ) : listing.resumable ? (
           <div class="bean-status bean-status--info">

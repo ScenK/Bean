@@ -1318,18 +1318,29 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           return ack({ refused: "post-failed" });
         }
         const fromName = deps.roles.ownerName;
+        const direct = row.kind === "dm";
+        const msg: IncomingMessage = {
+          conversationId: conv, text, ...owner, fromName, direct,
+          ...(direct ? {} : { scopeId: target.scopeId }),
+          channelName: direct ? "DM" : row.title,
+        };
+        // `stop` (typed, or the desk's End) ends the session as the platform command does, never
+        // reaching the agent as text. In a conversation that has had a session it is never a Bean
+        // turn either — the session may have ended while the echo was in flight. Saved as a line so
+        // the desk's pending bubble lands.
+        if (commandWord(text) === "stop" && (deps.liveSessions.has(conv) || row.liveCli)) {
+          deps.conversations.append(conv, { role: "user", content: speakerLine(fromName, text) });
+          ack({ ok: true });
+          await onCommand(msg, target.fx);
+          return;
+        }
         // Re-checked after the echo's await: a session that ended meanwhile takes a normal turn.
         if (deps.liveSessions.has(conv)) {
           deps.conversations.setAmbientCutoff(conv, Date.now());
           return ack(await steerLive(conv, fromName, text) ? { ok: true } : { refused: "queue-full" });
         }
         ack({ ok: true });
-        const direct = row.kind === "dm";
-        await bot.onMessage({
-          conversationId: conv, text, ...owner, fromName, direct,
-          ...(direct ? {} : { scopeId: target.scopeId }),
-          channelName: direct ? "DM" : row.title,
-        }, target.fx);
+        await bot.onMessage(msg, target.fx);
       } finally {
         deskInFlight--;
       }
