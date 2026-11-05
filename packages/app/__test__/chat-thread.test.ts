@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, THREAD_MAX_BYTES, THREAD_TEXT_MAX, normalizeForSave, restoreItems, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
+import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, normalizeForSave, restoreItems, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
 import { applyDelegateEventToItems, closeTranscript } from "../src/renderer/components/chat/ChatSession.js";
 import { canContinueLive } from "../src/renderer/components/chat/agent-mode.js";
 import { newId, type ChatItem } from "../src/renderer/shared/chat-types.js";
@@ -157,4 +157,25 @@ it("titles a thread from its first message", () => {
   expect(threadTitle("  fix\n the   build ")).toBe("fix the build");
   expect(threadTitle("x".repeat(100))).toHaveLength(60);
   expect(threadTitle("")).toBe("New chat");
+});
+
+describe("continued pointer (#697)", () => {
+  const pointer: ChatItem = { kind: "continued", id: "c-1", surface: "discord", conversationId: "th-1", title: "Week plan" };
+
+  it("survives normalize, a save round trip, restore and a later autosave", () => {
+    const saved = normalizeForSave([{ kind: "user", id: "u", text: "hi" }, pointer]);
+    expect(saved[1]).toEqual(pointer);
+    const restored = restoreItems(JSON.parse(JSON.stringify(saved)));
+    expect(restored[1]).toMatchObject({ kind: "continued", surface: "discord", conversationId: "th-1", title: "Week plan" });
+    // A late autosave of the restored chat writes it again unchanged.
+    expect(normalizeForSave(restored).map(({ id: _id, ...rest }) => rest)).toEqual(saved.map(({ id: _id, ...rest }) => rest));
+    expect(continuedTo(restored)?.conversationId).toBe("th-1");
+  });
+
+  it("drops a malformed pointer and any extra fields", () => {
+    const extra = { ...pointer, secret: "x" } as ChatItem;
+    expect(restoreItems([extra])[0]).not.toHaveProperty("secret");
+    expect(restoreItems([{ kind: "continued", id: "c", surface: "teams", conversationId: "t", title: "x" }])).toEqual([]);
+    expect(restoreItems([{ kind: "continued", id: "c", surface: "discord", conversationId: "", title: "x" }])).toEqual([]);
+  });
 });

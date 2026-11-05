@@ -112,6 +112,9 @@ export function ChatPanel({
   onUnlink,
   incognito,
   onToggleIncognito,
+  continueButton,
+  continued,
+  onOpenContinued,
   onMemoryUndo,
   onForgetUndo,
   mode,
@@ -194,6 +197,11 @@ export function ChatPanel({
   // Off the record: nothing from this chat is remembered at close.
   incognito: boolean;
   onToggleIncognito: () => void;
+  /** Continue in Discord's header button (ContinueDiscord), when this chat may offer it. */
+  continueButton?: ComponentChildren;
+  /** The thread this chat moved to: read-only, Open thread instead of a composer. */
+  continued?: { title: string };
+  onOpenContinued?: () => void;
   onMemoryUndo: (id: string) => void;
   onForgetUndo: (id: string) => void;
   // Agent mode: who answers typed text, the project an agent would start in ("" = scratch), and
@@ -510,6 +518,7 @@ export function ChatPanel({
           <span class="bean-switch" aria-hidden="true" />
           Off the record
         </button>
+        {continueButton}
         <button
           type="button"
           class={`bean-chat-term-toggle${terminalOpen ? " bean-chat-term-toggle--on" : ""}`}
@@ -575,7 +584,7 @@ export function ChatPanel({
               return (
                 <div key={it.id} class={`bean-status bean-status--${it.tone}`}>
                   {it.text}
-                  {canContinueLive(it, clis, !!live) ? (
+                  {!continued && canContinueLive(it, clis, !!live) ? (
                     <>
                       {" · "}
                       <button type="button" class="bean-status-action" disabled={!!it.exiting}
@@ -593,6 +602,14 @@ export function ChatPanel({
                 <summary>{it.text} ▸</summary>
                 {it.details.map((d) => <div class="bean-status-detail">{d}</div>)}
               </details>
+            );
+          }
+          if (it.kind === "continued") {
+            return (
+              <div key={it.id} class="bean-status bean-status--done">
+                Continued in Discord · {it.title}{" "}
+                <button type="button" class="bean-status-action" onClick={onOpenContinued}>Open thread</button>
+              </div>
             );
           }
           if (it.kind === "memory") {
@@ -713,7 +730,7 @@ export function ChatPanel({
                 onConfirm={(edited, choice) => onDelegateConfirm(it.id, edited, choice)}
                 onDismiss={() => onDelegateDismiss(it.id)}
                 onCancelTask={() => onDelegateCancelTask(it.id)}
-                onContinueLive={canContinueLive(it, clis, !!live) ? () => onContinueLive(it.id) : undefined}
+                onContinueLive={!continued && canContinueLive(it, clis, !!live) ? () => onContinueLive(it.id) : undefined}
               />
             );
           }
@@ -734,6 +751,12 @@ export function ChatPanel({
           );
         })}
       </div>
+      {continued ? (
+        <div class="bean-chat-continued" role="note">
+          <span>This chat continues in Discord — “{continued.title}”. Read only here.</span>
+          <button type="button" class="bean-btn" onClick={onOpenContinued}>Open thread</button>
+        </div>
+      ) : (
       <div class="bean-chat-input">
         {showJump ? (
           <button type="button" class="bean-jump-down" aria-label="Jump to latest" onClick={scrollToBottom}>
@@ -891,6 +914,7 @@ export function ChatPanel({
           </div>
         </div>
       </div>
+      )}
       <TerminalPane
         mountId={mountId}
         open={terminalOpen}

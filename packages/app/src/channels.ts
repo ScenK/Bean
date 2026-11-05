@@ -161,6 +161,8 @@ export const IPC = {
   syncedChatSend: "bean:synced-chat-send",
   syncedChatResume: "bean:synced-chat-resume",
   syncedChatEvent: "bean:synced-chat-event",
+  // chat window → main: Continue in Discord (desk-continue.ts) — open a thread and move this chat there.
+  deskContinue: "bean:desk-continue",
   getMemoryBatch: "bean:get-memory-batch",
   undoMemoryBatch: "bean:undo-memory-batch",
   getLastDream: "bean:get-last-dream",

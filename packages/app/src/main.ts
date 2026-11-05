@@ -8,6 +8,7 @@ import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./ch
 import { createChatopsServers } from "./chatops-servers.js";
 import { buildSyncedChatHandlers, type SyncedChatEvent } from "./synced-chats.js";
 import { buildDestinationHandlers, buildSendHandlers } from "./destinations.js";
+import { buildDeskContinueHandler } from "./desk-continue.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { applyChatopsActivity, clearBotJobs } from "./chatops-activity.js";
@@ -1113,6 +1114,11 @@ app.whenReady().then(async () => {
         owners: () => loadChatopsOwners(dir),
         listDestinations: (file) => listDestinations(file), destinationLabel, ambientSpeakers: (file, id) => ambientSpeakers(file, id),
         setAlias, clearAlias, retargetAlias,
+      }),
+      deskContinue: buildDeskContinueHandler({
+        listDestinations: () => listDestinations(dbFile(dir)),
+        deskContinue: (body) => chatopsServers!.deskContinue("discord", body),
+        handover: (owner, sessionId) => liveTasks.handover(owner, sessionId),
       }),
     }));
 

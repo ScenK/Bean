@@ -25,6 +25,7 @@ import { terminalLink, type TerminalTasks } from "./terminal-tasks.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import type { UpdateCheckOutcome } from "./updater.js";
 import type { buildSyncedChatHandlers } from "./synced-chats.js";
+import type { buildDeskContinueHandler } from "./desk-continue.js";
 import type { buildDestinationHandlers, buildSendHandlers } from "./destinations.js";
 
 export { IPC };
@@ -1145,6 +1146,8 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   chatThreadHandlers: ReturnType<typeof buildChatThreadHandlers>;
   syncedChatHandlers: ReturnType<typeof buildSyncedChatHandlers>;
   destinationHandlers: ReturnType<typeof buildDestinationHandlers>;
+  /** Continue in Discord; absent = not offered (refused). */
+  deskContinue?: ReturnType<typeof buildDeskContinueHandler>;
 }
 
 /** `releaseChatSender` = a chat window is gone: release every chat it still had attached. */
@@ -1375,6 +1378,12 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.handle(IPC.syncedChatResume, (e, surface: unknown, conversationId: unknown, mountId: unknown) => {
     chatKey(e.sender, mountId);
     return deps.syncedChatHandlers.resume(surface, conversationId);
+  });
+  // Continue in Discord: one chat (sender + attached mount), its incognito latch read here, not sent.
+  ipcMain.handle(IPC.deskContinue, (e, req: unknown, mountId: unknown) => {
+    const key = chatKey(e.sender, mountId);
+    if (!deps.deskContinue) return { failed: "Continue in Discord isn't available." };
+    return deps.deskContinue({ senderId: e.sender.id, mountId: key }, memoryHandlers.isIncognito(key), req);
   });
   ipcMain.on(IPC.rememberOnClose, (e, transcript: unknown, opts: unknown) => {
     const o = opts as { incognito?: unknown; rejected?: unknown; mountId?: unknown } | null;

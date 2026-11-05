@@ -75,7 +75,7 @@ Bean has two chat adapters over one shared brain:
   (`proactive.ts`'s `refFor` — bare channel id finds the ref, the full `;messageid=` id is the
   send target, same as the outbox); a conversation with no stored ref fails the echo → `post-failed`.
 - **Desk continue** (#695, `desk-continue`): app → bot `{ mode: "chat", channelId, title, tail,
-  count }` (agent mode `sessionId`, refused `unsupported` until #696); mixed or over-cap payloads
+  count }` or `{ mode: "agent", channelId, title, sessionId }`; mixed or over-cap payloads
   are dropped. `bot.onDeskContinue` takes the owner from config (never the request), asks the
   surface's `openThread` (Discord: GuildText + CreatePublicThreads + SendMessagesInThreads, OneDay,
   **no channel fallback**), catalogs it, saves the tail once as a framed `> `-quoted user turn
@@ -83,6 +83,25 @@ Bean has two chat adapters over one shared brain:
   messages carried over` with `allowedMentions: { users: [owner] }`. Ack is ok + `threadId`,
   `partial` + `threadId` (thread made, a later step failed), or a fixed refusal — still no text.
   `DeskContinueResult` is its own type so turn/resume consumers never see `partial`.
+  **Agent mode** (#696) moves an idle desktop CLI session: `findDelegateRun(id, "desktop")` must
+  pass *before* the thread opens; then a `delegate_runs` row for this surface is appended
+  (`recordDelegateRun` must return true and a plain lookup must resolve it here) — the newest row
+  is the one owner, so the desktop's lookup now refuses it. The thread is bound (`live_cli`/
+  `live_session_id`), a live card posted and kept (its idle end offers Continue live), and the
+  session resumes restricted with the config owner as starter. Any failure after the thread exists
+  posts the reason there and acks `partial`; it never starts fresh — recovery is Continue live.
+  **Desktop side** (#697, `app/src/desk-continue.ts`, IPC `deskContinue`): the chat header's Continue in
+  Discord (`ContinueDiscord.tsx`) picks a labelled Discord `channel` destination (last pick in
+  `localStorage`); main re-checks it against `listDestinations`, refuses off-the-record chats, and
+  serializes per mount. Agent mode goes through `liveTasks.handover`: refused while a turn runs, stops
+  the session, waits for its `ended` (onExit), then holds the CLI id (resume refused) until the ack. On
+  ok/partial the chat saves a `{ kind: "continued" }` pointer (kept by `chat-thread.ts`) and switches to
+  the thread's synced view; a chat holding one is read-only (Open thread, no composer, no Continue live,
+  pending cards expired). "Idle" = no turn running *and* no follow-up turn still owed: claude answers each
+  send accepted mid-turn as its own turn (counted), codex/opencode merge them into one (`onTurnStart`
+  clears it). A pending request counts as the chat's work: it stays
+  mounted and a window close awaits the ack, so the pointer is never lost. A refused agent move leaves a
+  status row with the stopped session's receipt (Continue live here).
 - **Sprout triggers** (#637, `chatops/sprout-bridge.ts`): an app-spawned bot has no scheduler
   (`BEAN_HEADLESS_ROUTINES` is cleared), so its sprout-run card tap sends `routine-trigger
   {requestId, name, action, origin}` over the same IPC slot (still no message text bot → app). The app

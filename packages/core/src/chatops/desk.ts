@@ -12,8 +12,8 @@ export const DESK_REFUSALS = [
   "too-long", "not-eligible", "queue-full", "channel-busy", "cli-missing", "no-record", "post-failed", "bot-busy",
 ] as const;
 export type DeskRefusal = (typeof DESK_REFUSALS)[number];
-/** Desk-continue's own refusals: no owner configured, the thread couldn't be opened, agent mode
- * (until #696). */
+/** Desk-continue's own refusals: no owner configured, the thread couldn't be opened, or this bot
+ * can't take an agent session (live sessions off, or no way to record the move). */
 export const DESK_CONTINUE_REFUSALS = ["no-owner", "thread-failed", "unsupported"] as const;
 export type DeskContinueRefusal = (typeof DESK_CONTINUE_REFUSALS)[number];
 
