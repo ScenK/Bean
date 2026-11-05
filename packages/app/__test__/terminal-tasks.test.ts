@@ -47,7 +47,7 @@ function harness(over: Partial<TerminalTasksDeps> = {}) {
 describe("terminal tasks", () => {
   it("spawns one login shell in an allowed project with the allowlisted env", async () => {
     const { tasks, ptys } = harness();
-    expect(await tasks.start(A, T, "/proj", 80, 24)).toEqual({ cwd: "/proj" });
+    expect(await tasks.start(A, T, "/proj", 80, 24)).toEqual({ cwd: "/proj", shell: "zsh" });
     expect(ptys).toHaveLength(1);
     const p = ptys[0]!;
     expect([p.file, p.args, p.opts.cwd, p.opts.cols, p.opts.rows]).toEqual(["/bin/zsh", ["-l"], "/proj", 80, 24]);
@@ -60,7 +60,7 @@ describe("terminal tasks", () => {
     const first = tasks.start(A, T, "/proj", 80, 24);
     expect(await tasks.start(A, T, "/proj", 80, 24)).toEqual({ error: expect.stringMatching(/already has a terminal/) });
     release(true);
-    expect(await first).toEqual({ cwd: "/proj" });
+    expect(await first).toEqual({ cwd: "/proj", shell: "zsh" });
     expect(ptys).toHaveLength(1);
   });
 
@@ -83,18 +83,18 @@ describe("terminal tasks", () => {
 
   it("never spawns outside the registry: an unknown or stale project opens scratch with a notice", async () => {
     const { tasks, ptys, events } = harness();
-    expect(await tasks.start(A, T, "/etc", 80, 24)).toEqual({ cwd: "/scratch" });
+    expect(await tasks.start(A, T, "/etc", 80, 24)).toEqual({ cwd: "/scratch", shell: "zsh" });
     expect(ptys[0]!.opts.cwd).toBe("/scratch");
     expect(events).toEqual([{ mountId: "m1", tabId: T, type: "data", data: STALE_PROJECT_NOTICE }]);
     // A failing registry read is treated the same way.
     const h = harness({ projectAllowed: async () => { throw new Error("bad json"); } });
-    expect(await h.tasks.start(A, T, "/proj", 80, 24)).toEqual({ cwd: "/scratch" });
+    expect(await h.tasks.start(A, T, "/proj", 80, 24)).toEqual({ cwd: "/scratch", shell: "zsh" });
   });
 
   it("\"\" opens the scratch workspace without asking the registry or a notice", async () => {
     const projectAllowed = vi.fn(async () => false);
     const { tasks, events } = harness({ projectAllowed });
-    expect(await tasks.start(A, T, "", 80, 24)).toEqual({ cwd: "/scratch" });
+    expect(await tasks.start(A, T, "", 80, 24)).toEqual({ cwd: "/scratch", shell: "zsh" });
     expect(projectAllowed).not.toHaveBeenCalled();
     expect(events).toEqual([]);
   });
@@ -149,15 +149,15 @@ describe("terminal tasks", () => {
   it("holds up to MAX_TABS shells per chat: a fifth is refused, even two racing behind a slow projectAllowed", async () => {
     const gates: Array<(v: boolean) => void> = [];
     const { tasks, ptys } = harness({ projectAllowed: () => new Promise((r) => { gates.push(r); }) });
-    for (let i = 1; i <= MAX_TABS - 1; i++) expect(await tasks.start(A, tab(i), "", 80, 24)).toEqual({ cwd: "/scratch" });
+    for (let i = 1; i <= MAX_TABS - 1; i++) expect(await tasks.start(A, tab(i), "", 80, 24)).toEqual({ cwd: "/scratch", shell: "zsh" });
     const racing = [tasks.start(A, tab(4), "/proj", 80, 24), tasks.start(A, tab(5), "/proj", 80, 24)];
     gates.forEach((g) => g(true));
-    expect(await Promise.all(racing)).toEqual([{ cwd: "/proj" }, { error: expect.stringMatching(/at most 4/) }]);
+    expect(await Promise.all(racing)).toEqual([{ cwd: "/proj", shell: "zsh" }, { error: expect.stringMatching(/at most 4/) }]);
     expect(ptys).toHaveLength(MAX_TABS);
     // Another chat has its own four; a closed tab frees its slot.
-    expect(await tasks.start(B, tab(1), "", 80, 24)).toEqual({ cwd: "/scratch" });
+    expect(await tasks.start(B, tab(1), "", 80, 24)).toEqual({ cwd: "/scratch", shell: "zsh" });
     ptys[0]!.exit();
-    expect(await tasks.start(A, tab(5), "", 80, 24)).toEqual({ cwd: "/scratch" });
+    expect(await tasks.start(A, tab(5), "", 80, 24)).toEqual({ cwd: "/scratch", shell: "zsh" });
   });
 
   it("refuses unknown, malformed and other-mount tab ids", async () => {
@@ -275,7 +275,7 @@ describe("terminal tasks", () => {
     await tasks.start(A, T, "", 80, 24);
     ptys[0]!.exit(3);
     expect(events).toEqual([{ mountId: "m1", tabId: T, type: "exit", code: 3 }]);
-    expect(await tasks.start(A, T, "", 80, 24)).toEqual({ cwd: "/scratch" });
+    expect(await tasks.start(A, T, "", 80, 24)).toEqual({ cwd: "/scratch", shell: "zsh" });
   });
 
   it("stop hangs up a real shell and kills its backgrounded child, settling only once it's gone", async () => {

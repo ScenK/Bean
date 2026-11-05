@@ -1,5 +1,8 @@
 import { test, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
+import { existsSync, rmSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
+import { basename, join } from "node:path";
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
@@ -30,7 +33,8 @@ test("chat terminal: folded by default, Control+` opens from the composer and fo
     await chat.keyboard.press("Control+Backquote");
     await expect(pane).toBeVisible();
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await expect(pane.locator(".bean-term-head")).toHaveText("Scratch");
+    await expect(pane.locator(".bean-term-project")).toHaveText("Scratch");
+    await expect(pane.getByRole("tab")).toHaveCount(1);
     await expect.poll(() => chat.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))).toBe(true);
 
     // The shell runs: the marker only appears as output, never as the typed command.
@@ -142,5 +146,160 @@ test("chat terminal lifecycle: an idle shell closes the window without a card", 
     await closed;
   } finally {
     await Promise.allSettled([app.close(), home.cleanup()]);
+  }
+});
+
+/** The shown tab's shell has printed its prompt (zsh drops typeahead sent before its line editor starts). */
+const promptShown = (pane: ReturnType<Page["locator"]>): Promise<void> =>
+  expect(pane.locator("[role=tabpanel]:not([hidden]) .xterm-rows")).toHaveText(/\S/);
+/** The shown tab's shell has focus (not a now-hidden tab's). */
+const focusedShell = (chat: Page): Promise<boolean> => chat.evaluate(() => {
+  const el = document.activeElement;
+  return !!el?.classList.contains("xterm-helper-textarea") && !el.closest("[role=tabpanel]")?.hasAttribute("hidden");
+});
+
+// #674: up to four tabs per chat, each its own shell and xterm.
+test("chat terminal tabs: Cmd+T opens up to four, Cmd+1/2 switch, background output never stalls, exit and × close", async () => {
+  const home = await makeBeanHome({ autoMemory: false });
+  const app = await launchBean({ HOME: home.homeDir });
+  const sleeper = `sleep ${150_000 + (process.pid % 50_000)}`;
+  const marker = join(tmpdir(), `bean-tab-bg-${process.pid}`);
+  rmSync(marker, { force: true });
+  try {
+    const chat = await openChat(app);
+    const pane = chat.locator(".bean-chat:not([hidden]) .bean-term");
+    const tabs = pane.getByRole("tab");
+    const shownRows = pane.locator("[role=tabpanel]:not([hidden]) .xterm-rows");
+    await chat.keyboard.press("Control+Backquote");
+    await expect.poll(() => focusedShell(chat)).toBe(true);
+    await expect(tabs).toHaveCount(1);
+    // Idle: titled by the account's shell (main spawns the passwd shell, not $SHELL).
+    await expect(tabs.first()).toHaveAttribute("aria-label", basename(userInfo().shell || "/bin/zsh"));
+    await chat.keyboard.type("echo one-$((1+1))");
+    await chat.keyboard.press("Enter");
+    await expect(shownRows).toContainText("one-2");
+
+    // A background tab keeps writing: tab 1 produces far more than the flow-control watermark
+    // while tab 2 is shown, and still reaches its last command.
+    await chat.keyboard.type(`sleep 1; yes bean | head -c 600000; touch ${marker}`);
+    await chat.keyboard.press("Enter");
+    await chat.keyboard.press("Meta+t");
+    await expect(tabs).toHaveCount(2);
+    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+    await expect.poll(() => focusedShell(chat)).toBe(true);
+    await promptShown(pane);
+    await chat.keyboard.type("echo two-$((2+2))");
+    await chat.keyboard.press("Enter");
+    await expect(shownRows).toContainText("two-4");
+    await expect(shownRows).not.toContainText("one-2");
+    await expect.poll(() => existsSync(marker), { timeout: 15_000 }).toBe(true);
+    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+
+    await chat.keyboard.press("Meta+1");
+    await expect(tabs.nth(0)).toHaveAttribute("aria-selected", "true");
+    await expect(shownRows).not.toContainText("two-4");
+    await chat.keyboard.press("Meta+2");
+    await expect(shownRows).toContainText("two-4");
+
+    // The cap: four tabs, then Cmd+T does nothing and "+" reads as disabled.
+    const plus = pane.getByRole("button", { name: "New terminal" });
+    await expect(plus).toHaveAttribute("aria-disabled", "false");
+    await chat.keyboard.press("Meta+t");
+    await expect(tabs).toHaveCount(3);
+    await chat.keyboard.press("Meta+t");
+    await expect(tabs).toHaveCount(4);
+    await expect(plus).toHaveAttribute("aria-disabled", "true");
+    await expect(plus).toHaveAttribute("title", "4 terminals per chat");
+    await chat.keyboard.press("Meta+t");
+    await plus.click({ force: true }); // aria-disabled: Playwright would wait for it to enable
+    await chat.waitForTimeout(300);
+    await expect(tabs).toHaveCount(4);
+    await chat.keyboard.press("Meta+4");
+
+    // A non-zero exit keeps its tab, with Restart.
+    await expect.poll(() => focusedShell(chat)).toBe(true);
+    await promptShown(pane);
+    await chat.keyboard.type("exit 3");
+    await chat.keyboard.press("Enter");
+    await expect(pane.locator(".bean-term-strip-text")).toHaveText("Shell exited (code 3)");
+    await expect(tabs.nth(3)).toHaveAttribute("aria-label", /, exited$/);
+    await pane.getByRole("button", { name: "Restart" }).click();
+    await expect(pane.locator(".bean-term-strip")).toHaveCount(0);
+
+    // `exit 0` closes its tab (a bare `exit` reuses `$?`, which a fresh HOME's zsh leaves at 1).
+    await expect.poll(() => focusedShell(chat)).toBe(true);
+    await promptShown(pane);
+    await chat.keyboard.type("exit 0");
+    await chat.keyboard.press("Enter");
+    await expect(tabs).toHaveCount(3);
+
+    // × on a busy tab asks first; Stop & close kills its command.
+    await chat.keyboard.press("Meta+3");
+    await expect.poll(() => focusedShell(chat)).toBe(true);
+    await promptShown(pane);
+    await chat.keyboard.type(sleeper);
+    await chat.keyboard.press("Enter");
+    await expect.poll(() => running(sleeper)).toBe(true);
+    await expect(tabs.nth(2)).toHaveAttribute("aria-label", "sleep, running");
+    await pane.locator(".bean-term-tab--on .bean-term-tab-close").click();
+    await expect(pane.locator(".bean-term-strip-text")).toHaveText("sleep is running — closing stops it.");
+    await expect(tabs).toHaveCount(3);
+    await pane.getByRole("button", { name: "Cancel" }).click();
+    await expect(pane.locator(".bean-term-strip")).toHaveCount(0);
+    expect(running(sleeper)).toBe(true);
+    await pane.locator(".bean-term-tab--on .bean-term-tab-close").click();
+    await pane.getByRole("button", { name: "Stop & close" }).click();
+    await expect(tabs).toHaveCount(2);
+    await expect.poll(() => running(sleeper)).toBe(false);
+
+    // An idle tab's × closes at once; the last tab closing folds the pane.
+    await pane.locator(".bean-term-tab--on .bean-term-tab-close").click();
+    await expect(tabs).toHaveCount(1);
+    await expect.poll(() => focusedShell(chat)).toBe(true);
+    await chat.keyboard.type("exit 0");
+    await chat.keyboard.press("Enter");
+    await expect(pane).toBeHidden();
+    await expect(chat.locator(".bean-chat-term-toggle")).toHaveAttribute("aria-expanded", "false");
+    // The next unfold starts a fresh tab.
+    await chat.keyboard.press("Control+Backquote");
+    await expect(tabs).toHaveCount(1);
+    await expect.poll(() => focusedShell(chat)).toBe(true);
+  } finally {
+    try { execFileSync("pkill", ["-fx", sleeper]); } catch { /* already gone */ }
+    rmSync(marker, { force: true });
+    await Promise.allSettled([app.close(), home.cleanup()]);
+  }
+});
+
+test("chat terminal tabs: a hidden chat with one surviving tab stays mounted after another tab exits", async () => {
+  const home = await makeBeanHome({ autoMemory: false });
+  const stub = await startStubOpenAI();
+  stub.queue({ content: "Hello from stub!" });
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  try {
+    const chat = await openChat(app);
+    const shown = chat.locator(".bean-chat:not([hidden])");
+    await shown.locator(".bean-input--composer").fill("hi bean");
+    await shown.locator(".bean-send").click();
+    await expect(shown.locator(".bean-bubble--bean")).toContainText("Hello from stub!");
+    await chat.keyboard.press("Control+Backquote");
+    const tabs = shown.locator(".bean-term").getByRole("tab");
+    await expect.poll(() => focusedShell(chat)).toBe(true);
+    await chat.keyboard.press("Meta+t");
+    await expect(tabs).toHaveCount(2);
+    await expect.poll(() => focusedShell(chat)).toBe(true);
+    await promptShown(shown.locator(".bean-term"));
+    await chat.keyboard.type("exit 0");
+    await chat.keyboard.press("Enter");
+    await expect(tabs).toHaveCount(1);
+
+    const row = chat.locator(".bean-chat-sidebar-row", { hasText: "hi bean" });
+    await expect(row.locator(".bean-chat-sidebar-term")).toBeVisible();
+    await chat.locator(".bean-chat-sidebar-new").click();
+    await expect(shown.locator(".bean-bubble")).toHaveCount(0);
+    await expect(chat.locator(".bean-chat")).toHaveCount(2);
+    await expect(row.locator(".bean-chat-sidebar-term")).toBeVisible();
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });

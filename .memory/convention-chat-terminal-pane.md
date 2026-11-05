@@ -12,8 +12,10 @@
 - **`xterm.css` is copied, not bundled** (`esbuild.config.mjs`), linked only from `chat.html`.
   It paints `.xterm-viewport` `#000` — `shared.css` overrides it to transparent; drop that and a
   black strip shows under the last row.
-- **Control+` is one capture-phase listener in `ChatWindow`** (routes to the shown chat; skips
-  synced chats, repeats, IME). xterm's `attachCustomKeyEventHandler` only stops it sending NUL.
+- **Control+` and the tab shortcuts are one capture-phase listener in `ChatWindow`** (routes to the
+  shown chat; skips synced chats, repeats, IME): Cmd+T, Cmd+1…4, Cmd+Shift+[ / ] by `e.code`
+  (`tabShortcut`). Cmd+W stays Electron's Close Window; Control+T/W stay readline's. xterm's
+  `attachCustomKeyEventHandler` only keeps xterm off them.
 - **Fit only at a real size**: never while folded, hidden, or mid-fold animation (`transitionend`
   on `height` settles it); the shell starts on the first unfold with the fitted cols/rows.
 - jsdom (unit tests) has no `ResizeObserver` — the pane guards it rather than a test shim.
@@ -35,3 +37,12 @@ chat, the cap checked in the same synchronous section that reserves the slot. Ev
 call carries the tab; `terminalStop` with no tab (and release) stops the whole mount. One
 registry-wide busy poll (two `ps` calls per tick for all shells, skipped while one is in flight,
 off when no shell lives) pushes `busy` with the command name on change — never a timer per tab.
+
+**Tab strip (#674).** One xterm per tab, opened into its host the first time the tab is shown (it
+needs a real size); hidden tabs keep writing and acking, so a background dev server never stalls on
+flow control. Focus moves to a new shell only after `terminalStart` resolves (main drops keys for a
+tab it doesn't have yet). Exit code 0 closes the tab; non-zero or a signal keeps it with Restart. A
+bare `exit` reuses `$?` — a fresh-HOME zsh (e2e) leaves it at 1, so specs type `exit 0`. Closing
+the last tab folds the pane; the next unfold opens a fresh one. `ChatSession` counts live tabs
+(`onShells`) — any one keeps a hidden chat mounted. The idle title is the shell's name from the
+start result (`shell`), the busy one main's `command`.
