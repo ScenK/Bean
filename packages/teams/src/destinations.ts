@@ -32,7 +32,7 @@ export function teamsDestination(
 }
 
 export interface TeamsDestinationRecorder {
-  /** Addressed ingress. A meeting's title is fetched once per meeting id (awaited — call it while
+  /** Ingress, addressed or ambient. A meeting's title is fetched once per meeting id (awaited — call it while
    * the turn context is live). Never throws. */
   seen(ref: Partial<ConversationReference>, channelData: TeamsChannelData | undefined, meetingTitle: (meetingId: string) => Promise<string | undefined>): Promise<void>;
   /** After a successful outbox post — the ref alone, so known names are kept. Never throws. */

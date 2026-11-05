@@ -9,7 +9,10 @@ channel id). Not `chatops_conversations` — that one is the owner-only continua
   (`COALESCE`), and an unchanged sighting under an hour old writes nothing — keep that throttle,
   three processes share the file.
 - **Bot side (#685):** Teams `destinations.ts` reads names from the activity's `channelData`
-  (a stored ref has none, so the outbox records without names and `COALESCE` keeps them);
+  (a stored ref has none, so the outbox records without names and `COALESCE` keeps them).
+  Teams records on **every** received message — ambient chatter too (the manifest's RSC
+  `ChannelMessage.Read.Group`/`ChatMessage.Read.Chat` deliver it), so naming a channel or a
+  human 1:1 with Bean added never needs an @mention; recorded before the empty-text return;
   targeted `a:` refs are skipped, the meeting title is fetched once per meeting id inside the
   turn (needs the live context). Discord syncs postable (`ViewChannel`+`SendMessages`) guild
   text/announcement channels on ready/guildCreate/channelCreate/Update; threads only when seen.

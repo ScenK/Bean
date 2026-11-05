@@ -67,8 +67,9 @@ async function rememberConversation(ref: Partial<ConversationReference>): Promis
   await writeFile(conversationRefsFile, JSON.stringify(conversationRefs, null, 2) + "\n", "utf8");
 }
 
-// Named-destination discovery (#685): every conversation Bean is addressed in or delivers to, with
-// the names channelData carries (the stored refs above don't keep them).
+// Named-destination discovery (#685): every conversation Bean reads a message in (addressed or
+// ambient, via the manifest's RSC read permissions) or delivers to, with the names channelData
+// carries (the stored refs above don't keep them).
 const destinations = teamsDestinationRecorder((seen) => recordDestination(dbFile(dir), seen));
 
 // ConfigurationServiceClientCredentialFactory builds the app-id/password credentials;
@@ -311,7 +312,13 @@ app.post("/api/messages", (req, res) => {
     // who may. Mirrors the Discord surface's `capturing` bypass.
     const liveRun = liveSessions.generation(a.conversation.id);
     const capturing = liveRun !== undefined;
+    // Awaited while the turn context is still live (the meeting lookup needs it). Never throws.
+    const recordSeen = (): Promise<void> => destinations.seen(TurnContext.getConversationReference(a), a.channelData as TeamsChannelData | undefined,
+      async (id) => (await TeamsInfo.getMeetingInfo(context, id)).details?.title);
     if (!addressedToBot(a, `28:${teamsConfig.botAppId}`) && !capturing) {
+      // Catalog the conversation from plain chatter too, so naming it never needs an @mention.
+      // Never a DM here (personal chats are always addressed), so no guest-DM gate applies.
+      await recordSeen();
       // Not for Bean — remember it as context for a later mention, but don't reply.
       if (!text) return;
       ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
@@ -377,11 +384,7 @@ app.post("/api/messages", (req, res) => {
       );
     } finally {
       clearInterval(typing);
-      // Awaited here, while the turn context is still live (the meeting lookup needs it).
-      if (!dmBlocked) {
-        await destinations.seen(TurnContext.getConversationReference(a), a.channelData as TeamsChannelData | undefined,
-          async (id) => (await TeamsInfo.getMeetingInfo(context, id)).details?.title);
-      }
+      if (!dmBlocked) await recordSeen();
     }
   });
 });
