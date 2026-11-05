@@ -923,6 +923,29 @@ describe("propose_sprout_run", () => {
   });
 });
 
+describe("propose_send", () => {
+  it("is offered only with sendAvailable, as a static spec with no destination names", async () => {
+    const offered: ToolSpec[][] = [];
+    const deps: ConverseDeps = { model: "m", chat: async ({ tools }) => { offered.push(tools ?? []); return { content: "", toolCalls: [] }; } };
+    await conv({ latestUserText: "x", deps });
+    await conv({ latestUserText: "x", deps, sendAvailable: true });
+    expect(offered[0]!.map((t) => t.name)).not.toContain("propose_send");
+    const spec = offered[1]!.find((t) => t.name === "propose_send");
+    expect(spec?.parameters).toMatchObject({ required: ["destination", "text"] });
+    expect(JSON.stringify(spec)).not.toContain("enum");
+  });
+
+  it("returns the name as said and the exact text; refuses blanks and an un-offered call", async () => {
+    const call = (args: unknown) => depsReturning("", [{ name: "propose_send", args }]);
+    const ok = await conv({ latestUserText: "x", deps: call({ destination: " ops room ", text: "  Deploy done.\n" }), sendAvailable: true });
+    expect(ok.proposedSend).toEqual({ destination: "ops room", text: "  Deploy done.\n" });
+    const blank = await conv({ latestUserText: "x", deps: call({ destination: "ops", text: "  " }), sendAvailable: true });
+    expect(blank.proposedSend).toBeUndefined();
+    const unoffered = await conv({ latestUserText: "x", deps: call({ destination: "ops", text: "hi" }) });
+    expect(unoffered.proposedSend).toBeUndefined();
+  });
+});
+
 test("a failing chat call surfaces the real reason, not a blanket API-key blame", async () => {
   const deps: ConverseDeps = {
     model: "gpt-5.6-luna",

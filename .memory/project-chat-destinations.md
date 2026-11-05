@@ -39,3 +39,10 @@ channel id). Not `chatops_conversations` — that one is the owner-only continua
   Editor (`DestinationPicker.tsx`): picking an unnamed row names it immediately (label, `" 2"` on
   a clash); a raw id with a known row gets "Name it" (`destinationsNameRaw`), which rewrites that
   id → alias in every sprout using it.
+- **Desktop send (#688):** `propose_send { destination, text }` is a static spec (no names — an enum
+  would bust the prompt cache), offered only when the surface passes `sendAvailable` (desktop:
+  `ChatHandlerDeps.proposeSend`). Main (`buildSendHandlers` in `app/src/destinations.ts`) matches the
+  spoken name and keeps the proposal (body + opaque option id → row, capped at 50); the renderer's
+  `SendCard` sends back only the card id + option id, so it can't edit the body or name an unoffered
+  row. Send re-resolves the row (forgotten since → refused), is one-shot, and enqueues
+  `{ transport, channel: conversationId, body }` — receipt "Queued → <label>". Restored cards expire.
