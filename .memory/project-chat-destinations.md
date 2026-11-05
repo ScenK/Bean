@@ -56,3 +56,5 @@ channel id). Not `chatops_conversations` — that one is the owner-only continua
   the adapter derives it (Teams `isDirect`, Discord `isDMBased()`); never infer privacy from a
   missing `scopeId` (targeted Teams picks have none). Teams copies card values through
   `cardActionOf` (`teams/src/proactive.ts`) — add a new card input's id there or it never arrives.
+  Send ids are random UUIDs (a pre-restart card must never name a new proposal), and a body over
+  `MAX_SEND_CHARS` (4000) gets no card — the card must show everything Send posts.

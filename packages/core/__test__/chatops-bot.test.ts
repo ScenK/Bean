@@ -3751,6 +3751,21 @@ describe("owner-DM send cards (#689)", () => {
     expect(t.queued).toEqual([{ transport: "discord", channel: "d-new", body: "Deploy done.\n" }]);
   });
 
+  test("ids don't restart after a bot restart; a body too long to preview gets no card", async () => {
+    expect(new SendProposalStore().add({ conversationId: "dm-1", proposedById: "u1", body: "x", rows: new Map() }).id)
+      .not.toBe(new SendProposalStore().add({ conversationId: "dm-1", proposedById: "u1", body: "x", rows: new Map() }).id);
+    const t = setup();
+    const long = makeDeps({
+      chat: async () => ({ content: "", toolCalls: [{ name: "propose_send", args: { destination: "ops", text: "x".repeat(4001) } }] }),
+      cards: { ...fakeCards, sendCard: (i: object) => ({ kind: "send", ...i }) } as CardBuilders,
+      send: { transport: "discord", destinations: () => t.h.rows, enqueue: async () => {}, proposals: new SendProposalStore() },
+    });
+    const effects = fx();
+    await buildTeamsBot(long.deps).onMessage(dm(), effects);
+    expect(effects.cards).toEqual([]);
+    expect(effects.posted.at(-1)).toMatch(/too long to confirm/);
+  });
+
   test("Cancel never sends; an expired card is refused", async () => {
     const t = setup();
     const { card: a, effects } = await card(t);

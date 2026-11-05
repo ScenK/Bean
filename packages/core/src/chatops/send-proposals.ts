@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { DestinationKey } from "../destinations.js";
 
 /** An owner-DM send card (#689) awaiting Send or Cancel. The body is frozen here; a tap only
@@ -18,15 +19,14 @@ export interface PendingSend {
 
 const EXPIRY_MS = 10 * 60_000;
 
-/** One-shot like SproutRunProposalStore: claim() removes, so a replayed Send can't post twice. */
+/** One-shot like SproutRunProposalStore: claim() removes, so a replayed Send can't post twice.
+ * Ids are random, not sequential: a card from before a bot restart must never name a new proposal. */
 export class SendProposalStore {
   private byId = new Map<string, PendingSend>();
-  private seq = 0;
-
   constructor(private nowMs: () => number = () => Date.now()) {}
 
   add(p: Omit<PendingSend, "id" | "createdAt">): PendingSend {
-    const full: PendingSend = { ...p, id: `send-${++this.seq}`, createdAt: this.nowMs() };
+    const full: PendingSend = { ...p, id: `send-${randomUUID()}`, createdAt: this.nowMs() };
     this.byId.set(full.id, full);
     return full;
   }

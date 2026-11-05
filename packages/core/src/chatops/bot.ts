@@ -286,6 +286,8 @@ const SPROUT_BLOCKED: Record<SproutRunBlock, (name: string) => string> = {
 
 const SEND_KIND: Record<Destination["kind"], string> = { channel: "channel", thread: "thread", group: "group chat", meeting: "meeting chat", dm: "DM" };
 const SEND_EXPIRED = "That send card expired — ask me again.";
+/** The longest body a send card shows in full (Discord's embed description caps at 4096). */
+export const MAX_SEND_CHARS = 4000;
 
 const nameTaken = (name: string): string => `a sprout named "${name}" already exists — ask for a different name.`;
 
@@ -892,6 +894,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   async function postSendCard(proposed: ProposedSend, msg: IncomingMessage, fx: BotEffects): Promise<void> {
     const send = deps.send;
     if (!send || !deps.cards.sendCard) return;
+    // The card must show everything Send posts, so a body too long to preview is refused.
+    if (proposed.text.length > MAX_SEND_CHARS) {
+      await fx.post(`That message is too long to confirm on a card (over ${MAX_SEND_CHARS} characters) — shorten it and ask again.`);
+      return;
+    }
     const all = sendRows(send);
     if (all.length === 0) {
       await fx.post("I don't know any conversations to send to yet — mention me in one once, and it shows up in Bean's Settings → ChatOps.");
