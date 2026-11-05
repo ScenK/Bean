@@ -27,13 +27,13 @@ contextBridge.exposeInMainWorld("bean", {
   liveResume: (sessionId: string, mountId: string): Promise<LiveResumeResult> => ipcRenderer.invoke(IPC.liveResume, sessionId, mountId),
   onLiveEvent: (cb: (e: LiveEvent) => void) =>
     ipcRenderer.on(IPC.liveEvent, (_e, ev: LiveEvent) => cb(ev)),
-  terminalStart: (projectPath: string, cols: number, rows: number, mountId: string): Promise<TerminalStartResult> =>
-    ipcRenderer.invoke(IPC.terminalStart, projectPath, cols, rows, mountId),
-  terminalWrite: (data: string, mountId: string): void => ipcRenderer.send(IPC.terminalWrite, data, mountId),
-  terminalResize: (cols: number, rows: number, mountId: string): void => ipcRenderer.send(IPC.terminalResize, cols, rows, mountId),
-  terminalAck: (chars: number, mountId: string): void => ipcRenderer.send(IPC.terminalAck, chars, mountId),
-  terminalStop: (mountId: string): Promise<void> => ipcRenderer.invoke(IPC.terminalStop, mountId),
-  terminalRunning: (mountId: string): Promise<string | undefined> => ipcRenderer.invoke(IPC.terminalRunning, mountId),
+  terminalStart: (projectPath: string, cols: number, rows: number, mountId: string, tabId: string): Promise<TerminalStartResult> =>
+    ipcRenderer.invoke(IPC.terminalStart, projectPath, cols, rows, mountId, tabId),
+  terminalWrite: (data: string, mountId: string, tabId: string): void => ipcRenderer.send(IPC.terminalWrite, data, mountId, tabId),
+  terminalResize: (cols: number, rows: number, mountId: string, tabId: string): void => ipcRenderer.send(IPC.terminalResize, cols, rows, mountId, tabId),
+  terminalAck: (chars: number, mountId: string, tabId: string): void => ipcRenderer.send(IPC.terminalAck, chars, mountId, tabId),
+  terminalStop: (mountId: string, tabId?: string): Promise<void> => ipcRenderer.invoke(IPC.terminalStop, mountId, tabId),
+  terminalRunning: (mountId: string, tabId?: string): Promise<string[]> => ipcRenderer.invoke(IPC.terminalRunning, mountId, tabId),
   terminalOpenLink: (url: string, mountId: string): void => ipcRenderer.send(IPC.terminalOpenLink, url, mountId),
   onTerminalEvent: (cb: (e: TerminalEvent) => void) =>
     ipcRenderer.on(IPC.terminalEvent, (_e, ev: TerminalEvent) => cb(ev)),

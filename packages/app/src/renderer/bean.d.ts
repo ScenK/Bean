@@ -29,16 +29,17 @@ declare global {
       /** Continue live from a finished delegate card: only the receipt's session id goes over. */
       liveResume(sessionId: string, mountId: string): Promise<LiveResumeResult>;
       onLiveEvent(cb: (e: LiveEvent) => void): void;
-      /** This chat's login shell: "" = Bean's scratch workspace; a project no longer configured opens there too. */
-      terminalStart(projectPath: string, cols: number, rows: number, mountId: string): Promise<TerminalStartResult>;
-      terminalWrite(data: string, mountId: string): void;
-      terminalResize(cols: number, rows: number, mountId: string): void;
-      /** Output chars the terminal has rendered — main pauses the shell past a watermark until acked. */
-      terminalAck(chars: number, mountId: string): void;
-      /** Resolves once the shell and its jobs are gone. */
-      terminalStop(mountId: string): Promise<void>;
-      /** The command in this chat's terminal's foreground right now (main re-checks); undefined = idle or none. */
-      terminalRunning(mountId: string): Promise<string | undefined>;
+      /** A login shell in one of this chat's tabs (tabId: a renderer-made UUID; at most 4 per chat):
+       * "" = Bean's scratch workspace; a project no longer configured opens there too. */
+      terminalStart(projectPath: string, cols: number, rows: number, mountId: string, tabId: string): Promise<TerminalStartResult>;
+      terminalWrite(data: string, mountId: string, tabId: string): void;
+      terminalResize(cols: number, rows: number, mountId: string, tabId: string): void;
+      /** Output chars the tab has rendered — main pauses its shell past a watermark until acked. */
+      terminalAck(chars: number, mountId: string, tabId: string): void;
+      /** One tab, or every tab of the chat when none is named; resolves once the shells and their jobs are gone. */
+      terminalStop(mountId: string, tabId?: string): Promise<void>;
+      /** The commands in this chat's terminals' (or one tab's) foreground right now (main re-checks); idle shells left out. */
+      terminalRunning(mountId: string, tabId?: string): Promise<string[]>;
       /** http(s) only; anything else is ignored. */
       terminalOpenLink(url: string, mountId: string): void;
       onTerminalEvent(cb: (e: TerminalEvent) => void): void;

@@ -23,8 +23,15 @@
 mounted, marked in the sidebar by a dim `>_` (not the spinner — a dev server never finishes). An
 empty, thread-less chat with a shell can't be kept (no row to come back to), so leaving it goes
 through the leave card like an off-the-record chat. "Running" means the tty's foreground process
-group isn't the shell's (`foregroundCommand`: `ps -o tpgid=`, then its argv[0] basename) — never
-"the shell has a child", which a prompt's gitstatusd or a `cmd &` job makes always true. The close
+group isn't the shell's (`foregroundCommands`: `ps -o pid=,tpgid=`, then the groups' argv[0]
+basenames, sanitized) — never "the shell has a child", which a prompt's gitstatusd or a `cmd &` job
+makes always true. The close
 and leave cards ask main fresh at that moment (`terminalRunning`); an idle shell closes silently.
 Terminal output never enters `items`, so it's never saved to `desktop_chats`; a restored chat gets a
 fresh, folded terminal.
+
+**Tabs (#673).** Main keys terminals mount → tab (renderer-made UUID), at most `MAX_TABS` (4) per
+chat, the cap checked in the same synchronous section that reserves the slot. Every terminal IPC
+call carries the tab; `terminalStop` with no tab (and release) stops the whole mount. One
+registry-wide busy poll (two `ps` calls per tick for all shells, skipped while one is in flight,
+off when no shell lives) pushes `busy` with the command name on change — never a timer per tab.

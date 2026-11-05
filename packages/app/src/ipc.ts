@@ -1122,7 +1122,7 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
     cancelMount: (mountId: string) => void;
   };
   liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "resume" | "stopMount">;
-  terminalTasks: Pick<TerminalTasks, "start" | "write" | "resize" | "ack" | "stop" | "runningCommand">;
+  terminalTasks: Pick<TerminalTasks, "start" | "write" | "resize" | "ack" | "stop" | "stopMount" | "runningCommand">;
   /** Whether an IPC sender is the chat window — the only window that may drive an agent session. */
   isChatSender: (sender: WebContents) => boolean;
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
@@ -1157,7 +1157,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     deps.chatThreadHandlers.release(mountId);
     deps.delegateTasks.cancelMount(mountId);
     deps.liveTasks.stopMount(mountId);
-    void deps.terminalTasks.stop(mountId); // never rejects; the entry is held until the shell is gone
+    void deps.terminalTasks.stopMount(mountId); // never rejects; the entry is held until the shell is gone
   };
   ipcMain.on(IPC.chatAttach, (e, mountId: unknown) => {
     if (deps.isChatSender(e.sender) && !mounts.attach(e.sender.id, mountId)) console.error("chat attach refused");
@@ -1278,34 +1278,36 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     const o = liveOwner(e.sender, mountId);
     return o ? deps.liveTasks.resume(o, sessionId) : { error: notLive };
   });
-  // A chat's terminal: every call names an attached mount of the chat window; payloads are
-  // validated in terminal-tasks. Refused fire-and-forget calls are dropped.
-  ipcMain.handle(IPC.terminalStart, (e, projectPath: unknown, cols: unknown, rows: unknown, mountId: unknown) => {
+  // A chat's terminals: every call names an attached mount of the chat window, plus the tab;
+  // payloads and tab ids are validated in terminal-tasks. Refused fire-and-forget calls are dropped.
+  ipcMain.handle(IPC.terminalStart, (e, projectPath: unknown, cols: unknown, rows: unknown, mountId: unknown, tabId: unknown) => {
     const key = tryChatKey(e.sender, mountId);
     return key === undefined
       ? { error: "Terminals run from the chat window." }
-      : deps.terminalTasks.start({ senderId: e.sender.id, mountId: key }, projectPath, cols, rows);
+      : deps.terminalTasks.start({ senderId: e.sender.id, mountId: key }, tabId, projectPath, cols, rows);
   });
-  ipcMain.on(IPC.terminalWrite, (e, data: unknown, mountId: unknown) => {
+  ipcMain.on(IPC.terminalWrite, (e, data: unknown, mountId: unknown, tabId: unknown) => {
     const key = tryChatKey(e.sender, mountId);
-    if (key !== undefined) deps.terminalTasks.write(key, data);
+    if (key !== undefined) deps.terminalTasks.write(key, tabId, data);
   });
-  ipcMain.on(IPC.terminalResize, (e, cols: unknown, rows: unknown, mountId: unknown) => {
+  ipcMain.on(IPC.terminalResize, (e, cols: unknown, rows: unknown, mountId: unknown, tabId: unknown) => {
     const key = tryChatKey(e.sender, mountId);
-    if (key !== undefined) deps.terminalTasks.resize(key, cols, rows);
+    if (key !== undefined) deps.terminalTasks.resize(key, tabId, cols, rows);
   });
-  ipcMain.on(IPC.terminalAck, (e, chars: unknown, mountId: unknown) => {
+  ipcMain.on(IPC.terminalAck, (e, chars: unknown, mountId: unknown, tabId: unknown) => {
     const key = tryChatKey(e.sender, mountId);
-    if (key !== undefined) deps.terminalTasks.ack(key, chars);
+    if (key !== undefined) deps.terminalTasks.ack(key, tabId, chars);
   });
-  ipcMain.handle(IPC.terminalStop, async (e, mountId: unknown) => {
+  // No tab = every tab of the chat.
+  ipcMain.handle(IPC.terminalStop, async (e, mountId: unknown, tabId?: unknown) => {
     const key = tryChatKey(e.sender, mountId);
-    if (key !== undefined) await deps.terminalTasks.stop(key);
+    if (key === undefined) return;
+    await (tabId === undefined ? deps.terminalTasks.stopMount(key) : deps.terminalTasks.stop(key, tabId));
   });
-  // The window-close card's fresh check: what runs in this chat's terminal right now.
-  ipcMain.handle(IPC.terminalRunning, (e, mountId: unknown) => {
+  // The close cards' fresh check: what runs in this chat's terminals (or one tab's) right now.
+  ipcMain.handle(IPC.terminalRunning, (e, mountId: unknown, tabId?: unknown) => {
     const key = tryChatKey(e.sender, mountId);
-    return key === undefined ? undefined : deps.terminalTasks.runningCommand(key);
+    return key === undefined ? [] : deps.terminalTasks.runningCommand(key, tabId);
   });
   ipcMain.on(IPC.terminalOpenLink, (e, url: unknown, mountId: unknown) => {
     const href = tryChatKey(e.sender, mountId) === undefined ? undefined : terminalLink(url);

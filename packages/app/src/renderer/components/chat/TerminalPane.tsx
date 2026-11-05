@@ -19,16 +19,18 @@ export function isTerminalToggle(e: KeyboardEvent): boolean {
   return e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.code === "Backquote" || e.code === "IntlBackslash");
 }
 
-// The preload's onTerminalEvent can't unsubscribe: one subscription, routed by mount id.
+// The preload's onTerminalEvent can't unsubscribe: one subscription, routed by mount + tab id.
 const panes = new Map<string, (e: TerminalEvent) => void>();
 let subscribed = false;
-const listen = (mountId: string, cb: (e: TerminalEvent) => void): (() => void) => {
+const paneKey = (mountId: string, tabId: string): string => `${mountId} ${tabId}`;
+const listen = (mountId: string, tabId: string, cb: (e: TerminalEvent) => void): (() => void) => {
   if (!subscribed) {
     subscribed = true;
-    window.bean.onTerminalEvent((e) => panes.get(e.mountId)?.(e));
+    window.bean.onTerminalEvent((e) => panes.get(paneKey(e.mountId, e.tabId))?.(e));
   }
-  panes.set(mountId, cb);
-  return () => { panes.delete(mountId); };
+  const key = paneKey(mountId, tabId);
+  panes.set(key, cb);
+  return () => { panes.delete(key); };
 };
 
 // Theme tokens are oklch(); getComputedStyle returns them verbatim, xterm wants RGB — resolve
@@ -96,6 +98,8 @@ export function TerminalPane({ mountId, open, projectPath, projects, onShell }: 
   const paneRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<{ term: Terminal; fit: FitAddon } | null>(null);
+  // ponytail: one tab per pane; the tab strip (#674) makes this a list.
+  const [tabId] = useState(() => crypto.randomUUID());
   const bootRef = useRef<Promise<void> | null>(null);
   const startedRef = useRef(false);
   const animatingRef = useRef(false);
@@ -160,9 +164,9 @@ export function TerminalPane({ mountId, open, projectPath, projects, onShell }: 
     // ChatWindow's capture listener owns Control+`; this only keeps xterm from sending NUL.
     term.attachCustomKeyEventHandler((e) => !isTerminalToggle(e));
     term.onData((data) => {
-      for (let i = 0; i < data.length; i += WRITE_CHUNK) window.bean.terminalWrite(data.slice(i, i + WRITE_CHUNK), mountId);
+      for (let i = 0; i < data.length; i += WRITE_CHUNK) window.bean.terminalWrite(data.slice(i, i + WRITE_CHUNK), mountId, tabId);
     });
-    term.onResize(({ cols, rows }) => window.bean.terminalResize(cols, rows, mountId));
+    term.onResize(({ cols, rows }) => window.bean.terminalResize(cols, rows, mountId, tabId));
     term.open(host);
     termRef.current = { term, fit };
   })();
@@ -172,7 +176,7 @@ export function TerminalPane({ mountId, open, projectPath, projects, onShell }: 
     if (!t) return;
     setStrip(null);
     const path = projectRef.current;
-    const res = await window.bean.terminalStart(path, t.term.cols, t.term.rows, mountId)
+    const res = await window.bean.terminalStart(path, t.term.cols, t.term.rows, mountId, tabId)
       .catch((err: unknown) => ({ error: `The terminal couldn't start: ${err instanceof Error ? err.message : String(err)}` }));
     if ("error" in res) setStrip({ kind: "error", text: res.error });
     else { setStartedIn(path); onShellRef.current(true); }
@@ -189,11 +193,11 @@ export function TerminalPane({ mountId, open, projectPath, projects, onShell }: 
 
   // Shell output and exit, theme flips (hidden panes too), size changes, teardown.
   useEffect(() => {
-    const off = listen(mountId, (e) => {
+    const off = listen(mountId, tabId, (e) => {
       const t = termRef.current?.term;
       if (e.type === "data") {
-        if (t) t.write(e.data, () => window.bean.terminalAck(e.data.length, mountId));
-        else window.bean.terminalAck(e.data.length, mountId);
+        if (t) t.write(e.data, () => window.bean.terminalAck(e.data.length, mountId, tabId));
+        else window.bean.terminalAck(e.data.length, mountId, tabId);
       } else if (e.type === "exit") {
         setStrip({ kind: "exit", text: `Shell exited (code ${e.code})` });
         onShellRef.current(false);

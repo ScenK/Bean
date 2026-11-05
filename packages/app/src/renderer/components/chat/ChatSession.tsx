@@ -1047,7 +1047,8 @@ export function ChatSession({
   const hasWork = (): boolean => busyRef.current || queuedSendsRef.current.length > 0 || liveRef.current !== undefined
     || shellRef.current || hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size);
   const tasks = async (): Promise<ChatTasks> => {
-    const terminal = shellRef.current ? await window.bean.terminalRunning(mountId).catch(() => undefined) : undefined;
+    // ponytail: the first running command only, until the close card lists every tab (#675).
+    const terminal = shellRef.current ? (await window.bean.terminalRunning(mountId).catch(() => []))[0] : undefined;
     return {
       delegates: Math.max(pendingDelegateStartsRef.current.size,
         itemsRef.current.filter((it) => it.kind === "delegate" && (it.state === "starting" || it.state === "running")).length),
