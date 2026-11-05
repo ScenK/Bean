@@ -3368,6 +3368,17 @@ describe("desk turns (#528)", () => {
     expect(d.chats()).toBe(0);
   });
 
+  test("desk `stop` ends the live session instead of steering it", async () => {
+    const d = await withLive(true);
+    const steered = d.sent.length;
+    const { acks, effects } = await d.run({ conversationId: "t1", text: "stop" });
+    expect(acks).toEqual([{ ok: true }]);
+    expect(d.sent).toHaveLength(steered);
+    expect(d.liveSessions.has("t1")).toBe(false);
+    expect(effects.posted[0]).toBe("🖥 (desk): stop");
+    expect(d.conversations.history("t1").at(-1)).toEqual({ role: "user", content: speakerLine("Scen", "stop") });
+  });
+
   test("a full live queue is acked queue-full and kept out of history", async () => {
     const d = await withLive(false);
     const before = d.conversations.history("t1").length;

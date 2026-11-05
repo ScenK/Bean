@@ -201,7 +201,7 @@ export function SyncedChat({ listing, botRunning, version, onWorking, hasArchive
         ) : listing.live ? (
           <div class="bean-agent-banner">
             <span class="bean-agent-banner-dot" aria-hidden="true">●</span>
-            <span>Live session running — your messages steer it</span>
+            <span>Live session running — your messages steer it · say <code>stop</code> to end it</span>
           </div>
         ) : listing.resumable ? (
           <div class="bean-status bean-status--info">

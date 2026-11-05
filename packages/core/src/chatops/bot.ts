@@ -1318,18 +1318,28 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           return ack({ refused: "post-failed" });
         }
         const fromName = deps.roles.ownerName;
-        // Re-checked after the echo's await: a session that ended meanwhile takes a normal turn.
-        if (deps.liveSessions.has(conv)) {
-          deps.conversations.setAmbientCutoff(conv, Date.now());
-          return ack(await steerLive(conv, fromName, text) ? { ok: true } : { refused: "queue-full" });
-        }
-        ack({ ok: true });
         const direct = row.kind === "dm";
-        await bot.onMessage({
+        const msg: IncomingMessage = {
           conversationId: conv, text, ...owner, fromName, direct,
           ...(direct ? {} : { scopeId: target.scopeId }),
           channelName: direct ? "DM" : row.title,
-        }, target.fx);
+        };
+        // Re-checked after the echo's await: a session that ended meanwhile takes a normal turn.
+        if (deps.liveSessions.has(conv)) {
+          deps.conversations.setAmbientCutoff(conv, Date.now());
+          // The live commands work from the desk as on the platform — `stop` ends the session
+          // rather than reaching the agent as text. Saved as a line so the desk sees it land.
+          const cmd = commandWord(text);
+          if (cmd === "stop" || cmd === "drivers" || cmd === "new") {
+            deps.conversations.append(conv, { role: "user", content: speakerLine(fromName, text) });
+            ack({ ok: true });
+            await onCommand(msg, target.fx);
+            return;
+          }
+          return ack(await steerLive(conv, fromName, text) ? { ok: true } : { refused: "queue-full" });
+        }
+        ack({ ok: true });
+        await bot.onMessage(msg, target.fx);
       } finally {
         deskInFlight--;
       }
