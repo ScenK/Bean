@@ -82,7 +82,10 @@ export type ChatItem =
   // verbatim (same id, every field); a failed append (e.g. that id exists again) is `error` with
   // Undo still offered. `row` never reaches history (chat-thread.ts): a restored receipt is `kept`
   // (no Undo) unless it was `restored`.
-  | { kind: "forgot"; id: string; text: string; row?: Memory; state: "saved" | "undoing" | "restored" | "error" | "kept"; error?: string };
+  | { kind: "forgot"; id: string; text: string; row?: Memory; state: "saved" | "undoing" | "restored" | "error" | "kept"; error?: string }
+  // Continue in Discord (#697): this chat moved to a Discord thread. A chat holding one is read-only
+  // and offers Open thread (the thread's synced view) instead of a composer.
+  | { kind: "continued"; id: string; surface: "discord"; conversationId: string; title: string };
 
 /** The speaker of a reply/working bubble, or undefined for every other item. */
 export function itemAgent(it: ChatItem): AgentId | undefined {

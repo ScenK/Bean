@@ -228,6 +228,22 @@ export function ChatWindow() {
     if (fromSynced && target !== "new" && target === activeId) return;
     shownApi()?.open(target);
   };
+  // Continue in Discord's switch (and a continued chat's Open thread): the thread's catalog row may be
+  // newer than the sidebar list, so it's re-read first. A row the listing doesn't have (the owner
+  // changed, or the bot hasn't catalogued it) leaves the desktop chat shown.
+  const openSynced = (conversationId: string): void => {
+    const key = syncedKey({ surface: "discord", conversationId });
+    window.bean.syncedChatList().then((c) => {
+      setSynced(c ?? []);
+      if (!(c ?? []).some((r) => syncedKey(r) === key)) {
+        shownApi()?.error("That Discord thread isn't in the sidebar — check that the Discord bot's owner is still you.");
+        return;
+      }
+      setOverlayOpen(false);
+      setSyncedShown(key);
+      setUnread((prev) => { const u = new Set(prev); u.delete(key); return u; });
+    }, () => {});
+  };
   // The mount-once listeners above need the current render's openThread (it reads synced/activeId).
   const openThreadRef = useRef(openThread);
   openThreadRef.current = openThread;
@@ -309,6 +325,8 @@ export function ChatWindow() {
             if (thread !== undefined && (mountId !== shownRef.current || syncedRef.current !== undefined)) setUnread((prev) => new Set(prev).add(thread));
           }}
           takeLateReceipts={takeLateReceipts}
+          discordBot={bots.discord === true}
+          onOpenSynced={openSynced}
           onSwitch={(target, keep) => switchTo(mountId, target, keep)}
           onEvicted={() => dropMount(mountId)}
         />

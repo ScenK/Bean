@@ -67,6 +67,10 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
       return { ...it, state: it.state === "undone" ? "undone" : "kept" };
     case "forgot": // only the receipt's text — never the deleted row's other fields
       return { kind: "forgot", id: it.id, text: cap(it.text), state: it.state === "restored" ? "restored" : "kept" };
+    case "continued": // known fields only; a malformed pointer is dropped, never half-kept
+      return it.surface === "discord" && typeof it.conversationId === "string" && it.conversationId && typeof it.title === "string"
+        ? { kind: "continued", id: it.id, surface: "discord", conversationId: it.conversationId.slice(0, 200), title: it.title.slice(0, 100) }
+        : undefined;
   }
 }
 
@@ -80,7 +84,7 @@ export function normalizeForSave(items: readonly ChatItem[]): ChatItem[] {
   return out;
 }
 
-const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "status", "memory", "forgot"]);
+const KINDS = new Set(["user", "reply", "working", "proposal", "delegate", "note", "skill", "offer", "todo", "sprout", "send", "status", "memory", "forgot", "continued"]);
 
 /** A saved transcript back into the window: well-formed items only, normalized again, fresh ids (a
  * restored `item-3` would collide with this load's counter), and user turns stripped of `source` —
@@ -97,6 +101,10 @@ export function restoreItems(saved: unknown): ChatItem[] {
     return { ...rest, id: newId() };
   });
 }
+
+/** The Discord thread this chat continues in, if it was continued (the chat is then read-only). */
+export const continuedTo = (items: readonly ChatItem[]): Extract<ChatItem, { kind: "continued" }> | undefined =>
+  items.find((it): it is Extract<ChatItem, { kind: "continued" }> => it.kind === "continued");
 
 /** A thread's title: the first message typed in it, one line, no model call. */
 export function threadTitle(text: string): string {

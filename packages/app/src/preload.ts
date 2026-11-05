@@ -13,6 +13,7 @@ import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.j
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "./ipc.js";
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "./synced-chats.js";
+import type { DeskContinueReply, DeskContinueRequest } from "./desk-continue.js";
 import type { DestinationView, NameRawResult, SendResult } from "./destinations.js";
 import type { AliasResult } from "@bean/core";
 import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
@@ -176,6 +177,8 @@ contextBridge.exposeInMainWorld("bean", {
     ipcRenderer.invoke(IPC.syncedChatSend, surface, conversationId, text, mountId),
   syncedChatResume: (surface: string, conversationId: string, mountId: string): Promise<SyncedSendResult> =>
     ipcRenderer.invoke(IPC.syncedChatResume, surface, conversationId, mountId),
+  deskContinue: (req: DeskContinueRequest, mountId: string): Promise<DeskContinueReply> =>
+    ipcRenderer.invoke(IPC.deskContinue, req, mountId),
   onSyncedChatEvent: (cb: (e: SyncedChatEvent) => void) =>
     ipcRenderer.on(IPC.syncedChatEvent, (_e, ev: SyncedChatEvent) => cb(ev)),
   onMemoryUpdated: (cb: (saved: Array<{ id: string; text: string; category?: string }>, mountId: string) => void) =>
