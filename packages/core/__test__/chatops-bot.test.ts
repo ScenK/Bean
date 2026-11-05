@@ -26,6 +26,8 @@ import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index
 import { SkillProposalStore } from "../src/chatops/skill-proposals.js";
 import { RoutineProposalStore } from "../src/chatops/routine-proposals.js";
 import { SproutRunProposalStore } from "../src/chatops/sprout-run-proposals.js";
+import { SendProposalStore } from "../src/chatops/send-proposals.js";
+import type { Destination } from "../src/destinations.js";
 import type { TriggerResult } from "../src/routine-scheduler.js";
 import type { Routine } from "../src/routine-store.js";
 import { LiveSessionRegistry, type LiveSessionSink } from "../src/chatops/live-sessions.js";
@@ -3613,5 +3615,166 @@ describe("sprout runs from chat (#636)", () => {
     const listed = fx();
     await on.bot.onMessage(say("u1", { text: "sprouts" }), listed);
     expect(listed.posted.at(-1)).toMatch(/Ask me to run one\.$/);
+  });
+});
+
+describe("owner-DM send cards (#689)", () => {
+  const row = (conversationId: string, extra: Partial<Destination> = {}): Destination =>
+    ({ surface: "discord", conversationId, kind: "channel", lastSeen: "2026-11-01T00:00:00.000Z", ...extra });
+  function setup(opts: { forge?: boolean } = {}) {
+    const offered: string[][] = [];
+    const queued: unknown[] = [];
+    const h = {
+      now: 0,
+      destination: "ops",
+      rows: [
+        row("d-ops", { alias: "ops", platformName: "ops-room", parentName: "Home" }),
+        row("d-old", { platformName: "general", lastSeen: "2026-10-01T00:00:00.000Z" }),
+        row("d-new", { platformName: "random", lastSeen: "2026-11-04T00:00:00.000Z" }),
+        row("d-nameless"),
+        { ...row("t-ops", { alias: "teams ops" }), surface: "teams" as const },
+      ] as Destination[],
+    };
+    const made = makeDeps({
+      chat: async ({ tools }) => {
+        const names = (tools ?? []).map((t) => t.name);
+        offered.push(names);
+        return names.includes("propose_send") || opts.forge
+          ? { content: "", toolCalls: [{ name: "propose_send", args: { destination: h.destination, text: "Deploy done.\n" } }] }
+          : { content: "ok", toolCalls: [] };
+      },
+      cards: { ...fakeCards, sendCard: (i: object) => ({ kind: "send", ...i }) } as CardBuilders,
+      send: {
+        transport: "discord",
+        destinations: () => h.rows,
+        enqueue: async (m) => { queued.push(m); },
+        proposals: new SendProposalStore(() => h.now),
+      },
+    });
+    made.deps.roles = makeRoles({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-send-"))), surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia"] });
+    made.deps.roles.addAdmins("s1", [{ id: "ada", name: "Ada" }]);
+    return { h, offered, queued, bot: buildTeamsBot(made.deps) };
+  }
+  const dm = (fromId = "u1", extra: object = {}) =>
+    ({ conversationId: "dm-1", fromId, fromName: fromId, text: "send deploy done to ops", direct: true, ...extra });
+  const tap = (beanAction: string, proposalId: string, extra: Record<string, unknown> = {}) => {
+    const { value, ...rest } = extra as { value?: object };
+    return { conversationId: "dm-1", fromId: "u1", fromName: "u1", direct: true, ...rest, value: { beanAction, proposalId, ...value } };
+  };
+  type Card = { kind: string; proposalId: string; pick?: string; options: { id: string; label: string; detail: string }[] };
+  async function card(t: ReturnType<typeof setup>): Promise<{ card: Card; effects: ReturnType<typeof fx> }> {
+    const effects = fx();
+    await t.bot.onMessage(dm(), effects);
+    return { card: effects.cards[0] as Card, effects };
+  }
+
+  test("tool absent outside the owner's DM: shared chats (channel, group, meeting, human 1:1, targeted) and non-owner DMs", async () => {
+    const t = setup();
+    for (const extra of [{ direct: false, conversationId: "c1", scopeId: "s1" }, { direct: false, conversationId: "a:targeted" }]) {
+      await t.bot.onMessage(dm("u1", extra), fx());
+    }
+    for (const who of ["ada", "mia", "zed"]) await t.bot.onMessage(dm(who), fx());
+    for (const names of t.offered) expect(names).not.toContain("propose_send");
+    await t.bot.onMessage(dm(), fx());
+    expect(t.offered.at(-1)).toContain("propose_send");
+  });
+
+  test("a forged call outside the owner's DM is refused: no card, nothing pending", async () => {
+    const t = setup({ forge: true });
+    const effects = fx();
+    await t.bot.onMessage(dm("u1", { direct: false, conversationId: "c1", scopeId: "s1" }), effects);
+    expect(effects.cards).toEqual([]);
+    expect(t.queued).toEqual([]);
+  });
+
+  test("owner DM: this platform's labelled rows only, pick → aliased → recent; Send queues the exact body once", async () => {
+    const t = setup();
+    const { card: c, effects } = await card(t);
+    expect(c.options.map((o) => o.label)).toEqual(["ops", "random", "general"]);
+    expect(c.options[0]).toMatchObject({ id: c.pick, detail: "ops-room · Home · channel" });
+    expect(JSON.stringify(c)).not.toContain("teams ops");
+    await t.bot.onCardAction(tap("send-confirm", c.proposalId), effects);
+    expect(t.queued).toEqual([{ transport: "discord", channel: "d-ops", body: "Deploy done.\n" }]);
+    expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "send", result: "Queued → ops" });
+    await t.bot.onCardAction(tap("send-confirm", c.proposalId), effects);
+    expect(effects.posted.at(-1)).toBe("That send card expired — ask me again.");
+    expect(t.queued).toHaveLength(1);
+  });
+
+  test("non-owner taps are refused before the claim; the owner's still works", async () => {
+    const t = setup();
+    const { card: c, effects } = await card(t);
+    for (const who of ["ada", "mia", "zed"]) {
+      const forged = fx();
+      await t.bot.onCardAction(tap("send-confirm", c.proposalId, { fromId: who }), forged);
+      await t.bot.onCardAction(tap("send-pick", c.proposalId, { fromId: who, value: { destination: "1" } }), forged);
+      expect(forged.posted[0] ?? "").toMatch(/Only Scen can confirm this|set up by Scen/);
+    }
+    expect(t.queued).toEqual([]);
+    await t.bot.onCardAction(tap("send-confirm", c.proposalId), effects);
+    expect(t.queued).toEqual([expect.objectContaining({ channel: "d-ops" })]);
+  });
+
+  test("owner taps from a shared or flag-less context, or another chat, leave the proposal unchanged (select included)", async () => {
+    const t = setup();
+    const { card: c, effects } = await card(t);
+    for (const ctx of [{ direct: false }, { direct: undefined }, { conversationId: "dm-2" }]) {
+      const out = fx();
+      await t.bot.onCardAction(tap("send-pick", c.proposalId, { ...ctx, value: { destination: "1" } }), out);
+      await t.bot.onCardAction(tap("send-confirm", c.proposalId, ctx), out);
+      await t.bot.onCardAction(tap("send-cancel", c.proposalId, ctx), out);
+      expect(out.posted).toHaveLength(3);
+    }
+    expect(t.queued).toEqual([]);
+    await t.bot.onCardAction(tap("send-confirm", c.proposalId), effects);
+    expect(t.queued).toEqual([expect.objectContaining({ channel: "d-ops" })]);
+  });
+
+  test("Discord select moves the stored pick; Teams' submitted value wins; empty, unknown or forgotten picks refuse before the claim", async () => {
+    const t = setup();
+    t.h.destination = "something else";
+    const { card: c, effects } = await card(t);
+    expect(c.pick).toBeUndefined();
+    await t.bot.onCardAction(tap("send-confirm", c.proposalId), effects);
+    expect(effects.posted.at(-1)).toBe("Pick a destination first.");
+    await t.bot.onCardAction(tap("send-confirm", c.proposalId, { value: { destination: "" } }), effects);
+    expect(effects.posted.at(-1)).toBe("Pick a destination first.");
+    await t.bot.onCardAction(tap("send-confirm", c.proposalId, { value: { destination: "99" } }), effects);
+    expect(effects.posted.at(-1)).toBe("That destination wasn't on this card.");
+    const general = c.options.find((o) => o.label === "general")!.id;
+    t.h.rows = t.h.rows.filter((r) => r.conversationId !== "d-old");
+    await t.bot.onCardAction(tap("send-confirm", c.proposalId, { value: { destination: general } }), effects);
+    expect(effects.posted.at(-1)).toBe("That conversation isn't known any more — pick another.");
+    const random = c.options.find((o) => o.label === "random")!.id;
+    await t.bot.onCardAction(tap("send-pick", c.proposalId, { value: { destination: random } }), effects);
+    await t.bot.onCardAction(tap("send-confirm", c.proposalId), effects);
+    expect(t.queued).toEqual([{ transport: "discord", channel: "d-new", body: "Deploy done.\n" }]);
+  });
+
+  test("ids don't restart after a bot restart; a body too long to preview gets no card", async () => {
+    expect(new SendProposalStore().add({ conversationId: "dm-1", proposedById: "u1", body: "x", rows: new Map() }).id)
+      .not.toBe(new SendProposalStore().add({ conversationId: "dm-1", proposedById: "u1", body: "x", rows: new Map() }).id);
+    const t = setup();
+    const long = makeDeps({
+      chat: async () => ({ content: "", toolCalls: [{ name: "propose_send", args: { destination: "ops", text: "x".repeat(4001) } }] }),
+      cards: { ...fakeCards, sendCard: (i: object) => ({ kind: "send", ...i }) } as CardBuilders,
+      send: { transport: "discord", destinations: () => t.h.rows, enqueue: async () => {}, proposals: new SendProposalStore() },
+    });
+    const effects = fx();
+    await buildTeamsBot(long.deps).onMessage(dm(), effects);
+    expect(effects.cards).toEqual([]);
+    expect(effects.posted.at(-1)).toMatch(/too long to confirm/);
+  });
+
+  test("Cancel never sends; an expired card is refused", async () => {
+    const t = setup();
+    const { card: a, effects } = await card(t);
+    const { card: b } = await card(t);
+    await t.bot.onCardAction(tap("send-cancel", a.proposalId), effects);
+    expect(effects.updates.at(-1)?.card).toMatchObject({ result: "Cancelled (by u1)" });
+    t.h.now = 11 * 60_000;
+    await t.bot.onCardAction(tap("send-confirm", b.proposalId), effects);
+    expect(effects.posted.at(-1)).toBe("That send card expired — ask me again.");
+    expect(t.queued).toEqual([]);
   });
 });

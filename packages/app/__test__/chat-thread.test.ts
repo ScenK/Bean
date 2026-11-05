@@ -59,6 +59,16 @@ describe("normalizeForSave", () => {
     expect(done).toMatchObject({ state: "done", result: "Finished" });
   });
 
+  it("restores a send card inert: pending and sending expire, a sent one stays sent", () => {
+    const card = { id: "p1", destination: "ops", body: "hi", options: [] };
+    const items = restoreItems(JSON.parse(JSON.stringify([
+      { kind: "send", id: "a", card, state: "pending" },
+      { kind: "send", id: "b", card, state: "sending" },
+      { kind: "send", id: "c", card, state: "sent" },
+    ]))) as Extract<ChatItem, { kind: "send" }>[];
+    expect(items.map((it) => it.state)).toEqual(["expired", "expired", "sent"]);
+  });
+
   it("keeps a forget receipt's text only: kept without Undo (restored stays restored), no row snapshot", () => {
     expect(find("old-15")).toEqual({ kind: "forgot", id: "old-15", text: "lives in Seattle", state: "kept" });
     expect(find("old-16")).toEqual({ kind: "forgot", id: "old-16", text: "uses zed", state: "restored" });

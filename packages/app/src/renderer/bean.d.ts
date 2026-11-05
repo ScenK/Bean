@@ -12,7 +12,7 @@ import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.
 import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "../ipc.js";
 import type { RoutineBuildView } from "../routine-builder.js";
 import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "../synced-chats.js";
-import type { DestinationView, NameRawResult } from "../destinations.js";
+import type { DestinationView, NameRawResult, SendResult } from "../destinations.js";
 import type { AliasResult } from "@bean/core";
 import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
 
@@ -195,6 +195,8 @@ declare global {
       destinationsRetarget(alias: string, surface: string, conversationId: string): Promise<AliasResult>;
       /** "Name it" on a raw-id sink: name that conversation, rewrite the id to the alias in every sprout using it. */
       destinationsNameRaw(surface: string, conversationId: string, alias: string): Promise<NameRawResult>;
+      /** Confirms a propose_send card: queues its frozen body to the picked option. */
+      sendToDestination(proposalId: string, optionId: string): Promise<SendResult>;
       chatopsStart(bot: ChatopsBot): void;
       chatopsStop(bot: ChatopsBot): void;
       onChatopsEvent(cb: (e: ChatopsEvent) => void): void;

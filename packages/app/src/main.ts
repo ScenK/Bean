@@ -7,7 +7,7 @@ import { basename, join, dirname } from "node:path";
 import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./chatops-enabled-store.js";
 import { createChatopsServers } from "./chatops-servers.js";
 import { buildSyncedChatHandlers, type SyncedChatEvent } from "./synced-chats.js";
-import { buildDestinationHandlers } from "./destinations.js";
+import { buildDestinationHandlers, buildSendHandlers } from "./destinations.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { applyChatopsActivity, clearBotJobs } from "./chatops-activity.js";
@@ -33,7 +33,7 @@ import {
   availableModels, pinnedStepSelection, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat, deleteDesktopChat, listDesktopChats,
   createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
   listChatopsConversations, chatopsConversationTurns, loadChatopsOwners, ownerSubjectIds,
-  listDestinations, destinationLabel, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems,
+  listDestinations, destinationLabel, matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems,
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, CliName, Routine } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
@@ -893,7 +893,12 @@ app.whenReady().then(async () => {
       taskStatus.finish("memory:dream", "done", `🌙 Tidied memory: ${parts} · click to review`);
     };
 
+    const sendHandlers = buildSendHandlers({
+      dbFile: dbFile(dir), listDestinations: (file) => listDestinations(file), destinationLabel, matchDestination,
+      enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID), newId: randomUUID,
+    });
     ({ releaseChatSender } = registerIpc(ipcMain, {
+      proposeSend: sendHandlers.propose, sendHandlers,
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
       loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory, deleteMemories, extractMemories, restoreDreamRun, dreamDetails,
       ownerSubjectIds: () => ownerSubjectIds(dbFile(dir), dir),

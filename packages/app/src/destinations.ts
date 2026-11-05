@@ -1,4 +1,7 @@
-import type { AliasInUse, AliasResult, ChatopsSurface, Destination, DestinationKey, Routine, RoutineChatopsSink } from "@bean/core";
+import type {
+  AliasInUse, AliasResult, ChatopsSurface, Destination, DestinationKey, DestinationMatch, OutboxMessage, Routine, RoutineChatopsSink,
+  SendCard,
+} from "@bean/core";
 
 // Settings → ChatOps → Destinations (#686): list the conversations the bots have seen and let the
 // owner name, retarget and clear their aliases. Every rule (uniqueness, the referenced-alias
@@ -96,6 +99,80 @@ export function buildDestinationHandlers(deps: DestinationHandlerDeps) {
       const key = toKey(surface, conversationId);
       if (typeof alias !== "string") throw new Error("malformed name");
       return deps.retargetAlias(deps.dbFile, alias, key, await inUse());
+    },
+  };
+}
+
+// propose_send (#688): the desktop chat's "post this to <name>" card. Main matches the spoken name
+// and keeps the proposal (body + the rows behind each opaque option id); the renderer only ever
+// sends back the proposal id and the picked option id, so it can't change the body or name a
+// conversation that wasn't offered.
+
+export type SendResult = { ok: true; label: string } | { ok: false; error: string };
+
+export interface SendHandlerDeps {
+  dbFile: string;
+  listDestinations: (file: string) => Destination[];
+  destinationLabel: (row: Destination, rows: readonly Destination[]) => string | undefined;
+  matchDestination: (query: string, rows: readonly Destination[]) => DestinationMatch;
+  enqueue: (msg: Pick<OutboxMessage, "transport" | "channel" | "body">) => Promise<unknown>;
+  newId: () => string;
+}
+
+interface PendingSend { body: string; rows: Map<string, DestinationKey> }
+
+/** Unconfirmed cards kept in main; the oldest is dropped past this (its Send then says so). */
+const PENDING_SENDS_MAX = 50;
+
+const KIND_TEXT: Record<Destination["kind"], string> = { channel: "channel", thread: "thread", group: "group chat", meeting: "meeting chat", dm: "DM" };
+
+export function buildSendHandlers(deps: SendHandlerDeps) {
+  const pending = new Map<string, PendingSend>();
+  const labelled = (): Array<{ row: Destination; label: string }> => {
+    const rows = deps.listDestinations(deps.dbFile);
+    return rows.flatMap((row) => {
+      const label = deps.destinationLabel(row, rows);
+      return label ? [{ row, label }] : [];
+    });
+  };
+  const same = (a: DestinationKey, b: DestinationKey): boolean => a.surface === b.surface && a.conversationId === b.conversationId;
+  return {
+    /** Builds the card for a propose_send: every labelled destination (the name's candidates
+     * first), pre-picked only on a confident match. */
+    propose: (destination: string, body: string): SendCard => {
+      const all = labelled();
+      const { pick, candidates } = deps.matchDestination(destination, all.map((e) => e.row));
+      const rank = (r: Destination): number => {
+        const i = candidates.findIndex((c) => same(c, r));
+        return i < 0 ? candidates.length : i;
+      };
+      const ordered = [...all].sort((a, b) => rank(a.row) - rank(b.row));
+      const id = deps.newId();
+      const rows = new Map<string, DestinationKey>();
+      const options = ordered.map(({ row, label }, i) => {
+        const optionId = String(i);
+        rows.set(optionId, { surface: row.surface, conversationId: row.conversationId });
+        const detail = [row.platformName, row.parentName, KIND_TEXT[row.kind]].filter(Boolean).join(" · ");
+        return { id: optionId, surface: row.surface, label, detail };
+      });
+      pending.set(id, { body, rows });
+      while (pending.size > PENDING_SENDS_MAX) pending.delete(pending.keys().next().value!);
+      const picked = pick ? options.find((o) => same(rows.get(o.id)!, pick)) : undefined;
+      return { id, destination, body, ...(picked ? { pick: picked.id } : {}), options };
+    },
+    /** Queues the card's frozen body to the picked row, re-resolved now (it may have been
+     * forgotten since). One-shot: a sent card can't post again. */
+    send: async (proposalId: unknown, optionId: unknown): Promise<SendResult> => {
+      const p = typeof proposalId === "string" ? pending.get(proposalId) : undefined;
+      if (!p) return { ok: false, error: "This card has expired — ask again." };
+      if (typeof optionId !== "string" || !optionId) return { ok: false, error: "Pick a destination first." };
+      const key = p.rows.get(optionId);
+      if (!key) return { ok: false, error: "That destination wasn't on this card." };
+      const now = labelled().find((e) => same(e.row, key));
+      if (!now) return { ok: false, error: "That conversation isn't known any more." };
+      pending.delete(proposalId as string);
+      await deps.enqueue({ transport: key.surface, channel: key.conversationId, body: p.body });
+      return { ok: true, label: now.label };
     },
   };
 }

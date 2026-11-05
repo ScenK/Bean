@@ -6,6 +6,7 @@ import { NoteCard } from "./NoteCard.js";
 import { SkillCard } from "./SkillCard.js";
 import { TodoCard } from "./TodoCard.js";
 import { SproutRunCard } from "./SproutRunCard.js";
+import { SendCard } from "./SendCard.js";
 import { LiveOfferCard } from "./LiveOfferCard.js";
 import { DelegateCard } from "./DelegateCard.js";
 import { TerminalPane, type TabShortcut } from "./TerminalPane.js";
@@ -98,6 +99,8 @@ export function ChatPanel({
   onTodoDismiss,
   onSproutTrigger,
   onSproutDismiss,
+  onSendConfirm,
+  onSendDismiss,
   onOfferStart,
   onOfferDismiss,
   onDelegateConfirm,
@@ -176,6 +179,8 @@ export function ChatPanel({
   onTodoDismiss: (id: string) => void;
   onSproutTrigger: (id: string) => void;
   onSproutDismiss: (id: string) => void;
+  onSendConfirm: (id: string, optionId: string) => void;
+  onSendDismiss: (id: string) => void;
   onOfferStart: (id: string) => void;
   onOfferDismiss: (id: string) => void;
   onDelegateConfirm: (id: string, editedPrompt: string, choice: { projectPath: string; model?: string; cli?: CliName }) => void;
@@ -646,6 +651,17 @@ export function ChatPanel({
                 state={it.state}
                 onQueue={() => onTodoQueue(it.id)}
                 onDismiss={() => onTodoDismiss(it.id)}
+              />
+            );
+          }
+          if (it.kind === "send") {
+            return (
+              <SendCard
+                key={it.id}
+                card={it.card}
+                state={it.state}
+                onSend={(optionId) => onSendConfirm(it.id, optionId)}
+                onDismiss={() => onSendDismiss(it.id)}
               />
             );
           }

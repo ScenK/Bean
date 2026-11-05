@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
-  AmbientStore, ambientSpeakers, clearAlias, destinationLabel, listDestinations, recordDestination, retargetAlias, setAlias,
-  type Routine,
+  AmbientStore, ambientSpeakers, clearAlias, destinationLabel, forgetDestination, listDestinations, matchDestination,
+  recordDestination, retargetAlias, setAlias, type OutboxMessage, type Routine,
 } from "@bean/core";
-import { aliasUsers, buildDestinationHandlers } from "../src/destinations.js";
+import { aliasUsers, buildDestinationHandlers, buildSendHandlers } from "../src/destinations.js";
 
 const sprout = (name: string, alias?: string): Routine => ({
   name, enabled: true, cron: "0 9 * * *", steps: [{ kind: "chat", instruction: "x" }],
@@ -89,4 +89,51 @@ test("Name it on a raw id names the conversation and rewrites that id to the ali
     { transport: "discord" }, { transport: "discord", alias: "Ops room" }, { transport: "teams", channel: "d1" },
   ] });
   expect(await h.nameRaw("discord", "nope", "X")).toMatchObject({ ok: false });
+});
+
+function sendSetup() {
+  const file = join(mkdtempSync(join(tmpdir(), "bean-app-send-")), "bean.db");
+  recordDestination(file, { surface: "discord", conversationId: "d1", kind: "channel", platformName: "deploys", parentName: "Guild" });
+  recordDestination(file, { surface: "discord", conversationId: "d2", kind: "channel", platformName: "general", parentName: "Guild" });
+  recordDestination(file, { surface: "teams", conversationId: "t1", kind: "group", platformName: "Family" });
+  recordDestination(file, { surface: "teams", conversationId: "19:x_y@unq.gbl.spaces", kind: "group" }); // unlabelled
+  const queued: Array<Pick<OutboxMessage, "transport" | "channel" | "body">> = [];
+  let n = 0;
+  const h = buildSendHandlers({
+    dbFile: file, listDestinations: (f) => listDestinations(f), destinationLabel, matchDestination,
+    enqueue: async (m) => { queued.push(m); }, newId: () => `p${++n}`,
+  });
+  return { file, h, queued };
+}
+
+test("propose offers every labelled row, candidates first, and pre-picks a typo's confident match", () => {
+  const { h } = sendSetup();
+  const card = h.propose("deplys", "Deploy done.");
+  expect(card.options[0]?.label).toBe("deploys");
+  expect(card.options.map((o) => o.label).sort()).toEqual(["Family", "deploys", "general"]);
+  const picked = card.options.find((o) => o.id === card.pick);
+  expect(picked).toMatchObject({ surface: "discord", label: "deploys", detail: "deploys · Guild · channel" });
+  expect(h.propose("zzzz", "x").pick).toBeUndefined();
+});
+
+test("send refuses no pick, an unknown option and an unknown card; the queued message has the resolved id and exact body", async () => {
+  const { h, queued } = sendSetup();
+  const card = h.propose("Family", "  Dinner at 7.\n");
+  expect(await h.send(card.id, "")).toMatchObject({ ok: false, error: expect.stringContaining("Pick") });
+  expect(await h.send(card.id, "99")).toMatchObject({ ok: false });
+  expect(await h.send("nope", card.pick)).toMatchObject({ ok: false, error: expect.stringContaining("expired") });
+  expect(queued).toEqual([]);
+  expect(await h.send(card.id, card.pick)).toEqual({ ok: true, label: "Family" });
+  expect(queued).toEqual([{ transport: "teams", channel: "t1", body: "  Dinner at 7.\n" }]);
+  // One-shot: the same card can't post twice.
+  expect(await h.send(card.id, card.pick)).toMatchObject({ ok: false });
+  expect(queued).toHaveLength(1);
+});
+
+test("send re-resolves the row: a conversation forgotten since the card was shown is refused", async () => {
+  const { file, h, queued } = sendSetup();
+  const card = h.propose("general", "hi");
+  forgetDestination(file, { surface: "discord", conversationId: "d2" });
+  expect(await h.send(card.id, card.pick)).toMatchObject({ ok: false, error: expect.stringContaining("isn't known") });
+  expect(queued).toEqual([]);
 });

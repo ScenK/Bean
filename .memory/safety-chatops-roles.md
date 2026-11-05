@@ -56,6 +56,8 @@ per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_ad
   (names deliberately don't end in `-routine`, which would mean admin). The card is also bound to its
   conversation and asker before `claim()`; the action is frozen on the card. The finish reply is one
   fixed outbox line from the scheduler host (`withFinishReply`), never step output.
+- **Send by name (#689)**: `send` (owner) — and only in the owner's real DM, checked via the
+  adapter's `CardAction.direct`; see [project-chat-destinations](project-chat-destinations.md).
 - **Chatty setting (#444)**: `chatops/chatter.ts`, `chatops_chatty` (missing row = off), scoped like
   admins (channel, never a thread). `chatty on|off` = `NEEDS.chatty` (admin); `chatty status`,
   addressed mute (`quiet|hush|mute|be quiet|stay quiet [for] <n><unit>`, whole message only, 30 min
