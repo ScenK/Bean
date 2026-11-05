@@ -1,7 +1,7 @@
 import type {
   CardBuilders, FinishedCardInput, RememberedCardInput, ReminderCardInput,
   NoteProposalCardInput, NoteResultCardInput, NoteArchiveProposalCardInput, NoteArchiveResultCardInput, ProposalCardInput, RunningCardInput,
-  SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, SproutRunCardInput, TodoProposalCardInput, TodoResultCardInput,
+  SkillProposalCardInput, SkillResultCardInput, RoutineProposalCardInput, RoutineResultCardInput, SproutRunCardInput, SendCardInput, TodoProposalCardInput, TodoResultCardInput,
   LiveSessionProposalCardInput, LiveSessionResultCardInput, CliName,
 } from "@bean/core";
 import { BROWSER_SKILL_NOTE, rememberedScopeLine } from "@bean/core";
@@ -179,6 +179,35 @@ function todoProposalCard(input: TodoProposalCardInput): object {
       { type: BUTTON, style: 3, label: "Queue", custom_id: `bean:queue-todo:${input.proposalId}` },
       { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:cancel-todo:${input.proposalId}` },
     ])],
+  };
+}
+
+// Owner-DM send card (#689). The select carries opaque option ids; core keeps the ids' rows and
+// re-checks the pick on Send. Discord caps a select at 25 options, so the pick (ordered first by
+// core) plus the next 24 fit; label/description cap at 100 chars.
+export function sendCard({ proposalId, body, options, pick, result }: SendCardInput): object {
+  const embed = {
+    title: "Send a message",
+    description: clampInstruction(body),
+    ...(result !== undefined ? { fields: [{ name: "Result", value: clampField(result) }] } : {}),
+    footer: { text: "Posts as Bean · Missing one? Name it in Bean's Settings → ChatOps." },
+  };
+  if (result !== undefined) return { embeds: [embed], components: [] };
+  const shown = [...options.filter((o) => o.id === pick), ...options.filter((o) => o.id !== pick)].slice(0, 25);
+  return {
+    embeds: [embed],
+    components: [
+      row([{
+        type: STRING_SELECT, custom_id: `bean:send-pick:${proposalId}`, placeholder: "Pick a destination",
+        options: shown.map((o) => ({
+          label: o.label.slice(0, 100), value: o.id, default: o.id === pick, ...(o.detail ? { description: o.detail.slice(0, 100) } : {}),
+        })),
+      }]),
+      row([
+        { type: BUTTON, style: 3, label: "Send", custom_id: `bean:send-confirm:${proposalId}` },
+        { type: BUTTON, style: 2, label: "Cancel", custom_id: `bean:send-cancel:${proposalId}` },
+      ]),
+    ],
   };
 }
 
@@ -418,6 +447,6 @@ function liveSessionResultCard(input: LiveSessionResultCardInput): object {
 export const discordCards: CardBuilders = {
   proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard,
   rememberedCard, reminderCard,
-  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, routineProposalCard, routineResultCard,
+  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, sendCard, routineProposalCard, routineResultCard,
   liveSessionProposalCard, liveSessionResultCard,
 };

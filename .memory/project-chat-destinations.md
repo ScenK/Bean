@@ -46,3 +46,13 @@ channel id). Not `chatops_conversations` — that one is the owner-only continua
   `SendCard` sends back only the card id + option id, so it can't edit the body or name an unoffered
   row. Send re-resolves the row (forgotten since → refused), is one-shot, and enqueues
   `{ transport, channel: conversationId, body }` — receipt "Queued → <label>". Restored cards expire.
+- **Chatops send (#689): owner's real DM only.** `bot.ts` offers `propose_send` only when
+  `isOwner && msg.direct` and the surface wired `send` (also on the chat-skill follow-up hop, same
+  gate) — never a channel, group, meeting, human 1:1, Teams targeted `/` pick, or a member's DM,
+  because the card lists destination names. The card lists the asking platform's labelled rows only
+  (pick → aliased → most recent; Discord shows 25 with the pick first). `send-confirm`/`send-cancel`/
+  `send-pick` (Discord's select, routed through core) map to `owner` in `cardActionNeeds`, and
+  `handleSendAction` refuses unless `CardAction.direct === true` *before* touching the proposal —
+  the adapter derives it (Teams `isDirect`, Discord `isDMBased()`); never infer privacy from a
+  missing `scopeId` (targeted Teams picks have none). Teams copies card values through
+  `cardActionOf` (`teams/src/proactive.ts`) — add a new card input's id there or it never arrives.

@@ -57,6 +57,7 @@ export * from "./chatops/note-proposals.js";
 export * from "./chatops/note-archive-proposals.js";
 export * from "./chatops/todo-proposals.js";
 export * from "./chatops/sprout-run-proposals.js";
+export * from "./chatops/send-proposals.js";
 export * from "./chatops/skill-proposals.js";
 export * from "./chatops/routine-proposals.js";
 export * from "./chatops/runs.js";

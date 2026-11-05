@@ -22,6 +22,8 @@ const NEEDS = {
   channelMemory: "admin",
   // Running or checking a saved sprout now (propose_sprout_run and its card, #636).
   runRoutines: "owner",
+  // Posting to a named destination from the owner's DM (propose_send and its card, #689).
+  send: "owner",
   systemControl: "owner", liveSession: "owner", skillWrites: "owner", routineWrites: "owner", manageAdmins: "owner",
 } as const satisfies Record<string, Role>;
 export type Capability = keyof typeof NEEDS;
@@ -162,6 +164,8 @@ export function cardActionNeeds(beanAction: string | undefined): Role {
   // Routine drafts are further bound to their proposer in bot.ts (handleRoutineAction).
   if (a.endsWith("-routine")) return needs("routineDrafts");
   if (a === "run-sprout" || a === "cancel-sprout") return needs("runRoutines");
+  // send-pick is Discord's destination select: gated like Send so a pick can't move first.
+  if (a === "send-confirm" || a === "send-cancel" || a === "send-pick") return needs("send");
   if (["save-note", "cancel-note", "archive-note", "cancel-archive-note", "restore-note"].includes(a)) return needs("notes");
   if (a === "queue-todo" || a === "cancel-todo") return needs("todos");
   if (a === "forget-memory" || a === "share-memory") return needs("memory");
