@@ -143,8 +143,10 @@ function cleanSinks(v: unknown): RoutineSinks {
   for (const c of Array.isArray(s.chatops) ? s.chatops as (Record<string, unknown> | null)[] : []) {
     const transport = c?.transport;
     if ((transport !== "discord" && transport !== "teams") || chatops.some((x) => x.transport === transport)) continue;
+    // A named destination wins over an id: the two are exclusive.
+    const alias = typeof c?.alias === "string" ? c.alias.trim() : "";
     const channel = typeof c?.channel === "string" ? c.channel.trim() : "";
-    chatops.push({ transport, ...(channel ? { channel } : {}) });
+    chatops.push({ transport, ...(alias ? { alias } : channel ? { channel } : {}) });
   }
   return {
     ...(chatops.length > 0 ? { chatops } : {}),

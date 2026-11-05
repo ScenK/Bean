@@ -12,7 +12,7 @@ import {
   DESKTOP_CHAT_MAX_BYTES, DESKTOP_CHAT_TITLE_MAX, type DesktopChat, type DesktopChatInput, type DesktopChatListing,
 } from "@bean/core";
 import type { RoutineBuildView } from "./routine-builder.js";
-import type { WatchCheckResult } from "@bean/core";
+import type { WatchCheckResult, SendCard } from "@bean/core";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,6 +25,7 @@ import { terminalLink, type TerminalTasks } from "./terminal-tasks.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import type { UpdateCheckOutcome } from "./updater.js";
 import type { buildSyncedChatHandlers } from "./synced-chats.js";
+import type { buildDestinationHandlers, buildSendHandlers } from "./destinations.js";
 
 export { IPC };
 
@@ -218,6 +219,8 @@ export interface ChatHandlerDeps {
   loadRoutines?: () => Promise<Routine[]>;
   /** A sprout's pending todos and whether its watch is seeded — enables propose_sprout_run. */
   sproutFacts?: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
+  /** Enables propose_send: matches the spoken destination and keeps the proposal for the Send tap. */
+  proposeSend?: (destination: string, body: string) => SendCard;
   /** Enables the generate_image action tool. getModel (not a value): imageModel may live
    * behind runtime config someday; onStart drives the 🎨 working indicator of the chat (mount) that asked. */
   imageGen?: {
@@ -282,7 +285,12 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       todoRoutines,
       sproutCatalog: deps.sproutFacts ? routines.map((r) => ({ name: r.name, description: r.description })) : [],
       webSearch: deps.webSearch?.() ?? false,
+      sendAvailable: deps.proposeSend !== undefined,
     });
+    if (result.proposedSend && deps.proposeSend) {
+      result.sendCard = deps.proposeSend(result.proposedSend.destination, result.proposedSend.text);
+      delete result.proposedSend;
+    }
     if (result.proposedSproutRun && deps.sproutFacts) await planSproutCard(result, routines, deps.sproutFacts);
     if (imageTool && imageTool.paths.length > 0) {
       result.generatedImages = await Promise.all(imageTool.paths.map(async (path) => ({
@@ -1094,6 +1102,8 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   webSearch?: () => boolean;
   imageGen?: ChatHandlerDeps["imageGen"];
   sproutFacts?: ChatHandlerDeps["sproutFacts"];
+  proposeSend?: ChatHandlerDeps["proposeSend"];
+  sendHandlers?: ReturnType<typeof buildSendHandlers>;
   broadcast: (channel: string, payload: unknown) => void;
   openComponent: (kind: ComponentKind, payload?: ChatDrop | DashboardTarget) => void;
   proposeRun: (suggestion: RouteSuggestion) => void;
@@ -1134,6 +1144,7 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   todoHandlers: ReturnType<typeof buildTodoHandlers>;
   chatThreadHandlers: ReturnType<typeof buildChatThreadHandlers>;
   syncedChatHandlers: ReturnType<typeof buildSyncedChatHandlers>;
+  destinationHandlers: ReturnType<typeof buildDestinationHandlers>;
 }
 
 /** `releaseChatSender` = a chat window is gone: release every chat it still had attached. */
@@ -1414,6 +1425,19 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.handle(IPC.chatopsStatus, () => chatopsHandlers.status());
   ipcMain.on(IPC.chatopsStart, (_e, bot: ChatopsBot) => chatopsHandlers.start(bot));
   ipcMain.on(IPC.chatopsStop, (_e, bot: ChatopsBot) => chatopsHandlers.stop(bot));
+  ipcMain.handle(IPC.destinationsList, () => deps.destinationHandlers.list());
+  ipcMain.handle(IPC.destinationsName, (_e, surface: unknown, conversationId: unknown, alias: unknown) =>
+    deps.destinationHandlers.name(surface, conversationId, alias));
+  ipcMain.handle(IPC.destinationsClear, (_e, surface: unknown, conversationId: unknown) =>
+    deps.destinationHandlers.clear(surface, conversationId));
+  ipcMain.handle(IPC.destinationsNameRaw, (_e, surface: unknown, conversationId: unknown, alias: unknown) =>
+    deps.destinationHandlers.nameRaw(surface, conversationId, alias));
+  ipcMain.handle(IPC.sendToDestination, (e, proposalId: unknown, optionId: unknown) => {
+    if (!deps.isChatSender(e.sender) || !deps.sendHandlers) throw new Error("Sends are confirmed in the chat window.");
+    return deps.sendHandlers.send(proposalId, optionId);
+  });
+  ipcMain.handle(IPC.destinationsRetarget, (_e, alias: unknown, surface: unknown, conversationId: unknown) =>
+    deps.destinationHandlers.retarget(alias, surface, conversationId));
 
   const updateHandlers = buildUpdateHandlers(deps);
   ipcMain.handle(IPC.checkForUpdate, () => updateHandlers.check());

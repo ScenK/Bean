@@ -98,6 +98,18 @@ export interface SproutRunCardInput {
   result?: string;
 }
 
+/** The owner-DM send card (#689): one platform's destinations only. `options` are ordered
+ * pick → aliased → most recently seen; `pick` (an option id) is set only for a confident match.
+ * `result` set = sent or cancelled — the card shows it and no controls. */
+export interface SendCardInput {
+  proposalId: string;
+  body: string;
+  /** `detail` = "platform name · parent · kind" (untrusted names: render as plain text). */
+  options: { id: string; label: string; detail: string }[];
+  pick?: string;
+  result?: string;
+}
+
 export interface TodoResultCardInput {
   routine: string;
   queuedBy: string;
@@ -222,6 +234,8 @@ export interface CardBuilders {
   todoProposalCard: (input: TodoProposalCardInput) => object;
   todoResultCard: (input: TodoResultCardInput) => object;
   sproutRunCard: (input: SproutRunCardInput) => object;
+  /** Optional: only surfaces that wire `send` need it. */
+  sendCard?: (input: SendCardInput) => object;
   rememberedCard: (input: RememberedCardInput) => object;
   /** Optional: only surfaces that wire `reminders` need it. */
   reminderCard?: (input: ReminderCardInput) => object;

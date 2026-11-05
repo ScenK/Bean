@@ -115,7 +115,8 @@ export function describeSinks(
   r: Routine, people: { id: string; name: string }[], ownerName: string, channelId?: string,
 ): string[] {
   const out = (r.sinks.chatops ?? []).map((s) =>
-    s.user ? `DM ${people.find((p) => p.id === s.user)?.name ?? s.user}`
+    s.alias !== undefined ? s.alias
+      : s.user ? `DM ${people.find((p) => p.id === s.user)?.name ?? s.user}`
       : s.channel === undefined ? `DM ${ownerName}`
         : s.channel === channelId ? (s.transport === "teams" ? "This chat" : "This channel")
           : s.transport === "teams" ? s.channel : `<#${s.channel}>`);

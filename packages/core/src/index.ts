@@ -34,6 +34,7 @@ export * from "./agent-rules.js";
 export * from "./delegate.js";
 export * from "./delegate-runs.js";
 export * from "./desktop-chats.js";
+export * from "./destinations.js";
 export * from "./step-attempts.js";
 export * from "./retro.js";
 export * from "./drop-plan.js";
@@ -56,6 +57,7 @@ export * from "./chatops/note-proposals.js";
 export * from "./chatops/note-archive-proposals.js";
 export * from "./chatops/todo-proposals.js";
 export * from "./chatops/sprout-run-proposals.js";
+export * from "./chatops/send-proposals.js";
 export * from "./chatops/skill-proposals.js";
 export * from "./chatops/routine-proposals.js";
 export * from "./chatops/runs.js";
@@ -80,6 +82,7 @@ export * from "./spawn-env.js";
 export {
   appendRunRecord, chatRoutineProblem, createRoutine, deleteRoutine, describeRoutineError, isValidRoutine, loadRoutines, watchEveryMinutes, DEFAULT_WATCH_MINUTES,
   loadRoutineStates, memberTodoEligible, resolveTodoRoutine, saveRoutine, todoRunHint, saveRoutineStates, usesGates,
+  resolveSinkAlias, sinkAliasProblems,
 } from "./routine-store.js";
 export type {
   Routine, RoutineChatopsSink, RoutineSinks, RoutineState, RoutineStep, RoutineWatch, RunRecord, RunStatus, StepGate, StepKind, StepRoute,

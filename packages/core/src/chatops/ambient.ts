@@ -41,6 +41,15 @@ export class AmbientStore {
   }
 }
 
+/** The distinct names that spoke in a conversation's recent ambient chatter, most recent first —
+ * the Settings hint for a conversation with no platform name (a Teams 1:1 or group chat). */
+export function ambientSpeakers(file: string, conversationId: string, limit = 50): string[] {
+  const rows = openDb(file).prepare(
+    "SELECT from_name FROM chatops_ambient WHERE conversation_id = ? ORDER BY at DESC, rowid DESC LIMIT ?",
+  ).all(conversationId, limit) as unknown as { from_name: string }[];
+  return [...new Set(rows.map((r) => r.from_name))];
+}
+
 function hhmm(ms: number): string {
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;

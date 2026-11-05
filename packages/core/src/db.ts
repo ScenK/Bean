@@ -281,6 +281,20 @@ CREATE TABLE IF NOT EXISTS desktop_chats (
 );
 CREATE INDEX IF NOT EXISTS desktop_chats_updated ON desktop_chats(updated_at);
 
+-- Conversations the bots have seen, as send destinations (destinations.ts). Bots write the
+-- platform names and last_seen; only the desktop writes alias (NULL = unnamed). Teams channels
+-- are keyed by their bare channel id. Not chatops_conversations: that one is a continuation catalog.
+CREATE TABLE IF NOT EXISTS chat_destinations (
+  surface         TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  kind            TEXT NOT NULL CHECK (kind IN ('channel', 'thread', 'group', 'meeting', 'dm')),
+  platform_name   TEXT,
+  parent_name     TEXT,
+  alias           TEXT UNIQUE,
+  last_seen       TEXT NOT NULL,
+  PRIMARY KEY (surface, conversation_id)
+);
+
 CREATE TABLE IF NOT EXISTS watch_source (
   routine TEXT PRIMARY KEY,
   source  TEXT NOT NULL
