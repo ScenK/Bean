@@ -204,6 +204,9 @@ export function RoutinesPanel() {
   const [editorFor, setEditorFor] = useState<string | undefined>(undefined);
   const [checking, setChecking] = useState(false);
   const [notice, setNotice] = useState("");
+  // Save button feedback, like Settings' Save: "Saving…" while in flight, "Saved ✓" until the next edit.
+  const [saving, setSaving] = useState(false);
+  const [savedName, setSavedName] = useState<string | undefined>(undefined);
   // Catalogs that back the per-step skill / project / model pickers (same sources the
   // ProposalCard/DelegateCard chips use).
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -395,14 +398,19 @@ export function RoutinesPanel() {
   };
 
   const save = async (): Promise<void> => {
+    setSaving(true);
+    setSavedName(undefined);
     try {
       await window.bean.routinesSave({ ...draft, sinks: cleanChatSinks(draft.sinks) });
       setError("");
       await refresh();
       setSelected(draft.name);
       setCreating(false);
+      setSavedName(draft.name);
     } catch (e) {
       setError(ipcErrorMessage(e) ?? "save failed — check name, cadence, and steps");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -514,6 +522,8 @@ export function RoutinesPanel() {
 
   const selectedState = selected ? states[selected] : undefined;
   const savedRoutine = selected ? routines.find((r) => r.name === selected) : undefined;
+  // Any edit after the save makes the draft differ from disk, so the button reverts by itself.
+  const justSaved = savedName !== undefined && savedName === selected && JSON.stringify(draft) === savedJson;
   const reviewing = Boolean(savedRoutine && needsReview(savedRoutine, selectedState) && editorFor !== selected);
   const buildView = selectedBuild ? builds.find((b) => b.name === selectedBuild) : undefined;
   const notifyOnly = Boolean(draft.watch) && draft.steps.length === 0;
@@ -1163,7 +1173,9 @@ export function RoutinesPanel() {
               {runNowNote ? <span class="bean-routines-section-note">{runNowNote}</span> : null}
             </>
           ) : null}
-          <button type="button" class="bean-btn" onClick={() => void save()}>Save sprout</button>
+          <button type="button" class="bean-btn" disabled={saving} onClick={() => void save()}>
+            {saving ? "Saving…" : justSaved ? "Saved ✓" : "Save sprout"}
+          </button>
         </div>
         {selected ? (
           <button type="button" class="bean-skills-delete-link bean-routines-delete" onClick={() => void remove()}>Delete sprout…</button>

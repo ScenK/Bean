@@ -44,6 +44,11 @@ test("routines: only-on-problems chat rule round-trips and hides for notify-only
     await expect(win.locator(".bean-routines-digest-line")).toContainText("Discord DM only when a run needs you");
     await win.getByRole("button", { name: "Save sprout" }).click();
     await expect.poll(async () => (await saved()).chatopsOnlyOnProblems).toBe(true);
+    // Save confirms itself like Settings' Save, and reverts once the draft is edited again.
+    await expect(win.getByRole("button", { name: "Saved ✓" })).toBeVisible();
+    await quiet.uncheck();
+    await expect(win.getByRole("button", { name: "Save sprout" })).toBeVisible();
+    await quiet.check();
 
     await win.reload();
     await win.locator(".bean-routines-row", { hasText: "quiet" }).click();
