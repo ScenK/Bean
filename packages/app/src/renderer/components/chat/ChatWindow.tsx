@@ -1,19 +1,21 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ChatSession, type ChatSessionApi, type ChatTasks } from "./ChatSession.js";
+import { ChatSession, commandList, type ChatSessionApi, type ChatTasks } from "./ChatSession.js";
 import { ChatSidebar, SIDEBAR_INLINE_MIN, SIDEBAR_OPEN_KEY } from "./ChatSidebar.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { SyncedChat, syncedKey } from "./SyncedChat.js";
-import { isTerminalToggle } from "./TerminalPane.js";
+import { isTerminalToggle, tabShortcut } from "./TerminalPane.js";
 import type { DesktopChatListing } from "@bean/core";
 import type { ChatDrop } from "../../../channels.js";
 import type { SyncedChatListing } from "../../../synced-chats.js";
 
 /** The window-close card for the chats with running tasks (one entry per chat). */
 export function closeCard(busy: ChatTasks[]): { title: string; stop: string } {
-  const count = busy.reduce((n, t) => n + t.delegates + (t.live ? 1 : 0) + (t.terminal ? 1 : 0), 0);
+  const count = busy.reduce((n, t) => n + t.delegates + (t.live ? 1 : 0) + (t.terminal?.length ?? 0), 0);
   const only = busy.length === 1 ? busy[0] : undefined;
-  if (only?.terminal && count === 1) return { title: `${only.terminal} is still running in the terminal — closing stops it.`, stop: "Stop & close" };
+  const cmds = only?.terminal ?? [];
+  if (cmds.length === 1 && count === 1) return { title: `${cmds[0]} is still running in the terminal — closing stops it.`, stop: "Stop & close" };
+  if (cmds.length > 1 && count === cmds.length) return { title: `${commandList(cmds)} are still running in this chat's terminals — closing stops them.`, stop: "Stop & close" };
   const name = only?.live && !only.terminal ? AGENT_NAMES[only.live] : undefined;
   if (only && name && only.delegates === 0) return { title: `${name} is still running — closing ends the session.`, stop: `End ${name} session & close` };
   if (only && name && only.delegates === 1) return { title: `A delegated task and a ${name} session are still running — closing stops both.`, stop: "Stop & close" };
@@ -242,15 +244,19 @@ export function ChatWindow() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
-  // Control+` folds/unfolds the shown chat's terminal — capture phase, so it wins over the shell's
-  // own keydown (xterm would send NUL) and works from the composer or the terminal alike.
+  // Control+` folds/unfolds the shown chat's terminal, Cmd+T / Cmd+1…4 / Cmd+Shift+[ ] drive its
+  // tabs — capture phase, so they win over the shell's own keydown (xterm would send NUL) and work
+  // from the composer or the terminal alike.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.isComposing || !isTerminalToggle(e)) return;
+      if (e.isComposing) return;
+      const tab = tabShortcut(e);
+      if (!tab && !isTerminalToggle(e)) return;
       e.preventDefault();
       e.stopPropagation();
       if (e.repeat || syncedRef.current !== undefined) return;
-      shownApi()?.toggleTerminal();
+      if (tab) shownApi()?.terminalShortcut(tab);
+      else shownApi()?.toggleTerminal();
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);

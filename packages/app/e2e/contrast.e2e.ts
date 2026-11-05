@@ -132,6 +132,9 @@ test("every component window clears WCAG AA text contrast in both themes", async
         await win.keyboard.type("echo scanned");
         await win.keyboard.press("Enter");
         await expect(win.locator(".bean-term .xterm-rows")).toContainText("scanned");
+        // A second tab (#674), so the strip's active and inactive tabs are both measured.
+        await win.keyboard.press("Meta+t");
+        await expect(win.locator(".bean-term").getByRole("tab")).toHaveCount(2);
       }
       await win.waitForTimeout(600);
       for (const theme of ["hearth", "graphite"]) {

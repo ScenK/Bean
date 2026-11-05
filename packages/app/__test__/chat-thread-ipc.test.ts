@@ -128,7 +128,7 @@ function ipcHarness(given: Partial<RegisterDeps> = {}) {
   const chat = { id: 1, isDestroyed: () => false, send: vi.fn() }, other = { id: 2, isDestroyed: () => false, send: vi.fn() };
   const delegateTasks = { start: vi.fn(async () => "t1"), cancel: vi.fn(), cancelMount: vi.fn() };
   const liveTasks = { start: vi.fn(async () => ({ sessionId: "s1", handedOver: 0 })), send: vi.fn(), stop: vi.fn(), resume: vi.fn(), stopMount: vi.fn() };
-  const terminalTasks = { start: vi.fn(async () => ({ cwd: "/scratch" })), write: vi.fn(), resize: vi.fn(), ack: vi.fn(), stop: vi.fn(async () => {}), runningCommand: vi.fn(async () => "pnpm") };
+  const terminalTasks = { start: vi.fn(async () => ({ cwd: "/scratch" })), write: vi.fn(), resize: vi.fn(), ack: vi.fn(), stop: vi.fn(async () => {}), stopMount: vi.fn(async () => {}), runningCommand: vi.fn(async () => ["pnpm"]) };
   const all: Partial<RegisterDeps> = { isChatSender: (s) => s === (chat as never), chatThreadHandlers: handlers, delegateTasks, liveTasks, terminalTasks, ...given };
   // Every other dep is a no-op: registration only stores handlers.
   const deps = new Proxy(all, { get: (t, k) => (k in t ? t[k as keyof typeof t] : vi.fn()) }) as RegisterDeps;
@@ -164,37 +164,47 @@ describe("chat thread IPC", () => {
     expect(invoke(IPC.chatThreadSave, chat, save(), A)).toBeUndefined();
   });
 
-  it("terminal calls need the chat window and an attached mount; release and window close stop it", async () => {
+  it("terminal calls need the chat window and an attached mount; release and window close stop every tab", async () => {
     const { chat, other, invoke, emit, terminalTasks, releaseChatSender } = ipcHarness();
     const openExternal = vi.mocked((await import("electron")).shell.openExternal);
+    const T = "d0000000-0000-4000-8000-000000000001";
     emit(IPC.chatAttach, chat, A);
     emit(IPC.chatAttach, chat, B);
-    expect(await invoke(IPC.terminalStart, other, "", 80, 24, A)).toEqual({ error: expect.stringMatching(/chat window/) });
-    expect(await invoke(IPC.terminalStart, chat, "", 80, 24, "c0000000-0000-4000-8000-000000000003")).toEqual({ error: expect.stringMatching(/chat window/) });
-    emit(IPC.terminalWrite, other, "rm -rf ~\r", A);
-    emit(IPC.terminalResize, other, 100, 30, A);
-    emit(IPC.terminalAck, other, 10, A);
+    expect(await invoke(IPC.terminalStart, other, "", 80, 24, A, T)).toEqual({ error: expect.stringMatching(/chat window/) });
+    expect(await invoke(IPC.terminalStart, chat, "", 80, 24, "c0000000-0000-4000-8000-000000000003", T)).toEqual({ error: expect.stringMatching(/chat window/) });
+    emit(IPC.terminalWrite, other, "rm -rf ~\r", A, T);
+    emit(IPC.terminalResize, other, 100, 30, A, T);
+    emit(IPC.terminalAck, other, 10, A, T);
+    await invoke(IPC.terminalStop, other, A, T);
     await invoke(IPC.terminalStop, other, A);
     emit(IPC.terminalOpenLink, other, "https://example.com", A);
-    expect([terminalTasks.start, terminalTasks.write, terminalTasks.resize, terminalTasks.ack, terminalTasks.stop, openExternal]
-      .map((f) => f.mock.calls.length)).toEqual([0, 0, 0, 0, 0, 0]);
-    expect(await invoke(IPC.terminalStart, chat, "/proj", 80, 24, A)).toEqual({ cwd: "/scratch" });
-    expect(terminalTasks.start.mock.calls).toEqual([[{ senderId: chat.id, mountId: A }, "/proj", 80, 24]]);
-    emit(IPC.terminalWrite, chat, "ls\r", A);
+    expect([terminalTasks.start, terminalTasks.write, terminalTasks.resize, terminalTasks.ack, terminalTasks.stop, terminalTasks.stopMount, openExternal]
+      .map((f) => f.mock.calls.length)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(await invoke(IPC.terminalStart, chat, "/proj", 80, 24, A, T)).toEqual({ cwd: "/scratch" });
+    expect(terminalTasks.start.mock.calls).toEqual([[{ senderId: chat.id, mountId: A }, T, "/proj", 80, 24]]);
+    emit(IPC.terminalWrite, chat, "ls\r", A, T);
+    emit(IPC.terminalResize, chat, 100, 30, A, T);
+    emit(IPC.terminalAck, chat, 10, A, T);
     emit(IPC.terminalOpenLink, chat, "file:///etc/passwd", A);
     emit(IPC.terminalOpenLink, chat, "https://example.com", A);
-    expect(terminalTasks.write.mock.calls).toEqual([[A, "ls\r"]]);
-    expect(await invoke(IPC.terminalRunning, other, A)).toBeUndefined();
-    expect(await invoke(IPC.terminalRunning, chat, A)).toBe("pnpm");
-    expect(terminalTasks.runningCommand.mock.calls).toEqual([[A]]);
+    expect([terminalTasks.write.mock.calls, terminalTasks.resize.mock.calls, terminalTasks.ack.mock.calls])
+      .toEqual([[[A, T, "ls\r"]], [[A, T, 100, 30]], [[A, T, 10]]]);
+    expect(await invoke(IPC.terminalRunning, other, A)).toEqual([]);
+    expect(await invoke(IPC.terminalRunning, chat, A)).toEqual(["pnpm"]);
+    await invoke(IPC.terminalRunning, chat, A, T);
+    expect(terminalTasks.runningCommand.mock.calls).toEqual([[A, undefined], [A, T]]);
     expect(openExternal.mock.calls).toEqual([["https://example.com/"]]);
-    // A released mount is stale: its terminal stops and later calls are refused.
+    // A tab stops alone; no tab stops the whole chat.
+    await invoke(IPC.terminalStop, chat, A, T);
+    await invoke(IPC.terminalStop, chat, A);
+    expect([terminalTasks.stop.mock.calls, terminalTasks.stopMount.mock.calls]).toEqual([[[A, T]], [[A]]]);
+    // A released mount is stale: every tab stops and later calls are refused.
     emit(IPC.chatRelease, chat, A);
-    expect(terminalTasks.stop.mock.calls).toEqual([[A]]);
-    emit(IPC.terminalWrite, chat, "ls\r", A);
+    expect(terminalTasks.stopMount.mock.calls).toEqual([[A], [A]]);
+    emit(IPC.terminalWrite, chat, "ls\r", A, T);
     expect(terminalTasks.write.mock.calls).toHaveLength(1);
     releaseChatSender(chat.id);
-    expect(terminalTasks.stop.mock.calls).toEqual([[A], [B]]);
+    expect(terminalTasks.stopMount.mock.calls).toEqual([[A], [A], [B]]);
   });
 
   it("two mounts in one window: separate threads, per-mount incognito, delete refuses both, release frees them", async () => {

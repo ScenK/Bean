@@ -2,9 +2,9 @@ import { execFile } from "node:child_process";
 import { userInfo } from "node:os";
 import { escalateKill, killPendingGroups, killTree, spawnEnv } from "@bean/core";
 
-// Per-chat interactive terminals: one login shell in a PTY per chat (mount), owned by the chat
-// window. The tracked, interactive sibling of launcher.ts's Terminal.app hand-off — Bean spawns,
-// streams, and kills it. node-pty is injected (main.ts) so this file tests without the native module.
+// Per-chat interactive terminals: a login shell in a PTY per tab, up to MAX_TABS per chat (mount),
+// owned by the chat window. The tracked, interactive sibling of launcher.ts's Terminal.app
+// hand-off — Bean spawns, streams, and kills it. node-pty is injected (main.ts) so this file tests without the native module.
 
 /** The node-pty `IPty` surface Bean uses. */
 export interface PtyProcess {
@@ -19,15 +19,16 @@ export interface PtyProcess {
 export interface PtySpawnOptions { name: string; cols: number; rows: number; cwd: string; env: NodeJS.ProcessEnv }
 export type PtyFactory = (file: string, args: string[], opts: PtySpawnOptions) => PtyProcess;
 
-/** A main→renderer push on `bean:terminal-event`, tagged with the chat (mount) that owns it. */
-export type TerminalEvent = { mountId: string } & (
+/** A main→renderer push on `bean:terminal-event`, tagged with the chat (mount) and tab that own it. */
+export type TerminalEvent = { mountId: string; tabId: string } & (
   | { type: "data"; data: string }
-  /** Something other than the shell holds the terminal's foreground (or no longer does). */
-  | { type: "busy"; busy: boolean }
+  /** The foreground command changed: its name, or none once the shell has the terminal back. */
+  | { type: "busy"; command?: string }
   | { type: "exit"; code: number; signal?: number }
 );
 
-export type TerminalStartResult = { cwd: string } | { error: string };
+/** `shell` is the shell's display name (an idle tab's title). */
+export type TerminalStartResult = { cwd: string; shell: string } | { error: string };
 
 /** Largest single write (a paste) main accepts; the renderer chunks anything bigger. */
 export const WRITE_LIMIT = 64 * 1024;
@@ -35,9 +36,12 @@ export const WRITE_LIMIT = 64 * 1024;
 export const HIGH_WATERMARK = 128 * 1024;
 export const LOW_WATERMARK = 16 * 1024;
 export const MAX_DIMENSION = 1000;
+/** Terminals (tabs) one chat may hold, pending starts included. */
+export const MAX_TABS = 4;
 export const STALE_PROJECT_NOTICE = "\x1b[2m[Bean] That project isn't configured anymore — opened in the scratch workspace.\x1b[0m\r\n";
 
 const dim = (n: unknown): n is number => Number.isInteger(n) && (n as number) >= 1 && (n as number) <= MAX_DIMENSION;
+const TAB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The account's login shell (passwd, not launchd's env), /bin/zsh if unknown. */
 export function accountShell(): string {
@@ -48,16 +52,35 @@ export function accountShell(): string {
   }
 }
 
-/** What runs in the foreground of shell `pid`'s terminal: the command name of the tty's foreground
- * process group when that isn't the shell's own, undefined while the shell has it (idle). A shell's
- * background children (`cmd &`, a prompt's gitstatusd) don't count. */
-export async function foregroundCommand(pid: number): Promise<string | undefined> {
-  const ps = (args: string[]): Promise<string> =>
-    new Promise((resolve) => execFile("ps", args, (err, out) => resolve(err ? "" : String(out).trim())));
-  const tpgid = Number(await ps(["-o", "tpgid=", "-p", String(pid)]));
-  if (!Number.isInteger(tpgid) || tpgid <= 0 || tpgid === pid) return undefined;
-  const argv0 = (await ps(["-o", "command=", "-p", String(tpgid)])).split(/\s+/)[0] ?? "";
-  return argv0.split("/").pop()?.slice(0, 64) || "A command";
+/** A foreground command's display name: argv[0]'s basename, control and bidi/format characters
+ * stripped (it ends up in tab titles and cards), at most 64 characters. */
+export function commandName(commandLine: string): string {
+  const argv0 = commandLine.trim().split(/\s+/)[0] ?? "";
+  const clean = (argv0.split("/").pop() ?? "").replace(/[\p{Cc}\p{Cf}]/gu, "");
+  return [...clean].slice(0, 64).join("") || "A command";
+}
+
+// ps exits 1 when some pid is gone but still prints the rest.
+const runPs = (args: string[]): Promise<string> =>
+  new Promise((resolve) => execFile("ps", args, (_err, out) => resolve(String(out ?? ""))));
+
+/** What runs in the foreground of each shell's terminal, in two `ps` calls for any number of
+ * shells: shell pid → the command name of its tty's foreground process group, absent while the
+ * shell has it (idle). A shell's background children (`cmd &`, a prompt's gitstatusd) don't count. */
+export async function foregroundCommands(pids: readonly number[], ps: (args: string[]) => Promise<string> = runPs): Promise<Map<number, string>> {
+  if (pids.length === 0) return new Map();
+  const fg = new Map<number, number>(); // shell pid → foreground pgid
+  for (const line of (await ps(["-o", "pid=,tpgid=", "-p", pids.join(",")])).split("\n")) {
+    const [pid, tpgid] = line.trim().split(/\s+/).map(Number);
+    if (pids.includes(pid!) && Number.isInteger(tpgid) && tpgid! > 0 && tpgid !== pid) fg.set(pid!, tpgid!);
+  }
+  if (fg.size === 0) return new Map();
+  const names = new Map<number, string>();
+  for (const line of (await ps(["-o", "pid=,command=", "-p", [...new Set(fg.values())].join(",")])).split("\n")) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (m) names.set(Number(m[1]), commandName(m[2]!));
+  }
+  return new Map([...fg].map(([pid, pgid]) => [pid, names.get(pgid) ?? "A command"]));
 }
 
 /** A link the terminal asked to open: http(s) only, normalized; anything else is refused. */
@@ -81,8 +104,8 @@ export interface TerminalTasksDeps {
   scratchPath: string;
   send: (senderId: number, event: TerminalEvent) => void;
   shell?: string;
-  /** The shell's foreground command, undefined when idle (default: foregroundCommand). */
-  foreground?: (pid: number) => Promise<string | undefined>;
+  /** Batched foreground lookup (default: foregroundCommands). */
+  foreground?: (pids: readonly number[]) => Promise<Map<number, string>>;
   busyPollMs?: number;
   /** SIGHUP → SIGKILL grace on stop. */
   killGraceMs?: number;
@@ -90,6 +113,8 @@ export interface TerminalTasksDeps {
 
 interface Terminal {
   senderId: number;
+  mountId: string;
+  tabId: string;
   /** Unset while start() awaits its checks — a stop then means "never spawn". */
   pty?: PtyProcess;
   stopping: boolean;
@@ -97,43 +122,72 @@ interface Terminal {
   rows: number;
   unacked: number;
   paused: boolean;
-  busy: boolean;
-  poll?: ReturnType<typeof setInterval>;
+  /** The foreground command last pushed; undefined = idle. */
+  command?: string;
   exited: Promise<void>;
   settle: () => void;
 }
 
+type EventBody = TerminalEvent extends infer E ? E extends TerminalEvent ? Omit<E, "mountId" | "tabId"> : never : never;
+
 export function createTerminalTasks(deps: TerminalTasksDeps) {
-  const terms = new Map<string, Terminal>(); // mount id → its terminal
-  const foreground = deps.foreground ?? foregroundCommand;
+  const terms = new Map<string, Map<string, Terminal>>(); // mount id → tab id → its terminal
+  const foreground = deps.foreground ?? foregroundCommands;
   let shutdown = false;
+  let poll: ReturnType<typeof setInterval> | undefined;
+  let polling = false;
 
-  const emit = (mountId: string, t: Terminal, body: TerminalEvent extends infer E ? E extends TerminalEvent ? Omit<E, "mountId"> : never : never): void => {
-    deps.send(t.senderId, { ...body, mountId } as TerminalEvent);
+  const emit = (t: Terminal, body: EventBody): void => {
+    deps.send(t.senderId, { ...body, mountId: t.mountId, tabId: t.tabId } as TerminalEvent);
+  };
+  const current = (t: Terminal): boolean => terms.get(t.mountId)?.get(t.tabId) === t;
+  const drop = (t: Terminal): void => {
+    const tabs = terms.get(t.mountId);
+    if (tabs?.get(t.tabId) !== t) return;
+    tabs.delete(t.tabId);
+    if (tabs.size === 0) terms.delete(t.mountId);
+  };
+  const isLive = (t: Terminal | undefined): t is Terminal & { pty: PtyProcess } => !!t?.pty && !t.stopping;
+  const live = (mountId: string, tabId: unknown): (Terminal & { pty: PtyProcess }) | undefined => {
+    const t = typeof tabId === "string" ? terms.get(mountId)?.get(tabId) : undefined;
+    return isLive(t) ? t : undefined;
+  };
+  const liveIn = (tabs: Iterable<Terminal>): Array<Terminal & { pty: PtyProcess }> => [...tabs].filter(isLive);
+
+  /** Look up the foreground of `ts` and push `busy` wherever it changed; returns the commands. */
+  const refresh = async (ts: Array<Terminal & { pty: PtyProcess }>): Promise<Array<string | undefined>> => {
+    let fg = new Map<number, string>();
+    try { fg = await foreground(ts.map((t) => t.pty.pid)); } catch { /* treated as idle */ }
+    return ts.map((t) => {
+      const command = fg.get(t.pty.pid);
+      if (current(t) && command !== t.command) {
+        t.command = command;
+        emit(t, command === undefined ? { type: "busy" } : { type: "busy", command });
+      }
+      return command;
+    });
   };
 
-  const live = (mountId: string): Terminal | undefined => {
-    const t = terms.get(mountId);
-    return t?.pty && !t.stopping ? t : undefined;
+  // One registry-wide tick while any shell lives; a slow `ps` skips ticks rather than stacking them.
+  const tick = async (): Promise<void> => {
+    if (polling) return;
+    const all = liveIn([...terms.values()].flatMap((tabs) => [...tabs.values()]));
+    if (all.length === 0) { clearInterval(poll); poll = undefined; return; }
+    polling = true;
+    try { await refresh(all); } finally { polling = false; }
+  };
+  const ensurePoll = (): void => {
+    if (poll) return;
+    poll = setInterval(() => { void tick(); }, deps.busyPollMs ?? 1000);
+    poll.unref?.();
   };
 
-  const checkBusy = async (mountId: string, t: Terminal): Promise<string | undefined> => {
-    let command: string | undefined;
-    try { command = await foreground(t.pty!.pid); } catch { /* treated as idle */ }
-    const busy = command !== undefined;
-    if (terms.get(mountId) === t && busy !== t.busy) {
-      t.busy = busy;
-      emit(mountId, t, { type: "busy", busy });
-    }
-    return command;
-  };
-
-  const stop = (mountId: string): Promise<void> => {
-    const t = terms.get(mountId);
+  const stop = (mountId: string, tabId: unknown): Promise<void> => {
+    const t = typeof tabId === "string" ? terms.get(mountId)?.get(tabId) : undefined;
     if (!t) return Promise.resolve();
     if (!t.pty) {
       // Still validating: start() sees it gone and spawns nothing.
-      terms.delete(mountId);
+      drop(t);
       t.settle();
       return t.exited;
     }
@@ -147,16 +201,22 @@ export function createTerminalTasks(deps: TerminalTasksDeps) {
   };
 
   return {
-    async start(owner: TerminalOwner, rawPath: unknown, cols: unknown, rows: unknown): Promise<TerminalStartResult> {
-      if (typeof rawPath !== "string" || !dim(cols) || !dim(rows)) return { error: "Invalid terminal request." };
+    async start(owner: TerminalOwner, tabId: unknown, rawPath: unknown, cols: unknown, rows: unknown): Promise<TerminalStartResult> {
+      if (typeof tabId !== "string" || !TAB_ID.test(tabId) || typeof rawPath !== "string" || !dim(cols) || !dim(rows)) {
+        return { error: "Invalid terminal request." };
+      }
       if (shutdown) return { error: "Bean is quitting." };
       const { mountId } = owner;
-      if (terms.has(mountId)) return { error: "This chat already has a terminal." };
-      // Reserved before any await, so a double start, release, or quit during validation finds it.
+      const tabs = terms.get(mountId) ?? new Map<string, Terminal>();
+      if (tabs.has(tabId)) return { error: "This tab already has a terminal." };
+      if (tabs.size >= MAX_TABS) return { error: `A chat holds at most ${MAX_TABS} terminals.` };
+      // Reserved before any await (the cap check above is in the same synchronous section), so a
+      // double start, a fifth tab, release, or quit during validation finds it.
       let settle = (): void => {};
       const exited = new Promise<void>((r) => { settle = r; });
-      const t: Terminal = { senderId: owner.senderId, stopping: false, cols, rows, unacked: 0, paused: false, busy: false, exited, settle };
-      terms.set(mountId, t);
+      const t: Terminal = { senderId: owner.senderId, mountId, tabId, stopping: false, cols, rows, unacked: 0, paused: false, exited, settle };
+      tabs.set(tabId, t);
+      terms.set(mountId, tabs);
       let cwd = rawPath || deps.scratchPath;
       let stale = false;
       if (cwd !== deps.scratchPath) {
@@ -164,12 +224,14 @@ export function createTerminalTasks(deps: TerminalTasksDeps) {
         try { allowed = await deps.projectAllowed(cwd); } catch { /* treated as not allowed */ }
         if (!allowed) { cwd = deps.scratchPath; stale = true; }
       }
-      if (shutdown || terms.get(mountId) !== t) {
-        if (terms.get(mountId) === t) terms.delete(mountId);
+      if (shutdown || !current(t)) {
+        drop(t);
+        t.settle();
         return { error: "Stopped before it started." };
       }
+      const shell = deps.shell ?? accountShell();
       try {
-        t.pty = deps.spawn(deps.shell ?? accountShell(), ["-l"], {
+        t.pty = deps.spawn(shell, ["-l"], {
           name: "xterm-256color", cols, rows, cwd,
           env: spawnEnv({
             TERM: "xterm-256color", COLORTERM: "truecolor", PWD: cwd,
@@ -178,70 +240,80 @@ export function createTerminalTasks(deps: TerminalTasksDeps) {
           }),
         });
       } catch (err) {
-        terms.delete(mountId);
+        drop(t);
         t.settle();
         return { error: `The terminal couldn't start: ${err instanceof Error ? err.message : String(err)}` };
       }
       const pty = t.pty;
       pty.onData((data) => {
-        if (terms.get(mountId) !== t) return;
+        if (!current(t)) return;
         t.unacked += data.length;
         if (!t.paused && t.unacked > HIGH_WATERMARK) { t.paused = true; pty.pause(); }
-        emit(mountId, t, { type: "data", data });
+        emit(t, { type: "data", data });
       });
       pty.onExit(({ exitCode, signal }) => {
-        if (t.poll) clearInterval(t.poll);
-        if (terms.get(mountId) === t) terms.delete(mountId);
-        emit(mountId, t, { type: "exit", code: exitCode, ...(signal ? { signal } : {}) });
+        drop(t);
+        emit(t, { type: "exit", code: exitCode, ...(signal ? { signal } : {}) });
         t.settle();
       });
-      t.poll = setInterval(() => { void checkBusy(mountId, t); }, deps.busyPollMs ?? 1000);
-      t.poll.unref?.();
-      if (stale) emit(mountId, t, { type: "data", data: STALE_PROJECT_NOTICE });
-      return { cwd };
+      ensurePoll();
+      if (stale) emit(t, { type: "data", data: STALE_PROJECT_NOTICE });
+      return { cwd, shell: commandName(shell) };
     },
 
-    /** Keystrokes/paste. False = refused (no terminal, wrong shape, or past WRITE_LIMIT). */
-    write(mountId: string, data: unknown): boolean {
-      const t = live(mountId);
+    /** Keystrokes/paste. False = refused (no such tab, wrong shape, or past WRITE_LIMIT). */
+    write(mountId: string, tabId: unknown, data: unknown): boolean {
+      const t = live(mountId, tabId);
       if (!t || typeof data !== "string" || data.length > WRITE_LIMIT) return false;
-      t.pty!.write(data);
+      t.pty.write(data);
       return true;
     },
 
-    resize(mountId: string, cols: unknown, rows: unknown): void {
-      const t = live(mountId);
+    resize(mountId: string, tabId: unknown, cols: unknown, rows: unknown): void {
+      const t = live(mountId, tabId);
       if (!t || !dim(cols) || !dim(rows) || (cols === t.cols && rows === t.rows)) return;
       t.cols = cols;
       t.rows = rows;
-      t.pty!.resize(cols, rows);
+      t.pty.resize(cols, rows);
     },
 
-    /** The renderer consumed `chars` of output (xterm's write callback). */
-    ack(mountId: string, chars: unknown): void {
-      const t = live(mountId);
+    /** The renderer consumed `chars` of this tab's output (xterm's write callback). */
+    ack(mountId: string, tabId: unknown, chars: unknown): void {
+      const t = live(mountId, tabId);
       if (!t || typeof chars !== "number" || !Number.isFinite(chars) || chars <= 0) return;
       t.unacked = Math.max(0, t.unacked - chars);
-      if (t.paused && t.unacked < LOW_WATERMARK) { t.paused = false; t.pty!.resume(); }
+      if (t.paused && t.unacked < LOW_WATERMARK) { t.paused = false; t.pty.resume(); }
     },
 
-    /** Hang up the shell and its jobs; resolves once it's gone (the entry is held until then). */
+    /** Hang up one tab's shell and its jobs; resolves once it's gone (the entry is held until then). */
     stop,
 
-    /** Fresh check for a close prompt: the command running in this chat's shell right now, if any. */
-    async runningCommand(mountId: string): Promise<string | undefined> {
-      const t = live(mountId);
-      return t ? checkBusy(mountId, t) : undefined;
+    /** Every tab of a chat — its release, or a stop that names no tab. */
+    async stopMount(mountId: string): Promise<void> {
+      await Promise.all([...(terms.get(mountId)?.keys() ?? [])].map((tabId) => stop(mountId, tabId)));
+    },
+
+    /** Fresh check for a close prompt: the commands running in this chat's shells right now (one
+     * tab's when `tabId` is given), idle shells left out. */
+    async runningCommand(mountId: string, tabId?: unknown): Promise<string[]> {
+      const tabs = terms.get(mountId);
+      if (!tabs) return [];
+      const ts = tabId === undefined ? liveIn(tabs.values()) : [live(mountId, tabId)].filter(isLive);
+      if (ts.length === 0) return [];
+      return (await refresh(ts)).filter((c): c is string => c !== undefined);
     },
 
     /** before-quit / update relaunch: SIGKILL every tree now — stop()'s escalation would never fire
      * on an exiting process — and refuse any start still validating. */
     killAll(): void {
       shutdown = true;
-      for (const [mountId, t] of terms) {
-        if (t.poll) clearInterval(t.poll);
-        if (t.pty) killTree(t.pty.pid, "SIGKILL");
-        else terms.delete(mountId);
+      clearInterval(poll);
+      poll = undefined;
+      for (const tabs of terms.values()) {
+        for (const t of [...tabs.values()]) {
+          if (t.pty) killTree(t.pty.pid, "SIGKILL");
+          else { drop(t); t.settle(); }
+        }
       }
       killPendingGroups();
     },

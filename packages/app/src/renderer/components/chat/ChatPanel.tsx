@@ -8,7 +8,7 @@ import { TodoCard } from "./TodoCard.js";
 import { SproutRunCard } from "./SproutRunCard.js";
 import { LiveOfferCard } from "./LiveOfferCard.js";
 import { DelegateCard } from "./DelegateCard.js";
-import { TerminalPane } from "./TerminalPane.js";
+import { TerminalPane, type TabShortcut } from "./TerminalPane.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { MAX_IMAGES_PER_MESSAGE, imageFileGuard, insertDroppedPath, readImageFile, itemAgent, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
@@ -67,7 +67,9 @@ export function ChatPanel({
   mountId,
   terminalOpen,
   onToggleTerminal,
-  onShell,
+  onTerminalOpen,
+  onShells,
+  terminalShortcut,
   items,
   busy,
   model,
@@ -125,7 +127,9 @@ export function ChatPanel({
   mountId: string;
   terminalOpen: boolean;
   onToggleTerminal: () => void;
-  onShell: (alive: boolean) => void;
+  onTerminalOpen: (open: boolean) => void;
+  onShells: (count: number) => void;
+  terminalShortcut: { current: ((s: TabShortcut) => void) | null };
   items: ChatItem[];
   busy: boolean;
   model: string;
@@ -871,7 +875,15 @@ export function ChatPanel({
           </div>
         </div>
       </div>
-      <TerminalPane mountId={mountId} open={terminalOpen} projectPath={agentProject} projects={projects} onShell={onShell} />
+      <TerminalPane
+        mountId={mountId}
+        open={terminalOpen}
+        projectPath={agentProject}
+        projects={projects}
+        onOpenChange={onTerminalOpen}
+        onShells={onShells}
+        shortcutRef={terminalShortcut}
+      />
       {preview ? <ImagePreview image={preview} onClose={() => setPreview(null)} /> : null}
     </div>
   );
