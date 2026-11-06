@@ -16,17 +16,16 @@ export interface DestinationStore {
 }
 
 const LISTED = new Set<ChannelType>([ChannelType.GuildText, ChannelType.GuildAnnouncement]);
-const THREADS = new Set<ChannelType>([ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread]);
 const POSTABLE = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages];
 
 /** A channel as a destination: a DM is named after the other person (`dmName`), guild channels
- * `#name`, threads by name; the guild is the parent. Other channel types aren't destinations. */
+ * `#name`; the guild is the parent. Threads aren't destinations: every top-level mention and live
+ * session opens one, so they would flood the list with throwaway rows. Nor are other types. */
 export function discordDestination(channel: ChannelLike, dmName?: string): SeenDestination | undefined {
   const base = { surface: "discord", conversationId: channel.id } as const;
   if (channel.type === ChannelType.DM) return { ...base, kind: "dm", platformName: dmName };
   const parentName = channel.guild?.name;
   if (LISTED.has(channel.type)) return { ...base, kind: "channel", platformName: channel.name ? `#${channel.name}` : undefined, parentName };
-  if (THREADS.has(channel.type)) return { ...base, kind: "thread", platformName: channel.name ?? undefined, parentName };
   return undefined;
 }
 
@@ -34,7 +33,7 @@ export interface DiscordDestinations {
   /** Addressed ingress or a delivered outbox message. */
   seen(channel: ChannelLike, dmName?: string): void;
   /** Guild listing (`ready`, `channelCreate/Update`): a text/announcement channel is recorded while
-   * Bean can view and post in it, forgotten otherwise. Threads are only recorded when seen. */
+   * Bean can view and post in it, forgotten otherwise. */
   sync(channel: ChannelLike): void;
   /** `channelDelete`: forgotten, unless the owner named it (the store keeps aliased rows). */
   removed(channel: ChannelLike): void;

@@ -34,12 +34,12 @@ test("guild listing records only text/announcement channels Bean can view and po
   expect(listDestinations(file).map((d) => [d.conversationId, d.kind, d.platformName, d.parentName]).sort()).toEqual([
     ["1", "channel", "#general", "Home"], ["2", "channel", "#news", "Home"],
   ]);
-  // Losing SendMessages forgets it; a thread is recorded once seen; a DM by the person's name.
+  // Losing SendMessages forgets it; a thread is never recorded, even when seen; a DM by the person's name.
   dest.sync(channel("2", ChannelType.GuildAnnouncement, "news", [ViewChannel]));
   dest.seen(channel("6", ChannelType.PublicThread, "a thread", []));
   dest.seen({ id: "9", type: ChannelType.DM }, "Ana");
   expect(listDestinations(file).map((d) => [d.conversationId, d.kind, d.platformName]).sort()).toEqual([
-    ["1", "channel", "#general"], ["6", "thread", "a thread"], ["9", "dm", "Ana"],
+    ["1", "channel", "#general"], ["9", "dm", "Ana"],
   ]);
 });
 
