@@ -1,4 +1,4 @@
-// Shared blank-state for the right-hand detail pane across Skills/Notes/Projects/Routines —
+// Shared blank-state for the right-hand detail pane across Skills/Notes/Projects/Routines (and an empty chat) —
 // nothing auto-selected, so this is what greets you until you pick something. The mark below
 // is the same coffee-bean path as the avatar orb (see orb.ts BEAN_SVG), rendered in a flat
 // grey so it reads as a quiet watermark rather than the lit-up mascot.

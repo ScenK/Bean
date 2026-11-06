@@ -17,6 +17,7 @@ import {
   HANDOFF_ITEMS, agentModels, canContinueLive, handoffItems, imageLabel, isLiveAgent, mappedImageLabels, offerAgent, parseSlash, type ImageLabels,
 } from "./agent-mode.js";
 import { SECTION_TITLES, slashMenu, type SlashEntry } from "./slash-commands.js";
+import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 import type { ChatDrop, DroppedImage } from "../../../channels.js";
 
@@ -532,7 +533,9 @@ export function ChatPanel({
       </div>
       <div class="bean-chat-scroll" ref={scrollRef} onScroll={onScroll}>
         {items.length === 0 ? (
-          <div class="bean-panel-empty">Ask Bean to do something, or just say hi.</div>
+          <PanelEmptyState message="What are we brewing today?">
+            <div class="bean-panel-empty-text">Ask Bean to do something, or just say hi.</div>
+          </PanelEmptyState>
         ) : null}
         {items.map((it, i) => {
           if (it.kind === "user") {
