@@ -93,6 +93,11 @@ describe("command steps in a run", () => {
     expect(attempts[0]?.model).toBeUndefined();
   });
 
+  it("a sole command's digest is what it printed, without the (exit 0) bookkeeping", async () => {
+    const ok = await runRoutine(routine([{ kind: "command", command: "report" }]), baseDeps(fixed({ exitCode: 0, output: "Weekly: link\n" }).command));
+    expect(ok.digest).toBe("Weekly: link");
+  });
+
   it("ungated non-zero exit fails the step; a timeout is a step error", async () => {
     const res = await runRoutine(routine([{ kind: "command", command: "false" }]), baseDeps(fixed({ exitCode: 1, output: "boom" }).command));
     expect(res.record.status).toBe("failed");

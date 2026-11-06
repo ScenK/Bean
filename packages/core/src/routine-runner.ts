@@ -102,7 +102,11 @@ export interface StepResult {
   /** A route step's chosen label (also its verdict). */
   chose?: string;
 }
-export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[] }
+export interface RoutineRunResult {
+  record: RunRecord; digest: string; results: StepResult[];
+  /** The resume footer `withResumeFooter` appended to `digest` — so a shared-chat sink can drop it. */
+  resumeFooter?: string;
+}
 
 export const ROUTINE_STEP_TIMEOUT_MS = 15 * 60_000;
 const MAX_TOOL_ROUNDS = 5;
@@ -616,9 +620,11 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
   // One successful step: its output IS the deliverable. Re-summarizing it only loses detail and
   // bolts on "Overall status / Step 1 / FAILED steps" scaffolding the step's own format forbids.
   // The `[todo: ...] ` label is scaffolding for the digest prompt's grouping, not for the reader.
+  // A sole command's `(exit 0)` is bookkeeping, not part of what it printed.
   const only = results.length === 1 ? results[0] : undefined;
+  const soleOutput = only?.kind === "command" ? only.output.replace(/\n\(exit 0\)$/, "") : only?.output ?? "";
   const body = unfence(only?.ok
-    ? (soleLabelPrefix && only.output.startsWith(soleLabelPrefix) ? only.output.slice(soleLabelPrefix.length) : only.output)
+    ? (soleLabelPrefix && soleOutput.startsWith(soleLabelPrefix) ? soleOutput.slice(soleLabelPrefix.length) : soleOutput)
     : await composeDigest(routine, results, deps, timeoutMs));
   const digest = attention.length ? `${attention.map((a) => `Needs attention: ${a}`).join("\n")}\n\n${body}` : body;
   const record: RunRecord = {
@@ -642,6 +648,9 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
 export function withResumeFooter(result: RoutineRunResult, receipts: string[]): RoutineRunResult {
   if (receipts.length === 0) return result;
   const footer = `\n\nResume a delegate session:\n${receipts.join("\n")}`;
-  return { ...result, digest: result.digest + footer, record: { ...result.record, digest: result.record.digest + footer } };
+  return {
+    ...result, digest: result.digest + footer, resumeFooter: footer,
+    record: { ...result.record, digest: result.record.digest + footer },
+  };
 }
 

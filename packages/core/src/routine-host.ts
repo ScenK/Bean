@@ -238,6 +238,8 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     const sinks = quiet ? [] : routine.sinks.chatops ?? [];
     // Read at enqueue, so a retarget in Settings applies to the next digest.
     const named = sinks.some((s) => s.alias !== undefined) ? listDestinations(dbFile(dir)) : [];
+    // A digest whose first line already names the sprout (a report's own heading) needs no title line.
+    const titled = !(result.digest.split("\n", 1)[0] ?? "").toLowerCase().includes(routine.name.toLowerCase());
     for (const sink of sinks) {
       let channel = sink.channel;
       if (sink.alias !== undefined) {
@@ -246,11 +248,13 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         if ("error" in resolved) continue;
         channel = resolved.channel;
       }
+      // The resume footer is the owner's own CLI handle: only their DM (no channel, no user) gets it.
+      const digest = channel || sink.user ? result.digest.replace(result.resumeFooter ?? "", "") : result.digest;
       await enqueueOutbox(outboxDir(dir), {
         transport: sink.transport, channel, userId: sink.user,
-        title: `Sprout: ${routine.name}`,
+        ...(titled ? { title: `Sprout: ${routine.name}` } : {}),
         // A member DM says whose routine it is — they didn't set it up.
-        body: sink.user ? `${result.digest}\n\n_Sent by Bean's owner's sprout "${routine.name}"._` : result.digest,
+        body: sink.user ? `${digest}\n\n_Sent by Bean's owner's sprout "${routine.name}"._` : digest,
         context: deps.getRoutineDigestContext(),
       }, newId);
     }

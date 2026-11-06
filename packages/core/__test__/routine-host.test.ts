@@ -157,6 +157,22 @@ describe("createRoutineHost", () => {
     });
   });
 
+  it("keeps the resume footer for the owner's DM only, and drops the title when the digest's first line names the sprout", async () => {
+    let n = 0;
+    const h = host({ newId: () => `id-${n++}` });
+    const r = routine([], { name: "Sigma Pulse", sinks: { chatops: [{ transport: "teams", channel: "19:c@thread.tacv2" }, { transport: "teams" }, { transport: "discord", user: "u1" }] } });
+    const footer = "\n\nResume a delegate session:\nstep 1 (p) — claude --resume s1";
+    await h.deliverDigest(r, { digest: `Sigma Pulse — 5 Nov: link${footer}`, resumeFooter: footer, results: [], record: { startedAt: "2026-10-23T06:00:00.000Z" } as never });
+    const teams = await claimOutbox(outboxDir(dir), "teams");
+    const channel = teams.find((m) => m.channel);
+    const dm = teams.find((m) => !m.channel);
+    expect(channel?.body).toBe("Sigma Pulse — 5 Nov: link");
+    expect(channel?.title).toBeUndefined();
+    expect(dm?.body).toBe(`Sigma Pulse — 5 Nov: link${footer}`);
+    const [member] = await claimOutbox(outboxDir(dir), "discord");
+    expect(member?.body).not.toContain("--resume");
+  });
+
   it("maps a user sink to outbox userId with a whose-routine footer", async () => {
     const h = host();
     const r = routine([], { sinks: { chatops: [{ transport: "discord", user: "u1" }] } });
