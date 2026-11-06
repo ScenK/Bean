@@ -1005,7 +1005,11 @@ export function ChatSession({
       if (plan.action === "check") settle(sproutCheckText(await window.bean.routinesCheckNow(plan.routine), plan.queuesNew));
       else {
         const res = await window.bean.routinesRunNow(plan.routine);
-        settle(res.started ? "Finished" : res.reason ?? "Couldn't start");
+        settle(!res.started ? res.reason ?? "Couldn't start"
+          : res.stopped ? "Stopped"
+          : res.status === "failed" ? "Failed"
+          : res.status === "needs-attention" ? "Needs attention"
+          : "Finished");
       }
     } catch (err) {
       settle(err instanceof Error ? err.message : String(err));

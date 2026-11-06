@@ -1,4 +1,4 @@
-import type { TaskJob } from "../task-status.js";
+import { STOPPING_LINE, type TaskJob } from "../task-status.js";
 import type { DashboardTarget } from "../channels.js";
 
 // Design 2a "speech bubble": one bubble per running job or failure, stacked above the bean, newest
@@ -8,6 +8,8 @@ import type { DashboardTarget } from "../channels.js";
 // so a misclick can't lose data. A finished routine likewise: one click dismisses it and opens that
 // run in the Dashboard, whose card is the lasting record of a failure. A chat's delegate or live
 // session opens that chat (dismissing it once finished) — the chat shows its detail and output.
+// A running sprout's expanded detail carries the one control: Stop. It sits beside the bubble's
+// <button> (a button can't nest one), overlaid on room reserved in the detail.
 const ICONS = {
   delegate: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   routine: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/><path d="M12 7v5l3 3"/>',
@@ -49,7 +51,7 @@ const opensRun = (j: TaskJob): boolean => j.kind === "routine" && j.state !== "r
 // A chat's delegate or live session: the chat is where you answer it ("Waiting for you").
 const opensChat = (j: TaskJob): boolean => (j.kind === "live" || j.kind === "delegate") && j.mountId !== undefined;
 
-function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh: boolean, now: number): string {
+function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh: boolean, now: number, stop?: string): string {
   const running = j.state === "running";
   const steps = j.steps ?? [];
   const bar = running && steps.length > 0 && j.step !== undefined
@@ -62,8 +64,9 @@ function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh:
   }).join("");
   const failed = j.state === "failed";
   const hint = failed ? '<div class="bean-bubble-hint">Click again to dismiss</div>' : "";
-  const detail = open && (j.detail || steps.length || failed)
-    ? `<div class="bean-bubble-detail">${j.detail ? `<div class="bean-bubble-note">${esc(j.detail)}</div>` : ""}${stepRows ? `<div class="bean-bubble-steps">${stepRows}</div>` : ""}${hint}</div>`
+  const room = stop ? '<div class="bean-bubble-stop-room"></div>' : "";
+  const detail = open && (j.detail || steps.length || failed || stop)
+    ? `<div class="bean-bubble-detail">${j.detail ? `<div class="bean-bubble-note">${esc(j.detail)}</div>` : ""}${stepRows ? `<div class="bean-bubble-steps">${stepRows}</div>` : ""}${hint}${room}</div>`
     : "";
   const caret = running && (j.kind === "delegate" || j.kind === "live") ? '<span class="bean-bubble-caret"></span>' : "";
   // A finished routine doesn't expand, it navigates — the label keeps its name and result audible.
@@ -72,7 +75,7 @@ function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh:
     : opensChat(j)
       ? `title="Open chat" aria-label="${esc(`${j.name} — ${j.line}. Open chat`)}"`
       : `aria-expanded="${open}"`;
-  return `
+  const html = `
     <button type="button" class="bean-bubble bean-bubble--${j.state}${tail ? " bean-bubble--tail" : ""}${fresh ? " bean-bubble--new" : ""}" data-id="${esc(j.id)}" ${action}>
       <span class="bean-bubble-head">
         <span class="bean-bubble-icon bean-bubble-icon--${iconKey(j)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${ICONS[iconKey(j)]}</svg></span>
@@ -82,6 +85,17 @@ function bubble(j: TaskJob, open: boolean, quiet: boolean, tail: boolean, fresh:
       ${quiet ? "" : `<span class="bean-bubble-line">${esc(j.line)}${caret}</span>`}
       ${bar}${detail}
     </button>`;
+  if (!stop || !j.routine) return html;
+  const stopping = j.line === STOPPING_LINE;
+  return `<div class="bean-bubble-item">${html}<button type="button" class="bean-bubble-stop" data-routine="${esc(j.routine)}"${stopping ? " disabled" : ""}>${stopping ? "Stopping…" : esc(stop)}</button></div>`;
+}
+
+/** The Stop label for an expanded bubble, or undefined when it gets none (only running sprouts do).
+ * Stop ends every live run of the sprout, so say so when there's more than one. */
+function stopLabel(j: TaskJob, jobs: readonly TaskJob[]): string | undefined {
+  if (j.kind !== "routine" || j.state !== "running" || !j.routine) return undefined;
+  const n = jobs.filter((x) => x.kind === "routine" && x.state === "running" && x.routine === j.routine).length;
+  return n > 1 ? `Stop all ${n} runs` : "Stop";
 }
 
 // A busy Discord channel can stack many turns at once; past this, the oldest fold into a
@@ -92,6 +106,7 @@ export function createTaskBubbles(
   container: HTMLElement, onHeight: (h: number) => void, onDismiss: (id: string) => void, onOpenMemory: () => void = () => {},
   onOpenRun: (target: DashboardTarget) => void = () => {},
   onOpenChat: (mountId: string) => void = () => {},
+  onStop: (routine: string) => void = () => {},
 ) {
   let jobs: TaskJob[] = [];
   let openId: string | undefined;
@@ -112,29 +127,39 @@ export function createTaskBubbles(
     const active = document.activeElement as HTMLElement | null;
     const focused = active?.closest<HTMLElement>(".bean-bubble")?.dataset.id;
     const pillFocused = active?.classList.contains("bean-bubble-more") ?? false;
+    // A focused Stop sits beside its bubble: keep focus on it (or on its bubble once it's disabled).
+    const stopOf = active?.classList.contains("bean-bubble-stop")
+      ? active.closest<HTMLElement>(".bean-bubble-item")?.querySelector<HTMLElement>(".bean-bubble")?.dataset.id : undefined;
     if (jobs.length <= MAX_VISIBLE) showAll = false;
     const hidden = showAll ? [] : jobs.slice(0, Math.max(0, jobs.length - MAX_VISIBLE));
     const shown = jobs.slice(hidden.length);
     // An open job that left (or folded into the pill) would otherwise keep every visible one quiet.
     if (openId && !shown.some((j) => j.id === openId)) openId = undefined;
     const html = shown.map((j, i) =>
-      bubble(j, j.id === openId, openId !== undefined && j.id !== openId, i === shown.length - 1, !seen.has(j.id), now));
+      bubble(j, j.id === openId, openId !== undefined && j.id !== openId, i === shown.length - 1, !seen.has(j.id), now,
+        j.id === openId ? stopLabel(j, jobs) : undefined));
     const failed = hidden.filter((j) => j.state === "failed").length;
     // Oldest end of the stack (farthest from the bean), so it lands there in either direction.
     if (hidden.length) html.unshift(`<button type="button" class="bean-bubble-more" aria-expanded="false">+${hidden.length} more${failed ? ` · ${failed} failed` : ""}</button>`);
     else if (showAll) html.unshift('<button type="button" class="bean-bubble-more" aria-expanded="true">Show fewer</button>');
     stack.innerHTML = (below ? html.reverse() : html).join("");
     seen = new Set(jobs.map((j) => j.id));
-    if (focused || pillFocused) {
-      const target = focused
-        ? [...stack.querySelectorAll<HTMLElement>(".bean-bubble")].find((n) => n.dataset.id === focused)
-        : stack.querySelector<HTMLElement>(".bean-bubble-more");
+    const keep = focused ?? stopOf;
+    if (keep || pillFocused) {
+      const node = keep ? [...stack.querySelectorAll<HTMLElement>(".bean-bubble")].find((n) => n.dataset.id === keep) : undefined;
+      const stop = stopOf ? node?.nextElementSibling as HTMLButtonElement | null | undefined : undefined;
+      const target = stop && !stop.disabled ? stop : keep ? node : stack.querySelector<HTMLElement>(".bean-bubble-more");
       // The focused one left or folded away: land on the newest bubble rather than dropping focus.
       (target ?? stack.querySelector<HTMLElement>(".bean-bubble--tail"))?.focus();
     }
   };
 
   stack.addEventListener("click", (e) => {
+    const stop = (e.target as HTMLElement).closest<HTMLButtonElement>(".bean-bubble-stop");
+    if (stop) {
+      if (!stop.disabled && stop.dataset.routine) onStop(stop.dataset.routine);
+      return;
+    }
     if ((e.target as HTMLElement).closest(".bean-bubble-more")) {
       showAll = !showAll;
       render();

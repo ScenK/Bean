@@ -1234,6 +1234,19 @@ test("routine handlers save delegates (validation is core saveRoutine's job); de
   expect(runNow).toHaveBeenCalledWith("r");
 });
 
+test("routine stop reaches stopRuns only for a running sprout's name", () => {
+  const stopRuns = vi.fn();
+  const h = buildRoutineHandlers({
+    loadRoutines: async () => [], saveRoutine: vi.fn(async () => {}), deleteRoutine: vi.fn(async () => {}),
+    loadStates: async () => ({}), isRunning: (name) => name === "r", runningCount: () => 1,
+    runNow: vi.fn(async () => ({ started: true })), stopRuns,
+  });
+  for (const bad of [undefined, 42, { name: "r" }, ["r"], "idle"]) h.stop(bad);
+  expect(stopRuns).not.toHaveBeenCalled();
+  h.stop("r");
+  expect(stopRuns).toHaveBeenCalledExactlyOnceWith("r");
+});
+
 it("buildRoutineHandlers.remove cascades to onRoutineDeleted", async () => {
   const deleted: string[] = [];
   const h = buildRoutineHandlers({

@@ -191,3 +191,23 @@
   cursor: pointer;
 }
 .bean-bubble-more:focus-visible { outline: 2px solid var(--bean-accent); outline-offset: 2px; }
+
+/* A running sprout's Stop: beside the bubble's <button> (a button can't nest one), laid over the
+   room the expanded detail reserves (.bean-bubble-stop-room). */
+.bean-bubble-item { position: relative; }
+.bean-bubble-stop-room { height: 22px; }
+.bean-bubble-stop {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  right: 12px;
+  bottom: 11px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--bean-control-border);
+  background: var(--bean-surface);
+  color: var(--bean-text);
+  font: 11px ui-monospace, monospace;
+  cursor: pointer;
+}
+.bean-bubble-stop:focus-visible { outline: 2px solid var(--bean-accent); outline-offset: 2px; }
+.bean-bubble-stop:disabled { cursor: default; color: var(--bean-text-dim); }

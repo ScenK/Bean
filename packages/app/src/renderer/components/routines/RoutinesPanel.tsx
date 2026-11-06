@@ -223,6 +223,8 @@ export function RoutinesPanel() {
   };
   const { clis, models } = useCliAvailability();
   const [triggering, setTriggering] = useState(false);
+  // The sprout whose Stop was clicked; "Stopping…" until its runs are gone.
+  const [stopping, setStopping] = useState<string | undefined>(undefined);
   // The todo queue for a todo-driven routine — only loaded when there's a saved routine
   // selected and it's todo-driven; empty otherwise (mirrors refreshTodos()'s own guard).
   const [todos, setTodos] = useState<TodoItem[]>([]);
@@ -261,6 +263,10 @@ export function RoutinesPanel() {
     }, 5000);
     return () => clearInterval(t);
   }, [selected, draft.todoDriven]);
+  // A Stop's "Stopping…" ends once that sprout has no live runs left.
+  useEffect(() => {
+    if (stopping && !states[stopping]?.runningCount) setStopping(undefined);
+  }, [states, stopping]);
   // Builds tick faster while one runs; when one finishes its routine appears (needs review).
   const anyBuilding = builds.some((b) => b.status === "building");
   useEffect(() => {
@@ -436,6 +442,13 @@ export function RoutinesPanel() {
     }
   };
 
+  const stopRuns = async (): Promise<void> => {
+    if (!selected) return;
+    setStopping(selected);
+    await window.bean.routineStop(selected);
+    await refresh();
+  };
+
   const remove = async (): Promise<void> => {
     if (!selected) return;
     if (!confirm(`${needsReview(draft, states[selected]) ? "Discard" : "Delete"} sprout "${selected}"?`)) return;
@@ -545,6 +558,7 @@ export function RoutinesPanel() {
   // at full just comes back "N/N running".
   const isRunningSelected = slots > 1 ? runningCount >= slots : triggering || Boolean(selectedState?.running);
   const slotsText = `${runningCount}/${slots} running`;
+  const isStopping = stopping !== undefined && stopping === selected && runningCount > 0;
   const pendingCount = todos.filter((t) => t.status === "pending").length;
   const emptyTodoQueue = Boolean(draft.todoDriven) && pendingCount === 0;
   // A saved watch with steps and nothing queued: Run now checks the watch instead (ignoring
@@ -1185,6 +1199,11 @@ export function RoutinesPanel() {
               >
                 {checking ? "Checking…" : isRunningSelected ? "Running…" : "Run now"}
               </button>
+              {runningCount > 0 ? (
+                <button type="button" class="bean-btn bean-btn--ghost bean-routines-stop" disabled={isStopping} onClick={() => void stopRuns()}>
+                  {isStopping ? "Stopping…" : runningCount > 1 ? `Stop all ${runningCount} runs` : "Stop"}
+                </button>
+              ) : null}
               {runNowNote ? <span class="bean-routines-section-note">{runNowNote}</span> : null}
             </>
           ) : null}

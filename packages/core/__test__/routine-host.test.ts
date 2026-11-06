@@ -52,7 +52,7 @@ describe("createRoutineHost", () => {
     const todo = (await claimTodo(dbFile(dir), "r"))!;
     const res = await h.runOneRoutine(routine([{ kind: "delegate", instruction: "work" }], { todoDriven: true, maxParallel: 2 }), todo);
     expect(res.record.status).toBe("ok");
-    expect(h.status[0]).toMatchObject({ type: "start", id: `routine:r:${todo.id}`, name: "fix the login bug", detail: "Sprout: r" });
+    expect(h.status[0]).toMatchObject({ type: "start", id: `routine:r:${todo.id}`, name: "fix the login bug", routine: "r", detail: "Sprout: r" });
     expect(h.status.at(-1)).toMatchObject({ type: "finish", id: `routine:r:${todo.id}`, state: "done" });
     expect(reqs[0]?.todoId).toBe(todo.id);
     expect((await listTodos(dbFile(dir), "r"))[0]?.status).toBe("done");
@@ -75,7 +75,7 @@ describe("createRoutineHost", () => {
     expect(res.digest).toBe(`delegate output${footer}`);
     expect(res.record.digest).toBe(`delegate output${footer}`);
     expect(h.status).toEqual([
-      { type: "start", id: "routine:r", name: "r", detail: "", steps: ["check the build please"], startedAt: expect.any(Number) },
+      { type: "start", id: "routine:r", name: "r", routine: "r", detail: "", steps: ["check the build please"], startedAt: expect.any(Number) },
       { type: "step", id: "routine:r", step: 0, line: "check the build please" },
       { type: "finish", id: "routine:r", state: "done", line: "Done · 1 step", startedAt: res.record.startedAt },
     ]);
