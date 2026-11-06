@@ -217,6 +217,9 @@ export function TerminalPane({ mountId, open, projectPath, projects, onOpenChang
       macOptionClickForcesSelection: true,
       allowProposedApi: false,
       theme: terminalTheme(),
+      // xterm draws its own scrollbar, sized by the ruler width (default 14px): match the sidebar
+      // list's 6px gutter (shared.css .bean-term-host hides the ruler itself and pills the thumb).
+      overviewRuler: { width: 6 },
       // OSC 8 hyperlinks go the same Cmd+click route; xterm's default would window.open them.
       linkHandler: { activate: openLink },
     });

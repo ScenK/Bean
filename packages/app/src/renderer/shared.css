@@ -538,6 +538,14 @@ button, input, textarea, select, a {
 .bean-term-host .xterm .xterm-viewport { background-color: transparent; }
 /* xterm v6's scroll shadow and overview ruler would draw a frame inside ours. */
 .bean-term-host .xterm-scrollable-element > .shadow { display: none; }
+.bean-term-host .xterm-decoration-overview-ruler { display: none; }
+/* The sidebar list's thin bar (.bean-chat-sidebar-list): a 4px pill inset in the 6px gutter. */
+.bean-term-host .xterm-scrollable-element > .scrollbar > .slider {
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
 .bean-term-strip {
   flex: none;
   display: flex;
