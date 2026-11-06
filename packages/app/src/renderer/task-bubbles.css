@@ -14,8 +14,12 @@
   flex-direction: column;
   gap: 8px;
   overflow-y: auto; /* max-height = room on this side of the bean (statusLayout stackMax) */
-  padding-bottom: 8px; /* room for the tail inside the scroll box */
-  margin-bottom: -8px;
+  /* Room for the whole tail inside the scroll box: the rotated 12px square reaches ~9.5px below
+     the bubble. Any less overflows by a pixel, and with non-overlay scrollbars (no trackpad, or
+     "Always show scroll bars") the scrollbars it spawns add height, flipping statusLayout above /
+     below the bean in a loop that re-renders the stack every frame. */
+  padding-bottom: 10px;
+  margin-bottom: -10px;
 }
 .bean-bubbles--below .bean-bubble-stack { padding: 8px 0 0; margin: -8px 0 0; }
 
