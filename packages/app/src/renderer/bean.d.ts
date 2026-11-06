@@ -15,7 +15,7 @@ import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResul
 import type { DeskContinueReply, DeskContinueRequest } from "../desk-continue.js";
 import type { DestinationView, NameRawResult, SendResult } from "../destinations.js";
 import type { AliasResult } from "@bean/core";
-import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
+import type { DesktopChatListing, RunStatus, WatchCheckResult } from "@bean/core";
 
 declare global {
   interface Window {
@@ -128,7 +128,8 @@ declare global {
       routinesDelete(name: string): Promise<void>;
       routinesState(): Promise<Record<string, RoutineStateView>>;
       routinesAttempts(runId: string): Promise<StepAttemptView[]>;
-      routinesRunNow(name: string): Promise<{ started: boolean; reason?: string }>;
+      routinesRunNow(name: string): Promise<{ started: boolean; reason?: string; status?: RunStatus; stopped?: true }>;
+      routineStop(name: string): Promise<void>;
       routinesCheckNow(name: string): Promise<WatchCheckResult>;
       routinesPreviewWatch(watch: RoutineWatch): Promise<WatchItem[]>;
       routinesEnableWatch(name: string, queueExisting: boolean): Promise<{ count: number }>;

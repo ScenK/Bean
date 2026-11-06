@@ -102,6 +102,7 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
     () => void window.bean.openComponent("persona"),
     (target) => void window.bean.openComponent("dashboard", target),
     (mountId) => window.bean.openChatMount(mountId),
+    (routine) => void window.bean.routineStop(routine),
   );
   // When the last job ends the orb rests in "done" for a beat before going back to listening.
   let wasRunning = false;

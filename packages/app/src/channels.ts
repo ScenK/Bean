@@ -190,6 +190,7 @@ export const IPC = {
   routinesSave: "bean:routines-save",
   routinesDelete: "bean:routines-delete",
   routinesRunNow: "bean:routines-run-now",
+  routineStop: "bean:routine-stop",
   routinesState: "bean:routines-state",
   routinesAttempts: "bean:routines-attempts",
   routinesCheckNow: "bean:routines-check-now",

@@ -1,7 +1,7 @@
 // What the avatar's status bubbles show: one entry per thing Bean is working on (design 2a) —
 // delegate tasks, routine runs, chat turns — plus failures, so a glance says Bean is alive or
 // broken. Main owns the list and pushes the whole thing on every change.
-import type { LiveCli } from "@bean/core";
+import type { LiveCli, RoutineHostStatus } from "@bean/core";
 
 export interface TaskJob {
   id: string;
@@ -25,6 +25,9 @@ export interface TaskJob {
   runStartedAt?: string;
   /** The desktop chat (mount id) that owns a delegate or live session — what its click opens. */
   mountId?: string;
+  /** A sprout run's own name, from the host's start event (`name` may be a todo's text) — what its
+   * Stop stops. */
+  routine?: string;
 }
 
 // How long a finished (or user-stopped) bubble stays before it clears (the design said a minute;
@@ -76,6 +79,38 @@ export function createTaskStatus(
       const t = lingers.get(id);
       if (t !== undefined) { timers.clear(t); lingers.delete(id); }
       if (jobs.delete(id)) push();
+    },
+  };
+}
+
+type TaskStatus = ReturnType<typeof createTaskStatus>;
+
+/** A stopping sprout bubble's line — the renderer disables its Stop on it. */
+export const STOPPING_LINE = "Stopping…";
+
+/** Core's routine host events onto the registry, plus the user's Stop: `stopping(routine)` turns that
+ * sprout's running bubbles to "Stopping…" at once, and later step events can't overwrite it. A
+ * stopped finish lingers and clears like a delegate's Stop — it isn't a failure to chase. */
+export function createRoutineBubbles(status: TaskStatus) {
+  const stopping = new Set<string>(); // bubble ids
+  return {
+    onStatus(e: RoutineHostStatus): void {
+      if (e.type === "start") {
+        stopping.delete(e.id);
+        status.upsert(e.id, { kind: "routine", name: e.name, routine: e.routine, line: e.steps[0] ?? "", detail: e.detail, steps: e.steps, step: 0, startedAt: e.startedAt, state: "running", runStartedAt: undefined });
+      } else if (e.type === "step") {
+        if (!stopping.has(e.id)) status.upsert(e.id, { step: e.step, line: e.line });
+      } else {
+        stopping.delete(e.id);
+        status.finish(e.id, e.state, e.line, e.stopped ? false : undefined, { runStartedAt: e.startedAt });
+      }
+    },
+    stopping(routine: string): void {
+      for (const j of status.list()) {
+        if (j.kind !== "routine" || j.routine !== routine || j.state !== "running") continue;
+        stopping.add(j.id);
+        status.upsert(j.id, { line: STOPPING_LINE });
+      }
     },
   };
 }

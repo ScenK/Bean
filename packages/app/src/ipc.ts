@@ -12,7 +12,7 @@ import {
   DESKTOP_CHAT_MAX_BYTES, DESKTOP_CHAT_TITLE_MAX, type DesktopChat, type DesktopChatInput, type DesktopChatListing,
 } from "@bean/core";
 import type { RoutineBuildView } from "./routine-builder.js";
-import type { WatchCheckResult, SendCard } from "@bean/core";
+import type { RunStatus, WatchCheckResult, SendCard } from "@bean/core";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -970,7 +970,9 @@ export interface RoutineHandlerDeps {
   isRunning: (name: string) => boolean;
   runningCount: (name: string) => number;
   queueCounts?: (name: string) => Promise<{ pending: number; running: number }>;
-  runNow: (name: string) => Promise<{ started: boolean; reason?: string }>;
+  runNow: (name: string) => Promise<{ started: boolean; reason?: string; status?: RunStatus; stopped?: true }>;
+  /** Stops the sprout's live runs (the scheduler's `stopRuns`); only called for a running name. */
+  stopRuns?: (name: string) => void;
   onRoutineDeleted?: (name: string) => Promise<void>;
   /** A run's step attempts (bean.db), oldest first. */
   attempts?: (runId: string) => StepAttemptView[];
@@ -1010,7 +1012,11 @@ export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
       }
       return out;
     },
-    runNow: (name: string): Promise<{ started: boolean; reason?: string }> => deps.runNow(name),
+    runNow: (name: string): Promise<{ started: boolean; reason?: string; status?: RunStatus; stopped?: true }> => deps.runNow(name),
+    /** A renderer payload: anything but a running sprout's name is ignored. */
+    stop: (name: unknown): void => {
+      if (typeof name === "string" && deps.isRunning(name)) deps.stopRuns?.(name);
+    },
     attempts: (runId: string): StepAttemptView[] => (typeof runId === "string" && runId ? deps.attempts?.(runId) ?? [] : []),
     checkNow: (name: string): Promise<WatchCheckResult> => watch().checkNow(name),
     previewWatch: (w: RoutineWatch): Promise<WatchItem[]> => watch().previewWatch(w),
@@ -1462,6 +1468,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.handle(IPC.routinesDelete, (_e, name: string) => deps.routineHandlers.remove(name));
   ipcMain.handle(IPC.routinesState, () => deps.routineHandlers.state());
   ipcMain.handle(IPC.routinesRunNow, (_e, name: string) => deps.routineHandlers.runNow(name));
+  ipcMain.handle(IPC.routineStop, (_e, name: unknown) => deps.routineHandlers.stop(name));
   ipcMain.handle(IPC.routinesAttempts, (_e, runId: string) => deps.routineHandlers.attempts(runId));
   ipcMain.handle(IPC.routinesCheckNow, (_e, name: string) => deps.routineHandlers.checkNow(name));
   ipcMain.handle(IPC.routinesPreviewWatch, (_e, w: RoutineWatch) => deps.routineHandlers.previewWatch(w));

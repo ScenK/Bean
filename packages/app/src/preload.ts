@@ -16,7 +16,7 @@ import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResul
 import type { DeskContinueReply, DeskContinueRequest } from "./desk-continue.js";
 import type { DestinationView, NameRawResult, SendResult } from "./destinations.js";
 import type { AliasResult } from "@bean/core";
-import type { DesktopChatListing, WatchCheckResult } from "@bean/core";
+import type { DesktopChatListing, RunStatus, WatchCheckResult } from "@bean/core";
 
 contextBridge.exposeInMainWorld("bean", {
   launch: (req: LaunchRequest): void => ipcRenderer.send(IPC.launch, req),
@@ -137,7 +137,8 @@ contextBridge.exposeInMainWorld("bean", {
   routinesDelete: (name: string): Promise<void> => ipcRenderer.invoke(IPC.routinesDelete, name),
   routinesState: (): Promise<Record<string, RoutineStateView>> => ipcRenderer.invoke(IPC.routinesState),
   routinesAttempts: (runId: string): Promise<StepAttemptView[]> => ipcRenderer.invoke(IPC.routinesAttempts, runId),
-  routinesRunNow: (name: string): Promise<{ started: boolean; reason?: string }> => ipcRenderer.invoke(IPC.routinesRunNow, name),
+  routinesRunNow: (name: string): Promise<{ started: boolean; reason?: string; status?: RunStatus; stopped?: true }> => ipcRenderer.invoke(IPC.routinesRunNow, name),
+  routineStop: (name: string): Promise<void> => ipcRenderer.invoke(IPC.routineStop, name),
   routinesCheckNow: (name: string): Promise<WatchCheckResult> => ipcRenderer.invoke(IPC.routinesCheckNow, name),
   routinesPreviewWatch: (watch: RoutineWatch): Promise<WatchItem[]> => ipcRenderer.invoke(IPC.routinesPreviewWatch, watch),
   routinesEnableWatch: (name: string, queueExisting: boolean): Promise<{ count: number }> => ipcRenderer.invoke(IPC.routinesEnableWatch, name, queueExisting),

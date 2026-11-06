@@ -2,8 +2,15 @@
 
 While Bean works, a stack of speech bubbles floats above the avatar bean, one per job. The
 newest sits nearest the bean and is the only one with a tail. Clicking a bubble expands it to
-show the delegate's instruction or the routine's steps. Expanded bubbles are **read-only** by
-decision: there's no Stop/Pause button, and a routine has no pause state to back one.
+show the delegate's instruction or the routine's steps. Expanded bubbles are read-only except
+one control: a running sprout's **Stop** (no Pause — a routine has no pause state to back one).
+
+- **Sprout Stop sits beside the bubble, not in it.** The bubble is a `<button>`, so the Stop
+  button is its sibling inside `.bean-bubble-item`, overlaid on room the detail reserves
+  (`.bean-bubble-stop-room`). It stops by `TaskJob.routine` (the sprout's real name from the
+  host's start event — `name` may be a todo's text), says "Stop all N runs" when N bubbles share
+  it, and keeps keyboard focus across re-renders. Main's `createRoutineBubbles` flips the bubbles
+  to "Stopping…" at once and drops step events until the finish; a `stopped` finish is non-sticky.
 
 - **Purpose: "Bean is alive / Bean is broken", not a mirror of any one window.** Sources:
   delegate tasks, routine runs, local chat turns (bubble while `converse()` runs, dismissed on

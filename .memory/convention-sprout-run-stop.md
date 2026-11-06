@@ -15,3 +15,6 @@
 - A stopped result (`RoutineRunResult.stopped`) is recorded (status `failed`, fixed digest
   "Stopped by you at step N (label)" + resume footer) but goes to **no sink** and triggers no
   watch post-run poll. A stop landing after the step loop/drain finished is ignored.
+- Desktop: `bean:routine-stop` (handler ignores non-strings and idle names) → `routineBubbles.stopping`
+  + `stopRuns`. Stop lives on the avatar bubble and the Sprouts panel; the chat sprout card reads
+  `runNow`'s `{ status, stopped }` to say Stopped / Failed / Needs attention / Finished.

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createTaskStatus, FINISHED_LINGER_MS, type TaskJob } from "../src/task-status.js";
+import { createRoutineBubbles, createTaskStatus, FINISHED_LINGER_MS, type TaskJob } from "../src/task-status.js";
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -63,5 +63,45 @@ describe("createTaskStatus", () => {
     expect(s.list()[0]!.runStartedAt).toBeUndefined();
     s.finish("routine:r", "failed", "Run failed", undefined, { runStartedAt: undefined });
     expect(s.list()[0]).toMatchObject({ state: "failed", runStartedAt: undefined });
+  });
+});
+
+describe("createRoutineBubbles", () => {
+  const start = (id: string, name: string, routine: string) =>
+    ({ type: "start" as const, id, name, routine, detail: "", steps: ["one", "two"], startedAt: 1 });
+
+  it("a Stop marks that sprout's running bubbles Stopping…, step events can't overwrite it, and a stopped finish lingers out", () => {
+    vi.useFakeTimers();
+    const s = createTaskStatus(() => {});
+    const b = createRoutineBubbles(s);
+    b.onStatus(start("routine:r:1", "fix the login bug", "r"));
+    b.onStatus(start("routine:r:2", "add a test", "r"));
+    b.onStatus(start("routine:other", "other", "other"));
+    expect(s.list()[0]).toMatchObject({ name: "fix the login bug", routine: "r" });
+
+    b.stopping("r");
+    b.onStatus({ type: "step", id: "routine:r:1", step: 1, line: "two" });
+    b.onStatus({ type: "step", id: "routine:other", step: 1, line: "two" });
+    expect(s.list().map((j) => j.line)).toEqual(["Stopping…", "Stopping…", "two"]);
+
+    b.onStatus({ type: "finish", id: "routine:r:1", state: "failed", line: "Stopped", startedAt: "t", stopped: true });
+    expect(s.list()[0]).toMatchObject({ state: "failed", line: "Stopped", runStartedAt: "t" });
+    vi.advanceTimersByTime(FINISHED_LINGER_MS);
+    expect(s.list().map((j) => j.id)).toEqual(["routine:r:2", "routine:other"]);
+  });
+
+  it("an ordinary failed finish stays sticky; a rerun of a stopped id takes step events again", () => {
+    vi.useFakeTimers();
+    const s = createTaskStatus(() => {});
+    const b = createRoutineBubbles(s);
+    b.onStatus(start("routine:r", "r", "r"));
+    b.stopping("r");
+    b.onStatus({ type: "finish", id: "routine:r", state: "done", line: "Done · 2 steps" }); // stop landed too late
+    b.onStatus(start("routine:r", "r", "r"));
+    b.onStatus({ type: "step", id: "routine:r", step: 1, line: "two" });
+    expect(s.list()[0]!.line).toBe("two");
+    b.onStatus({ type: "finish", id: "routine:r", state: "failed", line: "Finished with a failed step" });
+    vi.advanceTimersByTime(FINISHED_LINGER_MS * 2);
+    expect(s.list()).toMatchObject([{ state: "failed" }]);
   });
 });

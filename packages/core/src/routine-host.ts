@@ -28,7 +28,8 @@ export interface RoutineHold { scratch: Set<string> }
 
 /** Status bubble events — the desktop maps them onto its task-status registry. */
 export type RoutineHostStatus =
-  | { type: "start"; id: string; name: string; detail: string; steps: string[]; startedAt: number }
+  /** `name` is display text (a todo's text for a todo run); `routine` is the sprout's own name. */
+  | { type: "start"; id: string; name: string; routine: string; detail: string; steps: string[]; startedAt: number }
   | { type: "step"; id: string; step: number; line: string }
   /** `startedAt` is the run record's — what the Dashboard keys a run by. Absent when nothing was
    * recorded (the run threw). */
@@ -122,7 +123,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       const text = st.kind === "command" ? st.command : st.instruction;
       return st.skill || (text.length > 60 ? `${text.slice(0, 59)}…` : text);
     });
-    deps.onStatus?.({ type: "start", id, name: todo?.text ?? routine.name, detail: todo ? `Sprout: ${routine.name}` : routine.description ?? "", steps, startedAt: Date.now() });
+    deps.onStatus?.({ type: "start", id, name: todo?.text ?? routine.name, routine: routine.name, detail: todo ? `Sprout: ${routine.name}` : routine.description ?? "", steps, startedAt: Date.now() });
     let result: RoutineRunResult | undefined;
     // Run-scoped, so concurrent routines never mix receipts. Bean writes the footer itself —
     // the model never sees or retypes an id.

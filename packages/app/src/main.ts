@@ -53,7 +53,7 @@ import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } fr
 import { createLiveTasks, LIVE_AGENT_NAMES } from "./live-tasks.js";
 import { createTerminalTasks, type PtyFactory } from "./terminal-tasks.js";
 import { createRoutineBuilder } from "./routine-builder.js";
-import { createTaskStatus } from "./task-status.js";
+import { createTaskStatus, createRoutineBubbles } from "./task-status.js";
 import { createKeepAwake, keepAwakeFile, keepAwakeTooltip, loadKeepAwake, saveKeepAwake, type KeepAwakeState } from "./keep-awake.js";
 import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
 
@@ -791,6 +791,7 @@ app.whenReady().then(async () => {
       if (problem) throw new Error(problem);
       await saveRoutine(routinesPath, r, models);
     };
+    const routineBubbles = createRoutineBubbles(taskStatus);
     const { runOneRoutine, deliverDigest, sinkProblems } = createRoutineHost({
       dir,
       converse: runtime.converse,
@@ -802,11 +803,7 @@ app.whenReady().then(async () => {
       // Household-shared only: routines never see a member's private facts.
       memories: () => loadMemories(dbFile(dir), null),
       getRoutineDigestContext: () => runtime.getRoutineDigestContext(),
-      onStatus: (e) => {
-        if (e.type === "start") taskStatus.upsert(e.id, { kind: "routine", name: e.name, line: e.steps[0] ?? "", detail: e.detail, steps: e.steps, step: 0, startedAt: e.startedAt, state: "running", runStartedAt: undefined });
-        else if (e.type === "step") taskStatus.upsert(e.id, { step: e.step, line: e.line });
-        else taskStatus.finish(e.id, e.state, e.line, undefined, { runStartedAt: e.startedAt });
-      },
+      onStatus: routineBubbles.onStatus,
       notify: async ({ target, ...msg }) => {
         if (notificationTransport.available()) await notificationTransport.send({ ...msg, ...(target ? { meta: { open: "dashboard", target } } : {}) });
       },
@@ -1056,6 +1053,10 @@ app.whenReady().then(async () => {
           return { pending: todos.filter((t) => t.status === "pending").length, running: todos.filter((t) => t.status === "running").length };
         },
         runNow: (name) => routineScheduler.runNow(name),
+        stopRuns: (name) => {
+          routineBubbles.stopping(name);
+          routineScheduler.stopRuns(name);
+        },
         onRoutineDeleted: async (name) => {
           await deleteTodosForRoutine(dbFile(dir), name);
           clearWatch(dbFile(dir), name);
