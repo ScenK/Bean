@@ -8,3 +8,6 @@ release/
 /.worktrees/
 /packages/app/test-results/
 /packages/app/playwright-report/
+
+# Claude Code scheduler runtime lock
+.claude/scheduled_tasks.lock
