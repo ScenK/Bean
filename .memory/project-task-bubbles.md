@@ -59,6 +59,12 @@ one control: a running sprout's **Stop** (no Pause — a routine has no pause st
   `statusLayout` also sends `stackMax` (the room on that side), and past it the stack scrolls.
   Near the left edge, the bubble clamps inside the window and the tail slides over
   (`--bean-tail-right`).
+- **The stack's measured height must not depend on the flip.** `statusLayout` picks the side from
+  that height, so any side-dependent height loops above↔below every frame and re-creates the
+  bubble `<button>`s, so nothing can click them (#714). Example: the stack's padding-bottom
+  didn't cover the rotated tail. It overflowed by 1px, and non-overlay scrollbars (CI's macOS VM,
+  any Mac without a trackpad) added 15px above the bean only. Overlay-scrollbar Macs never show
+  it; `e2e/sprout-stop.e2e.ts` on CI does.
 - Menu/drag modes hide the bubbles with `opacity`, not `display:none`, so the measured height
   (and the window) doesn't jump under the tiles.
 - Guards: `task-status.test.ts` (incl. sticky/merge), the `statusLayout` + avatar-window unit tests, and
