@@ -120,7 +120,7 @@ describe("maxParallel workers", () => {
     await vi.waitFor(() => expect(runs.openIds()).toHaveLength(2));
     expect(await t.sched.runNow("q")).toEqual({ started: false, reason: "2/2 running" });
     await drain(runs, first);
-    expect(await first).toEqual({ started: true });
+    expect(await first).toEqual({ started: true, status: "ok" });
     expect(runs.started).toHaveLength(3);
   });
 
@@ -172,7 +172,7 @@ describe("maxParallel workers", () => {
     });
     const tick = t.sched.tick(); // q is due; the slow watch poll holds the tick
     await vi.waitFor(() => expect(t.deps.pollWatch).toHaveBeenCalled());
-    expect(await t.sched.runNow("q")).toEqual({ started: true });
+    expect(await t.sched.runNow("q")).toEqual({ started: true, status: "ok" });
     releasePoll();
     await tick;
     expect(runRoutineFn).toHaveBeenCalledOnce();
@@ -262,7 +262,7 @@ describe("maxParallel workers", () => {
     const t = setup(cronQueue({ maxParallel: undefined }), [todo("1"), todo("2")], { runRoutine: runRoutineFn, claimTodo });
     await t.sched.tick();
     expect(runRoutineFn).toHaveBeenCalledOnce();
-    expect(runRoutineFn.mock.calls[0]).toHaveLength(1); // the routine only — the run claims its own todos
+    expect(runRoutineFn.mock.calls[0]?.[1]).toBeUndefined(); // no todo — the run claims its own todos
     expect(claimTodo).not.toHaveBeenCalled();
     expect(t.deps.deliverDigest).toHaveBeenCalledOnce();
   });

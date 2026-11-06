@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { dbFile, scratchDir } from "./config.js";
 import { runDelegate, type DelegateSpawnFn } from "./delegate.js";
 import { isValidSessionId, recordDelegateSession } from "./delegate-runs.js";
-import { runShellCommand } from "./command-step.js";
+import { runShellCommand, STOPPED_BY_YOU } from "./command-step.js";
 import type { CliName } from "./launcher.js";
 import type { CliModelSelection } from "./models.js";
 import { composePrompt } from "./prompt.js";
@@ -47,6 +47,8 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
         choice = deps.selectCli({ cli: req.cli, model: req.model });
       } catch (err) { reject(err); return; }
       if (!choice) { reject(new Error("No enabled delegate CLI found — enable one in Settings.")); return; }
+      // Stopped before the spawn: nothing to start, nothing to record.
+      if (req.signal?.aborted) { reject(new Error(STOPPED_BY_YOU)); return; }
       const cli = choice.cli;
       const model = choice.model;
       const prompt =
@@ -61,6 +63,7 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
       // The shared scratch workspace must exist for the spawn's cwd.
       if (!req.projectPath && !perTodo) mkdirSync(projectPath, { recursive: true });
       const cleanup = (): void => {
+        req.signal?.removeEventListener("abort", onAbort);
         releaseRun(dir, runId);
         if (perTodo && !hold) rmSync(perTodo, { recursive: true, force: true });
       };
@@ -97,6 +100,9 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
       // Track the detached child, not this host: a crashed host's boot cleanup must kill the
       // delegate (run-queue.ts).
       if (handle.pid) updateRunPid(dir, runId, handle.pid);
+      // cancel() settles only its own callback (never onDone/onError), so it must release + reject.
+      function onAbort(): void { handle.cancel(() => { cleanup(); reject(new Error(STOPPED_BY_YOU)); }); }
+      req.signal?.addEventListener("abort", onAbort, { once: true });
     });
 
   const commandStep: RoutineHostDeps["commandStep"] = async (req: CommandStepRequest, hold) => {
@@ -109,6 +115,7 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
         cwd,
         env: spawnEnv({ PATH: deps.path, ...req.env }),
         timeoutMs: req.timeoutMinutes ? req.timeoutMinutes * 60_000 : ROUTINE_STEP_TIMEOUT_MS,
+        ...(req.signal ? { signal: req.signal } : {}),
       });
     } finally {
       if (perTodo && !hold) rmSync(perTodo, { recursive: true, force: true });

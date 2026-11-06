@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { ActionTool, ConverseDeps, ConvoMsg, ToolCall } from "./converse.js";
 import { DEFAULT_GATE_ROUNDS, MEMBER_TODO_REFUSAL, memberTodoEligible, parallelSlots, usesGates, type Routine, type RoutineStep, type RunRecord, type RunStatus, type StepKind } from "./routine-store.js";
-import type { CommandStepOutcome } from "./command-step.js";
+import { STOPPED_BY_YOU, type CommandStepOutcome } from "./command-step.js";
 import type { Skill } from "./types.js";
 import type { CliName } from "./launcher.js";
 import type { TodoItem, TodoStatus } from "./todo-store.js";
@@ -37,6 +37,8 @@ export interface DelegateStepRequest {
    * receipts from the request, never from the latest `onStep`. */
   stepIndex?: number;
   round?: number;
+  /** The run's Stop: the adapter kills the child and rejects (spawns nothing when already aborted). */
+  signal?: AbortSignal;
 }
 
 /** What a delegate step ran on. A bare string (output only) is still accepted. */
@@ -50,6 +52,8 @@ export interface CommandStepRequest {
   timeoutMinutes?: number;
   env: Record<string, string>;
   todoId?: string;
+  /** The run's Stop: the adapter kills the process group and rejects. */
+  signal?: AbortSignal;
 }
 
 export interface RoutineRunnerDeps {
@@ -77,6 +81,9 @@ export interface RoutineRunnerDeps {
   /** Called as each step starts — drives the avatar's status bubble. */
   onStep?: (info: StepInfo) => void;
   /** Injected by the app for todo-driven routines: core never touches the DB itself. */
+  /** The run's Stop. Checked before each step and after each commit; the in-flight step's
+   * adapter is cancelled through it. A stop after the steps (or the drain) finished is ignored. */
+  signal?: AbortSignal;
   todos?: {
     /** Atomically takes the routine's next pending todo (pending → running); undefined = none. */
     claim: (routine: string) => Promise<TodoItem | undefined>;
@@ -102,7 +109,8 @@ export interface StepResult {
   /** A route step's chosen label (also its verdict). */
   chose?: string;
 }
-export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[] }
+/** `stopped`: the user stopped it mid-run — status failed, a fixed digest, and no sink gets it. */
+export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[]; stopped?: true }
 
 export const ROUTINE_STEP_TIMEOUT_MS = 15 * 60_000;
 const MAX_TOOL_ROUNDS = 5;
@@ -137,8 +145,27 @@ export const priorOutputsData = (prior: string): string =>
 const gist = (output: string): string =>
   (output.split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("VERDICT:")) ?? "no report").slice(0, 120);
 
-/** How one pass of the steps ended; `attention` says why when it needs attention. */
-interface PassOutcome { status: RunStatus; attention?: string }
+/** How one pass of the steps ended; `attention` says why when it needs attention; `stoppedAt`
+ * = the step the user's Stop landed on. */
+interface PassOutcome { status: RunStatus; attention?: string; stoppedAt?: number }
+
+/** `step 3 (review)` — the step's id, skill or the start of its text. */
+function stepLabel(steps: RoutineStep[], i: number): string {
+  const st = steps[i];
+  const text = !st ? "" : st.id ?? st.skill ?? (st.kind === "command" ? st.command : st.instruction);
+  return `step ${i + 1}${text ? ` (${text.length > 60 ? `${text.slice(0, 59)}…` : text})` : ""}`;
+}
+
+/** Rejects with STOPPED_BY_YOU as soon as `signal` aborts — a late result is dropped. */
+function untilAborted<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return p;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(new Error(STOPPED_BY_YOU));
+    if (signal.aborted) { onAbort(); return; }
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
 const RANK: Record<RunStatus, number> = { ok: 0, "needs-attention": 1, failed: 2 };
 
 const ROUTINE_MEMORY_HEADER =
@@ -350,6 +377,7 @@ async function runSteps(
     let exitCode: number | undefined;
     let said: string | undefined; // a command's raw stdout — its ROUTE line comes before `(exit N)`
     try {
+      if (deps.signal?.aborted) throw new Error(STOPPED_BY_YOU);
       if (effective.kind === "command") {
         if (!deps.command) throw new Error("command steps can't run here");
         const res = await deps.command({
@@ -358,6 +386,7 @@ async function runSteps(
           ...(effective.timeoutMinutes ? { timeoutMinutes: effective.timeoutMinutes } : {}),
           env: todo ? { BEAN_TODO_ID: todo.id, BEAN_TODO_TEXT: todo.text } : {},
           ...(todo?.scratch ? { todoId: todo.id } : {}),
+          ...(deps.signal ? { signal: deps.signal } : {}),
         });
         exitCode = res.exitCode;
         said = res.output;
@@ -385,6 +414,7 @@ async function runSteps(
             ...(todo?.scratch ? { todoId: todo.id } : {}),
             ...(resume ? { resume } : {}),
             stepIndex: index, round,
+            ...(deps.signal ? { signal: deps.signal } : {}),
           });
           ({ output, ...ran } = typeof res === "string" ? { output: res } : res);
           // Its target was skipped by a route or failed: say so rather than pass it off as resumed.
@@ -392,11 +422,15 @@ async function runSteps(
         } else {
           const session = retro ? retroSession(deps.retro!, routine.name, deps.findSkill, now) : undefined;
           const expiry = new AbortController();
-          output = await withTimeout(
-            runChatStep(routine, effective, index, prior, deps, skill, memories, session ? [session.tool] : deps.tools, !session && routine.webSearch === true, expiry.signal),
+          // The run's Stop joins the expiry: no model call or tool runs after either.
+          const signal = deps.signal ? AbortSignal.any([expiry.signal, deps.signal]) : expiry.signal;
+          output = await untilAborted(withTimeout(
+            runChatStep(routine, effective, index, prior, deps, skill, memories, session ? [session.tool] : deps.tools, !session && routine.webSearch === true, signal),
             timeoutMs, `step ${index + 1}`, () => expiry.abort(),
-          );
-          // Only after the step finished in time: a failed or timed-out retro publishes nothing.
+          ), deps.signal);
+          // Only after the step finished in time and unstopped: a failed, timed-out or stopped
+          // retro publishes nothing.
+          if (deps.signal?.aborted) throw new Error(STOPPED_BY_YOU);
           if (session) output = session.finish(output);
         }
       }
@@ -469,10 +503,13 @@ async function runSteps(
     return attention ? { status: "needs-attention", attention } : { status: "ok" };
   };
 
+  const stopped = (at: number): PassOutcome => ({ status: "failed", stoppedAt: at });
+
   while (pc < steps.length) {
     const index = pc;
     const step = steps[index]!;
     const group = groups.get(index);
+    if (deps.signal?.aborted) return stopped(index);
     if (group) {
       const members = steps.slice(group.first, group.last + 1).map((_, k) => group.first + k);
       // The whole group fits the budget or none of it starts.
@@ -491,6 +528,7 @@ async function runSteps(
       // Awaiting in step order commits in step order (a later member finishing first waits);
       // the loop ends only once every member has settled.
       for (const p of pending) commit(await p);
+      if (deps.signal?.aborted) return stopped(index);
       pc = group.last + 1;
       continue;
     }
@@ -502,6 +540,8 @@ async function runSteps(
     feedback = "";
     const r = await run(index, nextRound(index), prior, fb);
     commit(r);
+    // Before gate/route handling: a killed step is never a FAIL verdict to loop on.
+    if (deps.signal?.aborted) return stopped(index);
     const { round, output, said, verdict, chose } = r;
     if (!r.ok) {
       // Gated: a hard error stops the run. Legacy todo pipeline: a failed step abandons this todo.
@@ -555,6 +595,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
   let status: RunStatus = "ok";
   const worst = (next: RunStatus): void => { if (RANK[next] > RANK[status]) status = next; };
   const attention: string[] = [];
+  let stoppedAt: number | undefined; // the step the user's Stop landed on
   let soleLabelPrefix = ""; // only meaningful when the run ends up with exactly one result
 
   /** Runs the pipeline for one claimed (already `running`) todo and settles its status. */
@@ -584,7 +625,9 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     // Strip the label prefix for the setStatus summary — it's redundant there since the
     // caller already knows which todo this is; `results`/the digest keep the labeled form.
     const rawOutput = last?.output.startsWith(labelPrefix) ? last.output.slice(labelPrefix.length) : last?.output ?? "";
-    const summary = (outcome.attention ? `needs attention: ${outcome.attention}` : rawOutput).slice(0, SUMMARY_CAP);
+    if (outcome.stoppedAt !== undefined) stoppedAt = outcome.stoppedAt;
+    const summary = (outcome.stoppedAt !== undefined ? STOPPED_BY_YOU
+      : outcome.attention ? `needs attention: ${outcome.attention}` : rawOutput).slice(0, SUMMARY_CAP);
     await setStatus(item.id, outcome.status === "ok" ? "done" : "failed", summary);
     worst(outcome.status);
     if (outcome.attention) attention.push(`${labelPrefix}${outcome.attention}`);
@@ -605,12 +648,29 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
           results: [],
         };
       }
-      for (; item; item = await claim(routine.name)) await runTodo(item, setStatus);
+      // A stopped drain claims nothing more; runTodo fails a todo claimed after the Stop unrun.
+      for (; item; item = stoppedAt === undefined && !deps.signal?.aborted ? await claim(routine.name) : undefined) {
+        await runTodo(item, setStatus);
+      }
     }
   } else {
     const outcome = await runSteps(routine, deps, timeoutMs, results, "", "", id);
     worst(outcome.status);
     if (outcome.attention) attention.push(outcome.attention);
+    stoppedAt = outcome.stoppedAt;
+  }
+  const stepsOf = (): RunRecord["steps"] => results.map((r) => ({
+    kind: r.kind, ...(r.stepId ? { id: r.stepId } : {}), ...(r.cli ? { cli: r.cli } : {}),
+    ...(r.round ? { round: r.round } : {}), ...(r.verdict ? { verdict: r.verdict } : {}),
+    ...(r.chose ? { chose: r.chose } : {}), ok: r.ok, summary: r.output.slice(0, SUMMARY_CAP),
+  }));
+  if (stoppedAt !== undefined) {
+    // A fixed line, not a model digest: nothing to summarize for a run the user cut short.
+    const digest = `${STOPPED_BY_YOU} at ${stepLabel(routine.steps, stoppedAt)}`;
+    return {
+      record: { id, startedAt, finishedAt: now().toISOString(), status: "failed", digest, steps: stepsOf() },
+      digest, results, stopped: true,
+    };
   }
 
   // One successful step: its output IS the deliverable. Re-summarizing it only loses detail and
@@ -627,11 +687,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     finishedAt: now().toISOString(),
     status,
     digest,
-    steps: results.map((r) => ({
-      kind: r.kind, ...(r.stepId ? { id: r.stepId } : {}), ...(r.cli ? { cli: r.cli } : {}),
-      ...(r.round ? { round: r.round } : {}), ...(r.verdict ? { verdict: r.verdict } : {}),
-      ...(r.chose ? { chose: r.chose } : {}), ok: r.ok, summary: r.output.slice(0, SUMMARY_CAP),
-    })),
+    steps: stepsOf(),
   };
   return { record, digest, results };
 }
