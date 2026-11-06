@@ -15,7 +15,9 @@ channel id). Not `chatops_conversations` — that one is the owner-only continua
   human 1:1 with Bean added never needs an @mention; recorded before the empty-text return;
   targeted `a:` refs are skipped, the meeting title is fetched once per meeting id inside the
   turn (needs the live context). Discord syncs postable (`ViewChannel`+`SendMessages`) guild
-  text/announcement channels on ready/guildCreate/channelCreate/Update; threads only when seen.
+  text/announcement channels on ready/guildCreate/channelCreate/Update. Discord threads are never
+  recorded (each top-level mention and live session opens one — throwaway rows); old thread rows
+  stay until forgotten.
   Lost access or `channelDelete` → `forgetDestination`, which never deletes an aliased row.
   Every call is wrapped — a failed record must not fail a turn or throw a delivery into retry.
 - **Settings UI (#686):** `app/src/destinations.ts` (IPC `destinations*`) feeds core the sprout
