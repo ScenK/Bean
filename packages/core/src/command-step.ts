@@ -9,6 +9,8 @@ export interface ShellCommandOptions {
   /** Full child env (the caller supplies PATH — see safety-packaged-app-path-detection). */
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
+  /** Aborted = SIGKILL the group and reject (once the pipes close) — the sprout's Stop. */
+  signal?: AbortSignal;
   /** Test seam; defaults to node's spawn. */
   spawnFn?: (command: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; detached: true; stdio: ["ignore", "pipe", "pipe"] }) => ChildProcess;
 }
@@ -29,12 +31,16 @@ export function killAllCommands(): void {
   liveGroups.clear();
 }
 
+export const STOPPED_BY_YOU = "Stopped by you";
+
 /** Runs `command` via `/bin/sh -c` in its own process group. Resolves with the exit code (a
  * signal-killed shell counts as 128 + signal number) and the combined output tail; rejects on
- * spawn failure or timeout — the timeout SIGKILLs the whole group, so pipeline/background
- * children die with the shell, and rejects only once the pipes close. */
+ * spawn failure, timeout or abort — both SIGKILL the whole group, so pipeline/background
+ * children die with the shell, and reject only once the pipes close. A killed command never
+ * resolves as an exit code, so a gate can't read it as FAIL. */
 export function runShellCommand(command: string, opts: ShellCommandOptions): Promise<CommandStepOutcome> {
   return new Promise((resolve, reject) => {
+    if (opts.signal?.aborted) { reject(new Error(STOPPED_BY_YOU)); return; }
     const child = (opts.spawnFn ?? spawn)("/bin/sh", ["-c", command], {
       cwd: opts.cwd, env: opts.env, detached: true, stdio: ["ignore", "pipe", "pipe"],
     });
@@ -47,14 +53,20 @@ export function runShellCommand(command: string, opts: ShellCommandOptions): Pro
     child.stdout?.on("data", take);
     child.stderr?.on("data", take);
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      if (pid) killGroup(pid); else child.kill("SIGKILL");
-    }, opts.timeoutMs);
-    child.on("error", (err) => { clearTimeout(timer); if (pid) liveGroups.delete(pid); reject(err); });
-    child.on("close", (code, signal) => {
+    let aborted = false;
+    const kill = (): void => { if (pid) killGroup(pid); else child.kill("SIGKILL"); };
+    const timer = setTimeout(() => { timedOut = true; kill(); }, opts.timeoutMs);
+    const onAbort = (): void => { aborted = true; kill(); };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+    const done = (): void => {
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
       if (pid) liveGroups.delete(pid);
+    };
+    child.on("error", (err) => { done(); reject(err); });
+    child.on("close", (code, signal) => {
+      done();
+      if (aborted) { reject(new Error(STOPPED_BY_YOU)); return; }
       if (timedOut) {
         reject(new Error(`command timed out after ${Math.max(1, Math.round(opts.timeoutMs / 60_000))} minutes`));
         return;

@@ -22,8 +22,9 @@ export interface RoutineSchedulerDeps {
   loadRoutines: () => Promise<Routine[]>;
   loadStates: () => Promise<Record<string, RoutineState>>;
   saveStates: (states: Record<string, RoutineState>) => Promise<void>;
-  /** `todo` set = a maxParallel worker's run of that one (already claimed) todo. */
-  runRoutine: (routine: Routine, todo?: TodoItem) => Promise<RoutineRunResult>;
+  /** `todo` set = a maxParallel worker's run of that one (already claimed) todo. `signal` =
+   * the run's Stop (`stopRuns`). */
+  runRoutine: (routine: Routine, todo?: TodoItem, signal?: AbortSignal) => Promise<RoutineRunResult>;
   deliverDigest: (routine: Routine, result: RoutineRunResult) => Promise<void>;
   /** Chat sinks that can't be delivered (an unknown destination name): the run is recorded
    * needs-attention with these lines appended, before the record is saved. Absent = none. */
@@ -77,6 +78,9 @@ export function withSinkProblems(result: RoutineRunResult, problems: string[]): 
   return { ...result, digest, record: { ...result.record, digest, status } };
 }
 
+/** What one admission's runs ended with: a status per run, and whether a Stop cut one short. */
+interface FillResult { statuses: RunStatus[]; stopped: boolean }
+
 const TICK_MS = 30_000;
 export const ALARM_AFTER = 3;
 
@@ -100,6 +104,21 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   const inFlight = new Map<string, number>();
   const bump = (name: string, by: number): void => { inFlight.set(name, (inFlight.get(name) ?? 0) + by); };
   let stopped = false;
+  // Per-run Stop handles, registered at admission (before stamp/claims) and dropped when that
+  // run/worker settles. `stopRuns(name)` aborts them; `stop()` (shutdown) doesn't touch them.
+  const stops = new Map<string, Set<AbortController>>();
+  const admit = (name: string): AbortController => {
+    const ctl = new AbortController();
+    const set = stops.get(name) ?? new Set();
+    set.add(ctl);
+    stops.set(name, set);
+    return ctl;
+  };
+  const settleStop = (name: string, ctl: AbortController): void => {
+    const set = stops.get(name);
+    set?.delete(ctl);
+    if (set?.size === 0) stops.delete(name);
+  };
   // In-memory mirror of which routines markMissed() flagged, checked by tick() instead of a
   // fresh loadStates() read: nextRun(cron, a stale lastRun) keeps landing on the same past
   // due time forever, so tick() needs to remember "already handled as missed" itself rather
@@ -172,42 +191,51 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   };
 
   /** The single run (maxParallel 1, plain routines): one runRoutine call drains the queue.
-   * Resolves with the run's status (a throw before a record exists counts as failed). */
-  async function execute(routine: Routine): Promise<RunStatus[]> {
+   * Resolves with the run's status (a throw before a record exists counts as failed). A stopped
+   * run is recorded but goes to no sink and triggers no post-run watch poll. */
+  async function execute(routine: Routine, ctl: AbortController): Promise<FillResult> {
     let status: RunStatus = "failed";
+    let stoppedRun = false;
     try {
       await stamp(routine.name);
-      const result = checkSinks(routine, await deps.runRoutine(routine));
+      const result = checkSinks(routine, await deps.runRoutine(routine, undefined, ctl.signal));
       status = result.record.status;
+      stoppedRun = result.stopped === true;
       await appendAndPrune(routine.name, result.record);
-      await deps.deliverDigest(routine, result);
+      if (!stoppedRun) await deps.deliverDigest(routine, result);
     } catch (err) {
       console.error(`bean: routine "${routine.name}" run failed`, err);
     } finally {
-      release(routine, true);
+      settleStop(routine.name, ctl);
+      release(routine, !stoppedRun);
     }
-    return [status];
+    return { statuses: [status], stopped: stoppedRun };
   }
 
   /** A maxParallel worker: claim a todo, run it as its own run, repeat until nothing's pending.
    * A lost claim ends the worker with no bubble, record or digest. Resolves with one status per
    * claimed todo. */
-  async function worker(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>): Promise<RunStatus[]> {
+  async function worker(routine: Routine, claim: (name: string) => Promise<TodoItem | undefined>, ctl: AbortController): Promise<FillResult> {
     const statuses: RunStatus[] = [];
+    let stoppedRun = false;
+    // A stopped worker claims nothing more; a todo whose claim was in flight at the Stop still
+    // goes to runRoutine, which fails it unrun (its signal is already aborted).
+    const next = (): Promise<TodoItem | undefined> => (ctl.signal.aborted ? Promise.resolve(undefined) : claim(routine.name));
     try {
-      for (let todo = await claim(routine.name); todo; todo = await claim(routine.name)) {
+      for (let todo = await next(); todo; todo = await next()) {
         statuses.push("failed"); // replaced by the record's status once the run returns
         bump(routine.name, 1);
         try {
           let result: RoutineRunResult;
           try {
-            result = checkSinks(routine, await deps.runRoutine(routine, todo));
+            result = checkSinks(routine, await deps.runRoutine(routine, todo, ctl.signal));
             statuses[statuses.length - 1] = result.record.status;
+            if (result.stopped) stoppedRun = true;
             await appendAndPrune(routine.name, result.record, () => (inFlight.get(routine.name) ?? 0) > 1);
           } finally {
             bump(routine.name, -1);
           }
-          await deps.deliverDigest(routine, result);
+          if (!result.stopped) await deps.deliverDigest(routine, result);
         } catch (err) {
           console.error(`bean: routine "${routine.name}" todo run failed`, err);
         }
@@ -215,23 +243,27 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     } catch (err) {
       console.error(`bean: routine "${routine.name}" claim failed`, err);
     } finally {
-      release(routine, statuses.length > 0);
+      settleStop(routine.name, ctl);
+      release(routine, statuses.length > 0 && !stoppedRun);
     }
-    return statuses;
+    return { statuses, stopped: stoppedRun };
   }
 
   /** Starts runs into the routine's free slots (maxParallel − live). The slots are taken
    * synchronously, before any await, so concurrent fills never overcommit. Resolves when the
-   * started runs end, with one status per run they made. */
-  async function fill(routine: Routine): Promise<RunStatus[]> {
+   * started runs end, with one status per run they made. Each run/worker's Stop handle is
+   * registered here, with its slot. */
+  async function fill(routine: Routine): Promise<FillResult> {
     const slots = deps.claimTodo ? parallelSlots(routine) : 1;
     const free = slots - count(routine.name);
-    if (free <= 0) return [];
+    if (free <= 0) return { statuses: [], stopped: false };
     running.set(routine.name, count(routine.name) + free);
-    if (slots === 1 || !deps.claimTodo) return execute(routine);
+    if (slots === 1 || !deps.claimTodo) return execute(routine, admit(routine.name));
     const claim = deps.claimTodo;
+    const ctls = Array.from({ length: free }, () => admit(routine.name));
     await stamp(routine.name).catch((err: unknown) => console.error(`bean: routine "${routine.name}" stamp failed`, err));
-    return (await Promise.all(Array.from({ length: free }, () => worker(routine, claim)))).flat();
+    const all = await Promise.all(ctls.map((ctl) => worker(routine, claim, ctl)));
+    return { statuses: all.flatMap((r) => r.statuses), stopped: all.some((r) => r.stopped) };
   }
 
   /** Why a run can't start now (the same reasons Run now gives), or undefined. Synchronous, so a
@@ -428,6 +460,12 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       void markMissed();
       timer = setInterval(() => void tick(), TICK_MS);
     },
+    /** Stops the routine's live runs (a no-op when idle): each in-flight step is cancelled, its
+     * todo failed, pending todos stay pending, and the next scheduled fire still runs. */
+    stopRuns(name: string): void {
+      for (const ctl of stops.get(name) ?? []) ctl.abort();
+    },
+    /** Shutdown — not a run's Stop (see stopRuns). */
     stop(): void {
       stopped = true;
       if (timer) clearInterval(timer);
@@ -451,15 +489,20 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     /** Live runs of the routine (its taken slots) — the panel's "2/3 running". */
     runningCount: count,
     pollFailures: (name: string): number => failures.get(name) ?? 0,
-    /** Refuses only when every slot is taken; otherwise fills the free ones. */
-    async runNow(name: string): Promise<{ started: boolean; reason?: string }> {
+    /** Refuses only when every slot is taken; otherwise fills the free ones and resolves once
+     * they finish, with their worst status (none when no run happened) and whether one was stopped. */
+    async runNow(name: string): Promise<{ started: boolean; reason?: string; status?: RunStatus; stopped?: true }> {
       const routine = (await deps.loadRoutines()).find((r) => r.name === name);
       if (!routine) return { started: false, reason: noSuch(name) };
       const reason = refuseRun(routine);
       if (reason) return { started: false, reason };
       checking.delete(name); // an in-flight tick's due decision for it is now stale
-      await fill(routine); // no await between the check above and fill's synchronous slot grab
-      return { started: true };
+      const ran = await fill(routine); // no await between the check above and fill's synchronous slot grab
+      return {
+        started: true,
+        ...(ran.statuses.length ? { status: triggerOutcome(ran.statuses).status } : {}),
+        ...(ran.stopped ? { stopped: true as const } : {}),
+      };
     },
     /** Poll a watch right now, ignoring its window (runNow doesn't poll). New todo-driven items
      * drain via a tick. */
@@ -479,7 +522,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       const reason = refuseRun(routine);
       if (reason) return { status: "refused", reason };
       checking.delete(name);
-      return { status: "started", done: fill(routine).then(triggerOutcome) }; // fill takes its slots synchronously
+      return { status: "started", done: fill(routine).then((r) => triggerOutcome(r.statuses)) }; // fill takes its slots synchronously
     },
     /** Enable from review: check the source again, seed from THAT check (not the build-time
      * preview), optionally queue what's already there, then save enabled. */

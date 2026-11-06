@@ -12,7 +12,7 @@ import { enqueueOutbox } from "./outbox.js";
 import { saveNote } from "./note-store.js";
 import { listSkillProposals, RETRO_SKILL, saveSkillProposals, withProposalFooter } from "./retro.js";
 import { listStepAttempts, recordStepAttempt } from "./step-attempts.js";
-import { claimTodo, updateTodoStatus, type TodoItem, type TodoStatus } from "./todo-store.js";
+import { claimTodo, listTodos, updateTodoStatus, type TodoItem, type TodoStatus } from "./todo-store.js";
 import { DEFAULT_GATE_ROUNDS, loadRoutines, loadRoutineStates, resolveSinkAlias, sinkAliasProblems, usesGates, type Routine } from "./routine-store.js";
 import { listDestinations } from "./destinations.js";
 import { resumeCommand } from "./delegate-runs.js";
@@ -32,7 +32,7 @@ export type RoutineHostStatus =
   | { type: "step"; id: string; step: number; line: string }
   /** `startedAt` is the run record's — what the Dashboard keys a run by. Absent when nothing was
    * recorded (the run threw). */
-  | { type: "finish"; id: string; state: "done" | "failed"; line: string; startedAt?: string };
+  | { type: "finish"; id: string; state: "done" | "failed"; line: string; startedAt?: string; stopped?: true };
 
 export interface RoutineHostDeps {
   /** ~/.bean — bean.db, outbox, routines and run records all derive from it. */
@@ -78,8 +78,9 @@ export function formatReceipts(receipts: SessionReceipt[]): string[] {
 }
 
 export interface RoutineHost {
-  /** `todo` (already claimed): run just that todo, as its own bubble/record/digest. */
-  runOneRoutine: (routine: Routine, todo?: TodoItem) => Promise<RoutineRunResult>;
+  /** `todo` (already claimed): run just that todo, as its own bubble/record/digest. `signal` =
+   * the run's Stop (see RoutineRunnerDeps.signal). */
+  runOneRoutine: (routine: Routine, todo?: TodoItem, signal?: AbortSignal) => Promise<RoutineRunResult>;
   deliverDigest: (routine: Routine, result: RoutineRunResult) => Promise<void>;
   /** Alias sinks that can't be delivered right now (unknown name, wrong platform). */
   sinkProblems: (routine: Routine) => string[];
@@ -115,7 +116,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     },
   };
 
-  const runOneRoutine = async (routine: Routine, todo?: TodoItem): Promise<RoutineRunResult> => {
+  const runOneRoutine = async (routine: Routine, todo?: TodoItem, signal?: AbortSignal): Promise<RoutineRunResult> => {
     const id = todo ? `routine:${routine.name}:${todo.id}` : `routine:${routine.name}`;
     const steps = routine.steps.map((st) => {
       const text = st.kind === "command" ? st.command : st.instruction;
@@ -198,6 +199,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
           save: (proposals) => saveSkillProposals(dbFile(dir), proposals),
         },
         todos: { claim: (r) => claimTodo(dbFile(dir), r), setStatus },
+        ...(signal ? { signal } : {}),
       }, todo);
       // Before the scheduler saves the record and delivers it to sinks.
       result = withResumeFooter(result, formatReceipts(receipts));
@@ -213,10 +215,15 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     } finally {
       for (const p of hold?.scratch ?? []) rmSync(p, { recursive: true, force: true });
       const status = result?.record.status;
+      // A Stop holds only this run: say what's still queued and how to hold it too.
+      const queued = result?.stopped && routine.todoDriven
+        ? (await listTodos(dbFile(dir), routine.name).catch(() => [])).filter((t) => t.status === "pending").length : 0;
       deps.onStatus?.({
         type: "finish", id, state: status === "ok" ? "done" : "failed",
         ...(result ? { startedAt: result.record.startedAt } : {}),
+        ...(result?.stopped ? { stopped: true as const } : {}),
         line: !status ? "Run failed"
+          : result?.stopped ? (queued ? `Stopped · ${queued} still queued — disable in Sprouts to hold` : "Stopped")
           : status === "failed" ? `Finished with a failed step${failedMembers(result!)}`
           : status === "needs-attention" ? "Needs attention — a gate stopped it"
           : `Done · ${steps.length} step${steps.length === 1 ? "" : "s"}`,
