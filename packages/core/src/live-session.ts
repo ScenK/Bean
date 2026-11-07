@@ -3,6 +3,7 @@
 // stdout, driven remotely from a chatops channel. Permissions are deliberately bypassed (true bypass).
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { BEAN_GIT_IDENTITY, claudeTailLine, claudeText, sessionIdOf } from "./delegate.js";
 import { withCliRules } from "./agent-rules.js";
 import { spawnEnv } from "./spawn-env.js";
@@ -52,6 +53,12 @@ export function liveSessionCommand(req: LiveSessionRequest): { command: string; 
   };
 }
 
+/** A stream-json control request that ends the running turn but keeps the process; claude answers
+ * with a `result` of subtype `error_during_execution`. */
+export function interruptLine(): string {
+  return JSON.stringify({ type: "control_request", request_id: randomUUID(), request: { subtype: "interrupt" } }) + "\n";
+}
+
 /** One stdin line = one user turn, per claude's stream-json input protocol. */
 export function userTurnLine(text: string): string {
   return JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text }] } }) + "\n";
@@ -64,6 +71,8 @@ export interface TurnSummary {
   costUsd?: number;
   /** Set when the turn failed (per-turn CLIs): the session stays bound, nothing goes to history. */
   failed?: string;
+  /** Set when interrupt() cut the turn short: the session stays, ready for the next turn. */
+  interrupted?: true;
 }
 
 export function claudeTurnSummary(event: unknown): TurnSummary | undefined {
@@ -94,6 +103,9 @@ export interface LiveSessionCallbacks {
 export interface LiveSessionHandle {
   /** False when the text was refused (per-turn CLIs: the merged next turn would overflow its cap). */
   send: (text: string) => boolean;
+  /** Ends the running turn and keeps the session; its summary carries `interrupted`. False when
+   * no turn is running (nothing done). */
+  interrupt: () => boolean;
   stop: () => void;
   pid: number | undefined;
 }
@@ -133,6 +145,9 @@ export function startLiveSession(
   // `assistant` (fallback) clears it and reports onTurnStart — a queued message answered as its
   // own turn, after the previous `result` already stopped typing.
   let afterResult = false;
+  // A user turn was written and its `result` hasn't arrived; interrupt() only acts while set.
+  let turnActive = false;
+  let interruptSent = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -187,11 +202,15 @@ export function startLiveSession(
     if (req.resume && !initSeen) return;
     if (afterResult && (e?.type === "assistant" || (e?.type === "system" && e.subtype === "init"))) {
       afterResult = false;
+      turnActive = true;
       if (!stopping) cbs.onTurnStart?.();
     }
     const summary = claudeTurnSummary(event);
     if (summary) {
       afterResult = true;
+      turnActive = false;
+      if (interruptSent && e?.subtype === "error_during_execution") summary.interrupted = true;
+      interruptSent = false;
       cbs.onTurnComplete(summary);
       resetIdle();
       return;
@@ -241,6 +260,7 @@ export function startLiveSession(
     });
 
     c.stdin?.write(userTurnLine(withCliRules(text, "live")));
+    turnActive = true;
   };
 
   if (req.prompt) open(req.prompt);
@@ -250,8 +270,10 @@ export function startLiveSession(
     get pid() { return child?.pid; },
     send: (text) => {
       if (exited || stopping) return true;
-      if (child) child.stdin?.write(userTurnLine(text));
-      else {
+      if (child) {
+        child.stdin?.write(userTurnLine(text));
+        turnActive = true;
+      } else {
         try {
           open(text);
         } catch (err) {
@@ -260,6 +282,15 @@ export function startLiveSession(
         }
       }
       resetIdle();
+      return true;
+    },
+    interrupt: () => {
+      if (exited || stopping || !child || !turnActive) return false;
+      // One control line per turn: a repeat press while claude winds down is a no-op.
+      if (!interruptSent) {
+        interruptSent = true;
+        child.stdin?.write(interruptLine());
+      }
       return true;
     },
     stop: beginStop,

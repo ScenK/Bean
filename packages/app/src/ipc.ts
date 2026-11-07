@@ -1138,7 +1138,7 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
     /** Stops every task one chat (mount) started — its release. */
     cancelMount: (mountId: string) => void;
   };
-  liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "resume" | "stopMount">;
+  liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "interrupt" | "resume" | "stopMount">;
   terminalTasks: Pick<TerminalTasks, "start" | "write" | "resize" | "ack" | "stop" | "stopMount" | "runningCommand">;
   /** Whether an IPC sender is the chat window — the only window that may drive an agent session. */
   isChatSender: (sender: WebContents) => boolean;
@@ -1293,6 +1293,10 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.on(IPC.liveStop, (e, sessionId: unknown, mountId: unknown) => {
     const o = liveOwner(e.sender, mountId);
     if (o) deps.liveTasks.stop(o, sessionId);
+  });
+  ipcMain.handle(IPC.liveInterrupt, (e, sessionId: unknown, mountId: unknown, turns: unknown) => {
+    const o = liveOwner(e.sender, mountId);
+    return o ? deps.liveTasks.interrupt(o, sessionId, turns) : false;
   });
   ipcMain.handle(IPC.liveResume, (e, sessionId: unknown, mountId: unknown) => {
     const o = liveOwner(e.sender, mountId);

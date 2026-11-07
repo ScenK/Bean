@@ -11,7 +11,7 @@ import { escalateKill } from "./kill-tree.js";
 import { spawnEnv } from "./spawn-env.js";
 import {
   LIVE_SESSION_IDLE_MS, RESUME_REJECTED, reportSessionId,
-  type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type LiveSessionSpawnFn,
+  type LiveSessionCallbacks, type LiveSessionHandle, type LiveSessionRequest, type LiveSessionSpawnFn, type TurnSummary,
 } from "./live-session.js";
 
 export const TURN_QUEUE_FULL = "That's more than I can queue for the next turn — wait for this turn to finish, then send it.";
@@ -75,6 +75,8 @@ export function startTurnLiveSession(
   let stopping = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let reported = false;
+  // The running turn's interrupt (set per runTurn, so its flag never leaks into the next turn).
+  let interruptTurn: (() => void) | undefined;
 
   const finish = (err?: Error): void => {
     if (exited) return;
@@ -114,6 +116,7 @@ export function startTurnLiveSession(
     let sawSession = false;
     let mismatch = false;
     let completed = false;
+    let interrupted = false;
     let failure: string | undefined;
     let result = "";
     let stdoutBuf = "";
@@ -121,6 +124,11 @@ export function startTurnLiveSession(
 
     const c = spawnFn(cli, adapter.args({ prompt, model: req.model, resume: sessionId }), req.projectPath);
     child = c;
+    interruptTurn = () => {
+      if (interrupted) return;
+      interrupted = true;
+      if (!stopping && !mismatch) interrupt(c);
+    };
     cbs.onTurnStart?.();
 
     const handleLine = (line: string): void => {
@@ -180,12 +188,17 @@ export function startTurnLiveSession(
       // Checked first: our own stop exits non-zero, and a stop reports no turn footer.
       if (stopping) { finish(); return; }
       if (mismatch) { finish(new Error(adapter.mismatch)); return; }
+      const durationMs = now() - startedAt;
+      // completed wins: the turn finished before the kill landed.
+      const cut = interrupted && !completed;
+      // A fresh session killed before it reported an id has nothing to resume: end it cleanly.
+      if (cut && !sessionId) { finish(); return; }
       const override = adapter.failureText?.(failure, stderrBuf);
       const failed = override ?? failure;
       // stderr stays in the host log: it carries paths and diagnostics, and chat is shared.
       const died = `${cli} exited with code ${code ?? "null"}`;
-      if (code !== 0 && stderrBuf.trim()) console.warn(`bean: ${cli} live turn failed: ${stderrBuf.trim().split("\n").slice(-5).join("\n")}`);
-      if (first && !sawSession) {
+      if (!cut && code !== 0 && stderrBuf.trim()) console.warn(`bean: ${cli} live turn failed: ${stderrBuf.trim().split("\n").slice(-5).join("\n")}`);
+      if (!cut && first && !sawSession) {
         // Nothing to keep: the resume was rejected, or a fresh session never started.
         finish(new Error(
           override
@@ -193,9 +206,8 @@ export function startTurnLiveSession(
         ));
         return;
       }
-      const durationMs = now() - startedAt;
       // completed wins over an earlier failure event (codex reports retried stream errors too).
-      const summary = completed ? { result, durationMs } : {
+      const summary: TurnSummary = completed ? { result, durationMs } : cut ? { result: "", durationMs, interrupted: true } : {
         result: "", durationMs,
         failed: failed ?? (code === 0 ? `${cli} exited without finishing the turn` : died),
       };
@@ -224,6 +236,11 @@ export function startTurnLiveSession(
       const merged = pending ? `${pending}\n\n${text}` : text;
       if (merged.length > TURN_QUEUE_LIMIT) return false;
       pending = merged;
+      return true;
+    },
+    interrupt: () => {
+      if (exited || stopping || !child || !interruptTurn) return false;
+      interruptTurn();
       return true;
     },
     stop: beginStop,

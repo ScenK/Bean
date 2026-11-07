@@ -59,6 +59,7 @@ export const IPC = {
   liveStart: "bean:live-start",
   liveSend: "bean:live-send",
   liveStop: "bean:live-stop",
+  liveInterrupt: "bean:live-interrupt",
   liveResume: "bean:live-resume",
   liveEvent: "bean:live-event",
   // chat window ⇄ main: the chat's own terminal (terminal-tasks.ts), mount-tagged both ways.

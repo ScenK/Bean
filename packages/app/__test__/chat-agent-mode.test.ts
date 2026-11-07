@@ -80,6 +80,19 @@ describe("agent-mode helpers", () => {
     expect(turnFooter({ failed: "boom" })).toBe("— turn failed: boom");
   });
 
+  it("an interrupted turn closes its bubble with the partial text kept; turn-start changes nothing", () => {
+    const ev = (e: Partial<LiveEvent> & { type: LiveEvent["type"] }): LiveEvent => ({ sessionId: "s1", agent: "claude", seq: 1, ...e } as LiveEvent);
+    let items = applyLiveEvent([], ev({ type: "started", projectPath: "/p", handedOver: 0 }), id);
+    items = applyLiveEvent(items, ev({ type: "turn-start" }), id);
+    items = applyLiveEvent(items, ev({ type: "text", text: "Half an ans" }), id);
+    items = applyLiveEvent(items, ev({ type: "output", line: "▸ Bash" }), id);
+    items = applyLiveEvent(items, ev({ type: "turn", result: "", durationMs: 900, interrupted: true }), id);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ display: "Half an ans", tail: ["▸ Bash"], streaming: false, footer: "— turn interrupted" });
+    // Interrupted wins over failed (a killed per-turn child can carry both shapes).
+    expect(turnFooter({ interrupted: true, failed: "codex exited with code 143" })).toBe("— turn interrupted");
+  });
+
   it("expands the handoff row to exactly the handed-over tail", () => {
     const history = [{ role: "user" as const, text: "a" }, { role: "reply" as const, text: " " }, { role: "reply" as const, text: "b", agent: "codex" as const }];
     expect(handoffLines(history, 1)).toEqual(["Codex: b"]);

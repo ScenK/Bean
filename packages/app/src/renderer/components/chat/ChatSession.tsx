@@ -42,10 +42,11 @@ export const THREAD_SAVE_MS = 1000;
  * resumed from a receipt (Continue live). `receipt` = the CLI's own session, from the `session` event.
  * `unopened` = texts sent to a continued session before its resume was accepted (it opens lazily, on
  * the first send) — handed back to the composer if the host rejects the id. `model` = the `--model` it
- * launched with (unset = the agent's default, or a resumed session). */
+ * launched with (unset = the agent's default, or a resumed session). `stopping` = a Stop is in flight,
+ * until the next `turn`/`ended` or main refuses it. */
 interface LiveState {
   key: string; agent: LiveCli; projectPath: string; model?: string; sessionId?: string; turns: number; busy: boolean; queued: string[];
-  continuing?: boolean; receipt?: LiveReceipt; unopened?: string[];
+  continuing?: boolean; receipt?: LiveReceipt; unopened?: string[]; stopping?: boolean;
 }
 
 type QueuedSend = { text: string; display?: string; source?: TurnSource };
@@ -785,6 +786,17 @@ export function ChatSession({
     for (const q of cur.queued) await deliver(res.sessionId, agent, q);
   };
 
+  // Stop / Esc Esc: end the running turn, keep the session. Main drops it if that turn already ended
+  // (our `turns` is behind), and a false answer clears Stopping at once.
+  const interruptTurn = async (): Promise<void> => {
+    const l = liveRef.current;
+    if (!l?.sessionId || !l.busy || l.stopping) return;
+    setLive({ ...l, stopping: true });
+    const ok = await window.bean.liveInterrupt(l.sessionId, mountId, l.turns).catch(() => false);
+    const cur = liveRef.current;
+    if (!ok && cur?.key === l.key && cur.stopping) setLive({ ...cur, stopping: false });
+  };
+
   const dismissOffer = (id: string): void => {
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "offer" && it.state === "pending" ? { ...it, state: "dismissed" as const } : it)));
   };
@@ -805,9 +817,9 @@ export function ChatSession({
     // closes its bubbles.
     const cur = liveRef.current;
     if (!cur || cur.sessionId !== e.sessionId) return;
-    if (e.type === "turn") setLive({ ...cur, turns: cur.turns + 1, busy: false });
-    // Output means a turn runs — a queued follow-up starts right after the last turn's end.
-    if ((e.type === "output" || e.type === "text") && !cur.busy) setLive({ ...cur, busy: true });
+    if (e.type === "turn") setLive({ ...cur, turns: cur.turns + 1, busy: false, stopping: false });
+    // A queued follow-up starts right after the last turn's end: turn-start (or its first output) says so.
+    if ((e.type === "turn-start" || e.type === "output" || e.type === "text") && !cur.busy) setLive({ ...cur, busy: true });
     if (e.type === "session") setLive({ ...cur, receipt: e.receipt });
     if (e.type !== "ended") return;
     setLive(undefined);
@@ -1350,7 +1362,7 @@ export function ChatSession({
         mode={mode}
         agentProject={agentProject}
         agentModel={isLiveAgent(mode) ? validModel(runModels, mode, agentModel) ?? "" : ""}
-        live={live ? { agent: live.agent, projectPath: live.projectPath, model: live.model, busy: live.busy, continuing: live.continuing } : undefined}
+        live={live ? { agent: live.agent, projectPath: live.projectPath, model: live.model, busy: live.busy, continuing: live.continuing, stopping: live.stopping } : undefined}
         offerLaunch={(offerPath) => {
           const agent = offerAgent(clis);
           return agent ? offerLaunch(offerPath, agent, picks, projects, runModels) : { projectPath: offerPath };
@@ -1359,6 +1371,7 @@ export function ChatSession({
         onPickProject={pickProject}
         onPickModel={pickModel}
         onEndAgent={() => { endSession("Bean"); setMode("bean"); }}
+        onStopTurn={() => void interruptTurn()}
         onConfirm={confirmProposal}
         onCancel={cancelProposal}
         onNoteSave={(id, edited, asNew, images) => void saveNote(id, edited, asNew, images)}

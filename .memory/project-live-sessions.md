@@ -59,6 +59,12 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   Same rule for the desktop's `busy` (`live-tasks.ts`, gates Continue in Discord, #725): claude's
   busy follows the stream (idle at `result`, relit by onTurnStart); only per-turn CLIs keep a
   `queued` flag for a mid-turn send. A send counter stuck `busy` forever once claude merged sends.
+- **Turn interrupt (#723)**: `handle.interrupt()` ends the running turn and keeps the session
+  (false = no turn running). Claude: one stream-json `control_request` `{subtype:"interrupt"}` per
+  turn; the closing `result` of subtype `error_during_execution` → `TurnSummary.interrupted`. Per-turn
+  CLIs: kill the turn's child (adapter stop + `escalateKill`); `completed` wins, else an
+  `interrupted` summary and the queue drains; a fresh session with no id yet ends clean. The flag
+  is local to `runTurn`, so it never leaks into the next turn. Chatops doesn't call it.
 - The stream sink rides `BotEffects`, preferring the optional **`postStream(text)→id` /
   `editStream(id,text)`** text effects, falling back to `postCard({content})` /
   `updateCard(id,{content})` when a surface omits them. Discord omits them — its `postCard`
@@ -244,6 +250,14 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   offer. Events carry `mountId` so a hidden chat still gets them; release `stopMount`s, window
   `closed` `stopOwner`s (by sender). The pending entry is registered **before** awaiting the project
   check, so a window close mid-startup (`stopOwner`) means the child is never spawned.
+- **Stop / Esc Esc (#724)**: banner Stop (shown while the renderer's `live.busy`) and composer Esc
+  Esc (800 ms; the first press isn't `preventDefault`ed, so an overlay's Escape still closes it) call
+  `liveInterrupt(sessionId, mountId, turns)` → `live-tasks.interrupt`, which drops the press when
+  main has emitted more `turn`s than the renderer's `turns` (that turn already ended — don't cut the
+  queued one). Main forwards `onTurnStart` as a `turn-start` event so the renderer's busy (and Stop)
+  returns for a queued turn before its first output; main's own `busy` never drives the button
+  (it can stick for claude, #725). An interrupted `turn` footers "— turn interrupted"; the bubble
+  keeps its streamed `display`.
 - Two spawns (`liveSpawnFn`): claude stdin `pipe` (stream-json turns), codex/opencode stdin
   `ignore`; both get the login-shell PATH, `PWD=cwd`, `spawnEnv`. Don't reuse delegate-tasks'
   `resolvedPathSpawnFn` for claude — its stdin is `ignore`.

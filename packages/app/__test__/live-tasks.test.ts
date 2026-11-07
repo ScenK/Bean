@@ -28,6 +28,8 @@ function harness(opts: {
   modelOffered?: (cli: string, model: string) => boolean;
   /** The child's pid once the first send spawns it (a lazy resume). */
   sendPid?: number;
+  /** What the engine's interrupt() answers (false = no turn running). */
+  interruptOk?: boolean;
 } = {}) {
   const dir = tmp();
   const events: Array<{ owner: number; e: LiveEvent }> = [];
@@ -35,6 +37,7 @@ function harness(opts: {
   const cbs: LiveSessionCallbacks[] = [];
   const sent: string[] = [];
   let stops = 0;
+  let interrupts = 0;
   let n = 0;
   const live = createLiveTasks({
     dir,
@@ -57,11 +60,12 @@ function harness(opts: {
       return {
         get pid() { return pid; },
         send: (t) => { sent.push(t); pid ??= opts.sendPid; return opts.sendOk ?? true; },
+        interrupt: () => { interrupts++; return opts.interruptOk ?? true; },
         stop: () => { stops++; },
       };
     },
   });
-  return { live, dir, events, reqs, cbs, sent, stops: () => stops, types: () => events.map(({ e }) => e.type) };
+  return { live, dir, events, reqs, cbs, sent, stops: () => stops, interrupts: () => interrupts, types: () => events.map(({ e }) => e.type) };
 }
 
 describe("createLiveTasks", () => {
@@ -337,6 +341,58 @@ describe("createLiveTasks CLI session ids", () => {
     expect(h.live.resume(B, "sess-a")).toEqual({ error: "That session is already live." });
     h.cbs[0]!.onExit();
     expect(h.live.resume(B, "sess-a")).toMatchObject({ sessionId: "s2" });
+  });
+});
+
+describe("createLiveTasks interrupt (Stop / Esc Esc)", () => {
+  it("interrupts only the owner's running turn; foreign chats, bad payloads and ended sessions are refused", async () => {
+    const h = harness();
+    await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "go" });
+    expect(h.live.interrupt(B, "s1", 0)).toBe(false);
+    expect(h.live.interrupt({ senderId: 1, mountId: "other" }, "s1", 0)).toBe(false);
+    expect(h.live.interrupt({ senderId: 2, mountId: "m1" }, "s1", 0)).toBe(false);
+    for (const turns of ["0", undefined, 0.5, Number.NaN]) expect(h.live.interrupt(A, "s1", turns)).toBe(false);
+    expect(h.live.interrupt(A, "nope", 0)).toBe(false);
+    expect(h.interrupts()).toBe(0);
+    expect(h.live.interrupt(A, "s1", 0)).toBe(true);
+    expect(h.interrupts()).toBe(1);
+    h.live.stop(A, "s1");
+    expect(h.live.interrupt(A, "s1", 0)).toBe(false);
+    expect(h.interrupts()).toBe(1);
+  });
+
+  it("drops a press aimed at a turn that already ended (stale turns), not the queued one now running", async () => {
+    const h = harness();
+    await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "go" });
+    h.live.send(A, "s1", "then this");
+    h.cbs[0]!.onTurnComplete({ result: "first" });
+    h.cbs[0]!.onTurnStart!();
+    expect(h.live.interrupt(A, "s1", 0)).toBe(false); // the renderer hadn't seen turn 1 end
+    expect(h.interrupts()).toBe(0);
+    expect(h.live.interrupt(A, "s1", 1)).toBe(true);
+    expect(h.interrupts()).toBe(1);
+  });
+
+  it("passes the engine's false through (no turn running)", async () => {
+    const h = harness({ interruptOk: false });
+    await h.live.start(A, { agent: "codex", projectPath: "/proj", ask: "go" });
+    expect(h.live.interrupt(A, "s1", 0)).toBe(false);
+    expect(h.interrupts()).toBe(1);
+  });
+
+  it("emits turn-start for every turn the engine starts (queued ones too), and marks an interrupted turn", async () => {
+    const h = harness();
+    await h.live.start(A, { agent: "codex", projectPath: "/proj", ask: "go" });
+    h.cbs[0]!.onTurnStart!();
+    h.cbs[0]!.onTurnComplete({ result: "", durationMs: 5, interrupted: true });
+    h.cbs[0]!.onTurnStart!(); // the queued, merged turn
+    h.cbs[0]!.onTurnComplete({ result: "ok" });
+    expect(h.types()).toEqual(["started", "turn-start", "turn", "turn-start", "turn"]);
+    expect(h.events[2]!.e).toEqual(expect.objectContaining({ type: "turn", interrupted: true }));
+    expect(h.events[4]!.e).not.toHaveProperty("interrupted");
+    h.live.stop(A, "s1");
+    h.cbs[0]!.onTurnStart!(); // nothing while stopping
+    expect(h.types().at(-1)).toBe("turn");
   });
 });
 

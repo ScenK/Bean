@@ -72,6 +72,7 @@ function fakeLiveStartFn(): { startFn: (req: LiveSessionRequest, cbs: LiveSessio
   const startFn = (_req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => ({
     pid: 1,
     send: (t: string) => { sent.push(t); },
+    interrupt: () => false,
     stop: () => cbs.onExit(undefined),
   });
   return { startFn, sent };
@@ -1346,7 +1347,7 @@ test("start-live composes the picked skill's body into the opening prompt", asyn
   const prompts: string[] = [];
   const startFn = (req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => {
     prompts.push(req.prompt);
-    return { pid: 1, send: () => {}, stop: () => cbs.onExit(undefined) };
+    return { pid: 1, send: () => {}, interrupt: () => false, stop: () => cbs.onExit(undefined) };
   };
   const { deps } = makeDeps({
     liveSessionsEnabled: () => true,
@@ -1368,7 +1369,7 @@ test("start-live applies on-card selections carried in the submit value (Teams p
   const reqs: LiveSessionRequest[] = [];
   const startFn = (req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => {
     reqs.push(req);
-    return { pid: 1, send: () => {}, stop: () => cbs.onExit(undefined) };
+    return { pid: 1, send: () => {}, interrupt: () => false, stop: () => cbs.onExit(undefined) };
   };
   const { deps } = makeDeps({
     liveSessionsEnabled: () => true,
@@ -1393,7 +1394,7 @@ test("a browser skill on opencode is refused without consuming the card; switchi
   const reqs: LiveSessionRequest[] = [];
   const startFn = (req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => {
     reqs.push(req);
-    return { pid: 1, send: () => true, stop: () => cbs.onExit(undefined) };
+    return { pid: 1, send: () => true, interrupt: () => false, stop: () => cbs.onExit(undefined) };
   };
   const { deps } = makeDeps({
     liveSessionsEnabled: () => true,
@@ -1421,7 +1422,7 @@ test("a picked skill that's gone at Start refuses instead of starting with the b
   const reqs: LiveSessionRequest[] = [];
   const startFn = (req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => {
     reqs.push(req);
-    return { pid: 1, send: () => true, stop: () => cbs.onExit(undefined) };
+    return { pid: 1, send: () => true, interrupt: () => false, stop: () => cbs.onExit(undefined) };
   };
   const { deps } = makeDeps({
     liveSessionsEnabled: () => true,
@@ -1534,7 +1535,7 @@ test("capturing a live-session message advances the ambient cutoff, so it isn't 
 // #629: a steer's images are staged for the agent by path; history never sees a path.
 function makeBotWithImageSession(steering: "open" | "restricted") {
   const sent: string[] = [];
-  const startFn = (): LiveSessionHandle => ({ pid: 1, send: (t: string) => { sent.push(t); return true; }, stop: () => {} });
+  const startFn = (): LiveSessionHandle => ({ pid: 1, send: (t: string) => { sent.push(t); return true; }, interrupt: () => false, stop: () => {} });
   const imagesDir = mkdtempSync(join(tmpdir(), "bean-live-img-"));
   const { deps } = makeDeps({
     liveSessionsEnabled: () => true,
@@ -1721,7 +1722,7 @@ function resumeDeps(found: (id: string) => ResumableRun = (id) => (id === "sess-
   const startFn = (req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => {
     reqs.push(req);
     exits.push(cbs.onExit);
-    return { pid: process.pid, send: () => {}, stop: () => cbs.onExit(undefined) };
+    return { pid: process.pid, send: () => {}, interrupt: () => false, stop: () => cbs.onExit(undefined) };
   };
   const made = makeDeps({
     liveSessionsEnabled: () => true,
@@ -1967,7 +1968,7 @@ test("live Start re-checks the registry at launch: a project removed after the p
 
 test("a refused send (codex queue full) replies and stays out of history", async () => {
   const startFn = (_req: LiveSessionRequest, cbs: LiveSessionCallbacks): LiveSessionHandle => ({
-    pid: process.pid, send: (t) => t.length < 10, stop: () => cbs.onExit(undefined),
+    pid: process.pid, send: (t) => t.length < 10, interrupt: () => false, stop: () => cbs.onExit(undefined),
   });
   const { deps } = makeDeps({
     liveSessionsEnabled: () => true,
@@ -3198,7 +3199,7 @@ describe("conversation catalog (#527)", () => {
     let cbs: LiveSessionCallbacks | undefined;
     const startFn = (_req: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
       cbs = c;
-      return { pid: 1, send: () => true, stop: () => c.onExit(undefined) };
+      return { pid: 1, send: () => true, interrupt: () => false, stop: () => c.onExit(undefined) };
     };
     const { deps } = makeDeps({
       conversations: new ConversationStore(file),
@@ -3278,7 +3279,7 @@ describe("desk turns (#528)", () => {
     const reqs: LiveSessionRequest[] = [];
     const startFn = (req: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
       reqs.push(req);
-      return { pid: 1, send: (t: string) => { sent.push(t); return opts.liveAccepts ?? true; }, stop: () => c.onExit(undefined) };
+      return { pid: 1, send: (t: string) => { sent.push(t); return opts.liveAccepts ?? true; }, interrupt: () => false, stop: () => c.onExit(undefined) };
     };
     const liveSessions = new LiveSessionRegistry(startFn as never, { dir, surface: "discord" });
     const subjects: (string | string[] | null | undefined)[] = [];
@@ -3593,7 +3594,7 @@ describe("desk continue, agent mode (#696)", () => {
     const startFn = (req: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
       reqs.push(req);
       cbs.push(c);
-      return { pid: 1, send: () => true, stop: () => c.onExit(undefined) };
+      return { pid: 1, send: () => true, interrupt: () => false, stop: () => c.onExit(undefined) };
     };
     const liveSessions = new LiveSessionRegistry(startFn as never, { dir, surface: "discord" });
     const lookup = (id: string, surface?: "desktop") => findDelegateRun(file, id, () => true, surface);
