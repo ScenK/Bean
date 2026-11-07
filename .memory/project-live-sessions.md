@@ -56,6 +56,9 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   both), so there's no turn boundary to signal. Don't add a pending-send counter or grace timer:
   injection/merging makes them show false typing. Discord's `effectsFor` supplies `sendTyping`
   (`.catch`ed), so its live-session typing lasts the whole turn, not just the ~10s ingress ping.
+  Same rule for the desktop's `busy` (`live-tasks.ts`, gates Continue in Discord, #725): claude's
+  busy follows the stream (idle at `result`, relit by onTurnStart); only per-turn CLIs keep a
+  `queued` flag for a mid-turn send. A send counter stuck `busy` forever once claude merged sends.
 - The stream sink rides `BotEffects`, preferring the optional **`postStream(text)→id` /
   `editStream(id,text)`** text effects, falling back to `postCard({content})` /
   `updateCard(id,{content})` when a surface omits them. Discord omits them — its `postCard`
