@@ -144,7 +144,9 @@ export function handoffLines(history: HandoffItem[], count: number): string[] {
     `${h.role === "user" ? "You" : AGENT_NAMES[h.agent ?? "bean"]}: ${h.text.trim()}`);
 }
 
-export function turnFooter(t: { durationMs?: number; costUsd?: number; failed?: string }): string {
+export function turnFooter(t: { durationMs?: number; costUsd?: number; failed?: string; interrupted?: true }): string {
+  // Ahead of failed: a stopped turn is the user's doing, not a failure.
+  if (t.interrupted) return "— turn interrupted";
   if (t.failed) return `— turn failed: ${t.failed}`;
   const parts = [
     ...(t.durationMs !== undefined ? [`${(t.durationMs / 1000).toFixed(1)}s`] : []),
@@ -167,7 +169,7 @@ export function applyLiveEvent(items: ChatItem[], e: LiveEvent, newId: () => str
   const patch = (fn: (it: Extract<ChatItem, { kind: "reply" }>) => ChatItem): ChatItem[] =>
     items.map((it, i) => (i === open && it.kind === "reply" ? fn(it) : it));
   if (e.type === "started") return ensureStreaming(items, e.sessionId, e.agent, newId());
-  if (e.type === "session") return items;
+  if (e.type === "session" || e.type === "turn-start") return items;
   // The agent's messages show as `display`; `text` stays the turn's final result, so history
   // (chatTurns) and saved chats never lose the answer behind long progress prose.
   if (e.type === "text") {

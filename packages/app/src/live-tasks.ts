@@ -20,7 +20,9 @@ export type LiveEvent = { sessionId: string; agent: LiveCli; mountId: string; se
   | { type: "output"; line: string }
   // One completed agent message's prose — shown in the bubble; `output` is only its tool steps.
   | { type: "text"; text: string }
-  | { type: "turn"; result: string; durationMs?: number; costUsd?: number; failed?: string }
+  // A turn began — also a queued one, right after the last `turn` (the renderer's Stop shows from here).
+  | { type: "turn-start" }
+  | { type: "turn"; result: string; durationMs?: number; costUsd?: number; failed?: string; interrupted?: true }
   | { type: "session"; receipt: LiveReceipt }
   // stopped = End / window close; ended = idle timeout or a clean exit on its own; failed = crash.
   | { type: "ended"; reason: "stopped" | "ended" | "failed"; error?: string }
@@ -187,6 +189,8 @@ interface Session {
    * ponytail: that result→init gap reads idle with a reply still to come; a handover in it drops
    * the queued message. Track claude's stdin replay if that ever bites. */
   queued: boolean;
+  /** `turn` events emitted — an interrupt aimed at an earlier turn (the renderer's count) is stale. */
+  turns: number;
   /** Settles the hand-over waiting on this session's exit (Continue in Discord). */
   onEnded?: () => void;
 }
@@ -262,16 +266,19 @@ export function createLiveTasks(deps: LiveTasksDeps) {
             if (sessions.get(sessionId) !== s) return;
             s.busy = true;
             s.queued = false; // the queue is this turn
+            if (!s.stopping) emit(sessionId, s, { type: "turn-start" });
           },
           onTurnComplete: (t) => {
             if (sessions.get(sessionId) !== s) return;
             s.busy = s.queued;
             s.queued = false;
+            s.turns++;
             emit(sessionId, s, {
               type: "turn", result: t.result,
               ...(t.durationMs !== undefined ? { durationMs: t.durationMs } : {}),
               ...(t.costUsd !== undefined ? { costUsd: t.costUsd } : {}),
               ...(t.failed !== undefined ? { failed: t.failed } : {}),
+              ...(t.interrupted ? { interrupted: true as const } : {}),
             });
           },
           onSessionId: (id) => {
@@ -324,7 +331,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (refused) return { error: refused };
       // Registered before any await, so a window close during startup finds it and cancels the spawn.
       const sessionId = deps.newId();
-      const s: Session = { ...owner, agent, seq: 0, stopping: false, queued: false, ask: label || req.ask.trim(), ...(model ? { model } : {}) };
+      const s: Session = { ...owner, agent, seq: 0, stopping: false, queued: false, turns: 0, ask: label || req.ask.trim(), ...(model ? { model } : {}) };
       sessions.set(sessionId, s);
       const projectPath = req.projectPath || deps.scratchPath || "";
       let allowed = false;
@@ -368,7 +375,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (refused) return { error: refused };
       const sessionId = deps.newId();
       const s: Session = {
-        ...owner, agent: cli, seq: 0, stopping: false, queued: false, resumeId: id,
+        ...owner, agent: cli, seq: 0, stopping: false, queued: false, turns: 0, resumeId: id,
         ...(model && deps.modelOffered?.(cli, model) ? { model } : {}),
       };
       sessions.set(sessionId, s);
@@ -403,6 +410,16 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       handingOver.add(cliId);
       await new Promise<void>((resolve) => { s.onEnded = resolve; stopSession(s); });
       return { cliId, agent: s.agent, release: () => { handingOver.delete(cliId); } };
+    },
+
+    /** Stop / Esc Esc: ends the running turn, the session stays. `turns` = the `turn` events the
+     * renderer had seen — main having emitted more means the turn it meant already ended, so the
+     * press is dropped rather than cutting a queued turn short. False = nothing was interrupted. */
+    interrupt(owner: LiveOwner, sessionId: unknown, turns: unknown): boolean {
+      const s = typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
+      if (!s || !owns(s, owner) || !s.handle || s.stopping) return false;
+      if (typeof turns !== "number" || !Number.isInteger(turns) || s.turns > turns) return false;
+      return s.handle.interrupt();
     },
 
     stop(owner: LiveOwner, sessionId: unknown): void {
