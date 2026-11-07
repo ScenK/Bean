@@ -179,11 +179,14 @@ interface Session {
   pid?: number;
   /** A turn is running (the opening one, or a send) — Continue in Discord waits for idle. */
   busy?: boolean;
-  /** Turns still to come after the running one, from sends accepted mid-turn — the current turn's
-   * end doesn't make the session idle while any remain. claude answers each queued message as its
-   * own turn (live-session.ts), so each send counts; per-turn CLIs merge every queued send into one
-   * next turn, so theirs is at most 1 and their onTurnStart clears it. */
-  outstanding: number;
+  /** Per-turn CLIs only: a send was accepted mid-turn, so the running turn's end isn't idle — their
+   * next turn (spawned right after) takes the whole queue, merged, and its onTurnStart clears this.
+   * claude isn't counted: it may inject a mid-turn send into the running turn, merge several into
+   * one next turn, or answer each as its own turn, so its busy follows the stream instead —
+   * idle at a `result`, relit by the next turn's `init` (engine onTurnStart, ~0.2s later).
+   * ponytail: that result→init gap reads idle with a reply still to come; a handover in it drops
+   * the queued message. Track claude's stdin replay if that ever bites. */
+  queued: boolean;
   /** Settles the hand-over waiting on this session's exit (Continue in Discord). */
   onEnded?: () => void;
 }
@@ -258,12 +261,12 @@ export function createLiveTasks(deps: LiveTasksDeps) {
           onTurnStart: () => {
             if (sessions.get(sessionId) !== s) return;
             s.busy = true;
-            if (agent !== "claude") s.outstanding = 0; // the merged queue is this turn
+            s.queued = false; // the queue is this turn
           },
           onTurnComplete: (t) => {
             if (sessions.get(sessionId) !== s) return;
-            s.busy = s.outstanding > 0;
-            if (s.outstanding > 0) s.outstanding--;
+            s.busy = s.queued;
+            s.queued = false;
             emit(sessionId, s, {
               type: "turn", result: t.result,
               ...(t.durationMs !== undefined ? { durationMs: t.durationMs } : {}),
@@ -321,7 +324,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (refused) return { error: refused };
       // Registered before any await, so a window close during startup finds it and cancels the spawn.
       const sessionId = deps.newId();
-      const s: Session = { ...owner, agent, seq: 0, stopping: false, outstanding: 0, ask: label || req.ask.trim(), ...(model ? { model } : {}) };
+      const s: Session = { ...owner, agent, seq: 0, stopping: false, queued: false, ask: label || req.ask.trim(), ...(model ? { model } : {}) };
       sessions.set(sessionId, s);
       const projectPath = req.projectPath || deps.scratchPath || "";
       let allowed = false;
@@ -365,7 +368,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (refused) return { error: refused };
       const sessionId = deps.newId();
       const s: Session = {
-        ...owner, agent: cli, seq: 0, stopping: false, outstanding: 0, resumeId: id,
+        ...owner, agent: cli, seq: 0, stopping: false, queued: false, resumeId: id,
         ...(model && deps.modelOffered?.(cli, model) ? { model } : {}),
       };
       sessions.set(sessionId, s);
@@ -382,7 +385,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       // Read first: a per-turn CLI with no turn running starts this one inside send() (onTurnStart).
       const wasBusy = s.busy === true;
       if (!s.handle.send(text)) return TURN_QUEUE_FULL;
-      if (wasBusy) s.outstanding = s.agent === "claude" ? s.outstanding + 1 : 1;
+      if (wasBusy && s.agent !== "claude") s.queued = true;
       s.busy = true;
       trackPid(sessionId as string, s);
       return undefined;

@@ -458,32 +458,39 @@ describe("handover (Continue in Discord)", () => {
     expect(h.live.resume(B, id)).toMatchObject({ agent: "claude" });
   });
 
-  it("a send accepted mid-turn keeps the session busy past that turn's end until its follow-up ends", async () => {
+  it("claude: a send injected into the running turn leaves it idle at that turn's result (#725)", async () => {
     const h = await started();
-    expect(h.live.send(A, "s1", "and then this")).toBeUndefined(); // queued behind the opening turn
-    h.cbs[0]!.onTurnComplete({ result: "first" });
-    expect(await h.live.handover(A, "s1")).toEqual({ error: "Wait for Claude Code to finish its turn first." });
-    h.cbs[0]!.onTurnStart!(); // the follow-up starts (before any output)
-    expect(await h.live.handover(A, "s1")).toEqual({ error: "Wait for Claude Code to finish its turn first." });
-    h.cbs[0]!.onTurnComplete({ result: "second" });
+    expect(h.live.send(A, "s1", "and then this")).toBeUndefined(); // written during a tool run
+    h.cbs[0]!.onTurnComplete({ result: "both answered" });
     const held = h.live.handover(A, "s1");
     h.cbs[0]!.onExit();
     expect(await held).toMatchObject({ agent: "claude" });
   });
 
-  it("claude: two sends queued mid-turn keep it busy until both follow-up turns end", async () => {
+  it("claude: two sends merged into one following turn leave it idle after that turn (#725)", async () => {
     const h = await started();
     h.live.send(A, "s1", "one");
     h.live.send(A, "s1", "two");
-    const turn = (result: string): void => { h.cbs[0]!.onTurnComplete({ result }); };
+    h.cbs[0]!.onTurnComplete({ result: "opening" });
+    h.cbs[0]!.onTurnStart!(); // claude answers "one\ntwo" as one turn
+    expect(await h.live.handover(A, "s1")).toEqual({ error: "Wait for Claude Code to finish its turn first." });
+    h.cbs[0]!.onTurnComplete({ result: "one. two." });
+    const held = h.live.handover(A, "s1");
+    h.cbs[0]!.onExit();
+    expect(await held).toMatchObject({ agent: "claude" });
+  });
+
+  it("claude: queued sends answered one turn each relight busy when the next turn starts", async () => {
+    const h = await started();
+    h.live.send(A, "s1", "one");
+    h.live.send(A, "s1", "two");
     const refused = { error: "Wait for Claude Code to finish its turn first." };
-    turn("opening");
+    h.cbs[0]!.onTurnComplete({ result: "opening" });
+    h.cbs[0]!.onTurnStart!();
+    h.cbs[0]!.onTurnComplete({ result: "one" });
+    h.cbs[0]!.onTurnStart!(); // "two" as its own turn
     expect(await h.live.handover(A, "s1")).toEqual(refused);
-    h.cbs[0]!.onTurnStart!();
-    turn("one");
-    expect(await h.live.handover(A, "s1")).toEqual(refused); // "two" is still to come
-    h.cbs[0]!.onTurnStart!();
-    turn("two");
+    h.cbs[0]!.onTurnComplete({ result: "two" });
     const held = h.live.handover(A, "s1");
     h.cbs[0]!.onExit();
     expect(await held).toMatchObject({ agent: "claude" });
