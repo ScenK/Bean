@@ -21,6 +21,9 @@ import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 import type { ChatDrop, DroppedImage } from "../../../channels.js";
 
+/** Esc Esc: the window for the second press. */
+const ESC_STOP_MS = 800;
+
 /** An image to attach, wherever it came from; `path` = its file on disk, "" when it has none. */
 interface ImageSource { type: string; size: number; path: string; read: () => Promise<{ attachment: ImageAttachment; dataUrl: string }> }
 
@@ -127,6 +130,7 @@ export function ChatPanel({
   onPickProject,
   onPickModel,
   onEndAgent,
+  onStopTurn,
 }: {
   /** A chat kept mounted in the background while another one is shown. */
   hidden?: boolean;
@@ -212,13 +216,15 @@ export function ChatPanel({
   /** The model the next fresh start uses ("" = the agent's default) — already checked against clis.json. */
   agentModel: string;
   /** `model` = what the running session launched with (unset = the agent's default). */
-  live?: { agent: LiveCli; projectPath: string; model?: string; busy: boolean; continuing?: boolean };
+  live?: { agent: LiveCli; projectPath: string; model?: string; busy: boolean; continuing?: boolean; stopping?: boolean };
   /** What a hand-off offer's Start launches (the same function startOffer uses). */
   offerLaunch: (offerPath: string) => { projectPath: string; model?: string };
   onPickAgent: (agent: AgentId) => void;
   onPickProject: (path: string) => void;
   onPickModel: (model: string) => void;
   onEndAgent: () => void;
+  /** Stop the running turn; the session stays (banner Stop, composer Esc Esc). */
+  onStopTurn: () => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -252,6 +258,14 @@ export function ChatPanel({
     : undefined;
   const pickable = menu ?? [];
   const activeEntry = pickable.length ? pickable[((slashIndex % pickable.length) + pickable.length) % pickable.length] : undefined;
+  // Esc Esc stops the running turn: the first press arms (and still reaches an overlay's Escape),
+  // a second within ESC_STOP_MS stops. Anything else in between disarms.
+  const [escArmed, setEscArmed] = useState(false);
+  const escTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const disarmEsc = (): void => { clearTimeout(escTimer.current); setEscArmed(false); };
+  const canStop = live?.busy === true && !live.stopping;
+  useEffect(() => { if (!canStop) disarmEsc(); }, [canStop]);
+  useEffect(() => () => clearTimeout(escTimer.current), []);
   const onComposerInput = (value: string): void => {
     const next = /^\/\S*$/.test(value) ? value : "";
     if (next && !slashText) onSlashOpen();
@@ -772,6 +786,16 @@ export function ChatPanel({
             {live.continuing ? <span>Continuing</span> : null}
             <AgentAvatar agent={live.agent} size={16} />
             <span>{AGENT_NAMES[live.agent]} · {projectName(live.projectPath)}{live.model ? ` · ${modelName(live.model)}` : ""}</span>
+            {escArmed ? <span class="bean-agent-banner-hint">Esc again to stop</span> : null}
+            {live.busy ? (
+              <button
+                type="button"
+                class="bean-status-action"
+                title="Stop this turn — session stays open (Esc Esc)"
+                disabled={live.stopping}
+                onClick={onStopTurn}
+              >{live.stopping ? "Stopping…" : "Stop"}</button>
+            ) : null}
             <button type="button" class="bean-status-action" onClick={onEndAgent}>End</button>
           </div>
         ) : null}
@@ -828,6 +852,7 @@ export function ChatPanel({
             onPaste={pasteImages}
             onDragOver={(e) => { if (droppedPath(e)) e.preventDefault(); }}
             onDrop={dropPathIntoComposer}
+            onBlur={disarmEsc}
             onKeyDown={(e) => {
               // IME-safe: Enter/arrows while composing belong to the input method.
               if (e.isComposing || e.keyCode === 229) return;
@@ -838,6 +863,15 @@ export function ChatPanel({
                 return;
               }
               if (menu && e.key === "Escape") { e.preventDefault(); setSlashText(""); return; }
+              if (e.key === "Escape" && canStop) {
+                if (e.repeat) return;
+                if (escArmed) { e.preventDefault(); disarmEsc(); onStopTurn(); return; }
+                setEscArmed(true);
+                clearTimeout(escTimer.current);
+                escTimer.current = setTimeout(() => setEscArmed(false), ESC_STOP_MS);
+                return;
+              }
+              if (escArmed) disarmEsc();
               if (activeEntry && e.key === "Tab") {
                 e.preventDefault();
                 const el = e.currentTarget;

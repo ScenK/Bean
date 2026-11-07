@@ -29,6 +29,9 @@ declare global {
       /** Undefined = sent; otherwise why it wasn't (e.g. the next-turn queue is full). */
       liveSend(sessionId: string, text: string, mountId: string): Promise<string | undefined>;
       liveStop(sessionId: string, mountId: string): void;
+      /** Stop the running turn, keep the session. `turns` = the `turn` events this chat has seen, so a
+       * press that lands after that turn already ended is dropped. False = nothing was stopped. */
+      liveInterrupt(sessionId: string, mountId: string, turns: number): Promise<boolean>;
       /** Continue live from a finished delegate card: only the receipt's session id goes over. */
       liveResume(sessionId: string, mountId: string): Promise<LiveResumeResult>;
       onLiveEvent(cb: (e: LiveEvent) => void): void;

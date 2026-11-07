@@ -250,6 +250,14 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   offer. Events carry `mountId` so a hidden chat still gets them; release `stopMount`s, window
   `closed` `stopOwner`s (by sender). The pending entry is registered **before** awaiting the project
   check, so a window close mid-startup (`stopOwner`) means the child is never spawned.
+- **Stop / Esc Esc (#724)**: banner Stop (shown while the renderer's `live.busy`) and composer Esc
+  Esc (800 ms; the first press isn't `preventDefault`ed, so an overlay's Escape still closes it) call
+  `liveInterrupt(sessionId, mountId, turns)` → `live-tasks.interrupt`, which drops the press when
+  main has emitted more `turn`s than the renderer's `turns` (that turn already ended — don't cut the
+  queued one). Main forwards `onTurnStart` as a `turn-start` event so the renderer's busy (and Stop)
+  returns for a queued turn before its first output; main's own `busy` never drives the button
+  (it can stick for claude, #725). An interrupted `turn` footers "— turn interrupted"; the bubble
+  keeps its streamed `display`.
 - Two spawns (`liveSpawnFn`): claude stdin `pipe` (stream-json turns), codex/opencode stdin
   `ignore`; both get the login-shell PATH, `PWD=cwd`, `spawnEnv`. Don't reuse delegate-tasks'
   `resolvedPathSpawnFn` for claude — its stdin is `ignore`.

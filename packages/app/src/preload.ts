@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld("bean", {
   liveStart: (req: LiveStartRequest, mountId: string): Promise<LiveStartResult> => ipcRenderer.invoke(IPC.liveStart, req, mountId),
   liveSend: (sessionId: string, text: string, mountId: string): Promise<string | undefined> => ipcRenderer.invoke(IPC.liveSend, sessionId, text, mountId),
   liveStop: (sessionId: string, mountId: string): void => ipcRenderer.send(IPC.liveStop, sessionId, mountId),
+  liveInterrupt: (sessionId: string, mountId: string, turns: number): Promise<boolean> => ipcRenderer.invoke(IPC.liveInterrupt, sessionId, mountId, turns),
   liveResume: (sessionId: string, mountId: string): Promise<LiveResumeResult> => ipcRenderer.invoke(IPC.liveResume, sessionId, mountId),
   onLiveEvent: (cb: (e: LiveEvent) => void) =>
     ipcRenderer.on(IPC.liveEvent, (_e, ev: LiveEvent) => cb(ev)),

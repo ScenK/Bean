@@ -127,7 +127,7 @@ function ipcHarness(given: Partial<RegisterDeps> = {}) {
   const { handlers, row } = setup();
   const chat = { id: 1, isDestroyed: () => false, send: vi.fn() }, other = { id: 2, isDestroyed: () => false, send: vi.fn() };
   const delegateTasks = { start: vi.fn(async () => "t1"), cancel: vi.fn(), cancelMount: vi.fn() };
-  const liveTasks = { start: vi.fn(async () => ({ sessionId: "s1", handedOver: 0 })), send: vi.fn(), stop: vi.fn(), resume: vi.fn(), stopMount: vi.fn() };
+  const liveTasks = { start: vi.fn(async () => ({ sessionId: "s1", handedOver: 0 })), send: vi.fn(), stop: vi.fn(), interrupt: vi.fn(() => true), resume: vi.fn(), stopMount: vi.fn() };
   const terminalTasks = { start: vi.fn(async () => ({ cwd: "/scratch" })), write: vi.fn(), resize: vi.fn(), ack: vi.fn(), stop: vi.fn(async () => {}), stopMount: vi.fn(async () => {}), runningCommand: vi.fn(async () => ["pnpm"]) };
   const all: Partial<RegisterDeps> = { isChatSender: (s) => s === (chat as never), chatThreadHandlers: handlers, delegateTasks, liveTasks, terminalTasks, ...given };
   // Every other dep is a no-op: registration only stores handlers.
@@ -234,6 +234,11 @@ describe("chat thread IPC", () => {
     emit(IPC.liveStop, chat, "s1", B);
     expect(liveTasks.start.mock.calls).toEqual([[{ senderId: chat.id, mountId: B }, { agent: "claude" }]]);
     expect(liveTasks.stop.mock.calls).toEqual([[{ senderId: chat.id, mountId: B }, "s1"]]);
+    // Stop / Esc Esc: same ownership gate; refused senders and mounts never reach live-tasks.
+    expect(invoke(IPC.liveInterrupt, other, "s1", B, 0)).toBe(false);
+    expect(invoke(IPC.liveInterrupt, chat, "s1", "not-a-uuid", 0)).toBe(false);
+    expect(invoke(IPC.liveInterrupt, chat, "s1", B, 2)).toBe(true);
+    expect(liveTasks.interrupt.mock.calls).toEqual([[{ senderId: chat.id, mountId: B }, "s1", 2]]);
     // Release: A's tasks stop, its id is never re-attachable, and a stray release is ignored.
     emit(IPC.chatRelease, chat, A);
     emit(IPC.chatRelease, chat, A);

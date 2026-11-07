@@ -612,6 +612,7 @@ button, input, textarea, select, a {
   margin-bottom: 8px;
 }
 .bean-agent-banner-dot { color: var(--bean-orb-check-ink); }
+.bean-agent-banner-hint { color: var(--bean-text-dim); }
 /* Overlays the transcript just above the composer instead of pushing it up. */
 .bean-slash-menu {
   position: absolute;
