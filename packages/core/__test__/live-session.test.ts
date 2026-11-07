@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
-import { claudeTurnSummary, liveSessionCommand, userTurnLine, startLiveSession, LIVE_SESSION_IDLE_MS, RESUME_REJECTED } from "../src/live-session.js";
+import { claudeTurnSummary, liveSessionCommand, userTurnLine, startLiveSession, LIVE_SESSION_IDLE_MS, RESUME_REJECTED, type TurnSummary } from "../src/live-session.js";
 import { withCliRules } from "../src/agent-rules.js";
 
 describe("liveSessionCommand", () => {
@@ -362,5 +362,62 @@ describe("startLiveSession onTurnStart", () => {
     handle.stop();
     f.stdout.write(result + init + assistant);
     expect(onTurnStart).not.toHaveBeenCalled();
+  });
+});
+
+describe("startLiveSession interrupt", () => {
+  const ev = (o: object): string => JSON.stringify(o) + "\n";
+  const start = () => {
+    const f = fakeChild();
+    const written: string[] = [];
+    f.stdin.on("data", (c: Buffer) => written.push(c.toString("utf8")));
+    const turns: TurnSummary[] = [];
+    const exits: (Error | undefined)[] = [];
+    const handle = startLiveSession(
+      { projectPath: "/p", prompt: "go" },
+      { onOutput: () => {}, onTurnComplete: (s) => turns.push(s), onExit: (e) => exits.push(e) },
+      () => f.child,
+    );
+    const controls = () => written.join("").split("\n").filter((l) => l.includes("control_request")).map((l) => JSON.parse(l));
+    return { f, handle, turns, exits, controls };
+  };
+
+  it("writes exactly one control line while a turn runs; the error_during_execution result is interrupted", async () => {
+    const h = start();
+    expect(h.handle.interrupt()).toBe(true);
+    expect(h.handle.interrupt()).toBe(true); // repeat press: no second line
+    await new Promise((r) => setImmediate(r));
+    expect(h.controls()).toHaveLength(1);
+    expect(h.controls()[0]).toMatchObject({ type: "control_request", request: { subtype: "interrupt" } });
+    expect(typeof h.controls()[0].request_id).toBe("string");
+    h.f.stdout.write(ev({ type: "result", subtype: "error_during_execution", duration_ms: 5 }));
+    expect(h.turns).toEqual([{ result: "", durationMs: 5, costUsd: undefined, interrupted: true }]);
+    expect(h.exits).toEqual([]); // the session stays
+  });
+
+  it("returns false when idle, before a lazy open, and after stop()", () => {
+    const h = start();
+    h.f.stdout.write(ev({ type: "result", subtype: "success", result: "ok" }));
+    expect(h.handle.interrupt()).toBe(false);
+    h.handle.send("next");
+    expect(h.handle.interrupt()).toBe(true);
+
+    const lazy = startLiveSession({ projectPath: "/p", prompt: "" }, { onOutput: () => {}, onTurnComplete: () => {}, onExit: () => {} }, () => fakeChild().child);
+    expect(lazy.interrupt()).toBe(false);
+
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const s = start();
+    s.handle.stop();
+    expect(s.handle.interrupt()).toBe(false);
+    killSpy.mockRestore();
+  });
+
+  it("a turn that finished before the interrupt landed stays a normal summary; the flag never leaks", () => {
+    const h = start();
+    h.handle.interrupt();
+    h.f.stdout.write(ev({ type: "result", subtype: "success", result: "done" }));
+    h.handle.send("next");
+    h.f.stdout.write(ev({ type: "result", subtype: "error_during_execution" }));
+    expect(h.turns.map((t) => t.interrupted)).toEqual([undefined, undefined]);
   });
 });

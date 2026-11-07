@@ -196,6 +196,45 @@ describe("startCodexLiveSession", () => {
     expect(h.spawned).toHaveLength(3);
   });
 
+  it("interrupt mid-turn reports an interrupted turn, keeps the session, and drains the queue", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    expect(h.handle.interrupt()).toBe(true); // before thread.started: still a running turn
+    h.emit({ type: "thread.started", thread_id: TID });
+    h.handle.send("queued");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(killSpy).toHaveBeenCalledWith(-h.spawned[0]!.pid, "SIGINT");
+    h.last().stderr.write("killed\n");
+    h.spawned[0]!.child.emit("close", 130);
+    expect(h.turns).toEqual([{ result: "", durationMs: 0, interrupted: true }]);
+    expect(h.exits).toEqual([]);
+    expect(h.spawned).toHaveLength(2); // the queued text ran as the next turn, resuming the thread
+    expect(h.spawned[1]!.args.slice(-3)).toEqual(["--", TID, "queued"]);
+    vi.useRealTimers();
+    await h.completeTurn("next", h.spawned[1]!);
+    expect(h.turns.at(-1)).toEqual({ result: "next", durationMs: 6100 }); // no leak into turn 2
+    expect(h.handle.interrupt()).toBe(false); // idle between turns
+  });
+
+  it("interrupt after the turn completed keeps the normal summary", async () => {
+    const h = harness();
+    h.emit({ type: "thread.started", thread_id: TID });
+    h.emit({ type: "item.completed", item: { type: "agent_message", text: "done" } });
+    h.emit({ type: "turn.completed", usage: {} });
+    await new Promise((r) => setImmediate(r));
+    h.handle.interrupt();
+    await h.close(130);
+    expect(h.turns).toEqual([{ result: "done", durationMs: 0 }]);
+  });
+
+  it("interrupting a fresh turn 1 before its thread id ends the session cleanly", async () => {
+    const h = harness();
+    h.handle.interrupt();
+    await h.close(130);
+    expect(h.turns).toEqual([]);
+    expect(h.exits).toEqual([undefined]);
+  });
+
   it("an auth failure renders the signed-out message", async () => {
     const h = harness();
     h.last().stderr.write("Error: 401 Unauthorized\n");

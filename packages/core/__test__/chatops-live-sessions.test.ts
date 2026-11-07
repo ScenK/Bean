@@ -40,6 +40,7 @@ function fakeStart() {
     return {
       pid: 1,
       send: (t) => sent.push(t),
+      interrupt: () => false,
       stop: () => { stopped = true; queueMicrotask(() => cbs.onExit(undefined)); },
     };
   };
@@ -72,7 +73,7 @@ describe("LiveSessionRegistry", () => {
     const startFn = (req: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
       reqs.push(req);
       cbs = c;
-      return { pid: process.pid, send: () => {}, stop: () => {} };
+      return { pid: process.pid, send: () => {}, interrupt: () => false, stop: () => {} };
     };
     const reg = new LiveSessionRegistry(startFn as never, { dir: tmp() });
     const onEnded = vi.fn();
@@ -89,7 +90,7 @@ describe("LiveSessionRegistry", () => {
     let pid: number | undefined;
     const startFn = (req: LiveSessionRequest): LiveSessionHandle => {
       reqs.push(req);
-      return { get pid() { return pid; }, send: (t) => { sent.push(t); pid = 4242; return true; }, stop: () => {} };
+      return { get pid() { return pid; }, send: (t) => { sent.push(t); pid = 4242; return true; }, interrupt: () => false, stop: () => {} };
     };
     const dir = tmp();
     const reg = new LiveSessionRegistry(startFn as never, { dir });
@@ -188,7 +189,7 @@ describe("LiveSessionRegistry", () => {
 
   it("two channels run sessions on one project at once, each with its own run record", () => {
     const dir = tmp();
-    const aliveStart = (): LiveSessionHandle => ({ pid: process.pid, send: () => true, stop: () => {} });
+    const aliveStart = (): LiveSessionHandle => ({ pid: process.pid, send: () => true, interrupt: () => false, stop: () => {} });
     const regA = new LiveSessionRegistry(aliveStart as never, { dir });
     const regB = new LiveSessionRegistry(aliveStart as never, { dir });
     const { sink } = fakeSink();
@@ -616,7 +617,7 @@ describe("LiveSessionRegistry", () => {
 
   it("forceKillAll SIGKILLs every active session's process group immediately", () => {
     let nextPid = 100;
-    const startFn = (): LiveSessionHandle => ({ pid: nextPid++, send: () => {}, stop: () => {} });
+    const startFn = (): LiveSessionHandle => ({ pid: nextPid++, send: () => {}, interrupt: () => false, stop: () => {} });
     const reg = new LiveSessionRegistry(startFn as never, { dir: tmp() });
     const { sink } = fakeSink();
     reg.start({ channelId: "a", projectPath: "/p", instruction: "go", sink });
@@ -633,7 +634,7 @@ describe("LiveSessionRegistry", () => {
 
   it("forceKillAll SIGKILLs a session child's tool process groups too", () => {
     ps.out = "100 1 100\n200 100 200\n";
-    const startFn = (): LiveSessionHandle => ({ pid: 100, send: () => {}, stop: () => {} });
+    const startFn = (): LiveSessionHandle => ({ pid: 100, send: () => {}, interrupt: () => false, stop: () => {} });
     const reg = new LiveSessionRegistry(startFn as never, { dir: tmp() });
     reg.start({ channelId: "a", projectPath: "/p", instruction: "go", sink: fakeSink().sink });
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
@@ -646,7 +647,7 @@ describe("LiveSessionRegistry", () => {
   });
 
   it("forceKillAll tolerates a kill on an already-dead process", () => {
-    const startFn = (): LiveSessionHandle => ({ pid: 42, send: () => {}, stop: () => {} });
+    const startFn = (): LiveSessionHandle => ({ pid: 42, send: () => {}, interrupt: () => false, stop: () => {} });
     const reg = new LiveSessionRegistry(startFn as never, { dir: tmp() });
     const { sink } = fakeSink();
     reg.start({ channelId: "c", projectPath: "/p", instruction: "go", sink });
@@ -733,7 +734,7 @@ describe("LiveSessionRegistry", () => {
   });
 
   it("per-turn CLIs keep the run record on the bot pid; claude moves it to the child", () => {
-    const child = (): LiveSessionHandle => ({ pid: 4242, send: () => true, stop: () => {} });
+    const child = (): LiveSessionHandle => ({ pid: 4242, send: () => true, interrupt: () => false, stop: () => {} });
     for (const [cli, pid] of [["codex", process.pid], ["opencode", process.pid], ["claude", 4242]] as const) {
       const dir = tmp();
       const reg = new LiveSessionRegistry(child as never, { dir });
@@ -748,7 +749,7 @@ describe("LiveSessionRegistry", () => {
     let cbs!: LiveSessionCallbacks;
     const startFn = (r: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
       req = r; cbs = c;
-      return { pid: process.pid, send: (t) => t !== "too much", stop: () => {} };
+      return { pid: process.pid, send: (t) => t !== "too much", interrupt: () => false, stop: () => {} };
     };
     const reg = new LiveSessionRegistry(startFn as never, { dir: tmp(), throttleMs: 100 });
     const s = fakeSink();
@@ -770,7 +771,7 @@ describe("LiveSessionRegistry", () => {
     let cbs!: LiveSessionCallbacks;
     const startFn = (_r: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
       cbs = c;
-      return { pid: process.pid, send: () => true, stop: () => {} };
+      return { pid: process.pid, send: () => true, interrupt: () => false, stop: () => {} };
     };
     const reg = new LiveSessionRegistry(startFn as never, { dir: tmp() });
     const onEnded = vi.fn();
