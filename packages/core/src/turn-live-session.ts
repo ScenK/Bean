@@ -71,6 +71,8 @@ export function startTurnLiveSession(
   let child: ChildProcess | undefined;
   let turns = 0;
   let pending = "";
+  // Accepted sends merged into `pending` — onConsumed's count when their turn spawns.
+  let pendingCount = 0;
   let exited = false;
   let stopping = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -82,6 +84,7 @@ export function startTurnLiveSession(
     if (exited) return;
     exited = true;
     pending = "";
+    pendingCount = 0;
     clearTimeout(idleTimer);
     cbs.onExit(err);
   };
@@ -97,6 +100,7 @@ export function startTurnLiveSession(
     if (exited || stopping) return;
     stopping = true;
     pending = "";
+    pendingCount = 0;
     if (child) interrupt(child);
     else finish();
   };
@@ -106,7 +110,8 @@ export function startTurnLiveSession(
     idleTimer = setTimeout(beginStop, idleTimeoutMs);
   };
 
-  const runTurn = (text: string): void => {
+  /** `count`: the sends `text` carries (onConsumed, reported once the turn has spawned). */
+  const runTurn = (text: string, count: number): void => {
     // Armed during a turn too (reset on output), so a hung silent child can't hold the channel.
     armIdle();
     turns++;
@@ -130,6 +135,7 @@ export function startTurnLiveSession(
       if (!stopping && !mismatch) interrupt(c);
     };
     cbs.onTurnStart?.();
+    cbs.onConsumed?.(count);
 
     const handleLine = (line: string): void => {
       if (!line.trim() || child !== c || mismatch) return;
@@ -217,25 +223,28 @@ export function startTurnLiveSession(
       if (exited || stopping || child) return;
       if (pending) {
         const next = pending;
+        const count = pendingCount;
         pending = "";
-        runTurn(next);
+        pendingCount = 0;
+        runTurn(next, count);
       } else armIdle();
     });
   };
 
   if (req.resume && !adapter.validResume(req.resume)) {
     queueMicrotask(() => finish(new Error(RESUME_REJECTED)));
-  } else if (req.prompt) runTurn(req.prompt);
+  } else if (req.prompt) runTurn(req.prompt, 1);
   else armIdle(); // lazy (Continue live): the first send() is turn 1
 
   return {
     get pid() { return child?.pid; },
     send: (text) => {
       if (exited || stopping) return true;
-      if (!child) { runTurn(text); return true; }
+      if (!child) { runTurn(text, 1); return true; }
       const merged = pending ? `${pending}\n\n${text}` : text;
       if (merged.length > TURN_QUEUE_LIMIT) return false;
       pending = merged;
+      pendingCount++;
       return true;
     },
     interrupt: () => {

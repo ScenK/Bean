@@ -14,13 +14,16 @@ describe("liveSessionCommand", () => {
       "--input-format", "stream-json",
       "--output-format", "stream-json",
       "--verbose",
+      "--replay-user-messages",
       "--dangerously-skip-permissions",
       "--chrome",
     ]);
   });
 
-  it("keeps --chrome on a resumed session", () => {
-    expect(liveSessionCommand({ projectPath: "/p", prompt: "", resume: "3f2a-uuid" }).args).toContain("--chrome");
+  it("keeps --chrome and --replay-user-messages on a resumed session", () => {
+    const { args } = liveSessionCommand({ projectPath: "/p", prompt: "", resume: "3f2a-uuid" });
+    expect(args).toContain("--chrome");
+    expect(args).toContain("--replay-user-messages");
   });
 
   it("appends --resume <id> when continuing a session", () => {
@@ -362,6 +365,62 @@ describe("startLiveSession onTurnStart", () => {
     handle.stop();
     f.stdout.write(result + init + assistant);
     expect(onTurnStart).not.toHaveBeenCalled();
+  });
+});
+
+describe("startLiveSession onConsumed", () => {
+  const ev = (o: object): string => JSON.stringify(o) + "\n";
+  const init = ev({ type: "system", subtype: "init", session_id: "s1" });
+  const replay = ev({ type: "user", isReplay: true, message: { role: "user", content: [{ type: "text", text: "hint" }] } });
+  const start = (resume?: string) => {
+    const f = fakeChild();
+    const onConsumed = vi.fn();
+    const outputs: string[] = [];
+    const onText = vi.fn();
+    const handle = startLiveSession(
+      { projectPath: "/p", prompt: "go", ...(resume ? { resume } : {}) },
+      { onOutput: (l) => outputs.push(l), onText, onConsumed, onTurnComplete: () => {}, onExit: () => {} },
+      () => f.child,
+    );
+    return { f, onConsumed, outputs, onText, handle };
+  };
+
+  it("a replay echo fires onConsumed(1) and reaches neither onOutput nor onText", () => {
+    const { f, onConsumed, outputs, onText } = start();
+    f.stdout.write(init + replay + replay);
+    expect(onConsumed.mock.calls).toEqual([[1], [1]]);
+    expect(outputs).toEqual([]);
+    expect(onText).not.toHaveBeenCalled();
+  });
+
+  it("tool-result and interrupt-notice user events (no isReplay) don't fire it", () => {
+    const { f, onConsumed } = start();
+    f.stdout.write(init
+      + ev({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } })
+      + ev({ type: "user", message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user for tool use]" }] } }));
+    expect(onConsumed).not.toHaveBeenCalled();
+  });
+
+  it("a resumed session reports the replay after init (claude emits init first)", () => {
+    const { f, onConsumed } = start("s1");
+    f.stdout.write(init + replay);
+    expect(onConsumed.mock.calls).toEqual([[1]]);
+  });
+
+  it("never fires while stopping or after exit", () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const a = start();
+    a.f.stdout.write(init);
+    a.handle.stop();
+    a.f.stdout.write(replay);
+    expect(a.onConsumed).not.toHaveBeenCalled();
+    killSpy.mockRestore();
+
+    const b = start();
+    b.f.stdout.write(init);
+    b.f.emit("close", 0, null);
+    b.f.stdout.write(replay);
+    expect(b.onConsumed).not.toHaveBeenCalled();
   });
 });
 
