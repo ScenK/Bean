@@ -9,7 +9,7 @@ import { AGENT_RULES } from "./agent-rules.js";
 // end for every current reasoning model. See .memory/project-openai-responses-api.md.
 type ResponsesItem =
   | { role: "system" | "assistant"; content: string }
-  | { role: "user"; content: string | Array<{ type: "input_text"; text: string } | { type: "input_image"; image_url: string }> }
+  | { role: "user"; content: string | Array<{ type: "input_text"; text: string } | { type: "input_image"; image_url: string } | { type: "input_file"; filename: string; file_data: string }> }
   | { type: "function_call"; call_id: string; name: string; arguments: string }
   | { type: "function_call_output"; call_id: string; output: string };
 
@@ -84,7 +84,9 @@ function toResponsesItems(message: ConvoMsg): ResponsesItem[] {
       content: message.content.map((p) =>
         p.type === "text"
           ? { type: "input_text" as const, text: p.text }
-          : { type: "input_image" as const, image_url: `data:${p.image.mimeType};base64,${p.image.data}` }),
+          : p.type === "image"
+            ? { type: "input_image" as const, image_url: `data:${p.image.mimeType};base64,${p.image.data}` }
+            : { type: "input_file" as const, filename: p.file.filename, file_data: `data:application/pdf;base64,${p.file.data}` }),
     }];
   }
   return [message as { role: "system"; content: string } | { role: "user"; content: string }];
