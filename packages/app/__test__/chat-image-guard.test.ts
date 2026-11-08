@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { imageFileGuard } from "../src/renderer/shared/chat-types.js";
+import { formatSize, imageFileGuard, pdfFileGuard } from "../src/renderer/shared/chat-types.js";
 
 test("rejects non-images, unsupported formats, >10MB files, and over-count; accepts supported images", () => {
   expect(imageFileGuard("application/pdf", 100)).toMatch(/image/i);
@@ -16,4 +16,13 @@ test("rejects non-images, unsupported formats, >10MB files, and over-count; acce
   // Aggregate cap: 4 already attached → a 5th is rejected.
   expect(imageFileGuard("image/png", 1024, 4)).toMatch(/4 images/);
   expect(imageFileGuard("image/png", 1024, 3)).toBeNull();
+});
+
+test("PDF guard: ≤ 10 MB, one per drop; chip sizes read in KB/MB", () => {
+  expect(pdfFileGuard(10 * 1024 * 1024)).toBeNull();
+  expect(pdfFileGuard(10 * 1024 * 1024 + 1)).toMatch(/10 MB/);
+  expect(pdfFileGuard(100, 2)).toMatch(/one PDF/);
+  expect(formatSize(300)).toBe("1 KB");
+  expect(formatSize(820 * 1024)).toBe("820 KB");
+  expect(formatSize(3.4 * 1024 * 1024)).toBe("3.4 MB");
 });

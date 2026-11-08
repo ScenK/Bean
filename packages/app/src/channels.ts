@@ -4,10 +4,10 @@ export type AvatarMode = "normal" | "hover" | "menu" | "drag";
 /** A run to open in the Dashboard: routine + its run record's `startedAt` (absent = the routine's
  * latest recorded run — the run itself wasn't recorded). */
 export interface DashboardTarget { routine: string; startedAt?: string }
-/** An image file dropped on the avatar, forwarded to chat. `data` (base64) is absent when the avatar
- * didn't read it — unattachable, so the chat only needs type/size to say why. */
+/** An image or PDF file dropped on the avatar, forwarded to chat. `data` (base64) is absent when the
+ * avatar didn't read it — unattachable, so the chat only needs type/size to say why. */
 export interface DroppedImage { path: string; mimeType: string; size: number; data?: string }
-/** What a drop on the avatar hands the chat: a path/URL as text, or image files to attach. */
+/** What a drop on the avatar hands the chat: a path/URL as text, or image/PDF files to attach. */
 export type ChatDrop = string | DroppedImage[];
 
 export interface ConfigView {

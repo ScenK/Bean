@@ -3,7 +3,7 @@ import { createTaskBubbles, liveBadgeAgent } from "./task-bubbles.js";
 import { h, render } from "preact";
 import { AgentAvatar } from "./shared/AgentAvatar.js";
 import type { AvatarMode, ComponentKind, DroppedImage } from "../channels.js";
-import { imageFileGuard, readImageFile } from "./shared/chat-types.js";
+import { PDF_MIME, imageFileGuard, pdfFileGuard, readImageFile } from "./shared/chat-types.js";
 import { createDragPreparationGate } from "../drag-preparation.js";
 import { createDragWatchdog } from "../drag-watchdog.js";
 import { AVATAR_SIZE } from "../avatar-menu.js";
@@ -317,11 +317,17 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
   // empties once the event returns — and only attachable ones are read.
   const dropToChat = (e: DragEvent, url: string): void => {
     const files = [...(e.dataTransfer?.files ?? [])];
-    if (files.length === 0 || !files.every((f) => f.type.startsWith("image/"))) { void window.bean.openComponent("chat", url); return; }
+    if (files.length === 0 || !files.every((f) => f.type.startsWith("image/") || f.type === PDF_MIME)) { void window.bean.openComponent("chat", url); return; }
     // Counts only accepted files, as the composer does: a rejected GIF doesn't use up a slot.
     let accepted = 0;
+    const pdfs = files.filter((f) => f.type === PDF_MIME).length;
     const toDropped = async (f: File): Promise<DroppedImage> => {
       const img: DroppedImage = { path: window.bean.getPathForFile(f), mimeType: f.type, size: f.size };
+      if (f.type === PDF_MIME) {
+        // The chat says why an unreadable one was refused (and inserts its path in agent mode).
+        if (pdfFileGuard(f.size, pdfs)) return img;
+        return readImageFile(f).then(({ attachment }) => ({ ...img, data: attachment.data }), () => img);
+      }
       if (imageFileGuard(f.type, f.size, accepted)) return img;
       accepted += 1;
       return readImageFile(f).then(({ attachment }) => ({ ...img, data: attachment.data }), () => img);

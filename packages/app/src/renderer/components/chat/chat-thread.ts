@@ -11,6 +11,8 @@ export const THREAD_ITEMS_MAX = 500;
 // Renderer copy of core's DESKTOP_CHAT_MAX_BYTES (node-free bundle rule) — keep in step.
 export const THREAD_MAX_BYTES = 2 * 1024 * 1024;
 export const IMAGE_PLACEHOLDER = "[image attached]";
+export const pdfPlaceholder = (name: string): string => `[PDF attached: ${name}]`;
+const PDF_PLACEHOLDER_RE = /\[PDF attached: ([^\]\n]+)\]$/;
 const TITLE_MAX = 60;
 
 const cap = (s: string): string => (s.length > THREAD_TEXT_MAX ? `${s.slice(0, THREAD_TEXT_MAX)}…` : s);
@@ -23,8 +25,9 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
     case "working":
       return undefined;
     case "user": {
-      const { images, ...rest } = it;
-      return { ...rest, text: cap(withPlaceholder(it.text, !!images?.length)), ...(it.display !== undefined ? { display: cap(it.display) } : {}) };
+      const { images, pdf, ...rest } = it;
+      const text = withPlaceholder(it.text, !!images?.length);
+      return { ...rest, text: cap(pdf ? `${text}\n${pdfPlaceholder(pdf.name)}` : text), ...(it.display !== undefined ? { display: cap(it.display) } : {}) };
     }
     case "reply": {
       const { images, session: _s, tail: _t, streaming, ...rest } = it;
@@ -100,6 +103,21 @@ export function restoreItems(saved: unknown): ChatItem[] {
     const { source: _s, ...rest } = it;
     return { ...rest, id: newId() };
   });
+}
+
+export const pdfAskAgain = (name: string): string => `📄 ${name} isn't attached anymore — drop it again to keep asking about it.`;
+
+/** The PDF a restored chat last attached (its placeholder), so the chat can ask for it again —
+ * unless that ask is already in the transcript (a re-restore of a chat that was saved since). */
+export function restoredPdf(items: readonly ChatItem[]): string | undefined {
+  const later = new Set<string>();
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]!;
+    if (it.kind === "status") later.add(it.text);
+    const name = it.kind === "user" ? PDF_PLACEHOLDER_RE.exec(it.text)?.[1] : undefined;
+    if (name) return later.has(pdfAskAgain(name)) ? undefined : name;
+  }
+  return undefined;
 }
 
 /** The Discord thread this chat continues in, if it was continued (the chat is then read-only). */
