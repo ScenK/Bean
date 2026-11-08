@@ -1,6 +1,6 @@
 import {
   converse, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
-  attachNoteImages, MAX_NOTE_IMAGE_BYTES, stageImages, type ImageAttachment,
+  attachNoteImages, MAX_NOTE_IMAGE_BYTES, stageImages, checkImageAttachments, type ImageAttachment,
   availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine, planSproutRun, type SproutRunBlock,
   listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash,
   type SkillProposal, type ProposalOutcome,
@@ -232,6 +232,8 @@ export interface ChatHandlerDeps {
 
 export function buildChatHandler(deps: ChatHandlerDeps) {
   return async (req: ChatRequest, senderId?: number, mountId?: string): Promise<ConverseResult> => {
+    // The renderer's imageFileGuard is UX only; main re-checks before anything reaches OpenAI (#733).
+    if (req.images !== undefined) checkImageAttachments(req.images);
     const [skills, projects, persona, memories, routines, ownerIds] = await Promise.all([
       deps.loadSkills(deps.projectSkillsDir, deps.skillsDir),
       deps.loadProjects(deps.projectsFile),

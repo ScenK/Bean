@@ -91,6 +91,29 @@ test("chat handler offers the desktop hand-off only to a chat that can open a li
   expect(toolNames).not.toContain("propose_live_session");
 });
 
+test("chat handler rejects bad images in main before converse runs (#733)", async () => {
+  let called = false;
+  const handler = buildChatHandler({
+    loadSkills: async () => [],
+    loadProjects: async () => [],
+    loadPersona: async () => ({ name: "Bean", tags: [] }) as Persona,
+    converse: async () => { called = true; return { content: "x", toolCalls: [] }; },
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills",
+    skillsDir: "/b/skills",
+    projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json",
+    projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [],
+    dbFile: "/b/memory.json",
+  });
+  const png = { data: "AAAA", mimeType: "image/png" };
+  await expect(handler({ history: [], message: "hi", images: [{ ...png, mimeType: "image/svg+xml" }] })).rejects.toThrow(/PNG, JPEG and WebP/);
+  await expect(handler({ history: [], message: "hi", images: [png, png, png, png, png] })).rejects.toThrow(/at most 4/);
+  await expect(handler({ history: [], message: "hi", images: [{ ...png, data: "A".repeat(14 * 1024 * 1024) }] })).rejects.toThrow(/10 MB/);
+  expect(called).toBe(false);
+});
+
 test("chat handler forwards req.images to converse and runs generate_image into generatedImages", async () => {
   const { mkdtemp } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stageImages, MAX_STAGED_IMAGE_BYTES } from "../src/stage-images.js";
+import { checkImageAttachments, stageImages, MAX_STAGED_IMAGE_BYTES } from "../src/stage-images.js";
 
 const png = { data: Buffer.from("png-bytes").toString("base64"), mimeType: "image/png" };
 
@@ -27,5 +27,14 @@ describe("stageImages", () => {
     await expect(stageImages([png, { ...png, data: "A".repeat(Math.ceil(MAX_STAGED_IMAGE_BYTES / 3) * 4 + 4) }], dir)).rejects.toThrow(/10 MB/);
     await expect(stageImages([png, png, png, png, png], dir)).rejects.toThrow(/at most 4/);
     expect(() => statSync(dir)).toThrow();
+  });
+});
+
+describe("checkImageAttachments", () => {
+  it("rejects a non-list and malformed entries; passes valid images", () => {
+    expect(() => checkImageAttachments("AAAA")).toThrow(/list/);
+    expect(() => checkImageAttachments([null])).toThrow(/PNG, JPEG and WebP/);
+    expect(() => checkImageAttachments([{ mimeType: "image/png", data: 1 }])).toThrow(/10 MB/);
+    expect(() => checkImageAttachments([png, png])).not.toThrow();
   });
 });
