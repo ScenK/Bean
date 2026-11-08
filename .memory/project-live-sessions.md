@@ -4,7 +4,7 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
 
 - `core/live-session.ts` = multi-turn sibling of `delegate.ts`: a long-lived
   `claude -p --input-format stream-json --output-format stream-json --verbose
-  --dangerously-skip-permissions --chrome` process, user turns written as JSON lines to stdin, one
+  --replay-user-messages --dangerously-skip-permissions --chrome` process, user turns written as JSON lines to stdin, one
   `result` event per turn. The permissions bypass is a **deliberate spec decision** (true
   bypass, explicitly stronger than the desktop UI's "Auto" mode, which still prompts on
   dangerous actions) — do not "fix" it into a safer mode without re-checking the spec; the
@@ -59,6 +59,13 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   Same rule for the desktop's `busy` (`live-tasks.ts`, gates Continue in Discord, #725): claude's
   busy follows the stream (idle at `result`, relit by onTurnStart); only per-turn CLIs keep a
   `queued` flag for a mid-turn send. A send counter stuck `busy` forever once claude merged sends.
+- **Pickup signal (#745)**: `onConsumed(n)` reports when the agent actually takes in sent
+  messages — separate from `onTurnStart` (busy/typing). Claude: `--replay-user-messages` echoes
+  each stdin message as `{type:"user",isReplay:true}` when it enters context (after `system/init`,
+  also on `--resume`; mid-turn right after a `tool_result`) → `onConsumed(1)`. Tool results and
+  the interrupt notice are `user` events without `isReplay`. Per-turn CLIs: accepted sends merged
+  into `pending` are counted, reported at the turn's spawn (opening/lazy first = 1). Chatops'
+  `claudeText`/`claudeTailLine` read only `assistant`, so the echo is invisible there.
 - **Turn interrupt (#723)**: `handle.interrupt()` ends the running turn and keeps the session
   (false = no turn running). Claude: one stream-json `control_request` `{subtype:"interrupt"}` per
   turn; the closing `result` of subtype `error_during_execution` → `TurnSummary.interrupted`. Per-turn

@@ -43,6 +43,9 @@ export function liveSessionCommand(req: LiveSessionRequest): { command: string; 
       "--input-format", "stream-json",
       "--output-format", "stream-json",
       "--verbose",
+      // Echoes each stdin user message (`isReplay`) when it enters the model's context — the
+      // moment onConsumed reports, which can be mid-turn (#745).
+      "--replay-user-messages",
       "--dangerously-skip-permissions",
       // Always the browser (#597): live sessions are steered turn by turn, so a `browser: true`
       // skill sent into one must find Claude in Chrome. Headless claude loads it only with the flag.
@@ -92,6 +95,10 @@ export interface LiveSessionCallbacks {
   onText?: (text: string) => void;
   /** A turn began without a fresh send() (per-turn CLIs: a queued, merged turn) — relight typing. */
   onTurnStart?: () => void;
+  /** The agent picked up `count` sent messages (the opening one included): claude when it echoes
+   * one into the running turn's context, per-turn CLIs when a turn carrying merged sends spawns.
+   * Never while stopping. Unlike onTurnStart, it can fire mid-turn. */
+  onConsumed?: (count: number) => void;
   onTurnComplete: (summary: TurnSummary) => void;
   /** The CLI's own session id, once per engine: after the event that proves the session started,
    * and on a resume only when it matches the resumed id. A throw is swallowed (bookkeeping). */
@@ -200,6 +207,12 @@ export function startLiveSession(
     }
     // Pre-init on a resume, a `result` is claude's rejection, not a turn — the exit reports it.
     if (req.resume && !initSeen) return;
+    // --replay-user-messages' echo of one sent message; tool results and interrupt notices are
+    // `user` events too, but never carry isReplay. Nothing else in it is read or shown.
+    if (e?.type === "user" && (event as { isReplay?: unknown }).isReplay === true) {
+      if (!stopping) cbs.onConsumed?.(1);
+      return;
+    }
     if (afterResult && (e?.type === "assistant" || (e?.type === "system" && e.subtype === "init"))) {
       afterResult = false;
       turnActive = true;

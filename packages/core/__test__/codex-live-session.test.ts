@@ -32,6 +32,7 @@ function harness(opts: { resume?: string; idleMs?: number; prompt?: string } = {
   const turns: TurnSummary[] = [];
   const exits: (Error | undefined)[] = [];
   const ids: string[] = [];
+  const consumed: number[] = [];
   const hooks: { onTurn?: (s: TurnSummary) => void; turnStarts: number } = { turnStarts: 0 };
   let clock = 0;
   const handle = startCodexLiveSession(
@@ -39,6 +40,7 @@ function harness(opts: { resume?: string; idleMs?: number; prompt?: string } = {
     {
       onOutput: (l) => outputs.push(l), onText: (t) => texts.push(t), onExit: (e) => exits.push(e), onSessionId: (id) => ids.push(id),
       onTurnStart: () => { hooks.turnStarts++; },
+      onConsumed: (n) => consumed.push(n),
       onTurnComplete: (s) => { turns.push(s); hooks.onTurn?.(s); },
     },
     spawnFn, opts.idleMs ?? 60_000, () => clock,
@@ -57,7 +59,7 @@ function harness(opts: { resume?: string; idleMs?: number; prompt?: string } = {
     clock += 6100;
     await close(0, f);
   };
-  return { handle, spawned, last, emit, close, completeTurn, outputs, texts, turns, exits, ids, hooks };
+  return { handle, spawned, last, emit, close, completeTurn, outputs, texts, turns, exits, ids, hooks, consumed };
 }
 
 let killSpy: ReturnType<typeof vi.spyOn>;
@@ -114,6 +116,42 @@ describe("startCodexLiveSession", () => {
     expect(h.spawned).toHaveLength(3);
     expect(h.spawned[2]!.args.at(-1)).toBe("b");
     expect(h.hooks.turnStarts).toBe(3);
+  });
+
+  it("onConsumed: 1 for the opening turn, the accepted-send count at a merged turn's spawn", async () => {
+    const h = harness();
+    expect(h.consumed).toEqual([1]);
+    expect(h.handle.send("a")).toBe(true);
+    expect(h.handle.send("b")).toBe(true);
+    expect(h.handle.send("x".repeat(TURN_QUEUE_LIMIT))).toBe(false); // refused: adds nothing
+    expect(h.handle.send("c")).toBe(true);
+    expect(h.consumed).toEqual([1]); // nothing until the merged turn spawns
+    await h.completeTurn("one");
+    expect(h.consumed).toEqual([1, 3]);
+    await h.completeTurn("two");
+    expect(h.handle.send("d")).toBe(true); // idle send: its own turn
+    expect(h.consumed).toEqual([1, 3, 1]);
+  });
+
+  it("onConsumed: a lazy first send counts 1; a spawn that throws emits nothing; stop drops the queue", async () => {
+    const lazy = harness({ prompt: "", resume: TID });
+    expect(lazy.consumed).toEqual([]);
+    lazy.handle.send("hi");
+    expect(lazy.consumed).toEqual([1]);
+
+    const throwing = startCodexLiveSession(
+      { cli: "codex", projectPath: "/p", prompt: "" },
+      { onOutput: () => {}, onTurnComplete: () => {}, onExit: () => {}, onConsumed: () => { throw new Error("must not fire"); } },
+      () => { throw new Error("spawn failed"); },
+    );
+    expect(() => throwing.send("hi")).toThrow("spawn failed");
+
+    const h = harness();
+    h.handle.send("queued");
+    h.handle.stop();
+    h.spawned[0]!.child.emit("close", 1);
+    expect(h.consumed).toEqual([1]);
+    expect(h.spawned).toHaveLength(1);
   });
 
   it("renders a shell command as `▸ shell`, never the raw command", async () => {
