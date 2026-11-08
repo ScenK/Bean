@@ -47,4 +47,9 @@
   never touch a `ChatItem`: the attaching user item has `pdf: { name, size }`, saved as
   `[PDF attached: name]`; a restored chat gets one "drop it again" row (`restoredPdf` dedupes). Main
   runs `checkPdfAttachment` before `converse()`; a thrown check or a `result.error` on a PDF turn
-  unpins it so one bad file can't sink every later turn. Agent mode gets the PDF's path as text.
+  unpins it so one bad file can't sink every later turn.
+- **Agent-mode PDFs (#732) are path-only text** — no staging, no Bean call. A Finder drop inserts the
+  path; a paste/browser drag (no path) gets `PDF_NO_PATH`. A *pending* (unsent) pin carried into an
+  agent (`takePendingPdf`) leaves Bean: `/claude <ask>` prefixes its path, a mode switch refills the
+  composer with it. A *sent* pin stays for Bean; the handoff marks the turn
+  `[PDF attached: name — not handed over]`.

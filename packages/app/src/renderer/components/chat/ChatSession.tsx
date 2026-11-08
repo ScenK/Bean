@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
-import { insertDroppedPath, newId, type AgentId, type ChatItem, type PinnedPdf } from "../../shared/chat-types.js";
+import { PDF_NO_PATH, insertDroppedPath, newId, type AgentId, type ChatItem, type PinnedPdf } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
   HANDOFF_ITEMS, chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent,
@@ -381,6 +381,15 @@ export function ChatSession({
     setPdf(undefined);
     if (old?.sent) addStatus(`📄 ${old.filename} removed — Bean no longer sees it.`, "info");
   };
+  // A pending (never sent) PDF carried into an agent leaves Bean: the agent gets its path as text —
+  // or, with no path, the Finder notice. A sent one stays pinned for Bean; the handoff marks it.
+  const takePendingPdf = (): string | undefined => {
+    const doc = pdfRef.current;
+    if (!doc || doc.sent) return undefined;
+    setPdf(undefined);
+    if (!doc.path) addStatus(PDF_NO_PATH, "info");
+    return doc.path || undefined;
+  };
   // Async callbacks (a chat prompt after its note lookup, delegate loopbacks) reach sendMessage
   // through a ref — a direct reference would close over a stale render's `busy`/`items`.
   const sendRef = useRef<(text: string, display?: string, queueIfBusy?: boolean, images?: ImageAttachment[], source?: TurnSource) => Promise<void>>(async () => {});
@@ -604,6 +613,8 @@ export function ChatSession({
     endSession(AGENT_NAMES[next]);
     setMode(next);
     if (!isLiveAgent(next)) return;
+    const pdfPath = takePendingPdf();
+    if (pdfPath) setRefill({ text: pdfPath });
     // The agent's remembered picks, checked against what's configured now.
     const pick = picksRef.current[next];
     const project = validProject(projects, pick?.project);
@@ -744,11 +755,14 @@ export function ChatSession({
         addStatus(`${AGENT_NAMES[agent]} isn't installed or is turned off in Settings.`, "error");
         return;
       }
+      // `/claude <ask>` carries a pending PDF in the ask (a bare `/claude`: switchMode refills it).
+      const pdfPath = isLiveAgent(agent) && slash.rest ? takePendingPdf() : undefined;
+      const rest = pdfPath ? `${pdfPath} ${slash.rest}` : slash.rest;
       switchMode(agent);
       // `/claude <ask>` with Bean image chips: stage them into labels instead of dropping them.
-      if (isLiveAgent(agent) && images?.length) { void sendWithImages(agent, slash.rest, images); return; }
-      if (!slash.rest) return;
-      text = slash.rest;
+      if (isLiveAgent(agent) && images?.length) { void sendWithImages(agent, rest, images); return; }
+      if (!rest) return;
+      text = rest;
     }
     const agent = modeRef.current;
     if (isLiveAgent(agent)) sendToAgent(agent, text);

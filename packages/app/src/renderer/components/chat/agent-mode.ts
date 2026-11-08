@@ -94,16 +94,21 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
 }
 
 /** What the renderer offers main for the opening turn's handoff (main keeps the tail). Bean-mode
- * image bytes never reach an agent — the turn says one was there. */
+ * image and PDF bytes never reach an agent — the turn says one was there. */
 export function handoffItems(items: ChatItem[]): HandoffItem[] {
   return items.flatMap((it): HandoffItem[] => {
-    if (it.kind === "user") return [{ role: "user", text: it.images?.length ? `${it.text}\n${IMAGE_NOT_HANDED}` : it.text }];
+    if (it.kind === "user") {
+      const marks = [...(it.images?.length ? [IMAGE_NOT_HANDED] : []), ...(it.pdf ? [pdfNotHanded(it.pdf.name)] : [])];
+      return [{ role: "user", text: [it.text, ...marks].join("\n") }];
+    }
     if (it.kind !== "reply" || it.streaming) return [];
     return [{ role: "reply", text: it.text, ...(isLiveAgent(it.agent) ? { agent: it.agent } : {}) }];
   });
 }
 
 export const IMAGE_NOT_HANDED = "[image attached — not handed over]";
+/** A Bean-mode PDF turn in the handoff: the name only, never its path or bytes. */
+export const pdfNotHanded = (name: string): string => `[PDF attached: ${name} — not handed over]`;
 /** Renderer copy of live-tasks' LABEL_LIMIT (main-only module). */
 export const LABEL_LIMIT = 2000;
 

@@ -12,7 +12,7 @@ import { DelegateCard } from "./DelegateCard.js";
 import { TerminalPane, type TabShortcut } from "./TerminalPane.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
-import { MAX_IMAGES_PER_MESSAGE, PDF_MIME, formatSize, imageFileGuard, pdfFileGuard, insertDroppedPath, readImageFile, itemAgent, type PinnedPdf, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
+import { MAX_IMAGES_PER_MESSAGE, PDF_MIME, PDF_NO_PATH, formatSize, imageFileGuard, pdfFileGuard, insertDroppedPath, readImageFile, itemAgent, type PinnedPdf, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import {
   HANDOFF_ITEMS, agentModels, canContinueLive, handoffItems, imageLabel, isLiveAgent, mappedImageLabels, offerAgent, parseSlash, type ImageLabels,
 } from "./agent-mode.js";
@@ -27,7 +27,7 @@ const ESC_STOP_MS = 800;
 /** An image to attach, wherever it came from; `path` = its file on disk, "" when it has none. */
 interface ImageSource { type: string; size: number; path: string; read: () => Promise<{ attachment: ImageAttachment; dataUrl: string }> }
 /** A PDF to pin, wherever it came from; `read` resolves to its base64 payload. */
-interface PdfSource { size: number; filename: string; read: () => Promise<string> }
+interface PdfSource { size: number; filename: string; path: string; read: () => Promise<string> }
 
 /**
  * Full-size preview for a chat image. Native `<dialog>`, so the backdrop, Esc-to-close and
@@ -326,19 +326,22 @@ export function ChatPanel({
     const images = dropped.filter((d) => d.mimeType !== PDF_MIME);
     if (images.length > 0) attachDroppedImages(images);
     else setImageError(null);
-    if (agentMode) {
-      // An agent reads a PDF by path: insert each one as text, like any other dropped file.
-      const el = inputRef.current;
-      if (el && pdfs.length > 0) {
-        el.value = `${pdfs.map((d) => d.path).join(" ")} ${el.value}`;
-        resizeInput();
-      }
-      return;
-    }
+    if (agentMode) { insertPdfPaths(pdfs.map((d) => d.path)); return; }
     attachPdfs(pdfs.map((d) => ({
-      size: d.size, filename: d.path.split("/").pop() ?? "",
+      size: d.size, filename: d.path.split("/").pop() ?? "", path: d.path,
       read: () => (d.data === undefined ? Promise.reject(new Error("not read")) : Promise.resolve(d.data)),
     })));
+  };
+  // Agent mode: an agent reads a PDF by path, so each goes in as text, like any other dropped file —
+  // never staged, never sent to Bean. One with no path (a paste, a browser drag) gets the notice.
+  const insertPdfPaths = (paths: string[]): void => {
+    const el = inputRef.current;
+    const real = paths.filter(Boolean);
+    if (el && real.length > 0) {
+      el.value = `${real.join(" ")} ${el.value}`;
+      resizeInput();
+    }
+    if (real.length < paths.length) setImageError(PDF_NO_PATH);
   };
   const attachDroppedImages = (images: DroppedImage[]): void =>
     attachImages(images.map(({ path, mimeType, size, data }) => ({
@@ -381,19 +384,21 @@ export function ChatPanel({
     if (problem) { setImageError(problem); return; }
     setImageReadsInFlight((n) => n + 1);
     void src.read()
-      .then((data) => onAttachPdf({ data, filename: src.filename || "document.pdf", size: src.size }))
+      .then((data) => onAttachPdf({ data, filename: src.filename || "document.pdf", size: src.size, path: src.path }))
       .catch(() => setImageError("Couldn't read that PDF."))
       .finally(() => setImageReadsInFlight((n) => n - 1));
   };
   // PDFs attach in Bean mode only; an agent gets a PDF's path as text instead.
   const isPdf = (type: string): boolean => !agentMode && type === PDF_MIME;
   const attachFiles = (files: File[]): void => {
-    const images = files.filter((f) => !isPdf(f.type));
+    const images = files.filter((f) => f.type !== PDF_MIME);
     if (images.length > 0) attachImageFiles(images);
     else setImageError(null);
-    attachPdfs(files.filter((f) => isPdf(f.type)).map((f) => ({
-      size: f.size, filename: f.name, read: () => readImageFile(f).then(({ attachment }) => attachment.data),
-    })));
+    const pdfs = files.filter((f) => f.type === PDF_MIME).map((f) => ({
+      size: f.size, filename: f.name, path: window.bean.getPathForFile(f), read: () => readImageFile(f).then(({ attachment }) => attachment.data),
+    }));
+    if (agentMode) insertPdfPaths(pdfs.map((p) => p.path));
+    else attachPdfs(pdfs);
   };
   // "Near bottom" tracked in a ref (the scroll handler runs constantly); the jump-down
   // button is state because it renders.
@@ -527,7 +532,7 @@ export function ChatPanel({
 
   const pasteImages = (e: ClipboardEvent): void => {
     const files = [...(e.clipboardData?.items ?? [])]
-      .filter((i) => i.kind === "file" && (i.type.startsWith("image/") || isPdf(i.type)))
+      .filter((i) => i.kind === "file" && (i.type.startsWith("image/") || i.type === PDF_MIME))
       .map((i) => i.getAsFile())
       .filter((f): f is File => f !== null);
     if (files.length === 0) return; // plain text paste — leave it to the textarea
