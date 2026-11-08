@@ -14,7 +14,22 @@ export function imageFileGuard(type: string, size: number, attachedCount = 0): s
   return null;
 }
 
-/** Read a picked image into an attachment + full data URL for its composer thumbnail. */
+// Renderer copy of core's MAX_PDF_BYTES / MAX_PDFS_PER_CHAT (converse.ts) — keep in step.
+export const PDF_MIME = "application/pdf";
+export const MAX_PDF_BYTES = 10 * 1024 * 1024;
+/** A PDF pinned to a chat: re-sent with every Bean turn until removed, replaced, unpinned or closed. */
+export interface PinnedPdf { data: string; filename: string; size: number }
+/** Error message for PDFs that can't be attached, or null. `count` = PDFs in this one drop/paste. */
+export function pdfFileGuard(size: number, count = 1): string | null {
+  if (count > 1) return "Only one PDF can be attached per chat.";
+  if (size > MAX_PDF_BYTES) return "PDFs must be 10 MB or smaller.";
+  return null;
+}
+/** "820 KB" / "3.4 MB" for a file chip. */
+export const formatSize = (bytes: number): string =>
+  bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+/** Read a picked image (or PDF — any file reads the same) into an attachment + full data URL for its composer thumbnail. */
 export function readImageFile(file: File): Promise<{ attachment: ImageAttachment; dataUrl: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -37,7 +52,8 @@ export type ChatItem =
   // `images` are data URLs for attached-image thumbnails; presence also drives the
   // "[image attached]" history placeholder (the bytes go only to the current turn's API call).
   // `source` = provenance for memory extraction: only "typed" turns are the user's own words.
-  | { kind: "user"; id: string; text: string; display?: string; images?: string[]; source?: TurnSource }
+  // `pdf` = the PDF this turn attached (name + size only — the bytes live in ChatSession's pin).
+  | { kind: "user"; id: string; text: string; display?: string; images?: string[]; pdf?: { name: string; size: number }; source?: TurnSource }
   // Same `display`/`text` split as above, in the other direction: an interrupted-run notice
   // needs its full instruction in `text` so a later "retry" has context (it drives history the
   // same as any other reply), but shows a short `display` instead of dumping that wall of text.

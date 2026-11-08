@@ -41,3 +41,10 @@
   ChatItem, `typed` and the liveStart `label` stay label-only, so no path reaches `bean.db`. A
   Bean-bound send holding mapped labels is refused inline; Bean-mode image turns hand over as
   `[image attached — not handed over]`.
+- **PDFs (#731, desktop Bean mode only) are pinned per chat, not per turn.** Drop/paste/avatar drop
+  (`DroppedImage` carries PDFs too) → composer chip; `ChatSession`'s `pdfRef` holds the bytes and
+  every Bean turn sends `documents` (core re-sends them as one framed message before history). Bytes
+  never touch a `ChatItem`: the attaching user item has `pdf: { name, size }`, saved as
+  `[PDF attached: name]`; a restored chat gets one "drop it again" row (`restoredPdf` dedupes). Main
+  runs `checkPdfAttachment` before `converse()`; a thrown check or a `result.error` on a PDF turn
+  unpins it so one bad file can't sink every later turn. Agent mode gets the PDF's path as text.

@@ -3,6 +3,7 @@ import type { HandoffItem, LiveEvent } from "../../../live-tasks.js";
 import type { CloseTurn } from "../../../ipc.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import type { AgentId, ChatItem } from "../../shared/chat-types.js";
+import { pdfPlaceholder } from "./chat-thread.js";
 
 // Agent mode's pure pieces — slash parsing, the shared history mapper and the live-event reducer —
 // kept out of ChatWindow so they test without a DOM. See .memory/project-live-sessions.md.
@@ -80,7 +81,8 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
     if (it.kind === "user") {
       if (opts.memory) return it.source === "live" ? [] : [{ role: "user", content: it.text, source: it.source, id: it.id }];
       // Image bytes ride only on the current turn; older turns keep a text placeholder.
-      return [{ role: "user", content: it.images?.length ? `${it.text}\n[image attached]` : it.text, source: it.source }];
+      const text = it.images?.length ? `${it.text}\n[image attached]` : it.text;
+      return [{ role: "user", content: it.pdf ? `${text}\n${pdfPlaceholder(it.pdf.name)}` : text, source: it.source }];
     }
     if (it.kind !== "reply") return [];
     if (!isLiveAgent(it.agent)) return [{ role: "assistant", content: it.text }];

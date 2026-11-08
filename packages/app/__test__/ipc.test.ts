@@ -1556,3 +1556,37 @@ describe("dashboard targets", () => {
     expect(notificationOpens(undefined)).toEqual({ kind: "chat" });
   });
 });
+
+test("chat handler validates documents before converse: a real PDF reaches it, a spoofed or oversize one is refused", async () => {
+  let sawFile: string | undefined;
+  let calls = 0;
+  const handler = buildChatHandler({
+    loadSkills: async () => [],
+    loadProjects: async () => [],
+    loadPersona: async () => ({ name: "Bean", tags: [] }) as Persona,
+    converse: async ({ messages }) => {
+      calls += 1;
+      for (const m of messages) {
+        if (m.role === "user" && Array.isArray(m.content)) {
+          for (const p of m.content) if (p.type === "file") sawFile = p.file.filename;
+        }
+      }
+      return { content: "ok", toolCalls: [] };
+    },
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills",
+    skillsDir: "/b/skills",
+    projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json",
+    projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [],
+    dbFile: "/b/memory.json",
+  });
+  const pdf = Buffer.from("%PDF-1.4\n%%EOF").toString("base64");
+  await handler({ history: [], message: "summarise", documents: [{ data: pdf, filename: "a.pdf" }] });
+  expect(sawFile).toBe("a.pdf");
+  const spoofed = Buffer.from("not a pdf at all").toString("base64");
+  await expect(handler({ history: [], message: "x", documents: [{ data: spoofed, filename: "b.pdf" }] })).rejects.toThrow(/not a PDF/);
+  await expect(handler({ history: [], message: "x", documents: [{ data: "A".repeat(14_000_000), filename: "c.pdf" }] })).rejects.toThrow(/10 MB/);
+  expect(calls).toBe(1);
+});

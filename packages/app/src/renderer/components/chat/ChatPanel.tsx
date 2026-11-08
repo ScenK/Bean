@@ -12,7 +12,7 @@ import { DelegateCard } from "./DelegateCard.js";
 import { TerminalPane, type TabShortcut } from "./TerminalPane.js";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
-import { MAX_IMAGES_PER_MESSAGE, imageFileGuard, insertDroppedPath, readImageFile, itemAgent, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
+import { MAX_IMAGES_PER_MESSAGE, PDF_MIME, formatSize, imageFileGuard, pdfFileGuard, insertDroppedPath, readImageFile, itemAgent, type PinnedPdf, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import {
   HANDOFF_ITEMS, agentModels, canContinueLive, handoffItems, imageLabel, isLiveAgent, mappedImageLabels, offerAgent, parseSlash, type ImageLabels,
 } from "./agent-mode.js";
@@ -26,6 +26,8 @@ const ESC_STOP_MS = 800;
 
 /** An image to attach, wherever it came from; `path` = its file on disk, "" when it has none. */
 interface ImageSource { type: string; size: number; path: string; read: () => Promise<{ attachment: ImageAttachment; dataUrl: string }> }
+/** A PDF to pin, wherever it came from; `read` resolves to its base64 payload. */
+interface PdfSource { size: number; filename: string; read: () => Promise<string> }
 
 /**
  * Full-size preview for a chat image. Native `<dialog>`, so the backdrop, Esc-to-close and
@@ -90,6 +92,9 @@ export function ChatPanel({
   delegateCli,
   onSlashOpen,
   onSend,
+  pdf,
+  onAttachPdf,
+  onRemovePdf,
   imageLabels,
   onImageLabel,
   onStageImage,
@@ -166,6 +171,10 @@ export function ChatPanel({
   delegateCli: string;
   onSlashOpen: () => void;
   onSend: (text: string, images?: ImageAttachment[]) => void;
+  /** The chat's pinned PDF (Bean mode only): `sent` once a turn carried it. */
+  pdf?: { filename: string; size: number; sent: boolean };
+  onAttachPdf: (pdf: PinnedPdf) => void;
+  onRemovePdf: () => void;
   /** Agent mode's `[Image #N]` → file map (chat-scoped, read-only here). */
   imageLabels: ImageLabels;
   /** Maps `path` to a fresh `[Image #N]` for `agent`; `composer` = the text it lands in (numbering). */
@@ -312,6 +321,25 @@ export function ChatPanel({
   // A composer drop/paste and an avatar drop (DroppedImage) take the same path, so both attach alike.
   const attachImageFiles = (files: File[]): void =>
     attachImages(files.map((file) => ({ type: file.type, size: file.size, path: window.bean.getPathForFile(file), read: () => readImageFile(file) })));
+  const attachDropped = (dropped: DroppedImage[]): void => {
+    const pdfs = dropped.filter((d) => d.mimeType === PDF_MIME);
+    const images = dropped.filter((d) => d.mimeType !== PDF_MIME);
+    if (images.length > 0) attachDroppedImages(images);
+    else setImageError(null);
+    if (agentMode) {
+      // An agent reads a PDF by path: insert each one as text, like any other dropped file.
+      const el = inputRef.current;
+      if (el && pdfs.length > 0) {
+        el.value = `${pdfs.map((d) => d.path).join(" ")} ${el.value}`;
+        resizeInput();
+      }
+      return;
+    }
+    attachPdfs(pdfs.map((d) => ({
+      size: d.size, filename: d.path.split("/").pop() ?? "",
+      read: () => (d.data === undefined ? Promise.reject(new Error("not read")) : Promise.resolve(d.data)),
+    })));
+  };
   const attachDroppedImages = (images: DroppedImage[]): void =>
     attachImages(images.map(({ path, mimeType, size, data }) => ({
       type: mimeType, size, path,
@@ -343,6 +371,29 @@ export function ChatPanel({
           setImageReadsInFlight((n) => n - 1);
         });
     }
+  };
+  // One PDF per chat (Bean mode): read, then handed to ChatSession, which pins it. A drop holding
+  // two is refused outright. Doesn't clear the error row — attachFiles does, once per drop.
+  const attachPdfs = (sources: PdfSource[]): void => {
+    const src = sources[0];
+    if (!src) return;
+    const problem = pdfFileGuard(src.size, sources.length);
+    if (problem) { setImageError(problem); return; }
+    setImageReadsInFlight((n) => n + 1);
+    void src.read()
+      .then((data) => onAttachPdf({ data, filename: src.filename || "document.pdf", size: src.size }))
+      .catch(() => setImageError("Couldn't read that PDF."))
+      .finally(() => setImageReadsInFlight((n) => n - 1));
+  };
+  // PDFs attach in Bean mode only; an agent gets a PDF's path as text instead.
+  const isPdf = (type: string): boolean => !agentMode && type === PDF_MIME;
+  const attachFiles = (files: File[]): void => {
+    const images = files.filter((f) => !isPdf(f.type));
+    if (images.length > 0) attachImageFiles(images);
+    else setImageError(null);
+    attachPdfs(files.filter((f) => isPdf(f.type)).map((f) => ({
+      size: f.size, filename: f.name, read: () => readImageFile(f).then(({ attachment }) => attachment.data),
+    })));
   };
   // "Near bottom" tracked in a ref (the scroll handler runs constantly); the jump-down
   // button is state because it renders.
@@ -390,7 +441,7 @@ export function ChatPanel({
   useEffect(() => {
     const el = inputRef.current;
     if (!prefillUrl || !el) return;
-    if (Array.isArray(prefillUrl)) { attachDroppedImages(prefillUrl); return; }
+    if (Array.isArray(prefillUrl)) { attachDropped(prefillUrl); return; }
     // Prepend so a drop never clobbers whatever the user was already typing.
     el.value = el.value ? `${prefillUrl} ${el.value}` : `${prefillUrl} `;
     el.focus();
@@ -430,7 +481,7 @@ export function ChatPanel({
       return;
     }
     // Image-only sends are allowed; converse still needs some text on the turn.
-    const text = el.value.trim() || (pendingImages.length > 0 ? "(image)" : "");
+    const text = el.value.trim() || (pendingImages.length > 0 ? "(image)" : pdf && !pdf.sent && !agentMode ? "(PDF)" : "");
     if (!text) return;
     el.value = "";
     resizeInput();
@@ -456,11 +507,11 @@ export function ChatPanel({
 
   const dropPathIntoComposer = (e: DragEvent): void => {
     const files = [...(e.dataTransfer?.files ?? [])];
-    // Image files become attachments (Bean can see them); everything else keeps the
-    // existing insert-the-path behavior for project/URL drops.
-    if (files.length > 0 && files.every((f) => f.type.startsWith("image/"))) {
+    // Image files (and in Bean mode PDFs) become attachments Bean can read; everything else keeps
+    // the existing insert-the-path behavior for project/URL drops.
+    if (files.length > 0 && files.every((f) => f.type.startsWith("image/") || isPdf(f.type))) {
       e.preventDefault();
-      attachImageFiles(files);
+      attachFiles(files);
       return;
     }
     const path = droppedPath(e);
@@ -476,12 +527,12 @@ export function ChatPanel({
 
   const pasteImages = (e: ClipboardEvent): void => {
     const files = [...(e.clipboardData?.items ?? [])]
-      .filter((i) => i.kind === "file" && i.type.startsWith("image/"))
+      .filter((i) => i.kind === "file" && (i.type.startsWith("image/") || isPdf(i.type)))
       .map((i) => i.getAsFile())
       .filter((f): f is File => f !== null);
     if (files.length === 0) return; // plain text paste — leave it to the textarea
     e.preventDefault();
-    attachImageFiles(files);
+    attachFiles(files);
   };
 
   // The newest run's avatar bobs while a turn is in flight — toggled on turn start/stop, not per chunk.
@@ -557,6 +608,7 @@ export function ChatPanel({
               <div key={it.id} class="bean-bubble bean-bubble--user">
                 <span class="bean-sr-only">You: </span>
                 {it.display ?? it.text}
+                {it.pdf ? <span class="bean-chat-file">📄 {it.pdf.name} · {formatSize(it.pdf.size)}</span> : null}
                 {it.images?.map((src) => (
                   <button type="button" class="bean-chat-thumb" title="Preview" onClick={() => setPreview({ dataUrl: src })}>
                     <img src={src} alt="attached image" />
@@ -826,6 +878,14 @@ export function ChatPanel({
           </div>
         ) : null}
         {imageError ? <div class="bean-status bean-status--error">{imageError}</div> : null}
+        {pdf && !agentMode ? (
+          <div class="bean-chat-pending-images">
+            <span class="bean-chat-pending-file" title={pdf.sent ? "Bean reads it on every turn until you remove it" : undefined}>
+              📄 {pdf.filename} · {formatSize(pdf.size)}
+              <button type="button" aria-label={`Remove ${pdf.filename}`} onClick={onRemovePdf}>✕</button>
+            </span>
+          </div>
+        ) : null}
         {pendingImages.length > 0 ? (
           <div class="bean-chat-pending-images">
             {pendingImages.map((img, i) => (

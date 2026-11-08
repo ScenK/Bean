@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ChatPanel } from "./ChatPanel.js";
-import { insertDroppedPath, newId, type AgentId, type ChatItem } from "../../shared/chat-types.js";
+import { insertDroppedPath, newId, type AgentId, type ChatItem, type PinnedPdf } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
   HANDOFF_ITEMS, chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent,
@@ -9,7 +9,7 @@ import {
 } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import type { TabShortcut } from "./TerminalPane.js";
-import { continuedTo, normalizeForSave, restoreItems, threadTitle } from "./chat-thread.js";
+import { continuedTo, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, threadTitle } from "./chat-thread.js";
 import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt } from "@bean/core/prompt";
@@ -366,6 +366,21 @@ export function ChatSession({
   // ref too — state alone would be a stale closure there.
   const linkedNoteRef = useRef<LinkedNote | undefined>(undefined);
   linkedNoteRef.current = linkedNote;
+  // The chat's pinned PDF (#731): its bytes ride on every Bean turn (core re-sends documents each
+  // turn) and never on a ChatItem, so no save carries them. `sent` = a turn already attached it.
+  const [pdf, setPdfState] = useState<(PinnedPdf & { sent: boolean }) | undefined>(undefined);
+  const pdfRef = useRef<(PinnedPdf & { sent: boolean }) | undefined>(undefined);
+  const setPdf = (p: (PinnedPdf & { sent: boolean }) | undefined): void => { pdfRef.current = p; setPdfState(p); };
+  const attachPdf = (next: PinnedPdf): void => {
+    const old = pdfRef.current;
+    if (old) addStatus(`📄 ${next.filename} replaces ${old.filename} — Bean reads only one PDF per chat.`, "info");
+    setPdf({ ...next, sent: false });
+  };
+  const removePdf = (): void => {
+    const old = pdfRef.current;
+    setPdf(undefined);
+    if (old?.sent) addStatus(`📄 ${old.filename} removed — Bean no longer sees it.`, "info");
+  };
   // Async callbacks (a chat prompt after its note lookup, delegate loopbacks) reach sendMessage
   // through a ref — a direct reference would close over a stale render's `busy`/`items`.
   const sendRef = useRef<(text: string, display?: string, queueIfBusy?: boolean, images?: ImageAttachment[], source?: TurnSource) => Promise<void>>(async () => {});
@@ -428,7 +443,11 @@ export function ChatSession({
       }
       threadRef.current = { id: t.id, title: t.title };
       onActive(t.id);
-      itemsRef.current = [...restoreItems(t.items), ...itemsRef.current];
+      const restored = restoreItems(t.items);
+      // PDF bytes are never saved: ask for the file again. Part of the baseline, so viewing still
+      // never writes; restoredPdf skips the ask once a later save has kept it.
+      const pdfName = restoredPdf(restored);
+      itemsRef.current = [...restored, ...(pdfName ? [{ kind: "status", id: newId(), tone: "info", text: pdfAskAgain(pdfName) } satisfies ChatItem] : []), ...itemsRef.current];
       savedRef.current = snapshot();
       // A receipt that missed this chat (it was switched away mid-capture) comes back live, Undo
       // included — and is then saved like any new row.
@@ -474,18 +493,31 @@ export function ChatSession({
     setStatus("working");
     const workingId = newId();
     const turnId = newId();
+    // The pinned PDF goes with every Bean turn; only the turn that attaches it shows its chip.
+    const doc = pdfRef.current;
+    const attaching = doc !== undefined && !doc.sent;
+    if (attaching) setPdf({ ...doc, sent: true });
     setItems((prev) => [...prev, {
       kind: "user", id: turnId, text: message, display, source,
       images: images?.map((i) => `data:${i.mimeType};base64,${i.data}`),
-    }, { kind: "working", id: workingId, text: "Spinning up" }]);
+      ...(attaching ? { pdf: { name: doc.filename, size: doc.size } } : {}),
+    }, { kind: "working", id: workingId, text: attaching ? `Reading ${doc.filename}…` : "Spinning up" }]);
+    // A turn that sent the PDF and failed unpins it, so the next turn isn't sunk by the same file.
+    const unpinFailed = (): void => { if (doc && pdfRef.current?.data === doc.data) setPdf(undefined); };
 
     // Image bytes ride only on the current turn; older turns keep a text placeholder
     // (mirrors chatops — see core's latestUserImages doc comment).
     const history = chatTurns(itemsRef.current);
 
     try {
-      const res = await window.bean.chat({ history, message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, turnId }, mountId);
+      const documents = doc ? [{ data: doc.data, filename: doc.filename }] : undefined;
+      const res = await window.bean.chat({ history, message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
       if (res.model) setModel(res.model);
+      if (doc && res.error) {
+        unpinFailed();
+        res.reply = `${res.reply}\n\nI couldn't read ${doc.filename} — it may have too many pages or be password-protected, ` +
+          "or this model doesn't take files. I've unpinned it; drop it again to retry.";
+      }
       // Forgotten facts go to close catch-up as already handled, so closing doesn't re-save them.
       rejectedMemoriesRef.current.push(...(res.forgotten ?? []).map((m) => m.text));
 
@@ -532,8 +564,11 @@ export function ChatSession({
       flushRef.current = true;
       setStatus("idle");
       if (hiddenRef.current) onUnread();
-    } catch {
-      setItems((prev) => [...prev.filter((it) => it.id !== workingId), { kind: "status", id: newId(), text: "Failed to reach Bean.", tone: "error" }]);
+    } catch (err) {
+      // Main refuses a document that isn't a real PDF (or is oversize): say so and unpin it.
+      const why = doc ? ` ${doc.filename} was unpinned: ${err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "") : String(err)}` : "";
+      unpinFailed();
+      setItems((prev) => [...prev.filter((it) => it.id !== workingId), { kind: "status", id: newId(), text: `Failed to reach Bean.${why}`, tone: "error" }]);
       setStatus("error");
     } finally {
       busyRef.current = false;
@@ -1356,6 +1391,9 @@ export function ChatSession({
         delegateCli={delegateCli}
         onSlashOpen={refreshCatalogs}
         onSend={onComposerSend}
+        pdf={pdf ? { filename: pdf.filename, size: pdf.size, sent: pdf.sent } : undefined}
+        onAttachPdf={attachPdf}
+        onRemovePdf={removePdf}
         imageLabels={imageLabelsRef.current}
         onImageLabel={labelImage}
         onStageImage={stageImage}
