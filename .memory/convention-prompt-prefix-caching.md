@@ -2,7 +2,7 @@
 
 OpenAI prompt caching is exact-prefix: the cached prefix is `[system, history…]` plus the
 tools array, and any byte that changes invalidates everything after it. `converse()`'s order:
-leading system → linked-note user message → history → recall user message → trailing system →
+leading system → linked-note user message → attached-documents user message → history → recall user message → trailing system →
 latest user.
 
 - **Leading system message** — persona + behavior instructions + skills/projects catalog + a
@@ -13,6 +13,9 @@ latest user.
 - **Linked note** — its own framed user message right after the leading system message, so a
   save-in-place re-bills only what follows it (saved text never rides in system — see
   [safety-saved-text-never-system](safety-saved-text-never-system.md)).
+- **Attached documents** (`ConverseInput.documents`, PDFs as `input_file` parts) — one framed
+  user message after the linked note, before history. Chat-scoped, re-sent every turn (unlike
+  latest-turn-only images), so the prefix breaks only when the attached set changes.
 - **Recall** (`What you remember`, selection depends on `latestUserText`) — its own user
   message after history, before the trailing system message.
 - **Trailing context system message** — just before the latest user message: `Current date and

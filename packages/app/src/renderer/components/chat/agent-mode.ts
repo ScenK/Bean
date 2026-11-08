@@ -3,6 +3,7 @@ import type { HandoffItem, LiveEvent } from "../../../live-tasks.js";
 import type { CloseTurn } from "../../../ipc.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import type { AgentId, ChatItem } from "../../shared/chat-types.js";
+import { pdfPlaceholder } from "./chat-thread.js";
 
 // Agent mode's pure pieces — slash parsing, the shared history mapper and the live-event reducer —
 // kept out of ChatWindow so they test without a DOM. See .memory/project-live-sessions.md.
@@ -80,7 +81,8 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
     if (it.kind === "user") {
       if (opts.memory) return it.source === "live" ? [] : [{ role: "user", content: it.text, source: it.source, id: it.id }];
       // Image bytes ride only on the current turn; older turns keep a text placeholder.
-      return [{ role: "user", content: it.images?.length ? `${it.text}\n[image attached]` : it.text, source: it.source }];
+      const text = it.images?.length ? `${it.text}\n[image attached]` : it.text;
+      return [{ role: "user", content: it.pdf ? `${text}\n${pdfPlaceholder(it.pdf.name)}` : text, source: it.source }];
     }
     if (it.kind !== "reply") return [];
     if (!isLiveAgent(it.agent)) return [{ role: "assistant", content: it.text }];
@@ -92,16 +94,21 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
 }
 
 /** What the renderer offers main for the opening turn's handoff (main keeps the tail). Bean-mode
- * image bytes never reach an agent — the turn says one was there. */
+ * image and PDF bytes never reach an agent — the turn says one was there. */
 export function handoffItems(items: ChatItem[]): HandoffItem[] {
   return items.flatMap((it): HandoffItem[] => {
-    if (it.kind === "user") return [{ role: "user", text: it.images?.length ? `${it.text}\n${IMAGE_NOT_HANDED}` : it.text }];
+    if (it.kind === "user") {
+      const marks = [...(it.images?.length ? [IMAGE_NOT_HANDED] : []), ...(it.pdf ? [pdfNotHanded(it.pdf.name)] : [])];
+      return [{ role: "user", text: [it.text, ...marks].join("\n") }];
+    }
     if (it.kind !== "reply" || it.streaming) return [];
     return [{ role: "reply", text: it.text, ...(isLiveAgent(it.agent) ? { agent: it.agent } : {}) }];
   });
 }
 
 export const IMAGE_NOT_HANDED = "[image attached — not handed over]";
+/** A Bean-mode PDF turn in the handoff: the name only, never its path or bytes. */
+export const pdfNotHanded = (name: string): string => `[PDF attached: ${name} — not handed over]`;
 /** Renderer copy of live-tasks' LABEL_LIMIT (main-only module). */
 export const LABEL_LIMIT = 2000;
 

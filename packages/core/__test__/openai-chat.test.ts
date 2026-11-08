@@ -110,6 +110,20 @@ test("converse adapter maps user image parts to input_image data URLs", async ()
   ]);
 });
 
+test("converse adapter maps user file parts to input_file PDF data URLs", async () => {
+  const { client, seen } = fakeResponses();
+  const chat = makeOpenAIConverseWithClient(client as never);
+  await chat({
+    model: "m",
+    messages: [{ role: "user", content: [{ type: "text", text: "doc:" }, { type: "file", file: { data: "JVBERi0=", filename: "spec.pdf" } }] }],
+    tools: [],
+  });
+  expect((seen.args?.input as Array<{ content: unknown }>)[0]?.content).toEqual([
+    { type: "input_text", text: "doc:" },
+    { type: "input_file", filename: "spec.pdf", file_data: "data:application/pdf;base64,JVBERi0=" },
+  ]);
+});
+
 test("converse adapter passes plain-string user content through unchanged", async () => {
   const { client, seen } = fakeResponses();
   const chat = makeOpenAIConverseWithClient(client as never);

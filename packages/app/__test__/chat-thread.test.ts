@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, normalizeForSave, restoreItems, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
+import { IMAGE_PLACEHOLDER, THREAD_ITEMS_MAX, THREAD_MAX_BYTES, THREAD_TEXT_MAX, continuedTo, normalizeForSave, pdfAskAgain, restoreItems, restoredPdf, threadTitle } from "../src/renderer/components/chat/chat-thread.js";
 import { applyDelegateEventToItems, closeTranscript } from "../src/renderer/components/chat/ChatSession.js";
 import { canContinueLive } from "../src/renderer/components/chat/agent-mode.js";
 import { newId, type ChatItem } from "../src/renderer/shared/chat-types.js";
@@ -177,5 +177,29 @@ describe("continued pointer (#697)", () => {
     expect(restoreItems([extra])[0]).not.toHaveProperty("secret");
     expect(restoreItems([{ kind: "continued", id: "c", surface: "teams", conversationId: "t", title: "x" }])).toEqual([]);
     expect(restoreItems([{ kind: "continued", id: "c", surface: "discord", conversationId: "", title: "x" }])).toEqual([]);
+  });
+});
+
+describe("PDF attachments in saved threads (#731)", () => {
+  const items: ChatItem[] = [
+    { kind: "user", id: "u1", text: "summarise", pdf: { name: "report.pdf", size: 2048 }, source: "typed" },
+    { kind: "reply", id: "r1", text: "It says…" },
+    { kind: "user", id: "u2", text: "and page 2?", source: "typed" },
+  ];
+
+  it("saves a placeholder and never the pdf field", () => {
+    const saved = normalizeForSave(items);
+    expect(saved[0]).toEqual({ kind: "user", id: "u1", text: "summarise\n[PDF attached: report.pdf]", source: "typed" });
+    expect(JSON.stringify(saved)).not.toContain("size");
+    // Repeat save/load doesn't multiply the placeholder.
+    expect(normalizeForSave(restoreItems(saved))[0]).toMatchObject({ text: "summarise\n[PDF attached: report.pdf]" });
+  });
+
+  it("a restored chat asks for the PDF again, once", () => {
+    const restored = restoreItems(normalizeForSave(items));
+    expect(restoredPdf(restored)).toBe("report.pdf");
+    const asked: ChatItem[] = [...restored, { kind: "status", id: "s1", text: pdfAskAgain("report.pdf"), tone: "info" }];
+    expect(restoredPdf(restoreItems(normalizeForSave(asked)))).toBeUndefined();
+    expect(restoredPdf(restoreItems(normalizeForSave([items[2]!])))).toBeUndefined();
   });
 });

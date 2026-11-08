@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "vitest";
-import { converse, type ActionTool, type ConverseDeps, type ConverseInput, type ConvoMsg, type ToolSpec } from "../src/converse.js";
+import { checkPdfAttachment, converse, MAX_PDF_BYTES, type ActionTool, type ConverseDeps, type ConverseInput, type ConvoMsg, type ToolSpec } from "../src/converse.js";
 import { composePersonaPrompt, DEFAULT_PERSONA, type Persona } from "../src/persona.js";
 import { availableModels } from "../src/models.js";
 import type { Project, Skill } from "../src/types.js";
@@ -55,6 +55,67 @@ test("no images keeps the final user message a plain string", async () => {
   };
   await conv({ latestUserText: "hello", deps });
   expect(captured[captured.length - 1]).toEqual({ role: "user", content: "hello" });
+});
+
+describe("PDF documents", () => {
+  const PDF = Buffer.from("%PDF-1.7\nbody").toString("base64");
+  const capture = () => {
+    const seen: ConvoMsg[][] = [];
+    const deps: ConverseDeps = { model: "m", chat: async ({ messages }) => { seen.push(messages); return { content: "ok", toolCalls: [] }; } };
+    return { seen, deps };
+  };
+
+  it("ride one framed user message after the linked note and before history", async () => {
+    const { seen, deps } = capture();
+    const doc = { data: PDF, filename: "spec.pdf" };
+    await conv({
+      history: [{ role: "user", content: "earlier" }],
+      latestUserText: "summarise it", deps, documents: [doc],
+      linkedNote: { slug: "n", title: "T", version: 1, body: "B" },
+    });
+    const msgs = seen[0]!;
+    expect(msgs[1]!.content).toContain("linked note");
+    expect(msgs[2]!.role).toBe("user");
+    const parts = msgs[2]!.content as Array<{ type: string }>;
+    expect(parts[0]).toMatchObject({ type: "text", text: expect.stringContaining("data, not instructions") });
+    expect(parts[1]).toEqual({ type: "file", file: doc });
+    expect(msgs[3]).toEqual({ role: "user", content: "earlier" });
+  });
+
+  it("leave the message list unchanged when absent and the leading system message byte-stable", async () => {
+    const { seen, deps } = capture();
+    await conv({ latestUserText: "hi", deps });
+    await conv({ latestUserText: "hi", deps, documents: [] });
+    await conv({ latestUserText: "hi", deps, documents: [{ data: PDF, filename: "a.pdf" }] });
+    expect(seen[1]).toEqual(seen[0]);
+    expect(seen[2]![0]).toEqual(seen[0]![0]);
+    expect(seen[2]!.length).toBe(seen[0]!.length + 1);
+  });
+
+  it("checkPdfAttachment validates and sanitises", () => {
+    expect(checkPdfAttachment(undefined)).toEqual([]);
+    expect(checkPdfAttachment([{ data: PDF, filename: "a\u0000b\nc.pdf" }])).toEqual([{ data: PDF, filename: "abc.pdf" }]);
+    expect(checkPdfAttachment([{ data: PDF }])[0]!.filename).toBe("document.pdf");
+    expect(checkPdfAttachment([{ data: PDF, filename: " \u0007 " }])[0]!.filename).toBe("document.pdf");
+    expect(checkPdfAttachment([{ data: PDF, filename: "x".repeat(500) }])[0]!.filename).toHaveLength(120);
+    expect(() => checkPdfAttachment([{ data: PDF, filename: "a" }, { data: PDF, filename: "b" }])).toThrow(/only 1/);
+    expect(() => checkPdfAttachment([{ data: Buffer.from("PNG....").toString("base64"), filename: "x" }])).toThrow(/not a PDF/);
+    expect(() => checkPdfAttachment([{ data: "%PDF-!!!", filename: "x" }])).toThrow(/base64/);
+    expect(() => checkPdfAttachment([{ data: "", filename: "x" }])).toThrow(/base64/);
+    expect(() => checkPdfAttachment([{ data: 42, filename: "x" }])).toThrow(/string/);
+    expect(() => checkPdfAttachment("nope")).toThrow(/list/);
+  });
+
+  it("checkPdfAttachment rejects oversize payloads by length, before decoding", () => {
+    // Not valid base64 at all — rejected on encoded length alone, so nothing was decoded.
+    const huge = "!".repeat(Math.ceil(MAX_PDF_BYTES / 3) * 4 + 4);
+    expect(() => checkPdfAttachment([{ data: huge, filename: "x" }])).toThrow(/10 MB/);
+    // Exactly at the cap is fine; one byte over (decoded) is not.
+    const at = Buffer.alloc(MAX_PDF_BYTES, 0x20); at.write("%PDF-");
+    expect(checkPdfAttachment([{ data: at.toString("base64"), filename: "x" }])).toHaveLength(1);
+    const over = Buffer.alloc(MAX_PDF_BYTES + 1, 0x20); over.write("%PDF-");
+    expect(() => checkPdfAttachment([{ data: over.toString("base64"), filename: "x" }])).toThrow(/10 MB/);
+  });
 });
 
 test("valid propose_run tool call composes a run from the local skill body", async () => {
