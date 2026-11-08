@@ -22,6 +22,9 @@ export type LiveEvent = { sessionId: string; agent: LiveCli; mountId: string; se
   | { type: "text"; text: string }
   // A turn began — also a queued one, right after the last `turn` (the renderer's Stop shows from here).
   | { type: "turn-start" }
+  // The agent picked up `count` of the session's sent messages (the opening one included) — mid-turn
+  // for claude, at the queued turn's spawn for per-turn CLIs (#746: "Not read yet" clears, the bubble splits).
+  | { type: "consumed"; count: number }
   | { type: "turn"; result: string; durationMs?: number; costUsd?: number; failed?: string; interrupted?: true }
   | { type: "session"; receipt: LiveReceipt }
   // stopped = End / window close; ended = idle timeout or a clean exit on its own; failed = crash.
@@ -268,6 +271,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
             s.queued = false; // the queue is this turn
             if (!s.stopping) emit(sessionId, s, { type: "turn-start" });
           },
+          onConsumed: (count) => { if (sessions.get(sessionId) === s && !s.stopping) emit(sessionId, s, { type: "consumed", count }); },
           onTurnComplete: (t) => {
             if (sessions.get(sessionId) !== s) return;
             s.busy = s.queued;

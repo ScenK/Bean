@@ -168,6 +168,23 @@ export function ensureStreaming(items: ChatItem[], session: string, agent: LiveC
   return [...items, { kind: "reply", id, text: "", agent, session, tail: [], streaming: true }];
 }
 
+/** The agent picked up `count` messages sent to session `key` (#746): their oldest `count` pending
+ * rows clear. If the session's open bubble sits above the newest cleared row, it closes there — kept
+ * without a footer when it has content, dropped when empty — and the Working bubble reopens below,
+ * so the agent's output after pickup reads under the message it answers. Clears nothing = no change. */
+export function consumeLive(items: ChatItem[], session: string, key: string, agent: LiveCli, count: number, id: string): ChatItem[] {
+  const cleared = items.flatMap((it, i) => (it.kind === "user" && it.pending === key ? [i] : [])).slice(0, Math.max(0, count));
+  const newest = cleared.at(-1);
+  if (newest === undefined) return items;
+  const open = items.findLastIndex((it) => it.kind === "reply" && it.session === session && it.streaming);
+  const next = items.flatMap((it, i): ChatItem[] => {
+    if (it.kind === "user" && cleared.includes(i)) { const { pending: _, ...rest } = it; return [rest]; }
+    if (i === open && open < newest && it.kind === "reply") return it.display || it.tail?.length ? [{ ...it, streaming: false }] : [];
+    return [it];
+  });
+  return ensureStreaming(next, session, agent, id);
+}
+
 /** Fold a live event into the transcript. Rows about the session (handoff, end, failure) are the
  * caller's: this only touches the session's own bubbles, so a late event from an ended session
  * still closes its bubble without speaking for the current mode. */
@@ -176,7 +193,8 @@ export function applyLiveEvent(items: ChatItem[], e: LiveEvent, newId: () => str
   const patch = (fn: (it: Extract<ChatItem, { kind: "reply" }>) => ChatItem): ChatItem[] =>
     items.map((it, i) => (i === open && it.kind === "reply" ? fn(it) : it));
   if (e.type === "started") return ensureStreaming(items, e.sessionId, e.agent, newId());
-  if (e.type === "session" || e.type === "turn-start") return items;
+  // consumed is the caller's (consumeLive): only it knows which rows belong to the session.
+  if (e.type === "session" || e.type === "turn-start" || e.type === "consumed") return items;
   // The agent's messages show as `display`; `text` stays the turn's final result, so history
   // (chatTurns) and saved chats never lose the answer behind long progress prose.
   if (e.type === "text") {

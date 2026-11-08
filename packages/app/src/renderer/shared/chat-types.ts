@@ -55,7 +55,9 @@ export type ChatItem =
   // "[image attached]" history placeholder (the bytes go only to the current turn's API call).
   // `source` = provenance for memory extraction: only "typed" turns are the user's own words.
   // `pdf` = the PDF this turn attached (name + size only — the bytes live in ChatSession's pin).
-  | { kind: "user"; id: string; text: string; display?: string; images?: string[]; pdf?: { name: string; size: number }; source?: TurnSource }
+  // `pending` = the LiveState.key of the agent session it was sent to, until that agent picks it up
+  // ("Not read yet", #746). Transient: never saved.
+  | { kind: "user"; id: string; text: string; display?: string; images?: string[]; pdf?: { name: string; size: number }; source?: TurnSource; pending?: string }
   // Same `display`/`text` split as above, in the other direction: an interrupted-run notice
   // needs its full instruction in `text` so a later "retry" has context (it drives history the
   // same as any other reply), but shows a short `display` instead of dumping that wall of text.

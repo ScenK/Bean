@@ -43,7 +43,7 @@ test("agent mode: a dropped PNG becomes [Image #1] and the agent gets its path",
     await composer.press("End");
     await composer.pressSequentially("what is this?");
     await composer.press("Enter");
-    await expect(chat.locator(".bean-bubble--user").last()).toHaveText(/\[Image #1\] what is this\?$/);
+    await expect(chat.locator(".bean-bubble--user").last()).toHaveText(/\[Image #1\] what is this\?( \(not read yet\))?$/);
     await expect.poll(() => readFile(join(home.homeDir, "stdin-claude.txt"), "utf8").catch(() => ""), { timeout: 15_000 })
       .toMatch(/\[Image #1\]: \/[^"\\]+\.png/);
     await expect(chat.locator(".bean-chat-scroll")).not.toContainText(".png");

@@ -265,6 +265,16 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   returns for a queued turn before its first output; main's own `busy` never drives the button
   (it can stick for claude, #725). An interrupted `turn` footers "— turn interrupted"; the bubble
   keeps its streamed `display`.
+- **Pickup split + "Not read yet" (#746)**: main forwards `onConsumed(n)` as a `consumed`
+  LiveEvent. Live user rows carry `pending: <LiveState.key>` (key, not session id — an old
+  session's late `ended`/`consumed` must not clear the next session's rows). `consumeLive` (pure,
+  agent-mode.ts) clears the oldest `n` rows of the current key and, when the session's open bubble
+  sits above the newest cleared row, closes it (no footer; dropped if empty) and reopens Working at
+  the end — so the final `turn` lands on the newest bubble and split bubbles keep `text: ""`
+  (chatTurns keeps one answer). Refused `deliver`, failed start/resume, `endSession` and the
+  current `ended` clear rows; `deliver` opens Working only while its row is still pending (a
+  consume can beat the IPC reply). `pending` is never saved (normalizeItem). CSS reveals the
+  outline/caption after 1.5s so an idle pickup never flashes it.
 - Two spawns (`liveSpawnFn`): claude stdin `pipe` (stream-json turns), codex/opencode stdin
   `ignore`; both get the login-shell PATH, `PWD=cwd`, `spawnEnv`. Don't reuse delegate-tasks'
   `resolvedPathSpawnFn` for claude — its stdin is `ignore`.

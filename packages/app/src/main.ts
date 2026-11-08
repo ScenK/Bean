@@ -681,7 +681,7 @@ app.whenReady().then(async () => {
           if (line) taskStatus.upsert(id, { line });
         } else if (event.type === "turn") {
           taskStatus.upsert(id, { line: event.interrupted ? "Turn stopped" : event.failed ? "Turn failed" : "Waiting for you" });
-        } else if (event.type === "session" || event.type === "text" || event.type === "turn-start") {
+        } else if (event.type === "session" || event.type === "text" || event.type === "turn-start" || event.type === "consumed") {
           // the receipt and prose are for the chat window only
         } else if (event.reason === "failed") taskStatus.finish(id, "failed", event.error ?? "Session died");
         else taskStatus.finish(id, "done", event.reason === "stopped" ? "Session ended" : "Session ended on its own", false);

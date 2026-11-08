@@ -619,10 +619,11 @@ export function ChatPanel({
         ) : null}
         {items.map((it, i) => {
           if (it.kind === "user") {
-            return (
+            const bubble = (
               <div key={it.id} class="bean-bubble bean-bubble--user">
                 <span class="bean-sr-only">You: </span>
                 {it.display ?? it.text}
+                {it.pending ? <span class="bean-sr-only"> (not read yet)</span> : null}
                 {it.pdf ? <span class="bean-chat-file">📄 {it.pdf.name} · {formatSize(it.pdf.size)}</span> : null}
                 {it.images?.map((src) => (
                   <button type="button" class="bean-chat-thumb" title="Preview" onClick={() => setPreview({ dataUrl: src })}>
@@ -631,6 +632,14 @@ export function ChatPanel({
                 ))}
               </div>
             );
+            // Sent to an agent that hasn't picked it up yet (#746): the outline and caption sit on the
+            // page surface, outside the accent fill.
+            return it.pending ? (
+              <div key={it.id} class="bean-pending">
+                {bubble}
+                <div class="bean-pending-caption" aria-hidden="true">Not read yet</div>
+              </div>
+            ) : bubble;
           }
           if (it.kind === "reply") {
             return agentRow(it, i, (
