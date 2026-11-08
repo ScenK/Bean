@@ -550,7 +550,7 @@ app.whenReady().then(async () => {
         required: ["url"],
       },
     },
-    run: async (args) => {
+    run: async (args, ctx) => {
       const { url } = (args ?? {}) as { url?: unknown };
       let parsed: URL;
       try {
@@ -563,7 +563,7 @@ app.whenReady().then(async () => {
       }
       try {
         // safeFetch refuses loopback/LAN/metadata addresses (also after redirects) and caps the body.
-        const res = await safeFetch(parsed.toString(), { timeoutMs: 15_000, maxBytes: 5 * 1024 * 1024 });
+        const res = await safeFetch(parsed.toString(), { timeoutMs: 15_000, maxBytes: 5 * 1024 * 1024, signal: ctx?.signal });
         if (!res.ok) return `error: fetch failed with HTTP ${res.status}`;
         const text = extractPageText(res.body);
         return text || "error: page had no readable text";

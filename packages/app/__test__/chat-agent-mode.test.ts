@@ -489,6 +489,63 @@ describe("ChatWindow agent mode", () => {
     expect(chatCalls().map((c) => c.message)).toEqual(["first", "second"]);
     expect(ta.value).toBe("");
   });
+  // #740: Stop / Esc Esc for Bean's own running turn.
+  const esc = async (): Promise<void> => {
+    const ta = root.querySelector("textarea.bean-input--composer") as HTMLTextAreaElement;
+    await act(async () => { ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  };
+  const hint = (): Element | null => root.querySelector(".bean-bubble--working .bean-agent-banner-hint");
+
+  it("Bean's turn: the working row's Stop names that turn, shows Stopping…, then the receipts and Stopped by you.", async () => {
+    bean.chatStop = vi.fn();
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    let answer!: (v: unknown) => void;
+    bean.chat!.mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    await send("first");
+    const turnId = (bean.chat!.mock.calls[0]![0] as { turnId: string }).turnId;
+    await click("Stop");
+    expect(bean.chatStop).toHaveBeenCalledWith(expect.any(String), turnId);
+    const stopping = [...root.querySelectorAll(".bean-bubble--working button")].find((b) => b.textContent === "Stopping…") as HTMLButtonElement;
+    expect(stopping.disabled).toBe(true);
+    await act(async () => { answer({ reply: "", model: "m", stopped: true, remembered: [{ id: "x", text: "Lives in Seattle", createdAt: "" }] }); });
+    await flush();
+    expect(root.querySelector(".bean-bubble--working")).toBeNull();
+    expect(root.textContent).toContain("🧠 Remembered — Lives in Seattle");
+    expect([...root.querySelectorAll(".bean-status")].at(-1)?.textContent).toBe("Stopped by you.");
+    expect(root.textContent).not.toContain("Failed to reach Bean");
+    await send("again");
+    expect(root.textContent).toContain("ok");
+    expect(bean.chatStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("Esc Esc stops Bean's turn; an Esc armed for one turn never carries to the queued loopback that follows", async () => {
+    bean.chatStop = vi.fn();
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    bean.chat!.mockResolvedValueOnce({ reply: "on it", model: "m", proposedDelegate: { projectPath: "/p", instruction: "audit", composedPrompt: "audit" } });
+    await send("hi bean");
+    await click("Delegate");
+    let first!: (v: unknown) => void;
+    bean.chat!.mockImplementationOnce(() => new Promise((r) => { first = r; }));
+    bean.chat!.mockImplementationOnce(() => new Promise(() => {}));
+    await send("long one");
+    // The delegate finishes mid-turn: its loopback queues behind it.
+    await act(async () => { listeners.onDelegateEvent!({ taskId: "task1", type: "done", result: "audit ok" } satisfies DelegateEvent); });
+    await flush();
+    await esc();
+    expect(hint()?.textContent).toBe("Esc again to stop");
+    // The turn ends inside the Esc Esc window and the loopback starts in the same tick.
+    await act(async () => { first({ reply: "done", model: "m" }); });
+    await flush();
+    expect(chatCalls().at(-1)).toMatchObject({ source: "loopback" });
+    expect(hint()).toBeNull();
+    await esc();
+    expect(bean.chatStop).not.toHaveBeenCalled();
+    await esc();
+    expect(bean.chatStop).toHaveBeenCalledWith(expect.any(String), (bean.chat!.mock.calls.at(-1)![0] as { turnId: string }).turnId);
+  });
+
   it("agent mode: /skill runs its composed prompt in the live session — starts one, then steers it; no delegate card", async () => {
     bean.listSkills!.mockResolvedValue([
       { name: "Review PR", description: "review", body: "# Review PR\nCheck it.", target: "terminal" },

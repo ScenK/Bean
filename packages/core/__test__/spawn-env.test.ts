@@ -89,4 +89,13 @@ describe("safeFetch", () => {
     await expect(safeFetch(`http://127.0.0.1:${port}/`, only127)).resolves.toMatchObject({ ok: true, status: 200, body: "hello" });
     await expect(safeFetch(`http://127.0.0.1:${port}/big`, only127)).rejects.toThrow(/larger than/);
   });
+
+  it("an aborted caller signal rejects; the private-address and size guards still hold with a signal", async () => {
+    const signal = new AbortController().signal;
+    await expect(safeFetch(`http://127.0.0.1:${port}/`, { ...only127, signal: AbortSignal.abort() })).rejects.toThrow(/abort/i);
+    await expect(safeFetch(`http://127.0.0.1:${port}/`, { ...opts, signal })).rejects.toThrow(/refusing/);
+    await expect(safeFetch(`http://127.0.0.1:${port}/to-metadata`, { ...only127, signal })).rejects.toThrow(/refusing/);
+    await expect(safeFetch(`http://127.0.0.1:${port}/big`, { ...only127, signal })).rejects.toThrow(/larger than/);
+    await expect(safeFetch(`http://127.0.0.1:${port}/`, { ...only127, signal })).resolves.toMatchObject({ body: "hello" });
+  });
 });

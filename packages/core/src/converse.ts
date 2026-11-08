@@ -80,11 +80,13 @@ export interface ToolSpec { name: string; description: string; parameters: objec
 export interface ToolCall { id?: string; name: string; args: unknown; }
 // A tool Bean executes itself (in the Electron main process), unlike propose_run
 // which is confirm-first. run() returns a plain-text result fed back to the model.
-export interface ActionTool { spec: ToolSpec; run: (args: unknown) => Promise<string>; }
+// ctx.signal = the turn's abort signal: forward it to IO and check it before any write.
+export interface ActionTool { spec: ToolSpec; run: (args: unknown, ctx?: { signal?: AbortSignal }) => Promise<string>; }
 export interface ConverseDeps {
   /** webSearch = also offer the provider's built-in web search (OpenAI Responses `web_search`),
-   * which runs server-side inside the same model call — no tool round trip on Bean's side. */
-  chat: (a: { model: string; messages: ConvoMsg[]; tools: ToolSpec[]; webSearch?: boolean }) => Promise<{
+   * which runs server-side inside the same model call — no tool round trip on Bean's side.
+   * signal = abort the request (the turn was stopped). */
+  chat: (a: { model: string; messages: ConvoMsg[]; tools: ToolSpec[]; webSearch?: boolean; signal?: AbortSignal }) => Promise<{
     content: string;
     toolCalls: ToolCall[];
   }>;
@@ -179,6 +181,8 @@ export interface ConverseResult {
   sendCard?: SendCard;
   /** Set when the model call itself failed; `reply` then carries the user-facing explanation. */
   error?: string;
+  /** The caller aborted the turn (`ConverseInput.signal`); `reply` is "" and nothing else is set. */
+  stopped?: true;
 }
 /** `source` is the latest message's provenance: the memory tools are offered only for "typed".
  * `incognito` (the chat's off-the-record chip) withholds them too — an incognito chat writes nothing. */
@@ -672,6 +676,24 @@ export interface ConverseInput {
   routineAuthoring?: RoutineAuthoring;
   /** Offer propose_send (default false — the desktop; the surface resolves the name). */
   sendAvailable?: boolean;
+  /** Abort the turn: the model call and any running action are abandoned promptly and the
+   * result is `{ reply: "", stopped: true }`. Absent = the turn can't be stopped. */
+  signal?: AbortSignal;
+}
+
+/** Settles like `p`, or rejects as soon as `signal` aborts — for awaits whose callee may ignore
+ * the signal. `p` keeps a handler either way, so its later rejection is never unhandled. */
+function untilAbort<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return p;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    p.then(
+      (v) => { signal.removeEventListener("abort", onAbort); resolve(v); },
+      (e: unknown) => { signal.removeEventListener("abort", onAbort); reject(e); },
+    );
+  });
 }
 
 // Constant per surface (not per speaker) so the leading system message stays cache-stable.
@@ -716,6 +738,7 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     roleNote,
     routineAuthoring,
     sendAvailable = false,
+    signal,
   } = input;
   // The leading system message must stay byte-stable for the life of a chat: OpenAI prompt
   // caching is exact-prefix, so anything per-turn here (a clock, per-message memory ranking)
@@ -804,20 +827,26 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
 
   // Tool-execution loop: action tools run here and their result goes back to the model
   // for a confirming reply; propose_run short-circuits out to the UI as before.
+  // An abort is checked before every model call and after every await, and is never reported
+  // as an error or fed back to the model as a tool result.
+  const stopped = (): ConverseResult => ({ reply: "", model: deps.model, stopped: true });
   let content = "";
   for (let round = 0; round < 3; round++) {
+    if (signal?.aborted) return stopped();
     let toolCalls: ToolCall[] = [];
     try {
-      const res = await deps.chat({ model: deps.model, messages, tools, webSearch });
+      const res = await untilAbort(deps.chat({ model: deps.model, messages, tools, webSearch, signal }), signal);
       content = res.content;
       toolCalls = res.toolCalls;
     } catch (err) {
+      if (signal?.aborted) return stopped();
       // The cause matters: a bad key, a 404 model id, a 429, and a 400 over unsupported
       // params all land here, and blaming the API key for every one of them sent a past
       // debugging session down the wrong path entirely.
       const why = err instanceof Error ? err.message : String(err);
       return { reply: `I couldn't reach the model (${deps.model}): ${why}`, model: deps.model, error: why };
     }
+    if (signal?.aborted) return stopped();
 
     // A rejected proposal (hallucinated tool, unknown skill/project, blank args) must not end
     // the turn: `content` is usually "" alongside a tool call, and an empty reply is silence on
@@ -1027,10 +1056,12 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
     for (const c of actionCalls) {
       let result: string;
       try {
-        result = await actionByName.get(c.name)!.run(c.args);
+        result = await untilAbort(actionByName.get(c.name)!.run(c.args, { signal }), signal);
       } catch (err) {
+        if (signal?.aborted) return stopped();
         result = `error: ${err instanceof Error ? err.message : String(err)}`;
       }
+      if (signal?.aborted) return stopped();
       messages.push({ role: "tool", content: result, toolCallId: c.id ?? c.name });
     }
   }

@@ -49,3 +49,9 @@ there's no round in `converse()`'s tool loop; the adapter drops `web_search_call
 items like reasoning items. Gated by config `webSearch` on desktop/Discord/Teams (bots read
 config at startup — restart to apply) and by the per-routine `webSearch` flag for routine
 chat steps (never the digest call).
+
+**Stopping a turn (#739):** `ConverseInput.signal` aborts a turn — `converse()` races every
+`deps.chat` and action `run` against it (`untilAbort`) and returns `{ reply: "", stopped: true }`,
+never an error or a tool result. Actions get it as `run(args, { signal })`: forward it to IO
+(`safeFetch` `signal`, adapter request options) and re-check `signal.aborted` before any write —
+a tool that ignores it still stops the turn, but its side effect may land.

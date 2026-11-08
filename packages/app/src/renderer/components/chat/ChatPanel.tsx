@@ -24,6 +24,10 @@ import type { ChatDrop, DroppedImage } from "../../../channels.js";
 /** Esc Esc: the window for the second press. */
 const ESC_STOP_MS = 800;
 
+/** The running turn Stop / Esc Esc ends — the live agent's (banner) or Bean's own (working row).
+ * `key` changes with every turn, so an Esc armed for one never stops the next. */
+export interface StopTarget { key: string; kind: "live" | "bean"; stopping: boolean }
+
 /** An image to attach, wherever it came from; `path` = its file on disk, "" when it has none. */
 interface ImageSource { type: string; size: number; path: string; read: () => Promise<{ attachment: ImageAttachment; dataUrl: string }> }
 /** A PDF to pin, wherever it came from; `read` resolves to its base64 payload. */
@@ -135,6 +139,7 @@ export function ChatPanel({
   onPickProject,
   onPickModel,
   onEndAgent,
+  stopTarget,
   onStopTurn,
 }: {
   /** A chat kept mounted in the background while another one is shown. */
@@ -232,7 +237,8 @@ export function ChatPanel({
   onPickProject: (path: string) => void;
   onPickModel: (model: string) => void;
   onEndAgent: () => void;
-  /** Stop the running turn; the session stays (banner Stop, composer Esc Esc). */
+  stopTarget?: StopTarget;
+  /** Stop `stopTarget`; a live session stays (banner / working-row Stop, composer Esc Esc). */
   onStopTurn: () => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -268,12 +274,16 @@ export function ChatPanel({
   const pickable = menu ?? [];
   const activeEntry = pickable.length ? pickable[((slashIndex % pickable.length) + pickable.length) % pickable.length] : undefined;
   // Esc Esc stops the running turn: the first press arms (and still reaches an overlay's Escape),
-  // a second within ESC_STOP_MS stops. Anything else in between disarms.
-  const [escArmed, setEscArmed] = useState(false);
+  // a second within ESC_STOP_MS stops. Anything else in between disarms. The arm holds the target's
+  // key, so it is derived away (not reset by an effect, which could run after the next press) the
+  // moment another turn takes over — a same-tick hand-off is never stopped by a leftover arm.
+  const [escArmedKey, setEscArmedKey] = useState<string | undefined>(undefined);
   const escTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const disarmEsc = (): void => { clearTimeout(escTimer.current); setEscArmed(false); };
-  const canStop = live?.busy === true && !live.stopping;
-  useEffect(() => { if (!canStop) disarmEsc(); }, [canStop]);
+  const disarmEsc = (): void => { clearTimeout(escTimer.current); setEscArmedKey(undefined); };
+  const canStop = stopTarget !== undefined && !stopTarget.stopping;
+  const escArmed = canStop && escArmedKey === stopTarget.key;
+  const escHint = (kind: StopTarget["kind"]) =>
+    escArmed && stopTarget?.kind === kind ? <span class="bean-agent-banner-hint">Esc again to stop</span> : null;
   useEffect(() => () => clearTimeout(escTimer.current), []);
   const onComposerInput = (value: string): void => {
     const next = /^\/\S*$/.test(value) ? value : "";
@@ -650,7 +660,16 @@ export function ChatPanel({
           }
           if (it.kind === "working") {
             return agentRow(it, i, (
-              <div class="bean-bubble bean-bubble--bean bean-bubble--working">{speaker(it)}{it.text}<span class="bean-dots"><span /><span /><span /></span></div>
+              <div class="bean-bubble bean-bubble--bean bean-bubble--working">
+                {speaker(it)}{it.text}<span class="bean-dots"><span /><span /><span /></span>
+                {stopTarget?.kind === "bean" ? (
+                  <>
+                    <button type="button" class="bean-status-action" title="Stop this turn (Esc Esc)"
+                      disabled={stopTarget.stopping} onClick={onStopTurn}>{stopTarget.stopping ? "Stopping…" : "Stop"}</button>
+                    {escHint("bean")}
+                  </>
+                ) : null}
+              </div>
             ));
           }
           if (it.kind === "status") {
@@ -843,7 +862,7 @@ export function ChatPanel({
             {live.continuing ? <span>Continuing</span> : null}
             <AgentAvatar agent={live.agent} size={16} />
             <span>{AGENT_NAMES[live.agent]} · {projectName(live.projectPath)}{live.model ? ` · ${modelName(live.model)}` : ""}</span>
-            {escArmed ? <span class="bean-agent-banner-hint">Esc again to stop</span> : null}
+            {escHint("live")}
             {live.busy ? (
               <button
                 type="button"
@@ -931,9 +950,9 @@ export function ChatPanel({
               if (e.key === "Escape" && canStop) {
                 if (e.repeat) return;
                 if (escArmed) { e.preventDefault(); disarmEsc(); onStopTurn(); return; }
-                setEscArmed(true);
+                setEscArmedKey(stopTarget.key);
                 clearTimeout(escTimer.current);
-                escTimer.current = setTimeout(() => setEscArmed(false), ESC_STOP_MS);
+                escTimer.current = setTimeout(() => setEscArmedKey(undefined), ESC_STOP_MS);
                 return;
               }
               if (escArmed) disarmEsc();

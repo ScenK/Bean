@@ -231,7 +231,8 @@ export interface ChatHandlerDeps {
 }
 
 export function buildChatHandler(deps: ChatHandlerDeps) {
-  return async (req: ChatRequest, senderId?: number, mountId?: string): Promise<ConverseResult> => {
+  // signal = the turn's Stop (registerIpc's per-mount controller); converse() then resolves `stopped`.
+  return async (req: ChatRequest, senderId?: number, mountId?: string, signal?: AbortSignal): Promise<ConverseResult> => {
     // The renderer's imageFileGuard is UX only; main re-checks before anything reaches OpenAI (#733).
     if (req.images !== undefined) checkImageAttachments(req.images);
     // Renderer input is untrusted: a spoofed (non-%PDF-) or oversize document fails the turn here.
@@ -292,6 +293,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       sproutCatalog: deps.sproutFacts ? routines.map((r) => ({ name: r.name, description: r.description })) : [],
       webSearch: deps.webSearch?.() ?? false,
       sendAvailable: deps.proposeSend !== undefined,
+      signal,
     });
     if (result.proposedSend && deps.proposeSend) {
       result.sendCard = deps.proposeSend(result.proposedSend.destination, result.proposedSend.text);
@@ -1176,8 +1178,11 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   const tryChatKey = (sender: WebContents, mountId: unknown): string | undefined => {
     try { return chatKey(sender, mountId); } catch { return undefined; }
   };
+  // Bean's running turn per chat (mount key), so Stop / Esc Esc and a release can abort it.
+  const beanTurns = new Map<string, { turnId: unknown; ctl: AbortController }>();
   const releaseChat = (senderId: number, mountId: string): void => {
     if (!mounts.release(senderId, mountId)) return;
+    beanTurns.get(mountId)?.ctl.abort();
     memoryHandlers.release(mountId);
     deps.chatThreadHandlers.release(mountId);
     deps.delegateTasks.cancelMount(mountId);
@@ -1192,10 +1197,15 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   });
   ipcMain.handle(IPC.chat, async (e, req: ChatRequest, mountId: unknown) => {
     const key = chatKey(e.sender, mountId);
+    // Registered before any await, so a Stop that lands while the loaders run still aborts.
+    const turn = { turnId: req?.turnId, ctl: new AbortController() };
+    beanTurns.set(key, turn);
     const end = deps.onChatTurn?.(key);
     try {
-      const result = await chatHandler(req, e.sender.id, key);
+      const result = await chatHandler(req, e.sender.id, key, turn.ctl.signal);
       end?.(result.error);
+      // Stopped by the user: no error bubble, and nothing of this turn is captured as memory.
+      if (result.stopped) return result;
       // Fire-and-forget, off the reply path: the reply returns now, the receipt row follows —
       // tagged with its chat, which may no longer be the visible one.
       const sender = e.sender;
@@ -1208,7 +1218,15 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     } catch (err) {
       end?.(err instanceof Error ? err.message : String(err));
       throw err;
+    } finally {
+      if (beanTurns.get(key) === turn) beanTurns.delete(key);
     }
+  });
+  // Only the running turn it names: a late Stop must not abort the next turn.
+  ipcMain.on(IPC.chatStop, (e, mountId: unknown, turnId: unknown) => {
+    const key = tryChatKey(e.sender, mountId);
+    const turn = key === undefined ? undefined : beanTurns.get(key);
+    if (turn && typeof turnId === "string" && turn.turnId === turnId) turn.ctl.abort();
   });
   // Agent-mode images: a paste or browser drag has no file on disk, so it's written to a private
   // temp dir (one per app run) and the agent reads it by path. stageImages checks mime + size.

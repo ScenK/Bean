@@ -1170,3 +1170,57 @@ test("memoryCategories ride in the user-role recall message; system message and 
   expect(JSON.stringify(b!.tools)).toBe(JSON.stringify(a!.tools));
   expect(c!.messages.some((m) => String(m.content).includes("categories"))).toBe(false);
 });
+
+describe("abort signal", () => {
+  test("a model call that only settles on abort gives stopped promptly", async () => {
+    const ac = new AbortController();
+    let seen: AbortSignal | undefined;
+    const deps: ConverseDeps = {
+      model: "m",
+      chat: ({ signal }) => {
+        seen = signal;
+        return new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted"))));
+      },
+    };
+    const turn = conv({ latestUserText: "hi", deps, signal: ac.signal });
+    ac.abort();
+    expect(await turn).toEqual({ reply: "", model: "m", stopped: true });
+    expect(seen).toBe(ac.signal);
+  });
+
+  test("an action that ignores the signal still stops the turn; no later round or action runs", async () => {
+    const ac = new AbortController();
+    let chats = 0;
+    const ran: string[] = [];
+    const deps: ConverseDeps = {
+      model: "m",
+      chat: async () => {
+        chats++;
+        return { content: "", toolCalls: [{ id: "1", name: "slow", args: {} }, { id: "2", name: "fast", args: {} }] };
+      },
+    };
+    const tool = (name: string, run: ActionTool["run"]): ActionTool => ({ spec: { name, description: name, parameters: {} }, run });
+    const slow = tool("slow", (_args, ctx) => {
+      ran.push("slow");
+      expect(ctx?.signal).toBe(ac.signal);
+      setTimeout(() => ac.abort(), 1);
+      return new Promise(() => {}); // never settles
+    });
+    const fast = tool("fast", async () => { ran.push("fast"); return "ok"; });
+    const res = await conv({ latestUserText: "go", deps, actions: [slow, fast], signal: ac.signal });
+    expect(res).toEqual({ reply: "", model: "m", stopped: true });
+    expect(ran).toEqual(["slow"]);
+    expect(chats).toBe(1);
+  });
+
+  test("an already-aborted signal never calls the model, and a model error after abort isn't reported", async () => {
+    let called = false;
+    const pre = await conv({ latestUserText: "hi", deps: { model: "m", chat: async () => { called = true; return { content: "x", toolCalls: [] }; } }, signal: AbortSignal.abort() });
+    expect(pre.stopped).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  test("no signal leaves results unchanged", async () => {
+    expect(await conv({ latestUserText: "hi", deps: depsReturning("Hello!") })).toEqual({ reply: "Hello!", model: "m" });
+  });
+});

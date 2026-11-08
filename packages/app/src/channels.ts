@@ -78,6 +78,8 @@ export const IPC = {
   getModelMemory: "bean:get-model-memory",
   setModelMemory: "bean:set-model-memory",
   chat: "bean:chat",
+  // chat window → main: Stop / Esc Esc for Bean's own running turn (that mount + turnId only).
+  chatStop: "bean:chat-stop",
   chatImageProgress: "bean:chat-image-progress",
   chatStageImage: "bean:chat-stage-image",
   listSkills: "bean:list-skills",
