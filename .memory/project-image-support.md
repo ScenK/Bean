@@ -5,6 +5,8 @@
   (all surfaces do this). Deliberate ceiling: multi-turn follow-ups about the same image lose
   the pixels — widen `ChatTurn` only if that ever matters. Never store base64 in bean.db — note images (#182) are
   raw BLOBs in their own `note_images` table, referenced by id, so prompt/search/history rows stay small.
+  Main re-checks renderer-sent images (`checkImageAttachments`: list, ≤4, png/jpeg/webp, ≤10 MB by base64
+  length) in the desktop chat handler and `stageImages` — the renderer's `imageFileGuard` is UX only (#733).
 - **Generation is a per-request tool.** `makeGenerateImageTool()` (core `image-gen.ts`) must
   be built fresh per converse() call — its `paths` array collects that one turn's generated
   files (a shared instance leaks paths across requests). `converse()` never sets
