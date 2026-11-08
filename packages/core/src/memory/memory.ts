@@ -84,7 +84,8 @@ export function memorySections(memories: Memory[], ownerIds: string[]): MemorySe
     owner: [...byCategory].sort(([a], [b]) => rank(a).localeCompare(rank(b))).map(([category, rows]) => ({ category, rows })),
     ownerCount,
     channels: [...byChannel].map(([sourceId, rows]) => ({
-      sourceId, rows, title: [...rows].reverse().find((r) => r.sourceTitle)?.sourceTitle ?? sourceId,
+      // Latest title by time, not position: the Persona panel passes rows newest-first.
+      sourceId, rows, title: rows.filter((r) => r.sourceTitle).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.sourceTitle ?? sourceId,
     })),
     others,
     projects,

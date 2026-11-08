@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { bestProjectForSkill } from "../src/project-select.js";
+import { bestProjectForSkill, projectsByName } from "../src/project-select.js";
 import type { Project } from "../src/types.js";
 
 test("prefers a project whose skills array includes the name", () => {
@@ -36,4 +36,10 @@ test("skills array takes priority even when defaultSkill points elsewhere", () =
 
 test("returns undefined when there are no projects", () => {
   expect(bestProjectForSkill("review-code", [])).toBeUndefined();
+});
+
+test("projectsByName sorts A–Z ignoring case without mutating the input", () => {
+  const projects: Project[] = [{ name: "web", path: "/w" }, { name: "Zed", path: "/z" }, { name: "api", path: "/a" }];
+  expect(projectsByName(projects).map((p) => p.name)).toEqual(["api", "web", "Zed"]);
+  expect(projects.map((p) => p.name)).toEqual(["web", "Zed", "api"]);
 });

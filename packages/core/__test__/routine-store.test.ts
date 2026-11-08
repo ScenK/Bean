@@ -43,6 +43,11 @@ describe("save/load/delete routines", () => {
     await saveRoutine(dir, routine());
     expect((await loadRoutines(dir)).map((r) => r.name)).toEqual(["morning-triage"]);
   });
+  it("lists routines A–Z ignoring case (uppercase doesn't jump ahead)", async () => {
+    const dir = await tmp();
+    for (const name of ["beta", "Zeta", "alpha"]) await saveRoutine(dir, routine({ name }));
+    expect((await loadRoutines(dir)).map((r) => r.name)).toEqual(["alpha", "beta", "Zeta"]);
+  });
   it("writes atomically: no temp file left, and a stray .json.tmp is never loaded", async () => {
     const dir = await tmp();
     await saveRoutine(dir, routine());

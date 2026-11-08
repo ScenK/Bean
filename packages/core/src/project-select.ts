@@ -14,3 +14,8 @@ export function bestProjectForSkill(skillName: string, projects: Project[]): Pro
   return projects.find((p) => p.skills?.includes(skillName))
     ?? projects.find((p) => p.defaultSkill === skillName);
 }
+
+// Display order only — desktop panels list projects A–Z. Never feed this into
+// bestProjectForSkill or a "first project" fallback: those resolve in file order.
+export const projectsByName = (projects: Project[]): Project[] =>
+  [...projects].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
