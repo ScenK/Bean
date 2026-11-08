@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-import { join } from "node:path";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { delimiter, join } from "node:path";
 import { dbFile, recordDestination, saveDesktopChat, setAlias } from "@bean/core";
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
@@ -89,6 +90,22 @@ const SCAN = `(() => {
   return fails;
 })()`;
 
+// The pending row's dashed outline (#746) against the backdrop behind its wrapper. Its shimmer
+// alternates two tokens; the computed border color is whichever the animation shows now, and both
+// are 3:1 graphics tokens (theme-contrast.test.ts), so either sample holds the line.
+const OUTLINE = `(() => {
+  const cv = document.createElement("canvas"); cv.width = cv.height = 1;
+  const cx = cv.getContext("2d", { willReadFrequently: true });
+  const rgb = (s) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = s; cx.fillRect(0, 0, 1, 1); const d = cx.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+  const lum = (c) => { const f = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4); return 0.2126 * f(c[0] / 255) + 0.7152 * f(c[1] / 255) + 0.0722 * f(c[2] / 255); };
+  const el = document.querySelector(".bean-pending");
+  let bg = null;
+  for (let n = el; n && !bg; n = n.parentElement) { const c = rgb(getComputedStyle(n).backgroundColor); if (c[3] > 0) bg = c; }
+  const fg = rgb(getComputedStyle(el, "::before").borderTopColor);
+  const x = lum(fg), y = lum(bg);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+})()`;
+
 // Theme colors transition (the orb body's fill eases over .3s): scan only once they've settled.
 const setTheme = (win: Page, theme: string): Promise<void> => win.evaluate(async (t) => {
   document.documentElement.setAttribute("data-theme", t);
@@ -107,8 +124,16 @@ test("every component window clears WCAG AA text contrast in both themes", async
   recordDestination(db, { surface: "discord", conversationId: "c1", kind: "channel", platformName: "general", parentName: "Guild" });
   recordDestination(db, { surface: "teams", conversationId: "t1", kind: "channel", platformName: "Ops", parentName: "Team" });
   setAlias(db, { surface: "teams", conversationId: "t1" }, "Ops room", () => []);
+  // A fake claude that reads its turns and never picks one up, so the chat's live row stays
+  // "Not read yet" (#746) for the scan below.
+  const bin = join(home.homeDir, "fake-bin");
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, "claude"), "#!/bin/sh\ncat > /dev/null\n", "utf8");
+  await chmod(join(bin, "claude"), 0o755);
   const stub = await startStubOpenAI();
-  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  const app = await launchBean({
+    HOME: home.homeDir, OPENAI_BASE_URL: stub.url, PATH: [bin, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter),
+  });
   try {
     const avatar = await app.firstWindow();
     for (const kind of WINDOWS) {
@@ -173,6 +198,19 @@ test("every component window clears WCAG AA text contrast in both themes", async
         }
         await stop.click();
         await expect(win.getByText("Stopped by you.")).toBeVisible();
+        // #746: a live message the agent hasn't picked up — its outline and "Not read yet" caption
+        // (revealed after ~1.5s; toBeVisible waits past the hidden phase).
+        await win.locator(".bean-agent-chip").click();
+        await win.locator(".bean-chip-menu-row", { hasText: "Claude Code" }).first().click();
+        await win.locator(".bean-input--composer").fill("not picked up");
+        await win.locator(".bean-input--composer").press("Enter");
+        await expect(win.locator(".bean-pending-caption")).toBeVisible({ timeout: 10_000 });
+        for (const theme of ["hearth", "graphite"]) {
+          await setTheme(win, theme);
+          expect(await win.evaluate(SCAN), `chat pending row / ${theme}`).toEqual([]);
+          // The outline is a graphic: 3:1 against the surface it sits on (WCAG 1.4.11).
+          expect(await win.evaluate(OUTLINE), `pending outline / ${theme}`).toBeGreaterThanOrEqual(3);
+        }
       }
       await win.close();
     }

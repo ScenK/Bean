@@ -25,7 +25,7 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
     case "working":
       return undefined;
     case "user": {
-      const { images, pdf, ...rest } = it;
+      const { images, pdf, pending: _p, ...rest } = it;
       const text = withPlaceholder(it.text, !!images?.length);
       return { ...rest, text: cap(pdf ? `${text}\n${pdfPlaceholder(pdf.name)}` : text), ...(it.display !== undefined ? { display: cap(it.display) } : {}) };
     }

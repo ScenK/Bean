@@ -4,7 +4,7 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { ChatTurn, LiveCli } from "@bean/core";
 import {
-  AGENT_FINAL_CHARS, applyLiveEvent, canContinueLive, chatTurns, handoffLines, liveModelKey, liveProjectKey, offerAgent, offerLaunch,
+  AGENT_FINAL_CHARS, applyLiveEvent, consumeLive, canContinueLive, chatTurns, handoffLines, liveModelKey, liveProjectKey, offerAgent, offerLaunch,
   parseSlash, turnFooter, validModel, validProject, handoffItems, nextImageNumber, withImagePaths, mappedImageLabels, IMAGE_NOT_HANDED, pdfNotHanded,
 } from "../src/renderer/components/chat/agent-mode.js";
 import { slashMenu } from "../src/renderer/components/chat/slash-commands.js";
@@ -101,6 +101,52 @@ describe("agent-mode helpers", () => {
 });
 
 // ChatWindow end to end against a fake window.bean.
+describe("consumeLive (#746)", () => {
+  const user = (id: string, pending?: string): ChatItem => ({ kind: "user", id, text: id, source: "live", ...(pending ? { pending } : {}) });
+  const reply = (id: string, extra: Partial<Extract<ChatItem, { kind: "reply" }>> = {}): ChatItem =>
+    ({ kind: "reply", id, text: "", agent: "claude", session: "s1", tail: [], streaming: true, ...extra });
+  const ids = (items: ChatItem[]): string[] => items.map((it) => it.id);
+
+  it("splits an open bubble above the picked-up row: kept with no footer, the Working bubble reopens below", () => {
+    const out = consumeLive([user("a"), reply("r1", { display: "prose", tail: ["▸ Bash"] }), user("b", "k")], "s1", "k", "claude", 1, "r2");
+    expect(ids(out)).toEqual(["a", "r1", "b", "r2"]);
+    expect(out[1]).toMatchObject({ display: "prose", tail: ["▸ Bash"], streaming: false, text: "" });
+    expect(out[1]).not.toHaveProperty("footer");
+    expect(out[2]).not.toHaveProperty("pending");
+    expect(out[3]).toMatchObject({ kind: "reply", streaming: true, session: "s1" });
+  });
+
+  it("drops an empty open bubble above the row; one already below it stays (idle send)", () => {
+    expect(ids(consumeLive([reply("r1"), user("b", "k")], "s1", "k", "claude", 1, "r2"))).toEqual(["b", "r2"]);
+    const idle = [user("b", "k"), reply("r1")];
+    const out = consumeLive(idle, "s1", "k", "claude", 1, "r2");
+    expect(ids(out)).toEqual(["b", "r1"]);
+    expect(out[1]).toBe(idle[1]);
+  });
+
+  it("clears the oldest `count` rows of that key only; clearing none changes nothing", () => {
+    const items = [user("a", "k"), user("b", "old"), user("c", "k"), user("d", "k")];
+    const out = consumeLive(items, "s1", "k", "codex", 2, "r");
+    expect(out.map((it) => (it.kind === "user" ? it.pending : "reply"))).toEqual([undefined, "old", undefined, "k", "reply"]);
+    const none = [user("b", "old"), reply("r1", { display: "x" })];
+    expect(consumeLive(none, "s1", "k", "claude", 1, "r")).toBe(none);
+    expect(consumeLive([user("a", "k")], "s1", "k", "claude", 0, "r")).toHaveLength(1);
+  });
+
+  it("the turn's final result lands on the newest bubble; history keeps exactly one copy", () => {
+    const ev = (e: Partial<LiveEvent> & { type: LiveEvent["type"] }): LiveEvent => ({ sessionId: "s1", agent: "claude", seq: 1, ...e } as LiveEvent);
+    let items = applyLiveEvent([user("a")], ev({ type: "text", text: "Before." }), id);
+    items = [...items, user("b", "k")];
+    expect(applyLiveEvent(items, ev({ type: "consumed", count: 1 }), id)).toBe(items);
+    items = consumeLive(items, "s1", "k", "claude", 1, id());
+    items = applyLiveEvent(items, ev({ type: "text", text: "After." }), id);
+    items = applyLiveEvent(items, ev({ type: "turn", result: "After.", durationMs: 10 }), id);
+    const replies = items.filter((it): it is Extract<ChatItem, { kind: "reply" }> => it.kind === "reply");
+    expect(replies.map((r) => [r.display, r.text, r.footer])).toEqual([["Before.", "", undefined], ["After.", "After.", "— turn done (0.0s)"]]);
+    expect(chatTurns(items).filter((t) => t.role === "assistant")).toEqual([{ role: "assistant", content: "[Claude Code] After." }]);
+  });
+});
+
 describe("canContinueLive", () => {
   const card = (receipt?: { label: string; command: string; sessionId?: string; agent?: "claude" | "codex" }): ChatItem => ({
     kind: "delegate", id: "d", proposal: { projectPath: "/p", instruction: "i", composedPrompt: "i" }, state: "done", tail: [],
@@ -824,5 +870,69 @@ describe("ChatWindow agent mode", () => {
       expect(root.querySelector(".bean-chat-pending-image")).toBeNull();
       expect(bean.liveStart).not.toHaveBeenCalled();
     });
+  });
+
+  it("#746: a live row is \"Not read yet\" until picked up; pickup mid-turn splits the bubble; refusal and end clear rows", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    const pending = (): string[] => [...root.querySelectorAll(".bean-pending .bean-bubble--user")].map((b) => b.textContent ?? "");
+    await send("/claude fix X");
+    await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
+    expect(pending()).toEqual(["You: fix X (not read yet)"]);
+    expect(root.querySelector(".bean-pending-caption")?.textContent).toBe("Not read yet");
+    await live({ type: "consumed", count: 1 });
+    expect(pending()).toEqual([]);
+    await live({ type: "text", text: "Looking around." });
+    await live({ type: "output", line: "▸ Bash" });
+
+    // Mid-tool steer: the row waits below the open bubble, then pickup moves the bubble under it.
+    await send("also add a test");
+    expect(pending()).toHaveLength(1);
+    await live({ type: "consumed", count: 1 });
+    expect(pending()).toEqual([]);
+    await live({ type: "text", text: "Adding the test." });
+    await live({ type: "turn", result: "Adding the test.", durationMs: 1000 });
+    const order = [...root.querySelectorAll(".bean-bubble--user, .bean-bubble--bean")].map((b) => b.textContent ?? "");
+    const at = (s: string): number => order.findIndex((t) => t.includes(s));
+    expect(at("fix X")).toBeLessThan(at("Looking around."));
+    expect(at("Looking around.")).toBeLessThan(at("also add a test"));
+    expect(at("also add a test")).toBeLessThan(at("Adding the test."));
+    expect(root.querySelectorAll(".bean-agent-footer")).toHaveLength(1); // only the newest bubble
+
+    // A refused send clears its own row.
+    bean.liveSend!.mockResolvedValueOnce("The agent's queue is full.");
+    await send("one more");
+    expect(pending()).toEqual([]);
+    expect(root.textContent).toContain("The agent's queue is full.");
+
+    // Ending the session clears what it never picked up; a late consume from it touches nothing.
+    await send("and another");
+    expect(pending()).toHaveLength(1);
+    await send("/bean");
+    expect(pending()).toEqual([]);
+  });
+
+  it("#746: a switched-to session's consume clears its row; the old session's late events don't", async () => {
+    bean.availableClis!.mockResolvedValue(["claude", "codex"]);
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    const pending = (): string[] => [...root.querySelectorAll(".bean-pending .bean-bubble--user")].map((b) => b.textContent ?? "");
+    await send("/claude first");
+    await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
+    await send("queued in claude");
+    expect(pending()).toHaveLength(2);
+    bean.liveStart!.mockResolvedValueOnce({ sessionId: "s2", handedOver: 0 });
+    await send("/codex second");
+    expect(pending()).toEqual(["You: second (not read yet)"]);
+    const ev = async (e: Record<string, unknown>): Promise<void> => {
+      await act(async () => { listeners.onLiveEvent!({ seq: 1, ...e }); });
+      await flush();
+    };
+    await ev({ sessionId: "s2", agent: "codex", type: "started", projectPath: "/scratch", handedOver: 0 });
+    await ev({ sessionId: "s1", agent: "claude", type: "consumed", count: 1 });
+    await ev({ sessionId: "s1", agent: "claude", type: "ended", reason: "stopped" });
+    expect(pending()).toEqual(["You: second (not read yet)"]);
+    await ev({ sessionId: "s2", agent: "codex", type: "consumed", count: 1 });
+    expect(pending()).toEqual([]);
   });
 });

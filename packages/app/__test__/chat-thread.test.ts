@@ -33,6 +33,10 @@ describe("normalizeForSave", () => {
   const saved = normalizeForSave(transcript);
   const find = <K extends ChatItem["kind"]>(id: string) => saved.find((it) => it.id === id) as Extract<ChatItem, { kind: K }>;
 
+  it("drops a live row's pending marker (#746)", () => {
+    expect(normalizeForSave([{ kind: "user", id: "u", text: "hi", source: "live", pending: "k" }])).toEqual([{ kind: "user", id: "u", text: "hi", source: "live" }]);
+  });
+
   it("restores every actionable kind inert", () => {
     expect(saved.some((it) => it.kind === "working")).toBe(false);
     for (const id of ["old-5", "old-6", "old-9", "old-10", "old-11", "old-12"]) expect((find(id) as { state: string }).state).toBe("expired");

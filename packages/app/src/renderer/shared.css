@@ -666,6 +666,48 @@ button, input, textarea, select, a {
   color: var(--bean-text);
   border-radius: 14px 14px 4px 14px;
 }
+/* A message an agent hasn't picked up yet (#746): a dashed outline and a "Not read yet" caption on
+   the page surface. Both appear only after ~1.5s, so an idle send that's picked up at once never
+   flashes them; the outline shimmers slowly. No opacity dimming (convention-theme-contrast). */
+.bean-pending {
+  position: relative;
+  align-self: flex-end;
+  max-width: 80%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.bean-pending > .bean-bubble { max-width: 100%; }
+.bean-pending::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 1px dashed var(--bean-control-border);
+  border-radius: 17px 17px 7px 17px;
+  pointer-events: none;
+  animation: bean-pending-reveal 1ms 1.5s both, bean-pending-shimmer 2.4s 1.5s ease-in-out infinite;
+}
+/* Absolute, so it takes no room (no layout jump when it clears); it sits in the row gap below. */
+.bean-pending-caption {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 4px;
+  font-size: 11px;
+  line-height: 12px;
+  white-space: nowrap;
+  color: var(--bean-text-dim);
+  animation: bean-pending-reveal 1ms 1.5s both;
+}
+@keyframes bean-pending-reveal {
+  from { visibility: hidden; }
+  to { visibility: visible; }
+}
+@keyframes bean-pending-shimmer {
+  50% { border-color: var(--bean-text-dim); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bean-pending::before { animation: bean-pending-reveal 1ms 1.5s both; }
+}
 .bean-bubble--working {
   display: flex;
   align-items: center;

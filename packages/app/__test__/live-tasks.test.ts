@@ -394,6 +394,20 @@ describe("createLiveTasks interrupt (Stop / Esc Esc)", () => {
     h.cbs[0]!.onTurnStart!(); // nothing while stopping
     expect(h.types().at(-1)).toBe("turn");
   });
+
+  it("forwards the engine's onConsumed as a consumed event, never while stopping (#746)", async () => {
+    const h = harness();
+    await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "go" });
+    h.cbs[0]!.onConsumed!(1);
+    h.cbs[0]!.onConsumed!(2);
+    expect(h.events.slice(1).map((x) => x.e)).toEqual([
+      expect.objectContaining({ type: "consumed", count: 1, sessionId: "s1", agent: "claude" }),
+      expect.objectContaining({ type: "consumed", count: 2 }),
+    ]);
+    h.live.stop(A, "s1");
+    h.cbs[0]!.onConsumed!(1);
+    expect(h.types()).toEqual(["started", "consumed", "consumed"]);
+  });
 });
 
 describe("liveSpawnFn", () => {

@@ -3,7 +3,7 @@ import { ChatPanel, type StopTarget } from "./ChatPanel.js";
 import { PDF_NO_PATH, insertDroppedPath, newId, type AgentId, type ChatItem, type PinnedPdf } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
-  HANDOFF_ITEMS, chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, isLiveAgent, offerAgent,
+  HANDOFF_ITEMS, chatTurns, handoffItems, handoffLines, ensureStreaming, applyLiveEvent, consumeLive, isLiveAgent, offerAgent,
   LIVE_AGENTS, liveModelKey, liveProjectKey, offerLaunch, validModel, validProject, type AgentPick, type AgentPicks,
   LABEL_LIMIT, imageLabel, nextImageNumber, withImagePaths,
 } from "./agent-mode.js";
@@ -43,9 +43,11 @@ export const THREAD_SAVE_MS = 1000;
  * `unopened` = texts sent to a continued session before its resume was accepted (it opens lazily, on
  * the first send) — handed back to the composer if the host rejects the id. `model` = the `--model` it
  * launched with (unset = the agent's default, or a resumed session). `stopping` = a Stop is in flight,
- * until the next `turn`/`ended` or main refuses it. */
+ * until the next `turn`/`ended` or main refuses it. Its user rows carry `pending: key` until the agent
+ * picks them up (`consumed`), the send is refused, or the session ends (#746). */
 interface LiveState {
-  key: string; agent: LiveCli; projectPath: string; model?: string; sessionId?: string; turns: number; busy: boolean; queued: string[];
+  key: string; agent: LiveCli; projectPath: string; model?: string; sessionId?: string; turns: number; busy: boolean;
+  queued: { text: string; rowId: string }[];
   continuing?: boolean; receipt?: LiveReceipt; unopened?: string[]; stopping?: boolean;
 }
 
@@ -613,6 +615,7 @@ export function ChatSession({
     const l = liveRef.current;
     if (!l) return;
     setLive(undefined);
+    clearPending((it) => it.pending === l.key);
     if (l.sessionId) window.bean.liveStop(l.sessionId, mountId);
     const row: ChatItem = {
       kind: "status", id: newId(), tone: "info",
@@ -666,11 +669,22 @@ export function ChatSession({
     }
   };
 
-  const deliver = async (sessionId: string, agent: LiveCli, text: string): Promise<void> => {
+  // "Not read yet" ends for the matching rows: picked up, refused, or their session is gone.
+  const clearPending = (match: (it: Extract<ChatItem, { kind: "user" }>) => boolean): void => {
+    setItems((prev) => prev.map((it) => {
+      if (it.kind !== "user" || it.pending === undefined || !match(it)) return it;
+      const { pending: _, ...rest } = it;
+      return rest;
+    }));
+  };
+
+  // The Working bubble opens here only while the row still waits: a `consumed` that beat this IPC
+  // reply already opened it (and its turn may have ended since), so a late reply mustn't reopen one.
+  const deliver = async (sessionId: string, agent: LiveCli, text: string, rowId: string): Promise<void> => {
     // Undefined = sent; otherwise why not (TURN_QUEUE_FULL, an ended session) — shown inline.
     const err = await window.bean.liveSend(sessionId, text, mountId).catch(() => "Couldn't reach the agent session.");
-    if (err) { addStatus(err, "error"); return; }
-    setItems((prev) => ensureStreaming(prev, sessionId, agent, newId()));
+    if (err) { clearPending((it) => it.id === rowId); addStatus(err, "error"); return; }
+    setItems((prev) => (prev.some((it) => it.id === rowId && it.kind === "user" && it.pending) ? ensureStreaming(prev, sessionId, agent, newId()) : prev));
     const l = liveRef.current;
     if (l?.sessionId === sessionId) setLive({ ...l, busy: true });
   };
@@ -687,11 +701,12 @@ export function ChatSession({
     setLive(l);
     const history = handoffItems(itemsRef.current);
     const userId = newId();
-    setItems((prev) => [...prev, { kind: "user", id: userId, text, ...(display ? { display } : {}), source: "live" }]);
+    setItems((prev) => [...prev, { kind: "user", id: userId, text, ...(display ? { display } : {}), source: "live", pending: l.key }]);
     const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask, history, ...(label ? { label } : {}), ...(model ? { model } : {}) }, mountId)
       .catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
     if ("error" in res) {
       // A crash during startup already reported itself through the ended event.
+      clearPending((it) => it.pending === l.key);
       if (liveRef.current?.key === l.key) { setLive(undefined); addStatus(res.error, "error"); }
       return;
     }
@@ -711,7 +726,7 @@ export function ChatSession({
         return at < 0 ? [...prev, row] : [...prev.slice(0, at + 1), row, ...prev.slice(at + 1)];
       });
     }
-    for (const q of cur.queued) await deliver(res.sessionId, agent, q);
+    for (const q of cur.queued) await deliver(res.sessionId, agent, q.text, q.rowId);
   };
 
   // Typed composer text in agent mode (or a `/skill` composed from it: `display` is its label,
@@ -721,11 +736,12 @@ export function ChatSession({
   const sendToAgent = (agent: LiveCli, text: string, display?: string, typed = text): void => {
     const l = liveRef.current;
     if (!l || l.agent !== agent) { void startSession(agent, text, display, true); return; }
-    setItems((prev) => [...prev, { kind: "user", id: newId(), text, ...(display ? { display } : {}), source: "live" }]);
+    const rowId = newId();
+    setItems((prev) => [...prev, { kind: "user", id: rowId, text, ...(display ? { display } : {}), source: "live", pending: l.key }]);
     if (!l.receipt) l.unopened?.push(typed);
     const toAgent = withImagePaths(text, imageLabelsRef.current);
-    if (l.sessionId) void deliver(l.sessionId, agent, toAgent);
-    else l.queued.push(toAgent);
+    if (l.sessionId) void deliver(l.sessionId, agent, toAgent, rowId);
+    else l.queued.push({ text: toAgent, rowId });
   };
 
   // Commands parse here only — replies, streamed agent text, loopbacks and skill prompts never
@@ -839,6 +855,7 @@ export function ChatSession({
     setMode(agent);
     const res = await window.bean.liveResume(sessionId, mountId).catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
     if ("error" in res) {
+      clearPending((it) => it.pending === l.key);
       if (liveRef.current?.key === l.key) { setLive(undefined); setMode(prevMode); addStatus(res.error, "error"); }
       return;
     }
@@ -847,7 +864,7 @@ export function ChatSession({
     if (cur?.key !== l.key) { window.bean.liveStop(res.sessionId, mountId); return; } // ended while starting
     setLive({ ...cur, sessionId: res.sessionId, projectPath: res.projectPath, queued: [] });
     if (projects.some((p) => p.path === res.projectPath)) rememberProject(res.projectPath);
-    for (const q of cur.queued) await deliver(res.sessionId, agent, q);
+    for (const q of cur.queued) await deliver(res.sessionId, agent, q.text, q.rowId);
   };
 
   // Stop / Esc Esc: end the running turn, keep the session. Main drops it if that turn already ended
@@ -883,6 +900,12 @@ export function ChatSession({
     if (!knownSessionsRef.current.has(e.sessionId)) return;
     // A Continue live opens lazily — nothing runs until the first send (deliver opens the bubble).
     if (e.type === "started" && liveRef.current?.continuing) return;
+    // Pickup: only the current session's rows clear (a late event from an ended one has no rows left).
+    if (e.type === "consumed") {
+      const cur = liveRef.current;
+      if (cur?.sessionId === e.sessionId) setItems((prev) => consumeLive(prev, e.sessionId, cur.key, e.agent, e.count, newId()));
+      return;
+    }
     if (e.type === "turn" || e.type === "ended") flushRef.current = true;
     if (e.type === "turn" && hiddenRef.current) onUnread();
     setItems((prev) => applyLiveEvent(prev, e, newId));
@@ -896,6 +919,7 @@ export function ChatSession({
     if (e.type === "session") setLive({ ...cur, receipt: e.receipt });
     if (e.type !== "ended") return;
     setLive(undefined);
+    clearPending((it) => it.pending === cur.key);
     setMode("bean");
     const name = AGENT_NAMES[e.agent];
     // The child has exited: the receipt's Continue live is ready at once.
