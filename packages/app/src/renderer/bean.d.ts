@@ -59,6 +59,8 @@ declare global {
       chatAttach(mountId: string): void;
       chatRelease(mountId: string): void;
       chat(req: ChatRequest, mountId: string): Promise<ConverseResult>;
+      /** Stop that chat's running Bean turn — ignored unless `turnId` is the one running; its `chat()` then resolves `stopped`. */
+      chatStop(mountId: string, turnId: string): void;
       onChatImageProgress(cb: (mountId: string) => void): void;
       /** Writes a pasted/dragged image (base64) to a private temp file for an agent to read; its path. */
       chatStageImage(data: string, mime: string, mountId: string): Promise<string>;

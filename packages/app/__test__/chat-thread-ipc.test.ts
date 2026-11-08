@@ -272,6 +272,53 @@ describe("chat thread IPC", () => {
     expect(chat.send).toHaveBeenCalledWith(IPC.memoryUpdated, [{ id: expect.any(String), text: "fact 1" }], A);
   });
 
+  // #740: Stop / Esc Esc for Bean's own turn. The model call never answers, so only an abort ends it.
+  function hangingChat() {
+    const extractMemories = vi.fn(async () => ({ candidates: [{ text: "fact" }], rejected: 0, failed: false }));
+    const ended: unknown[] = [];
+    const h = ipcHarness({
+      loadSkills: async () => [], loadProjects: async () => [], loadPersona: async () => ({ name: "Bean", tags: [] }),
+      loadMemories: async () => [], loadRoutines: async () => [],
+      converse: () => new Promise(() => {}),
+      extractMemories, autoMemory: () => true, getModel: () => "m",
+      onChatTurn: () => (error?: string) => { ended.push(error); },
+      imageGen: undefined, beanDirPath: undefined, actions: [],
+    });
+    h.emit(IPC.chatAttach, h.chat, A);
+    h.emit(IPC.chatAttach, h.chat, B);
+    const turn = (mount: string, turnId: string) =>
+      h.invoke(IPC.chat, h.chat, { history: [], message: "I live in Seattle", source: "typed", turnId }, mount) as Promise<{ stopped?: true; error?: string }>;
+    return { ...h, extractMemories, ended, turn };
+  }
+
+  it("chatStop aborts only its own mount's running turn; a stopped turn raises no error and captures nothing", async () => {
+    const { chat, other, emit, turn, ended, extractMemories } = hangingChat();
+    let settled = false;
+    const running = turn(A, "t1").finally(() => { settled = true; });
+    emit(IPC.chatStop, other, A, "t1"); // not the chat window
+    emit(IPC.chatStop, chat, B, "t1"); // another chat's mount
+    emit(IPC.chatStop, chat, A, "t0"); // a stale turn id
+    emit(IPC.chatStop, chat, A); // no turn id
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+    emit(IPC.chatStop, chat, A, "t1");
+    expect(await running).toMatchObject({ reply: "", stopped: true });
+    expect(ended).toEqual([undefined]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(extractMemories).not.toHaveBeenCalled();
+    expect(chat.send).not.toHaveBeenCalled();
+  });
+
+  it("releasing a chat aborts its running turn", async () => {
+    const { chat, emit, turn, releaseChatSender } = hangingChat();
+    const a = turn(A, "t1");
+    const b = turn(B, "t2");
+    emit(IPC.chatRelease, chat, A);
+    expect(await a).toMatchObject({ stopped: true });
+    releaseChatSender(chat.id);
+    expect(await b).toMatchObject({ stopped: true });
+  });
+
   it("list/delete are chat-window only", () => {
     const { chat, other, invoke } = ipcHarness();
     expect(() => invoke(IPC.chatThreadList, other)).toThrow(/chat window/);
