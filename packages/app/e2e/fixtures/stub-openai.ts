@@ -4,6 +4,8 @@ import type { AddressInfo } from "node:net";
 export interface StubReply {
   content?: string;
   toolCall?: { name: string; args: Record<string, unknown> };
+  /** Never answer: the request is held until the client gives up (a Stop aborts it). */
+  hang?: boolean;
 }
 
 export interface StubOpenAI {
@@ -14,6 +16,8 @@ export interface StubOpenAI {
   queue: (reply: StubReply) => void;
   /** Every `/v1/responses` request body seen so far, parsed (raw text if it isn't JSON). */
   requests: unknown[];
+  /** How many held (`hang`) requests the client has closed. */
+  aborted: () => number;
   close: () => Promise<void>;
 }
 
@@ -27,13 +31,21 @@ export interface StubOpenAI {
 export async function startStubOpenAI(): Promise<StubOpenAI> {
   const replies: StubReply[] = [];
   const requests: unknown[] = [];
+  let aborted = 0;
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
+    // A held request's socket closes under it: never an uncaught error.
+    req.on("error", () => {});
+    res.on("error", () => {});
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
       const body = Buffer.concat(chunks).toString("utf8");
       try { requests.push(JSON.parse(body)); } catch { requests.push(body); }
       const reply = replies.shift();
+      if (reply?.hang) {
+        res.on("close", () => { aborted++; });
+        return;
+      }
       const output: Record<string, unknown>[] = [
         { type: "message", content: [{ type: "output_text", text: reply?.content ?? "" }] },
       ];
@@ -55,6 +67,8 @@ export async function startStubOpenAI(): Promise<StubOpenAI> {
     url: `http://127.0.0.1:${port}/v1`,
     queue: (reply) => replies.push(reply),
     requests,
-    close: () => new Promise((resolve) => server.close(() => resolve())),
+    aborted: () => aborted,
+    // A still-held request would keep close() waiting forever.
+    close: () => new Promise((resolve) => { server.close(() => resolve()); server.closeAllConnections(); }),
   };
 }

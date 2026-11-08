@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ChatPanel } from "./ChatPanel.js";
+import { ChatPanel, type StopTarget } from "./ChatPanel.js";
 import { PDF_NO_PATH, insertDroppedPath, newId, type AgentId, type ChatItem, type PinnedPdf } from "../../shared/chat-types.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import {
@@ -358,6 +358,10 @@ export function ChatSession({
   // Hand-off offers already started (startOffer's claim-once guard).
   const offersClaimedRef = useRef(new Set<string>());
   const busyRef = useRef(false);
+  // Bean's own running turn (its turnId) and whether a Stop is in flight for it.
+  const beanTurnRef = useRef<{ id: string; stopping?: boolean } | undefined>(undefined);
+  const [beanTurn, setBeanTurnState] = useState<{ id: string; stopping?: boolean } | undefined>(undefined);
+  const setBeanTurn = (t: { id: string; stopping?: boolean } | undefined): void => { beanTurnRef.current = t; setBeanTurnState(t); };
   const queuedSendsRef = useRef<QueuedSend[]>([]);
   const pendingDelegateStartsRef = useRef(new Map<string, Promise<string>>());
   const delegateTaskIdsRef = useRef(new Map<string, string>());
@@ -502,6 +506,7 @@ export function ChatSession({
     setStatus("working");
     const workingId = newId();
     const turnId = newId();
+    setBeanTurn({ id: turnId });
     // The pinned PDF goes with every Bean turn; only the turn that attaches it shows its chip.
     const doc = pdfRef.current;
     const attaching = doc !== undefined && !doc.sent;
@@ -522,7 +527,10 @@ export function ChatSession({
       const documents = doc ? [{ data: doc.data, filename: doc.filename }] : undefined;
       const res = await window.bean.chat({ history, message, source, incognito: incognitoRef.current, linkedNote: linkedNoteRef.current, images, documents, turnId }, mountId);
       if (res.model) setModel(res.model);
-      if (doc && res.error) {
+      // Stopped while attaching: the file may be what hung, so it's unpinned like a failure. A PDF an
+      // earlier turn already read stays pinned.
+      if (res.stopped && attaching) unpinFailed();
+      if (doc && res.error && !res.stopped) {
         unpinFailed();
         res.reply = `${res.reply}\n\nI couldn't read ${doc.filename} — it may have too many pages or be password-protected, ` +
           "or this model doesn't take files. I've unpinned it; drop it again to retry.";
@@ -568,6 +576,12 @@ export function ChatSession({
         if (res.proposedLiveSession) next.push({ kind: "offer", id: newId(), offer: res.proposedLiveSession, state: "pending" });
         for (const m of res.remembered ?? []) next.push({ kind: "status", id: newId(), text: `🧠 Remembered — ${m.text}${m.category ? ` (${m.category})` : ""}`, tone: "done" });
         for (const m of res.forgotten ?? []) next.push({ kind: "forgot", id: newId(), text: m.text, row: m, state: "saved" });
+        if (res.stopped) {
+          next.push({
+            kind: "status", id: newId(), tone: "info",
+            text: attaching ? `Stopped by you. 📄 ${doc.filename} unpinned — drop it again to retry.` : "Stopped by you.",
+          });
+        }
         return next;
       });
       flushRef.current = true;
@@ -582,6 +596,7 @@ export function ChatSession({
     } finally {
       busyRef.current = false;
       setBusy(false);
+      if (beanTurnRef.current?.id === turnId) setBeanTurn(undefined);
       const next = queuedSendsRef.current.shift();
       if (next) void sendMessage(next.text, next.display, true, undefined, next.source);
     }
@@ -844,6 +859,15 @@ export function ChatSession({
     const ok = await window.bean.liveInterrupt(l.sessionId, mountId, l.turns).catch(() => false);
     const cur = liveRef.current;
     if (!ok && cur?.key === l.key && cur.stopping) setLive({ ...cur, stopping: false });
+  };
+
+  // Stop / Esc Esc for Bean's own turn: main aborts it only if this turn is still the one running;
+  // its chat() then resolves `stopped` (sendMessage renders the row).
+  const stopBeanTurn = (): void => {
+    const t = beanTurnRef.current;
+    if (!t || t.stopping) return;
+    setBeanTurn({ ...t, stopping: true });
+    window.bean.chatStop(mountId, t.id);
   };
 
   const dismissOffer = (id: string): void => {
@@ -1198,6 +1222,15 @@ export function ChatSession({
   const working = busy || live?.busy === true || hasActiveDelegates(items, 0);
   useEffect(() => onWorking(working ? threadRef.current?.id : undefined), [working]);
   const isLive = live !== undefined;
+  // What Stop / Esc Esc ends: the live turn first (loopbacks and skill prompts can run a Bean turn
+  // beside it), otherwise Bean's own. A new key = a new turn, so ChatPanel disarms a leftover Esc.
+  const stopTarget: StopTarget | undefined = live?.busy
+    ? { key: `${live.key}:${live.turns}`, kind: "live", stopping: live.stopping === true }
+    : beanTurn ? { key: `bean:${beanTurn.id}`, kind: "bean", stopping: beanTurn.stopping === true } : undefined;
+  const onStopTurn = (): void => {
+    if (stopTarget?.kind === "live") void interruptTurn();
+    else if (stopTarget?.kind === "bean") stopBeanTurn();
+  };
   useEffect(() => onLive(isLive ? threadRef.current?.id : undefined), [isLive]);
 
   // Window close: write the thread one last time (main re-checks the incognito latch), hand off memory.
@@ -1298,7 +1331,10 @@ export function ChatSession({
     memoryUpdated: (saved) => setItems((prev) => [...prev, { kind: "memory", id: newId(), saved, state: "saved" }]),
     // generate_image started inside the current turn — flip the working bubble so the
     // (up to a minute) wait reads as painting, not a hang.
-    imageProgress: () => setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it))),
+    imageProgress: () => {
+      if (beanTurnRef.current?.stopping) return; // the row is on its way out
+      setItems((prev) => prev.map((it) => (it.kind === "working" ? { ...it, text: "🎨 Painting" } : it)));
+    },
     runPrompt,
     // Rendered as a `reply` (not `status`) so it enters conversation history: a later "retry" needs
     // the full instruction (notice.text) in context, not just the short bubble text (notice.display).
@@ -1423,7 +1459,8 @@ export function ChatSession({
         onPickProject={pickProject}
         onPickModel={pickModel}
         onEndAgent={() => { endSession("Bean"); setMode("bean"); }}
-        onStopTurn={() => void interruptTurn()}
+        stopTarget={stopTarget}
+        onStopTurn={onStopTurn}
         onConfirm={confirmProposal}
         onCancel={cancelProposal}
         onNoteSave={(id, edited, asNew, images) => void saveNote(id, edited, asNew, images)}

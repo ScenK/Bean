@@ -161,6 +161,18 @@ test("every component window clears WCAG AA text contrast in both themes", async
         }
         await win.keyboard.press("Escape");
         await expect(win.locator(".bean-chat-sidebar--overlay")).toHaveCount(0);
+        // #740: a running Bean turn's working row and its Stop (still narrow, sidebar hidden).
+        stub.queue({ hang: true });
+        await win.locator(".bean-input--composer").fill("hold on");
+        await win.locator(".bean-input--composer").press("Enter");
+        const stop = win.locator(".bean-bubble--working").getByRole("button", { name: "Stop", exact: true });
+        await expect(stop).toBeVisible();
+        for (const theme of ["hearth", "graphite"]) {
+          await setTheme(win, theme);
+          expect(await win.evaluate(SCAN), `chat working row / ${theme}`).toEqual([]);
+        }
+        await stop.click();
+        await expect(win.getByText("Stopped by you.")).toBeVisible();
       }
       await win.close();
     }
