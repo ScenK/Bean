@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { projectsByName } from "@bean/core/project-select";
 import { Markdown } from "../../shared/Markdown.js";
 import { storeNoteImageFiles, useResolvedNoteBody } from "../../shared/note-images.js";
 import { imageFileGuard } from "../../shared/chat-types.js";
@@ -93,7 +94,7 @@ export function NotesPanel() {
     return q ? notes.filter((n) => n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q)) : notes;
   }, [notes, query]);
 
-  // Starred notes first as their own group, then by project (registry order), General last;
+  // Starred notes first as their own group, then by project (A–Z), General last;
   // notes sorted A–Z by title within a group. A star that only floated a note inside its own
   // project group would stay buried under the groups above it — the point of starring is to be
   // above everything, so starred notes leave their project group entirely.
@@ -108,7 +109,7 @@ export function NotesPanel() {
     const starred = live.filter((n) => n.starred);
     if (starred.length > 0) out.push({ key: STARRED_KEY, label: "★ Starred", notes: starred.sort(byTitle) });
     const rest = live.filter((n) => !n.starred);
-    for (const p of projects) {
+    for (const p of projectsByName(projects)) {
       const own = rest.filter((n) => n.project === p.path);
       if (own.length > 0) out.push({ key: p.path, label: p.name, notes: own.sort(byTitle) });
     }

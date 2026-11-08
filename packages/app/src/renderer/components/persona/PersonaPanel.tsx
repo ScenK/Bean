@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { PERSONA_TAGS, type Persona, type PersonaTag } from "@bean/core/persona";
 import type { DreamDigest, Memory, Project } from "@bean/core";
 import { memorySections, OWNER_CATEGORY, OWNER_PIN_LIMIT } from "@bean/core/memory";
+import { projectsByName } from "@bean/core/project-select";
 import type { MemoryBatch } from "../../../ipc.js";
 
 const ago = (iso: string): string => {
@@ -33,6 +34,7 @@ export function PersonaPanel() {
   const [dreamDetails, setDreamDetails] = useState<{ before: string[]; after?: string }[] | undefined>(undefined);
   const [dreamNote, setDreamNote] = useState<string | undefined>(undefined);
   const justRef = useRef<HTMLDivElement>(null);
+  const addedIds = useRef(new Set<string>());
 
   const refresh = async (): Promise<void> => {
     const [p, mem, projs, b, d, owners] = await Promise.all([
@@ -123,6 +125,7 @@ export function PersonaPanel() {
   };
   const addMemory = (projectPath?: string): void => {
     const entry: Memory = { id: crypto.randomUUID(), text: "", projectPath, createdAt: new Date().toISOString() };
+    addedIds.current.add(entry.id);
     setMemories((prev) => [...prev, entry]);
     setQuery(""); // the new row is empty — a live filter would hide it
     void run(() => window.bean.appendMemories([entry]));
@@ -149,7 +152,11 @@ export function PersonaPanel() {
     : "";
 
   const needle = query.trim().toLowerCase();
-  const shown = needle ? memories.filter((m) => m.text.toLowerCase().includes(needle)) : memories;
+  // Newest first; rows added in this session stay last, next to the "+ Add" button that made them.
+  // Pinned by id, not by empty text: typing the first character mustn't move the focused row.
+  const pinned = (m: Memory): number => Number(addedIds.current.has(m.id));
+  const newestFirst = (a: Memory, b: Memory): number => pinned(a) - pinned(b) || b.createdAt.localeCompare(a.createdAt);
+  const shown = (needle ? memories.filter((m) => m.text.toLowerCase().includes(needle)) : [...memories]).sort(newestFirst);
   const batchIds = new Set(batch?.ids ?? []);
   const justRemembered = shown.filter((m) => batchIds.has(m.id));
   const sections = memorySections(shown.filter((m) => !batchIds.has(m.id)), ownerIds);
@@ -316,7 +323,7 @@ export function PersonaPanel() {
           {ownerGroups.length === 0 ? (
             <div class="bean-memory-empty">{needle ? "No matches." : "Nothing yet."}</div>
           ) : (
-            ownerGroups.flatMap((g) => g.rows).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(ownerRow)
+            ownerGroups.flatMap((g) => g.rows).sort(newestFirst).map(ownerRow)
           )}
         </>
       ) : (
@@ -357,7 +364,7 @@ export function PersonaPanel() {
         </>
       ) : null}
 
-      {projects.filter((p) => sections.projects.some((m) => m.projectPath === p.path)).map((p) => (
+      {projectsByName(projects).filter((p) => sections.projects.some((m) => m.projectPath === p.path)).map((p) => (
         <div key={p.path}>
           <div class="bean-memory-group-label">{p.name}</div>
           {sections.projects.filter((m) => m.projectPath === p.path).map((m) => row(m))}

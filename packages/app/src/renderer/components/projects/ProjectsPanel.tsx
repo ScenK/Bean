@@ -1,5 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import type { Project, LaunchMode, Skill } from "@bean/core";
+import { projectsByName } from "@bean/core/project-select";
 import { truncateMiddle } from "./truncate-path.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
@@ -128,7 +129,7 @@ export function ProjectsPanel({
         {projects.length === 0 ? (
           <div class="bean-panel-empty">No projects yet — add one below.</div>
         ) : (
-          projects.map((p) => (
+          projectsByName(projects).map((p) => (
             <div
               key={p.path}
               class={`bean-projects-row${selected === p.path ? " bean-projects-row--selected" : ""}`}
