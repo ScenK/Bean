@@ -97,14 +97,14 @@ export function ProjectsPanel({
     }
     // Preserve skill-group assignments across an edit — they're not part of the edit form.
     const priorSkills = projects.find((p) => p.path === editing.original)?.skills;
-    const next = [
-      ...others,
-      {
-        name, path,
-        ...(editing.form.defaultSkill ? { defaultSkill: editing.form.defaultSkill } : {}),
-        ...(priorSkills ? { skills: priorSkills } : {}),
-      },
-    ];
+    const edited: Project = {
+      name, path,
+      ...(editing.form.defaultSkill ? { defaultSkill: editing.form.defaultSkill } : {}),
+      ...(priorSkills ? { skills: priorSkills } : {}),
+    };
+    // Edit in place: re-appending would jump the project (and its Notes group) to the bottom.
+    const at = projects.findIndex((p) => p.path === editing.original);
+    const next = at < 0 ? [...others, edited] : projects.map((p, i) => (i === at ? edited : p));
     try {
       await window.bean.saveProjects(next);
       setEditing(undefined);

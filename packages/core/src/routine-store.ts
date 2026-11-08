@@ -371,7 +371,7 @@ export async function loadRoutines(dir: string): Promise<Routine[]> {
     return [];
   }
   const routines: Routine[] = [];
-  for (const file of entries.filter((f) => f.endsWith(".json") && !f.startsWith(".")).sort()) {
+  for (const file of entries.filter((f) => f.endsWith(".json") && !f.startsWith(".")).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))) {
     try {
       const parsed: unknown = JSON.parse(await readFile(join(dir, file), "utf8"));
       if (isValidRoutine(parsed)) routines.push(parsed);
