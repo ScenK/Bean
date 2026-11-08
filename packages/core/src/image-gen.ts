@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ActionTool } from "./converse.js";
 
 export interface ImageGenDeps {
-  generate: (args: { model: string; prompt: string }) => Promise<{ b64: string }>;
+  generate: (args: { model: string; prompt: string; signal?: AbortSignal }) => Promise<{ b64: string }>;
   model: string;
   imagesDir: string;
   /** Fired when a generation actually starts — surfaces show a "🎨 working" indicator
@@ -36,12 +36,13 @@ export function makeGenerateImageTool(deps: ImageGenDeps): { tool: ActionTool; p
         required: ["prompt"],
       },
     },
-    run: async (args: unknown): Promise<string> => {
+    run: async (args: unknown, ctx?: { signal?: AbortSignal }): Promise<string> => {
       const prompt = (args as { prompt?: unknown })?.prompt;
       if (typeof prompt !== "string" || !prompt.trim()) return "error: generate_image needs a non-empty prompt";
       deps.onStart?.();
       try {
-        const { b64 } = await deps.generate({ model: deps.model, prompt });
+        const { b64 } = await deps.generate({ model: deps.model, prompt, signal: ctx?.signal });
+        if (ctx?.signal?.aborted) return "error: stopped";
         await mkdir(deps.imagesDir, { recursive: true });
         // UUID chunk: concurrent generations with matching prompt slugs in the same
         // millisecond must not race writeFile into the same path.

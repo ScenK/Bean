@@ -461,3 +461,28 @@ test("the remember tool keeps the model's category only on an owner path (#648)"
   // The spec is the same object shape either way — byte-stable for prompt caching.
   expect(JSON.stringify(tool(true).tools.map((t) => t.spec))).toBe(JSON.stringify(tool().tools.map((t) => t.spec)));
 });
+
+test("an abort during the remember classifier writes nothing and the classifier got the signal", async () => {
+  const ac = new AbortController();
+  let seen: AbortSignal | undefined;
+  const appended: unknown[] = [];
+  const t = makeMemoryTools({
+    append: async (a) => { appended.push(...a); }, forget: async (ids) => ids, memories: [m("x", "old")], projects: [],
+    latestUserText: "remember that I prefer tabs and forget the old one",
+    classifier: {
+      model: "c",
+      chat: async ({ signal }) => {
+        seen = signal;
+        ac.abort(); // stopped mid-classification; the classifier still answers yes
+        return { content: '{"remember": true, "forget": true}', toolCalls: [] };
+      },
+    },
+  });
+  const [remember, forget] = t.tools;
+  expect(await remember!.run({ text: "Prefers tabs", quote: "I prefer tabs" }, { signal: ac.signal })).toMatch(/^error/);
+  expect(await forget!.run({ ids: ["x"] }, { signal: ac.signal })).toMatch(/^error/);
+  expect(seen).toBe(ac.signal);
+  expect(appended).toEqual([]);
+  expect(t.remembered).toEqual([]);
+  expect(t.forgotten).toEqual([]);
+});

@@ -51,7 +51,7 @@ interface ResponsesClient {
       reasoning?: { effort: string };
       store?: boolean;
       prompt_cache_key?: string;
-    }) => Promise<{
+    }, options?: { signal?: AbortSignal }) => Promise<{
       output?: ResponsesOutputItem[] | null;
       status?: string | null;
       incomplete_details?: { reason?: string | null } | null;
@@ -93,7 +93,7 @@ function toResponsesItems(message: ConvoMsg): ResponsesItem[] {
 }
 
 export function makeOpenAIConverseWithClient(client: ResponsesClient, reasoningEffort = ""): ConverseDeps["chat"] {
-  return async ({ model, messages, tools, webSearch }) => {
+  return async ({ model, messages, tools, webSearch, signal }) => {
     const res = await client.responses.create({
       model,
       // Bean's fixed runtime rules, on every brain call (converse, routine steps, memory,
@@ -123,7 +123,7 @@ export function makeOpenAIConverseWithClient(client: ResponsesClient, reasoningE
       // raises cache-hit odds under load. Bean's volume stays far below the per-key rate
       // where a shared key would hurt routing.
       prompt_cache_key: "bean-converse",
-    });
+    }, { signal });
     let content = "";
     const toolCalls: ToolCall[] = [];
     for (const item of res.output ?? []) {
@@ -161,17 +161,17 @@ export function makeOpenAIConverse(apiKey: string, reasoningEffort = ""): Conver
 }
 
 interface ImageClient {
-  images: { generate: (a: { model: string; prompt: string; response_format?: "b64_json" }) => Promise<{ data?: Array<{ b64_json?: string }> }> };
+  images: { generate: (a: { model: string; prompt: string; response_format?: "b64_json" }, options?: { signal?: AbortSignal }) => Promise<{ data?: Array<{ b64_json?: string }> }> };
 }
 
 export function makeOpenAIImageGenWithClient(client: ImageClient): ImageGenDeps["generate"] {
-  return async ({ model, prompt }) => {
+  return async ({ model, prompt, signal }) => {
     // gpt-image-* always returns b64 and rejects response_format; dall-e-* defaults to a URL,
     // so it must be asked for b64 explicitly or generation "succeeds" with no data for us.
     const res = await client.images.generate({
       model, prompt,
       ...(model.startsWith("dall-e") ? { response_format: "b64_json" as const } : {}),
-    });
+    }, { signal });
     const b64 = res.data?.[0]?.b64_json;
     if (!b64) throw new Error("Images API returned no image data");
     return { b64 };

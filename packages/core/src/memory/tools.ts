@@ -41,10 +41,10 @@ export const MEMORY_INTENT_PROMPT =
 
 /** One model call: the fixed prompt plus the typed text — no history, memories or tool args.
  * Anything but two strict booleans (or a thrown call) is `undefined` = check failed. */
-async function classifyIntent(llm: ConverseDeps, text: string): Promise<MemoryIntent | undefined> {
+async function classifyIntent(llm: ConverseDeps, text: string, signal?: AbortSignal): Promise<MemoryIntent | undefined> {
   try {
     const res = await llm.chat({
-      model: llm.model, tools: [],
+      model: llm.model, tools: [], signal,
       messages: [{ role: "system", content: MEMORY_INTENT_PROMPT }, { role: "user", content: text }],
     });
     const o = JSON.parse(res.content.trim().replace(/^```(?:json)?\s*|\s*```$/g, "")) as Partial<MemoryIntent> | null;
@@ -88,8 +88,10 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
   // ordinary turn that calls neither tool costs nothing extra.
   let intent: Promise<MemoryIntent | undefined> | undefined;
   /** undefined = authorized; otherwise the refusal the model sees. Runs before any mutation. */
-  const refuse = async (kind: keyof MemoryIntent): Promise<string | undefined> => {
-    const verdict = await (intent ??= classifyIntent(deps.classifier, deps.latestUserText));
+  const refuse = async (kind: keyof MemoryIntent, signal?: AbortSignal): Promise<string | undefined> => {
+    const verdict = await (intent ??= classifyIntent(deps.classifier, deps.latestUserText, signal));
+    // A stopped turn writes nothing, whatever the classifier said.
+    if (signal?.aborted) return "error: stopped";
     const verb = kind === "remember" ? "remembered" : "forgotten";
     if (!verdict) return `error: nothing ${verb} — Bean couldn't confirm the request right now. Tell the user to try again.`;
     return verdict[kind] ? undefined : `error: nothing ${verb} — the user's latest message doesn't ask you to ${kind} anything. Don't retry.`;
@@ -102,8 +104,8 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
         "you to remember something (\"remember that…\"). Banter, messages addressed to someone " +
         "else, or remarks about you needing to learn are NOT requests to remember.",
     ),
-    run: async (args) => {
-      const no = await refuse("remember");
+    run: async (args, ctx) => {
+      const no = await refuse("remember", ctx?.signal);
       if (no) return no;
       const c = validateCandidate(args, [deps.latestUserText], deps.projects);
       if (typeof c === "string") return `error: not remembered — ${c}`;
@@ -135,8 +137,8 @@ export function makeMemoryTools(deps: MemoryToolDeps): { tools: ActionTool[]; re
         required: ["ids"],
       },
     },
-    run: async (args) => {
-      const no = await refuse("forget");
+    run: async (args, ctx) => {
+      const no = await refuse("forget", ctx?.signal);
       if (no) return no;
       const raw = (args as { ids?: unknown })?.ids;
       const ids = Array.isArray(raw) ? [...new Set(raw.filter((id): id is string => typeof id === "string" && known.has(id)))] : [];

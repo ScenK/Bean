@@ -27,6 +27,8 @@ export interface SafeFetchOptions {
   timeoutMs: number;
   maxBytes: number;
   maxRedirects?: number;
+  /** Caller's abort (a stopped turn), combined with the deadline. */
+  signal?: AbortSignal;
   /** Test seam; defaults to `isPrivateAddress`. */
   isBlocked?: (address: string) => boolean;
 }
@@ -37,7 +39,8 @@ export interface SafeFetchResult { status: number; ok: boolean; url: string; bod
  * redirect hop. One deadline covers the whole chain + body; the body aborts past `maxBytes`. */
 export async function safeFetch(url: string, opts: SafeFetchOptions): Promise<SafeFetchResult> {
   const isBlocked = opts.isBlocked ?? isPrivateAddress;
-  const signal = AbortSignal.timeout(opts.timeoutMs);
+  const deadline = AbortSignal.timeout(opts.timeoutMs);
+  const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
   let current = new URL(url);
   for (let hop = 0; ; hop++) {
     const res = await get(current, isBlocked, signal);

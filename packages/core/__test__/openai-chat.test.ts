@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { makeOpenAIConverseWithClient, makeOpenAISpeakWithClient, makeOpenAITranscribeWithClient } from "../src/openai-chat.js";
+import { makeOpenAIConverseWithClient, makeOpenAIImageGenWithClient, makeOpenAISpeakWithClient, makeOpenAITranscribeWithClient } from "../src/openai-chat.js";
 
 // A fake /v1/responses client that records the request and replays a canned output[].
 function fakeResponses(output: unknown[] = [{ type: "message", content: [{ type: "output_text", text: "ok" }] }]) {
@@ -253,4 +253,18 @@ test("converse adapter appends the built-in web_search tool only when asked, and
 
   await chat({ model: "m", messages: [{ role: "user", content: "hi" }], tools: [tool] });
   expect((seen.args?.tools as Array<{ type: string }>).map((t) => t.type)).toEqual(["function"]);
+});
+
+test("responses.create and images.generate receive the abort signal in request options", async () => {
+  const signal = new AbortController().signal;
+  const opts: unknown[] = [];
+  const chat = makeOpenAIConverseWithClient({
+    responses: { create: async (_a: unknown, o?: unknown) => { opts.push(o); return { output: [] }; } },
+  } as never);
+  await chat({ model: "m", messages: [], tools: [], signal });
+  const generate = makeOpenAIImageGenWithClient({
+    images: { generate: async (_a, o) => { opts.push(o); return { data: [{ b64_json: "QUJD" }] }; } },
+  });
+  await generate({ model: "gpt-image-2", prompt: "p", signal });
+  expect(opts).toEqual([{ signal }, { signal }]);
 });
