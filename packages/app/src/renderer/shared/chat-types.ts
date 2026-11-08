@@ -17,8 +17,10 @@ export function imageFileGuard(type: string, size: number, attachedCount = 0): s
 // Renderer copy of core's MAX_PDF_BYTES / MAX_PDFS_PER_CHAT (converse.ts) — keep in step.
 export const PDF_MIME = "application/pdf";
 export const MAX_PDF_BYTES = 10 * 1024 * 1024;
-/** A PDF pinned to a chat: re-sent with every Bean turn until removed, replaced, unpinned or closed. */
-export interface PinnedPdf { data: string; filename: string; size: number }
+/** A PDF pinned to a chat (`path` = its file on disk, "" when it has none): re-sent with every Bean turn until removed, replaced, unpinned or closed. */
+export interface PinnedPdf { data: string; filename: string; size: number; path: string }
+/** Agent mode: a PDF the agent can't read because it has no file on disk (a paste, a browser drag). */
+export const PDF_NO_PATH = "That PDF has no file path — drop it from Finder to hand it to the agent.";
 /** Error message for PDFs that can't be attached, or null. `count` = PDFs in this one drop/paste. */
 export function pdfFileGuard(size: number, count = 1): string | null {
   if (count > 1) return "Only one PDF can be attached per chat.";

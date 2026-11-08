@@ -5,11 +5,11 @@ import { act } from "preact/test-utils";
 import type { ChatTurn, LiveCli } from "@bean/core";
 import {
   AGENT_FINAL_CHARS, applyLiveEvent, canContinueLive, chatTurns, handoffLines, liveModelKey, liveProjectKey, offerAgent, offerLaunch,
-  parseSlash, turnFooter, validModel, validProject, handoffItems, nextImageNumber, withImagePaths, mappedImageLabels, IMAGE_NOT_HANDED,
+  parseSlash, turnFooter, validModel, validProject, handoffItems, nextImageNumber, withImagePaths, mappedImageLabels, IMAGE_NOT_HANDED, pdfNotHanded,
 } from "../src/renderer/components/chat/agent-mode.js";
 import { slashMenu } from "../src/renderer/components/chat/slash-commands.js";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
-import type { ChatItem } from "../src/renderer/shared/chat-types.js";
+import { PDF_NO_PATH, type ChatItem } from "../src/renderer/shared/chat-types.js";
 import type { LiveEvent } from "../src/live-tasks.js";
 import type { DelegateEvent } from "../src/delegate-tasks.js";
 
@@ -178,6 +178,12 @@ describe("agent-mode image labels", () => {
   it("hand-off marks earlier Bean-mode image turns", () => {
     expect(handoffItems([{ kind: "user", id: "u", text: "what is this", images: ["data:image/png;base64,AA"] }]))
       .toEqual([{ role: "user", text: `what is this\n${IMAGE_NOT_HANDED}` }]);
+  });
+
+  it("hand-off marks earlier Bean-mode PDF turns by name only", () => {
+    expect(handoffItems([{ kind: "user", id: "u", text: "sum up", pdf: { name: "r.pdf", size: 9 } }]))
+      .toEqual([{ role: "user", text: "sum up\n[PDF attached: r.pdf — not handed over]" }]);
+    expect(pdfNotHanded("r.pdf")).toBe("[PDF attached: r.pdf — not handed over]");
   });
 });
 
@@ -683,6 +689,73 @@ describe("ChatWindow agent mode", () => {
       const req = bean.liveStart!.mock.calls[0]![0];
       expect(req.ask).toBe("fix it [Image #1]\n\n[Image #1]: /tmp/bean-images-x/staged.png");
       expect(req.history[0].text).toBe(`what is this\n${IMAGE_NOT_HANDED}`);
+    });
+
+    describe("PDFs (#732)", () => {
+      const pdf = (): File => new File(["%PDF-1.4\n%%EOF\n"], "r.pdf", { type: "application/pdf" });
+      const paste = async (file: File): Promise<void> => {
+        const ev = new Event("paste", { bubbles: true, cancelable: true });
+        Object.defineProperty(ev, "clipboardData", { value: { items: [{ kind: "file", type: file.type, getAsFile: () => file }] } });
+        await act(async () => { composer().dispatchEvent(ev); });
+        await flush();
+      };
+      const pinned = async (path: string): Promise<void> => {
+        bean.getPathForFile!.mockReturnValueOnce(path);
+        await drop(pdf());
+        await vi.waitFor(() => expect(root.querySelector(".bean-chat-pending-file")).not.toBeNull());
+      };
+
+      it("agent mode: a Finder drop inserts the path, a paste gets the notice; neither reaches Bean", async () => {
+        await mount();
+        await send("/claude");
+        bean.getPathForFile!.mockReturnValueOnce("/Users/me/r.pdf");
+        await drop(pdf());
+        expect(composer().value).toBe("/Users/me/r.pdf ");
+        composer().value = "";
+        await paste(pdf());
+        expect(root.textContent).toContain(PDF_NO_PATH);
+        expect(composer().value).toBe("");
+        expect(bean.chat).not.toHaveBeenCalled();
+        expect(bean.liveStart).not.toHaveBeenCalled();
+        expect(root.querySelector(".bean-chat-pending-file")).toBeNull();
+      });
+
+      it("/claude <ask> carries a pending PDF as its path and unpins it", async () => {
+        await mount();
+        await pinned("/Users/me/r.pdf");
+        await send("/claude sum it up");
+        await vi.waitFor(() => expect(bean.liveStart).toHaveBeenCalled());
+        expect(bean.liveStart!.mock.calls[0]![0].ask).toBe("/Users/me/r.pdf sum it up");
+        await send("/bean");
+        expect(root.querySelector(".bean-chat-pending-file")).toBeNull();
+        expect(bean.chat).not.toHaveBeenCalled();
+      });
+
+      it("/claude <ask> with a pathless pending PDF sends the ask alone, with the notice", async () => {
+        await mount();
+        await pinned("");
+        await send("/claude sum it up");
+        await vi.waitFor(() => expect(bean.liveStart).toHaveBeenCalled());
+        expect(bean.liveStart!.mock.calls[0]![0].ask).toBe("sum it up");
+        expect(root.textContent).toContain(PDF_NO_PATH);
+      });
+
+      it("a bare /claude puts a pending PDF's path in the composer; a sent one is marked in the hand-off, never its path", async () => {
+        await mount();
+        await pinned("/Users/me/r.pdf");
+        await send("what is this");
+        expect(bean.chat).toHaveBeenCalledTimes(1);
+        await send("/claude");
+        expect(composer().value).toBe("");
+        await send("/bean");
+        await pinned("/Users/me/s.pdf");
+        await send("/claude");
+        expect(composer().value).toBe("/Users/me/s.pdf");
+        await send("go");
+        const req = bean.liveStart!.mock.calls[0]![0];
+        expect(req.history[0].text).toBe("what is this\n[PDF attached: r.pdf — not handed over]");
+        expect(JSON.stringify(req.history)).not.toContain("/Users/me");
+      });
     });
 
     it("a bare /claude hands pending Bean images back to the composer as labels", async () => {
