@@ -219,6 +219,9 @@ export interface LiveSessionResultCardInput {
   projectName: string;
   startedBy: string;
   outcome: "started" | "cancelled" | "ended";
+  /** A fresh session's opening prompt: this card replaces the proposal card that showed it (and a
+   * Discord `/live-session` prompt is never a message of its own), so it would vanish otherwise. */
+  prompt?: string;
   /** On "ended": re-offer "Continue live" for this session id (a resumed session). */
   resumeLiveId?: string;
 }

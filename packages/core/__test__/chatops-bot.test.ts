@@ -1234,6 +1234,10 @@ test("start-live card action starts the session and binds the channel", async ()
   const proposalId = latestLiveProposalId(effects.cards);
   await bot.onCardAction({ conversationId: "c1", fromName: "sam", value: { beanAction: "start-live", proposalId } }, effects);
   expect(deps.liveSessions.has("c1")).toBe(true);
+  // The result card replaces the proposal card, so it keeps the prompt the agent got.
+  expect(effects.updates.at(-1)?.card).toMatchObject({ kind: "live-session-result", outcome: "started", prompt: "look at the auth module" });
+  // And history saves it, so the agent's answer isn't a reply to nothing.
+  expect(deps.conversations.history("c1").at(-1)).toEqual({ role: "user", content: "[sam]: look at the auth module" });
 });
 
 test("start-live/cancel-live from another conversation is refused without consuming the proposal", async () => {

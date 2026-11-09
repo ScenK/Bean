@@ -173,6 +173,8 @@ test("Continue live: finished/ended cards submit resume-live with the session id
     .toContain("resume-live");
   expect(JSON.stringify(liveSessionResultCard({ projectName: "bean", startedBy: "bob", outcome: "started", resumeLiveId: "sess-1" })))
     .not.toContain("resume-live");
+  expect(JSON.stringify(liveSessionResultCard({ projectName: "bean", startedBy: "bob", outcome: "started", prompt: "fix the login bug" })))
+    .toContain("fix the login bug");
 
   const card = JSON.stringify(liveSessionProposalCard({
     proposalId: "live-1", projectName: "other", instruction: "",

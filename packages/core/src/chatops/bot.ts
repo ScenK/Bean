@@ -554,6 +554,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   const liveSkillNameOf = (p: ProposedLiveSession, v: CardAction["value"]): string | undefined =>
     v.skillName === undefined ? p.skillName : v.skillName === "__none__" ? undefined : v.skillName || undefined;
 
+  // The result card replaces the proposal card that showed the prompt: a fresh session's carries it on.
+  const shownPrompt = (p: ProposedLiveSession): { prompt?: string } => (p.resume || !p.instruction ? {} : { prompt: p.instruction });
+
   /** `owner` set = the owner tapped Start (or Continue live at the desk): the conversation goes
    * into the catalog with this session's live binding. `quiet` = a desk resume: a refusal is only
    * returned (the desk shows its own line), never posted to the channel. */
@@ -578,7 +581,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       refusal = { refused: "no-record", text: "That project isn't registered any more — this session wasn't started." };
     }
     if (refusal) {
-      await updateTo(deps.cards.liveSessionResultCard({ projectName: await projectLabel(resume?.projectPath ?? p.proposal.projectPath, !!resume), startedBy, outcome: "cancelled" }));
+      await updateTo(deps.cards.liveSessionResultCard({ projectName: await projectLabel(resume?.projectPath ?? p.proposal.projectPath, !!resume), startedBy, outcome: "cancelled", ...shownPrompt(p.proposal) }));
       if (!quiet) await fx.post(refusal.text);
       return { refused: refusal.refused };
     }
@@ -633,14 +636,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     async function updateToEnded(): Promise<void> {
       // The session id doesn't change across a resume, so the ended card can offer it again.
       await updateTo(deps.cards.liveSessionResultCard({
-        projectName, startedBy, outcome: "ended", ...(resume ? { resumeLiveId: resume.sessionId } : {}),
+        projectName, startedBy, outcome: "ended", ...shownPrompt(p.proposal), ...(resume ? { resumeLiveId: resume.sessionId } : {}),
       }));
     }
     if (started === "channel") {
       if (!quiet) await fx.post("A live session is already running in this channel — say `stop` to end it first.");
       return { refused: "channel-busy" };
     }
-    await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started" }));
+    // The opening prompt is a turn like any steering message (steerLive): saved before its answer,
+    // or history (and the desktop's synced view) holds the agent's reply to nothing.
+    if (!resume && p.proposal.instruction) {
+      deps.conversations.append(conv, { role: "user", content: speakerLine(startedBy, p.proposal.instruction) });
+    }
+    await updateTo(deps.cards.liveSessionResultCard({ projectName, startedBy, outcome: "started", ...shownPrompt(p.proposal) }));
     // A resume's project and CLI were locked to its row, not picked — nothing to remember.
     if (!resume) {
       const memory = await deps.loadModelMemory();
@@ -2173,7 +2181,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (beanAction === "cancel-live") {
           const projectName = await projectLabel(pending.proposal.projectPath, !!pending.proposal.resume);
           if (pending.cardActivityId !== undefined) {
-            await fx.updateCard(pending.cardActivityId, deps.cards.liveSessionResultCard({ projectName, startedBy: action.fromName, outcome: "cancelled" }));
+            await fx.updateCard(pending.cardActivityId, deps.cards.liveSessionResultCard({ projectName, startedBy: action.fromName, outcome: "cancelled", ...shownPrompt(pending.proposal) }));
           }
           return;
         }
@@ -2183,7 +2191,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         if (!deps.liveSessionsEnabled()) {
           const projectName = await projectLabel(pending.proposal.projectPath, !!pending.proposal.resume);
           if (pending.cardActivityId !== undefined) {
-            await fx.updateCard(pending.cardActivityId, deps.cards.liveSessionResultCard({ projectName, startedBy: action.fromName, outcome: "cancelled" }));
+            await fx.updateCard(pending.cardActivityId, deps.cards.liveSessionResultCard({ projectName, startedBy: action.fromName, outcome: "cancelled", ...shownPrompt(pending.proposal) }));
           }
           await fx.post("Live sessions are disabled — this session wasn't started.");
           return;

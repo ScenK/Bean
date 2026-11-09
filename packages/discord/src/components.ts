@@ -441,7 +441,10 @@ function liveSessionResultCard(input: LiveSessionResultCardInput): object {
     : input.outcome === "cancelled"
       ? `Live session cancelled (by ${input.startedBy})`
       : `Live session in ${input.projectName} ended`;
-  return { embeds: [{ title }], components: input.outcome === "ended" ? continueLiveRows(input.resumeLiveId) : [] };
+  return {
+    embeds: [{ title, ...(input.prompt ? { description: input.prompt.slice(0, LIVE_PROMPT_LIMIT) } : {}) }],
+    components: input.outcome === "ended" ? continueLiveRows(input.resumeLiveId) : [],
+  };
 }
 
 export const discordCards: CardBuilders = {

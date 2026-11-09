@@ -489,7 +489,11 @@ export function liveSessionResultCard(input: LiveSessionResultCardInput): object
       ? `Live session cancelled (by ${input.startedBy})`
       : `Live session in ${input.projectName} ended`;
   return {
-    type: "AdaptiveCard", version: "1.4", body: [{ type: "TextBlock", text, weight: "Bolder" }],
+    type: "AdaptiveCard", version: "1.4",
+    body: [
+      { type: "TextBlock", text, weight: "Bolder" },
+      ...(input.prompt ? [{ type: "TextBlock", text: input.prompt, wrap: true }] : []),
+    ],
     ...(input.outcome === "ended" && input.resumeLiveId ? { actions: continueLiveActions(input.resumeLiveId) } : {}),
   };
 }

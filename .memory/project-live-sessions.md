@@ -359,3 +359,8 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   the last one. `s.sent` (text last delivered to `msgId`) lets the seal/rollover branches skip an
   edit whose text is unchanged. The 1900-char rollover is still the only split; stream mode
   (unset `proseOnly`) never seals on text.
+- **Chatops opening prompt**: the proposal card is the only place a live prompt is
+  shown (a Discord `/live-session` prompt is never its own message), and Start/Cancel replace that
+  card. So `liveSessionResultCard` carries `prompt` (fresh sessions; `shownPrompt` in `bot.ts`), and
+  `startLiveSessionAction` appends the prompt to history as a `speakerLine` user turn before the
+  first `[live session]` result — like `steerLive`. Resumes have no prompt and save none.
