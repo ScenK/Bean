@@ -301,6 +301,8 @@ test("Continue live: a button on finished/ended cards only when the custom_id fi
   expect(tooLong.components).toEqual([]);
   expect(JSON.stringify(discordCards.liveSessionResultCard({ projectName: "bean", startedBy: "scen", outcome: "ended", resumeLiveId: "sess-1" })))
     .toContain("bean:resume-live:sess-1");
+  expect(JSON.stringify(discordCards.liveSessionResultCard({ projectName: "bean", startedBy: "scen", outcome: "started", prompt: "fix the login bug" })))
+    .toContain("fix the login bug");
 
   const card = JSON.stringify(discordCards.liveSessionProposalCard({
     proposalId: "live-1", projectName: "other", instruction: "",
