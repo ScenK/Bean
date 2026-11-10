@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { homedir } from "node:os";
+import { homedir, release } from "node:os";
 import { fileURLToPath } from "node:url";
 import { basename, join, dirname } from "node:path";
 import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./chatops-enabled-store.js";
@@ -13,10 +13,11 @@ import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { applyChatopsActivity, clearBotJobs } from "./chatops-activity.js";
 import { installAvatarControls } from "./avatar-window.js";
-import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker, webContents } from "electron";
+import { createAvatarLog } from "./avatar-log.js";
+import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker, powerMonitor, screen, webContents } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import {
-  beanDir, ensurePrivateBeanDir, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
+  beanDir, ensurePrivateBeanDir, avatarLogFile, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
   isValidSessionId, resumeCommand, listSkillProposals, pruneStepAttempts, listStepAttempts, CLI_NAMES,
   modelMemoryFile, loadCliModels, clisFile, type CliModels,
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
@@ -98,7 +99,34 @@ app.whenReady().then(async () => {
   let quitting = false;
   app.on("before-quit", () => { quitting = true; });
   const avatar = createAvatarWindow();
-  const avatarControls = installAvatarControls(avatar);
+  // Evidence for a vanished avatar (#757): renderer/GPU deaths, sleep, displays, each recovery click.
+  const avatarLogPath = avatarLogFile(dir);
+  const writeAvatarLog = createAvatarLog(avatarLogPath);
+  let avatarLogOk = true;
+  const avatarLog = (event: string, fields?: Record<string, unknown>): void => { avatarLogOk = writeAvatarLog(event, fields); };
+  avatar.webContents.on("render-process-gone", (_e, d) => avatarLog("render-process-gone", { reason: d.reason, exitCode: d.exitCode }));
+  avatar.webContents.on("did-fail-load", (_e, errorCode, errorDescription) => avatarLog("did-fail-load", { errorCode, errorDescription }));
+  avatar.on("unresponsive", () => avatarLog("unresponsive"));
+  avatar.on("responsive", () => avatarLog("responsive"));
+  app.on("child-process-gone", (_e, d) => avatarLog("child-process-gone", { type: d.type, reason: d.reason, exitCode: d.exitCode }));
+  powerMonitor.on("suspend", () => avatarLog("suspend"));
+  powerMonitor.on("resume", () => avatarLog("resume"));
+  screen.on("display-added", () => avatarLog("display-added"));
+  screen.on("display-removed", () => avatarLog("display-removed"));
+  const avatarControls = installAvatarControls(avatar, {
+    log: (event, fields) => avatarLog(event, event === "bring-back" ? { ...fields, version: pkg.version, os: release() } : fields),
+    // Hoisted closure: only runs after a reload, long after taskStatus exists.
+    replay: () => { if (!avatar.isDestroyed()) avatar.webContents.send(IPC.taskStatus, taskStatus.list()); },
+    // Non-blocking: main keeps streaming delegates/sessions while this is open.
+    fail: () => void dialog.showMessageBox({
+      type: "warning",
+      message: "Bean couldn't bring the avatar back",
+      detail: "Recovery did not stop any running work. Relaunch Bean when it finishes."
+        + `\n\n${avatarLogOk ? `Log: ${avatarLogPath}` : "Log unavailable."}`,
+    }),
+  });
+  // e2e hook (avatar-visibility.e2e.ts): the tray menu item isn't reachable from Playwright.
+  (globalThis as { beanBringBack?: () => void }).beanBringBack = avatarControls.bringBack;
   // Keep the Mac awake while Bean works, or always if the tray toggle is on (#188).
   const keepAwake = createKeepAwake({
     start: (type) => powerSaveBlocker.start(type),
@@ -108,7 +136,8 @@ app.whenReady().then(async () => {
   // What Bean is working on, and what failed — pushed to the avatar's status bubbles (design 2a).
   const taskStatus = createTaskStatus((jobs) => {
     keepAwake.setJobs(jobs); // before the avatar check: the hold must track work even without a window
-    if (!avatar.isDestroyed()) avatar.webContents.send(IPC.taskStatus, jobs);
+    // Mid-reload the old document is gone; the finished reload replays the current list.
+    if (!avatar.isDestroyed() && !avatarControls.reloading()) avatar.webContents.send(IPC.taskStatus, jobs);
   });
   ipcMain.on(IPC.dismissTask, (_e, id: unknown) => { if (typeof id === "string") taskStatus.dismiss(id); });
   // The running turn per chat (mount id), so image progress can find its bubble.

@@ -3,7 +3,8 @@
 The Electron windowing has several non-obvious behaviors. Don't "fix" them away.
 
 **The avatar window never navigates.** Unlike the old avatar+intake single-window model,
-`avatar.html` is loaded once and stays loaded for the app's lifetime. Double-click is
+`avatar.html` is loaded once and stays loaded for the app's lifetime — except that the tray's
+**Bring Bean Back** reloads that same page (see "Bring Bean Back reloads" below). Double-click is
 intentionally not wired on the bean body; component opens still call `window.bean.openComponent(kind,
 droppedUrl?)` (IPC), which opens or focuses one of 4 separate singleton component
 `BrowserWindow`s — it does not `location.href` the avatar window anywhere. There is no more
@@ -81,3 +82,18 @@ synchronously (`chat-size-store.ts`) before building the chat `BrowserWindow`, c
 synchronously on `close`. Don't move this to renderer `localStorage` — the window exists before
 any renderer does, so a renderer-held size makes it visibly jump. Guarded by
 `chat-size-store.test.ts` and the chat-size spec in `component-windows.e2e.ts`.
+
+**Bring Bean Back reloads the avatar page (#757).** A crashed/blank avatar renderer still
+reports a URL and `isVisible() === true`, so moving + showing it does nothing — only
+`webContents.reload()` repaints. `bringBack` resets main-side state (mode `normal`, status
+height 0, cursor-display spot), reloads with `did-finish-load` / `did-fail-load` (main frame) /
+`render-process-gone` / 10 s timeout listeners, then replays `taskStatus.list()`. While
+`reloading`, the move/mode/status-height IPC is ignored (the old document still passes the
+sender check) and main skips task-status pushes. Failure → non-blocking `showMessageBox`
+(never `showErrorBox`: running work must keep going). The Space hop is
+`setVisibleOnAllWorkspaces(true→false)` with `skipTransformProcessType: true` on **both** calls —
+without it Electron flips the activation policy (the tray-parking trigger in
+safety-tray-tahoe-placement.md). `reveal()` (tray click on a hidden bean, second launch, Dock)
+does not reload. Evidence lines go to `~/.bean/logs/avatar.log` (allowlisted fields only; never
+URLs/paths/task text). Known gap: the avatar can't be shown over a fullscreen app. No automatic
+recovery — keep it click-only.
