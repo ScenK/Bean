@@ -8,6 +8,7 @@ import {
   deleteDesktopChat,
   getDesktopChat,
   listDesktopChats,
+  renameDesktopChat,
   saveDesktopChat,
   starDesktopChat,
 } from "../src/desktop-chats.js";
@@ -23,13 +24,19 @@ const tmpDb = (): string => {
 afterEach(() => files.splice(0).forEach(closeDb));
 const day = (d: number): Date => new Date(Date.UTC(2026, 9, d));
 
-test("upsert keeps created_at, updates the rest, and trims the title", () => {
+test("the first save stores the trimmed, capped title and returns it", () => {
+  const file = tmpDb();
+  expect(saveDesktopChat(file, { id: A, title: `  ${"x".repeat(100)}  `, itemsJson: "[]" }, day(1))).toBe("x".repeat(80));
+  expect(getDesktopChat(file, A)?.title).toBe("x".repeat(80));
+});
+
+test("upsert keeps created_at and title, updates the rest, and returns the stored title", () => {
   const file = tmpDb();
   saveDesktopChat(file, { id: A, title: "first", itemsJson: "[1]" }, day(1));
-  saveDesktopChat(file, { id: A, title: `  ${"x".repeat(100)}  `, itemsJson: "[1,2]", noteSlug: "n1" }, day(2));
+  expect(saveDesktopChat(file, { id: A, title: "second", itemsJson: "[1,2]", noteSlug: "n1" }, day(2))).toBe("first");
   expect(getDesktopChat(file, A)).toEqual({
     id: A,
-    title: "x".repeat(80),
+    title: "first",
     createdAt: day(1).toISOString(),
     updatedAt: day(2).toISOString(),
     itemsJson: "[1,2]",
@@ -147,4 +154,24 @@ test("a pre-star bean.db gains desktop_chats.starred on open", async () => {
   expect(listDesktopChats(file, day(21))).toEqual([{ id: A, title: "old", updatedAt: day(20).toISOString(), agents: [], starred: false }]);
   expect(starDesktopChat(file, A, true, day(21))).toBe(day(20).toISOString());
   expect(listDesktopChats(file, day(21))[0]!.starred).toBe(true);
+});
+
+test("a rename sticks through later saves and leaves updated_at and starred alone", () => {
+  const file = tmpDb();
+  saveDesktopChat(file, { id: A, title: "old", itemsJson: "[]" }, day(1));
+  starDesktopChat(file, A, true, day(2));
+  expect(renameDesktopChat(file, A, `  New\n\t ${"y".repeat(100)}  `)).toBe(`New ${"y".repeat(76)}`);
+  expect(listDesktopChats(file, day(3))).toEqual([{ id: A, title: `New ${"y".repeat(76)}`, updatedAt: day(1).toISOString(), agents: [], starred: true }]);
+  expect(saveDesktopChat(file, { id: A, title: "old", itemsJson: "[1]" }, day(4))).toBe(`New ${"y".repeat(76)}`);
+  expect(getDesktopChat(file, A)?.title).toBe(`New ${"y".repeat(76)}`);
+});
+
+test("renaming refuses an empty title; a missing or non-UUID id returns undefined and creates no row", () => {
+  const file = tmpDb();
+  saveDesktopChat(file, { id: A, title: "kept", itemsJson: "[]" }, day(1));
+  expect(() => renameDesktopChat(file, A, " \n\t ")).toThrow(/empty/);
+  expect(getDesktopChat(file, A)?.title).toBe("kept");
+  expect(renameDesktopChat(file, B, "t")).toBeUndefined();
+  expect(renameDesktopChat(file, "../x", "t")).toBeUndefined();
+  expect(openDb(file).prepare("SELECT COUNT(*) AS n FROM desktop_chats").get()).toEqual({ n: 1 });
 });

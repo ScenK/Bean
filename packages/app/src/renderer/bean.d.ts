@@ -175,6 +175,8 @@ declare global {
       chatThreadDelete(id: string): Promise<void>;
       /** Sets a thread's star: its resulting `updatedAt`, or undefined when the thread is gone. */
       chatThreadStar(id: string, starred: boolean): Promise<string | undefined>;
+      /** Renames a thread (later saves keep it): the stored title, or undefined when the thread is gone. Refused for an empty title. */
+      chatThreadRename(id: string, title: string): Promise<string | undefined>;
       /** The owner's Discord/Teams conversations, newest first. */
       syncedChatList(): Promise<SyncedChatListing[]>;
       /** One listed conversation's transcript, mapped for display. */

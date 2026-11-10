@@ -33,19 +33,33 @@ export const DESKTOP_CHAT_MAX_BYTES = 2 * 1024 * 1024;
 export const DESKTOP_CHAT_TITLE_MAX = 80;
 export const DESKTOP_CHAT_RETENTION_DAYS = 90;
 
-/** Upserts a thread: `created_at` is kept from the first save, `updated_at` is `now`. Throws on a
- * non-UUID id or a transcript over DESKTOP_CHAT_MAX_BYTES. */
-export function saveDesktopChat(file: string, chat: DesktopChatInput, now: Date = new Date()): void {
+/** Upserts a thread: `created_at` and `title` are kept from the first save (a rename is the only
+ * later writer of `title`), `updated_at` is `now`. Returns the stored title. Throws on a non-UUID id
+ * or a transcript over DESKTOP_CHAT_MAX_BYTES. */
+export function saveDesktopChat(file: string, chat: DesktopChatInput, now: Date = new Date()): string {
   if (!UUID.test(chat.id)) throw new Error("desktop chat id must be a UUID");
   if (Buffer.byteLength(chat.itemsJson, "utf8") > DESKTOP_CHAT_MAX_BYTES) throw new Error("desktop chat is too large to save");
   const at = now.toISOString();
-  openDb(file)
+  const row = openDb(file)
     .prepare(
       `INSERT INTO desktop_chats (id, title, created_at, updated_at, items_json, note_slug) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at,
-         items_json = excluded.items_json, note_slug = excluded.note_slug`,
+       ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at,
+         items_json = excluded.items_json, note_slug = excluded.note_slug
+       RETURNING title`,
     )
-    .run(chat.id, chat.title.trim().slice(0, DESKTOP_CHAT_TITLE_MAX), at, at, chat.itemsJson, chat.noteSlug ?? null);
+    .get(chat.id, chat.title.trim().slice(0, DESKTOP_CHAT_TITLE_MAX), at, at, chat.itemsJson, chat.noteSlug ?? null);
+  return row!.title as string;
+}
+
+/** Renames a thread: trimmed, collapsed to one line, capped at DESKTOP_CHAT_TITLE_MAX. Returns the
+ * stored title, or undefined for a missing or non-UUID id (never inserts). Leaves `updated_at` and
+ * `starred` alone. Throws on a title that's empty after trimming. */
+export function renameDesktopChat(file: string, id: string, title: string): string | undefined {
+  if (!UUID.test(id)) return undefined;
+  const clean = title.replace(/\s+/g, " ").trim().slice(0, DESKTOP_CHAT_TITLE_MAX).trim();
+  if (!clean) throw new Error("desktop chat title can't be empty");
+  const row = openDb(file).prepare("UPDATE desktop_chats SET title = ? WHERE id = ? RETURNING title").get(clean, id);
+  return row ? (row.title as string) : undefined;
 }
 
 const retentionCutoff = (now: Date): string => new Date(now.getTime() - DESKTOP_CHAT_RETENTION_DAYS * 86_400_000).toISOString();

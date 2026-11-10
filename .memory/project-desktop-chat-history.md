@@ -16,6 +16,13 @@ patches only the existing entry with the returned `updatedAt` (undefined = gone 
 fragments are keyed, but a row changing group still remounts, so the sidebar refocuses the row's ★
 (or the Earlier fold) after each toggle.
 
+**Titles are insert-only (#761).** The save upsert never updates `title` (the open chat re-sends its
+in-memory title on every save) and returns the stored one, which the save ack carries — so `withSaveAck`
+shows a rename, not the renderer's stale copy. `renameDesktopChat` (`chatThreadRename`, chat window only,
+UUID id, no holder check — like ★) is the only later writer: one line, trimmed, capped, never empty,
+never inserts, leaves `updated_at`/`starred` alone. If an auto-titler is ever added it needs a real lock
+flag, not this convention.
+
 **Normalizer — `renderer/components/chat/chat-thread.ts`, node-free, runs on every save and again on
 restore.** Never mutates. Drops `working` items, `reply.session`/`tail`/`streaming` (a streaming reply
 gets the "— turn interrupted" footer), delegate `taskId`/`tail`, status `exiting`, and every image data

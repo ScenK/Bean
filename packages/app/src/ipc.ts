@@ -9,7 +9,7 @@ import {
   type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type ExtractResult, type ChatTurn,
   type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
   type TodoItem, type StepKind, type CliModels, type DreamDigest, type RoutineBrief, type RoutineWatch, type WatchItem,
-  DESKTOP_CHAT_MAX_BYTES, DESKTOP_CHAT_TITLE_MAX, type DesktopChat, type DesktopChatInput, type DesktopChatListing,
+  DESKTOP_CHAT_MAX_BYTES, type DesktopChat, type DesktopChatInput, type DesktopChatListing,
 } from "@bean/core";
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { RunStatus, WatchCheckResult, SendCard } from "@bean/core";
@@ -726,10 +726,11 @@ export interface ChatThreadAck { id: string; title: string; updatedAt: string }
 export type PendingChatThread = { id: string; title: string; items: unknown[]; noteSlug: string | null } | { missing: true };
 
 export interface ChatThreadHandlerDeps {
-  saveDesktopChat: (file: string, chat: DesktopChatInput, now?: Date) => void;
+  saveDesktopChat: (file: string, chat: DesktopChatInput, now?: Date) => string;
   getDesktopChat: (file: string, id: string) => DesktopChat | undefined;
   deleteDesktopChat: (file: string, id: string) => void;
   starDesktopChat: (file: string, id: string, starred: boolean) => string | undefined;
+  renameDesktopChat: (file: string, id: string, title: string) => string | undefined;
   listDesktopChats: (file: string) => DesktopChatListing[];
   dbFile: string;
 }
@@ -802,6 +803,12 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       if (typeof starred !== "boolean") throw new Error("starred must be a boolean");
       return deps.starDesktopChat(deps.dbFile, id, starred);
     },
+    /** Sidebar rename: any thread, open or not. The stored title, or undefined when it's gone. */
+    rename: (id: unknown, title: unknown): string | undefined => {
+      if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
+      if (typeof title !== "string") throw new Error("title must be a string");
+      return deps.renameDesktopChat(deps.dbFile, id, title);
+    },
     get,
     /** Undefined = refused by the latch (quietly: the renderer already stopped saving). */
     save: (key: string, req: unknown): ChatThreadAck | undefined => {
@@ -817,9 +824,10 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       const itemsJson = JSON.stringify(o.items);
       if (Buffer.byteLength(itemsJson, "utf8") > DESKTOP_CHAT_MAX_BYTES) throw new Error("desktop chat is too large to save");
       const now = new Date();
-      deps.saveDesktopChat(deps.dbFile, { id: o.id, title: o.title, itemsJson, noteSlug: o.noteSlug ?? null }, now);
+      // The stored title, not the renderer's: a rename since the first save wins over the open chat's copy.
+      const title = deps.saveDesktopChat(deps.dbFile, { id: o.id, title: o.title, itemsJson, noteSlug: o.noteSlug ?? null }, now);
       threads.set(key, o.id);
-      return { id: o.id, title: o.title.trim().slice(0, DESKTOP_CHAT_TITLE_MAX), updatedAt: now.toISOString() };
+      return { id: o.id, title, updatedAt: now.toISOString() };
     },
     /** 🕶 on: latch first, then delete the chat's saved row. Off: nothing — the latch is sticky. */
     setIncognito: (key: string, on: boolean): void => {
@@ -1408,6 +1416,8 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     deps.isChatSender(e.sender) ? deps.chatThreadHandlers.delete(id) : notChat());
   ipcMain.handle(IPC.chatThreadStar, (e, id: unknown, starred: unknown) =>
     deps.isChatSender(e.sender) ? deps.chatThreadHandlers.star(id, starred) : notChat());
+  ipcMain.handle(IPC.chatThreadRename, (e, id: unknown, title: unknown) =>
+    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.rename(id, title) : notChat());
   ipcMain.handle(IPC.syncedChatList, (e) => deps.isChatSender(e.sender) ? deps.syncedChatHandlers.list() : notChat());
   ipcMain.handle(IPC.syncedChatGet, (e, surface: unknown, conversationId: unknown, mountId: unknown) => {
     chatKey(e.sender, mountId);

@@ -154,10 +154,11 @@ export const IPC = {
   // a chat picked in the sidebar restores.
   chatThreadSave: "bean:chat-thread-save",
   chatThreadGet: "bean:chat-thread-get",
-  // chat window's history sidebar → main: list/delete/star saved threads.
+  // chat window's history sidebar → main: list/delete/star/rename saved threads.
   chatThreadList: "bean:chat-thread-list",
   chatThreadDelete: "bean:chat-thread-delete",
   chatThreadStar: "bean:chat-thread-star",
+  chatThreadRename: "bean:chat-thread-rename",
   // chat window ⇄ main: the owner's Discord/Teams conversations in the sidebar (synced-chats.ts) —
   // list, one transcript, a desk turn, Continue live; main pushes `syncedChatEvent` when one changes.
   syncedChatList: "bean:synced-chat-list",

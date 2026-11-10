@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getDesktopChat, saveDesktopChat, deleteDesktopChat, starDesktopChat, listDesktopChats, DESKTOP_CHAT_MAX_BYTES } from "@bean/core";
+import { getDesktopChat, saveDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, listDesktopChats, DESKTOP_CHAT_MAX_BYTES } from "@bean/core";
 import { buildChatThreadHandlers, registerIpc, type RegisterDeps } from "../src/ipc.js";
 import { IPC } from "../src/channels.js";
 import type { Memory } from "@bean/core";
@@ -14,7 +14,7 @@ const OTHER = "9f1d7c2e-3b4a-4e6f-8a1b-5c2d3e4f5a6b";
 
 function setup() {
   const dbFile = join(mkdtempSync(join(tmpdir(), "bean-thread-")), "bean.db");
-  const handlers = buildChatThreadHandlers({ dbFile, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, listDesktopChats });
+  const handlers = buildChatThreadHandlers({ dbFile, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, listDesktopChats });
   return { dbFile, handlers, row: (id = ID) => getDesktopChat(dbFile, id) };
 }
 const save = (items: unknown[] = [{ kind: "status", id: "item-1", text: "hi", tone: "info" }], id = ID) => ({ id, title: "hi there", items });
@@ -27,6 +27,23 @@ describe("buildChatThreadHandlers", () => {
     expect(Date.parse(ack!.updatedAt)).not.toBeNaN();
     expect(row()).toMatchObject({ title: "hi there", noteSlug: "my-note" });
     expect(JSON.parse(row()!.itemsJson)).toHaveLength(1);
+  });
+
+  it("a rename sticks: a later save carrying the old title stores and acks the renamed one", () => {
+    const { handlers, row } = setup();
+    handlers.save("a", save());
+    expect(handlers.rename(ID, "  Renamed\n chat ")).toBe("Renamed chat");
+    const ack = handlers.save("a", save([{ kind: "status", id: "item-2", text: "more", tone: "info" }]));
+    expect(ack).toMatchObject({ id: ID, title: "Renamed chat" });
+    expect(row()).toMatchObject({ title: "Renamed chat" });
+    expect(JSON.parse(row()!.itemsJson)[0]).toMatchObject({ text: "more" });
+  });
+
+  it("rename validates its arguments and returns undefined for a missing thread", () => {
+    const { handlers } = setup();
+    expect(() => handlers.rename("../x", "t")).toThrow(/UUID/);
+    expect(() => handlers.rename(ID, 3)).toThrow(/string/);
+    expect(handlers.rename(ID, "t")).toBeUndefined();
   });
 
   it("refuses a bad id, a malformed payload, an oversized payload and a second thread in one chat", () => {
@@ -333,12 +350,14 @@ describe("chat thread IPC", () => {
     expect(await b).toMatchObject({ stopped: true });
   });
 
-  it("list/delete/star are chat-window only", () => {
+  it("list/delete/star/rename are chat-window only", () => {
     const { chat, other, invoke } = ipcHarness();
     expect(() => invoke(IPC.chatThreadList, other)).toThrow(/chat window/);
     expect(() => invoke(IPC.chatThreadDelete, other, OTHER)).toThrow(/chat window/);
     expect(() => invoke(IPC.chatThreadStar, other, OTHER, true)).toThrow(/chat window/);
     expect(invoke(IPC.chatThreadStar, chat, OTHER, true)).toBeUndefined();
+    expect(() => invoke(IPC.chatThreadRename, other, OTHER, "t")).toThrow(/chat window/);
+    expect(invoke(IPC.chatThreadRename, chat, OTHER, "t")).toBeUndefined();
     expect(invoke(IPC.chatThreadList, chat)).toEqual([]);
   });
   it("chatStageImage stages to a private file and rejects a bad mime, an oversize payload and an unattached mount", async () => {
