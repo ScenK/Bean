@@ -8,7 +8,7 @@ const root = document.createElement("div");
 afterEach(() => { render(null, root); });
 
 test("Earlier starts folded (the open chat still shows) and its header unfolds it", async () => {
-  const old = (id: string, d: number) => ({ id, title: id, updatedAt: new Date(2020, 0, d).toISOString(), agents: [] as string[] });
+  const old = (id: string, d: number) => ({ id, title: id, updatedAt: new Date(2020, 0, d).toISOString(), agents: [] as string[], starred: false });
   const threads = [old("jan-9", 9), old("jan-8", 8), old("jan-7", 7), old("jan-6", 6)];
   const none = new Set<string>();
   const noop = () => {};

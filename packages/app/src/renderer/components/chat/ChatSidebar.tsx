@@ -33,7 +33,8 @@ export function groupThreads<T extends { updatedAt: string }>(threads: T[], now:
  * No push channel — this ack is the only live update. */
 export function withSaveAck(threads: DesktopChatListing[], ack: ChatThreadAck, items: ChatItem[]): DesktopChatListing[] {
   const agents = [...new Set(items.flatMap((it) => (it.kind === "reply" && it.agent && it.agent !== "bean" ? [it.agent] : [])))];
-  return [{ ...ack, agents }, ...threads.filter((t) => t.id !== ack.id)];
+  const starred = threads.find((t) => t.id === ack.id)?.starred ?? false;
+  return [{ ...ack, agents, starred }, ...threads.filter((t) => t.id !== ack.id)];
 }
 
 /** One sidebar list: desktop threads and synced (Discord/Teams) chats, newest first. Stable, so

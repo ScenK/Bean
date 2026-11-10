@@ -9,6 +9,7 @@ import {
   getDesktopChat,
   listDesktopChats,
   saveDesktopChat,
+  starDesktopChat,
 } from "../src/desktop-chats.js";
 
 const A = "11111111-1111-4111-8111-111111111111";
@@ -41,8 +42,8 @@ test("lists newest first without the transcript", () => {
   saveDesktopChat(file, { id: A, title: "a", itemsJson: "[]" }, day(1));
   saveDesktopChat(file, { id: B, title: "b", itemsJson: "[]" }, day(3));
   expect(listDesktopChats(file, day(4))).toEqual([
-    { id: B, title: "b", updatedAt: day(3).toISOString(), agents: [] },
-    { id: A, title: "a", updatedAt: day(1).toISOString(), agents: [] },
+    { id: B, title: "b", updatedAt: day(3).toISOString(), agents: [], starred: false },
+    { id: A, title: "a", updatedAt: day(1).toISOString(), agents: [], starred: false },
   ]);
 });
 
@@ -90,4 +91,60 @@ test("delete is idempotent", () => {
   deleteDesktopChat(file, A);
   deleteDesktopChat(file, "nope");
   expect(getDesktopChat(file, A)).toBeUndefined();
+});
+
+test("a starred thread survives the prune; starring and a fresh unstar keep updated_at; saves keep the star", () => {
+  const file = tmpDb();
+  const now = new Date(Date.UTC(2026, 9, 29));
+  const ago = (days: number): Date => new Date(now.getTime() - days * 86_400_000);
+  saveDesktopChat(file, { id: A, title: "kept", itemsJson: "[]" }, ago(100));
+  saveDesktopChat(file, { id: B, title: "pruned", itemsJson: "[]" }, ago(100));
+  expect(starDesktopChat(file, A, true, now)).toBe(ago(100).toISOString());
+  expect(listDesktopChats(file, now)).toEqual([{ id: A, title: "kept", updatedAt: ago(100).toISOString(), agents: [], starred: true }]);
+  saveDesktopChat(file, { id: A, title: "kept", itemsJson: "[1]" }, ago(1));
+  expect(listDesktopChats(file, now)[0]!.starred).toBe(true);
+  // Unstarring inside the retention window leaves the clock alone.
+  expect(starDesktopChat(file, A, false, now)).toBe(ago(1).toISOString());
+  expect(listDesktopChats(file, now)[0]).toMatchObject({ starred: false, updatedAt: ago(1).toISOString() });
+});
+
+test("unstarring a stale starred thread resets its clock; one exactly at the cutoff or already unstarred is untouched", () => {
+  const file = tmpDb();
+  const now = new Date(Date.UTC(2026, 9, 29));
+  const ago = (days: number): Date => new Date(now.getTime() - days * 86_400_000);
+  saveDesktopChat(file, { id: A, title: "stale", itemsJson: "[]" }, ago(120));
+  starDesktopChat(file, A, true, now);
+  expect(starDesktopChat(file, A, false, now)).toBe(now.toISOString());
+  expect(listDesktopChats(file, now).map((c) => c.id)).toEqual([A]);
+
+  saveDesktopChat(file, { id: B, title: "edge", itemsJson: "[]" }, ago(90));
+  starDesktopChat(file, B, true, now);
+  expect(starDesktopChat(file, B, false, now)).toBe(ago(90).toISOString());
+
+  // Already unstarred and stale (not yet listed, so not yet pruned): no reset.
+  const C = "33333333-3333-4333-8333-333333333333";
+  saveDesktopChat(file, { id: C, title: "gone", itemsJson: "[]" }, ago(120));
+  expect(starDesktopChat(file, C, false, now)).toBe(ago(120).toISOString());
+});
+
+test("starring a missing or non-UUID id returns undefined and creates no row", () => {
+  const file = tmpDb();
+  expect(starDesktopChat(file, A, true)).toBeUndefined();
+  expect(starDesktopChat(file, "../x", true)).toBeUndefined();
+  expect(openDb(file).prepare("SELECT COUNT(*) AS n FROM desktop_chats").get()).toEqual({ n: 0 });
+});
+
+test("a pre-star bean.db gains desktop_chats.starred on open", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const file = tmpDb();
+  const legacy = new DatabaseSync(file);
+  legacy.exec(
+    "CREATE TABLE desktop_chats (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL, " +
+      "updated_at TEXT NOT NULL, items_json TEXT NOT NULL, note_slug TEXT);" +
+      `INSERT INTO desktop_chats VALUES ('${A}', 'old', '${day(20).toISOString()}', '${day(20).toISOString()}', '[]', NULL);`,
+  );
+  legacy.close();
+  expect(listDesktopChats(file, day(21))).toEqual([{ id: A, title: "old", updatedAt: day(20).toISOString(), agents: [], starred: false }]);
+  expect(starDesktopChat(file, A, true, day(21))).toBe(day(20).toISOString());
+  expect(listDesktopChats(file, day(21))[0]!.starred).toBe(true);
 });

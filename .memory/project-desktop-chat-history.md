@@ -4,6 +4,11 @@ Every non-incognito desktop chat is written through to `bean.db`'s `desktop_chat
 `desktop-chats.ts`, 90-day prune inside `listDesktopChats`). Epic #501; this entry covers the save/restore
 slice.
 
+**Starred threads (#752).** `desktop_chats.starred` exempts a thread from the prune. `starDesktopChat` never
+inserts and leaves `updated_at` alone — except unstarring a *starred* thread already past the cutoff resets
+`updated_at` to `now` (same `<` and `now` as the prune), else the next listing would delete it on the spot.
+The save upsert never lists `starred`, so saves keep it; `withSaveAck` carries it over from the old row.
+
 **Normalizer — `renderer/components/chat/chat-thread.ts`, node-free, runs on every save and again on
 restore.** Never mutates. Drops `working` items, `reply.session`/`tail`/`streaming` (a streaming reply
 gets the "— turn interrupted" footer), delegate `taskId`/`tail`, status `exiting`, and every image data
