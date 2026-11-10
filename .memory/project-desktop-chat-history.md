@@ -67,6 +67,15 @@ header highlight is the only drag state and never commits anything; it clears on
 row's dragend, document-level capture `dragend`/`drop` (a save ack can remount the source row and lose
 its dragend), and an 800ms no-dragover watchdog ([[safety-drag-mode-needs-watchdog]]).
 
+**Multi-select into a group (#767).** The head's Select toggles select mode: each desktop row becomes one
+native `<label>` (checkbox + title, no row controls, not draggable, no F2), synced rows unchanged, and a
+form bar (count, name input with a `<datalist>` of groups, Group, Cancel) replaces New chat. The
+selection is a `Set` of thread ids; only ids still in `threads` count, so deleted/pruned rows drop out
+on their own. Group sends one `chatThreadGroup(ids, name)` (stars too); over `GROUP_SELECT_MAX` (100,
+main's cap) is refused in the bar. `onGroup` settles with the error message (else undefined), so a
+failure keeps the mode, selection and name. Escape: the name input's moves focus to Cancel, then the
+nav's leaves the mode — both default-prevented so the overlay stays.
+
 **Normalizer — `renderer/components/chat/chat-thread.ts`, node-free, runs on every save and again on
 restore.** Never mutates. Drops `working` items, `reply.session`/`tail`/`streaming` (a streaming reply
 gets the "— turn interrupted" footer), delegate `taskId`/`tail`, status `exiting`, and every image data
