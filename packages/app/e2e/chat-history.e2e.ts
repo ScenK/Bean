@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication, type Page } from "@playwright/t
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
-import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, listDesktopChats, saveDesktopChat, speakerLine } from "@bean/core";
+import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, listDesktopChats, saveDesktopChat, speakerLine, starDesktopChat } from "@bean/core";
 import { join } from "node:path";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -381,6 +381,75 @@ test("chat history: rename a chat inline in the sidebar", async () => {
     await expect(again.locator(".bean-chat-sidebar-title", { hasText: "Week plan" })).toHaveCount(1);
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
+  }
+});
+
+// #764: starred chats grouped from the row's Group menu, folded by keyboard (the fold survives a
+// restart), renamed with F2; unstarring a member sends it back to its date section and the group
+// goes once its last member leaves.
+test("chat history: foldable named groups inside Starred", async () => {
+  const home = await makeBeanHome();
+  const file = dbFile(join(home.homeDir, ".bean"));
+  const userDataDir = await mkdtemp(join(tmpdir(), "bean-e2e-userdata-"));
+  const [a, b] = ["9c4d5e6f-7081-4c9d-8e0f-2a3b4c5d6e7f", "0d5e6f70-8192-4dae-9f10-3b4c5d6e7f80"];
+  for (const [id, title] of [[a, "alpha"], [b, "beta"]] as const) {
+    saveDesktopChat(file, { id, title, itemsJson: JSON.stringify([{ kind: "user", id: "a", text: title }]) });
+    starDesktopChat(file, id, true);
+  }
+  const env = { HOME: home.homeDir };
+  try {
+    const app = await launchBean(env, userDataDir);
+    try {
+      const chat = await openChat(app);
+      const row = (id: string) => chat.locator(`[data-row="${id}"]`);
+      const header = chat.locator(".bean-chat-sidebar-group--named");
+      await row(a).locator(".bean-chat-sidebar-row-group").selectOption({ label: "New group…" });
+      await expect(chat.locator(".bean-chat-sidebar-rename")).toBeFocused();
+      await chat.keyboard.type("Work");
+      await chat.keyboard.press("Enter");
+      await expect(header).toHaveText(/Work\s*1/);
+      await expect(row(a).locator(".bean-chat-sidebar-row-group")).toBeFocused();
+      await row(b).locator(".bean-chat-sidebar-row-group").selectOption("Work");
+      await expect(header).toHaveText(/Work\s*2/);
+      // Fold by keyboard: members hide, the count stays.
+      await header.focus();
+      await chat.keyboard.press("Enter");
+      await expect(header).toHaveAttribute("aria-expanded", "false");
+      await expect(chat.locator("[data-row]")).toHaveCount(0);
+      // F2 renames the folded group; it stays folded.
+      await chat.keyboard.press("F2");
+      await expect(chat.locator(".bean-chat-sidebar-rename")).toBeFocused();
+      await chat.keyboard.press("Meta+A");
+      await chat.keyboard.type("Projects");
+      await chat.keyboard.press("Enter");
+      await expect(header).toHaveText(/Projects\s*2/);
+      await expect(header).toHaveAttribute("aria-expanded", "false");
+      await expect(header).toBeFocused();
+      expect(listDesktopChats(file).map((t) => t.groupName)).toEqual(["Projects", "Projects"]);
+    } finally {
+      await app.close();
+    }
+    const restarted = await launchBean(env, userDataDir);
+    try {
+      const chat = await openChat(restarted);
+      const row = (id: string) => chat.locator(`[data-row="${id}"]`);
+      const header = chat.locator(".bean-chat-sidebar-group--named");
+      await expect(header).toHaveAttribute("aria-expanded", "false");
+      await header.click();
+      await expect(header).toHaveAttribute("aria-expanded", "true");
+      await row(a).hover();
+      await row(a).locator(".bean-chat-sidebar-row-star").click();
+      await expect(chat.locator('.bean-chat-sidebar-group:has-text("Today") + [data-row]')).toHaveAttribute("data-row", a);
+      await expect(header).toHaveText(/Projects\s*1/);
+      await row(b).locator(".bean-chat-sidebar-row-group").selectOption({ label: "Remove from group" });
+      await expect(header).toHaveCount(0);
+      await expect(chat.locator('.bean-chat-sidebar-group:has-text("Starred") + [data-row]')).toHaveAttribute("data-row", b);
+      expect(Object.fromEntries(listDesktopChats(file).map((t) => [t.id, [t.starred, t.groupName]]))).toEqual({ [a]: [false, null], [b]: [true, null] });
+    } finally {
+      await restarted.close();
+    }
+  } finally {
+    await Promise.allSettled([home.cleanup(), rm(userDataDir, { recursive: true, force: true })]);
   }
 });
 

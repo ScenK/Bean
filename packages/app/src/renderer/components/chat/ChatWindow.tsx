@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ChatSession, commandList, type ChatSessionApi, type ChatTasks } from "./ChatSession.js";
-import { ChatSidebar, SIDEBAR_INLINE_MIN, SIDEBAR_OPEN_KEY } from "./ChatSidebar.js";
+import { ChatSidebar, cleanGroupName, SIDEBAR_INLINE_MIN, SIDEBAR_OPEN_KEY } from "./ChatSidebar.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ListFoldToggle } from "../../shared/ListFold.js";
@@ -302,6 +302,23 @@ export function ChatWindow() {
     },
     (err: unknown) => shownApi()?.error(`Couldn't rename that chat: ${err instanceof Error ? err.message : String(err)}`),
   );
+  // Patches the returned rows; an asked-for row not returned is gone, so it's dropped.
+  const groupThread = (ids: string[], name: string | null): Promise<void> => window.bean.chatThreadGroup(ids, name).then(
+    (done) => {
+      const groupName = name === null ? null : cleanGroupName(name);
+      setThreads((prev) => prev.flatMap((t) => (!ids.includes(t.id) ? [t]
+        : done.includes(t.id) ? [{ ...t, groupName, starred: name === null ? t.starred : true }] : [])));
+    },
+    (err: unknown) => shownApi()?.error(`Couldn't ${name === null ? "ungroup" : "group"} that chat: ${err instanceof Error ? err.message : String(err)}`),
+  );
+  // Same, over the group's members: moved ones take the new name, the rest are gone.
+  const renameGroup = (from: string, to: string): Promise<void> => window.bean.chatThreadGroupRename(from, to).then(
+    (moved) => {
+      const groupName = cleanGroupName(to);
+      setThreads((prev) => prev.flatMap((t) => (t.groupName !== from ? [t] : moved.includes(t.id) ? [{ ...t, groupName }] : [])));
+    },
+    (err: unknown) => shownApi()?.error(`Couldn't rename that group: ${err instanceof Error ? err.message : String(err)}`),
+  );
 
   return (
     <div class="bean-dashboard bean-chat-window">
@@ -322,6 +339,8 @@ export function ChatWindow() {
           onDelete={deleteThread}
           onStar={starThread}
           onRename={renameThread}
+          onGroup={groupThread}
+          onRenameGroup={renameGroup}
         />
       ) : null}
       {mounts.map(({ mountId, restoreId }) => (

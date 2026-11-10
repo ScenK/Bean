@@ -1,6 +1,6 @@
 import type { DesktopChatListing } from "@bean/core";
 import { Fragment } from "preact";
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import type { AgentId, ChatItem } from "../../shared/chat-types.js";
 import type { ChatThreadAck } from "../../../ipc.js";
@@ -71,16 +71,60 @@ interface Props {
   onStar: (id: string, starred: boolean) => Promise<void>;
   /** Settles (never rejects) once the list reflects the result; focus then returns to the row's ✎. */
   onRename: (id: string, title: string) => Promise<void>;
+  /** Puts threads in a group (`null` = out of it). Settles once the list reflects the result. */
+  onGroup: (ids: string[], name: string | null) => Promise<void>;
+  /** Renames a group (onto an existing name, they merge). Settles once the list reflects the result. */
+  onRenameGroup: (from: string, to: string) => Promise<void>;
 }
 
-/** Starred desktop threads first as one never-folded group (newest first), then the date groups
- * over everything else. Synced chats are never starred. */
-export function sidebarGroups(rows: SidebarRow[], now: Date): Array<{ label: string; threads: SidebarRow[] }> {
+/** Where focus goes after an edit: a row's control (or, folded away, its section's header), or a header. */
+type Refocus = { id: string; control: "star" | "rename" | "group" } | { section: string };
+
+/** One sidebar section. `key` never collides with a user's group name (kind-prefixed); `count` is
+ * the header's number (Starred counts its groups' members too). */
+export interface SidebarSection { kind: "starred" | "group" | "date" | "earlier"; key: string; label: string; count: number; threads: SidebarRow[] }
+
+/** Starred desktop threads first — the ungrouped ones under "Starred", then its named groups in
+ * alphabetical order (members newest first) — then the date sections over everything else. Synced
+ * chats are never starred. */
+export function sidebarGroups(rows: SidebarRow[], now: Date): SidebarSection[] {
   const isStarred = (r: SidebarRow): boolean => !r.synced && r.thread.starred;
-  const starred = rows.filter(isStarred);
-  const rest = groupThreads(rows.filter((r) => !isStarred(r)), now);
-  return starred.length > 0 ? [{ label: "Starred", threads: starred }, ...rest] : rest;
+  const loose: SidebarRow[] = [];
+  const named = new Map<string, SidebarRow[]>();
+  for (const r of rows.filter(isStarred)) {
+    const name = r.synced ? null : r.thread.groupName;
+    if (name) named.set(name, [...(named.get(name) ?? []), r]);
+    else loose.push(r);
+  }
+  const groups = [...named].sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, threads]): SidebarSection => ({ kind: "group", key: `group:${name}`, label: name, count: threads.length, threads }));
+  const total = loose.length + groups.reduce((n, g) => n + g.count, 0);
+  const dates = groupThreads(rows.filter((r) => !isStarred(r)), now).map((g): SidebarSection => (g.label === "Earlier"
+    ? { kind: "earlier", key: "earlier", label: g.label, count: g.threads.length, threads: g.threads }
+    : { kind: "date", key: `date:${g.label}`, label: g.label, count: g.threads.length, threads: g.threads }));
+  return [...(total > 0 ? [{ kind: "starred" as const, key: "starred", label: "Starred", count: total, threads: loose }] : []), ...groups, ...dates];
 }
+
+/** Folded starred groups, by name (absent = unfolded). */
+export const GROUP_FOLD_KEY = "bean.chat.foldedGroups";
+/** Renderer copy of core's DESKTOP_CHAT_TITLE_MAX (node-free bundle rule) — keep in step. */
+export const GROUP_NAME_MAX = 80;
+/** Core's `desktopChatName` cleaning, so the renderer can patch rows with the stored group name. */
+export const cleanGroupName = (name: string): string => name.replace(/\s+/g, " ").trim().slice(0, GROUP_NAME_MAX).trim();
+/** The fold list after renaming group `from` to `to`: the entry moves, but onto an existing group
+ * (a merge) the target's state wins. */
+export function foldedAfterRename(folded: string[], from: string, to: string, names: string[]): string[] {
+  const rest = folded.filter((n) => n !== from);
+  return names.includes(to) || !folded.includes(from) ? rest : [...rest, to];
+}
+function readFolded(): string[] {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(GROUP_FOLD_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((n): n is string => typeof n === "string") : [];
+  } catch { return []; }
+}
+/** The Group control's "New group…" value — whitespace only, so never a stored group name. */
+const NEW_GROUP = "\n";
 
 /** Row time: "now"/"3h" today, "Oct 28" before that. */
 export function rowTime(iso: string, now: Date): string {
@@ -90,11 +134,29 @@ export function rowTime(iso: string, now: Date): string {
   return agoText(iso, now).replace("just now", "now").replace(" ago", "");
 }
 
-export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, onNew, onOpen, onDelete, onStar, onRename }: Props) {
+export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, onNew, onOpen, onDelete, onStar, onRename, onGroup, onRenameGroup }: Props) {
   const now = new Date();
   const rows = mergeRows(threads, synced);
+  const sections = sidebarGroups(rows, now);
+  const groupNames = sections.flatMap((s) => (s.kind === "group" ? [s.label] : []));
   // Earlier starts folded each time the sidebar mounts; the open chat stays visible inside it.
   const [earlierOpen, setEarlierOpen] = useState(false);
+  // Starred groups' folds persist (localStorage); vanished names are pruned once the list has loaded.
+  const [folded, setFoldedState] = useState(readFolded);
+  // Updaters, so the prune effect (a closure from an older render) can't undo a rename's fold move.
+  const setFolded = (update: (f: string[]) => string[]): void => setFoldedState((f) => {
+    const next = update(f);
+    try { localStorage.setItem(GROUP_FOLD_KEY, JSON.stringify(next)); } catch { /* unfolded next launch */ }
+    return next;
+  });
+  useEffect(() => {
+    if (threads.length > 0 && folded.some((n) => !groupNames.includes(n))) setFolded((f) => f.filter((n) => groupNames.includes(n)));
+  }, [threads]);
+  const isFolded = (s: SidebarSection): boolean => (s.kind === "earlier" ? !earlierOpen : s.kind === "group" && folded.includes(s.label));
+  const toggleFold = (s: SidebarSection): void => {
+    if (s.kind === "earlier") setEarlierOpen(!earlierOpen);
+    else setFolded((f) => (f.includes(s.label) ? f.filter((n) => n !== s.label) : [...f, s.label]));
+  };
   // A row that moved (a save ack lifts its thread to the top) slides from where it was (FLIP).
   const listRef = useRef<HTMLDivElement>(null);
   const tops = useRef(new Map<string, number>());
@@ -109,30 +171,42 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
     }
     tops.current = next;
   });
-  // After a star toggle or a rename the row may have changed group (remounted): put focus back on its
-  // ★ / ✎, or on the Earlier fold when the row is folded away or gone.
-  const [refocus, setRefocus] = useState<{ id: string; control: "star" | "rename" } | undefined>(undefined);
+  // After a star, rename or group move the row may have changed section (remounted): put focus back
+  // on its control, or on its section's fold when it's folded away (gone: the first fold).
+  const [refocus, setRefocus] = useState<Refocus | undefined>(undefined);
   useLayoutEffect(() => {
     if (!refocus) return;
     const list = listRef.current;
+    const header = (key: string | undefined) => [...(list?.querySelectorAll<HTMLElement>("[data-section]") ?? [])].find((el) => el.dataset.section === key);
+    if ("section" in refocus) { header(refocus.section)?.focus(); return; }
     (list?.querySelector<HTMLElement>(`[data-row="${refocus.id}"] .bean-chat-sidebar-row-${refocus.control}`)
+      ?? header(sections.find((s) => s.threads.some((r) => r.key === refocus.id))?.key)
       ?? list?.querySelector<HTMLElement>(".bean-chat-sidebar-group--fold"))?.focus();
   }, [refocus]);
-  // Rename drafts by thread id, so a save ack (a new title, a moved row) mid-edit doesn't lose one.
+  // Inline edit drafts — `title:<id>`, `group:<id>` (New group…), `header:<name>` — so a save ack (a new
+  // title, a moved row) mid-edit doesn't lose one.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
-  const endEdit = (id: string): void => setDrafts(({ [id]: _, ...rest }) => rest);
-  const cancelEdit = (id: string): void => { endEdit(id); setRefocus({ id, control: "rename" }); };
-  // Enter or blur: an empty or unchanged title just ends the edit. The ref guards Enter's later blur.
-  const saveEdit = (id: string, current: string): void => {
-    const { [id]: draft, ...rest } = draftsRef.current;
+  const startEdit = (key: string, value: string): void => setDrafts((d) => ({ ...d, [key]: value }));
+  const endEdit = (key: string): void => setDrafts(({ [key]: _, ...rest }) => rest);
+  // Enter or blur: an empty or unchanged value just ends the edit (focus `back(current)`). The ref
+  // guards Enter's later blur.
+  const saveEdit = (key: string, current: string, clean: (v: string) => string, commit: (v: string) => Promise<void>, back: (v: string) => Refocus): void => {
+    const { [key]: draft, ...rest } = draftsRef.current;
     if (draft === undefined) return;
     draftsRef.current = rest;
-    const title = draft.trim();
-    if (!title || title === current) { cancelEdit(id); return; }
-    endEdit(id);
-    void onRename(id, title).then(() => setRefocus({ id, control: "rename" }));
+    const value = clean(draft);
+    endEdit(key);
+    if (!value || value === current) { setRefocus(back(current)); return; }
+    void commit(value).then(() => setRefocus(back(value)));
+  };
+  const cancelEdit = (key: string, back: Refocus): void => { endEdit(key); setRefocus(back); };
+  const renameGroup = (from: string, to: string): Promise<void> => {
+    // Moved up front: a prune between the list update and a later move would drop `from` first.
+    // ponytail: a failed rename then loses the group's fold (it unfolds) — an error row says why.
+    setFolded((f) => foldedAfterRename(f, from, to, groupNames));
+    return onRenameGroup(from, to);
   };
   const marker = (key: string) => (working.has(key)
     ? <span class="bean-chat-sidebar-spinner" role="img" aria-label="Working" />
@@ -142,14 +216,40 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
       <div class="bean-chat-sidebar-head">All chats · {rows.length}</div>
       <div class="bean-chat-sidebar-list" ref={listRef}>
         {rows.length === 0 ? <div class="bean-chat-sidebar-empty">No saved chats yet.</div> : null}
-        {sidebarGroups(rows, now).map((g) => (
-          <Fragment key={g.label}>
-            {g.label === "Earlier" ? (
-              <button type="button" class="bean-chat-sidebar-group bean-chat-sidebar-group--fold" aria-expanded={earlierOpen} onClick={() => setEarlierOpen(!earlierOpen)}>
-                <span><span class="bean-chat-sidebar-chevron" aria-hidden="true">{earlierOpen ? "▾" : "▸"}</span> {g.label}</span><span>{g.threads.length}</span>
+        {sections.map((g) => {
+          const header = drafts[`header:${g.label}`];
+          const named = g.kind === "group" ? " bean-chat-sidebar-group--named" : "";
+          return <Fragment key={g.key}>
+            {g.kind === "group" && header !== undefined ? (
+              <div class={`bean-chat-sidebar-group${named}`} data-section={g.key}>
+                <RenameInput
+                  value={header}
+                  label={`Rename group "${g.label}"`}
+                  onInput={(v) => setDrafts((d) => (`header:${g.label}` in d ? { ...d, [`header:${g.label}`]: v } : d))}
+                  onSave={() => saveEdit(`header:${g.label}`, g.label, cleanGroupName, (to) => renameGroup(g.label, to), (v) => ({ section: `group:${v}` }))}
+                  onCancel={() => cancelEdit(`header:${g.label}`, { section: g.key })}
+                />
+                <span>{g.count}</span>
+              </div>
+            ) : g.kind === "earlier" || g.kind === "group" ? (
+              <button
+                type="button"
+                class={`bean-chat-sidebar-group bean-chat-sidebar-group--fold${named}`}
+                data-section={g.key}
+                aria-expanded={!isFolded(g)}
+                title={g.kind === "group" ? "Fold group (double-click or F2 to rename)" : undefined}
+                onClick={() => toggleFold(g)}
+                onDblClick={g.kind === "group" ? () => startEdit(`header:${g.label}`, g.label) : undefined}
+                onKeyDown={g.kind === "group" ? (e) => {
+                  if (e.key !== "F2") return;
+                  e.preventDefault();
+                  startEdit(`header:${g.label}`, g.label);
+                } : undefined}
+              >
+                <span><span class="bean-chat-sidebar-chevron" aria-hidden="true">{isFolded(g) ? "▸" : "▾"}</span> {g.label}</span><span>{g.count}</span>
               </button>
-            ) : <div class="bean-chat-sidebar-group"><span>{g.label}</span><span>{g.threads.length}</span></div>}
-            {(g.label === "Earlier" && !earlierOpen ? g.threads.filter((row) => row.key === activeId) : g.threads).map((row) => {
+            ) : <div class="bean-chat-sidebar-group" data-section={g.key}><span>{g.label}</span><span>{g.count}</span></div>}
+            {(isFolded(g) ? g.threads.filter((row) => row.key === activeId) : g.threads).map((row) => {
               if (row.synced) {
                 const active = row.key === activeId;
                 const surface = SURFACE_NAMES[row.chat.surface];
@@ -176,7 +276,9 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
               const active = t.id === activeId;
               const title = t.title || "Untitled chat";
               const agents = t.agents.filter((a): a is AgentId => a in AGENT_NAMES);
-              const draft = drafts[t.id];
+              // The row's inline edit: its title (✎ / F2) or a new group's name (Group → New group…).
+              const editKey = `title:${t.id}` in drafts ? `title:${t.id}` : `group:${t.id}` in drafts ? `group:${t.id}` : undefined;
+              const draft = editKey === undefined ? undefined : drafts[editKey];
               return (
                 <div
                   key={t.id}
@@ -185,16 +287,18 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                   onKeyDown={(e) => {
                     if (e.key !== "F2" || draft !== undefined) return;
                     e.preventDefault();
-                    setDrafts((d) => ({ ...d, [t.id]: t.title }));
+                    startEdit(`title:${t.id}`, t.title);
                   }}
                 >
-                  {draft !== undefined ? (
+                  {editKey !== undefined && draft !== undefined ? (
                     <RenameInput
                       value={draft}
-                      label={`Rename "${title}"`}
-                      onInput={(v) => setDrafts((d) => (t.id in d ? { ...d, [t.id]: v } : d))}
-                      onSave={() => saveEdit(t.id, t.title)}
-                      onCancel={() => cancelEdit(t.id)}
+                      label={editKey.startsWith("title:") ? `Rename "${title}"` : `New group for "${title}"`}
+                      onInput={(v) => setDrafts((d) => (editKey in d ? { ...d, [editKey]: v } : d))}
+                      onSave={() => (editKey.startsWith("title:")
+                        ? saveEdit(editKey, t.title, (v) => v.trim(), (v) => onRename(t.id, v), () => ({ id: t.id, control: "rename" }))
+                        : saveEdit(editKey, "", cleanGroupName, (v) => onGroup([t.id], v), () => ({ id: t.id, control: "group" })))}
+                      onCancel={() => cancelEdit(editKey, { id: t.id, control: editKey.startsWith("title:") ? "rename" : "group" })}
                     />
                   ) : <button
                     type="button"
@@ -225,11 +329,32 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                       class="bean-chat-sidebar-row-rename"
                       aria-label={`Rename "${title}"`}
                       title="Rename (F2)"
-                      onClick={() => setDrafts((d) => ({ ...d, [t.id]: t.title }))}
+                      onClick={() => startEdit(`title:${t.id}`, t.title)}
                     >
                       ✎
                     </button>
                   )}
+                  {t.starred ? (
+                    // A native menu (keyboard and VoiceOver for free) under a hover-revealed glyph.
+                    <span class="bean-chat-sidebar-row-grouping" title="Move to a group">
+                      <span aria-hidden="true">⋯</span>
+                      <select
+                        class="bean-chat-sidebar-row-group"
+                        aria-label={`Group "${title}"`}
+                        value={t.groupName ?? ""}
+                        onChange={(e) => {
+                          const v = e.currentTarget.value;
+                          e.currentTarget.value = t.groupName ?? "";
+                          if (v === NEW_GROUP) startEdit(`group:${t.id}`, "");
+                          else void onGroup([t.id], v || null).then(() => setRefocus({ id: t.id, control: "group" }));
+                        }}
+                      >
+                        <option value="">{t.groupName ? "Remove from group" : "No group"}</option>
+                        {groupNames.map((n) => <option value={n}>{n}</option>)}
+                        <option value={NEW_GROUP}>New group…</option>
+                      </select>
+                    </span>
+                  ) : null}
                   <button
                     type="button"
                     class={`bean-notes-star bean-chat-sidebar-row-star${t.starred ? " bean-notes-star--on" : ""}`}
@@ -246,8 +371,8 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                 </div>
               );
             })}
-          </Fragment>
-        ))}
+          </Fragment>;
+        })}
       </div>
       <button type="button" class="bean-btn bean-chat-sidebar-new" disabled={busy} onClick={onNew}>+ New chat</button>
       <div class="bean-chat-sidebar-foot">Kept 90 days unless starred · incognito chats never kept</div>

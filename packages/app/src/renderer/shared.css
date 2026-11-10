@@ -221,6 +221,13 @@ button, input, textarea, select, a {
 .bean-chat-sidebar-group--fold:hover { color: var(--bean-text); }
 .bean-chat-sidebar-group--fold:focus-visible { outline: 2px solid var(--bean-accent-text); outline-offset: -2px; }
 .bean-chat-sidebar-chevron { display: inline-block; width: 1em; }
+/* A named group inside Starred: indented, and its name shown as typed (names are case-sensitive). */
+.bean-chat-sidebar-group--named {
+  padding-left: 18px;
+  text-transform: none;
+  letter-spacing: 0.04em;
+}
+.bean-chat-sidebar-group--named .bean-chat-sidebar-rename { margin: -3px 6px -3px 0; }
 .bean-chat-sidebar-row {
   display: flex;
   align-items: center;
@@ -359,6 +366,30 @@ button, input, textarea, select, a {
 .bean-chat-sidebar-row:hover .bean-chat-sidebar-row-star,
 .bean-chat-sidebar-row-star:focus-visible,
 .bean-chat-sidebar-row-star.bean-notes-star--on { opacity: 1; }
+/* A starred row's Group control: a transparent native <select> over a hover-revealed ⋯. */
+.bean-chat-sidebar-row-grouping {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  color: var(--bean-text-dim);
+  -webkit-app-region: no-drag;
+}
+.bean-chat-sidebar-row-group {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.bean-chat-sidebar-row:hover .bean-chat-sidebar-row-grouping,
+.bean-chat-sidebar-row-grouping:focus-within { opacity: 1; }
+.bean-chat-sidebar-row-grouping:hover { color: var(--bean-text); }
+.bean-chat-sidebar-row-grouping:has(.bean-chat-sidebar-row-group:focus-visible) { outline: 2px solid var(--bean-accent-text); outline-offset: -2px; }
 /* Discord/Teams badge on a synced chat's sidebar row and header. */
 .bean-chat-sidebar-badge {
   flex: none;

@@ -40,6 +40,19 @@ no groups table, a group exists while a row names it. The save upsert never list
 `withSaveAck` spreads the old row under the ack so any listing field survives a save. IPC:
 `chatThreadGroup` (1–100 unique UUIDs, name or `null`) / `chatThreadGroupRename`, chat window only,
 no holder check (like ★/rename).
+**Sidebar groups (#764).** `sidebarGroups` returns typed sections (`kind` starred/group/date/earlier,
+`key` kind-prefixed — `group:<name>`, `date:<label>` — so a group named "Earlier"/"Today"/"Starred" is
+just a group; never special-case by label). Starred = ungrouped starred rows, then groups A→Z (header
+count = all starred). A starred row's Group control is a transparent native `<select>` over a ⋯ glyph
+(keyboard/VoiceOver for free; the `"\n"` value = New group…, can't be a cleaned name). Group fold state
+is `localStorage` `bean.chat.foldedGroups` (names); a rename moves the entry **before** the IPC call
+(the prune effect, which runs on every list change once loaded, would drop `from` first), onto an
+existing group the target's state wins (`foldedAfterRename`); fold writes are updaters so a stale
+effect closure can't undo them. The renderer patches rows with `cleanGroupName` (a copy of core's
+cleaning; `GROUP_NAME_MAX` is pinned to `DESKTOP_CHAT_TITLE_MAX` by a test) since group IPC returns
+ids only; an asked-for id not returned is dropped. Inline edits share one draft map keyed
+`title:<id>` / `group:<id>` / `header:<name>`; focus after a move goes to the row's Group control or,
+folded away, its section header (`data-section`).
 
 **Normalizer — `renderer/components/chat/chat-thread.ts`, node-free, runs on every save and again on
 restore.** Never mutates. Drops `working` items, `reply.session`/`tail`/`streaming` (a streaming reply
