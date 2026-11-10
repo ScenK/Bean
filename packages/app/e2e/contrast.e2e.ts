@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
-import { dbFile, recordDestination, saveDesktopChat, setAlias } from "@bean/core";
+import { dbFile, groupDesktopChats, recordDestination, saveDesktopChat, setAlias } from "@bean/core";
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
@@ -69,6 +69,8 @@ const SCAN = `(() => {
     const raw = parse(cs.color);
     if (!raw) continue;
     const rows = chain(el);
+    // Hidden inside a hover-revealed control (an ancestor at opacity 0, e.g. a row's Group menu).
+    if (rows.reduce((k, r) => k * r.alpha, 1) < 0.3) continue;
     const fg = fold(rows, raw);
     const bg = fold(rows, [0, 0, 0, 0]);
     const px = parseFloat(cs.fontSize);
@@ -120,6 +122,11 @@ test("every component window clears WCAG AA text contrast in both themes", async
   const db = dbFile(join(home.homeDir, ".bean"));
   saveDesktopChat(db, { id: "11111111-1111-4111-8111-111111111111", title: "Plan the week", itemsJson: JSON.stringify([{ kind: "reply", agent: "claude", text: "ok" }]) });
   saveDesktopChat(db, { id: "22222222-2222-4222-8222-222222222222", title: "Older chat", itemsJson: "[]" }, new Date(Date.now() - 3 * 86_400_000));
+  // Two starred groups (#765), so each group's filled header and its ink are measured.
+  for (const [id, group] of [["33333333-3333-4333-8333-333333333333", "Work"], ["44444444-4444-4444-8444-444444444444", "Home"]] as const) {
+    saveDesktopChat(db, { id, title: `${group} chat`, itemsJson: "[]" });
+    groupDesktopChats(db, [id], group);
+  }
   // Settings → Destinations (#686): an unnamed row and a named one, so both row kinds are measured.
   recordDestination(db, { surface: "discord", conversationId: "c1", kind: "channel", platformName: "general", parentName: "Guild" });
   recordDestination(db, { surface: "teams", conversationId: "t1", kind: "channel", platformName: "Ops", parentName: "Team" });
@@ -154,6 +161,7 @@ test("every component window clears WCAG AA text contrast in both themes", async
           });
           await win.locator(".bean-chat-row .bean-agent-avatar--bean").first().waitFor({ timeout: 1000 });
         }).toPass({ timeout: 10_000 });
+        await expect(win.locator(".bean-chat-sidebar-set > .bean-chat-sidebar-group")).toHaveCount(2);
         // Open the chat's terminal pane (#663) so its shell output is scanned in both themes too.
         await win.locator(".bean-input--composer").focus();
         await win.keyboard.press("Control+Backquote");
