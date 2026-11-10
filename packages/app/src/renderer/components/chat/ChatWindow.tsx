@@ -288,7 +288,7 @@ export function ChatWindow() {
   const starThread = (id: string, starred: boolean): Promise<void> => window.bean.chatThreadStar(id, starred).then(
     (updatedAt) => setThreads((prev) => (updatedAt === undefined
       ? prev.filter((t) => t.id !== id)
-      : prev.map((t) => (t.id === id ? { ...t, starred, updatedAt } : t)))),
+      : prev.map((t) => (t.id === id ? { ...t, starred, updatedAt, groupName: starred ? t.groupName : null } : t)))),
     (err: unknown) => shownApi()?.error(`Couldn't ${starred ? "star" : "unstar"} that chat: ${err instanceof Error ? err.message : String(err)}`),
   );
   // Same shape as ★. The mounted chat holding the thread (shown or hidden) takes the stored title too,

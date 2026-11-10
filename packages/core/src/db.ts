@@ -278,7 +278,8 @@ CREATE TABLE IF NOT EXISTS desktop_chats (
   updated_at TEXT NOT NULL,
   items_json TEXT NOT NULL,
   note_slug  TEXT,
-  starred    INTEGER NOT NULL DEFAULT 0
+  starred    INTEGER NOT NULL DEFAULT 0,
+  group_name TEXT
 );
 CREATE INDEX IF NOT EXISTS desktop_chats_updated ON desktop_chats(updated_at);
 
@@ -356,6 +357,8 @@ export function openDb(file: string): DatabaseSync {
     ["delegate_runs", "model", "TEXT"],
     // Starred desktop chats (#752): exempt from the 90-day prune.
     ["desktop_chats", "starred", "INTEGER NOT NULL DEFAULT 0"],
+    // Named groups of starred desktop chats (#763): NULL = ungrouped.
+    ["desktop_chats", "group_name", "TEXT"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");

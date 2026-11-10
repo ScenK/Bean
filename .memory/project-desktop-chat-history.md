@@ -29,6 +29,18 @@ ignored), Escape cancels **and `preventDefault()`s** so the overlay sidebar stay
 (ChatWindow) patches the row like ★ and calls the holding mount's `renamed()` — `threadRef.title` is
 what Continue in Discord proposes, and nothing else refreshes it until a restore.
 
+**Groups of starred chats (#763).** `desktop_chats.group_name` (NULL = ungrouped) — only starred rows
+have one. `groupDesktopChats(ids, name)` is one `UPDATE`: a name stars **and** groups (so grouping an
+unstarred row stars it), `null` ungroups and keeps the star; missing ids are skipped, never inserts,
+`updated_at` untouched. Unstarring (`starDesktopChat`) clears the group, so re-starring lands ungrouped.
+`renameDesktopChatGroup(from, to)` moves every member; onto an existing name they merge (no separate
+merge op). Group and title names share `desktopChatName` (one line, trimmed, capped at
+`DESKTOP_CHAT_TITLE_MAX`, never empty); identity is the exact, case-sensitive cleaned string — there's
+no groups table, a group exists while a row names it. The save upsert never lists `group_name`, and
+`withSaveAck` spreads the old row under the ack so any listing field survives a save. IPC:
+`chatThreadGroup` (1–100 unique UUIDs, name or `null`) / `chatThreadGroupRename`, chat window only,
+no holder check (like ★/rename).
+
 **Normalizer — `renderer/components/chat/chat-thread.ts`, node-free, runs on every save and again on
 restore.** Never mutates. Drops `working` items, `reply.session`/`tail`/`streaming` (a streaming reply
 gets the "— turn interrupted" footer), delegate `taskId`/`tail`, status `exiting`, and every image data

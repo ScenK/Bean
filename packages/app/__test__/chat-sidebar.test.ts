@@ -5,7 +5,7 @@ import type { ChatItem } from "../src/renderer/shared/chat-types.js";
 
 const now = new Date(2026, 9, 29, 15, 0);
 const at = (d: Date) => d.toISOString();
-const t = (id: string, updatedAt: string) => ({ id, title: id, updatedAt, agents: [] as string[], starred: false });
+const t = (id: string, updatedAt: string) => ({ id, title: id, updatedAt, agents: [] as string[], starred: false, groupName: null as string | null });
 
 test("groups into Today, the two latest earlier active days, and Earlier, dropping empty groups", () => {
   const today = t("a", at(new Date(2026, 9, 29, 0, 5)));
@@ -38,14 +38,14 @@ test("a save ack moves the active row to the top with its title, time and live a
   ];
   const next = withSaveAck(list, { id: "b", title: "B!", updatedAt: "2026-10-29T11:00:00.000Z" }, items);
   expect(next).toEqual([
-    { id: "b", title: "B!", updatedAt: "2026-10-29T11:00:00.000Z", agents: ["claude"], starred: false },
+    { id: "b", title: "B!", updatedAt: "2026-10-29T11:00:00.000Z", agents: ["claude"], starred: false, groupName: null },
     list[0],
   ]);
   // A first save adds the row.
-  expect(withSaveAck([], { id: "c", title: "c", updatedAt: "x" }, [])).toEqual([{ id: "c", title: "c", updatedAt: "x", agents: [], starred: false }]);
-  // A starred row stays starred.
-  const starred = [{ ...t("d", "2026-10-29T08:00:00.000Z"), starred: true }];
-  expect(withSaveAck(starred, { id: "d", title: "d", updatedAt: "y" }, [])[0]!.starred).toBe(true);
+  expect(withSaveAck([], { id: "c", title: "c", updatedAt: "x" }, [])).toEqual([{ id: "c", title: "c", updatedAt: "x", agents: [], starred: false, groupName: null }]);
+  // A starred row stays starred and keeps its group.
+  const starred = [{ ...t("d", "2026-10-29T08:00:00.000Z"), starred: true, groupName: "Work" }];
+  expect(withSaveAck(starred, { id: "d", title: "d", updatedAt: "y" }, [])[0]).toMatchObject({ starred: true, groupName: "Work" });
 });
 
 test("starred desktop threads come first as one group and skip the date groups' day slots", () => {
