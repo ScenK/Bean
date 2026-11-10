@@ -85,3 +85,8 @@ test("statusLayout flips below the bean when the top of the screen lacks room", 
   expect(bounds.y).toBe(100);
   expect(bean).toEqual({ x: 256, y: 60, bubblesBelow: true, stackMax: 680 });
 });
+test("statusLayout keeps a stale off-screen anchor's bean inside the window", () => {
+  const { bounds, bean } = statusLayout({ x: 1800, y: 900 }, 200, { x: 0, y: 0, width: 800, height: 600 });
+  expect(bounds).toEqual({ x: 500, y: 280, width: 300, height: 320 });
+  expect(bean).toMatchObject({ x: 256, y: 260 });
+});
