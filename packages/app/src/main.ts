@@ -32,7 +32,7 @@ import {
   addTodo, claimTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
   recoverInterruptedTodos, deleteTodosForRoutine, sweepDeadRuns,
   pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  availableModels, pinnedStepSelection, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, listDesktopChats,
+  availableModels, pinnedStepSelection, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats,
   createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
   listChatopsConversations, chatopsConversationTurns, loadChatopsOwners, ownerSubjectIds,
   listDestinations, destinationLabel, matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems,
@@ -368,7 +368,7 @@ app.whenReady().then(async () => {
   // an open one. A mounted window never stores it — that would make a later reopen jump to an old run.
   let pendingDashboardTarget: DashboardTarget | undefined;
   // Desktop chat history: per-chat thread pins and incognito latches (ipc.ts).
-  const chatThreadHandlers = buildChatThreadHandlers({ dbFile: dbFile(dir), saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, listDesktopChats });
+  const chatThreadHandlers = buildChatThreadHandlers({ dbFile: dbFile(dir), saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats });
   const openComponent = (kind: ComponentKind, payload?: ChatDrop | DashboardTarget): void => {
     const droppedUrl = typeof payload === "string" || Array.isArray(payload) ? payload : undefined;
     const target = typeof payload === "object" && !Array.isArray(payload) && kind === "dashboard" ? payload : undefined;

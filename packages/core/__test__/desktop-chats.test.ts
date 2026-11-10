@@ -7,7 +7,10 @@ import {
   DESKTOP_CHAT_MAX_BYTES,
   deleteDesktopChat,
   getDesktopChat,
+  groupDesktopChats,
   listDesktopChats,
+  renameDesktopChat,
+  renameDesktopChatGroup,
   saveDesktopChat,
   starDesktopChat,
 } from "../src/desktop-chats.js";
@@ -23,13 +26,19 @@ const tmpDb = (): string => {
 afterEach(() => files.splice(0).forEach(closeDb));
 const day = (d: number): Date => new Date(Date.UTC(2026, 9, d));
 
-test("upsert keeps created_at, updates the rest, and trims the title", () => {
+test("the first save stores the trimmed, capped title and returns it", () => {
+  const file = tmpDb();
+  expect(saveDesktopChat(file, { id: A, title: `  ${"x".repeat(100)}  `, itemsJson: "[]" }, day(1))).toBe("x".repeat(80));
+  expect(getDesktopChat(file, A)?.title).toBe("x".repeat(80));
+});
+
+test("upsert keeps created_at and title, updates the rest, and returns the stored title", () => {
   const file = tmpDb();
   saveDesktopChat(file, { id: A, title: "first", itemsJson: "[1]" }, day(1));
-  saveDesktopChat(file, { id: A, title: `  ${"x".repeat(100)}  `, itemsJson: "[1,2]", noteSlug: "n1" }, day(2));
+  expect(saveDesktopChat(file, { id: A, title: "second", itemsJson: "[1,2]", noteSlug: "n1" }, day(2))).toBe("first");
   expect(getDesktopChat(file, A)).toEqual({
     id: A,
-    title: "x".repeat(80),
+    title: "first",
     createdAt: day(1).toISOString(),
     updatedAt: day(2).toISOString(),
     itemsJson: "[1,2]",
@@ -42,8 +51,8 @@ test("lists newest first without the transcript", () => {
   saveDesktopChat(file, { id: A, title: "a", itemsJson: "[]" }, day(1));
   saveDesktopChat(file, { id: B, title: "b", itemsJson: "[]" }, day(3));
   expect(listDesktopChats(file, day(4))).toEqual([
-    { id: B, title: "b", updatedAt: day(3).toISOString(), agents: [], starred: false },
-    { id: A, title: "a", updatedAt: day(1).toISOString(), agents: [], starred: false },
+    { id: B, title: "b", updatedAt: day(3).toISOString(), agents: [], starred: false, groupName: null },
+    { id: A, title: "a", updatedAt: day(1).toISOString(), agents: [], starred: false, groupName: null },
   ]);
 });
 
@@ -100,7 +109,7 @@ test("a starred thread survives the prune; starring and a fresh unstar keep upda
   saveDesktopChat(file, { id: A, title: "kept", itemsJson: "[]" }, ago(100));
   saveDesktopChat(file, { id: B, title: "pruned", itemsJson: "[]" }, ago(100));
   expect(starDesktopChat(file, A, true, now)).toBe(ago(100).toISOString());
-  expect(listDesktopChats(file, now)).toEqual([{ id: A, title: "kept", updatedAt: ago(100).toISOString(), agents: [], starred: true }]);
+  expect(listDesktopChats(file, now)).toEqual([{ id: A, title: "kept", updatedAt: ago(100).toISOString(), agents: [], starred: true, groupName: null }]);
   saveDesktopChat(file, { id: A, title: "kept", itemsJson: "[1]" }, ago(1));
   expect(listDesktopChats(file, now)[0]!.starred).toBe(true);
   // Unstarring inside the retention window leaves the clock alone.
@@ -134,7 +143,7 @@ test("starring a missing or non-UUID id returns undefined and creates no row", (
   expect(openDb(file).prepare("SELECT COUNT(*) AS n FROM desktop_chats").get()).toEqual({ n: 0 });
 });
 
-test("a pre-star bean.db gains desktop_chats.starred on open", async () => {
+test("a pre-star bean.db gains desktop_chats.starred and group_name on open", async () => {
   const { DatabaseSync } = await import("node:sqlite");
   const file = tmpDb();
   const legacy = new DatabaseSync(file);
@@ -144,7 +153,94 @@ test("a pre-star bean.db gains desktop_chats.starred on open", async () => {
       `INSERT INTO desktop_chats VALUES ('${A}', 'old', '${day(20).toISOString()}', '${day(20).toISOString()}', '[]', NULL);`,
   );
   legacy.close();
-  expect(listDesktopChats(file, day(21))).toEqual([{ id: A, title: "old", updatedAt: day(20).toISOString(), agents: [], starred: false }]);
+  expect(listDesktopChats(file, day(21))).toEqual([{ id: A, title: "old", updatedAt: day(20).toISOString(), agents: [], starred: false, groupName: null }]);
   expect(starDesktopChat(file, A, true, day(21))).toBe(day(20).toISOString());
   expect(listDesktopChats(file, day(21))[0]!.starred).toBe(true);
+});
+
+test("a rename sticks through later saves and leaves updated_at and starred alone", () => {
+  const file = tmpDb();
+  saveDesktopChat(file, { id: A, title: "old", itemsJson: "[]" }, day(1));
+  starDesktopChat(file, A, true, day(2));
+  expect(renameDesktopChat(file, A, `  New\n\t ${"y".repeat(100)}  `)).toBe(`New ${"y".repeat(76)}`);
+  expect(listDesktopChats(file, day(3))).toEqual([{ id: A, title: `New ${"y".repeat(76)}`, updatedAt: day(1).toISOString(), agents: [], starred: true, groupName: null }]);
+  expect(saveDesktopChat(file, { id: A, title: "old", itemsJson: "[1]" }, day(4))).toBe(`New ${"y".repeat(76)}`);
+  expect(getDesktopChat(file, A)?.title).toBe(`New ${"y".repeat(76)}`);
+});
+
+test("renaming refuses an empty title; a missing or non-UUID id returns undefined and creates no row", () => {
+  const file = tmpDb();
+  saveDesktopChat(file, { id: A, title: "kept", itemsJson: "[]" }, day(1));
+  expect(() => renameDesktopChat(file, A, " \n\t ")).toThrow(/empty/);
+  expect(getDesktopChat(file, A)?.title).toBe("kept");
+  expect(renameDesktopChat(file, B, "t")).toBeUndefined();
+  expect(renameDesktopChat(file, "../x", "t")).toBeUndefined();
+  expect(openDb(file).prepare("SELECT COUNT(*) AS n FROM desktop_chats").get()).toEqual({ n: 1 });
+});
+
+const C = "33333333-3333-4333-8333-333333333333";
+const count = (file: string): unknown => openDb(file).prepare("SELECT COUNT(*) AS n FROM desktop_chats").get();
+const groups = (file: string, now: Date): [string, boolean, string | null][] =>
+  listDesktopChats(file, now).map((c) => [c.id, c.starred, c.groupName]).sort() as [string, boolean, string | null][];
+
+test("grouping stars and groups a mix of starred and unstarred ids in one call, skipping missing ones", () => {
+  const file = tmpDb();
+  saveDesktopChat(file, { id: A, title: "a", itemsJson: "[]" }, day(1));
+  saveDesktopChat(file, { id: B, title: "b", itemsJson: "[]" }, day(2));
+  starDesktopChat(file, A, true, day(3));
+  expect(groupDesktopChats(file, [A, B, C, "../x"], "  Work\n stuff ").sort()).toEqual([A, B]);
+  expect(groups(file, day(4))).toEqual([[A, true, "Work stuff"], [B, true, "Work stuff"]]);
+  expect(count(file)).toEqual({ n: 2 });
+  // updated_at untouched.
+  expect(listDesktopChats(file, day(4)).map((c) => c.updatedAt).sort()).toEqual([day(1).toISOString(), day(2).toISOString()]);
+  expect(groupDesktopChats(file, [C], "x")).toEqual([]);
+});
+
+test("null ungroups and keeps the star; unstarring clears the group and re-starring doesn't restore it", () => {
+  const file = tmpDb();
+  saveDesktopChat(file, { id: A, title: "a", itemsJson: "[]" }, day(1));
+  saveDesktopChat(file, { id: B, title: "b", itemsJson: "[]" }, day(1));
+  groupDesktopChats(file, [A, B], "G");
+  expect(groupDesktopChats(file, [A], null)).toEqual([A]);
+  expect(groups(file, day(2))).toEqual([[A, true, null], [B, true, "G"]]);
+  starDesktopChat(file, B, false, day(2));
+  expect(groups(file, day(2))).toEqual([[A, true, null], [B, false, null]]);
+  starDesktopChat(file, B, true, day(2));
+  expect(groups(file, day(2))).toEqual([[A, true, null], [B, true, null]]);
+  // Re-starring an already-starred grouped thread keeps its group.
+  groupDesktopChats(file, [A], "G");
+  starDesktopChat(file, A, true, day(2));
+  expect(listDesktopChats(file, day(2)).find((c) => c.id === A)!.groupName).toBe("G");
+});
+
+test("saving a grouped thread keeps its group", () => {
+  const file = tmpDb();
+  saveDesktopChat(file, { id: A, title: "a", itemsJson: "[]" }, day(1));
+  groupDesktopChats(file, [A], "G");
+  saveDesktopChat(file, { id: A, title: "a", itemsJson: "[1]" }, day(2));
+  expect(listDesktopChats(file, day(3))[0]).toMatchObject({ starred: true, groupName: "G", updatedAt: day(2).toISOString() });
+});
+
+test("renaming a group moves every member; onto an existing name it merges; names are exact and case-sensitive", () => {
+  const file = tmpDb();
+  for (const id of [A, B, C]) saveDesktopChat(file, { id, title: id, itemsJson: "[]" }, day(1));
+  groupDesktopChats(file, [A, B], "Old");
+  groupDesktopChats(file, [C], "New");
+  expect(renameDesktopChatGroup(file, "old", "X")).toEqual([]);
+  expect(renameDesktopChatGroup(file, " Old ", "Renamed").sort()).toEqual([A, B]);
+  expect(groups(file, day(2))).toEqual([[A, true, "Renamed"], [B, true, "Renamed"], [C, true, "New"]]);
+  expect(renameDesktopChatGroup(file, "New", "Renamed")).toEqual([C]);
+  expect(groups(file, day(2)).map((g) => g[2])).toEqual(["Renamed", "Renamed", "Renamed"]);
+});
+
+test("invalid group names are refused and change nothing", () => {
+  const file = tmpDb();
+  saveDesktopChat(file, { id: A, title: "a", itemsJson: "[]" }, day(1));
+  expect(() => groupDesktopChats(file, [A], " \n\t ")).toThrow(/empty/);
+  expect(() => renameDesktopChatGroup(file, "", "x")).toThrow(/empty/);
+  expect(() => renameDesktopChatGroup(file, "x", "  ")).toThrow(/empty/);
+  expect(groups(file, day(2))).toEqual([[A, false, null]]);
+  // Over-long names are capped like titles.
+  groupDesktopChats(file, [A], "g".repeat(100));
+  expect(listDesktopChats(file, day(2))[0]!.groupName).toBe("g".repeat(80));
 });

@@ -175,6 +175,12 @@ declare global {
       chatThreadDelete(id: string): Promise<void>;
       /** Sets a thread's star: its resulting `updatedAt`, or undefined when the thread is gone. */
       chatThreadStar(id: string, starred: boolean): Promise<string | undefined>;
+      /** Renames a thread (later saves keep it): the stored title, or undefined when the thread is gone. Refused for an empty title. */
+      chatThreadRename(id: string, title: string): Promise<string | undefined>;
+      /** Puts 1–100 threads in a named group, starring them; `null` ungroups them and keeps the star. The ids updated (gone ones skipped). Refused for an empty name. */
+      chatThreadGroup(ids: string[], name: string | null): Promise<string[]>;
+      /** Renames a group (onto an existing name, they merge): the moved ids. */
+      chatThreadGroupRename(from: string, to: string): Promise<string[]>;
       /** The owner's Discord/Teams conversations, newest first. */
       syncedChatList(): Promise<SyncedChatListing[]>;
       /** One listed conversation's transcript, mapped for display. */
