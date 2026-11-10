@@ -314,7 +314,7 @@ test("chat history: star pins a chat past the prune; unstar returns it to Today"
     await expect(firstUnder(chat, "Starred")).toHaveAttribute("data-row", id);
     await expect(row(chat).locator(".bean-chat-sidebar-row-star")).toHaveAttribute("aria-pressed", "true");
     await expect(row(chat).locator(".bean-chat-sidebar-row-delete")).toHaveCount(0);
-    await expect(chat.locator(".bean-chat-sidebar-head")).toHaveText("All chats · 1");
+    await expect(chat.locator(".bean-chat-sidebar-head > span")).toHaveText("All chats · 1");
     await closeChat(app, chat);
     seed(new Date(Date.now() - 100 * 86_400_000)); // the save upsert keeps the star
     chat = await openChat(app);
@@ -492,6 +492,53 @@ test("chat history: drag a starred chat between groups", async () => {
     // Rows still open after the drags.
     await row(a).locator(".bean-chat-sidebar-open").click();
     await expect(chat.locator(".bean-chat-sidebar-row--active")).toHaveAttribute("data-row", a);
+  } finally {
+    await Promise.allSettled([app.close(), home.cleanup()]);
+  }
+});
+
+// #767: by keyboard alone, select mode puts starred and unstarred chats into an existing group in one
+// step (unstarred ones get starred); Escape leaves it with nothing changed.
+test("chat history: multi-select chats into a group", async () => {
+  const home = await makeBeanHome();
+  const file = dbFile(join(home.homeDir, ".bean"));
+  const [a, b, c] = ["41920314-c5d6-4ee2-9354-7f8091a2b3c4", "52a31425-d6e7-4ff3-a465-8091a2b3c4d5", "63b42536-e7f8-4a04-b576-91a2b3c4d5e6"];
+  for (const [id, title] of [[a, "alpha"], [b, "beta"], [c, "gamma"]] as const) {
+    saveDesktopChat(file, { id, title, itemsJson: JSON.stringify([{ kind: "user", id: "a", text: title }]) });
+  }
+  starDesktopChat(file, a, true);
+  groupDesktopChats(file, [a], "Work");
+  starDesktopChat(file, b, true);
+  const state = () => Object.fromEntries(listDesktopChats(file).map((t) => [t.id, [t.starred, t.groupName]]));
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const chat = await openChat(app);
+    const box = (id: string) => chat.locator(`[data-row="${id}"] input[type="checkbox"]`);
+    const select = chat.locator(".bean-chat-sidebar-select");
+    await select.focus();
+    await chat.keyboard.press("Enter");
+    await expect(chat.locator(".bean-chat-sidebar-new")).toHaveCount(0);
+    await box(b).focus();
+    await chat.keyboard.press("Space");
+    await expect(chat.locator(".bean-chat-sidebar-bar-count")).toHaveText("1 selected");
+    // Escape leaves select mode; nothing changed, the sidebar stays.
+    await chat.keyboard.press("Escape");
+    await expect(chat.locator(".bean-chat-sidebar-bar")).toHaveCount(0);
+    await expect(select).toBeFocused();
+    expect(state()).toEqual({ [a]: [true, "Work"], [b]: [true, null], [c]: [false, null] });
+    await chat.keyboard.press("Enter");
+    for (const id of [b, c]) {
+      await box(id).focus();
+      await chat.keyboard.press("Space");
+    }
+    await chat.locator('.bean-chat-sidebar-bar input[aria-label="Group name"]').focus();
+    await chat.keyboard.type("Work");
+    await chat.keyboard.press("Enter");
+    const work = chat.locator('[data-section="group:Work"]');
+    await expect(work).toHaveText(/Work\s*3/);
+    await expect(work).toBeFocused();
+    await expect(chat.locator(".bean-chat-sidebar-new")).toHaveCount(1);
+    expect(state()).toEqual({ [a]: [true, "Work"], [b]: [true, "Work"], [c]: [true, "Work"] });
   } finally {
     await Promise.allSettled([app.close(), home.cleanup()]);
   }
