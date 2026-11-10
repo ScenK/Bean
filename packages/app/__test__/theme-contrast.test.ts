@@ -94,14 +94,13 @@ describe.each(["hearth", "graphite"])("%s theme contrast", (theme) => {
     expect(contrast(t[name]!, t["--bean-surface"]!)).toBeGreaterThanOrEqual(4.5);
   });
 
-  // Starred chat groups (#765): each colour is a header fill under --bean-group-ink and a line
-  // beside the group's rows, on any surface.
+  // Starred chat groups (#765): each colour tints its group's card and inks the header's chevron,
+  // on any surface.
   const groups = Object.keys(t).filter((n) => /^--bean-group-\d+$/.test(n));
   test(`defines the ${GROUP_COLORS} group colours ChatSidebar assigns`, () => {
     expect(groups).toEqual(Array.from({ length: GROUP_COLORS }, (_, i) => `--bean-group-${i + 1}`));
   });
-  test.each(groups)("%s: ink reads on it (>= 4.5:1) and it reads as a line on every surface (>= 3:1)", (name) => {
-    expect(contrast(t["--bean-group-ink"]!, t[name]!), `ink on ${name}`).toBeGreaterThanOrEqual(4.5);
+  test.each(groups)("%s: reads as a graphic on every surface (>= 3:1)", (name) => {
     for (const surface of SURFACES) expect(contrast(t[name]!, t[surface]!), `${name} on ${surface}`).toBeGreaterThanOrEqual(3);
   });
 

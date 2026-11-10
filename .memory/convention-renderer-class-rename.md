@@ -19,4 +19,8 @@ Corollary for hiding an element in CSS: `visibility: hidden` and `display: none`
 out of the tab order, so a hover-revealed control becomes keyboard-unreachable. Hide it with
 `opacity: 0` and reveal it on `:focus-visible` alongside the hover rule.
 
+The chat sidebar's row controls are also zero-wide until the row is hovered or the control is
+focused (so titles keep the row). Playwright treats a zero-size node as not visible: an e2e spec
+must `row.hover()` before clicking one, or the click times out.
+
 Related: [convention-renderer-view-prefs-in-localstorage.md](convention-renderer-view-prefs-in-localstorage.md)

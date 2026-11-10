@@ -274,17 +274,31 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
       if (t?.starred && (t.groupName ?? null) !== name) void onGroup([id], name);
     },
   });
-  // Select mode: a set of thread ids (never positions — a save ack reorders rows), only the listed
-  // ones counted, so a deleted or pruned row drops out on its own.
-  const [selecting, setSelecting] = useState(false);
+  // ⌘-click selection: a set of thread ids (never positions — a save ack reorders rows), only the
+  // listed ones counted, so a deleted or pruned row drops out on its own. Any selection swaps New
+  // chat for the group bar.
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [newGroup, setNewGroup] = useState("");
   const [selectError, setSelectError] = useState<string | undefined>(undefined);
   const [grouping, setGrouping] = useState(false);
-  const selectRef = useRef<HTMLButtonElement>(null);
+  const newRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const barRef = useRef<HTMLFormElement>(null);
   const chosen = [...selected].filter((id) => threads.some((t) => t.id === id));
-  const endSelect = (): void => { setSelecting(false); setSelected(new Set()); setNewGroup(""); setSelectError(undefined); };
+  const selecting = chosen.length > 0;
+  // Focus inside the bar would be lost with it: it goes to New chat, which takes the bar's place.
+  const focusNew = useRef(false);
+  const endSelect = (): void => {
+    focusNew.current = barRef.current?.contains(document.activeElement) ?? false;
+    setSelected(new Set());
+  };
+  useLayoutEffect(() => {
+    if (selecting) return;
+    setNewGroup("");
+    setSelectError(undefined);
+    if (focusNew.current) newRef.current?.focus();
+    focusNew.current = false;
+  }, [selecting]);
   const toggleSelected = (id: string): void => setSelected((s) => {
     const next = new Set(s);
     if (!next.delete(id)) next.add(id);
@@ -299,7 +313,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
     void onGroup(chosen, name).then((err) => {
       setGrouping(false);
       if (err !== undefined) { setSelectError(`Couldn't group those chats: ${err}`); return; }
-      endSelect();
+      setSelected(new Set()); // not endSelect: focus goes to the new group's header, below
       setFolded((f) => f.filter((n) => n !== name));
       setRefocus({ section: `group:${name}` });
     });
@@ -313,27 +327,16 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
       id="bean-chat-sidebar"
       class={`bean-chat-sidebar${overlay ? " bean-chat-sidebar--overlay" : ""}`}
       aria-label="Chat history"
-      // Escape leaves select mode (the name input's own Escape, default-prevented, only leaves it).
+      // Escape drops the selection (the name input's own Escape, default-prevented, only leaves it).
       // Default-prevented too, so the overlay sidebar stays open.
       onKeyDown={selecting ? (e) => {
         if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
         e.preventDefault();
         endSelect();
-        selectRef.current?.focus();
       } : undefined}
     >
       <div class="bean-chat-sidebar-head">
         <span>All chats · {rows.length}</span>
-        <button
-          ref={selectRef}
-          type="button"
-          class="bean-chat-sidebar-select"
-          aria-pressed={selecting}
-          disabled={!selecting && threads.length === 0}
-          onClick={() => { if (selecting) endSelect(); else setSelecting(true); }}
-        >
-          Select
-        </button>
       </div>
       <div class="bean-chat-sidebar-list" ref={listRef}>
         {rows.length === 0 ? <div class="bean-chat-sidebar-empty">No saved chats yet.</div> : null}
@@ -405,29 +408,21 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                 <div
                   key={t.id}
                   data-row={t.id}
-                  class={`bean-chat-sidebar-row${active ? " bean-chat-sidebar-row--active" : ""}${live.has(t.id) ? " bean-chat-sidebar-row--live" : ""}`}
-                  draggable={t.starred && draft === undefined && !selecting}
-                  onDragStart={t.starred && draft === undefined && !selecting ? (e) => {
+                  class={`bean-chat-sidebar-row${active ? " bean-chat-sidebar-row--active" : ""}${live.has(t.id) ? " bean-chat-sidebar-row--live" : ""}${selected.has(t.id) ? " bean-chat-sidebar-row--selected" : ""}`}
+                  draggable={t.starred && draft === undefined}
+                  onDragStart={t.starred && draft === undefined ? (e) => {
                     if (!e.dataTransfer) return;
                     e.dataTransfer.setData(CHAT_DRAG_TYPE, t.id);
                     e.dataTransfer.effectAllowed = "move";
                   } : undefined}
                   onDragEnd={clearOver}
                   onKeyDown={(e) => {
-                    if (e.key !== "F2" || draft !== undefined || selecting) return;
+                    if (e.key !== "F2" || draft !== undefined) return;
                     e.preventDefault();
                     startEdit(`title:${t.id}`, t.title);
                   }}
                 >
-                  {selecting ? (
-                    <label class="bean-chat-sidebar-open bean-chat-sidebar-pick">
-                      <span class="bean-chat-sidebar-line">
-                        <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleSelected(t.id)} />
-                        <span class="bean-chat-sidebar-title">{title}</span>
-                        <span class="bean-chat-sidebar-time">{rowTime(t.updatedAt, now)}</span>
-                      </span>
-                    </label>
-                  ) : editKey !== undefined && draft !== undefined ? (
+                  {editKey !== undefined && draft !== undefined ? (
                     <RenameInput
                       value={draft}
                       label={editKey.startsWith("title:") ? `Rename "${title}"` : `New group for "${title}"`}
@@ -442,7 +437,19 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                     class="bean-chat-sidebar-open"
                     disabled={busy}
                     aria-current={active ? "true" : undefined}
-                    onClick={() => { if (!active) onOpen(t.id); }}
+                    aria-pressed={selecting ? selected.has(t.id) : undefined}
+                    // ⌘-click (or ⌘-Enter on the focused row — Chromium sends no click for it) picks rows
+                    // to group; a plain click drops the selection and opens as usual.
+                    onKeyDown={(e) => {
+                      if (!e.metaKey || e.key !== "Enter") return;
+                      e.preventDefault();
+                      toggleSelected(t.id);
+                    }}
+                    onClick={(e) => {
+                      if (e.metaKey) { toggleSelected(t.id); return; }
+                      if (selecting) endSelect();
+                      if (!active) onOpen(t.id);
+                    }}
                   >
                     <span class="bean-chat-sidebar-line">
                       {live.has(t.id) ? <span class="bean-chat-sidebar-live" role="img" aria-label="Agent session running" /> : null}
@@ -460,7 +467,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                       </span>
                     ) : null}
                   </button>}
-                  {draft !== undefined || selecting ? null : (
+                  {draft !== undefined ? null : (
                     <button
                       type="button"
                       class="bean-chat-sidebar-row-rename"
@@ -471,7 +478,6 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                       ✎
                     </button>
                   )}
-                  {selecting ? null : <>
                   {t.starred ? (
                     // A native menu (keyboard and VoiceOver for free) under a hover-revealed glyph.
                     <span class="bean-chat-sidebar-row-grouping" title="Move to a group">
@@ -506,7 +512,6 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                   {active || t.starred ? null : (
                     <button type="button" class="bean-chat-sidebar-row-delete" aria-label={`Delete "${title}"`} title="Delete" onClick={() => onDelete(t.id)}>✕</button>
                   )}
-                  </>}
                 </div>
               );
             })}
@@ -518,7 +523,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
         })}
       </div>
       {selecting ? (
-        <form class="bean-chat-sidebar-bar" onSubmit={(e) => { e.preventDefault(); groupSelected(); }}>
+        <form ref={barRef} class="bean-chat-sidebar-bar" onSubmit={(e) => { e.preventDefault(); groupSelected(); }}>
           <div class="bean-chat-sidebar-bar-count" aria-live="polite">{chosen.length} selected</div>
           <input
             class="bean-chat-sidebar-rename"
@@ -538,12 +543,12 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
           <datalist id="bean-chat-sidebar-groups">{groupNames.map((n) => <option value={n} />)}</datalist>
           {selectError ? <div class="bean-chat-sidebar-bar-error" role="alert">{selectError}</div> : null}
           <div class="bean-chat-sidebar-bar-actions">
-            <button type="submit" class="bean-btn" disabled={grouping || chosen.length === 0 || !cleanGroupName(newGroup)}>Group</button>
-            <button ref={cancelRef} type="button" class="bean-btn bean-btn--ghost" onClick={() => { endSelect(); selectRef.current?.focus(); }}>Cancel</button>
+            <button type="submit" class="bean-btn" disabled={grouping || !cleanGroupName(newGroup)}>{groupNames.includes(cleanGroupName(newGroup)) ? "Add to group" : "Create group"}</button>
+            <button ref={cancelRef} type="button" class="bean-btn bean-btn--ghost" onClick={endSelect}>Cancel</button>
           </div>
         </form>
-      ) : <button type="button" class="bean-btn bean-chat-sidebar-new" disabled={busy} onClick={onNew}>+ New chat</button>}
-      <div class="bean-chat-sidebar-foot">Kept 90 days unless starred · incognito chats never kept</div>
+      ) : <button ref={newRef} type="button" class="bean-btn bean-chat-sidebar-new" disabled={busy} onClick={onNew}>+ New chat</button>}
+      <div class="bean-chat-sidebar-foot">Kept 90 days unless starred · incognito chats never kept · ⌘-click chats to group them</div>
     </nav>
   );
 }

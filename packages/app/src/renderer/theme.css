@@ -23,15 +23,14 @@
   /* Agent mascot fills (AgentAvatar) — graphics, 3:1 on every surface; the mascot's features are
      drawn in --bean-surface, so the same ratio holds inside the body. */
   --bean-agent-claude: oklch(0.56 0.15 33);
-  /* Starred chat-group colours (ChatSidebar's groupColors picks one per group): the header's fill
-     and the line beside its rows — 3:1 on every surface as a line, 4.5:1 under --bean-group-ink. */
+  /* Starred chat-group colours (ChatSidebar's groupColors picks one per group): the group card's
+     tint and border, and its header's chevron — 3:1 on every surface as a graphic. */
   --bean-group-1: oklch(0.54 0.1 25);
   --bean-group-2: oklch(0.54 0.1 85);
   --bean-group-3: oklch(0.54 0.1 145);
   --bean-group-4: oklch(0.54 0.1 205);
   --bean-group-5: oklch(0.54 0.1 265);
   --bean-group-6: oklch(0.54 0.1 325);
-  --bean-group-ink: #fff;
   /* Terminal pane ANSI palette (TerminalPane): each 4.5:1 on --bean-surface, the pane's background.
      Light theme, so "white" is a mid gray — xterm's minimumContrastRatio lifts anything else. */
   --bean-ansi-black: oklch(0.3 0.02 60);
@@ -79,7 +78,6 @@
   --bean-group-4: oklch(0.74 0.1 205);
   --bean-group-5: oklch(0.74 0.1 265);
   --bean-group-6: oklch(0.74 0.1 325);
-  --bean-group-ink: oklch(0.18 0.012 265);
   /* Terminal pane ANSI palette: each 4.5:1 on --bean-surface; "black" is a gray on this dark surface. */
   --bean-ansi-black: oklch(0.62 0.02 260);
   --bean-ansi-red: oklch(0.7 0.16 25);

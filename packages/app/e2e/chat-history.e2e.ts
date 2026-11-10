@@ -310,6 +310,7 @@ test("chat history: star pins a chat past the prune; unstar returns it to Today"
     let chat = await openChat(app);
     const row = (c: Page) => c.locator(`[data-row="${id}"]`);
     const firstUnder = (c: Page, label: string) => c.locator(`.bean-chat-sidebar-group:has-text("${label}") + [data-row]`);
+    await row(chat).hover(); // hidden controls are zero-wide
     await row(chat).locator(".bean-chat-sidebar-row-star").click();
     await expect(firstUnder(chat, "Starred")).toHaveAttribute("data-row", id);
     await expect(row(chat).locator(".bean-chat-sidebar-row-star")).toHaveAttribute("aria-pressed", "true");
@@ -319,6 +320,7 @@ test("chat history: star pins a chat past the prune; unstar returns it to Today"
     seed(new Date(Date.now() - 100 * 86_400_000)); // the save upsert keeps the star
     chat = await openChat(app);
     await expect(firstUnder(chat, "Starred")).toHaveAttribute("data-row", id);
+    await row(chat).hover(); // hidden controls are zero-wide
     await row(chat).locator(".bean-chat-sidebar-row-star").click();
     await expect(firstUnder(chat, "Today")).toHaveAttribute("data-row", id);
     await expect(chat.locator(".bean-chat-sidebar-group", { hasText: "Starred" })).toHaveCount(0);
@@ -366,10 +368,12 @@ test("chat history: rename a chat inline in the sidebar", async () => {
     // A closed chat: ✎, then Escape cancels and an edit saves.
     const closed = chat.locator(`[data-row="${closedId}"]`);
     await closed.hover();
+    await closed.hover(); // hidden controls are zero-wide
     await closed.locator(".bean-chat-sidebar-row-rename").click();
     await chat.keyboard.type("nope");
     await chat.keyboard.press("Escape");
     await expect(closed.locator(".bean-chat-sidebar-title")).toHaveText("old chat");
+    await closed.hover(); // hidden controls are zero-wide
     await closed.locator(".bean-chat-sidebar-row-rename").click();
     await chat.keyboard.type("Renamed old");
     await chat.keyboard.press("Enter");
@@ -438,6 +442,7 @@ test("chat history: foldable named groups inside Starred", async () => {
       await header.click();
       await expect(header).toHaveAttribute("aria-expanded", "true");
       await row(a).hover();
+      await row(a).hover(); // hidden controls are zero-wide
       await row(a).locator(".bean-chat-sidebar-row-star").click();
       await expect(chat.locator('.bean-chat-sidebar-group:has-text("Today") + [data-row]')).toHaveAttribute("data-row", a);
       await expect(header).toHaveText(/Projects\s*1/);
@@ -497,8 +502,8 @@ test("chat history: drag a starred chat between groups", async () => {
   }
 });
 
-// #767: by keyboard alone, select mode puts starred and unstarred chats into an existing group in one
-// step (unstarred ones get starred); Escape leaves it with nothing changed.
+// #767: ⌘-click (or ⌘-Enter on a focused row) puts starred and unstarred chats into an existing group
+// in one step (unstarred ones get starred); Escape drops the selection with nothing changed.
 test("chat history: multi-select chats into a group", async () => {
   const home = await makeBeanHome();
   const file = dbFile(join(home.homeDir, ".bean"));
@@ -513,24 +518,23 @@ test("chat history: multi-select chats into a group", async () => {
   const app = await launchBean({ HOME: home.homeDir });
   try {
     const chat = await openChat(app);
-    const box = (id: string) => chat.locator(`[data-row="${id}"] input[type="checkbox"]`);
-    const select = chat.locator(".bean-chat-sidebar-select");
-    await select.focus();
-    await chat.keyboard.press("Enter");
+    const open = (id: string) => chat.locator(`[data-row="${id}"] .bean-chat-sidebar-open`);
+    // Hidden row controls take no width: the title runs to the row's time.
+    const widths = await chat.locator(`[data-row="${c}"] > :not(.bean-chat-sidebar-open)`).evaluateAll((els) => els.map((el) => el.getBoundingClientRect().width));
+    expect(widths.length).toBeGreaterThan(0);
+    expect(widths.every((w) => w === 0)).toBe(true);
+    await open(b).click({ modifiers: ["Meta"] });
     await expect(chat.locator(".bean-chat-sidebar-new")).toHaveCount(0);
-    await box(b).focus();
-    await chat.keyboard.press("Space");
     await expect(chat.locator(".bean-chat-sidebar-bar-count")).toHaveText("1 selected");
-    // Escape leaves select mode; nothing changed, the sidebar stays.
+    // Escape drops the selection; nothing changed, the sidebar stays.
     await chat.keyboard.press("Escape");
     await expect(chat.locator(".bean-chat-sidebar-bar")).toHaveCount(0);
-    await expect(select).toBeFocused();
+    await expect(chat.locator(".bean-chat-sidebar-new")).toHaveCount(1);
     expect(state()).toEqual({ [a]: [true, "Work"], [b]: [true, null], [c]: [false, null] });
-    await chat.keyboard.press("Enter");
-    for (const id of [b, c]) {
-      await box(id).focus();
-      await chat.keyboard.press("Space");
-    }
+    await open(b).click({ modifiers: ["Meta"] });
+    await open(c).focus();
+    await chat.keyboard.press("Meta+Enter");
+    await expect(chat.locator(".bean-chat-sidebar-bar-count")).toHaveText("2 selected");
     await chat.locator('.bean-chat-sidebar-bar input[aria-label="Group name"]').focus();
     await chat.keyboard.type("Work");
     await chat.keyboard.press("Enter");

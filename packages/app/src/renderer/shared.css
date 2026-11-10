@@ -180,26 +180,11 @@ button, input, textarea, select, a {
   align-items: baseline;
   justify-content: space-between;
 }
-.bean-chat-sidebar-select {
-  padding: 2px 6px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--bean-accent-text);
-  font: inherit;
-  cursor: pointer;
-  -webkit-app-region: no-drag;
-}
-.bean-chat-sidebar-select[aria-pressed="true"] { background: var(--bean-accent); color: var(--bean-accent-ink); }
-.bean-chat-sidebar-select:disabled { opacity: 0.5; cursor: default; }
-.bean-chat-sidebar-select:focus-visible { outline: 2px solid var(--bean-accent-text); outline-offset: 1px; }
 .bean-chat-sidebar-new {
   flex: none;
   width: 100%;
   -webkit-app-region: no-drag;
 }
-/* Select mode: the row is one native label (checkbox + title), and an action bar takes New chat's place. */
-.bean-chat-sidebar-pick input { flex: none; margin: 0; accent-color: var(--bean-accent); }
 .bean-chat-sidebar-bar { flex: none; display: flex; flex-direction: column; gap: 6px; -webkit-app-region: no-drag; }
 .bean-chat-sidebar-bar .bean-chat-sidebar-rename { flex: none; margin: 0; }
 .bean-chat-sidebar-bar-count { font: 600 11px ui-monospace, SFMono-Regular, monospace; color: var(--bean-text-dim); }
@@ -248,7 +233,6 @@ button, input, textarea, select, a {
 .bean-chat-sidebar-group--fold:focus-visible { outline: 2px solid var(--bean-accent-text); outline-offset: -2px; }
 /* A header a dragged starred row is over (#766): it takes the drop. */
 .bean-chat-sidebar-group--drop { outline: 2px dashed var(--bean-accent-text); outline-offset: -2px; border-radius: 6px; }
-.bean-chat-sidebar-set > .bean-chat-sidebar-group--drop { outline-offset: 2px; }
 .bean-chat-sidebar-chevron { display: inline-block; width: 1em; }
 /* A named group inside Starred: its name shown as typed (names are case-sensitive). */
 .bean-chat-sidebar-group--named {
@@ -256,23 +240,31 @@ button, input, textarea, select, a {
   letter-spacing: 0.04em;
 }
 .bean-chat-sidebar-group--named .bean-chat-sidebar-rename { margin: -3px 6px -3px 0; }
-/* A named group's set (#765), like a browser's vertical tab group: its colour (--bean-group-N, picked
-   by groupColors) fills the header and runs as a line down the left of its rows. Row backgrounds
-   (active, live, hover, focus) are untouched. */
+/* A named group's set (#765): a card tinted with the group's colour (--bean-group-N, picked by
+   groupColors) around its header and rows. The header stays plain text; the colour also inks the
+   chevron and fills the count's pill. Row backgrounds (active, live, hover, focus) are untouched. */
 .bean-chat-sidebar-set {
-  margin: 8px 0 2px 8px;
-  border-left: 3px solid var(--bean-group-color);
-  border-radius: 6px 0 0 6px;
+  margin: 8px 0 2px;
+  padding: 2px 3px 3px;
+  border: 1px solid color-mix(in oklch, var(--bean-group-color) 38%, transparent);
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--bean-group-color) 9%, transparent);
+  /* The tint costs the dim ink its 4.5:1, so inside the card it sits a step nearer the text ink. */
+  --bean-text-dim: color-mix(in oklch, var(--bean-text) 80%, var(--bean-surface));
 }
 .bean-chat-sidebar-set > .bean-chat-sidebar-group {
-  padding: 5px 10px 5px 7px;
-  border-radius: 0 6px 6px 0;
-  background: var(--bean-group-color);
-  color: var(--bean-group-ink);
+  align-items: center;
+  padding: 6px 7px 4px;
+  color: var(--bean-text);
 }
-.bean-chat-sidebar-set > .bean-chat-sidebar-group--fold:hover { color: var(--bean-group-ink); }
-.bean-chat-sidebar-set > .bean-chat-sidebar-group--fold:focus-visible { outline-offset: 2px; }
-.bean-chat-sidebar-set > [data-row] { margin-left: 4px; }
+/* Coloured glyphs likewise (contrast.e2e.ts scans them as text). */
+.bean-chat-sidebar-set .bean-chat-sidebar-chevron { color: color-mix(in oklch, var(--bean-group-color), var(--bean-text) 35%); }
+.bean-chat-sidebar-set .bean-notes-star--on { color: color-mix(in oklch, var(--bean-star), var(--bean-text) 35%); }
+.bean-chat-sidebar-set > .bean-chat-sidebar-group > span:last-child {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--bean-group-color) 22%, transparent);
+}
 .bean-chat-sidebar-row {
   display: flex;
   align-items: center;
@@ -309,6 +301,14 @@ button, input, textarea, select, a {
 .bean-chat-sidebar-row--active.bean-chat-sidebar-row--live {
   background: color-mix(in oklch, var(--bean-orb-check-ink) 8%, color-mix(in oklch, var(--bean-accent) 8%, var(--bean-surface)));
   border-color: color-mix(in oklch, var(--bean-orb-check-ink) 45%, transparent);
+}
+/* ⌘-clicked rows are selected (an action bar takes New chat's place). After the active card's rules,
+   so a selected active row shows it too; the dim ink steps nearer the text ink to keep 4.5:1. */
+.bean-chat-sidebar-row.bean-chat-sidebar-row--selected,
+.bean-chat-sidebar-row.bean-chat-sidebar-row--selected:hover {
+  background: color-mix(in oklch, var(--bean-accent) 16%, var(--bean-surface));
+  box-shadow: inset 0 0 0 1.5px var(--bean-accent-text);
+  --bean-text-dim: color-mix(in oklch, var(--bean-text) 80%, var(--bean-surface));
 }
 .bean-chat-sidebar-open {
   flex: 1;
@@ -361,7 +361,15 @@ button, input, textarea, select, a {
   gap: 6px;
   font-size: 10.5px;
 }
-/* Hover-revealed, but opacity (not visibility) keeps it in the tab order. */
+/* Hover-revealed, but opacity (not visibility) keeps it in the tab order. Hidden, a control is
+   zero-wide, so the title keeps the row; shown, the controls take the time's place. */
+.bean-chat-sidebar-row:not(:hover) > :is(.bean-chat-sidebar-row-rename, .bean-chat-sidebar-row-delete, .bean-chat-sidebar-row-grouping, .bean-chat-sidebar-row-star:not(.bean-notes-star--on)):not(:focus-visible, :focus-within) {
+  width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.bean-chat-sidebar-row:hover .bean-chat-sidebar-open:not(:only-child) .bean-chat-sidebar-time { display: none; }
 .bean-chat-sidebar-row-rename,
 .bean-chat-sidebar-row-delete {
   flex: none;
