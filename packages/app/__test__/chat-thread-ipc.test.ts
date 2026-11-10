@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getDesktopChat, saveDesktopChat, deleteDesktopChat, listDesktopChats, DESKTOP_CHAT_MAX_BYTES } from "@bean/core";
+import { getDesktopChat, saveDesktopChat, deleteDesktopChat, starDesktopChat, listDesktopChats, DESKTOP_CHAT_MAX_BYTES } from "@bean/core";
 import { buildChatThreadHandlers, registerIpc, type RegisterDeps } from "../src/ipc.js";
 import { IPC } from "../src/channels.js";
 import type { Memory } from "@bean/core";
@@ -14,7 +14,7 @@ const OTHER = "9f1d7c2e-3b4a-4e6f-8a1b-5c2d3e4f5a6b";
 
 function setup() {
   const dbFile = join(mkdtempSync(join(tmpdir(), "bean-thread-")), "bean.db");
-  const handlers = buildChatThreadHandlers({ dbFile, saveDesktopChat, getDesktopChat, deleteDesktopChat, listDesktopChats });
+  const handlers = buildChatThreadHandlers({ dbFile, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, listDesktopChats });
   return { dbFile, handlers, row: (id = ID) => getDesktopChat(dbFile, id) };
 }
 const save = (items: unknown[] = [{ kind: "status", id: "item-1", text: "hi", tone: "info" }], id = ID) => ({ id, title: "hi there", items });
@@ -85,6 +85,20 @@ describe("buildChatThreadHandlers", () => {
     handlers.release("a"); // the chat is gone: its thread is free to delete
     handlers.delete(ID);
     expect(row()).toBeUndefined();
+  });
+
+  it("stars any thread, open or not; rejects a non-UUID id and a non-boolean flag", () => {
+    const { handlers } = setup();
+    const ack = handlers.save("a", save());
+    expect(handlers.star(ID, true)).toBe(ack!.updatedAt); // the open chat's own thread
+    expect(handlers.list()[0]).toMatchObject({ id: ID, starred: true });
+    expect(handlers.star(ID, false)).toBe(ack!.updatedAt);
+    expect(handlers.list()[0]).toMatchObject({ id: ID, starred: false });
+    expect(handlers.star(OTHER, true)).toBeUndefined(); // gone: never inserted
+    expect(handlers.list()).toHaveLength(1);
+    expect(() => handlers.star("../x", true)).toThrow(/UUID/);
+    for (const bad of [1, "true", null, undefined]) expect(() => handlers.star(ID, bad)).toThrow(/boolean/);
+    expect(handlers.list()[0]!.starred).toBe(false);
   });
 
   it("two chats save two threads; neither may save, restore or delete the other's", () => {
@@ -319,10 +333,12 @@ describe("chat thread IPC", () => {
     expect(await b).toMatchObject({ stopped: true });
   });
 
-  it("list/delete are chat-window only", () => {
+  it("list/delete/star are chat-window only", () => {
     const { chat, other, invoke } = ipcHarness();
     expect(() => invoke(IPC.chatThreadList, other)).toThrow(/chat window/);
     expect(() => invoke(IPC.chatThreadDelete, other, OTHER)).toThrow(/chat window/);
+    expect(() => invoke(IPC.chatThreadStar, other, OTHER, true)).toThrow(/chat window/);
+    expect(invoke(IPC.chatThreadStar, chat, OTHER, true)).toBeUndefined();
     expect(invoke(IPC.chatThreadList, chat)).toEqual([]);
   });
   it("chatStageImage stages to a private file and rejects a bad mime, an oversize payload and an unattached mount", async () => {

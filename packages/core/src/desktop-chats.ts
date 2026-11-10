@@ -10,6 +10,8 @@ export interface DesktopChatSummary {
 /** A listed thread plus the live agents that replied in it (`reply` items' `agent`), for the picker. */
 export interface DesktopChatListing extends DesktopChatSummary {
   agents: string[];
+  /** Starred threads are exempt from the retention prune. */
+  starred: boolean;
 }
 
 export interface DesktopChat extends DesktopChatSummary {
@@ -46,22 +48,39 @@ export function saveDesktopChat(file: string, chat: DesktopChatInput, now: Date 
     .run(chat.id, chat.title.trim().slice(0, DESKTOP_CHAT_TITLE_MAX), at, at, chat.itemsJson, chat.noteSlug ?? null);
 }
 
-/** Prunes threads not saved in DESKTOP_CHAT_RETENTION_DAYS, then lists the rest newest first. */
+const retentionCutoff = (now: Date): string => new Date(now.getTime() - DESKTOP_CHAT_RETENTION_DAYS * 86_400_000).toISOString();
+
+/** Prunes unstarred threads not saved in DESKTOP_CHAT_RETENTION_DAYS, then lists the rest newest first. */
 export function listDesktopChats(file: string, now: Date = new Date()): DesktopChatListing[] {
   const db = openDb(file);
-  const cutoff = new Date(now.getTime() - DESKTOP_CHAT_RETENTION_DAYS * 86_400_000).toISOString();
-  db.prepare("DELETE FROM desktop_chats WHERE updated_at < ?").run(cutoff);
+  db.prepare("DELETE FROM desktop_chats WHERE updated_at < ? AND starred = 0").run(retentionCutoff(now));
   // Agents are read in SQL so the picker never ships transcripts; a non-JSON row lists none.
   return db
     .prepare(
-      `SELECT id, title, updated_at AS updatedAt,
+      `SELECT id, title, updated_at AS updatedAt, starred,
          (SELECT group_concat(agent) FROM (SELECT DISTINCT json_extract(j.value, '$.agent') AS agent
             FROM json_each(CASE WHEN json_valid(items_json) THEN items_json ELSE '[]' END) j
             WHERE json_extract(j.value, '$.kind') = 'reply' AND json_extract(j.value, '$.agent') NOT IN ('bean'))) AS agents
        FROM desktop_chats ORDER BY updated_at DESC, id`,
     )
     .all()
-    .map((r) => ({ id: r.id, title: r.title, updatedAt: r.updatedAt, agents: typeof r.agents === "string" ? r.agents.split(",") : [] }) as DesktopChatListing);
+    .map((r) => ({ id: r.id, title: r.title, updatedAt: r.updatedAt, agents: typeof r.agents === "string" ? r.agents.split(",") : [], starred: r.starred === 1 }) as DesktopChatListing);
+}
+
+/** Sets a thread's star; returns its `updated_at`, or undefined for a missing or non-UUID id (never
+ * inserts). Unstarring a starred thread already past the prune cutoff resets `updated_at` to `now`,
+ * so it isn't deleted on the next listing; otherwise `updated_at` is untouched. */
+export function starDesktopChat(file: string, id: string, starred: boolean, now: Date = new Date()): string | undefined {
+  if (!UUID.test(id)) return undefined;
+  // SET expressions read the pre-update row, so `starred = 1` here is the old value.
+  const row = openDb(file)
+    .prepare(
+      `UPDATE desktop_chats SET starred = ?,
+         updated_at = CASE WHEN ? = 0 AND starred = 1 AND updated_at < ? THEN ? ELSE updated_at END
+       WHERE id = ? RETURNING updated_at AS updatedAt`,
+    )
+    .get(starred ? 1 : 0, starred ? 1 : 0, retentionCutoff(now), now.toISOString(), id);
+  return row ? (row.updatedAt as string) : undefined;
 }
 
 export function getDesktopChat(file: string, id: string): DesktopChat | undefined {

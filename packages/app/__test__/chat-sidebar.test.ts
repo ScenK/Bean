@@ -1,11 +1,11 @@
 import { expect, test } from "vitest";
-import { groupThreads, mergeRows, withSaveAck } from "../src/renderer/components/chat/ChatSidebar.js";
+import { groupThreads, mergeRows, sidebarGroups, withSaveAck } from "../src/renderer/components/chat/ChatSidebar.js";
 import { composerState, kindChip, liveTurnRunning } from "../src/renderer/components/chat/SyncedChat.js";
 import type { ChatItem } from "../src/renderer/shared/chat-types.js";
 
 const now = new Date(2026, 9, 29, 15, 0);
 const at = (d: Date) => d.toISOString();
-const t = (id: string, updatedAt: string) => ({ id, title: id, updatedAt, agents: [] as string[] });
+const t = (id: string, updatedAt: string) => ({ id, title: id, updatedAt, agents: [] as string[], starred: false });
 
 test("groups into Today, the two latest earlier active days, and Earlier, dropping empty groups", () => {
   const today = t("a", at(new Date(2026, 9, 29, 0, 5)));
@@ -38,11 +38,32 @@ test("a save ack moves the active row to the top with its title, time and live a
   ];
   const next = withSaveAck(list, { id: "b", title: "B!", updatedAt: "2026-10-29T11:00:00.000Z" }, items);
   expect(next).toEqual([
-    { id: "b", title: "B!", updatedAt: "2026-10-29T11:00:00.000Z", agents: ["claude"] },
+    { id: "b", title: "B!", updatedAt: "2026-10-29T11:00:00.000Z", agents: ["claude"], starred: false },
     list[0],
   ]);
   // A first save adds the row.
-  expect(withSaveAck([], { id: "c", title: "c", updatedAt: "x" }, [])).toEqual([{ id: "c", title: "c", updatedAt: "x", agents: [] }]);
+  expect(withSaveAck([], { id: "c", title: "c", updatedAt: "x" }, [])).toEqual([{ id: "c", title: "c", updatedAt: "x", agents: [], starred: false }]);
+  // A starred row stays starred.
+  const starred = [{ ...t("d", "2026-10-29T08:00:00.000Z"), starred: true }];
+  expect(withSaveAck(starred, { id: "d", title: "d", updatedAt: "y" }, [])[0]!.starred).toBe(true);
+});
+
+test("starred desktop threads come first as one group and skip the date groups' day slots", () => {
+  const day = (id: string, d: number, starred = false) => ({ ...t(id, at(new Date(2026, 9, d, 12))), starred });
+  const threads = [day("a", 29), day("s1", 28, true), day("b", 27), day("s2", 2, true), day("c", 26), day("d", 25)];
+  const synced = [{ surface: "teams" as const, conversationId: "x", kind: "post" as const, title: "T", updatedAt: at(new Date(2026, 9, 24, 12)), live: false }];
+  const groups = sidebarGroups(mergeRows(threads, synced), now);
+  const label = (d: number) => new Date(2026, 9, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  expect(groups.map((g) => [g.label, g.threads.map((r) => r.key)])).toEqual([
+    ["Starred", ["s1", "s2"]],
+    ["Today", ["a"]],
+    [label(27), ["b"]],
+    [label(26), ["c"]],
+    ["Earlier", ["d", "teams:x"]],
+  ]);
+  // Every row once; no Starred group when nothing is starred.
+  expect(groups.flatMap((g) => g.threads)).toHaveLength(7);
+  expect(sidebarGroups(mergeRows([day("a", 29)], []), now).map((g) => g.label)).toEqual(["Today"]);
 });
 
 test("synced chats merge into the one list by time, keyed so they never collide with a thread", () => {

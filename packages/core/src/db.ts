@@ -277,7 +277,8 @@ CREATE TABLE IF NOT EXISTS desktop_chats (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   items_json TEXT NOT NULL,
-  note_slug  TEXT
+  note_slug  TEXT,
+  starred    INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS desktop_chats_updated ON desktop_chats(updated_at);
 
@@ -353,6 +354,8 @@ export function openDb(file: string): DatabaseSync {
     ["chatops_conversations", "archived_from", "TEXT"],
     // The run's --model (#613), so Continue live reapplies it; NULL = the CLI's default.
     ["delegate_runs", "model", "TEXT"],
+    // Starred desktop chats (#752): exempt from the 90-day prune.
+    ["desktop_chats", "starred", "INTEGER NOT NULL DEFAULT 0"],
   ];
   if (columns.some(([t, c]) => missing(t, c))) {
     db.exec("BEGIN IMMEDIATE");

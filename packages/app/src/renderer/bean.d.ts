@@ -173,6 +173,8 @@ declare global {
       chatThreadList(): Promise<DesktopChatListing[]>;
       /** Refused for a thread any open chat holds. */
       chatThreadDelete(id: string): Promise<void>;
+      /** Sets a thread's star: its resulting `updatedAt`, or undefined when the thread is gone. */
+      chatThreadStar(id: string, starred: boolean): Promise<string | undefined>;
       /** The owner's Discord/Teams conversations, newest first. */
       syncedChatList(): Promise<SyncedChatListing[]>;
       /** One listed conversation's transcript, mapped for display. */

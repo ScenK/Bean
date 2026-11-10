@@ -297,6 +297,38 @@ test("chat history: a synced Discord DM lists with its badge and opens read-only
   }
 });
 
+// #753: a starred chat sits in Starred with no ✕, outlives the 90-day prune, and unstarring a
+// thread past the cutoff lists it under Today.
+test("chat history: star pins a chat past the prune; unstar returns it to Today", async () => {
+  const home = await makeBeanHome();
+  const file = dbFile(join(home.homeDir, ".bean"));
+  const id = "7a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+  const seed = (at: Date): void => saveDesktopChat(file, { id, title: "keep me", itemsJson: JSON.stringify([{ kind: "user", id: "a", text: "keep me" }]) }, at);
+  seed(new Date());
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    let chat = await openChat(app);
+    const row = (c: Page) => c.locator(`[data-row="${id}"]`);
+    const firstUnder = (c: Page, label: string) => c.locator(`.bean-chat-sidebar-group:has-text("${label}") + [data-row]`);
+    await row(chat).locator(".bean-chat-sidebar-row-star").click();
+    await expect(firstUnder(chat, "Starred")).toHaveAttribute("data-row", id);
+    await expect(row(chat).locator(".bean-chat-sidebar-row-star")).toHaveAttribute("aria-pressed", "true");
+    await expect(row(chat).locator(".bean-chat-sidebar-row-delete")).toHaveCount(0);
+    await expect(chat.locator(".bean-chat-sidebar-head")).toHaveText("All chats · 1");
+    await closeChat(app, chat);
+    seed(new Date(Date.now() - 100 * 86_400_000)); // the save upsert keeps the star
+    chat = await openChat(app);
+    await expect(firstUnder(chat, "Starred")).toHaveAttribute("data-row", id);
+    await row(chat).locator(".bean-chat-sidebar-row-star").click();
+    await expect(firstUnder(chat, "Today")).toHaveAttribute("data-row", id);
+    await expect(chat.locator(".bean-chat-sidebar-group", { hasText: "Starred" })).toHaveCount(0);
+    await expect(row(chat).locator(".bean-chat-sidebar-row-delete")).toHaveCount(1);
+    expect(listDesktopChats(file)).toMatchObject([{ id, starred: false }]);
+  } finally {
+    await Promise.allSettled([app.close(), home.cleanup()]);
+  }
+});
+
 // #601: after the bot's `/new`, the archive joins the sidebar on its push (no reload), reads
 // `· archived` and stays read-only even with history; the live row shows the fresh start.
 test("chat history: a /new archive lists on push, read-only, and the live row says where it went", async () => {

@@ -1,4 +1,5 @@
 import type { DesktopChatListing } from "@bean/core";
+import { Fragment } from "preact";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import type { AgentId, ChatItem } from "../../shared/chat-types.js";
@@ -33,7 +34,8 @@ export function groupThreads<T extends { updatedAt: string }>(threads: T[], now:
  * No push channel — this ack is the only live update. */
 export function withSaveAck(threads: DesktopChatListing[], ack: ChatThreadAck, items: ChatItem[]): DesktopChatListing[] {
   const agents = [...new Set(items.flatMap((it) => (it.kind === "reply" && it.agent && it.agent !== "bean" ? [it.agent] : [])))];
-  return [{ ...ack, agents }, ...threads.filter((t) => t.id !== ack.id)];
+  const starred = threads.find((t) => t.id === ack.id)?.starred ?? false;
+  return [{ ...ack, agents, starred }, ...threads.filter((t) => t.id !== ack.id)];
 }
 
 /** One sidebar list: desktop threads and synced (Discord/Teams) chats, newest first. Stable, so
@@ -65,6 +67,17 @@ interface Props {
   onNew: () => void;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Settles (never rejects) once the list reflects the result; focus then returns to the row's ★. */
+  onStar: (id: string, starred: boolean) => Promise<void>;
+}
+
+/** Starred desktop threads first as one never-folded group (newest first), then the date groups
+ * over everything else. Synced chats are never starred. */
+export function sidebarGroups(rows: SidebarRow[], now: Date): Array<{ label: string; threads: SidebarRow[] }> {
+  const isStarred = (r: SidebarRow): boolean => !r.synced && r.thread.starred;
+  const starred = rows.filter(isStarred);
+  const rest = groupThreads(rows.filter((r) => !isStarred(r)), now);
+  return starred.length > 0 ? [{ label: "Starred", threads: starred }, ...rest] : rest;
 }
 
 /** Row time: "now"/"3h" today, "Oct 28" before that. */
@@ -75,7 +88,7 @@ export function rowTime(iso: string, now: Date): string {
   return agoText(iso, now).replace("just now", "now").replace(" ago", "");
 }
 
-export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, onNew, onOpen, onDelete }: Props) {
+export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, onNew, onOpen, onDelete, onStar }: Props) {
   const now = new Date();
   const rows = mergeRows(threads, synced);
   // Earlier starts folded each time the sidebar mounts; the open chat stays visible inside it.
@@ -94,6 +107,15 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
     }
     tops.current = next;
   });
+  // After a star toggle the row may have changed group (remounted): put focus back on its ★, or on
+  // the Earlier fold when the row is folded away or gone.
+  const [refocus, setRefocus] = useState<{ id: string } | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!refocus) return;
+    const list = listRef.current;
+    (list?.querySelector<HTMLElement>(`[data-row="${refocus.id}"] .bean-chat-sidebar-row-star`)
+      ?? list?.querySelector<HTMLElement>(".bean-chat-sidebar-group--fold"))?.focus();
+  }, [refocus]);
   const marker = (key: string) => (working.has(key)
     ? <span class="bean-chat-sidebar-spinner" role="img" aria-label="Working" />
     : unread.has(key) ? <span class="bean-chat-sidebar-dot" role="img" aria-label="New reply" /> : null);
@@ -102,8 +124,8 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
       <div class="bean-chat-sidebar-head">All chats · {rows.length}</div>
       <div class="bean-chat-sidebar-list" ref={listRef}>
         {rows.length === 0 ? <div class="bean-chat-sidebar-empty">No saved chats yet.</div> : null}
-        {groupThreads(rows, now).map((g) => (
-          <>
+        {sidebarGroups(rows, now).map((g) => (
+          <Fragment key={g.label}>
             {g.label === "Earlier" ? (
               <button type="button" class="bean-chat-sidebar-group bean-chat-sidebar-group--fold" aria-expanded={earlierOpen} onClick={() => setEarlierOpen(!earlierOpen)}>
                 <span><span class="bean-chat-sidebar-chevron" aria-hidden="true">{earlierOpen ? "▾" : "▸"}</span> {g.label}</span><span>{g.threads.length}</span>
@@ -161,17 +183,27 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                       </span>
                     ) : null}
                   </button>
-                  {active ? null : (
+                  <button
+                    type="button"
+                    class={`bean-notes-star bean-chat-sidebar-row-star${t.starred ? " bean-notes-star--on" : ""}`}
+                    aria-pressed={t.starred}
+                    aria-label={`${t.starred ? "Unstar" : "Star"} "${title}"`}
+                    title={t.starred ? "Unstar chat (starred chats can't be deleted)" : "Star chat"}
+                    onClick={() => { void onStar(t.id, !t.starred).then(() => setRefocus({ id: t.id })); }}
+                  >
+                    {"\u2605"}
+                  </button>
+                  {active || t.starred ? null : (
                     <button type="button" class="bean-chat-sidebar-row-delete" aria-label={`Delete "${title}"`} title="Delete" onClick={() => onDelete(t.id)}>✕</button>
                   )}
                 </div>
               );
             })}
-          </>
+          </Fragment>
         ))}
       </div>
       <button type="button" class="bean-btn bean-chat-sidebar-new" disabled={busy} onClick={onNew}>+ New chat</button>
-      <div class="bean-chat-sidebar-foot">Kept 90 days · incognito chats never kept</div>
+      <div class="bean-chat-sidebar-foot">Kept 90 days unless starred · incognito chats never kept</div>
     </nav>
   );
 }
