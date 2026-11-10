@@ -284,6 +284,13 @@ export function ChatWindow() {
       (err: unknown) => shownApi()?.error(`Couldn't delete that chat: ${err instanceof Error ? err.message : String(err)}`),
     );
   };
+  // Never re-inserts: a row dropped meanwhile (deleted) stays dropped; undefined = the thread is gone.
+  const starThread = (id: string, starred: boolean): Promise<void> => window.bean.chatThreadStar(id, starred).then(
+    (updatedAt) => setThreads((prev) => (updatedAt === undefined
+      ? prev.filter((t) => t.id !== id)
+      : prev.map((t) => (t.id === id ? { ...t, starred, updatedAt } : t)))),
+    (err: unknown) => shownApi()?.error(`Couldn't ${starred ? "star" : "unstar"} that chat: ${err instanceof Error ? err.message : String(err)}`),
+  );
 
   return (
     <div class="bean-dashboard bean-chat-window">
@@ -302,6 +309,7 @@ export function ChatWindow() {
           onNew={() => openThread("new")}
           onOpen={openThread}
           onDelete={deleteThread}
+          onStar={starThread}
         />
       ) : null}
       {mounts.map(({ mountId, restoreId }) => (

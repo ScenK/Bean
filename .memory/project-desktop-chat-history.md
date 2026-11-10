@@ -8,6 +8,13 @@ slice.
 inserts and leaves `updated_at` alone — except unstarring a *starred* thread already past the cutoff resets
 `updated_at` to `now` (same `<` and `now` as the prune), else the next listing would delete it on the spot.
 The save upsert never lists `starred`, so saves keep it; `withSaveAck` carries it over from the old row.
+**Sidebar (#753):** starred desktop rows are pulled out before `groupThreads` into a never-folded
+"Starred" group on top (`sidebarGroups`; synced rows never), so they don't use date-group day slots. A
+starred row has no ✕ (renderer only — no main-side delete guard). ★ is `chatThreadStar` (chat window
+only, UUID id, real boolean; no holder check — the open chat may star its own thread); the renderer
+patches only the existing entry with the returned `updatedAt` (undefined = gone → drop the row). Group
+fragments are keyed, but a row changing group still remounts, so the sidebar refocuses the row's ★
+(or the Earlier fold) after each toggle.
 
 **Normalizer — `renderer/components/chat/chat-thread.ts`, node-free, runs on every save and again on
 restore.** Never mutates. Drops `working` items, `reply.session`/`tail`/`streaming` (a streaming reply

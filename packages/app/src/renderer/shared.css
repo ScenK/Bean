@@ -326,6 +326,18 @@ button, input, textarea, select, a {
 .bean-chat-sidebar-row:hover .bean-chat-sidebar-row-delete,
 .bean-chat-sidebar-row-delete:focus-visible { opacity: 1; }
 .bean-chat-sidebar-row-delete:hover { color: var(--bean-text); }
+/* The row's ★ (the notes star look): hover-revealed like ✕, always shown once starred. */
+.bean-chat-sidebar-row-star {
+  opacity: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  font-size: 12px;
+  -webkit-app-region: no-drag;
+}
+.bean-chat-sidebar-row:hover .bean-chat-sidebar-row-star,
+.bean-chat-sidebar-row-star:focus-visible,
+.bean-chat-sidebar-row-star.bean-notes-star--on { opacity: 1; }
 /* Discord/Teams badge on a synced chat's sidebar row and header. */
 .bean-chat-sidebar-badge {
   flex: none;
