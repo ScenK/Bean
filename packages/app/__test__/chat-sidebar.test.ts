@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { DESKTOP_CHAT_TITLE_MAX } from "@bean/core";
-import { cleanGroupName, foldedAfterRename, GROUP_NAME_MAX, groupThreads, mergeRows, sidebarGroups, withSaveAck } from "../src/renderer/components/chat/ChatSidebar.js";
+import { cleanGroupName, foldedAfterRename, GROUP_COLORS, groupColors, GROUP_NAME_MAX, groupThreads, mergeRows, sidebarGroups, withSaveAck } from "../src/renderer/components/chat/ChatSidebar.js";
 import { composerState, kindChip, liveTurnRunning } from "../src/renderer/components/chat/SyncedChat.js";
 import type { ChatItem } from "../src/renderer/shared/chat-types.js";
 
@@ -125,4 +125,17 @@ test("a group rename moves its fold, but a merge keeps the target's; names clean
   expect(cleanGroupName("  Side\n  projects ")).toBe("Side projects");
   expect(cleanGroupName("x".repeat(100))).toHaveLength(GROUP_NAME_MAX);
   expect(GROUP_NAME_MAX).toBe(DESKTOP_CHAT_TITLE_MAX);
+});
+
+test("groupColors: a stable palette entry per name, never shared with the group directly above", () => {
+  const names = Array.from({ length: 40 }, (_, i) => `group ${i}`);
+  const colors = groupColors(names);
+  expect(colors.every((c) => Number.isInteger(c) && c >= 1 && c <= GROUP_COLORS)).toBe(true);
+  for (let i = 1; i < colors.length; i++) expect(colors[i], names[i]).not.toBe(colors[i - 1]);
+  // Same names, same colours (restarts, folding); a group alone keeps its hash colour.
+  expect(groupColors(names)).toEqual(colors);
+  expect(groupColors(["group 0"])).toEqual([colors[0]]);
+  // Two names hashing alike: the lower one moves to the next entry.
+  const [first] = groupColors(["Work"]);
+  expect(groupColors(["Work", "Work"])).toEqual([first, (first! % GROUP_COLORS) + 1]);
 });

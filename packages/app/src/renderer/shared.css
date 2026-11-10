@@ -221,13 +221,29 @@ button, input, textarea, select, a {
 .bean-chat-sidebar-group--fold:hover { color: var(--bean-text); }
 .bean-chat-sidebar-group--fold:focus-visible { outline: 2px solid var(--bean-accent-text); outline-offset: -2px; }
 .bean-chat-sidebar-chevron { display: inline-block; width: 1em; }
-/* A named group inside Starred: indented, and its name shown as typed (names are case-sensitive). */
+/* A named group inside Starred: its name shown as typed (names are case-sensitive). */
 .bean-chat-sidebar-group--named {
-  padding-left: 18px;
   text-transform: none;
   letter-spacing: 0.04em;
 }
 .bean-chat-sidebar-group--named .bean-chat-sidebar-rename { margin: -3px 6px -3px 0; }
+/* A named group's set (#765), like a browser's vertical tab group: its colour (--bean-group-N, picked
+   by groupColors) fills the header and runs as a line down the left of its rows. Row backgrounds
+   (active, live, hover, focus) are untouched. */
+.bean-chat-sidebar-set {
+  margin: 8px 0 2px 8px;
+  border-left: 3px solid var(--bean-group-color);
+  border-radius: 6px 0 0 6px;
+}
+.bean-chat-sidebar-set > .bean-chat-sidebar-group {
+  padding: 5px 10px 5px 7px;
+  border-radius: 0 6px 6px 0;
+  background: var(--bean-group-color);
+  color: var(--bean-group-ink);
+}
+.bean-chat-sidebar-set > .bean-chat-sidebar-group--fold:hover { color: var(--bean-group-ink); }
+.bean-chat-sidebar-set > .bean-chat-sidebar-group--fold:focus-visible { outline-offset: 2px; }
+.bean-chat-sidebar-set > [data-row] { margin-left: 4px; }
 .bean-chat-sidebar-row {
   display: flex;
   align-items: center;

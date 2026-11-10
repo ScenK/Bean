@@ -54,6 +54,12 @@ ids only; an asked-for id not returned is dropped. Inline edits share one draft 
 `title:<id>` / `group:<id>` / `header:<name>`; focus after a move goes to the row's Group control or,
 folded away, its section header (`data-section`).
 
+**Group colours (#765).** Each named group renders inside a `.bean-chat-sidebar-set` wrapper (header +
+visible rows) whose `--bean-group-color` (inline style → `var(--bean-group-N)`) fills the header and
+draws the wrapper's left border as the line; the wrapper is unpositioned on purpose so rows' `offsetTop`
+(the FLIP animation) keeps the same reference across sections. `groupColors` is a pure name hash, bumped
+when it equals the group above — nothing stored, so a rename can change a colour.
+
 **Normalizer — `renderer/components/chat/chat-thread.ts`, node-free, runs on every save and again on
 restore.** Never mutates. Drops `working` items, `reply.session`/`tail`/`streaming` (a streaming reply
 gets the "— turn interrupted" footer), delegate `taskId`/`tail`, status `exiting`, and every image data

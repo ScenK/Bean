@@ -105,6 +105,24 @@ export function sidebarGroups(rows: SidebarRow[], now: Date): SidebarSection[] {
   return [...(total > 0 ? [{ kind: "starred" as const, key: "starred", label: "Starred", count: total, threads: loose }] : []), ...groups, ...dates];
 }
 
+/** Palette size: theme.css defines `--bean-group-1…N` in each theme. */
+export const GROUP_COLORS = 6;
+/** Each group's palette entry (1-based), for names in listed order: a stable hash of the name, bumped
+ * to the next entry when it equals the group directly above, so neighbours always differ.
+ * ponytail: nothing stored — past GROUP_COLORS groups non-neighbours repeat, and a rename can change
+ * a colour; persist per group (a groups table) if that proves confusing. */
+export function groupColors(names: string[]): number[] {
+  const out: number[] = [];
+  for (const name of names) {
+    let h = 0;
+    for (const ch of name) h = (Math.imul(h, 31) + ch.codePointAt(0)!) >>> 0;
+    let i = (h % GROUP_COLORS) + 1;
+    if (i === out[out.length - 1]) i = (i % GROUP_COLORS) + 1;
+    out.push(i);
+  }
+  return out;
+}
+
 /** Folded starred groups, by name (absent = unfolded). */
 export const GROUP_FOLD_KEY = "bean.chat.foldedGroups";
 /** Renderer copy of core's DESKTOP_CHAT_TITLE_MAX (node-free bundle rule) — keep in step. */
@@ -139,6 +157,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
   const rows = mergeRows(threads, synced);
   const sections = sidebarGroups(rows, now);
   const groupNames = sections.flatMap((s) => (s.kind === "group" ? [s.label] : []));
+  const colors = groupColors(groupNames);
   // Earlier starts folded each time the sidebar mounts; the open chat stays visible inside it.
   const [earlierOpen, setEarlierOpen] = useState(false);
   // Starred groups' folds persist (localStorage); vanished names are pruned once the list has loaded.
@@ -219,7 +238,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
         {sections.map((g) => {
           const header = drafts[`header:${g.label}`];
           const named = g.kind === "group" ? " bean-chat-sidebar-group--named" : "";
-          return <Fragment key={g.key}>
+          const inner = <>
             {g.kind === "group" && header !== undefined ? (
               <div class={`bean-chat-sidebar-group${named}`} data-section={g.key}>
                 <RenameInput
@@ -371,7 +390,11 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                 </div>
               );
             })}
-          </Fragment>;
+          </>;
+          // A named group's colour fills its header and runs as a line beside its rows.
+          return g.kind === "group"
+            ? <div key={g.key} class="bean-chat-sidebar-set" style={`--bean-group-color: var(--bean-group-${colors[groupNames.indexOf(g.label)] ?? 1})`}>{inner}</div>
+            : <Fragment key={g.key}>{inner}</Fragment>;
         })}
       </div>
       <button type="button" class="bean-btn bean-chat-sidebar-new" disabled={busy} onClick={onNew}>+ New chat</button>
