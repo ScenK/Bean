@@ -175,11 +175,37 @@ button, input, textarea, select, a {
   text-transform: uppercase;
   color: var(--bean-text-dim);
 }
+.bean-chat-sidebar-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.bean-chat-sidebar-select {
+  padding: 2px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--bean-accent-text);
+  font: inherit;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.bean-chat-sidebar-select[aria-pressed="true"] { background: var(--bean-accent); color: var(--bean-accent-ink); }
+.bean-chat-sidebar-select:disabled { opacity: 0.5; cursor: default; }
+.bean-chat-sidebar-select:focus-visible { outline: 2px solid var(--bean-accent-text); outline-offset: 1px; }
 .bean-chat-sidebar-new {
   flex: none;
   width: 100%;
   -webkit-app-region: no-drag;
 }
+/* Select mode: the row is one native label (checkbox + title), and an action bar takes New chat's place. */
+.bean-chat-sidebar-pick input { flex: none; margin: 0; accent-color: var(--bean-accent); }
+.bean-chat-sidebar-bar { flex: none; display: flex; flex-direction: column; gap: 6px; -webkit-app-region: no-drag; }
+.bean-chat-sidebar-bar .bean-chat-sidebar-rename { flex: none; margin: 0; }
+.bean-chat-sidebar-bar-count { font: 600 11px ui-monospace, SFMono-Regular, monospace; color: var(--bean-text-dim); }
+.bean-chat-sidebar-bar-error { font-size: 12px; color: var(--bean-error); }
+.bean-chat-sidebar-bar-actions { display: flex; gap: 6px; }
+.bean-chat-sidebar-bar-actions .bean-btn { flex: 1; }
 .bean-chat-sidebar-list {
   flex: 1;
   min-height: 0;
@@ -220,7 +246,33 @@ button, input, textarea, select, a {
 }
 .bean-chat-sidebar-group--fold:hover { color: var(--bean-text); }
 .bean-chat-sidebar-group--fold:focus-visible { outline: 2px solid var(--bean-accent-text); outline-offset: -2px; }
+/* A header a dragged starred row is over (#766): it takes the drop. */
+.bean-chat-sidebar-group--drop { outline: 2px dashed var(--bean-accent-text); outline-offset: -2px; border-radius: 6px; }
+.bean-chat-sidebar-set > .bean-chat-sidebar-group--drop { outline-offset: 2px; }
 .bean-chat-sidebar-chevron { display: inline-block; width: 1em; }
+/* A named group inside Starred: its name shown as typed (names are case-sensitive). */
+.bean-chat-sidebar-group--named {
+  text-transform: none;
+  letter-spacing: 0.04em;
+}
+.bean-chat-sidebar-group--named .bean-chat-sidebar-rename { margin: -3px 6px -3px 0; }
+/* A named group's set (#765), like a browser's vertical tab group: its colour (--bean-group-N, picked
+   by groupColors) fills the header and runs as a line down the left of its rows. Row backgrounds
+   (active, live, hover, focus) are untouched. */
+.bean-chat-sidebar-set {
+  margin: 8px 0 2px 8px;
+  border-left: 3px solid var(--bean-group-color);
+  border-radius: 6px 0 0 6px;
+}
+.bean-chat-sidebar-set > .bean-chat-sidebar-group {
+  padding: 5px 10px 5px 7px;
+  border-radius: 0 6px 6px 0;
+  background: var(--bean-group-color);
+  color: var(--bean-group-ink);
+}
+.bean-chat-sidebar-set > .bean-chat-sidebar-group--fold:hover { color: var(--bean-group-ink); }
+.bean-chat-sidebar-set > .bean-chat-sidebar-group--fold:focus-visible { outline-offset: 2px; }
+.bean-chat-sidebar-set > [data-row] { margin-left: 4px; }
 .bean-chat-sidebar-row {
   display: flex;
   align-items: center;
@@ -310,6 +362,7 @@ button, input, textarea, select, a {
   font-size: 10.5px;
 }
 /* Hover-revealed, but opacity (not visibility) keeps it in the tab order. */
+.bean-chat-sidebar-row-rename,
 .bean-chat-sidebar-row-delete {
   flex: none;
   opacity: 0;
@@ -323,9 +376,29 @@ button, input, textarea, select, a {
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
+.bean-chat-sidebar-row:hover .bean-chat-sidebar-row-rename,
+.bean-chat-sidebar-row-rename:focus-visible,
 .bean-chat-sidebar-row:hover .bean-chat-sidebar-row-delete,
 .bean-chat-sidebar-row-delete:focus-visible { opacity: 1; }
+.bean-chat-sidebar-row-rename:hover,
 .bean-chat-sidebar-row-delete:hover { color: var(--bean-text); }
+.bean-chat-sidebar-row-rename { margin-right: 0; }
+/* The inline title editor (✎ / F2) takes the open button's place. */
+.bean-chat-sidebar-rename {
+  flex: 1;
+  min-width: 0;
+  margin: 3px 4px 3px 5px;
+  padding: 2px 4px;
+  border: 1px solid var(--bean-control-border);
+  border-radius: 6px;
+  background: var(--bean-surface);
+  color: var(--bean-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  -webkit-app-region: no-drag;
+}
+.bean-chat-sidebar-rename:focus { outline: 2px solid var(--bean-accent); outline-offset: -1px; }
 /* The row's ★ (the notes star look): hover-revealed like ✕, always shown once starred. */
 .bean-chat-sidebar-row-star {
   opacity: 0;
@@ -338,6 +411,30 @@ button, input, textarea, select, a {
 .bean-chat-sidebar-row:hover .bean-chat-sidebar-row-star,
 .bean-chat-sidebar-row-star:focus-visible,
 .bean-chat-sidebar-row-star.bean-notes-star--on { opacity: 1; }
+/* A starred row's Group control: a transparent native <select> over a hover-revealed ⋯. */
+.bean-chat-sidebar-row-grouping {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  color: var(--bean-text-dim);
+  -webkit-app-region: no-drag;
+}
+.bean-chat-sidebar-row-group {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.bean-chat-sidebar-row:hover .bean-chat-sidebar-row-grouping,
+.bean-chat-sidebar-row-grouping:focus-within { opacity: 1; }
+.bean-chat-sidebar-row-grouping:hover { color: var(--bean-text); }
+.bean-chat-sidebar-row-grouping:has(.bean-chat-sidebar-row-group:focus-visible) { outline: 2px solid var(--bean-accent-text); outline-offset: -2px; }
 /* Discord/Teams badge on a synced chat's sidebar row and header. */
 .bean-chat-sidebar-badge {
   flex: none;

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ChatSession, commandList, type ChatSessionApi, type ChatTasks } from "./ChatSession.js";
-import { ChatSidebar, SIDEBAR_INLINE_MIN, SIDEBAR_OPEN_KEY } from "./ChatSidebar.js";
+import { ChatSidebar, cleanGroupName, SIDEBAR_INLINE_MIN, SIDEBAR_OPEN_KEY } from "./ChatSidebar.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ListFoldToggle } from "../../shared/ListFold.js";
@@ -288,8 +288,42 @@ export function ChatWindow() {
   const starThread = (id: string, starred: boolean): Promise<void> => window.bean.chatThreadStar(id, starred).then(
     (updatedAt) => setThreads((prev) => (updatedAt === undefined
       ? prev.filter((t) => t.id !== id)
-      : prev.map((t) => (t.id === id ? { ...t, starred, updatedAt } : t)))),
+      : prev.map((t) => (t.id === id ? { ...t, starred, updatedAt, groupName: starred ? t.groupName : null } : t)))),
     (err: unknown) => shownApi()?.error(`Couldn't ${starred ? "star" : "unstar"} that chat: ${err instanceof Error ? err.message : String(err)}`),
+  );
+  // Same shape as ★. The mounted chat holding the thread (shown or hidden) takes the stored title too,
+  // so Continue in Discord proposes it without a reopen.
+  const renameThread = (id: string, title: string): Promise<void> => window.bean.chatThreadRename(id, title).then(
+    (stored) => {
+      if (stored !== undefined) [...sessions.values()].find((s) => s.threadId() === id)?.renamed(stored);
+      setThreads((prev) => (stored === undefined
+        ? prev.filter((t) => t.id !== id)
+        : prev.map((t) => (t.id === id ? { ...t, title: stored } : t))));
+    },
+    (err: unknown) => shownApi()?.error(`Couldn't rename that chat: ${err instanceof Error ? err.message : String(err)}`),
+  );
+  // Patches the returned rows; an asked-for row not returned is gone, so it's dropped. Settles with the
+  // error message on failure (select mode shows it in its bar too).
+  const groupThread = (ids: string[], name: string | null): Promise<string | undefined> => window.bean.chatThreadGroup(ids, name).then(
+    (done) => {
+      const groupName = name === null ? null : cleanGroupName(name);
+      setThreads((prev) => prev.flatMap((t) => (!ids.includes(t.id) ? [t]
+        : done.includes(t.id) ? [{ ...t, groupName, starred: name === null ? t.starred : true }] : [])));
+      return undefined;
+    },
+    (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      shownApi()?.error(`Couldn't ${name === null ? "ungroup" : "group"} ${ids.length === 1 ? "that chat" : "those chats"}: ${msg}`);
+      return msg;
+    },
+  );
+  // Same, over the group's members: moved ones take the new name, the rest are gone.
+  const renameGroup = (from: string, to: string): Promise<void> => window.bean.chatThreadGroupRename(from, to).then(
+    (moved) => {
+      const groupName = cleanGroupName(to);
+      setThreads((prev) => prev.flatMap((t) => (t.groupName !== from ? [t] : moved.includes(t.id) ? [{ ...t, groupName }] : [])));
+    },
+    (err: unknown) => shownApi()?.error(`Couldn't rename that group: ${err instanceof Error ? err.message : String(err)}`),
   );
 
   return (
@@ -310,6 +344,9 @@ export function ChatWindow() {
           onOpen={openThread}
           onDelete={deleteThread}
           onStar={starThread}
+          onRename={renameThread}
+          onGroup={groupThread}
+          onRenameGroup={renameGroup}
         />
       ) : null}
       {mounts.map(({ mountId, restoreId }) => (

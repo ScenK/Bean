@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { GROUP_COLORS } from "../src/renderer/components/chat/ChatSidebar.js";
 
 // WCAG 2.1 contrast guard for the two themes' color tokens. The e2e suite scans the real
 // DOM (packages/app/e2e/contrast.e2e.ts) but only in the states a fresh window renders;
@@ -91,6 +92,17 @@ describe.each(["hearth", "graphite"])("%s theme contrast", (theme) => {
   test("all 16 ANSI tokens are defined", () => expect(ansi).toHaveLength(16));
   test.each(ansi)("%s reads as terminal text on --bean-surface (>= 4.5:1)", (name) => {
     expect(contrast(t[name]!, t["--bean-surface"]!)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  // Starred chat groups (#765): each colour is a header fill under --bean-group-ink and a line
+  // beside the group's rows, on any surface.
+  const groups = Object.keys(t).filter((n) => /^--bean-group-\d+$/.test(n));
+  test(`defines the ${GROUP_COLORS} group colours ChatSidebar assigns`, () => {
+    expect(groups).toEqual(Array.from({ length: GROUP_COLORS }, (_, i) => `--bean-group-${i + 1}`));
+  });
+  test.each(groups)("%s: ink reads on it (>= 4.5:1) and it reads as a line on every surface (>= 3:1)", (name) => {
+    expect(contrast(t["--bean-group-ink"]!, t[name]!), `ink on ${name}`).toBeGreaterThanOrEqual(4.5);
+    for (const surface of SURFACES) expect(contrast(t[name]!, t[surface]!), `${name} on ${surface}`).toBeGreaterThanOrEqual(3);
   });
 
   test("toggle knob (accent ink) is distinguishable from both track colors >= 3:1", () => {

@@ -731,6 +731,8 @@ export interface ChatThreadHandlerDeps {
   deleteDesktopChat: (file: string, id: string) => void;
   starDesktopChat: (file: string, id: string, starred: boolean) => string | undefined;
   renameDesktopChat: (file: string, id: string, title: string) => string | undefined;
+  groupDesktopChats: (file: string, ids: string[], name: string | null) => string[];
+  renameDesktopChatGroup: (file: string, from: string, to: string) => string[];
   listDesktopChats: (file: string) => DesktopChatListing[];
   dbFile: string;
 }
@@ -808,6 +810,20 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
       if (typeof title !== "string") throw new Error("title must be a string");
       return deps.renameDesktopChat(deps.dbFile, id, title);
+    },
+    /** Sidebar group (stars too) / ungroup (`null`, keeps the star): 1–100 unique UUIDs, open or not.
+     * The ids it updated; gone ones are skipped. */
+    group: (ids: unknown, name: unknown): string[] => {
+      if (!Array.isArray(ids) || ids.length === 0 || ids.length > 100) throw new Error("chat thread ids must be 1–100 UUIDs");
+      if (!ids.every((id) => typeof id === "string" && THREAD_ID.test(id))) throw new Error("chat thread id must be a UUID");
+      if (new Set(ids.map((id: string) => id.toLowerCase())).size !== ids.length) throw new Error("chat thread ids must be unique");
+      if (name !== null && typeof name !== "string") throw new Error("group name must be a string or null");
+      return deps.groupDesktopChats(deps.dbFile, ids as string[], name);
+    },
+    /** Sidebar group rename (onto an existing name, they merge): the moved ids. */
+    groupRename: (from: unknown, to: unknown): string[] => {
+      if (typeof from !== "string" || typeof to !== "string") throw new Error("group names must be strings");
+      return deps.renameDesktopChatGroup(deps.dbFile, from, to);
     },
     get,
     /** Undefined = refused by the latch (quietly: the renderer already stopped saving). */
@@ -1418,6 +1434,10 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     deps.isChatSender(e.sender) ? deps.chatThreadHandlers.star(id, starred) : notChat());
   ipcMain.handle(IPC.chatThreadRename, (e, id: unknown, title: unknown) =>
     deps.isChatSender(e.sender) ? deps.chatThreadHandlers.rename(id, title) : notChat());
+  ipcMain.handle(IPC.chatThreadGroup, (e, ids: unknown, name: unknown) =>
+    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.group(ids, name) : notChat());
+  ipcMain.handle(IPC.chatThreadGroupRename, (e, from: unknown, to: unknown) =>
+    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.groupRename(from, to) : notChat());
   ipcMain.handle(IPC.syncedChatList, (e) => deps.isChatSender(e.sender) ? deps.syncedChatHandlers.list() : notChat());
   ipcMain.handle(IPC.syncedChatGet, (e, surface: unknown, conversationId: unknown, mountId: unknown) => {
     chatKey(e.sender, mountId);

@@ -161,6 +161,8 @@ export interface ChatSessionApi {
   liveEvent: (e: LiveEvent) => void;
   /** The thread this chat writes, once it has one. */
   threadId: () => string | undefined;
+  /** Its thread was renamed in the sidebar: the stored title, for Continue in Discord. */
+  renamed: (title: string) => void;
   /** A per-turn "Memory updated" receipt for this chat (the shell routes by mount and thread). */
   memoryUpdated: (saved: Array<{ id: string; text: string; category?: string }>) => void;
   imageProgress: () => void;
@@ -1352,6 +1354,7 @@ export function ChatSession({
     delegateEvent: applyDelegateEvent,
     liveEvent: onLiveEvent,
     threadId: () => threadRef.current?.id,
+    renamed: (title) => { if (threadRef.current) threadRef.current = { ...threadRef.current, title }; },
     memoryUpdated: (saved) => setItems((prev) => [...prev, { kind: "memory", id: newId(), saved, state: "saved" }]),
     // generate_image started inside the current turn — flip the working bubble so the
     // (up to a minute) wait reads as painting, not a hang.
