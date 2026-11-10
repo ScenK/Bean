@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { groupThreads, mergeRows, sidebarGroups, withSaveAck } from "../src/renderer/components/chat/ChatSidebar.js";
+import { DESKTOP_CHAT_TITLE_MAX } from "@bean/core";
+import { cleanGroupName, foldedAfterRename, GROUP_COLORS, groupColors, GROUP_NAME_MAX, groupThreads, mergeRows, sidebarGroups, withSaveAck } from "../src/renderer/components/chat/ChatSidebar.js";
 import { composerState, kindChip, liveTurnRunning } from "../src/renderer/components/chat/SyncedChat.js";
 import type { ChatItem } from "../src/renderer/shared/chat-types.js";
 
@@ -96,4 +97,45 @@ test("a live turn is in flight while the transcript ends on a user line", () => 
   expect(liveTurnRunning(live, [user, reply])).toBe(false);
   expect(liveTurnRunning(live, [])).toBe(false);
   expect(liveTurnRunning({ ...live, live: false }, [user])).toBe(false);
+});
+
+test("Starred holds its ungrouped rows, then named groups A→Z; keys never collide with a group's name", () => {
+  const s = (id: string, d: number, groupName: string | null = null) => ({ ...t(id, at(new Date(2026, 9, d, 12))), starred: true, groupName });
+  const threads = [t("a", at(new Date(2026, 9, 29, 12))), s("w1", 29, "Work"), s("loose", 28), s("e1", 27, "Earlier"), s("w2", 26, "Work"), s("t1", 25, "Today"), s("st", 24, "Starred"), t("old", at(new Date(2026, 8, 1)))];
+  const sections = sidebarGroups(mergeRows(threads, []), now);
+  expect(sections.map((g) => [g.kind, g.key, g.label, g.count, g.threads.map((r) => r.key)])).toEqual([
+    ["starred", "starred", "Starred", 6, ["loose"]],
+    ["group", "group:Earlier", "Earlier", 1, ["e1"]],
+    ["group", "group:Starred", "Starred", 1, ["st"]],
+    ["group", "group:Today", "Today", 1, ["t1"]],
+    ["group", "group:Work", "Work", 2, ["w1", "w2"]],
+    ["date", "date:Today", "Today", 1, ["a"]],
+    ["date", `date:${new Date(2026, 8, 1).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`, new Date(2026, 8, 1).toLocaleDateString(undefined, { month: "short", day: "numeric" }), 1, ["old"]],
+  ]);
+  expect(new Set(sections.map((g) => g.key)).size).toBe(sections.length);
+  // Only grouped stars: Starred still heads them, with no rows of its own.
+  expect(sidebarGroups(mergeRows([s("w", 29, "Work")], []), now).map((g) => [g.key, g.count, g.threads.length])).toEqual([["starred", 1, 0], ["group:Work", 1, 1]]);
+});
+
+test("a group rename moves its fold, but a merge keeps the target's; names clean like core's", () => {
+  expect(foldedAfterRename(["A", "B"], "A", "C", ["A", "B"])).toEqual(["B", "C"]);
+  expect(foldedAfterRename(["A"], "A", "B", ["A", "B"])).toEqual([]);
+  expect(foldedAfterRename(["B"], "A", "B", ["A", "B"])).toEqual(["B"]);
+  expect(foldedAfterRename([], "A", "C", ["A"])).toEqual([]);
+  expect(cleanGroupName("  Side\n  projects ")).toBe("Side projects");
+  expect(cleanGroupName("x".repeat(100))).toHaveLength(GROUP_NAME_MAX);
+  expect(GROUP_NAME_MAX).toBe(DESKTOP_CHAT_TITLE_MAX);
+});
+
+test("groupColors: a stable palette entry per name, never shared with the group directly above", () => {
+  const names = Array.from({ length: 40 }, (_, i) => `group ${i}`);
+  const colors = groupColors(names);
+  expect(colors.every((c) => Number.isInteger(c) && c >= 1 && c <= GROUP_COLORS)).toBe(true);
+  for (let i = 1; i < colors.length; i++) expect(colors[i], names[i]).not.toBe(colors[i - 1]);
+  // Same names, same colours (restarts, folding); a group alone keeps its hash colour.
+  expect(groupColors(names)).toEqual(colors);
+  expect(groupColors(["group 0"])).toEqual([colors[0]]);
+  // Two names hashing alike: the lower one moves to the next entry.
+  const [first] = groupColors(["Work"]);
+  expect(groupColors(["Work", "Work"])).toEqual([first, (first! % GROUP_COLORS) + 1]);
 });
