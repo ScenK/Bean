@@ -310,6 +310,7 @@ button, input, textarea, select, a {
   font-size: 10.5px;
 }
 /* Hover-revealed, but opacity (not visibility) keeps it in the tab order. */
+.bean-chat-sidebar-row-rename,
 .bean-chat-sidebar-row-delete {
   flex: none;
   opacity: 0;
@@ -323,9 +324,29 @@ button, input, textarea, select, a {
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
+.bean-chat-sidebar-row:hover .bean-chat-sidebar-row-rename,
+.bean-chat-sidebar-row-rename:focus-visible,
 .bean-chat-sidebar-row:hover .bean-chat-sidebar-row-delete,
 .bean-chat-sidebar-row-delete:focus-visible { opacity: 1; }
+.bean-chat-sidebar-row-rename:hover,
 .bean-chat-sidebar-row-delete:hover { color: var(--bean-text); }
+.bean-chat-sidebar-row-rename { margin-right: 0; }
+/* The inline title editor (✎ / F2) takes the open button's place. */
+.bean-chat-sidebar-rename {
+  flex: 1;
+  min-width: 0;
+  margin: 3px 4px 3px 5px;
+  padding: 2px 4px;
+  border: 1px solid var(--bean-control-border);
+  border-radius: 6px;
+  background: var(--bean-surface);
+  color: var(--bean-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  -webkit-app-region: no-drag;
+}
+.bean-chat-sidebar-rename:focus { outline: 2px solid var(--bean-accent); outline-offset: -1px; }
 /* The row's ★ (the notes star look): hover-revealed like ✕, always shown once starred. */
 .bean-chat-sidebar-row-star {
   opacity: 0;

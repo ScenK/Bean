@@ -22,6 +22,12 @@ shows a rename, not the renderer's stale copy. `renameDesktopChat` (`chatThreadR
 UUID id, no holder check — like ★) is the only later writer: one line, trimmed, capped, never empty,
 never inserts, leaves `updated_at`/`starred` alone. If an auto-titler is ever added it needs a real lock
 flag, not this convention.
+**Sidebar rename (#762):** ✎ / F2 on a desktop row (never synced) swaps the open button for an input;
+drafts live in sidebar state keyed by thread id (a save ack mid-edit keeps them). Enter/blur save
+(empty or unchanged = cancel; a ref stops Enter's later blur saving twice; a detached input's blur is
+ignored), Escape cancels **and `preventDefault()`s** so the overlay sidebar stays open. `renameThread`
+(ChatWindow) patches the row like ★ and calls the holding mount's `renamed()` — `threadRef.title` is
+what Continue in Discord proposes, and nothing else refreshes it until a restore.
 
 **Normalizer — `renderer/components/chat/chat-thread.ts`, node-free, runs on every save and again on
 restore.** Never mutates. Drops `working` items, `reply.session`/`tail`/`streaming` (a streaming reply

@@ -69,6 +69,8 @@ interface Props {
   onDelete: (id: string) => void;
   /** Settles (never rejects) once the list reflects the result; focus then returns to the row's ★. */
   onStar: (id: string, starred: boolean) => Promise<void>;
+  /** Settles (never rejects) once the list reflects the result; focus then returns to the row's ✎. */
+  onRename: (id: string, title: string) => Promise<void>;
 }
 
 /** Starred desktop threads first as one never-folded group (newest first), then the date groups
@@ -88,7 +90,7 @@ export function rowTime(iso: string, now: Date): string {
   return agoText(iso, now).replace("just now", "now").replace(" ago", "");
 }
 
-export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, onNew, onOpen, onDelete, onStar }: Props) {
+export function ChatSidebar({ threads, synced, activeId, busy, working, unread, live, terminal, overlay, onNew, onOpen, onDelete, onStar, onRename }: Props) {
   const now = new Date();
   const rows = mergeRows(threads, synced);
   // Earlier starts folded each time the sidebar mounts; the open chat stays visible inside it.
@@ -107,15 +109,31 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
     }
     tops.current = next;
   });
-  // After a star toggle the row may have changed group (remounted): put focus back on its ★, or on
-  // the Earlier fold when the row is folded away or gone.
-  const [refocus, setRefocus] = useState<{ id: string } | undefined>(undefined);
+  // After a star toggle or a rename the row may have changed group (remounted): put focus back on its
+  // ★ / ✎, or on the Earlier fold when the row is folded away or gone.
+  const [refocus, setRefocus] = useState<{ id: string; control: "star" | "rename" } | undefined>(undefined);
   useLayoutEffect(() => {
     if (!refocus) return;
     const list = listRef.current;
-    (list?.querySelector<HTMLElement>(`[data-row="${refocus.id}"] .bean-chat-sidebar-row-star`)
+    (list?.querySelector<HTMLElement>(`[data-row="${refocus.id}"] .bean-chat-sidebar-row-${refocus.control}`)
       ?? list?.querySelector<HTMLElement>(".bean-chat-sidebar-group--fold"))?.focus();
   }, [refocus]);
+  // Rename drafts by thread id, so a save ack (a new title, a moved row) mid-edit doesn't lose one.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  const endEdit = (id: string): void => setDrafts(({ [id]: _, ...rest }) => rest);
+  const cancelEdit = (id: string): void => { endEdit(id); setRefocus({ id, control: "rename" }); };
+  // Enter or blur: an empty or unchanged title just ends the edit. The ref guards Enter's later blur.
+  const saveEdit = (id: string, current: string): void => {
+    const { [id]: draft, ...rest } = draftsRef.current;
+    if (draft === undefined) return;
+    draftsRef.current = rest;
+    const title = draft.trim();
+    if (!title || title === current) { cancelEdit(id); return; }
+    endEdit(id);
+    void onRename(id, title).then(() => setRefocus({ id, control: "rename" }));
+  };
   const marker = (key: string) => (working.has(key)
     ? <span class="bean-chat-sidebar-spinner" role="img" aria-label="Working" />
     : unread.has(key) ? <span class="bean-chat-sidebar-dot" role="img" aria-label="New reply" /> : null);
@@ -158,9 +176,27 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
               const active = t.id === activeId;
               const title = t.title || "Untitled chat";
               const agents = t.agents.filter((a): a is AgentId => a in AGENT_NAMES);
+              const draft = drafts[t.id];
               return (
-                <div key={t.id} data-row={t.id} class={`bean-chat-sidebar-row${active ? " bean-chat-sidebar-row--active" : ""}${live.has(t.id) ? " bean-chat-sidebar-row--live" : ""}`}>
-                  <button
+                <div
+                  key={t.id}
+                  data-row={t.id}
+                  class={`bean-chat-sidebar-row${active ? " bean-chat-sidebar-row--active" : ""}${live.has(t.id) ? " bean-chat-sidebar-row--live" : ""}`}
+                  onKeyDown={(e) => {
+                    if (e.key !== "F2" || draft !== undefined) return;
+                    e.preventDefault();
+                    setDrafts((d) => ({ ...d, [t.id]: t.title }));
+                  }}
+                >
+                  {draft !== undefined ? (
+                    <RenameInput
+                      value={draft}
+                      label={`Rename "${title}"`}
+                      onInput={(v) => setDrafts((d) => (t.id in d ? { ...d, [t.id]: v } : d))}
+                      onSave={() => saveEdit(t.id, t.title)}
+                      onCancel={() => cancelEdit(t.id)}
+                    />
+                  ) : <button
                     type="button"
                     class="bean-chat-sidebar-open"
                     disabled={busy}
@@ -182,14 +218,25 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                         {["Bean", ...agents.map((a) => AGENT_NAMES[a])].join(" · ")}
                       </span>
                     ) : null}
-                  </button>
+                  </button>}
+                  {draft !== undefined ? null : (
+                    <button
+                      type="button"
+                      class="bean-chat-sidebar-row-rename"
+                      aria-label={`Rename "${title}"`}
+                      title="Rename (F2)"
+                      onClick={() => setDrafts((d) => ({ ...d, [t.id]: t.title }))}
+                    >
+                      ✎
+                    </button>
+                  )}
                   <button
                     type="button"
                     class={`bean-notes-star bean-chat-sidebar-row-star${t.starred ? " bean-notes-star--on" : ""}`}
                     aria-pressed={t.starred}
                     aria-label={`${t.starred ? "Unstar" : "Star"} "${title}"`}
                     title={t.starred ? "Unstar chat (starred chats can't be deleted)" : "Star chat"}
-                    onClick={() => { void onStar(t.id, !t.starred).then(() => setRefocus({ id: t.id })); }}
+                    onClick={() => { void onStar(t.id, !t.starred).then(() => setRefocus({ id: t.id, control: "star" })); }}
                   >
                     {"\u2605"}
                   </button>
@@ -205,5 +252,30 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
       <button type="button" class="bean-btn bean-chat-sidebar-new" disabled={busy} onClick={onNew}>+ New chat</button>
       <div class="bean-chat-sidebar-foot">Kept 90 days unless starred · incognito chats never kept</div>
     </nav>
+  );
+}
+
+/** A desktop row's title editor: focused and selected on mount (again if its row remounts). Escape is
+ * default-prevented so the overlay sidebar stays open. */
+function RenameInput({ value, label, onInput, onSave, onCancel }: {
+  value: string; label: string; onInput: (v: string) => void; onSave: () => void; onCancel: () => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => { ref.current?.focus(); ref.current?.select(); }, []);
+  return (
+    <input
+      ref={ref}
+      class="bean-chat-sidebar-rename"
+      value={value}
+      aria-label={label}
+      onInput={(e) => onInput(e.currentTarget.value)}
+      onKeyDown={(e) => {
+        if (e.isComposing) return;
+        if (e.key === "Enter") { e.preventDefault(); onSave(); }
+        else if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+      }}
+      // A remount (the row changed group) blurs a detached node — that's not the user leaving.
+      onBlur={(e) => { if (e.currentTarget.isConnected) onSave(); }}
+    />
   );
 }

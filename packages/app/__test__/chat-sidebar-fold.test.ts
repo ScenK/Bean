@@ -13,7 +13,7 @@ test("Earlier starts folded (the open chat still shows) and its header unfolds i
   const none = new Set<string>();
   const noop = () => {};
   await act(async () => {
-    render(h(ChatSidebar, { threads, synced: [], activeId: "jan-6", busy: false, working: none, unread: none, live: none, terminal: none, overlay: false, onNew: noop, onOpen: noop, onDelete: noop, onStar: async () => {} }), root);
+    render(h(ChatSidebar, { threads, synced: [], activeId: "jan-6", busy: false, working: none, unread: none, live: none, terminal: none, overlay: false, onNew: noop, onOpen: noop, onDelete: noop, onStar: async () => {}, onRename: async () => {} }), root);
   });
   const titles = () => [...root.querySelectorAll(".bean-chat-sidebar-title")].map((e) => e.textContent);
   expect(titles()).toEqual(["jan-9", "jan-8", "jan-6"]);
@@ -30,7 +30,7 @@ test("★ stars a desktop row without opening it; a starred row sits in Starred 
   const none = new Set<string>();
   const onOpen = vi.fn();
   const draw = (): void => {
-    render(h(ChatSidebar, { threads, synced, activeId: "act", busy: false, working: none, unread: none, live: none, terminal: none, overlay: false, onNew: () => {}, onOpen, onDelete: () => {}, onStar }), root);
+    render(h(ChatSidebar, { threads, synced, activeId: "act", busy: false, working: none, unread: none, live: none, terminal: none, overlay: false, onNew: () => {}, onOpen, onDelete: () => {}, onStar, onRename: async () => {} }), root);
   };
   const onStar = vi.fn(async (id: string, starred: boolean) => {
     threads = threads.map((t) => (t.id === id ? { ...t, starred } : t));
@@ -62,5 +62,71 @@ test("★ stars a desktop row without opening it; a starred row sits in Starred 
   expect(onStar).toHaveBeenLastCalledWith("b", false);
   expect(groups()).toEqual(["Starred", "Today"]);
   expect(document.activeElement).toBe(star("b"));
+  root.remove();
+});
+
+test("✎ / F2 renames a desktop row inline: Enter or blur saves, Escape cancels (default-prevented), empty never saves", async () => {
+  const row = (id: string) => ({ id, title: id, updatedAt: new Date().toISOString(), agents: [] as string[], starred: false });
+  let threads = [row("a"), row("act")];
+  const synced = [{ surface: "discord" as const, conversationId: "c", kind: "dm" as const, title: "DM", updatedAt: new Date().toISOString(), live: false }];
+  const none = new Set<string>();
+  const draw = (): void => {
+    render(h(ChatSidebar, { threads, synced, activeId: "act", busy: false, working: none, unread: none, live: none, terminal: none, overlay: true, onNew: () => {}, onOpen: () => {}, onDelete: () => {}, onStar: async () => {}, onRename }), root);
+  };
+  const onRename = vi.fn(async (id: string, title: string) => {
+    threads = threads.map((t) => (t.id === id ? { ...t, title } : t));
+    draw();
+  });
+  document.body.appendChild(root);
+  await act(async () => { draw(); });
+  const pencil = (id: string) => root.querySelector<HTMLButtonElement>(`[data-row="${id}"] .bean-chat-sidebar-row-rename`);
+  const input = () => root.querySelector<HTMLInputElement>(".bean-chat-sidebar-rename");
+  const key = (el: Element, k: string): KeyboardEvent => {
+    const e = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true });
+    el.dispatchEvent(e);
+    return e;
+  };
+  const type = async (v: string): Promise<void> => {
+    await act(async () => { input()!.value = v; input()!.dispatchEvent(new Event("input", { bubbles: true })); });
+  };
+  // Desktop rows (the active one too) get ✎; the synced row doesn't.
+  expect(root.querySelectorAll(".bean-chat-sidebar-row-rename")).toHaveLength(2);
+  expect(root.querySelector('[data-row="discord:c"] .bean-chat-sidebar-row-rename')).toBeNull();
+  // F2 on the focused row's open button: the title becomes a focused input.
+  const open = root.querySelector<HTMLButtonElement>('[data-row="a"] .bean-chat-sidebar-open')!;
+  open.focus();
+  await act(async () => { key(open, "F2"); });
+  expect(document.activeElement).toBe(input());
+  expect(input()!.value).toBe("a");
+  // Escape cancels and is default-prevented (the overlay's document listener leaves it open).
+  await type("nope");
+  let esc: KeyboardEvent | undefined;
+  await act(async () => { esc = key(input()!, "Escape"); });
+  expect(esc!.defaultPrevented).toBe(true);
+  expect(input()).toBeNull();
+  expect(onRename).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(pencil("a"));
+  // Empty (whitespace) never saves.
+  await act(async () => { pencil("a")!.click(); });
+  await type("   ");
+  await act(async () => { key(input()!, "Enter"); });
+  expect(input()).toBeNull();
+  expect(onRename).not.toHaveBeenCalled();
+  // Enter saves the trimmed title once (no second save from the input's blur); focus returns to ✎.
+  await act(async () => { pencil("act")!.click(); });
+  await type("  Renamed  ");
+  await act(async () => { key(input()!, "Enter"); });
+  expect(onRename).toHaveBeenCalledTimes(1);
+  expect(onRename).toHaveBeenCalledWith("act", "Renamed");
+  expect(root.querySelector('[data-row="act"] .bean-chat-sidebar-title')!.textContent).toBe("Renamed");
+  expect(document.activeElement).toBe(pencil("act"));
+  // Blur saves too; a list update mid-edit keeps the draft.
+  await act(async () => { pencil("a")!.click(); });
+  await type("Blurred");
+  await act(async () => { threads = [...threads]; draw(); });
+  expect(input()!.value).toBe("Blurred");
+  await act(async () => { input()!.blur(); });
+  expect(onRename).toHaveBeenLastCalledWith("a", "Blurred");
+  expect(onRename).toHaveBeenCalledTimes(2);
   root.remove();
 });

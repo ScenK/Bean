@@ -329,6 +329,61 @@ test("chat history: star pins a chat past the prune; unstar returns it to Today"
   }
 });
 
+// #762: the open chat renamed by keyboard alone (focus a row, F2, type, Enter) keeps the new title
+// through its next saves and the close; a closed chat renames from ✎ too.
+test("chat history: rename a chat inline in the sidebar", async () => {
+  const home = await makeBeanHome();
+  const file = dbFile(join(home.homeDir, ".bean"));
+  const closedId = "8b3c4d5e-6f70-4b8c-9d0e-1f2a3b4c5d6e";
+  saveDesktopChat(file, { id: closedId, title: "old chat", itemsJson: JSON.stringify([{ kind: "user", id: "a", text: "old chat" }]) });
+  const stub = await startStubOpenAI();
+  stub.queue({ content: "Hello there!" });
+  // Turn 1's per-turn memory capture takes one of these, whichever order it lands in.
+  stub.queue({ content: "Again!" });
+  stub.queue({ content: "Again!" });
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  try {
+    const chat = await openChat(app);
+    const composer = chat.locator(".bean-chat:not([hidden]) .bean-input--composer");
+    await composer.fill("plan my week");
+    await chat.locator(".bean-chat:not([hidden]) .bean-send").click();
+    await expect(chat.locator(".bean-bubble--bean")).toContainText("Hello there!");
+    const active = chat.locator(".bean-chat-sidebar-row--active");
+    await expect(active.locator(".bean-chat-sidebar-title")).toHaveText("plan my week");
+    await active.locator(".bean-chat-sidebar-open").focus();
+    await chat.keyboard.press("F2");
+    const input = chat.locator(".bean-chat-sidebar-rename");
+    await expect(input).toBeFocused();
+    await chat.keyboard.type("Week plan");
+    await chat.keyboard.press("Enter");
+    await expect(active.locator(".bean-chat-sidebar-title")).toHaveText("Week plan");
+    await expect(active.locator(".bean-chat-sidebar-row-rename")).toBeFocused();
+    // The next save (the open chat re-sends its title) keeps the rename.
+    await composer.fill("and next week?");
+    await chat.locator(".bean-chat:not([hidden]) .bean-send").click();
+    await expect(chat.locator(".bean-bubble--bean").last()).toContainText("Again!");
+    await expect(active.locator(".bean-chat-sidebar-title")).toHaveText("Week plan");
+    // A closed chat: ✎, then Escape cancels and an edit saves.
+    const closed = chat.locator(`[data-row="${closedId}"]`);
+    await closed.hover();
+    await closed.locator(".bean-chat-sidebar-row-rename").click();
+    await chat.keyboard.type("nope");
+    await chat.keyboard.press("Escape");
+    await expect(closed.locator(".bean-chat-sidebar-title")).toHaveText("old chat");
+    await closed.locator(".bean-chat-sidebar-row-rename").click();
+    await chat.keyboard.type("Renamed old");
+    await chat.keyboard.press("Enter");
+    await expect(closed.locator(".bean-chat-sidebar-title")).toHaveText("Renamed old");
+    await closeChat(app, chat);
+    expect(Object.fromEntries(listDesktopChats(file).map((t) => [t.title, t.id]))).toMatchObject({ "Week plan": expect.any(String), "Renamed old": closedId });
+    const again = await openChat(app);
+    await expect(again.locator(`[data-row="${closedId}"] .bean-chat-sidebar-title`)).toHaveText("Renamed old");
+    await expect(again.locator(".bean-chat-sidebar-title", { hasText: "Week plan" })).toHaveCount(1);
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
+  }
+});
+
 // #601: after the bot's `/new`, the archive joins the sidebar on its push (no reload), reads
 // `· archived` and stays read-only even with history; the live row shows the fresh start.
 test("chat history: a /new archive lists on push, read-only, and the live row says where it went", async () => {

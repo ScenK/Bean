@@ -291,6 +291,17 @@ export function ChatWindow() {
       : prev.map((t) => (t.id === id ? { ...t, starred, updatedAt } : t)))),
     (err: unknown) => shownApi()?.error(`Couldn't ${starred ? "star" : "unstar"} that chat: ${err instanceof Error ? err.message : String(err)}`),
   );
+  // Same shape as ★. The mounted chat holding the thread (shown or hidden) takes the stored title too,
+  // so Continue in Discord proposes it without a reopen.
+  const renameThread = (id: string, title: string): Promise<void> => window.bean.chatThreadRename(id, title).then(
+    (stored) => {
+      if (stored !== undefined) [...sessions.values()].find((s) => s.threadId() === id)?.renamed(stored);
+      setThreads((prev) => (stored === undefined
+        ? prev.filter((t) => t.id !== id)
+        : prev.map((t) => (t.id === id ? { ...t, title: stored } : t))));
+    },
+    (err: unknown) => shownApi()?.error(`Couldn't rename that chat: ${err instanceof Error ? err.message : String(err)}`),
+  );
 
   return (
     <div class="bean-dashboard bean-chat-window">
@@ -310,6 +321,7 @@ export function ChatWindow() {
           onOpen={openThread}
           onDelete={deleteThread}
           onStar={starThread}
+          onRename={renameThread}
         />
       ) : null}
       {mounts.map(({ mountId, restoreId }) => (
