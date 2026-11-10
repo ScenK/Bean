@@ -175,11 +175,37 @@ button, input, textarea, select, a {
   text-transform: uppercase;
   color: var(--bean-text-dim);
 }
+.bean-chat-sidebar-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.bean-chat-sidebar-select {
+  padding: 2px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--bean-accent-text);
+  font: inherit;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.bean-chat-sidebar-select[aria-pressed="true"] { background: var(--bean-accent); color: var(--bean-accent-ink); }
+.bean-chat-sidebar-select:disabled { opacity: 0.5; cursor: default; }
+.bean-chat-sidebar-select:focus-visible { outline: 2px solid var(--bean-accent-text); outline-offset: 1px; }
 .bean-chat-sidebar-new {
   flex: none;
   width: 100%;
   -webkit-app-region: no-drag;
 }
+/* Select mode: the row is one native label (checkbox + title), and an action bar takes New chat's place. */
+.bean-chat-sidebar-pick input { flex: none; margin: 0; accent-color: var(--bean-accent); }
+.bean-chat-sidebar-bar { flex: none; display: flex; flex-direction: column; gap: 6px; -webkit-app-region: no-drag; }
+.bean-chat-sidebar-bar .bean-chat-sidebar-rename { flex: none; margin: 0; }
+.bean-chat-sidebar-bar-count { font: 600 11px ui-monospace, SFMono-Regular, monospace; color: var(--bean-text-dim); }
+.bean-chat-sidebar-bar-error { font-size: 12px; color: var(--bean-error); }
+.bean-chat-sidebar-bar-actions { display: flex; gap: 6px; }
+.bean-chat-sidebar-bar-actions .bean-btn { flex: 1; }
 .bean-chat-sidebar-list {
   flex: 1;
   min-height: 0;
@@ -220,6 +246,9 @@ button, input, textarea, select, a {
 }
 .bean-chat-sidebar-group--fold:hover { color: var(--bean-text); }
 .bean-chat-sidebar-group--fold:focus-visible { outline: 2px solid var(--bean-accent-text); outline-offset: -2px; }
+/* A header a dragged starred row is over (#766): it takes the drop. */
+.bean-chat-sidebar-group--drop { outline: 2px dashed var(--bean-accent-text); outline-offset: -2px; border-radius: 6px; }
+.bean-chat-sidebar-set > .bean-chat-sidebar-group--drop { outline-offset: 2px; }
 .bean-chat-sidebar-chevron { display: inline-block; width: 1em; }
 /* A named group inside Starred: its name shown as typed (names are case-sensitive). */
 .bean-chat-sidebar-group--named {

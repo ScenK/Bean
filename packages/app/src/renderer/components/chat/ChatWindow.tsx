@@ -302,14 +302,20 @@ export function ChatWindow() {
     },
     (err: unknown) => shownApi()?.error(`Couldn't rename that chat: ${err instanceof Error ? err.message : String(err)}`),
   );
-  // Patches the returned rows; an asked-for row not returned is gone, so it's dropped.
-  const groupThread = (ids: string[], name: string | null): Promise<void> => window.bean.chatThreadGroup(ids, name).then(
+  // Patches the returned rows; an asked-for row not returned is gone, so it's dropped. Settles with the
+  // error message on failure (select mode shows it in its bar too).
+  const groupThread = (ids: string[], name: string | null): Promise<string | undefined> => window.bean.chatThreadGroup(ids, name).then(
     (done) => {
       const groupName = name === null ? null : cleanGroupName(name);
       setThreads((prev) => prev.flatMap((t) => (!ids.includes(t.id) ? [t]
         : done.includes(t.id) ? [{ ...t, groupName, starred: name === null ? t.starred : true }] : [])));
+      return undefined;
     },
-    (err: unknown) => shownApi()?.error(`Couldn't ${name === null ? "ungroup" : "group"} that chat: ${err instanceof Error ? err.message : String(err)}`),
+    (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      shownApi()?.error(`Couldn't ${name === null ? "ungroup" : "group"} ${ids.length === 1 ? "that chat" : "those chats"}: ${msg}`);
+      return msg;
+    },
   );
   // Same, over the group's members: moved ones take the new name, the rest are gone.
   const renameGroup = (from: string, to: string): Promise<void> => window.bean.chatThreadGroupRename(from, to).then(

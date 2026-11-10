@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication, type Page } from "@playwright/t
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
-import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, listDesktopChats, saveDesktopChat, speakerLine, starDesktopChat } from "@bean/core";
+import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, groupDesktopChats, listDesktopChats, saveDesktopChat, speakerLine, starDesktopChat } from "@bean/core";
 import { join } from "node:path";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -314,7 +314,7 @@ test("chat history: star pins a chat past the prune; unstar returns it to Today"
     await expect(firstUnder(chat, "Starred")).toHaveAttribute("data-row", id);
     await expect(row(chat).locator(".bean-chat-sidebar-row-star")).toHaveAttribute("aria-pressed", "true");
     await expect(row(chat).locator(".bean-chat-sidebar-row-delete")).toHaveCount(0);
-    await expect(chat.locator(".bean-chat-sidebar-head")).toHaveText("All chats · 1");
+    await expect(chat.locator(".bean-chat-sidebar-head > span")).toHaveText("All chats · 1");
     await closeChat(app, chat);
     seed(new Date(Date.now() - 100 * 86_400_000)); // the save upsert keeps the star
     chat = await openChat(app);
@@ -450,6 +450,97 @@ test("chat history: foldable named groups inside Starred", async () => {
     }
   } finally {
     await Promise.allSettled([home.cleanup(), rm(userDataDir, { recursive: true, force: true })]);
+  }
+});
+
+// #766: a starred row drags onto a group header (move) or the Starred header (ungroup); a date
+// section and the composer refuse it (nothing pasted), no highlight is left, and rows still open.
+test("chat history: drag a starred chat between groups", async () => {
+  const home = await makeBeanHome();
+  const file = dbFile(join(home.homeDir, ".bean"));
+  const [a, b, c] = ["1e6f7081-92a3-4bbf-8021-4c5d6e7f8091", "2f708192-a3b4-4cc0-9132-5d6e7f8091a2", "30819203-b4c5-4dd1-8243-6e7f8091a2b3"];
+  for (const [id, title] of [[a, "alpha"], [b, "beta"], [c, "gamma"]] as const) {
+    saveDesktopChat(file, { id, title, itemsJson: JSON.stringify([{ kind: "user", id: "a", text: title }]) });
+  }
+  starDesktopChat(file, a, true);
+  starDesktopChat(file, b, true);
+  groupDesktopChats(file, [a], "Work");
+  const groups = () => Object.fromEntries(listDesktopChats(file).map((t) => [t.id, t.groupName]));
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const chat = await openChat(app);
+    const row = (id: string) => chat.locator(`[data-row="${id}"]`);
+    const work = chat.locator('[data-section="group:Work"]');
+    const starred = chat.locator('[data-section="starred"]');
+    const composer = chat.locator(".bean-input--composer");
+    await expect(row(c)).not.toHaveAttribute("draggable", "true");
+    // Onto a date section or the composer: nothing moves, nothing is pasted.
+    await row(b).dragTo(chat.locator('[data-section="date:Today"]'));
+    await row(b).dragTo(composer);
+    await expect(composer).toHaveValue("");
+    expect(groups()).toEqual({ [a]: "Work", [b]: null, [c]: null });
+    // Onto a group header: it moves there.
+    await row(b).dragTo(work);
+    await expect(work).toHaveText(/Work\s*2/);
+    expect(groups()).toEqual({ [a]: "Work", [b]: "Work", [c]: null });
+    // Onto Starred: out of its group.
+    await row(a).dragTo(starred);
+    await expect(work).toHaveText(/Work\s*1/);
+    await expect(chat.locator('[data-section="starred"] + [data-row]')).toHaveAttribute("data-row", a);
+    expect(groups()).toEqual({ [a]: null, [b]: "Work", [c]: null });
+    await expect(chat.locator(".bean-chat-sidebar-group--drop")).toHaveCount(0);
+    // Rows still open after the drags.
+    await row(a).locator(".bean-chat-sidebar-open").click();
+    await expect(chat.locator(".bean-chat-sidebar-row--active")).toHaveAttribute("data-row", a);
+  } finally {
+    await Promise.allSettled([app.close(), home.cleanup()]);
+  }
+});
+
+// #767: by keyboard alone, select mode puts starred and unstarred chats into an existing group in one
+// step (unstarred ones get starred); Escape leaves it with nothing changed.
+test("chat history: multi-select chats into a group", async () => {
+  const home = await makeBeanHome();
+  const file = dbFile(join(home.homeDir, ".bean"));
+  const [a, b, c] = ["41920314-c5d6-4ee2-9354-7f8091a2b3c4", "52a31425-d6e7-4ff3-a465-8091a2b3c4d5", "63b42536-e7f8-4a04-b576-91a2b3c4d5e6"];
+  for (const [id, title] of [[a, "alpha"], [b, "beta"], [c, "gamma"]] as const) {
+    saveDesktopChat(file, { id, title, itemsJson: JSON.stringify([{ kind: "user", id: "a", text: title }]) });
+  }
+  starDesktopChat(file, a, true);
+  groupDesktopChats(file, [a], "Work");
+  starDesktopChat(file, b, true);
+  const state = () => Object.fromEntries(listDesktopChats(file).map((t) => [t.id, [t.starred, t.groupName]]));
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const chat = await openChat(app);
+    const box = (id: string) => chat.locator(`[data-row="${id}"] input[type="checkbox"]`);
+    const select = chat.locator(".bean-chat-sidebar-select");
+    await select.focus();
+    await chat.keyboard.press("Enter");
+    await expect(chat.locator(".bean-chat-sidebar-new")).toHaveCount(0);
+    await box(b).focus();
+    await chat.keyboard.press("Space");
+    await expect(chat.locator(".bean-chat-sidebar-bar-count")).toHaveText("1 selected");
+    // Escape leaves select mode; nothing changed, the sidebar stays.
+    await chat.keyboard.press("Escape");
+    await expect(chat.locator(".bean-chat-sidebar-bar")).toHaveCount(0);
+    await expect(select).toBeFocused();
+    expect(state()).toEqual({ [a]: [true, "Work"], [b]: [true, null], [c]: [false, null] });
+    await chat.keyboard.press("Enter");
+    for (const id of [b, c]) {
+      await box(id).focus();
+      await chat.keyboard.press("Space");
+    }
+    await chat.locator('.bean-chat-sidebar-bar input[aria-label="Group name"]').focus();
+    await chat.keyboard.type("Work");
+    await chat.keyboard.press("Enter");
+    const work = chat.locator('[data-section="group:Work"]');
+    await expect(work).toHaveText(/Work\s*3/);
+    await expect(work).toBeFocused();
+    await expect(chat.locator(".bean-chat-sidebar-new")).toHaveCount(1);
+    expect(state()).toEqual({ [a]: [true, "Work"], [b]: [true, "Work"], [c]: [true, "Work"] });
+  } finally {
+    await Promise.allSettled([app.close(), home.cleanup()]);
   }
 });
 
