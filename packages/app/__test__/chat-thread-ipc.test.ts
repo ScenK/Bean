@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getDesktopChat, saveDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, listDesktopChats, DESKTOP_CHAT_MAX_BYTES } from "@bean/core";
+import { getDesktopChat, saveDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, DESKTOP_CHAT_MAX_BYTES } from "@bean/core";
 import { buildChatThreadHandlers, registerIpc, type RegisterDeps } from "../src/ipc.js";
 import { IPC } from "../src/channels.js";
 import type { Memory } from "@bean/core";
@@ -14,7 +14,7 @@ const OTHER = "9f1d7c2e-3b4a-4e6f-8a1b-5c2d3e4f5a6b";
 
 function setup() {
   const dbFile = join(mkdtempSync(join(tmpdir(), "bean-thread-")), "bean.db");
-  const handlers = buildChatThreadHandlers({ dbFile, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, listDesktopChats });
+  const handlers = buildChatThreadHandlers({ dbFile, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats });
   return { dbFile, handlers, row: (id = ID) => getDesktopChat(dbFile, id) };
 }
 const save = (items: unknown[] = [{ kind: "status", id: "item-1", text: "hi", tone: "info" }], id = ID) => ({ id, title: "hi there", items });
@@ -116,6 +116,35 @@ describe("buildChatThreadHandlers", () => {
     expect(() => handlers.star("../x", true)).toThrow(/UUID/);
     for (const bad of [1, "true", null, undefined]) expect(() => handlers.star(ID, bad)).toThrow(/boolean/);
     expect(handlers.list()[0]!.starred).toBe(false);
+  });
+
+  it("groups any threads (starring them), ungroups with null, renames a group; a save keeps the group", () => {
+    const { handlers } = setup();
+    handlers.save("a", save());
+    handlers.save("b", save([], OTHER));
+    expect(handlers.group([ID, OTHER], "Work").sort()).toEqual([ID, OTHER].sort());
+    expect(handlers.list().map((t) => [t.starred, t.groupName])).toEqual([[true, "Work"], [true, "Work"]]);
+    handlers.save("a", save([]));
+    expect(handlers.list().find((t) => t.id === ID)).toMatchObject({ starred: true, groupName: "Work" });
+    expect(handlers.group([OTHER], null)).toEqual([OTHER]);
+    expect(handlers.list().find((t) => t.id === OTHER)).toMatchObject({ starred: true, groupName: null });
+    expect(handlers.groupRename("Work", "Home")).toEqual([ID]);
+    expect(handlers.list().find((t) => t.id === ID)!.groupName).toBe("Home");
+  });
+
+  it("group refuses bad ids and names; groupRename refuses bad names", () => {
+    const { handlers } = setup();
+    handlers.save("a", save());
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+    for (const bad of [[], ids(101), "x", ["../x"], [ID, 3], [ID, ID], [ID, ID.toUpperCase()]]) {
+      expect(() => handlers.group(bad, "G")).toThrow(/UUID|unique/);
+    }
+    expect(handlers.group(ids(100), "G")).toEqual([]);
+    for (const bad of [3, undefined]) expect(() => handlers.group([ID], bad)).toThrow(/string or null/);
+    expect(() => handlers.group([ID], " \n ")).toThrow(/empty/);
+    expect(() => handlers.groupRename("G", 3)).toThrow(/strings/);
+    expect(() => handlers.groupRename("", "G")).toThrow(/empty/);
+    expect(handlers.list()[0]).toMatchObject({ starred: false, groupName: null });
   });
 
   it("two chats save two threads; neither may save, restore or delete the other's", () => {
@@ -350,7 +379,7 @@ describe("chat thread IPC", () => {
     expect(await b).toMatchObject({ stopped: true });
   });
 
-  it("list/delete/star/rename are chat-window only", () => {
+  it("list/delete/star/rename/group are chat-window only", () => {
     const { chat, other, invoke } = ipcHarness();
     expect(() => invoke(IPC.chatThreadList, other)).toThrow(/chat window/);
     expect(() => invoke(IPC.chatThreadDelete, other, OTHER)).toThrow(/chat window/);
@@ -358,6 +387,10 @@ describe("chat thread IPC", () => {
     expect(invoke(IPC.chatThreadStar, chat, OTHER, true)).toBeUndefined();
     expect(() => invoke(IPC.chatThreadRename, other, OTHER, "t")).toThrow(/chat window/);
     expect(invoke(IPC.chatThreadRename, chat, OTHER, "t")).toBeUndefined();
+    expect(() => invoke(IPC.chatThreadGroup, other, [OTHER], "G")).toThrow(/chat window/);
+    expect(invoke(IPC.chatThreadGroup, chat, [OTHER], "G")).toEqual([]);
+    expect(() => invoke(IPC.chatThreadGroupRename, other, "G", "H")).toThrow(/chat window/);
+    expect(invoke(IPC.chatThreadGroupRename, chat, "G", "H")).toEqual([]);
     expect(invoke(IPC.chatThreadList, chat)).toEqual([]);
   });
   it("chatStageImage stages to a private file and rejects a bad mime, an oversize payload and an unattached mount", async () => {

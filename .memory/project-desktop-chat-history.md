@@ -29,6 +29,53 @@ ignored), Escape cancels **and `preventDefault()`s** so the overlay sidebar stay
 (ChatWindow) patches the row like ★ and calls the holding mount's `renamed()` — `threadRef.title` is
 what Continue in Discord proposes, and nothing else refreshes it until a restore.
 
+**Groups of starred chats (#763).** `desktop_chats.group_name` (NULL = ungrouped) — only starred rows
+have one. `groupDesktopChats(ids, name)` is one `UPDATE`: a name stars **and** groups (so grouping an
+unstarred row stars it), `null` ungroups and keeps the star; missing ids are skipped, never inserts,
+`updated_at` untouched. Unstarring (`starDesktopChat`) clears the group, so re-starring lands ungrouped.
+`renameDesktopChatGroup(from, to)` moves every member; onto an existing name they merge (no separate
+merge op). Group and title names share `desktopChatName` (one line, trimmed, capped at
+`DESKTOP_CHAT_TITLE_MAX`, never empty); identity is the exact, case-sensitive cleaned string — there's
+no groups table, a group exists while a row names it. The save upsert never lists `group_name`, and
+`withSaveAck` spreads the old row under the ack so any listing field survives a save. IPC:
+`chatThreadGroup` (1–100 unique UUIDs, name or `null`) / `chatThreadGroupRename`, chat window only,
+no holder check (like ★/rename).
+**Sidebar groups (#764).** `sidebarGroups` returns typed sections (`kind` starred/group/date/earlier,
+`key` kind-prefixed — `group:<name>`, `date:<label>` — so a group named "Earlier"/"Today"/"Starred" is
+just a group; never special-case by label). Starred = ungrouped starred rows, then groups A→Z (header
+count = all starred). A starred row's Group control is a transparent native `<select>` over a ⋯ glyph
+(keyboard/VoiceOver for free; the `"\n"` value = New group…, can't be a cleaned name). Group fold state
+is `localStorage` `bean.chat.foldedGroups` (names); a rename moves the entry **before** the IPC call
+(the prune effect, which runs on every list change once loaded, would drop `from` first), onto an
+existing group the target's state wins (`foldedAfterRename`); fold writes are updaters so a stale
+effect closure can't undo them. The renderer patches rows with `cleanGroupName` (a copy of core's
+cleaning; `GROUP_NAME_MAX` is pinned to `DESKTOP_CHAT_TITLE_MAX` by a test) since group IPC returns
+ids only; an asked-for id not returned is dropped. Inline edits share one draft map keyed
+`title:<id>` / `group:<id>` / `header:<name>`; focus after a move goes to the row's Group control or,
+folded away, its section header (`data-section`).
+
+**Group colours (#765).** Each named group renders inside a `.bean-chat-sidebar-set` wrapper (header +
+visible rows) whose `--bean-group-color` (inline style → `var(--bean-group-N)`) fills the header and
+draws the wrapper's left border as the line; the wrapper is unpositioned on purpose so rows' `offsetTop`
+(the FLIP animation) keeps the same reference across sections. `groupColors` is a pure name hash, bumped
+when it equals the group above — nothing stored, so a rename can change a colour.
+
+**Drag between groups (#766).** Starred rows are `draggable` (not mid-edit) with only
+`application/x-bean-chat` set — no `text/plain`, so the composer's default drop pastes nothing. Only the
+Starred header (ungroup) and group headers (move) accept it, via the existing `chatThreadGroup`. The
+header highlight is the only drag state and never commits anything; it clears on drop, dragleave, the
+row's dragend, document-level capture `dragend`/`drop` (a save ack can remount the source row and lose
+its dragend), and an 800ms no-dragover watchdog ([[safety-drag-mode-needs-watchdog]]).
+
+**Multi-select into a group (#767).** The head's Select toggles select mode: each desktop row becomes one
+native `<label>` (checkbox + title, no row controls, not draggable, no F2), synced rows unchanged, and a
+form bar (count, name input with a `<datalist>` of groups, Group, Cancel) replaces New chat. The
+selection is a `Set` of thread ids; only ids still in `threads` count, so deleted/pruned rows drop out
+on their own. Group sends one `chatThreadGroup(ids, name)` (stars too); over `GROUP_SELECT_MAX` (100,
+main's cap) is refused in the bar. `onGroup` settles with the error message (else undefined), so a
+failure keeps the mode, selection and name. Escape: the name input's moves focus to Cancel, then the
+nav's leaves the mode — both default-prevented so the overlay stays.
+
 **Normalizer — `renderer/components/chat/chat-thread.ts`, node-free, runs on every save and again on
 restore.** Never mutates. Drops `working` items, `reply.session`/`tail`/`streaming` (a streaming reply
 gets the "— turn interrupted" footer), delegate `taskId`/`tail`, status `exiting`, and every image data
