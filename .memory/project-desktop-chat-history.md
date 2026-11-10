@@ -60,6 +60,13 @@ draws the wrapper's left border as the line; the wrapper is unpositioned on purp
 (the FLIP animation) keeps the same reference across sections. `groupColors` is a pure name hash, bumped
 when it equals the group above — nothing stored, so a rename can change a colour.
 
+**Drag between groups (#766).** Starred rows are `draggable` (not mid-edit) with only
+`application/x-bean-chat` set — no `text/plain`, so the composer's default drop pastes nothing. Only the
+Starred header (ungroup) and group headers (move) accept it, via the existing `chatThreadGroup`. The
+header highlight is the only drag state and never commits anything; it clears on drop, dragleave, the
+row's dragend, document-level capture `dragend`/`drop` (a save ack can remount the source row and lose
+its dragend), and an 800ms no-dragover watchdog ([[safety-drag-mode-needs-watchdog]]).
+
 **Normalizer — `renderer/components/chat/chat-thread.ts`, node-free, runs on every save and again on
 restore.** Never mutates. Drops `working` items, `reply.session`/`tail`/`streaming` (a streaming reply
 gets the "— turn interrupted" footer), delegate `taskId`/`tail`, status `exiting`, and every image data

@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication, type Page } from "@playwright/t
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
-import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, listDesktopChats, saveDesktopChat, speakerLine, starDesktopChat } from "@bean/core";
+import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, groupDesktopChats, listDesktopChats, saveDesktopChat, speakerLine, starDesktopChat } from "@bean/core";
 import { join } from "node:path";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -450,6 +450,50 @@ test("chat history: foldable named groups inside Starred", async () => {
     }
   } finally {
     await Promise.allSettled([home.cleanup(), rm(userDataDir, { recursive: true, force: true })]);
+  }
+});
+
+// #766: a starred row drags onto a group header (move) or the Starred header (ungroup); a date
+// section and the composer refuse it (nothing pasted), no highlight is left, and rows still open.
+test("chat history: drag a starred chat between groups", async () => {
+  const home = await makeBeanHome();
+  const file = dbFile(join(home.homeDir, ".bean"));
+  const [a, b, c] = ["1e6f7081-92a3-4bbf-8021-4c5d6e7f8091", "2f708192-a3b4-4cc0-9132-5d6e7f8091a2", "30819203-b4c5-4dd1-8243-6e7f8091a2b3"];
+  for (const [id, title] of [[a, "alpha"], [b, "beta"], [c, "gamma"]] as const) {
+    saveDesktopChat(file, { id, title, itemsJson: JSON.stringify([{ kind: "user", id: "a", text: title }]) });
+  }
+  starDesktopChat(file, a, true);
+  starDesktopChat(file, b, true);
+  groupDesktopChats(file, [a], "Work");
+  const groups = () => Object.fromEntries(listDesktopChats(file).map((t) => [t.id, t.groupName]));
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const chat = await openChat(app);
+    const row = (id: string) => chat.locator(`[data-row="${id}"]`);
+    const work = chat.locator('[data-section="group:Work"]');
+    const starred = chat.locator('[data-section="starred"]');
+    const composer = chat.locator(".bean-input--composer");
+    await expect(row(c)).not.toHaveAttribute("draggable", "true");
+    // Onto a date section or the composer: nothing moves, nothing is pasted.
+    await row(b).dragTo(chat.locator('[data-section="date:Today"]'));
+    await row(b).dragTo(composer);
+    await expect(composer).toHaveValue("");
+    expect(groups()).toEqual({ [a]: "Work", [b]: null, [c]: null });
+    // Onto a group header: it moves there.
+    await row(b).dragTo(work);
+    await expect(work).toHaveText(/Work\s*2/);
+    expect(groups()).toEqual({ [a]: "Work", [b]: "Work", [c]: null });
+    // Onto Starred: out of its group.
+    await row(a).dragTo(starred);
+    await expect(work).toHaveText(/Work\s*1/);
+    await expect(chat.locator('[data-section="starred"] + [data-row]')).toHaveAttribute("data-row", a);
+    expect(groups()).toEqual({ [a]: null, [b]: "Work", [c]: null });
+    await expect(chat.locator(".bean-chat-sidebar-group--drop")).toHaveCount(0);
+    // Rows still open after the drags.
+    await row(a).locator(".bean-chat-sidebar-open").click();
+    await expect(chat.locator(".bean-chat-sidebar-row--active")).toHaveAttribute("data-row", a);
+  } finally {
+    await Promise.allSettled([app.close(), home.cleanup()]);
   }
 });
 

@@ -141,6 +141,11 @@ function readFolded(): string[] {
     return Array.isArray(v) ? v.filter((n): n is string => typeof n === "string") : [];
   } catch { return []; }
 }
+/** A dragged starred row's id. Custom type only (no `text/plain`), so text fields ignore the drag. */
+export const CHAT_DRAG_TYPE = "application/x-bean-chat";
+/** Drop-highlight silence timeout: Chromium re-fires dragover ~every 350ms over a target, so this
+ * long without one means the drag's terminal events were lost (safety-drag-mode-needs-watchdog). */
+const DROP_WATCHDOG_MS = 800;
 /** The Group control's "New group…" value — whitespace only, so never a stored group name. */
 const NEW_GROUP = "\n";
 
@@ -227,6 +232,45 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
     setFolded((f) => foldedAfterRename(f, from, to, groupNames));
     return onRenameGroup(from, to);
   };
+  // Drag a starred row onto a group header (move) or the Starred header (ungroup). `over` is only a
+  // highlight: clearing it never commits a move, and nothing reads it to block clicks.
+  const [over, setOver] = useState<string | undefined>(undefined);
+  const overTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const clearOver = (): void => { clearTimeout(overTimer.current); setOver(undefined); };
+  useEffect(() => {
+    // A save ack can remount the dragged row, losing its own dragend; the document still hears these.
+    // (clearOver only touches the ref and the state setter, so this first render's copy stays valid.)
+    document.addEventListener("dragend", clearOver, true);
+    document.addEventListener("drop", clearOver, true);
+    return () => {
+      document.removeEventListener("dragend", clearOver, true);
+      document.removeEventListener("drop", clearOver, true);
+      clearTimeout(overTimer.current);
+    };
+  }, []);
+  const dropTarget = (g: SidebarSection) => (g.kind !== "starred" && g.kind !== "group" ? {} : {
+    onDragOver: (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes(CHAT_DRAG_TYPE)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setOver(g.key);
+      clearTimeout(overTimer.current);
+      overTimer.current = setTimeout(() => setOver(undefined), DROP_WATCHDOG_MS);
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) clearOver();
+    },
+    onDrop: (e: DragEvent) => {
+      const id = e.dataTransfer?.getData(CHAT_DRAG_TYPE);
+      if (!id) return;
+      e.preventDefault();
+      clearOver();
+      const t = threads.find((x) => x.id === id);
+      const name = g.kind === "group" ? g.label : null;
+      if (t?.starred && (t.groupName ?? null) !== name) void onGroup([id], name);
+    },
+  });
+  const dropClass = (g: SidebarSection): string => (over === g.key ? " bean-chat-sidebar-group--drop" : "");
   const marker = (key: string) => (working.has(key)
     ? <span class="bean-chat-sidebar-spinner" role="img" aria-label="Working" />
     : unread.has(key) ? <span class="bean-chat-sidebar-dot" role="img" aria-label="New reply" /> : null);
@@ -240,7 +284,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
           const named = g.kind === "group" ? " bean-chat-sidebar-group--named" : "";
           const inner = <>
             {g.kind === "group" && header !== undefined ? (
-              <div class={`bean-chat-sidebar-group${named}`} data-section={g.key}>
+              <div class={`bean-chat-sidebar-group${named}${dropClass(g)}`} data-section={g.key} {...dropTarget(g)}>
                 <RenameInput
                   value={header}
                   label={`Rename group "${g.label}"`}
@@ -253,8 +297,9 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
             ) : g.kind === "earlier" || g.kind === "group" ? (
               <button
                 type="button"
-                class={`bean-chat-sidebar-group bean-chat-sidebar-group--fold${named}`}
+                class={`bean-chat-sidebar-group bean-chat-sidebar-group--fold${named}${dropClass(g)}`}
                 data-section={g.key}
+                {...dropTarget(g)}
                 aria-expanded={!isFolded(g)}
                 title={g.kind === "group" ? "Fold group (double-click or F2 to rename)" : undefined}
                 onClick={() => toggleFold(g)}
@@ -267,7 +312,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
               >
                 <span><span class="bean-chat-sidebar-chevron" aria-hidden="true">{isFolded(g) ? "▸" : "▾"}</span> {g.label}</span><span>{g.count}</span>
               </button>
-            ) : <div class="bean-chat-sidebar-group" data-section={g.key}><span>{g.label}</span><span>{g.count}</span></div>}
+            ) : <div class={`bean-chat-sidebar-group${dropClass(g)}`} data-section={g.key} {...dropTarget(g)}><span>{g.label}</span><span>{g.count}</span></div>}
             {(isFolded(g) ? g.threads.filter((row) => row.key === activeId) : g.threads).map((row) => {
               if (row.synced) {
                 const active = row.key === activeId;
@@ -303,6 +348,13 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                   key={t.id}
                   data-row={t.id}
                   class={`bean-chat-sidebar-row${active ? " bean-chat-sidebar-row--active" : ""}${live.has(t.id) ? " bean-chat-sidebar-row--live" : ""}`}
+                  draggable={t.starred && draft === undefined}
+                  onDragStart={t.starred && draft === undefined ? (e) => {
+                    if (!e.dataTransfer) return;
+                    e.dataTransfer.setData(CHAT_DRAG_TYPE, t.id);
+                    e.dataTransfer.effectAllowed = "move";
+                  } : undefined}
+                  onDragEnd={clearOver}
                   onKeyDown={(e) => {
                     if (e.key !== "F2" || draft !== undefined) return;
                     e.preventDefault();

@@ -212,3 +212,84 @@ test("starred groups: Group menu → New group…, join, fold (persisted, active
   expect(onGroup).toHaveBeenLastCalledWith(["act"], null);
   root.remove();
 });
+
+test("drag a starred row onto a group header (move) or Starred (ungroup); only starred rows drag, highlights always clear", async () => {
+  localStorage.clear();
+  localStorage.setItem("bean.chat.foldedGroups", JSON.stringify(["Work"]));
+  const row = (id: string, starred: boolean, groupName: string | null = null) => ({ id, title: id, updatedAt: new Date().toISOString(), agents: [] as string[], starred, groupName });
+  let threads = [row("a", true), row("b", true, "Work"), row("c", true, "Home"), row("plain", false)];
+  const none = new Set<string>();
+  const onOpen = vi.fn();
+  const draw = (): void => {
+    render(h(ChatSidebar, { threads, synced: [], activeId: undefined, busy: false, working: none, unread: none, live: none, terminal: none, overlay: false, onNew: () => {}, onOpen, onDelete: () => {}, onStar: async () => {}, onRename: async () => {}, onGroup, onRenameGroup: async () => {} }), root);
+  };
+  const onGroup = vi.fn(async (ids: string[], name: string | null) => {
+    threads = threads.map((t) => (ids.includes(t.id) ? { ...t, groupName: name } : t));
+    draw();
+  });
+  document.body.appendChild(root);
+  await act(async () => { draw(); });
+  // jsdom has no DragEvent/DataTransfer: a plain event carrying a minimal store.
+  const store = new Map<string, string>();
+  const transfer = { get types() { return [...store.keys()]; }, setData: (k: string, v: string) => store.set(k, v), getData: (k: string) => store.get(k) ?? "", effectAllowed: "", dropEffect: "" };
+  const fire = (el: Element, type: string): Event => {
+    const e = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "dataTransfer", { value: transfer });
+    el.dispatchEvent(e);
+    return e;
+  };
+  const rowEl = (id: string) => root.querySelector<HTMLElement>(`[data-row="${id}"]`)!;
+  const header = (key: string) => root.querySelector<HTMLElement>(`[data-section="${key}"]`)!;
+  const lit = () => [...root.querySelectorAll<HTMLElement>(".bean-chat-sidebar-group--drop")].map((el) => el.dataset.section);
+  expect(rowEl("a").draggable).toBe(true);
+  expect(rowEl("plain").draggable).toBe(false);
+  // dragstart sets only the custom type.
+  await act(async () => { fire(rowEl("a"), "dragstart"); });
+  expect(transfer.types).toEqual(["application/x-bean-chat"]);
+  expect(transfer.effectAllowed).toBe("move");
+  // A date section refuses it; a group header takes it and lights up.
+  let over!: Event;
+  await act(async () => { over = fire(header("date:Today"), "dragover"); });
+  expect(over.defaultPrevented).toBe(false);
+  await act(async () => { over = fire(header("group:Work"), "dragover"); });
+  expect(over.defaultPrevented).toBe(true);
+  expect(lit()).toEqual(["group:Work"]);
+  // Drop moves it; the folded header stays folded and the highlight is gone.
+  await act(async () => { fire(header("group:Work"), "drop"); });
+  expect(onGroup).toHaveBeenLastCalledWith(["a"], "Work");
+  expect(header("group:Work").getAttribute("aria-expanded")).toBe("false");
+  expect(lit()).toEqual([]);
+  // Dropping on the row's own group is a no-op; onto Starred ungroups.
+  store.clear();
+  await act(async () => { fire(rowEl("c"), "dragstart"); fire(header("group:Home"), "dragover"); fire(header("group:Home"), "drop"); });
+  expect(onGroup).toHaveBeenCalledTimes(1);
+  await act(async () => { fire(header("starred"), "dragover"); });
+  expect(lit()).toEqual(["starred"]);
+  await act(async () => { fire(header("starred"), "drop"); });
+  expect(onGroup).toHaveBeenLastCalledWith(["c"], null);
+  // A drag without the custom type (text, files) is refused everywhere.
+  store.clear();
+  store.set("text/plain", "hi");
+  await act(async () => { over = fire(header("starred"), "dragover"); });
+  expect(over.defaultPrevented).toBe(false);
+  // A cancelled drag (the row remounted, so only the document hears dragend) leaves no highlight.
+  store.clear();
+  await act(async () => { fire(rowEl("c"), "dragstart"); fire(header("starred"), "dragover"); threads = [...threads]; draw(); });
+  expect(lit()).toEqual(["starred"]);
+  await act(async () => { document.dispatchEvent(new Event("dragend")); });
+  expect(lit()).toEqual([]);
+  // Lost terminal events: the highlight times out on its own.
+  vi.useFakeTimers();
+  try {
+    await act(async () => { fire(header("group:Work"), "dragover"); });
+    expect(lit()).toEqual(["group:Work"]);
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(lit()).toEqual([]);
+  } finally { vi.useRealTimers(); }
+  // Rows still open after a drag; a row whose rename is open doesn't drag.
+  await act(async () => { rowEl("plain").querySelector<HTMLButtonElement>(".bean-chat-sidebar-open")!.click(); });
+  expect(onOpen).toHaveBeenCalledWith("plain");
+  await act(async () => { rowEl("c").querySelector<HTMLButtonElement>(".bean-chat-sidebar-row-rename")!.click(); });
+  expect(rowEl("c").draggable).toBe(false);
+  root.remove();
+});

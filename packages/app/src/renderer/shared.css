@@ -220,6 +220,9 @@ button, input, textarea, select, a {
 }
 .bean-chat-sidebar-group--fold:hover { color: var(--bean-text); }
 .bean-chat-sidebar-group--fold:focus-visible { outline: 2px solid var(--bean-accent-text); outline-offset: -2px; }
+/* A header a dragged starred row is over (#766): it takes the drop. */
+.bean-chat-sidebar-group--drop { outline: 2px dashed var(--bean-accent-text); outline-offset: -2px; border-radius: 6px; }
+.bean-chat-sidebar-set > .bean-chat-sidebar-group--drop { outline-offset: 2px; }
 .bean-chat-sidebar-chevron { display: inline-block; width: 1em; }
 /* A named group inside Starred: its name shown as typed (names are case-sensitive). */
 .bean-chat-sidebar-group--named {
