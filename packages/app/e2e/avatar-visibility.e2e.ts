@@ -2,10 +2,11 @@ import { test, expect, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import electronExecutable from "electron";
-import { writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
+import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
 const openMenu = async (page: Page): Promise<void> => {
   await page.evaluate(() => {
@@ -130,3 +131,46 @@ for (const failure of ["early", "config"] as const) {
     } finally { await home.cleanup(); }
   });
 }
+
+test("Bring Bean Back reloads a crashed avatar with its running job's bubble, without stopping the job", async () => {
+  const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"], autoMemory: false });
+  const stub = await startStubOpenAI();
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  // Read through main: Playwright's Page for the avatar doesn't survive its renderer dying.
+  const inAvatar = (js: string) => app.evaluate(({ BrowserWindow }, js) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("avatar.html"))!;
+    return win.webContents.isCrashed() ? "crashed" : win.webContents.executeJavaScript(js);
+  }, js);
+  try {
+    const avatar = await app.firstWindow();
+    await expect(avatar.locator(".bean-orb-body")).toBeAttached();
+    const [chat] = await Promise.all([
+      app.waitForEvent("window"),
+      avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
+    ]);
+    await chat.waitForLoadState("domcontentloaded");
+    stub.queue({ hang: true }); // a turn that keeps running until stopped
+    await chat.locator(".bean-input--composer").fill("keep working");
+    await chat.locator(".bean-send").click();
+    await expect(avatar.locator(".bean-bubble")).toHaveCount(1);
+
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("avatar.html"))!.webContents.forcefullyCrashRenderer();
+    });
+    await expect.poll(() => inAvatar("1")).toBe("crashed");
+    const dock = () => app.evaluate(({ app }) => app.dock?.isVisible() ?? null);
+    const dockBefore = await dock();
+    await app.evaluate(() => (globalThis as { beanBringBack?: () => void }).beanBringBack!());
+    expect(await dock()).toBe(dockBefore); // the Space hop must not flip the activation policy
+    await expect.poll(() => inAvatar(`!!document.querySelector(".bean-orb-body")`)).toBe(true);
+    await expect.poll(() => inAvatar(`document.querySelectorAll(".bean-bubble").length`)).toBe(1);
+    await expect(chat.locator(".bean-bubble--working")).toHaveCount(1); // the turn kept running
+    expect(stub.aborted()).toBe(0);
+
+    const log = await readFile(join(home.homeDir, ".bean", "logs", "avatar.log"), "utf8");
+    expect(log).toMatch(/ render-process-gone \{"reason":"/);
+    expect(log).toMatch(/ bring-back \{.*"crashed":true/);
+    expect(log).toMatch(/ bring-back-outcome \{"outcome":"reload ok"/);
+    expect(log).not.toContain(home.homeDir);
+  } finally { await Promise.allSettled([app.close(), stub.close(), home.cleanup()]); }
+});

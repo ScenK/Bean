@@ -49,6 +49,8 @@ export function modelMemoryFile(dir: string): string { return join(dir, "model-m
 export function scratchDir(dir: string): string { return join(dir, "workspace"); }
 // generate_image output lands here as timestamped PNGs; no cleanup policy (add one if it matters).
 export function imagesDir(dir: string): string { return join(dir, "images"); }
+// Avatar recovery evidence (#757): one line per renderer/window event and Bring Bean Back click.
+export function avatarLogFile(dir: string): string { return join(dir, "logs", "avatar.log"); }
 
 export async function loadConfig(file: string, beanDirPath: string): Promise<BeanConfig> {
   let raw: string;
