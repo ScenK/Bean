@@ -729,6 +729,7 @@ export interface ChatThreadHandlerDeps {
   saveDesktopChat: (file: string, chat: DesktopChatInput, now?: Date) => void;
   getDesktopChat: (file: string, id: string) => DesktopChat | undefined;
   deleteDesktopChat: (file: string, id: string) => void;
+  starDesktopChat: (file: string, id: string, starred: boolean) => string | undefined;
   listDesktopChats: (file: string) => DesktopChatListing[];
   dbFile: string;
 }
@@ -794,6 +795,12 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
       if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
       if (holder(id) !== undefined) throw new Error("an open chat can't be deleted");
       deps.deleteDesktopChat(deps.dbFile, id);
+    },
+    /** Sidebar star: any thread, open or not. The thread's `updatedAt`, or undefined when it's gone. */
+    star: (id: unknown, starred: unknown): string | undefined => {
+      if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
+      if (typeof starred !== "boolean") throw new Error("starred must be a boolean");
+      return deps.starDesktopChat(deps.dbFile, id, starred);
     },
     get,
     /** Undefined = refused by the latch (quietly: the renderer already stopped saving). */
@@ -1399,6 +1406,8 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.handle(IPC.chatThreadList, (e) => deps.isChatSender(e.sender) ? deps.chatThreadHandlers.list() : notChat());
   ipcMain.handle(IPC.chatThreadDelete, (e, id: unknown) =>
     deps.isChatSender(e.sender) ? deps.chatThreadHandlers.delete(id) : notChat());
+  ipcMain.handle(IPC.chatThreadStar, (e, id: unknown, starred: unknown) =>
+    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.star(id, starred) : notChat());
   ipcMain.handle(IPC.syncedChatList, (e) => deps.isChatSender(e.sender) ? deps.syncedChatHandlers.list() : notChat());
   ipcMain.handle(IPC.syncedChatGet, (e, surface: unknown, conversationId: unknown, mountId: unknown) => {
     chatKey(e.sender, mountId);

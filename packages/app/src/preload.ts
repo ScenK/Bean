@@ -173,6 +173,7 @@ contextBridge.exposeInMainWorld("bean", {
   chatThreadGet: (id: string, mountId: string): Promise<PendingChatThread> => ipcRenderer.invoke(IPC.chatThreadGet, id, mountId),
   chatThreadList: (): Promise<DesktopChatListing[]> => ipcRenderer.invoke(IPC.chatThreadList),
   chatThreadDelete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.chatThreadDelete, id),
+  chatThreadStar: (id: string, starred: boolean): Promise<string | undefined> => ipcRenderer.invoke(IPC.chatThreadStar, id, starred),
   syncedChatList: (): Promise<SyncedChatListing[]> => ipcRenderer.invoke(IPC.syncedChatList),
   syncedChatGet: (surface: string, conversationId: string, mountId: string): Promise<SyncedChatRow[]> =>
     ipcRenderer.invoke(IPC.syncedChatGet, surface, conversationId, mountId),
