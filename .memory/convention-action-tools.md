@@ -8,7 +8,9 @@ itself in the Electron main process (first ones: `set_reminder`/`list_reminders`
   `proposedRun` and renders as a ProposalCard; the user confirms before anything runs.
 - **Action tools** run immediately inside `converse()`'s tool loop (max 3 rounds); the
   result string is fed back to the model, which confirms in text. No IPC/preload change
-  needed — they ride the existing `bean:chat` flow.
+  needed — they ride the existing `bean:chat` flow. If all 3 rounds go to tool calls (a
+  refused `remember` retried each round did this), one closing call with `tools: []` forces
+  the text reply — don't drop it, or the turn ends in silence until the user says "continue"
 
 **Chat-target skills** build on this: a skill with `target: chat` frontmatter runs in Bean's
 own chat instead of the terminal. `Skill.target` → copied onto `RouteSuggestion.target` by
