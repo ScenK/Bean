@@ -1065,5 +1065,17 @@ export async function converse(input: ConverseInput): Promise<ConverseResult> {
       messages.push({ role: "tool", content: result, toolCallId: c.id ?? c.name });
     }
   }
+  // Every round went to a tool call (e.g. `remember` refused and retried three times), so the
+  // model never read the last results and `content` is usually "" — silence on every surface.
+  // One closing call with no tools forces a text answer.
+  if (signal?.aborted) return stopped();
+  try {
+    content = (await untilAbort(deps.chat({ model: deps.model, messages, tools: [], signal }), signal)).content;
+  } catch (err) {
+    if (signal?.aborted) return stopped();
+    const why = err instanceof Error ? err.message : String(err);
+    return { reply: `I couldn't reach the model (${deps.model}): ${why}`, model: deps.model, error: why };
+  }
+  if (signal?.aborted) return stopped();
   return { reply: content, model: deps.model };
 }

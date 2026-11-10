@@ -185,7 +185,7 @@ test("runAvailable=false with no chat-target skills drops propose_run and reject
   const deps: ConverseDeps = {
     model: "m",
     chat: async ({ tools }) => {
-      captured = tools;
+      if (tools.length > 0) captured = tools; // the closing call after three rejected rounds offers none
       // Stray call for a terminal skill anyway — must not become a proposedRun.
       return { content: "hi", toolCalls: [{ name: "propose_run", args: { skill: "review-code", instruction: "x" } }] };
     },
@@ -589,10 +589,21 @@ test("action tool call executes the tool and feeds the result back to the model"
 
 test("action tool loop terminates even if the model keeps calling tools", async () => {
   const ran: unknown[] = [];
-  const deps = depsReturning("looping", [{ name: "set_reminder", args: {} }]);
+  const offered: number[] = [];
+  // Like the real model: with tools it keeps calling one (no text); with none it must answer.
+  const deps: ConverseDeps = {
+    model: "m",
+    chat: async ({ tools }) => {
+      offered.push(tools.length);
+      return tools.length > 0 ? { content: "", toolCalls: [{ name: "set_reminder", args: {} }] } : { content: "Done.", toolCalls: [] };
+    },
+  };
   const res = await conv({ latestUserText: "remind me", deps, actions: [reminderAction(ran)] });
   expect(ran).toHaveLength(3);
-  expect(res.reply).toBe("looping");
+  // The closing call offers no tools, so three tool rounds never end the turn in silence.
+  expect(offered.at(-1)).toBe(0);
+  expect(offered).toHaveLength(4);
+  expect(res.reply).toBe("Done.");
 });
 
 test("a throwing action feeds an error string back instead of crashing", async () => {
