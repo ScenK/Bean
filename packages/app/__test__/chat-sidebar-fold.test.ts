@@ -294,15 +294,16 @@ test("drag a starred row onto a group header (move) or Starred (ungroup); only s
   root.remove();
 });
 
-test("select mode groups several chats by id: survives reorders and folds, drops vanished rows, keyboard Escape/Cancel, 100 cap, failure keeps the selection", async () => {
+test("⌘-click groups several chats by id: survives reorders and folds, drops vanished rows, keyboard Escape/Cancel, 100 cap, failure keeps the selection", async () => {
   localStorage.clear();
   const row = (id: string, starred: boolean, groupName: string | null = null, d = 0) => ({ id, title: id, updatedAt: new Date(Date.now() - d * 1000).toISOString(), agents: [] as string[], starred, groupName });
   let threads = [row("a", false, null, 1), row("b", true, null, 2), row("c", false, null, 3), row("w", true, "Work", 4)];
   const synced = [{ surface: "discord" as const, conversationId: "s", kind: "dm" as const, title: "DM", updatedAt: new Date().toISOString(), live: false }];
   const none = new Set<string>();
   let fail: string | undefined;
+  const onOpen = vi.fn();
   const draw = (): void => {
-    render(h(ChatSidebar, { threads, synced, activeId: "a", busy: false, working: none, unread: none, live: none, terminal: none, overlay: true, onNew: () => {}, onOpen: () => {}, onDelete: () => {}, onStar: async () => {}, onRename: async () => {}, onGroup, onRenameGroup: async () => {} }), root);
+    render(h(ChatSidebar, { threads, synced, activeId: "a", busy: false, working: none, unread: none, live: none, terminal: none, overlay: true, onNew: () => {}, onOpen, onDelete: () => {}, onStar: async () => {}, onRename: async () => {}, onGroup, onRenameGroup: async () => {} }), root);
   };
   const onGroup = vi.fn(async (ids: string[], name: string | null): Promise<string | undefined> => {
     if (fail) return fail;
@@ -313,74 +314,90 @@ test("select mode groups several chats by id: survives reorders and folds, drops
   document.body.appendChild(root);
   await act(async () => { draw(); });
   const q = <T extends Element>(sel: string) => root.querySelector<T>(sel);
-  const box = (id: string) => q<HTMLInputElement>(`[data-row="${id}"] input[type=checkbox]`);
-  const selectBtn = q<HTMLButtonElement>(".bean-chat-sidebar-select")!;
+  const open = (id: string) => q<HTMLButtonElement>(`[data-row="${id}"] .bean-chat-sidebar-open`)!;
+  const pick = (el: Element): boolean => el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true }));
+  const picked = (id: string): boolean => q(`[data-row="${id}"]`)!.classList.contains("bean-chat-sidebar-row--selected");
   const key = (el: Element, k: string): KeyboardEvent => {
     const e = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true });
     el.dispatchEvent(e);
     return e;
   };
-  await act(async () => { selectBtn.click(); });
-  // Every desktop row has a checkbox and no row controls; synced rows have none; New chat is gone.
-  expect(root.querySelectorAll("input[type=checkbox]")).toHaveLength(4);
-  expect(q('[data-row="discord:s"] input')).toBeNull();
-  expect(root.querySelectorAll(".bean-chat-sidebar-row-star, .bean-chat-sidebar-row-rename, .bean-chat-sidebar-row-group, .bean-chat-sidebar-row-delete")).toHaveLength(0);
+  // No Select button, no checkboxes: nothing selected, New chat shows.
+  expect(q(".bean-chat-sidebar-select")).toBeNull();
+  expect(q(".bean-chat-sidebar-bar")).toBeNull();
+  await act(async () => { pick(open("a")); pick(open("c")); pick(open("b")); });
+  // The bar takes New chat's place; rows keep their controls; nothing opened; no checkboxes.
   expect(q(".bean-chat-sidebar-new")).toBeNull();
+  expect(root.querySelectorAll("input[type=checkbox]")).toHaveLength(0);
+  expect(root.querySelectorAll(".bean-chat-sidebar-row-star")).toHaveLength(4);
+  expect(onOpen).not.toHaveBeenCalled();
+  expect(open("b").getAttribute("aria-pressed")).toBe("true");
+  expect(open("w").getAttribute("aria-pressed")).toBe("false");
   const groupBtn = () => q<HTMLButtonElement>('.bean-chat-sidebar-bar button[type="submit"]')!;
   const nameInput = () => q<HTMLInputElement>('.bean-chat-sidebar-bar input[aria-label="Group name"]')!;
   const count = () => q(".bean-chat-sidebar-bar-count")!.textContent;
-  await act(async () => { box("a")!.click(); box("c")!.click(); box("b")!.click(); });
   expect(count()).toBe("3 selected");
   expect(groupBtn().disabled).toBe(true); // no name yet
+  expect(groupBtn().textContent).toBe("Create group");
+  // ⌘-click again unpicks.
+  await act(async () => { pick(open("b")); });
+  expect(count()).toBe("2 selected");
+  await act(async () => { pick(open("b")); });
   // A save ack reorders the list; folding Work and back keeps the selection; "b" is deleted meanwhile.
   await act(async () => { threads = [threads[2]!, threads[0]!, threads[3]!]; draw(); });
   await act(async () => { q<HTMLButtonElement>('[data-section="group:Work"]')!.click(); });
   await act(async () => { q<HTMLButtonElement>('[data-section="group:Work"]')!.click(); });
   expect(count()).toBe("2 selected");
-  expect(box("a")!.checked && box("c")!.checked).toBe(true);
-  // Escape in the name input only leaves it (focus to Cancel); the next Escape leaves select mode.
+  expect(picked("a") && picked("c") && !picked("w")).toBe(true);
+  // An existing group's name reads "Add to group".
+  await act(async () => { nameInput().value = "Work"; nameInput().dispatchEvent(new Event("input", { bubbles: true })); });
+  expect(groupBtn().textContent).toBe("Add to group");
+  // Escape in the name input only leaves it (focus to Cancel); the next Escape drops the selection.
   await act(async () => { nameInput().focus(); nameInput().value = "  Big   Project "; nameInput().dispatchEvent(new Event("input", { bubbles: true })); });
   let esc!: KeyboardEvent;
   await act(async () => { esc = key(nameInput(), "Escape"); });
   expect(esc.defaultPrevented).toBe(true);
   expect(document.activeElement?.textContent).toBe("Cancel");
   expect(q(".bean-chat-sidebar-bar")).not.toBeNull();
-  // A failure keeps select mode, the selection and the name, with the error shown.
+  // A failure keeps the selection and the name, with the error shown.
   fail = "disk full";
   await act(async () => { groupBtn().click(); });
   expect(onGroup).toHaveBeenLastCalledWith(["a", "c"], "Big Project");
   expect(q('.bean-chat-sidebar-bar [role="alert"]')!.textContent).toBe("Couldn't group those chats: disk full");
   expect(count()).toBe("2 selected");
   expect(nameInput().value).toBe("  Big   Project ");
-  // Success: stars + groups, leaves select mode, the new group is unfolded and its header focused.
+  // Success: stars + groups, the bar goes, the new group is unfolded and its header focused.
   fail = undefined;
   await act(async () => { groupBtn().click(); });
   expect(q(".bean-chat-sidebar-bar")).toBeNull();
   expect(threads.filter((t) => t.groupName === "Big Project").map((t) => t.id).sort()).toEqual(["a", "c"]);
   expect(document.activeElement).toBe(q('[data-section="group:Big Project"]'));
   expect(q('[data-section="group:Big Project"]')!.getAttribute("aria-expanded")).toBe("true");
-  // Escape outside the input leaves select mode with nothing changed (default-prevented: overlay stays).
+  // Escape on a row drops the selection with nothing changed (default-prevented: overlay stays).
   onGroup.mockClear();
-  await act(async () => { selectBtn.click(); });
-  await act(async () => { box("w")!.click(); });
-  await act(async () => { box("w")!.focus(); esc = key(box("w")!, "Escape"); });
+  await act(async () => { pick(open("w")); });
+  await act(async () => { open("w").focus(); esc = key(open("w"), "Escape"); });
   expect(esc.defaultPrevented).toBe(true);
   expect(q(".bean-chat-sidebar-bar")).toBeNull();
-  expect(document.activeElement).toBe(selectBtn);
-  // Cancel, likewise; re-entering starts empty.
-  await act(async () => { selectBtn.click(); });
-  expect(count()).toBe("0 selected");
-  await act(async () => { box("w")!.click(); });
-  await act(async () => { [...root.querySelectorAll<HTMLButtonElement>(".bean-chat-sidebar-bar button")].find((b) => b.textContent === "Cancel")!.click(); });
+  expect(document.activeElement).toBe(open("w"));
+  // Cancel, likewise — focus moves to New chat, which replaces the bar; the next selection starts empty.
+  await act(async () => { pick(open("w")); });
+  await act(async () => { nameInput().value = "X"; nameInput().dispatchEvent(new Event("input", { bubbles: true })); });
+  const cancel = [...root.querySelectorAll<HTMLButtonElement>(".bean-chat-sidebar-bar button")].find((b) => b.textContent === "Cancel")!;
+  await act(async () => { cancel.focus(); cancel.click(); });
   expect(q(".bean-chat-sidebar-bar")).toBeNull();
+  expect(document.activeElement).toBe(q(".bean-chat-sidebar-new"));
+  await act(async () => { pick(open("w")); });
+  expect(count()).toBe("1 selected");
+  expect(nameInput().value).toBe("");
+  // A plain click drops the selection and opens the chat as usual.
+  await act(async () => { open("w").click(); });
+  expect(q(".bean-chat-sidebar-bar")).toBeNull();
+  expect(onOpen).toHaveBeenCalledWith("w");
   expect(onGroup).not.toHaveBeenCalled();
   // More than 100 selected is refused with a message, no call.
   await act(async () => { threads = Array.from({ length: 101 }, (_, i) => row(`t${i}`, false)); draw(); });
-  await act(async () => { selectBtn.click(); });
-  await act(async () => {
-    q<HTMLButtonElement>(".bean-chat-sidebar-group--fold")?.click(); // unfold Earlier, if any
-  });
-  await act(async () => { root.querySelectorAll<HTMLInputElement>("input[type=checkbox]").forEach((b) => b.click()); });
+  await act(async () => { root.querySelectorAll<HTMLButtonElement>("[data-row^=t] .bean-chat-sidebar-open").forEach((b) => pick(b)); });
   expect(count()).toBe("101 selected");
   await act(async () => { nameInput().value = "X"; nameInput().dispatchEvent(new Event("input", { bubbles: true })); });
   await act(async () => { groupBtn().click(); });

@@ -10,8 +10,8 @@ Renderer colors that land on a surface or on an accent fill go through a `--bean
   (WCAG 1.4.11). `AgentAvatar` draws each mascot's features in `--bean-surface`, so that same
   check also keeps eyes/prompt 3:1 against the body — keep features on that token;
 - `--bean-accent-ink` on an `--bean-accent` fill — 4.5:1 (buttons, selected rows, chips).
-- `--bean-group-1…6` (starred chat-group colours) — each is both a header fill under
-  `--bean-group-ink` (4.5:1) and a line beside the group's rows (3:1 on every surface). The palette
+- `--bean-group-1…6` (starred chat-group colours) — each tints its group's card (9% mix, text
+  stays `--bean-text`) and inks the header's chevron (3:1 on every surface). The palette
   size is `GROUP_COLORS` in `ChatSidebar.tsx`; the token test fails if the two drift.
 
 The accent is **three tokens with three jobs**, and mixing them is the mistake to avoid:
