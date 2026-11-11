@@ -13,7 +13,8 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   on/off = `channelMemory`, admin; channel scope) and `autoMemory` are re-checked right before the
   insert, so a queued batch obeys them. Receipt: Discord 🧠 reaction (best-effort), Teams silent;
   the first save per scope posts `MEMORY_NOTICE` once (`memory_noticed`, atomic upsert). Daily cap
-  48 calls / 20 saves per scope is in-process (a restart resets it).
+  200 calls / 60 saves per scope is in-process (a restart resets it). The bar is generous on
+  purpose: commitments, deadlines and plans are kept (see project-bean-memory.md).
   Each row records its source (#649): `source_id` = `<chatter.surface>:<scopeId>`, `source_title`
   = the adapter's `AmbientLine.place.title` (its catalog `placeOf`; Teams' `capturePlace` adds a
   short id to an unnamed chat), one line ≤80 chars. Never from the model's tool args.
@@ -27,6 +28,9 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   gets the normal `rememberedCard` (Forget + Share). Captures run on one serialized chain so each
   sees the last one's rows; `onMessage`'s `finally` awaits it because Teams' `postCard` rides the
   turn's `context`, which is revoked once the handler returns — don't detach it.
+- **Live steering capture:** the owner's typed text steered into a live session goes through the
+  same `captureDm` (private to the owner, categorized, receipt card in the thread); a co-driver's
+  steering is never captured.
 - Config `autoMemory` gates DM capture only (explicit tools stay on): `deps.autoMemoryEnabled`,
   which each server wires to a per-turn `loadConfig` re-read (unreadable = off), so a Settings
   toggle applies without restarting the bot.

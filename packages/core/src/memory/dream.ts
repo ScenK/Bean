@@ -11,8 +11,9 @@ import {
 export const DREAM_MIN_HOURS = 24;
 export const DREAM_MIN_NEW = 5;
 const LEASE_MS = 10 * 60_000;
-// ponytail: one model call over the oldest 150; chunk the list if memory ever outgrows that.
-const MAX_PER_RUN = 150;
+// One model call per chunk, so a merge never spans two chunks.
+// ponytail: chunks are by saved order — sort by category first if cross-chunk duplicates pile up.
+const CHUNK = 150;
 
 /** Code-side validation of the model's proposal — the model is only trusted to suggest:
  * merge groups must be disjoint and single-scope (a global fact never absorbs a project one, and
@@ -93,9 +94,16 @@ export async function maybeDream(deps: DreamDeps): Promise<DreamDigest | undefin
       const skip = new Set(deps.exclude?.() ?? []);
       // Household-shared only: a merge must never fold one member's private fact into a shared
       // one (or another member's), and the apply/undo history doesn't carry subject_id.
-      const memories = (await loadMemories(deps.dbFile, null)).filter((m) => !skip.has(m.id)).slice(0, MAX_PER_RUN);
-      const result = await proposeMemoryConsolidation(memories, { chat: deps.chat, model: deps.model });
-      if (result.failed) return undefined; // an outage leaves the watermark alone — retried next close
+      const memories = (await loadMemories(deps.dbFile, null)).filter((m) => !skip.has(m.id));
+      const result: ConsolidationResult = { merges: [], drops: [] };
+      for (let i = 0; i < memories.length; i += CHUNK) {
+        // Each chunk gets a fresh lease window (a re-claim by the holder renews it); lost = stop.
+        if (i > 0 && !(await claimDreamLease(deps.dbFile, runId, now().getTime(), LEASE_MS))) return undefined;
+        const part = await proposeMemoryConsolidation(memories.slice(i, i + CHUNK), { chat: deps.chat, model: deps.model }, now());
+        if (part.failed) return undefined; // an outage leaves the watermark alone — retried next close
+        result.merges.push(...part.merges);
+        result.drops.push(...part.drops);
+      }
       const plan = planDream(memories, result, runId, now().toISOString());
       // Applied even when empty: it stamps lastDreamAt so the next close doesn't re-ask the model.
       const applied = await applyConsolidation(deps.dbFile, plan, now().getTime());

@@ -1712,7 +1712,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             return;
           }
           if (!steers(msg)) return;
-          if (!(await steerLive(conv, msg.fromName, msg.text, msg.images, () => steers(msg)))) await fx.reply(TURN_QUEUE_FULL);
+          if (!(await steerLive(conv, msg.fromName, msg.text, msg.images, () => steers(msg)))) {
+            await fx.reply(TURN_QUEUE_FULL);
+            return;
+          }
+          // What the owner types to an agent is their own words too: same private capture as an
+          // owner DM turn (a co-driver's steering is never captured).
+          const steered = msg.typedText ?? msg.text;
+          if (speakerRole(msg).role === "owner" && steered.trim()) {
+            capture = captureDm(
+              msg.fromId, [msg.fromId, ...(await deps.ownerSubjectIds?.() ?? [])],
+              [{ role: "user", content: steered, source: "typed" }], await deps.loadProjects(), fx, true,
+            );
+          }
           return;
         }
         // Typed `stop` with nothing live stays a model turn, as it always was.

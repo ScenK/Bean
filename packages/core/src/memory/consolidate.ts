@@ -15,7 +15,8 @@ const CONSOLIDATE_INSTRUCTIONS =
   "one clearer fact. Call merge_memories with a single id to rewrite one fact — e.g. to turn a " +
   "relative date (\"next week\", \"yesterday\") into an absolute one using its saved date. " +
   "Call drop_memory for a fact that is stale, contradicted by a newer fact (when two facts " +
-  "conflict, the more recently saved one wins), or no longer meaningful. Only merge facts about " +
+  "conflict, the more recently saved one wins), or no longer meaningful — including a follow-up, " +
+  "deadline or plan whose date is more than two weeks before today. Only merge facts about " +
   "the same project (or both global). Only act when confident — leave everything else alone. " +
   "If nothing needs changing, call no tools.";
 
@@ -60,12 +61,12 @@ function factsBlock(memories: Memory[]): string {
  * (one model call, defensive tool-call parsing) but over existing memories instead of a fresh
  * transcript. The dream pass (dream.ts) runs it in the background and validates the result in
  * code (disjoint groups, same-scope merges, drop cap) before a transactional apply. */
-export async function proposeMemoryConsolidation(memories: Memory[], deps: ConverseDeps): Promise<ConsolidationResult> {
+export async function proposeMemoryConsolidation(memories: Memory[], deps: ConverseDeps, now: Date = new Date()): Promise<ConsolidationResult> {
   if (memories.length === 0) return { merges: [], drops: [] };
   const ids = memories.map((m) => m.id);
   const messages: ConvoMsg[] = [
     { role: "system", content: CONSOLIDATE_INSTRUCTIONS },
-    { role: "user", content: `Remembered facts:\n${factsBlock(memories)}` },
+    { role: "user", content: `Today is ${now.toISOString().slice(0, 10)}.\n\nRemembered facts:\n${factsBlock(memories)}` },
   ];
   let toolCalls: ToolCall[] = [];
   try {

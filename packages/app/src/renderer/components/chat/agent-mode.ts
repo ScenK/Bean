@@ -16,6 +16,8 @@ export const isLiveAgent = (a: unknown): a is LiveCli => LIVE_AGENTS.includes(a 
 export const HANDOFF_ITEMS = 20;
 /** An agent's final, as Bean's history sees it. */
 export const AGENT_FINAL_CHARS = 4000;
+/** An agent's final as memory extraction's (non-citable) context. */
+const MEMORY_FINAL_CHARS = 1000;
 const TAIL_LINES = 30;
 
 /** The engine a hand-off offer starts: Claude Code when it's enabled, else the first enabled live agent. */
@@ -74,12 +76,16 @@ export function parseSlash(text: string): { agent: AgentId; rest: string } | und
 
 /** The one mapper behind Bean's `history` and `closeTranscript`. An agent's final becomes
  * `[Claude Code] <result>` (capped) so Bean can refer to what the agent did. `memory: true` is the
- * close-time transcript: live steering and agent finals never reach memory extraction, and user
- * turns keep their id (main skips turns per-turn capture already handled). */
+ * close-time transcript: what the user typed to an agent is citable like any typed turn (a composed
+ * `/skill` prompt is not — `display` marks it), agent finals ride as short non-citable context, and
+ * user turns keep their id (main skips turns per-turn capture already handled). */
 export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): CloseTurn[] {
   return items.flatMap((it): CloseTurn[] => {
     if (it.kind === "user") {
-      if (opts.memory) return it.source === "live" ? [] : [{ role: "user", content: it.text, source: it.source, id: it.id }];
+      if (opts.memory) {
+        const source = it.source === "live" ? (it.display ? "skill" : "typed") : it.source;
+        return [{ role: "user", content: it.text, source, id: it.id }];
+      }
       // Image bytes ride only on the current turn; older turns keep a text placeholder.
       const text = it.images?.length ? `${it.text}\n[image attached]` : it.text;
       return [{ role: "user", content: it.pdf ? `${text}\n${pdfPlaceholder(it.pdf.name)}` : text, source: it.source }];
@@ -87,8 +93,9 @@ export function chatTurns(items: ChatItem[], opts: { memory?: boolean } = {}): C
     if (it.kind !== "reply") return [];
     if (!isLiveAgent(it.agent)) return [{ role: "assistant", content: it.text }];
     const text = it.text.trim();
-    if (opts.memory || it.streaming || !text) return [];
-    const capped = text.length > AGENT_FINAL_CHARS ? `${text.slice(0, AGENT_FINAL_CHARS)}…` : text;
+    if (it.streaming || !text) return [];
+    const max = opts.memory ? MEMORY_FINAL_CHARS : AGENT_FINAL_CHARS;
+    const capped = text.length > max ? `${text.slice(0, max)}…` : text;
     return [{ role: "assistant", content: `[${AGENT_NAMES[it.agent]}] ${capped}` }];
   });
 }

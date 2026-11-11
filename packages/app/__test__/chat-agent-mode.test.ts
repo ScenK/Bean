@@ -54,11 +54,16 @@ describe("agent-mode helpers", () => {
     expect(turns[2]).toMatchObject({ content: "fix X", source: "live" });
     expect(turns[3]!.content.startsWith("[Claude Code] xxx")).toBe(true);
     expect(turns[3]!.content.length).toBe("[Claude Code] ".length + AGENT_FINAL_CHARS + 1);
-    // Close-time transcript: no live inputs, no agent finals; user turns keep their id.
-    expect(chatTurns(items, { memory: true })).toEqual([
+    // Close-time transcript: typed steering is citable, a composed skill prompt is not, and an
+    // agent final is short context; user turns keep their id.
+    const memory = chatTurns([...items, { kind: "user", id: "u3", text: "composed", display: "/review", source: "live" }], { memory: true });
+    expect(memory.slice(0, 3)).toEqual([
       { role: "user", content: "hi", source: "typed", id: "u1" },
       { role: "assistant", content: "hello" },
+      { role: "user", content: "fix X", source: "typed", id: "u2" },
     ]);
+    expect(memory[3]!.content.length).toBe("[Claude Code] ".length + 1000 + 1);
+    expect(memory[4]).toEqual({ role: "user", content: "composed", source: "skill", id: "u3" });
   });
 
   it("streams output into one bubble per turn and closes it on the turn result", () => {
@@ -322,8 +327,10 @@ describe("ChatWindow agent mode", () => {
     await act(async () => { listeners.onReviewBeforeClose!(undefined); });
     await flush();
     const transcript = bean.rememberOnClose!.mock.calls[0]![0] as ChatTurn[];
+    // What the user typed to the agent is citable; the agent's final is context only.
     expect(transcript.some((t) => t.source === "live")).toBe(false);
-    expect(transcript.some((t) => t.content.includes("Fixed X") || t.content.includes("fix X") || t.content.includes("add a test"))).toBe(false);
+    expect(transcript.some((t) => t.role === "user" && t.source === "typed" && t.content.includes("fix X"))).toBe(true);
+    expect(transcript.find((t) => t.content.includes("Fixed X"))).toMatchObject({ role: "assistant" });
     expect(transcript[0]).toMatchObject({ role: "user", content: "hi bean", source: "typed" });
   });
 

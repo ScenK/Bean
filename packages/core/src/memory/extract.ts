@@ -4,11 +4,14 @@ import type { Project } from "../types.js";
 
 const EXTRACT_INSTRUCTIONS =
   "You are reviewing a finished conversation to decide what — if anything — is worth " +
-  "remembering long-term. Call the remember tool once per fact worth keeping. Remember ONLY " +
-  "durable, reusable facts: the user's stable preferences and working style; project " +
-  "conventions, decisions, or gotchas; and lasting facts about people or bots the user " +
-  "interacts with. Do NOT remember one-off task details, transient state, anything already " +
-  "in the existing memory list, or small talk. Skip health details, credentials, account or " +
+  "remembering, so a personal assistant can keep track of the user's work over weeks. Call the " +
+  "remember tool once per fact worth keeping. Remember generously: the user's preferences and " +
+  "working style; project conventions, decisions, or gotchas; facts about people or bots the " +
+  "user interacts with; what the user is working on right now and why; and anything that may " +
+  "need a follow-up — commitments, deadlines, things the user is waiting on, open questions, " +
+  "plans (category Follow-up). Do NOT remember step-by-step instructions for the task at hand " +
+  "(\"fix that test\", \"rename this\"), anything already in the existing memory list, or small " +
+  "talk. Skip health details, credentials, account or " +
   "ID numbers, and financial figures unless the user explicitly asked you to remember them. " +
   'EXCEPTION: if the user explicitly asked to remember a specific fact ("remember that ..."), ' +
   "record that fact faithfully even if it would not otherwise meet the bar. Only lines marked " +
