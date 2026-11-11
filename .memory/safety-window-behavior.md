@@ -76,12 +76,14 @@ clear renderer collapse/drag state before sending the new idle layout, including
 pending asynchronous skill-list preparation. Keep the regression tests in avatar-window.test.ts
 and avatar-visibility.e2e.ts.
 
-**Chat remembers its size, not its position.** `windows.ts` reads `userData/chat-size.json`
-synchronously (`chat-size-store.ts`) before building the chat `BrowserWindow`, clamps it to
-440×520 and the anchor display's work area, then `nearAnchor` places it; the size is written
-synchronously on `close`. Don't move this to renderer `localStorage` — the window exists before
-any renderer does, so a renderer-held size makes it visibly jump. Guarded by
-`chat-size-store.test.ts` and the chat-size spec in `component-windows.e2e.ts`.
+**Every component window remembers its size (per kind), not its position.** `windows.ts` reads
+`userData/<kind>-size.json` synchronously (`window-size-store.ts`; chat's is `chat-size.json`)
+before building the `BrowserWindow`, clamps it to the kind's minimum (chat 440×520, others
+320×240) and the anchor display's work area, then `nearAnchor` places it; the size is written
+synchronously on `close`. First-open defaults: Skills/Projects/Notes/Sprouts/Dashboard share
+1200×780. Don't move this to renderer `localStorage` — the window exists before any renderer
+does, so a renderer-held size makes it visibly jump. Guarded by `window-size-store.test.ts` and
+the chat-size spec in `component-windows.e2e.ts`.
 
 **Bring Bean Back reloads the avatar page (#757).** A crashed/blank avatar renderer still
 reports a URL and `isVisible() === true`, so moving + showing it does nothing — only

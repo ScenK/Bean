@@ -282,7 +282,6 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
   const [selectError, setSelectError] = useState<string | undefined>(undefined);
   const [grouping, setGrouping] = useState(false);
   const newRef = useRef<HTMLButtonElement>(null);
-  const cancelRef = useRef<HTMLButtonElement>(null);
   const barRef = useRef<HTMLFormElement>(null);
   const chosen = [...selected].filter((id) => threads.some((t) => t.id === id));
   const selecting = chosen.length > 0;
@@ -327,8 +326,8 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
       id="bean-chat-sidebar"
       class={`bean-chat-sidebar${overlay ? " bean-chat-sidebar--overlay" : ""}`}
       aria-label="Chat history"
-      // Escape drops the selection (the name input's own Escape, default-prevented, only leaves it).
-      // Default-prevented too, so the overlay sidebar stays open.
+      // Escape drops the selection — also from the name input, so the bar needs no Cancel button.
+      // Default-prevented, so the overlay sidebar stays open.
       onKeyDown={selecting ? (e) => {
         if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
         e.preventDefault();
@@ -533,18 +532,12 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
             aria-label="Group name"
             maxLength={GROUP_NAME_MAX}
             onInput={(e) => setNewGroup(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key !== "Escape" || e.isComposing) return;
-              e.preventDefault();
-              cancelRef.current?.focus();
-            }}
           />
           {/* Suggestions: an existing group's name adds to that group. */}
           <datalist id="bean-chat-sidebar-groups">{groupNames.map((n) => <option value={n} />)}</datalist>
           {selectError ? <div class="bean-chat-sidebar-bar-error" role="alert">{selectError}</div> : null}
           <div class="bean-chat-sidebar-bar-actions">
             <button type="submit" class="bean-btn" disabled={grouping || !cleanGroupName(newGroup)}>{groupNames.includes(cleanGroupName(newGroup)) ? "Add to group" : "Create group"}</button>
-            <button ref={cancelRef} type="button" class="bean-btn bean-btn--ghost" onClick={endSelect}>Cancel</button>
           </div>
         </form>
       ) : <button ref={newRef} type="button" class="bean-btn bean-chat-sidebar-new" disabled={busy} onClick={onNew}>+ New chat</button>}
