@@ -124,8 +124,8 @@ unmount): delegate/live events and memory/image pushes by their `mountId` tag (u
 chat), Plan-popup prompts and notices to the shown chat. A pick or New chat never closes the window.
 The chat left behind **stays mounted, hidden** (`ChatPanel hidden` → `[hidden]` CSS) while it has work
 (`hasWork`: a Bean request in flight or queued, a delegate starting/running, a live session, or unsent
-composer text in a saved thread — that's how a draft and its agent pick survive a switch; a threadless
-chat's draft doesn't count, it has no row to come back to), so its
+composer text in a saved, still-savable thread — that's how a draft and its agent pick survive a switch; a threadless
+or unsavable (incognito-latched) chat's draft doesn't count, it has no row to come back to), so its
 loopback runs there at once; otherwise it **evicts** — final save (a failed save keeps it mounted with
 an error row), `rememberOnClose`, then the shell drops it and its unmount `chatRelease`s it (same IPC
 pipe, so main sees remember first). A pick another mount already holds is just shown; otherwise it

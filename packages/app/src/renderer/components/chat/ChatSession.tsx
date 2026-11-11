@@ -1233,8 +1233,8 @@ export function ChatSession({
   // for it, so a thread the bot opens always gets its pointer saved here.
   const continuingRef = useRef<Promise<unknown> | undefined>(undefined);
   // An unsent draft in a saved thread counts too: kept mounted, it comes back with its text and agent
-  // pick. A threadless chat has no sidebar row to return to, so its draft doesn't hold it.
-  const hasWork = (): boolean => (threadRef.current !== undefined && (composerRef.current?.value.trim() ?? "") !== "")
+  // pick. A threadless or unsavable chat has no sidebar row to return to, so its draft doesn't hold it.
+  const hasWork = (): boolean => (threadRef.current !== undefined && !unsavableRef.current && (composerRef.current?.value.trim() ?? "") !== "")
     || busyRef.current || queuedSendsRef.current.length > 0 || liveRef.current !== undefined
     || continuingRef.current !== undefined
     || shellRef.current > 0 || hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size);

@@ -1,6 +1,6 @@
 import { test, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { launchBean } from "./fixtures/launch-app.js";
-import { makeBeanHome } from "./fixtures/bean-home.js";
+import { installFakeCli, makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, groupDesktopChats, listDesktopChats, saveDesktopChat, speakerLine, starDesktopChat } from "@bean/core";
 import { join } from "node:path";
@@ -242,7 +242,8 @@ test("chat history: active card keeps its height on hover; a draft survives a sw
   saveDesktopChat(file, { id: a, title: "a long chat title that is cut short", itemsJson: JSON.stringify([{ kind: "user", id: "u", text: "hi" }, { kind: "reply", id: "r", agent: "claude", text: "ok" }]) });
   saveDesktopChat(file, { id: b, title: "other chat", itemsJson: JSON.stringify([{ kind: "user", id: "u", text: "other" }]) });
   const stub = await startStubOpenAI();
-  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  const bin = await installFakeCli(home.homeDir, "claude");
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url, PATH: `${bin}:${process.env.PATH ?? ""}` });
   try {
     const chat = await openChat(app);
     await chat.setViewportSize({ width: 900, height: 700 });
