@@ -24,6 +24,29 @@ export function classifyLink(s: string, spaced = false): LinkKind | undefined {
 const LEAD = new Set([..."([{<\"'`"]);
 const TRAIL = new Set([...".,;:!?]}>\"'`"]);
 
+/** `[start, end)` of a word with its surrounding punctuation trimmed. */
+function trim(text: string, start: number, end: number): [number, number] {
+  while (start < end && LEAD.has(text[start]!)) start++;
+  for (;;) {
+    const last = text[end - 1];
+    if (end > start && last !== undefined && (TRAIL.has(last) || (last === ")" && !text.slice(start, end).includes("(")))) end--;
+    else break;
+  }
+  return [start, end];
+}
+
+/** The absolute and `~/` paths in one terminal row (#780). Relative ones are never linked: the
+ * shell's directory after a `cd` isn't tracked, so they can't be resolved safely. */
+export function rootedPaths(text: string): LinkToken[] {
+  const out: LinkToken[] = [];
+  for (const m of text.matchAll(/\S+/g)) {
+    const [start, end] = trim(text, m.index, m.index + m[0].length);
+    const value = text.slice(start, end);
+    if (/^~?\//.test(value) && classifyLink(value) === "path") out.push({ start, end, kind: "path", value });
+  }
+  return out;
+}
+
 /** The URL or path token around `offset` in `text`, trimmed of surrounding punctuation. */
 export function linkAt(text: string, offset: number): LinkToken | undefined {
   const ws = (c: string | undefined): boolean => c === undefined || /\s/.test(c);
@@ -31,12 +54,7 @@ export function linkAt(text: string, offset: number): LinkToken | undefined {
   let end = offset;
   while (start > 0 && !ws(text[start - 1])) start--;
   while (end < text.length && !ws(text[end])) end++;
-  while (start < end && LEAD.has(text[start]!)) start++;
-  for (;;) {
-    const last = text[end - 1];
-    if (end > start && last !== undefined && (TRAIL.has(last) || (last === ")" && !text.slice(start, end).includes("(")))) end--;
-    else break;
-  }
+  [start, end] = trim(text, start, end);
   if (offset < start || offset > end || start === end) return undefined;
   const value = text.slice(start, end);
   const kind = classifyLink(value);

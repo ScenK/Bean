@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { Terminal, type ITheme } from "@xterm/xterm";
+import { Terminal, type IBufferLine, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { Project } from "@bean/core";
 import type { TerminalEvent } from "../../../terminal-tasks.js";
+import { rootedPaths } from "./chat-links.js";
 
 // The chat's own terminals (#663, tabs #674): each shell lives in main (terminal-tasks.ts), this pane
 // is their xterm views under the composer, one per tab. Folded by default; Control+` (ChatWindow)
@@ -32,6 +33,22 @@ export function tabShortcut(e: KeyboardEvent): TabShortcut | undefined {
   if (e.code === "KeyT") return { kind: "new" };
   const digit = /^Digit([1-4])$/.exec(e.code);
   return digit ? { kind: "select", index: Number(digit[1]) - 1 } : undefined;
+}
+
+export interface PathLink { value: string; start: number; end: number }
+/** The absolute and `~/` paths in one buffer row, as 1-based inclusive cell columns (a wide char is
+ * one string index over two cells). A path wrapped onto the next row isn't joined. */
+export function pathLinks(line: Pick<IBufferLine, "getCell">, cols: number): PathLink[] {
+  let text = "";
+  const at: number[] = [];
+  for (let x = 0; x < cols; x++) {
+    const cell = line.getCell(x);
+    if (!cell || cell.getWidth() === 0) continue; // the right half of a wide char
+    const chars = cell.getChars() || " ";
+    text += chars;
+    for (let i = 0; i < chars.length; i++) at.push(x + 1);
+  }
+  return rootedPaths(text).map((t) => ({ value: t.value, start: at[t.start]!, end: at[t.end - 1]! }));
 }
 
 // The preload's onTerminalEvent can't unsubscribe: one subscription, routed by mount + tab id.
@@ -226,6 +243,18 @@ export function TerminalPane({ mountId, open, projectPath, projects, onOpenChang
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon(openLink));
+    // Absolute and ~/ paths (#780): Cmd+click goes to main's chatOpenPath, like the chat log's.
+    term.registerLinkProvider({
+      provideLinks: (y, done) => {
+        const line = term.buffer.active.getLine(y - 1);
+        const links = line ? pathLinks(line, term.cols) : [];
+        done(links.length ? links.map((l) => ({
+          text: l.value,
+          range: { start: { x: l.start, y }, end: { x: l.end, y } },
+          activate: (e: MouseEvent) => { if (e.metaKey) window.bean.chatOpenPath(l.value, mountId); },
+        })) : undefined);
+      },
+    });
     // OSC 52: no clipboard writes from whatever runs in the shell.
     term.parser.registerOscHandler(52, () => true);
     // ChatWindow's capture listener owns Control+` and the tab shortcuts; this only keeps xterm off them.

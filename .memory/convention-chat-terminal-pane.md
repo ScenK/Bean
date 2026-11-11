@@ -18,6 +18,10 @@
   `attachCustomKeyEventHandler` only keeps xterm off them.
 - **Fit only at a real size**: never while folded, hidden, or mid-fold animation (`transitionend`
   on `height` settles it); the shell starts on the first unfold with the fitted cols/rows.
+- **Links need Cmd.** URLs (`WebLinksAddon`) and OSC 8 (`linkHandler`) go to `terminalOpenLink`;
+  absolute and `~/` paths (#780, a `registerLinkProvider` over `chat-links.ts`'s `rootedPaths`) go
+  to main's `chatOpenPath`. Relative paths are never linked — the shell's cwd after a `cd` isn't
+  tracked. A path wrapped onto the next row isn't joined (accepted).
 - jsdom (unit tests) has no `ResizeObserver` — the pane guards it rather than a test shim.
 - Height is a renderer view pref (`bean.chat.terminalHeight` in localStorage); fold state is never saved.
 
