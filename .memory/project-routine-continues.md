@@ -20,9 +20,8 @@ All rules live in `describeContinueErrors`/`continueProblem` (`routine-graph.ts`
 the save check, `stepEdgeProblems`, and the editor's `continueTargets` picker. `parseBrief` drops a
 rejected `continues`, never the step.
 
-Host: any `continues` holds the per-todo scratch for the whole run (like gates). Receipts are
-collected per session id and formatted by `formatReceipts`: one footer line per session
-(`steps 2→4→6 (kubernetes) — opencode -s <id>`), a gate loop's repeated id included.
+Host: any `continues` holds the per-todo scratch for the whole run (like gates). The Dashboard
+groups a run's attempts by session (one resume block per session); the digest has no session footer.
 
 Editor (#435): the `↻` chip (`StepsEditor.tsx`) lists earlier delegate steps from `continueTargets`,
 ineligible ones disabled with the validator's wording; `setStepContinues` never repairs a dangling

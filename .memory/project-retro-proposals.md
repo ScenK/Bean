@@ -16,7 +16,7 @@ injected run output must not be able to widen it.
 - `baseHash` = sha256 of the effective skill body (same hash as `StepAttempt.skillHash`) — the
   apply-time stale check.
 - The digest footer ("N skill proposal(s) waiting in Bean → Skills") is appended by the app via
-  `withProposalFooter`, like `withResumeFooter` — never model text.
+  `withProposalFooter` — never model text.
 - **Inbox (#263)** — Skills panel → Proposals; tray row when any wait. `approveSkillProposal`
   re-hashes the *effective* layered body against `baseHash` (stale → refuse; UI offers Regenerate =
   reject + run the retro routine now), writes the **user layer only** (built-in target → override;

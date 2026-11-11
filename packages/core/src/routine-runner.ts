@@ -691,13 +691,3 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
   };
   return { record, digest, results };
 }
-
-/** Appends Bean's own resume footer (one line per delegate session — see `formatReceipts`) to
- * both the delivered and the stored digest. Last, so a truncated notification loses the footer,
- * not the summary. */
-export function withResumeFooter(result: RoutineRunResult, receipts: string[]): RoutineRunResult {
-  if (receipts.length === 0) return result;
-  const footer = `\n\nResume a delegate session:\n${receipts.join("\n")}`;
-  return { ...result, digest: result.digest + footer, record: { ...result.record, digest: result.record.digest + footer } };
-}
-

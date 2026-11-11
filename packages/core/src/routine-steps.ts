@@ -40,7 +40,7 @@ export interface RoutineStepDeps {
  * Command: same cwd rules, no run record (a check is short-lived and reads the tree). */
 export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "delegateStep" | "commandStep"> {
   const { dir } = deps;
-  const delegateStep: RoutineHostDeps["delegateStep"] = (req: DelegateStepRequest, onSession, hold) =>
+  const delegateStep: RoutineHostDeps["delegateStep"] = (req: DelegateStepRequest, hold) =>
     new Promise<DelegateStepResult>((resolve, reject) => {
       let choice: CliModelSelection | undefined;
       try {
@@ -91,7 +91,6 @@ export function makeRoutineSteps(deps: RoutineStepDeps): Pick<RoutineHostDeps, "
           onSessionStart: (pid, sessionId) => {
             if (pid) updateRunPid(dir, runId, pid); // a resume fallback is a new child
             recordDelegateSession(dbFile(dir), { surface: "routine", cli, sessionId, projectPath, instruction: req.instruction });
-            if (isValidSessionId(sessionId)) onSession?.(cli, sessionId, projectPath);
           },
         },
         deps.spawnFn,

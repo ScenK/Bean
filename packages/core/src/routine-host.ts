@@ -1,7 +1,6 @@
 // packages/core/src/routine-host.ts
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import { basename } from "node:path";
 import type { ActionTool } from "./converse.js";
 import type { CliName } from "./launcher.js";
 import type { CommandStepOutcome } from "./command-step.js";
@@ -15,10 +14,9 @@ import { listStepAttempts, recordStepAttempt } from "./step-attempts.js";
 import { claimTodo, listTodos, updateTodoStatus, type TodoItem, type TodoStatus } from "./todo-store.js";
 import { DEFAULT_GATE_ROUNDS, loadRoutines, loadRoutineStates, resolveSinkAlias, sinkAliasProblems, usesGates, type Routine } from "./routine-store.js";
 import { listDestinations } from "./destinations.js";
-import { resumeCommand } from "./delegate-runs.js";
 import { stepGroups } from "./routine-graph.js";
 import {
-  runRoutine, withResumeFooter,
+  runRoutine,
   type CommandStepRequest, type DelegateStepRequest, type DelegateStepResult, type RoutineRunnerDeps, type RoutineRunResult,
 } from "./routine-runner.js";
 
@@ -41,10 +39,9 @@ export interface RoutineHostDeps {
   converse: RoutineRunnerDeps["chat"];
   /** Read per run, so a Settings change applies to the next run. */
   getModel: () => string;
-  /** Spawns a delegate step. `onSession` gets the started CLI session for the resume footer. */
+  /** Spawns a delegate step. */
   delegateStep: (
     req: DelegateStepRequest,
-    onSession?: (cli: CliName, sessionId: string, projectPath: string) => void,
     hold?: RoutineHold,
   ) => Promise<DelegateStepResult>;
   commandStep: (req: CommandStepRequest, hold?: RoutineHold) => Promise<CommandStepOutcome>;
@@ -63,21 +60,6 @@ export interface RoutineHostDeps {
   newId?: () => string;
 }
 
-/** One delegate session of a run: every step (in order) that ran in it. */
-export interface SessionReceipt { steps: { index: number; round: number }[]; project: string; cli: CliName; sessionId: string }
-
-/** One footer line per session: `step 3 (kubernetes) — <resume command>`, or
- * `steps 2→4→6 (…)` when later steps continued it — a gate loop's rounds in one session too. */
-export function formatReceipts(receipts: SessionReceipt[]): string[] {
-  return receipts.map(({ steps, project, cli, sessionId }) => {
-    const nums = [...new Set(steps.map((s) => s.index + 1))];
-    const first = steps[0];
-    const label = nums.length > 1 ? `steps ${nums.join("→")}`
-      : `step ${nums[0]}${first && first.round > 1 ? ` round ${first.round}` : ""}`;
-    return `${label} (${project}) — ${resumeCommand(cli, sessionId)}`;
-  });
-}
-
 export interface RoutineHost {
   /** `todo` (already claimed): run just that todo, as its own bubble/record/digest. `signal` =
    * the run's Stop (see RoutineRunnerDeps.signal). */
@@ -88,7 +70,7 @@ export interface RoutineHost {
 }
 
 /** The glue between the scheduler and `runRoutine()` shared by every routine host (desktop
- * today): builds the runner deps, writes the resume/proposal footers, and fans digests to sinks. */
+ * today): builds the runner deps, writes the proposal footer, and fans digests to sinks. */
 export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
   const { dir } = deps;
   const newId = deps.newId ?? randomUUID;
@@ -125,9 +107,6 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     });
     deps.onStatus?.({ type: "start", id, name: todo?.text ?? routine.name, routine: routine.name, detail: todo ? `Sprout: ${routine.name}` : routine.description ?? "", steps, startedAt: Date.now() });
     let result: RoutineRunResult | undefined;
-    // Run-scoped, so concurrent routines never mix receipts. Bean writes the footer itself —
-    // the model never sees or retypes an id.
-    const receipts: SessionReceipt[] = [];
     const groups = stepGroups(routine.steps);
     const groupOf = (i: number) => groups.find((g) => i >= g.first && i <= g.last);
     // The running parallel group's bubble: one line for all members, counting down as each lands.
@@ -172,16 +151,7 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         },
         chat: deps.converse,
         model: deps.getModel(),
-        delegate: (req) => {
-          // From the request: a group's members run at once, so the last onStep isn't this step.
-          const step = { index: req.stepIndex ?? 0, round: req.round ?? 1 };
-          return deps.delegateStep(req, (cli, sessionId, projectPath) => {
-            // A resumed session reports the same id: one receipt per session, listing its steps.
-            const same = receipts.find((r) => r.cli === cli && r.sessionId === sessionId);
-            if (same) same.steps.push(step);
-            else receipts.push({ steps: [step], project: req.projectPath ? basename(projectPath) : "workspace", cli, sessionId });
-          }, hold);
-        },
+        delegate: (req) => deps.delegateStep(req, hold),
         command: (req) => deps.commandStep(req, hold),
         tools: [...deps.tools, saveNoteTool],
         findSkill: (name) => skills.find((s) => s.name === name),
@@ -203,7 +173,6 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         ...(signal ? { signal } : {}),
       }, todo);
       // Before the scheduler saves the record and delivers it to sinks.
-      result = withResumeFooter(result, formatReceipts(receipts));
       if (routine.steps.some((st) => st.kind === "chat" && st.skill === RETRO_SKILL)) {
         result = withProposalFooter(result, listSkillProposals(dbFile(dir)).length);
       }
