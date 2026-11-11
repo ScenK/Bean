@@ -2353,7 +2353,7 @@ test("only the owner's DM pins the owner's You rows past top-K; channels and a m
   const h = await household();
   await (await import("../src/memory/store.js")).appendMemories(h.file, [
     { id: "you", text: "goes by Scen", category: "You", createdAt: "2026-07-01T00:00:00.000Z" },
-    ...Array.from({ length: 30 }, (_, i) => ({ id: `f-${i}`, text: `unrelated filler ${i}`, createdAt: "2026-07-03T00:00:00.000Z" })),
+    ...Array.from({ length: 80 }, (_, i) => ({ id: `f-${i}`, text: `unrelated filler ${i}`, createdAt: "2026-07-03T00:00:00.000Z" })),
   ]);
   const bot = buildTeamsBot(h.deps);
   const recalled = async (m: Parameters<typeof h.say>): Promise<boolean> => {
@@ -2384,6 +2384,23 @@ test("DM auto-capture: a typed fact is saved private with a receipt; guests, cha
   auto = false; // read per turn — no restart
   await bot.onMessage(h.say("u1", true, "I prefer rooibos"), fx());
   expect((await h.loadMemories(h.file)).map((m) => m.text)).toEqual(["Prefers oat milk"]);
+});
+
+test("live steering: the owner's typed words are captured private; a co-driver's are not", async () => {
+  const h = await household();
+  h.deps.autoMemoryEnabled = async () => true;
+  const sent: string[] = [];
+  h.deps.liveSessions = Object.assign(Object.create(h.deps.liveSessions), {
+    has: () => true, canSteer: () => true, isStarter: () => false, generation: () => 1,
+    send: (_c: string, text: string) => { sent.push(text); return true; },
+  });
+  const bot = buildTeamsBot(h.deps);
+  const effects = fx();
+  await bot.onMessage(h.say("ada", false, "I prefer rooibos"), effects);
+  await bot.onMessage(h.say("u1", false, "I prefer oat milk"), effects);
+  expect(sent).toEqual(["I prefer rooibos", "I prefer oat milk"]);
+  expect(await h.loadMemories(h.file)).toMatchObject([{ text: "Prefers oat milk", subjectId: "u1" }]);
+  expect(effects.cards).toMatchObject([{ kind: "remembered", scope: "private" }]);
 });
 
 test("owner DM captures and remembers keep the model's category; member DMs and channels store none (#648)", async () => {

@@ -246,3 +246,19 @@ test("a row recategorized mid-dream aborts the run", async () => {
   expect(await maybeDream(deps(chat))).toBeUndefined();
   expect(await texts()).toEqual(["fact a", "fact b", "fact c", "fact d", "fact e"]);
 });
+
+test("a dream reviews every shared row, 150 per model call, as one plan", async () => {
+  await appendMemories(file, Array.from({ length: 320 }, (_, i) => m(`r${i}`, `fact ${i}`)));
+  const seen: number[] = [];
+  let clock = T0;
+  const chat: ConverseDeps["chat"] = async ({ messages }) => {
+    clock += 6 * 60_000; // three calls outlast one 10-min lease: each chunk must renew it
+    const body = String(messages[1]!.content);
+    expect(body.startsWith("Today is 2026-09-01.")).toBe(true);
+    seen.push(body.split("\n").filter((l) => l.startsWith("- [")).length);
+    return { content: "", toolCalls: body.includes("[r319]") ? [{ name: "drop_memory", args: { id: "r319" } }] : [] };
+  };
+  expect(await maybeDream({ ...deps(chat), now: () => new Date(clock) })).toMatchObject({ removed: 1 });
+  expect(seen).toEqual([150, 150, 20]);
+  expect(await loadMemories(file)).toHaveLength(319);
+});

@@ -136,7 +136,7 @@ test("selectRelevantMemories pins the newest 15 rows in pinCategory, ahead of an
   const pinned = picked.filter((mm) => mm.category === "You").map((mm) => mm.id);
   expect(pinned).toEqual(Array.from({ length: 15 }, (_, i) => `you-${i + 5}`));
   expect(picked.slice(0, 15).map((mm) => mm.id)).toEqual(pinned);
-  expect(picked).toHaveLength(15 + 12); // pinned rows don't eat the ranked limit
+  expect(picked).toHaveLength(15 + 30); // pinned rows don't eat the ranked limit
   expect(pinned).not.toContain("you-4");
   // Exact category only, and no pin without the option.
   expect(selectRelevantMemories(memories, "what's the weather").some((mm) => mm.category === "You")).toBe(false);

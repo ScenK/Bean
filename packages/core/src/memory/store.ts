@@ -154,8 +154,8 @@ export async function claimDreamLease(file: string, runId: string, nowMs: number
   const res = openDb(file).prepare(
     `INSERT INTO memory_meta (key, value) VALUES ('dreamLease', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-     WHERE json_extract(memory_meta.value, '$.expires') < ?`,
-  ).run(JSON.stringify({ runId, expires: nowMs + ttlMs }), nowMs);
+     WHERE json_extract(memory_meta.value, '$.expires') < ? OR json_extract(memory_meta.value, '$.runId') = ?`,
+  ).run(JSON.stringify({ runId, expires: nowMs + ttlMs }), nowMs, runId);
   return Number(res.changes) > 0;
 }
 
@@ -303,7 +303,7 @@ export function selectRelevantMemories(
   memories: Memory[],
   latestUserText: string,
   currentProjectPath?: string,
-  { limit = 12, skipThreshold = 20, pinCategory, pinLimit = OWNER_PIN_LIMIT }: {
+  { limit = 30, skipThreshold = 40, pinCategory, pinLimit = OWNER_PIN_LIMIT }: {
     limit?: number; skipThreshold?: number; pinCategory?: string; pinLimit?: number;
   } = {},
 ): Memory[] {

@@ -28,7 +28,7 @@ import type { CloseTurn, InterruptedRunNotice } from "../../../ipc.js";
 // Window close asks in the shell (ChatWindow), across every chat.
 type LeaveFlow = { switchTo: string; title: string } | null;
 
-// Transcript handed to rememberOnClose — see chatTurns (live steering and agent finals stay out).
+// Transcript handed to rememberOnClose — see chatTurns (typed agent steering is citable; agent finals are context).
 // Nothing typed since this window loaded = nothing new to remember (a restored chat's turns were
 // covered when it first closed), so no extraction call at all.
 export const closeTranscript = (items: ChatItem[], typedSinceLoad: boolean): CloseTurn[] =>
@@ -698,7 +698,9 @@ export function ChatSession({
   // The opening turn: the transcript so far is handed over (main quotes the tail), then the text.
   // `display` = the transcript's short label for a composed skill prompt (also main's run-log label).
   // `persist` = the user chose this start (chip/slash), so its picks are remembered once it starts.
-  const startSession = async (agent: LiveCli, text: string, display?: string, persist = false): Promise<void> => {
+  // `typed` = the text is the user's own composer text; a hand-off offer's instruction is Bean's
+  // wording, so its row is `skill` (never citable for memory).
+  const startSession = async (agent: LiveCli, text: string, display?: string, persist = false, typed = false): Promise<void> => {
     const model = validModel(runModels, agent, agentModelRef.current);
     // The ask carries the image paths; the transcript and the run-log label stay label-only.
     const ask = withImagePaths(text, imageLabelsRef.current);
@@ -707,7 +709,7 @@ export function ChatSession({
     setLive(l);
     const history = handoffItems(itemsRef.current);
     const userId = newId();
-    setItems((prev) => [...prev, { kind: "user", id: userId, text, ...(display ? { display } : {}), source: "live", pending: l.key }]);
+    setItems((prev) => [...prev, { kind: "user", id: userId, text, ...(display ? { display } : {}), source: typed ? "live" : "skill", pending: l.key }]);
     const res: LiveStartResult = await window.bean.liveStart({ agent, projectPath: l.projectPath, ask, history, ...(label ? { label } : {}), ...(model ? { model } : {}) }, mountId)
       .catch(() => ({ error: `${AGENT_NAMES[agent]} couldn't start.` }));
     if ("error" in res) {
@@ -741,7 +743,7 @@ export function ChatSession({
   // they always stay Bean turns.
   const sendToAgent = (agent: LiveCli, text: string, display?: string, typed = text): void => {
     const l = liveRef.current;
-    if (!l || l.agent !== agent) { void startSession(agent, text, display, true); return; }
+    if (!l || l.agent !== agent) { void startSession(agent, text, display, true, true); return; }
     const rowId = newId();
     setItems((prev) => [...prev, { kind: "user", id: rowId, text, ...(display ? { display } : {}), source: "live", pending: l.key }]);
     if (!l.receipt) l.unopened?.push(typed);

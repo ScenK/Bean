@@ -300,8 +300,8 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
     `liveStart`/`liveSend`; loopbacks, skill prompts and Save to notes call `sendMessage`
     directly, so they stay Bean turns in agent mode. Don't route `sendMessage` by mode.
   - `chatTurns` is the one mapper for Bean's `history` and `closeTranscript`: agent finals are
-    `[Claude Code] <result>` (≤4k) for Bean; with `memory: true` live steering (`source: "live"`)
-    and agent finals are dropped entirely.
+    `[Claude Code] <result>` (≤4k) for Bean; with `memory: true` typed live steering
+    is citable (`typed`; a composed `/skill` prompt is `skill`) and agent finals are ≤1k context.
   - The renderer adopts a session id from the `started` event (or liveStart's result) only for
     its current start; events for any other id are ignored. A start ended before its id arrived
     is stopped once the id lands. `start()` ignores a *stopping* session in the one-per-window

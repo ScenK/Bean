@@ -50,8 +50,8 @@ export interface AmbientCapture {
   flush(conversationId: string): void;
 }
 
-export const CAPTURE_DAILY_CALLS = 48;
-export const CAPTURE_DAILY_SAVES = 20;
+export const CAPTURE_DAILY_CALLS = 200;
+export const CAPTURE_DAILY_SAVES = 60;
 const MAX_LINES = 50;
 const MAX_LINE_CHARS = 1000;
 export const MEMORY_NOTICE = "I'll remember facts people share here · `memory off` to stop";
@@ -59,10 +59,11 @@ export const MEMORY_NOTICE = "I'll remember facts people share here · `memory o
 const CHANNEL_INSTRUCTIONS =
   "You are reading a group chat that nobody addressed you in, deciding what — if anything — is " +
   "worth remembering long-term for everyone who uses Bean here. Call the remember " +
-  "tool once per fact worth keeping. Prefer a speaker's statements about themselves (stable " +
-  "preferences, routines, roles) and shared facts (schedules, conventions, " +
-  "decisions). Do NOT remember questions, hypotheticals, jokes or sarcasm, plans that may change, " +
-  "one-off task details, small talk, facts about Bean, or anything already in the existing memory " +
+  "tool once per fact worth keeping. Remember generously: a speaker's statements about themselves " +
+  "(preferences, routines, roles, what they are working on), shared facts (schedules, " +
+  "conventions, decisions), and anything that may need a follow-up — who committed to what, " +
+  "deadlines, what someone is waiting on, plans. Do NOT remember questions, hypotheticals, jokes " +
+  "or sarcasm, small talk, facts about Bean, or anything already in the existing memory " +
   "list. Skip health details, credentials, account or ID numbers, and financial figures. Only lines " +
   "marked \"citable\" may be a source: every fact must be stated in one such line, and `quote` must " +
   "copy the exact words from that single line. Write `text` in the speaker's own words and " +

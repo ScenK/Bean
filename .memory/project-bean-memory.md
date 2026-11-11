@@ -70,11 +70,19 @@ see `db.ts`'s `migrateFromFiles`.
   extraction + remember (`categorize: true`), owner-DM `captureDm` + remember. Member DMs,
   channels and channel capture drop whatever the model gave. Quote validation covers `text`
   only, so a Chinese fact with an English category passes; `sanitizeCategory` normalizes it.
-- **Recall:** `converse()` ranks via `selectRelevantMemories()` — below 20 memories inject all;
-  above, an FTS5 bm25 top-12 against the latest user message.
+- **Capture bar is generous on purpose (owner ask, 2026-11):** extraction keeps current work,
+  decisions and anything needing a follow-up (category `Follow-up`), not only durable preferences —
+  only step-by-step task instructions and small talk are out. Token cost was explicitly accepted;
+  don't tighten the prompts back without asking. The quote-cited validation in code is unchanged.
+  Agent-mode steering the user typed is citable at close catch-up (`chatTurns` maps `live` →
+  `typed`, a composed `/skill` prompt → `skill`; a hand-off offer's opening is Bean's wording, so
+  `startSession` rows are `skill` unless `typed` is passed; agent finals ride as ≤1k non-citable context);
+  there is no per-turn capture for live turns.
+- **Recall:** `converse()` ranks via `selectRelevantMemories()` — up to 40 memories inject all;
+  above, an FTS5 bm25 top-30 against the latest user message.
 - **"You" is the only reserved category (#650, `OWNER_CATEGORY`):** on owner paths only — desktop
   `buildChatHandler` and the owner's chatops DM (`pinOwnerMemories`) — the newest 15 rows with
-  category exactly `You` are pinned ahead of the top-12 (outside it). Channels, member DMs,
+  category exactly `You` are pinned ahead of the top-30 (outside it). Channels, member DMs,
   chime-ins and routines never pin. Pinned rows ride the same user-role recall message; the
   system message is untouched (cache-stable).
 - **Enabled-skills filter** lives in `buildChatHandler` (app `ipc.ts`), not in `converse()`.
@@ -93,7 +101,8 @@ see `db.ts`'s `migrateFromFiles`.
   transaction spans the model call. `proposeMemoryConsolidation()` sees each fact's saved date
   (newer wins) and may merge one id (a rewrite, e.g. relative → absolute date). `planDream()`
   validates in code: disjoint groups, same-`projectPath`/`category`/`source_id` merges only, non-empty text, drops capped
-  at max(3, 20%), oldest 150 per run. `applyConsolidation()` is one `BEGIN IMMEDIATE`: lease still
+  at max(3, 20%); every shared row is reviewed, 150 per model call (merges never span a chunk), and the
+  model sees today's date so it can drop follow-ups more than two weeks past. `applyConsolidation()` is one `BEGIN IMMEDIATE`: lease still
   ours + every touched row unchanged, else abort with no partial mutation; before/after images go
   to `memories_history` (pruned after 30 days) — any new `memories` column must be carried through
   apply/history/undo or a merge silently clears it (#646 added category/source). Merged rows keep the group's newest `created_at`
