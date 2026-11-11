@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getDesktopChat, saveDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, DESKTOP_CHAT_MAX_BYTES } from "@bean/core";
@@ -268,7 +268,7 @@ describe("chat thread IPC", () => {
   });
 
   it("chatOpenPath: only the owning chat, validated in main, relative paths only against the chat's live project", async () => {
-    const proj = mkdtempSync(join(tmpdir(), "bean-open-"));
+    const proj = realpathSync(mkdtempSync(join(tmpdir(), "bean-open-")));
     const { chat, other, emit, liveTasks } = ipcHarness({ getEditorApp: () => "", getTerminalApp: () => "" });
     const { shell } = await import("electron");
     const reveal = vi.mocked(shell.showItemInFolder);

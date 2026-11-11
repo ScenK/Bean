@@ -15,7 +15,7 @@ import type { RoutineBuildView } from "./routine-builder.js";
 import type { RunStatus, WatchCheckResult, SendCard } from "@bean/core";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { join } from "node:path";
@@ -1402,6 +1402,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     const abs = key === undefined ? undefined : chatPathTarget(raw, deps.liveTasks.projectOf(key), homedir());
     if (!abs) return;
     void openChatPath(abs, {
+      realpath,
       stat,
       editorApp: deps.getEditorApp(),
       terminalApp: deps.getTerminalApp(),

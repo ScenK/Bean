@@ -10,6 +10,7 @@ to `terminalOpenLink`, paths to `chatOpenPath`. The printed text is untrusted mo
   `liveTasks.projectOf(mount)`, main's own record (kept past the session, cleared on release,
   disabled once one chat ran sessions in two projects).
 - **A directory with an extension is only revealed** (`.app`, `.xcodeproj`): a click never launches a bundle.
+  Dispatch runs on the `realpath`, so an extensionless symlink to a bundle is revealed too.
 - **Editor guard:** files open via `execFile("/usr/bin/open", ["-a", editorApp, abs])`; if `editorApp`
   is unset, Terminal/iTerm or the configured `terminalApp`, the file is revealed instead
   (`open -a Terminal x.sh` would run it). A failed launch reveals; never the default app.

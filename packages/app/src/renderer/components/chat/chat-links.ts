@@ -9,14 +9,16 @@ export interface LinkToken { start: number; end: number; kind: LinkKind; value: 
 
 const URL_RE = /^https?:\/\/[^\s<>"'`]+$/i;
 const LINE = "(?::\\d+(?::\\d+)?)?";
-// Absolute, ~/, ./ or ../ — at least one name after the slash.
+// Absolute, ~/, ./ or ../ — at least one name after the slash. `SPACED` = an inline code span's
+// whole text, where the backticks delimit the path, so a space is part of it (My Project/out.md).
 const ROOTED_RE = new RegExp(`^(?:~|\\.{1,2})?/[\\w.@+~%,=-]+(?:/[\\w.@+~%,=-]*)*${LINE}$`);
+const SPACED_ROOTED_RE = new RegExp(`^(?:~|\\.{1,2})?/[\\w.@+~%,= -]*[\\w.@+~%,=-](?:/[\\w.@+~%,= -]*)*${LINE}$`);
 // Bare relative: needs a slash and a file extension with a letter, so 1/2, 2026/11/10 and and/or stay text.
 const RELATIVE_RE = new RegExp(`^[\\w.@+-]+(?:/[\\w.@+-]+)*/[\\w@+-][\\w.@+-]*\\.(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{1,10}${LINE}$`);
 
-export function classifyLink(s: string): LinkKind | undefined {
+export function classifyLink(s: string, spaced = false): LinkKind | undefined {
   if (URL_RE.test(s)) return "url";
-  return ROOTED_RE.test(s) || RELATIVE_RE.test(s) ? "path" : undefined;
+  return (spaced ? SPACED_ROOTED_RE : ROOTED_RE).test(s) || RELATIVE_RE.test(s) ? "path" : undefined;
 }
 
 const LEAD = new Set([..."([{<\"'`"]);
@@ -61,7 +63,7 @@ export function hitAt(root: HTMLElement, x: number, y: number): Hit | undefined 
   let hit: Hit | undefined;
   const code = el.closest("code");
   const whole = code && !code.closest("pre") ? (code.textContent ?? "").trim() : "";
-  const wholeKind = whole ? classifyLink(whole) : undefined;
+  const wholeKind = whole ? classifyLink(whole, true) : undefined;
   if (code && wholeKind) {
     range.selectNodeContents(code);
     hit = { range, kind: wholeKind, value: whole };

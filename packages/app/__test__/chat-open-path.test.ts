@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
+import { realpath, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { chatPathTarget, chooseOpen, openChatPath, PATH_LIMIT, type OpenPathDeps } from "../src/chat-open-path.js";
 import { classifyLink, linkAt } from "../src/renderer/components/chat/chat-links.js";
 
@@ -47,6 +51,7 @@ describe("openChatPath", () => {
   const deps = (over: Partial<OpenPathDeps> & { kind?: "dir" | "file" | "missing" } = {}) => {
     const kind = over.kind ?? "file";
     return {
+      realpath: vi.fn(async (p: string) => p),
       stat: vi.fn(async () => {
         if (kind === "missing") throw new Error("ENOENT");
         return { isDirectory: () => kind === "dir", isFile: () => kind === "file" };
@@ -70,6 +75,19 @@ describe("openChatPath", () => {
     const d = deps({ kind: "dir" });
     expect(await openChatPath("/proj/src", d)).toBe("finder");
     expect(d.openDir.mock.calls).toEqual([["/proj/src"]]);
+  });
+
+  it("decides on the symlink's real target: an extensionless link to a bundle is revealed, never opened", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "bean-open-link-")));
+    mkdirSync(join(dir, "Evil.app"));
+    symlinkSync(join(dir, "Evil.app"), join(dir, "innocent"));
+    mkdirSync(join(dir, "plain"));
+    symlinkSync(join(dir, "plain"), join(dir, "plain-link"));
+    const d = deps({ realpath, stat });
+    expect(await openChatPath(join(dir, "innocent"), d)).toBe("reveal");
+    expect(d.reveal.mock.calls).toEqual([[join(dir, "Evil.app")]]);
+    expect(await openChatPath(join(dir, "plain-link"), d)).toBe("finder");
+    expect(d.openDir.mock.calls).toEqual([[join(dir, "plain")]]);
   });
 
   it("a failed editor launch reveals the file instead of opening it elsewhere", async () => {
@@ -96,5 +114,12 @@ describe("chat link tokens", () => {
     const t = linkAt(text, text.indexOf("/tmp"))!;
     expect(text.slice(t.start, t.end)).toBe("/tmp/out.md");
     expect(linkAt("open `src/a.ts:4`.", 7)).toMatchObject({ value: "src/a.ts:4" });
+  });
+
+  it("an inline code span's whole text may hold spaces; loose text may not", () => {
+    expect(classifyLink("/Users/me/My Project/out.md", true)).toBe("path");
+    expect(classifyLink("~/My Notes/a b.md:3", true)).toBe("path");
+    expect(classifyLink("/Users/me/My Project/out.md")).toBeUndefined();
+    for (const t of ["pnpm test /foo", "/ ", "1/2", "and/or"]) expect(classifyLink(t, true)).toBeUndefined();
   });
 });

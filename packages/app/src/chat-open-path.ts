@@ -35,6 +35,9 @@ export function chooseOpen(kind: "dir" | "file" | "other", absPath: string, edit
 }
 
 export interface OpenPathDeps {
+  /** Resolves every symlink: dispatch decides on the real target, so an extensionless link to a
+   * `.app` is revealed like the bundle itself, never opened. */
+  realpath: (p: string) => Promise<string>;
   stat: (p: string) => Promise<{ isDirectory(): boolean; isFile(): boolean }>;
   editorApp: string;
   terminalApp: string;
@@ -46,9 +49,11 @@ export interface OpenPathDeps {
 }
 
 /** Opens a validated absolute path; a missing one is a no-op. Never throws. */
-export async function openChatPath(absPath: string, deps: OpenPathDeps): Promise<OpenAction | undefined> {
+export async function openChatPath(path: string, deps: OpenPathDeps): Promise<OpenAction | undefined> {
   let kind: "dir" | "file" | "other";
+  let absPath: string;
   try {
+    absPath = await deps.realpath(path);
     const st = await deps.stat(absPath);
     kind = st.isDirectory() ? "dir" : st.isFile() ? "file" : "other";
   } catch {
