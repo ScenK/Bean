@@ -463,7 +463,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                       <span class="bean-chat-sidebar-meta">
                         <AgentAvatar agent="bean" size={12} />
                         {agents.map((a) => <AgentAvatar agent={a} size={12} />)}
-                        {["Bean", ...agents.map((a) => AGENT_NAMES[a])].join(" · ")}
+                        <span class="bean-chat-sidebar-meta-names">{["Bean", ...agents.map((a) => AGENT_NAMES[a])].join(" · ")}</span>
                       </span>
                     ) : null}
                   </button>}

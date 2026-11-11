@@ -1,6 +1,6 @@
 import { test, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { launchBean } from "./fixtures/launch-app.js";
-import { makeBeanHome } from "./fixtures/bean-home.js";
+import { installFakeCli, makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 import { ConversationCatalog, ConversationStore, dbFile, getDesktopChat, groupDesktopChats, listDesktopChats, saveDesktopChat, speakerLine, starDesktopChat } from "@bean/core";
 import { join } from "node:path";
@@ -229,6 +229,45 @@ test("chat history: New chat in place, and a delegate keeps running in a chat sw
     expect(await chatState(app)).toEqual({ ...before, events: [] });
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup(), rm(bin, { recursive: true, force: true }), rm(flag, { force: true })]);
+  }
+});
+
+// The active card's "Bean · Claude Code" meta stays one line when hover's ✎ ★ narrow it, and an
+// unsent draft (text + agent pick) survives switching to another chat and back.
+test("chat history: active card keeps its height on hover; a draft survives a switch", async () => {
+  const home = await makeBeanHome({ autoMemory: false, disabledClis: ["codex", "opencode"] });
+  const file = dbFile(join(home.homeDir, ".bean"));
+  const a = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+  const b = "2b3c4d5e-6f70-4b8c-9d0e-1f2a3b4c5d6e";
+  saveDesktopChat(file, { id: a, title: "a long chat title that is cut short", itemsJson: JSON.stringify([{ kind: "user", id: "u", text: "hi" }, { kind: "reply", id: "r", agent: "claude", text: "ok" }]) });
+  saveDesktopChat(file, { id: b, title: "other chat", itemsJson: JSON.stringify([{ kind: "user", id: "u", text: "other" }]) });
+  const stub = await startStubOpenAI();
+  const bin = await installFakeCli(home.homeDir, "claude");
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url, PATH: `${bin}:${process.env.PATH ?? ""}` });
+  try {
+    const chat = await openChat(app);
+    await chat.setViewportSize({ width: 900, height: 700 });
+    const open = (id: string) => chat.locator(`[data-row="${id}"] .bean-chat-sidebar-open`);
+    await open(a).click();
+    const card = chat.locator(`[data-row="${a}"]`);
+    await expect(card).toHaveClass(/bean-chat-sidebar-row--active/);
+    await chat.mouse.move(0, 0);
+    const resting = (await card.boundingBox())!.height;
+    await card.hover();
+    await expect(card.locator(".bean-chat-sidebar-row-rename")).toBeVisible();
+    expect((await card.boundingBox())!.height).toBe(resting);
+
+    const shown = chat.locator(".bean-chat:not([hidden])");
+    await shown.locator(".bean-agent-chip").click();
+    await shown.locator(".bean-chip-menu-row", { hasText: "Claude Code" }).first().click();
+    await shown.locator(".bean-input--composer").fill("half-typed thought");
+    await open(b).click();
+    await expect(shown.locator(".bean-input--composer")).toHaveValue("");
+    await open(a).click();
+    await expect(shown.locator(".bean-input--composer")).toHaveValue("half-typed thought");
+    await expect(shown.locator(".bean-agent-chip")).toContainText("Claude Code");
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });
 

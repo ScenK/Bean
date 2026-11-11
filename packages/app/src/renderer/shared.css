@@ -361,6 +361,9 @@ button, input, textarea, select, a {
   gap: 6px;
   font-size: 10.5px;
 }
+/* One line: hover's ✎ ★ narrow the card, and a wrapped meta would make it jump taller. */
+.bean-chat-sidebar-meta .bean-agent-avatar { flex: none; }
+.bean-chat-sidebar-meta-names { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Hover-revealed, but opacity (not visibility) keeps it in the tab order. Hidden, a control is
    zero-wide, so the title keeps the row; shown, the controls take the time's place. */
 .bean-chat-sidebar-row:not(:hover) > :is(.bean-chat-sidebar-row-rename, .bean-chat-sidebar-row-delete, .bean-chat-sidebar-row-grouping, .bean-chat-sidebar-row-star:not(.bean-notes-star--on)):not(:focus-visible, :focus-within) {
