@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, RefObject } from "preact";
 import { ProposalCard, type PickableModel } from "../../shared/ProposalCard.js";
 import { Markdown } from "../../shared/Markdown.js";
 import { NoteCard } from "./NoteCard.js";
@@ -76,6 +76,7 @@ function ImagePreview({ image, onClose }: { image: { dataUrl: string; path?: str
 export function ChatPanel({
   hidden,
   mountId,
+  inputRef,
   terminalOpen,
   onToggleTerminal,
   onTerminalOpen,
@@ -146,6 +147,8 @@ export function ChatPanel({
   hidden?: boolean;
   /** This chat's mount: its terminal pane's shell is keyed by it. */
   mountId: string;
+  /** The composer, owned by ChatSession: an unsent draft keeps the chat mounted on a switch. */
+  inputRef: RefObject<HTMLTextAreaElement | null>;
   terminalOpen: boolean;
   onToggleTerminal: () => void;
   onTerminalOpen: (open: boolean) => void;
@@ -241,7 +244,6 @@ export function ChatPanel({
   /** Stop `stopTarget`; a live session stays (banner / working-row Stop, composer Esc Esc). */
   onStopTurn: () => void;
 }) {
-  const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pendingImages, setPendingImages] = useState<Array<{ attachment: ImageAttachment; dataUrl: string }>>([]);
   const [imageError, setImageError] = useState<string | null>(null);

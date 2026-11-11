@@ -312,6 +312,7 @@ export function ChatSession({
   };
   const itemsRef = useRef<ChatItem[]>([]);
   itemsRef.current = items;
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   // Agent mode: who answers typed composer text. A pick only switches; the agent spawns on the
   // first typed send. Refs mirror state for async callbacks (live events, awaited starts).
   const [mode, setModeState] = useState<AgentId>("bean");
@@ -1231,7 +1232,10 @@ export function ChatSession({
   // A Continue in Discord request awaiting the bot's ack: the chat stays mounted and a close waits
   // for it, so a thread the bot opens always gets its pointer saved here.
   const continuingRef = useRef<Promise<unknown> | undefined>(undefined);
-  const hasWork = (): boolean => busyRef.current || queuedSendsRef.current.length > 0 || liveRef.current !== undefined
+  // An unsent draft in a saved thread counts too: kept mounted, it comes back with its text and agent
+  // pick. A threadless chat has no sidebar row to return to, so its draft doesn't hold it.
+  const hasWork = (): boolean => (threadRef.current !== undefined && (composerRef.current?.value.trim() ?? "") !== "")
+    || busyRef.current || queuedSendsRef.current.length > 0 || liveRef.current !== undefined
     || continuingRef.current !== undefined
     || shellRef.current > 0 || hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size);
   const tasks = async (): Promise<ChatTasks> => {
@@ -1448,6 +1452,7 @@ export function ChatSession({
       <ChatPanel
         hidden={hidden}
         mountId={mountId}
+        inputRef={composerRef}
         terminalOpen={terminalOpen}
         onToggleTerminal={toggleTerminal}
         onTerminalOpen={setTerminalOpen}
