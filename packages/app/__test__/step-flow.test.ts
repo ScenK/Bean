@@ -5,7 +5,7 @@ import { act } from "preact/test-utils";
 import type { RoutineStep } from "@bean/core";
 import { stepFlow, stepLanes } from "@bean/core/routine-graph";
 import { layoutStepFlow, NODE_H, NODE_W, type FlowBox, type FlowGroup } from "../src/renderer/shared/step-flow-layout.js";
-import { StepFlow, type FlowOverlay } from "../src/renderer/shared/StepFlow.js";
+import { StepFlow } from "../src/renderer/shared/StepFlow.js";
 
 const s = (id: string, extra: Partial<RoutineStep> = {}): RoutineStep => ({ kind: "chat", id, instruction: "x", ...extra } as RoutineStep);
 // classify → bug | spec | reply, rejoining at report; report loops back to classify on fail.
@@ -51,10 +51,10 @@ describe("parallel groups", () => {
   const encloses = (g: FlowGroup, b: FlowBox): boolean => b.x >= g.x && b.x + NODE_W <= g.x + g.w && b.y >= g.y && b.y + NODE_H <= g.y + g.h;
   const ends = (d: string): [number, number] => d.split(/[ ,]/).slice(-2).map(Number) as [number, number];
   const starts = (d: string): [number, number] => d.slice(1).split(/[ ,]/).slice(0, 2).map(Number) as [number, number];
-  const mount = (steps: RoutineStep[], overlay?: FlowOverlay): HTMLElement => {
+  const mount = (steps: RoutineStep[]): HTMLElement => {
     const root = document.createElement("div");
     document.body.append(root);
-    act(() => { render(h(StepFlow, { steps, ...(overlay ? { overlay } : {}) }), root); });
+    act(() => { render(h(StepFlow, { steps }), root); });
     return root;
   };
 
@@ -125,19 +125,11 @@ describe("parallel groups", () => {
     expect(loop.d.endsWith(`H${layout.groups[0]!.x}`)).toBe(true);
   });
 
-  it("lights the frame when a member ran, and the edges the run took", () => {
-    const steps = [s("a"), s("b"), s("c", { alongside: true }), s("d")];
-    const edges = stepFlow(steps).edges;
-    const all = new Set(edges.map((_, k) => k).filter((k) => edges[k]!.kind === "fork" || edges[k]!.kind === "join"));
-    const root = mount(steps, { counts: [1, 1, 1, 0], failed: [false, false, true, false], edges: all });
-    expect(root.querySelector(".bean-flow-group")!.classList.contains("bean-flow-accent")).toBe(true);
-    expect(root.querySelectorAll(".bean-flow-edge--lit")).toHaveLength(2);
-    expect([...root.querySelectorAll(".bean-flow-title")].map((t) => t.textContent)).toContain("3 · chat ✗");
-    document.body.innerHTML = "";
-    const unrun = mount(steps, { counts: [1, 0, 0, 0], failed: [true, false, false, false], edges: new Set() });
-    expect(unrun.querySelector(".bean-flow-group")!.classList.contains("bean-flow-line")).toBe(true);
+  it("draws the frame plain, with no fork/join bar", () => {
+    const root = mount([s("a"), s("b"), s("c", { alongside: true }), s("d")]);
+    expect(root.querySelector(".bean-flow-group")!.classList.contains("bean-flow-line")).toBe(true);
     // The old fork/join bar was the diagram's only <line>.
-    expect(unrun.querySelectorAll("line")).toHaveLength(0);
+    expect(root.querySelectorAll("line")).toHaveLength(0);
   });
 });
 
@@ -188,22 +180,6 @@ describe("StepFlow", () => {
     act(() => render(h("div", null, h(StepFlow, { steps: triage() }), h(StepFlow, { steps: triage() })), root));
     const ids = [...root.querySelectorAll("marker")].map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
-  });
-});
-
-describe("StepFlow overlay", () => {
-  it("accents exactly the edges the run took, whatever the layout order", () => {
-    const steps = [s("a"), s("b", { gate: { onFail: { goto: "a", maxRounds: 2 } } }), s("c")];
-    const edges = stepFlow(steps).edges;
-    const taken = new Set(edges.flatMap((e, k) => (e.kind === "loop" || (e.from === 0 && e.to === 1) ? [k] : [])));
-    const root = document.createElement("div");
-    document.body.append(root);
-    act(() => { render(h(StepFlow, { steps, overlay: { counts: [2, 2, 0], failed: [false, true, false], edges: taken } }), root); });
-    const lit = [...root.querySelectorAll(".bean-flow-edge--lit")];
-    expect(lit).toHaveLength(2);
-    expect(lit.some((p) => p.classList.contains("bean-flow-edge--loop"))).toBe(true);
-    expect(root.querySelectorAll(".bean-flow-dim")).toHaveLength(1);
-    expect(root.querySelector(".bean-flow-title")!.textContent).toContain("×2");
   });
 });
 

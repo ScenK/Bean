@@ -97,10 +97,9 @@ read-only; nothing stops two members writing the same file. Children multiply: u
 (`maxParallel` 4 todos × a 4-wide group). The chat builder (`cleanEdges`) drops `alongside` — groups
 are editor/JSON-only.
 Dashboard (#419): a step's status is its **latest attempt** — `splitSteps` needs you only when the
-run isn't `ok` and no later record of the same id (same todo) passed; `runFlowOverlay` reads a group
-as one block (all members, step order, else drift), lights every fork + join, failed members ✗, and
-an error a later round of the same pass got past isn't ✗. `executedPath(run, steps)` brackets a
-group: `[lint ✓ | test ✗ | review ✓]`. Diagram: forks/joins meet a bar above/below the members.
+run isn't `ok` and no later record of the same id (same todo) passed. `executedPath(run, steps)`
+brackets a group: `[lint ✓ | test ✗ | review ✓]`. Editor diagram: forks/joins meet a bar above/below
+the members.
 
 **Command steps (#265).** `kind: "command"` runs `command` via `/bin/sh -c` (core `runShellCommand`,
 own process group, timeout SIGKILLs the group) in `project`, else the same scratch dir a delegate

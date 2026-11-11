@@ -1,12 +1,12 @@
 import { test, expect, type ElectronApplication, type Locator, type Page } from "@playwright/test";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
-/** The flow canvas spans its panel's content width and caps its height, scrolling inside — in the
- * sprout editor and in a Dashboard run. A 3-step sprout fits without a scrollbar. */
+/** The flow canvas spans its panel's content width and caps its height, scrolling inside the
+ * sprout editor. A 3-step sprout fits without a scrollbar. */
 test("flow canvas: full panel width, capped height that scrolls", async () => {
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
@@ -16,18 +16,6 @@ test("flow canvas: full panel width, capped height that scrolls", async () => {
     name: "long", enabled: false, cron: "0 6 * * *", sinks: {},
     steps: ids.map((id) => ({ kind: "chat", id, instruction: `do ${id}` })),
   }), "utf8");
-  // Newest run of all, so the Dashboard opens on it with its flow expanded.
-  const stateFile = join(routines, ".state.json");
-  const state = JSON.parse(await readFile(stateFile, "utf8")) as Record<string, unknown>;
-  state.long = {
-    lastRun: "2026-01-05T14:00:00.000Z",
-    history: [{
-      id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-      startedAt: "2026-01-05T14:00:00.000Z", finishedAt: "2026-01-05T14:30:00.000Z", status: "ok", digest: "done",
-      steps: ids.map((id) => ({ kind: "chat", id, ok: true, summary: id })),
-    }],
-  };
-  await writeFile(stateFile, JSON.stringify(state), "utf8");
 
   const open = async (app: ElectronApplication, kind: string): Promise<Page> => {
     const avatar = await app.firstWindow();
@@ -71,17 +59,13 @@ test("flow canvas: full panel width, capped height that scrolls", async () => {
     await expectFullWidthAndScrolls(editor.locator(".bean-flow"));
     await editor.locator(".bean-flow").focus();
     await expect(editor.locator(".bean-flow")).toBeFocused();
-
-    const dashboard = await open(app, "dashboard");
-    await expectFullWidthAndScrolls(dashboard.locator(".bean-dash-flow .bean-flow"));
   } finally {
     await app.close();
     await Promise.allSettled([stub.close(), home.cleanup()]);
   }
 });
 
-/** A parallel group draws as one labelled frame around its members — in the editor, and lit on a
- * Dashboard run that went through it. */
+/** A parallel group draws as one labelled frame around its members in the editor. */
 test("flow canvas: a parallel group is a labelled frame", async () => {
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
@@ -93,17 +77,6 @@ test("flow canvas: a parallel group is a labelled frame", async () => {
     { kind: "chat", id: "d", instruction: "do d" },
   ];
   await writeFile(join(routines, "fan.json"), JSON.stringify({ name: "fan", enabled: false, cron: "0 6 * * *", sinks: {}, steps }), "utf8");
-  const stateFile = join(routines, ".state.json");
-  const state = JSON.parse(await readFile(stateFile, "utf8")) as Record<string, unknown>;
-  state.fan = {
-    lastRun: "2026-01-05T14:00:00.000Z",
-    history: [{
-      id: "aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff",
-      startedAt: "2026-01-05T14:00:00.000Z", finishedAt: "2026-01-05T14:30:00.000Z", status: "ok", digest: "done",
-      steps: steps.map(({ kind, id }) => ({ kind, id, ok: true, summary: id })),
-    }],
-  };
-  await writeFile(stateFile, JSON.stringify(state), "utf8");
 
   const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
   try {
@@ -119,12 +92,6 @@ test("flow canvas: a parallel group is a labelled frame", async () => {
     await editor.locator(".bean-routines-row", { hasText: "fan" }).click();
     await expect(editor.locator(".bean-flow .bean-flow-group")).toHaveCount(1);
     await expect(editor.locator(".bean-flow .bean-flow-group-label")).toHaveText("⫴ together · 2");
-
-    const dashboard = await open("dashboard");
-    const flow = dashboard.locator(".bean-dash-flow .bean-flow");
-    await expect(flow.locator(".bean-flow-group")).toHaveClass(/bean-flow-accent/);
-    // The fork bundle, the join and the ● end.
-    await expect(flow.locator(".bean-flow-edge--lit")).toHaveCount(3);
   } finally {
     await app.close();
     await Promise.allSettled([stub.close(), home.cleanup()]);

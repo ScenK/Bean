@@ -33,7 +33,6 @@ that joins a group. The canvas badge (`StepFlow` `lanes` prop) uses raw `stepLan
 Dashboard (#436): which attempts shared a session comes only from the attempts — equal
 `StepAttemptView.resume` strings (built solely from cli + session id) are one session
 (`attemptSessions` in `dashboard/runs.ts`). Never derive past-run sessions from today's
-`continues`: an edit to it doesn't change the flow, so `runFlowOverlay`'s drift check can't catch
-it. The definition only feeds `fresh` (as a backup to the runner's "started fresh" note, which a
-tail-capped output can lose). Full output shows one resume block per session (its last attempt);
-the run flow's `lanes` come from `observedLanes`, loaded lazily when the flow opens.
+`continues`: an edit to it can't be detected from the run record. The definition only feeds `fresh` (as a backup to the runner's "started fresh" note, which a
+tail-capped output can lose). Full output shows one resume block per session (its last attempt).
+The Dashboard draws no flow diagram (removed — the executed path line is the record).
