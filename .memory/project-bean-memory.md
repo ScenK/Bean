@@ -41,7 +41,9 @@ see `db.ts`'s `migrateFromFiles`.
   `source: "typed"` turns are citable (`isCitable`). A delegate loopback, a composed skill prompt,
   the Save-to-notes command, ambient chatter, and compaction summaries all travel as role "user",
   so the role can't be trusted. Every candidate must `quote` a span of a typed turn
-  (`validateCandidate`), and every fact clause must be carried by one quote clause: Latin content
+  (`validateCandidate`), and every fact clause must be carried by one quote clause (or by a
+  comma-joined reason pair, `since/because X, Y`, when neither half is negated — never by words
+  pooled across unrelated clauses): Latin content
   words (4+ chars, minus `FRAMING`) match on a shared prefix of min(len, 5) ≥ 4 chars, where a
   4-char stem may only gain ≤2 chars ("live"~"lives", never "java"~"javascript"); Han/Kana/Hangul
   runs need every character bigram present. Polarity is checked on each occurrence of the quote

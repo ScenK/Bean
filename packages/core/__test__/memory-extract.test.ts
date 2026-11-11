@@ -196,14 +196,22 @@ test("CJK facts validate verbatim and as a light paraphrase", () => {
   expect(validateCandidate({ text: "用户讨厌pnpm", quote: "我喜欢用pnpm" }, ["我喜欢用pnpm"], projects)).toMatch(/support/);
 });
 
-test("a fact may join clauses the user split with a comma, unless the quote has a negation", () => {
+test("a fact may join a reason clause to its main clause, unless either is negated", () => {
   const said = "Keep in mind that since black friday is coming, I'm more interested in good deals. Email triage的时候帮我盯着点。";
   const quote = "since black friday is coming, I'm more interested in good deals";
   ok(said, "User is more interested in good deals ahead of Black Friday.", quote);
   ok(said, "User is more interested in good deals because Black Friday is coming.", quote);
   expect(validateCandidate({ text: "Not interested in good deals ahead of Black Friday", quote }, [said], projects)).toMatch(/flips/);
+  ok("I'm more interested in good deals, because Black Friday is coming", "More interested in good deals because Black Friday is coming.");
   const mixed = "I do not use Docker, but I use pnpm";
   expect(validateCandidate({ text: "Uses Docker and pnpm", quote: mixed }, [mixed], projects)).toMatch(/support|flips/);
+  // Unrelated clauses never pool their words.
+  const split = "I deploy Docker locally, but Kubernetes runs in production";
+  expect(validateCandidate({ text: "Deploys Docker in production", quote: split }, [split], projects)).toMatch(/support/);
+  const comma = "I use Docker, Kubernetes is disabled";
+  expect(validateCandidate({ text: "Uses Docker with Kubernetes", quote: comma }, [comma], projects)).toMatch(/support/);
+  const negReason = "since I don't drive, I like trains";
+  expect(validateCandidate({ text: "Doesn't like trains since driving", quote: negReason }, [negReason], projects)).not.toHaveProperty("text");
 });
 
 test("a quote cropped away from its negation is still rejected as flipped", () => {

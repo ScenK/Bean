@@ -106,17 +106,33 @@ const has = (q: string[], w: string): boolean => q.some((x) => {
   return n >= 4 && x.slice(0, n) === w.slice(0, n) && (n === 5 || Math.abs(x.length - w.length) <= 2);
 });
 
+const REASON = /\b(?:since|because|now that)\b/;
+const CLAUSE_SPLIT = new RegExp(`(${CLAUSE.source})`);
+/** Comma-joined pairs where one side is a reason clause and neither is negated, rejoined. */
+function reasonPairs(quote: string): string[] {
+  const parts = quote.split(CLAUSE_SPLIT).map((p) => p.trim());
+  const out: string[] = [];
+  for (let i = 0; i + 2 < parts.length; i += 2) {
+    const [a = "", sep, b = ""] = parts.slice(i, i + 3);
+    if ((sep === "," || sep === "，") && a && b && (REASON.test(a) || REASON.test(b)) && !NEGATION.test(a) && !NEGATION.test(b)) {
+      out.push(`${a} ${b}`);
+    }
+  }
+  return out;
+}
+
 /** Every clause of the fact must be carried by one clause of the quote — all its content words
  * (or, for CJK, all its character bigrams) there, with the same polarity. So a generic shared word
  * ("project") can't launder a claim only a fetched page made, "I never use Docker" can't become
  * "Uses Docker", and in "I do not use Docker, but I use pnpm" the "not" stays with Docker.
- * A quote with no negation anywhere has no "not" to misattach, so there the whole quote may carry
- * a fact that joins its clauses ("since Black Friday is coming, I want good deals").
+ * A reason clause and the clause it gives the reason for, split only by a comma ("since Black
+ * Friday is coming, I want good deals"), state one claim, so their join may carry a fact too —
+ * unless either is negated, where the "not" could land on the wrong half.
  * ponytail: prefix match stands in for stemming; Latin words under 4 chars are ignored, so a
  * forged 3-letter token (a tool name) can slip through. */
 function backedBy(quote: string, fact: string): "ok" | "unsupported" | "flipped" {
   const qs = clauses(quote).map((c) => ({ text: c, words: words(c), neg: NEGATION.test(c) }));
-  if (qs.length > 1 && !qs.some((q) => q.neg)) qs.push({ text: quote, words: words(quote), neg: false });
+  for (const text of reasonPairs(quote)) qs.push({ text, words: words(text), neg: false });
   let checked = 0;
   for (const fc of clauses(norm(fact))) {
     const need = content(fc);
