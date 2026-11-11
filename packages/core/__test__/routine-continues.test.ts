@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runRoutine, type DelegateStepRequest, type RoutineRunnerDeps } from "../src/routine-runner.js";
 import { describeRoutineError, usesGates, type Routine, type RoutineStep } from "../src/routine-store.js";
 import { continueTargets, stepContinueCaptions, stepEdgeProblems, stepLanes } from "../src/routine-graph.js";
-import { createRoutineHost, formatReceipts, type RoutineHostDeps } from "../src/routine-host.js";
+import { createRoutineHost, type RoutineHostDeps } from "../src/routine-host.js";
 import { parseBrief, type BriefContext, type TodoItem } from "../src/index.js";
 
 const routine = (steps: RoutineStep[], over: Partial<Routine> = {}): Routine =>
@@ -196,32 +196,24 @@ describe("continues on the host", () => {
     getRoutineDigestContext: () => false, newId: () => "id-1",
   });
 
-  it("holds the scratch across steps, removes it at the end, and prints one footer line per session", async () => {
+  it("holds the scratch across steps, and removes it at the end", async () => {
     const project = join(dir, "kubernetes");
     const scratch = join(dir, "scratch-todo");
     const seen: boolean[] = [];
     let n = 0;
-    const h = host(async (req, onSession, hold) => {
+    const h = host(async (req, hold) => {
       seen.push(existsSync(scratch));
       if (hold) { mkdirSync(scratch, { recursive: true }); hold.scratch.add(scratch); }
       const sessionId = req.resume?.sessionId ?? `s${++n}`;
-      onSession?.("claude", sessionId, project);
       return { output: "out", cli: "claude", sessionId };
     });
-    const res = await h.runOneRoutine(routine([
+    await h.runOneRoutine(routine([
       step("a", { project }), step("b", { project }), step("c", { project, continues: "a" }), step("d", { project, continues: "c" }),
     ]));
     expect(seen).toEqual([false, true, true, true]);
     expect(existsSync(scratch)).toBe(false);
-    expect(res.digest).toContain("Resume a delegate session:\nsteps 1→3→4 (kubernetes) — claude --resume s1\nstep 2 (kubernetes) — claude --resume s2");
   });
 
-  it("formats a gate loop's repeated session as one line", () => {
-    expect(formatReceipts([
-      { steps: [{ index: 1, round: 1 }, { index: 1, round: 2 }], project: "workspace", cli: "opencode", sessionId: "ses_1" },
-      { steps: [{ index: 2, round: 2 }], project: "workspace", cli: "opencode", sessionId: "ses_2" },
-    ])).toEqual(["step 2 (workspace) — opencode -s ses_1", "step 3 round 2 (workspace) — opencode -s ses_2"]);
-  });
 });
 
 describe("parseBrief and continues", () => {

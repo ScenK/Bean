@@ -28,10 +28,7 @@ function host(over: Partial<RoutineHostDeps> = {}) {
     dir,
     converse: async (a) => { toolNames.push(a.tools.map((t: ToolSpec) => t.name)); return { content: "the digest", toolCalls: [] }; },
     getModel: () => "gpt-test",
-    delegateStep: async (_req, onSession) => {
-      onSession?.("claude", "11111111-2222-3333-4444-555555555555", join(dir, "workspace"));
-      return { output: "delegate output", cli: "claude" };
-    },
+    delegateStep: async () => ({ output: "delegate output", cli: "claude", sessionId: "11111111-2222-3333-4444-555555555555" }),
     commandStep: async () => ({ exitCode: 0, output: "cmd ok" }),
     tools: [],
     loadSkills: async () => [],
@@ -67,31 +64,27 @@ describe("createRoutineHost", () => {
     expect(h.status.at(-1)).toMatchObject({ type: "finish", state: "failed" });
   });
 
-  it("runs a lone delegate step: verbatim digest + resume footer, status start/step/finish, attempt recorded", async () => {
+  it("runs a lone delegate step: verbatim digest with no session footer, status start/step/finish, attempt recorded", async () => {
     const h = host();
     const res = await h.runOneRoutine(routine([{ kind: "delegate", instruction: "check the build please" }]));
-    const footer = "\n\nResume a delegate session:\nstep 1 (workspace) — claude --resume 11111111-2222-3333-4444-555555555555";
     expect(res.record.status).toBe("ok");
-    expect(res.digest).toBe(`delegate output${footer}`);
-    expect(res.record.digest).toBe(`delegate output${footer}`);
+    // Session ids stay out of what sinks receive; the Dashboard reads them from the attempt.
+    expect(res.digest).toBe("delegate output");
+    expect(res.record.digest).toBe("delegate output");
     expect(h.status).toEqual([
       { type: "start", id: "routine:r", name: "r", routine: "r", detail: "", steps: ["check the build please"], startedAt: expect.any(Number) },
       { type: "step", id: "routine:r", step: 0, line: "check the build please" },
       { type: "finish", id: "routine:r", state: "done", line: "Done · 1 step", startedAt: res.record.startedAt },
     ]);
-    expect(listStepAttempts(dbFile(dir), res.record.id!)).toHaveLength(1);
+    expect(listStepAttempts(dbFile(dir), res.record.id!)).toMatchObject([{ sessionId: "11111111-2222-3333-4444-555555555555" }]);
   });
 
-  it("names the project in a receipt and reports a failed step", async () => {
+  it("reports a failed step", async () => {
     const h = host({
-      delegateStep: async (_req, onSession) => {
-        onSession?.("codex", "abc", "/work/proj");
-        throw new Error("boom");
-      },
+      delegateStep: async () => { throw new Error("boom"); },
     });
     const res = await h.runOneRoutine(routine([{ kind: "delegate", project: "/work/proj", instruction: "x" }]));
     expect(res.record.status).toBe("failed");
-    expect(res.digest).toContain("step 1 (proj) — codex resume abc");
     expect(h.status.at(-1)).toEqual({ type: "finish", id: "routine:r", state: "failed", line: "Finished with a failed step", startedAt: res.record.startedAt });
   });
 
@@ -114,10 +107,9 @@ describe("createRoutineHost", () => {
     const scratch = join(dir, "scratch-todo");
     const holds: unknown[] = [];
     let reviews = 0;
-    const delegateStep = vi.fn(async (req: DelegateStepRequest, onSession, hold) => {
+    const delegateStep = vi.fn(async (req: DelegateStepRequest, hold) => {
       holds.push(hold);
       if (hold) { mkdirSync(scratch, { recursive: true }); hold.scratch.add(scratch); }
-      onSession?.("claude", `s${holds.length}`, project);
       const isReview = req.instruction.startsWith("review");
       return { output: isReview ? (++reviews === 1 ? "bad\nVERDICT: FAIL" : "good\nVERDICT: PASS") : "built", cli: "claude" as const };
     }) as RoutineHostDeps["delegateStep"];
@@ -129,7 +121,6 @@ describe("createRoutineHost", () => {
     expect(res.record.status).toBe("ok");
     expect(holds.every((x) => x && x === holds[0])).toBe(true);
     expect(existsSync(scratch)).toBe(false);
-    expect(res.digest).toContain("step 1 (proj) — claude --resume s1\nstep 2 (proj) — claude --resume s2\nstep 1 round 2 (proj) — claude --resume s3\nstep 2 round 2 (proj) — claude --resume s4");
     expect(h.status.some((e) => e.type === "step" && e.line.includes("round 2/3"))).toBe(true);
   });
 

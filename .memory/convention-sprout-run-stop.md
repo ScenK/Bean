@@ -13,7 +13,7 @@
   that as FAIL and `onFail.goto` would loop. The runner also checks the signal after each
   commit, before gate/route handling, as a second fence.
 - A stopped result (`RoutineRunResult.stopped`) is recorded (status `failed`, fixed digest
-  "Stopped by you at step N (label)" + resume footer) but goes to **no sink** and triggers no
+  "Stopped by you at step N (label)") but goes to **no sink** and triggers no
   watch post-run poll. A stop landing after the step loop/drain finished is ignored.
 - Desktop: `bean:routine-stop` (handler ignores non-strings and idle names) → `routineBubbles.stopping`
   + `stopRuns`. Stop lives on the avatar bubble and the Sprouts panel; the chat sprout card reads

@@ -78,7 +78,7 @@ describe("makeRoutineSteps delegate adapter", () => {
       spawnFn: (_cmd, _args, cwd) => spawn(process.execPath, ["-e", ""], { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] }),
     });
     const hold = { scratch: new Set<string>() };
-    await delegateStep({ instruction: "x", priorOutputs: "", todoId: "t1" }, undefined, hold).catch(() => {});
+    await delegateStep({ instruction: "x", priorOutputs: "", todoId: "t1" }, hold).catch(() => {});
     const [scratch] = [...hold.scratch];
     expect(scratch && existsSync(scratch)).toBe(true);
     expect(records(dir)).toEqual([]);

@@ -1,6 +1,6 @@
 // packages/core/__test__/routine-runner.test.ts
 import { describe, expect, it, vi } from "vitest";
-import { runRoutine, withResumeFooter, type RoutineRunnerDeps } from "../src/routine-runner.js";
+import { runRoutine, type RoutineRunnerDeps } from "../src/routine-runner.js";
 import { availableModels, pinnedStepSelection } from "../src/models.js";
 import type { Routine } from "../src/routine-store.js";
 import type { ActionTool, ConvoMsg, ToolSpec } from "../src/converse.js";
@@ -440,15 +440,6 @@ describe("todo-driven routines", () => {
     expect(todos.statusLog.filter((l) => l.id === "3").map((l) => l.status)).toEqual(["running", "done"]);
     expect(result.record.status).toBe("failed");
   });
-});
-
-it("withResumeFooter appends one line per session to both the stored and delivered digest", () => {
-  const base = { record: { startedAt: "a", finishedAt: "b", status: "ok" as const, digest: "summary", steps: [] }, digest: "summary", results: [] };
-  expect(withResumeFooter(base, [])).toBe(base);
-  const out = withResumeFooter(base, ["step 1 (bean) — claude --resume s1", "step 2 (workspace) — codex resume s2"]);
-  const expected = "summary\n\nResume a delegate session:\nstep 1 (bean) — claude --resume s1\nstep 2 (workspace) — codex resume s2";
-  expect(out.digest).toBe(expected);
-  expect(out.record.digest).toBe(expected);
 });
 
 describe("routine memories", () => {

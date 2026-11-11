@@ -138,15 +138,14 @@ describe("parallel groups on the host", () => {
     return { ...h, status };
   };
 
-  it("labels receipts from the request even when session callbacks land late, and shows one counting group line", async () => {
-    // Both members start; their sessions report only after both are running, in reverse.
+  it("shows one counting group line for a parallel group", async () => {
+    // Both members start; they finish only after both are running, in reverse.
     const waiting: (() => void)[] = [];
     let n = 0;
-    const sid = (k: number): string => `00000000-0000-0000-0000-00000000000${k}`;
     const h = host({
-      delegateStep: (req, onSession) => new Promise((resolve) => {
-        const k = ++n;
-        waiting.push(() => { onSession?.("claude", sid(k), join(dir, "workspace")); resolve({ output: `${req.stepIndex} out`, cli: "claude" }); });
+      delegateStep: (req) => new Promise((resolve) => {
+        n++;
+        waiting.push(() => resolve({ output: `${req.stepIndex} out`, cli: "claude" }));
         if (waiting.length === 2) waiting.splice(0).reverse().forEach((f) => f());
       }),
       commandStep: async () => (n <= 2 ? { exitCode: 1, output: "fail" } : { exitCode: 0, output: "pass" }),
@@ -157,9 +156,6 @@ describe("parallel groups on the host", () => {
       { kind: "command", id: "j", command: "check", gate: { onFail: { goto: "a" } } },
     ]));
     expect(res.record.status).toBe("ok");
-    for (const label of ["step 1", "step 2", "step 1 round 2", "step 2 round 2"]) {
-      expect(res.digest).toMatch(new RegExp(`\\n${label} \\(workspace\\) — claude --resume`));
-    }
     const lines = h.status.flatMap((e) => (e.type === "step" ? [e.line] : []));
     expect(lines.slice(0, 3)).toEqual(["⫴ lint · test (2 of 2 left)", "⫴ lint · test (1 of 2 left)", "⫴ lint · test (0 of 2 left)"]);
     expect(lines).toContain("⫴ lint · test (2 of 2 left) · round 2");
