@@ -526,6 +526,9 @@ button, input, textarea, select, a {
 /* Terminal pane (TerminalPane.tsx): under the composer, inset like it, reading as part of the
    chat column — surface fill, hairline border, the theme's own ANSI palette. */
 .bean-chat--term .bean-chat-scroll { min-height: 120px; }
+/* ⌘ held over a link or path in the chat log (chat-links.ts): only that token underlines. */
+.bean-chat-scroll--link { cursor: pointer; }
+::highlight(bean-link) { text-decoration: underline; }
 .bean-term {
   position: relative;
   flex: 0 1 auto;

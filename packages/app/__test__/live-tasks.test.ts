@@ -113,6 +113,28 @@ describe("createLiveTasks", () => {
     expect(h.live.send(A, "s1", "late")).toBe("That agent session has ended.");
   });
 
+  it("remembers a chat's project past its session for Cmd+click; a second project or a release forgets it", async () => {
+    const h = harness();
+    expect(h.live.projectOf("m1")).toBeUndefined();
+    await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "go" });
+    h.live.stop(A, "s1");
+    h.cbs[0]!.onExit();
+    expect(h.live.projectOf("m1")).toBe("/proj"); // older replies stay clickable
+    await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "again" });
+    expect(h.live.projectOf("m1")).toBe("/proj");
+    expect(h.live.projectOf("m2")).toBeUndefined();
+    h.live.stop(A, "s2");
+    h.cbs[1]!.onExit();
+    await h.live.start(A, { agent: "claude", projectPath: "", ask: "scratch" }); // -> /scratch
+    expect(h.live.projectOf("m1")).toBeUndefined();
+    h.live.stopMount("m1");
+    h.cbs[2]!.onExit();
+    await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "fresh" });
+    expect(h.live.projectOf("m1")).toBe("/proj");
+    h.live.stopMount("m1");
+    expect(h.live.projectOf("m1")).toBeUndefined();
+  });
+
   it("reports a crash as failed and an idle/clean exit as ended", async () => {
     const h = harness();
     await h.live.start(A, { agent: "codex", projectPath: "/proj", ask: "a" });

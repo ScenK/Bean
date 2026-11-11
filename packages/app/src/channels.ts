@@ -70,6 +70,7 @@ export const IPC = {
   terminalStop: "bean:terminal-stop",
   terminalRunning: "bean:terminal-running",
   terminalOpenLink: "bean:terminal-open-link",
+  chatOpenPath: "bean:chat-open-path",
   terminalEvent: "bean:terminal-event",
   availableClis: "bean:available-clis",
   detectedClis: "bean:detected-clis",

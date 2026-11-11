@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("bean", {
   terminalStop: (mountId: string, tabId?: string): Promise<void> => ipcRenderer.invoke(IPC.terminalStop, mountId, tabId),
   terminalRunning: (mountId: string, tabId?: string): Promise<string[]> => ipcRenderer.invoke(IPC.terminalRunning, mountId, tabId),
   terminalOpenLink: (url: string, mountId: string): void => ipcRenderer.send(IPC.terminalOpenLink, url, mountId),
+  chatOpenPath: (raw: string, mountId: string): void => ipcRenderer.send(IPC.chatOpenPath, raw, mountId),
   onTerminalEvent: (cb: (e: TerminalEvent) => void) =>
     ipcRenderer.on(IPC.terminalEvent, (_e, ev: TerminalEvent) => cb(ev)),
   availableClis: (): Promise<CliName[]> => ipcRenderer.invoke(IPC.availableClis),

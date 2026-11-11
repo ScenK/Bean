@@ -209,6 +209,10 @@ export function createLiveTasks(deps: LiveTasksDeps) {
   const engine = deps.engine ?? startLiveEngine;
   // Keyed by session id, not chat: "one per chat" is only a check in start()/resume().
   const sessions = new Map<string, Session>();
+  // Per chat (mount): the project its live sessions ran in, for Cmd+click on a relative path
+  // (#779). null = sessions in two different projects — ambiguous, so relative paths stop resolving.
+  // Outlives the session (older replies stay clickable); cleared on the chat's release (stopMount).
+  const mountProjects = new Map<string, string | null>();
   // CLI session ids being handed to a bot (Continue in Discord): no resume until the bot's ack.
   const handingOver = new Set<string>();
 
@@ -256,6 +260,8 @@ export function createLiveTasks(deps: LiveTasksDeps) {
   const launch = (sessionId: string, s: Session, projectPath: string, prompt: string, handedOver: number): string | undefined => {
     const agent = s.agent;
     recordRun(deps.dir, sessionId, projectPath, process.pid);
+    const known = mountProjects.get(s.mountId);
+    mountProjects.set(s.mountId, known === undefined || known === projectPath ? projectPath : null);
     emit(sessionId, s, { type: "started", projectPath, handedOver });
     try {
       s.handle = engine(
@@ -431,8 +437,12 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       if (s && owns(s, owner)) stopSession(s);
     },
 
+    /** The project this chat's live sessions ran in; undefined = none, or more than one. */
+    projectOf: (mountId: string): string | undefined => mountProjects.get(mountId) ?? undefined,
+
     /** The chat was released (evicted or discarded): its session goes with it. */
     stopMount(mountId: string): void {
+      mountProjects.delete(mountId);
       for (const s of sessions.values()) if (s.mountId === mountId) stopSession(s);
     },
 
