@@ -155,3 +155,35 @@ test("chat links: Cmd+click on a URL in a delegate card's result opens it once",
     await Promise.allSettled([app.close(), home.cleanup()]);
   }
 });
+
+// #780: Cmd+click on an absolute path the shell printed opens it once; a plain click does nothing.
+test("chat links: Cmd+click on pwd output in the terminal opens the path once", async () => {
+  const home = await makeBeanHome({ autoMemory: false });
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const chat = await openChat(app);
+    await chat.keyboard.press("Control+Backquote");
+    const rows = chat.locator(".bean-chat:not([hidden]) .bean-term .xterm-rows");
+    await expect.poll(() => chat.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))).toBe(true);
+    await chat.keyboard.type("cd /usr/bin && pwd");
+    await chat.keyboard.press("Enter");
+    const out = rows.locator(":scope > div", { hasText: /^\s*\/usr\/bin\s*$/ });
+    await expect(out).toHaveCount(1);
+    await record(app);
+    const box = (await out.boundingBox())!;
+    const at = { x: box.x + 20, y: box.y + box.height / 2 }; // inside "/usr/bin" (8 cells from the left edge)
+    await chat.mouse.move(at.x, at.y);
+    await chat.mouse.click(at.x, at.y);
+    await chat.waitForTimeout(300);
+    expect(await opened(app)).toEqual([]);
+    await chat.keyboard.down("Meta");
+    await chat.mouse.move(at.x + 1, at.y);
+    await chat.mouse.click(at.x + 1, at.y);
+    await chat.keyboard.up("Meta");
+    await expect.poll(() => opened(app)).toEqual(["path /usr/bin"]);
+    await chat.waitForTimeout(300);
+    expect(await opened(app)).toEqual(["path /usr/bin"]);
+  } finally {
+    await Promise.allSettled([app.close(), home.cleanup()]);
+  }
+});
