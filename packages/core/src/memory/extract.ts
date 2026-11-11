@@ -77,7 +77,7 @@ const FRAMING = new Set([
   "into", "when", "what", "also", "just", "very", "more", "most", "some", "uses", "likes", "wants",
   "prefers", "does", "doesnt", "have", "has", "been", "being", "should", "would", "project",
   "rather", "instead", "named", "called", "currently", "usually", "typically", "generally", "mostly",
-  "often", "really",
+  "often", "really", "because", "since", "ahead", "during",
 ]);
 // Tested on norm()'d text, which strips apostrophes ("don't" → "dont"). CJK has no word
 // boundaries, so its cues match anywhere — a stray 不 only ever over-rejects.
@@ -110,10 +110,13 @@ const has = (q: string[], w: string): boolean => q.some((x) => {
  * (or, for CJK, all its character bigrams) there, with the same polarity. So a generic shared word
  * ("project") can't launder a claim only a fetched page made, "I never use Docker" can't become
  * "Uses Docker", and in "I do not use Docker, but I use pnpm" the "not" stays with Docker.
+ * A quote with no negation anywhere has no "not" to misattach, so there the whole quote may carry
+ * a fact that joins its clauses ("since Black Friday is coming, I want good deals").
  * ponytail: prefix match stands in for stemming; Latin words under 4 chars are ignored, so a
  * forged 3-letter token (a tool name) can slip through. */
 function backedBy(quote: string, fact: string): "ok" | "unsupported" | "flipped" {
   const qs = clauses(quote).map((c) => ({ text: c, words: words(c), neg: NEGATION.test(c) }));
+  if (qs.length > 1 && !qs.some((q) => q.neg)) qs.push({ text: quote, words: words(quote), neg: false });
   let checked = 0;
   for (const fc of clauses(norm(fact))) {
     const need = content(fc);

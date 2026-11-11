@@ -196,6 +196,16 @@ test("CJK facts validate verbatim and as a light paraphrase", () => {
   expect(validateCandidate({ text: "用户讨厌pnpm", quote: "我喜欢用pnpm" }, ["我喜欢用pnpm"], projects)).toMatch(/support/);
 });
 
+test("a fact may join clauses the user split with a comma, unless the quote has a negation", () => {
+  const said = "Keep in mind that since black friday is coming, I'm more interested in good deals. Email triage的时候帮我盯着点。";
+  const quote = "since black friday is coming, I'm more interested in good deals";
+  ok(said, "User is more interested in good deals ahead of Black Friday.", quote);
+  ok(said, "User is more interested in good deals because Black Friday is coming.", quote);
+  expect(validateCandidate({ text: "Not interested in good deals ahead of Black Friday", quote }, [said], projects)).toMatch(/flips/);
+  const mixed = "I do not use Docker, but I use pnpm";
+  expect(validateCandidate({ text: "Uses Docker and pnpm", quote: mixed }, [mixed], projects)).toMatch(/support|flips/);
+});
+
 test("a quote cropped away from its negation is still rejected as flipped", () => {
   const said = "I never use Docker";
   expect(validateCandidate({ text: "Uses Docker.", quote: "use Docker" }, [said], projects)).toMatch(/flips/);
