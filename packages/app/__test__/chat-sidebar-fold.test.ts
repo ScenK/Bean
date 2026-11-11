@@ -294,7 +294,7 @@ test("drag a starred row onto a group header (move) or Starred (ungroup); only s
   root.remove();
 });
 
-test("⌘-click groups several chats by id: survives reorders and folds, drops vanished rows, keyboard Escape/Cancel, 100 cap, failure keeps the selection", async () => {
+test("⌘-click groups several chats by id: survives reorders and folds, drops vanished rows, keyboard Escape, 100 cap, failure keeps the selection", async () => {
   localStorage.clear();
   const row = (id: string, starred: boolean, groupName: string | null = null, d = 0) => ({ id, title: id, updatedAt: new Date(Date.now() - d * 1000).toISOString(), agents: [] as string[], starred, groupName });
   let threads = [row("a", false, null, 1), row("b", true, null, 2), row("c", false, null, 3), row("w", true, "Work", 4)];
@@ -352,13 +352,10 @@ test("⌘-click groups several chats by id: survives reorders and folds, drops v
   // An existing group's name reads "Add to group".
   await act(async () => { nameInput().value = "Work"; nameInput().dispatchEvent(new Event("input", { bubbles: true })); });
   expect(groupBtn().textContent).toBe("Add to group");
-  // Escape in the name input only leaves it (focus to Cancel); the next Escape drops the selection.
+  // The bar has no Cancel button: Escape (below) is the way out.
   await act(async () => { nameInput().focus(); nameInput().value = "  Big   Project "; nameInput().dispatchEvent(new Event("input", { bubbles: true })); });
+  expect(root.querySelectorAll(".bean-chat-sidebar-bar button")).toHaveLength(1);
   let esc!: KeyboardEvent;
-  await act(async () => { esc = key(nameInput(), "Escape"); });
-  expect(esc.defaultPrevented).toBe(true);
-  expect(document.activeElement?.textContent).toBe("Cancel");
-  expect(q(".bean-chat-sidebar-bar")).not.toBeNull();
   // A failure keeps the selection and the name, with the error shown.
   fail = "disk full";
   await act(async () => { groupBtn().click(); });
@@ -380,11 +377,12 @@ test("⌘-click groups several chats by id: survives reorders and folds, drops v
   expect(esc.defaultPrevented).toBe(true);
   expect(q(".bean-chat-sidebar-bar")).toBeNull();
   expect(document.activeElement).toBe(open("w"));
-  // Cancel, likewise — focus moves to New chat, which replaces the bar; the next selection starts empty.
+  // Escape in the name input, likewise — focus moves to New chat, which replaces the bar; the next
+  // selection starts empty.
   await act(async () => { pick(open("w")); });
-  await act(async () => { nameInput().value = "X"; nameInput().dispatchEvent(new Event("input", { bubbles: true })); });
-  const cancel = [...root.querySelectorAll<HTMLButtonElement>(".bean-chat-sidebar-bar button")].find((b) => b.textContent === "Cancel")!;
-  await act(async () => { cancel.focus(); cancel.click(); });
+  await act(async () => { nameInput().focus(); nameInput().value = "X"; nameInput().dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => { esc = key(nameInput(), "Escape"); });
+  expect(esc.defaultPrevented).toBe(true);
   expect(q(".bean-chat-sidebar-bar")).toBeNull();
   expect(document.activeElement).toBe(q(".bean-chat-sidebar-new"));
   await act(async () => { pick(open("w")); });

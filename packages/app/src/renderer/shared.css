@@ -2578,6 +2578,7 @@ button, input, textarea, select, a {
   color: var(--bean-accent-text);
 }
 .bean-routines-footer { display: flex; align-items: center; gap: 12px; }
+.bean-routines-footer .bean-btn { flex: none; white-space: nowrap; }
 .bean-routines-digest-line {
   display: flex;
   align-items: center;
