@@ -15,7 +15,7 @@ async function openChat(app: ElectronApplication): Promise<Page> {
   return chat;
 }
 
-test("Bean's turn: the row's Stop and Esc Esc end it, the next send answers; a single Esc with the overlay open only closes it", async () => {
+test("Bean's turn: the row's Stop and Esc Esc end it, the next send answers; a single Esc with the overlay open only closes it", { tag: "@ci" }, async () => {
   const home = await makeBeanHome({ autoMemory: false });
   const stub = await startStubOpenAI();
   const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });

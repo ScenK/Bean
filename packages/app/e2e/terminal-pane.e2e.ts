@@ -7,7 +7,7 @@ import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
-test("chat terminal: folded by default, Control+` opens from the composer and folds from the shell, n stays in the shell", async () => {
+test("chat terminal: folded by default, Control+` opens from the composer and folds from the shell, n stays in the shell", { tag: "@ci" }, async () => {
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
   stub.queue({ content: "Hello from stub!" });
@@ -310,7 +310,7 @@ const alive = (pid: number): boolean => {
 };
 
 // #675: the window-close card lists every tab's running command; Stop & close leaves no shell or child.
-test("chat terminal tabs: closing the window with two busy tabs names both, Stop & close kills every shell and command", async () => {
+test("chat terminal tabs: closing the window with two busy tabs names both, Stop & close kills every shell and command", { tag: "@ci" }, async () => {
   const home = await makeBeanHome({ autoMemory: false });
   const app = await launchBean({ HOME: home.homeDir });
   const sleeper = `sleep ${200_000 + (process.pid % 50_000)}`;

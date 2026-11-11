@@ -5,7 +5,7 @@ import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
-test("chat: sending a message renders the stubbed reply", async () => {
+test("chat: sending a message renders the stubbed reply", { tag: "@ci" }, async () => {
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
   stub.queue({ content: "Hello from stub!" });

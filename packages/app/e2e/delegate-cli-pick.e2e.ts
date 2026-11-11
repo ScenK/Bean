@@ -7,7 +7,7 @@ import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
 // The delegate card's CLI pick reaches the real spawn: a fake codex records its argv and cwd.
 // Run against a packaged build with BEAN_E2E_EXECUTABLE (launch-app.ts).
-test("delegate card: picking codex over a claude-only remembered model spawns codex in the picked project", async () => {
+test("delegate card: picking codex over a claude-only remembered model spawns codex in the picked project", { tag: "@ci" }, async () => {
   const home = await makeBeanHome({ disabledClis: ["opencode"], autoMemory: false });
   const bin = join(home.homeDir, "fake-bin");
   await mkdir(bin, { recursive: true });

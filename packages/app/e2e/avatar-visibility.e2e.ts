@@ -17,7 +17,7 @@ const openMenu = async (page: Page): Promise<void> => {
   await expect(page.locator(".bean-menu--open")).toBeAttached();
 };
 
-test("theme is ready at boot and failed theme IPC retains a visible fallback", async () => {
+test("theme is ready at boot and failed theme IPC retains a visible fallback", { tag: "@ci" }, async () => {
   const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"] });
   const app = await launchBean({ HOME: home.homeDir });
   try {
@@ -132,15 +132,18 @@ for (const failure of ["early", "config"] as const) {
   });
 }
 
-test("Bring Bean Back reloads a crashed avatar with its running job's bubble, without stopping the job", async () => {
+test("Bring Bean Back reloads a crashed avatar with its running job's bubble, without stopping the job", { tag: "@ci" }, async () => {
   const home = await makeBeanHome({ disabledClis: ["claude", "codex", "opencode"], autoMemory: false });
   const stub = await startStubOpenAI();
   const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
   // Read through main: Playwright's Page for the avatar doesn't survive its renderer dying.
+  // A probe that spans the renderer swap throws "Render frame was disposed"; report it as a
+  // value so the poll retries instead of failing.
   const inAvatar = (js: string) => app.evaluate(({ BrowserWindow }, js) => {
     const win = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("avatar.html"))!;
     return win.webContents.isCrashed() ? "crashed" : win.webContents.executeJavaScript(js);
-  }, js);
+  }, js).catch(() => "swapping");
+  const avatarLog = () => readFile(join(home.homeDir, ".bean", "logs", "avatar.log"), "utf8").catch(() => "");
   try {
     const avatar = await app.firstWindow();
     await expect(avatar.locator(".bean-orb-body")).toBeAttached();
@@ -162,12 +165,14 @@ test("Bring Bean Back reloads a crashed avatar with its running job's bubble, wi
     const dockBefore = await dock();
     await app.evaluate(() => (globalThis as { beanBringBack?: () => void }).beanBringBack!());
     expect(await dock()).toBe(dockBefore); // the Space hop must not flip the activation policy
+    // Probe the page only once main has finished the reload; its budget is AVATAR_RELOAD_TIMEOUT_MS (10 s).
+    await expect.poll(avatarLog, { timeout: 15_000 }).toMatch(/ bring-back-outcome \{"outcome":"reload ok"/);
     await expect.poll(() => inAvatar(`!!document.querySelector(".bean-orb-body")`)).toBe(true);
     await expect.poll(() => inAvatar(`document.querySelectorAll(".bean-bubble").length`)).toBe(1);
     await expect(chat.locator(".bean-bubble--working")).toHaveCount(1); // the turn kept running
     expect(stub.aborted()).toBe(0);
 
-    const log = await readFile(join(home.homeDir, ".bean", "logs", "avatar.log"), "utf8");
+    const log = await avatarLog();
     expect(log).toMatch(/ render-process-gone \{"reason":"/);
     expect(log).toMatch(/ bring-back \{.*"crashed":true/);
     expect(log).toMatch(/ bring-back-outcome \{"outcome":"reload ok"/);

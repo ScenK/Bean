@@ -116,7 +116,7 @@ const setTheme = (win: Page, theme: string): Promise<void> => win.evaluate(async
 
 const WINDOWS = ["chat", "skills", "projects", "routines", "dashboard", "settings", "persona", "about", "notes", "plan"];
 
-test("every component window clears WCAG AA text contrast in both themes", async () => {
+test("every component window clears WCAG AA text contrast in both themes", { tag: "@ci" }, async () => {
   const home = await makeBeanHome();
   // Two saved chats (one with an agent) so the history sidebar's rows, groups and mini-avatars are measured.
   const db = dbFile(join(home.homeDir, ".bean"));

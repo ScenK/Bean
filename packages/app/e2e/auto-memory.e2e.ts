@@ -32,7 +32,7 @@ test("auto memory: a typed turn is captured with an Undo row, close is instant",
     const started = Date.now();
     const closed = chat.waitForEvent("close");
     await app.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("chat"))!.close();
+      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))!.close();
     });
     await closed;
     // ponytail: 200ms is the product bar; e2e allows CI jitter on top.
@@ -65,7 +65,7 @@ test("dream: a due close tidies memory in the background and Undo last dream res
     await expect(chat.locator(".bean-bubble--bean")).toContainText("Noted!");
     const closed = chat.waitForEvent("close");
     await app.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes("chat"))!.close();
+      BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith("/chat.html"))!.close();
     });
     await closed;
 

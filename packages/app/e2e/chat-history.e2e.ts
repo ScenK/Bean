@@ -70,7 +70,7 @@ test("chat history: a chat is saved through its close", async () => {
 });
 
 // #504: going off the record removes the saved chat, and nothing more is written — not even at close.
-test("chat history: incognito removes the chat and blocks the close write", async () => {
+test("chat history: incognito removes the chat and blocks the close write", { tag: "@ci" }, async () => {
   const home = await makeBeanHome();
   const stub = await startStubOpenAI();
   stub.queue({ content: "First!" });
@@ -101,7 +101,7 @@ test("chat history: incognito removes the chat and blocks the close write", asyn
 
 // #505/#516: a saved chat survives a relaunch, and picking it in the sidebar restores it inside the
 // same window — no close, no hide, no second window.
-test("chat history: relaunch, pick the saved chat, transcript restored in the same window", async () => {
+test("chat history: relaunch, pick the saved chat, transcript restored in the same window", { tag: "@ci" }, async () => {
   const home = await makeBeanHome({ autoMemory: false });
   const stub = await startStubOpenAI();
   stub.queue({ content: "Hello there!" });
