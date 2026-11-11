@@ -14,19 +14,24 @@ import {
 import type { RoutineBuildView } from "./routine-builder.js";
 import type { RunStatus, WatchCheckResult, SendCard } from "@bean/core";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, realpath, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { promisify } from "node:util";
 import { join } from "node:path";
 import { BrowserWindow, dialog, screen, shell, type IpcMain, type WebContents } from "electron";
 import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { createLiveTasks } from "./live-tasks.js";
 import { terminalLink, type TerminalTasks } from "./terminal-tasks.js";
+import { chatPathTarget, openChatPath } from "./chat-open-path.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import type { UpdateCheckOutcome } from "./updater.js";
 import type { buildSyncedChatHandlers } from "./synced-chats.js";
 import type { buildDeskContinueHandler } from "./desk-continue.js";
 import type { buildDestinationHandlers, buildSendHandlers } from "./destinations.js";
+
+const execFileAsync = promisify(execFile);
 
 export { IPC };
 
@@ -1176,7 +1181,7 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
     /** Stops every task one chat (mount) started — its release. */
     cancelMount: (mountId: string) => void;
   };
-  liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "interrupt" | "resume" | "stopMount">;
+  liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "interrupt" | "resume" | "stopMount" | "projectOf">;
   terminalTasks: Pick<TerminalTasks, "start" | "write" | "resize" | "ack" | "stop" | "stopMount" | "runningCommand">;
   /** Whether an IPC sender is the chat window — the only window that may drive an agent session. */
   isChatSender: (sender: WebContents) => boolean;
@@ -1390,6 +1395,21 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.on(IPC.terminalOpenLink, (e, url: unknown, mountId: unknown) => {
     const href = tryChatKey(e.sender, mountId) === undefined ? undefined : terminalLink(url);
     if (href) shell.openExternal(href).catch((err: unknown) => console.error("terminal link failed:", err));
+  });
+  // Cmd+click on a path in the chat log (#779): validated and resolved here, never by the renderer.
+  ipcMain.on(IPC.chatOpenPath, (e, raw: unknown, mountId: unknown) => {
+    const key = tryChatKey(e.sender, mountId);
+    const abs = key === undefined ? undefined : chatPathTarget(raw, deps.liveTasks.projectOf(key), homedir());
+    if (!abs) return;
+    void openChatPath(abs, {
+      realpath,
+      stat,
+      editorApp: deps.getEditorApp(),
+      terminalApp: deps.getTerminalApp(),
+      openDir: async (p) => { const err = await shell.openPath(p); if (err) throw new Error(err); },
+      reveal: (p) => shell.showItemInFolder(p),
+      openInEditor: (app, p) => execFileAsync("/usr/bin/open", ["-a", app, p]),
+    });
   });
   ipcMain.handle(IPC.availableClis, () => deps.getAvailableClis());
   ipcMain.handle(IPC.detectedClis, () => deps.getDetectedClis());

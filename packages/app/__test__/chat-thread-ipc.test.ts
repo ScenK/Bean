@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getDesktopChat, saveDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, DESKTOP_CHAT_MAX_BYTES } from "@bean/core";
@@ -7,7 +7,7 @@ import { buildChatThreadHandlers, registerIpc, type RegisterDeps } from "../src/
 import { IPC } from "../src/channels.js";
 import type { Memory } from "@bean/core";
 
-vi.mock("electron", () => ({ shell: { openExternal: vi.fn(async () => {}) } }));
+vi.mock("electron", () => ({ shell: { openExternal: vi.fn(async () => {}), openPath: vi.fn(async () => ""), showItemInFolder: vi.fn() } }));
 
 const ID = "0b6c4a52-1f5e-4c55-9a3e-2c6f0d9e7a10";
 const OTHER = "9f1d7c2e-3b4a-4e6f-8a1b-5c2d3e4f5a6b";
@@ -187,7 +187,7 @@ function ipcHarness(given: Partial<RegisterDeps> = {}) {
   const { handlers, row } = setup();
   const chat = { id: 1, isDestroyed: () => false, send: vi.fn() }, other = { id: 2, isDestroyed: () => false, send: vi.fn() };
   const delegateTasks = { start: vi.fn(async () => "t1"), cancel: vi.fn(), cancelMount: vi.fn() };
-  const liveTasks = { start: vi.fn(async () => ({ sessionId: "s1", handedOver: 0 })), send: vi.fn(), stop: vi.fn(), interrupt: vi.fn(() => true), resume: vi.fn(), stopMount: vi.fn() };
+  const liveTasks = { start: vi.fn(async () => ({ sessionId: "s1", handedOver: 0 })), send: vi.fn(), stop: vi.fn(), interrupt: vi.fn(() => true), resume: vi.fn(), stopMount: vi.fn(), projectOf: vi.fn((): string | undefined => undefined) };
   const terminalTasks = { start: vi.fn(async () => ({ cwd: "/scratch" })), write: vi.fn(), resize: vi.fn(), ack: vi.fn(), stop: vi.fn(async () => {}), stopMount: vi.fn(async () => {}), runningCommand: vi.fn(async () => ["pnpm"]) };
   const all: Partial<RegisterDeps> = { isChatSender: (s) => s === (chat as never), chatThreadHandlers: handlers, delegateTasks, liveTasks, terminalTasks, ...given };
   // Every other dep is a no-op: registration only stores handlers.
@@ -265,6 +265,36 @@ describe("chat thread IPC", () => {
     expect(terminalTasks.write.mock.calls).toHaveLength(1);
     releaseChatSender(chat.id);
     expect(terminalTasks.stopMount.mock.calls).toEqual([[A], [A], [B]]);
+  });
+
+  it("chatOpenPath: only the owning chat, validated in main, relative paths only against the chat's live project", async () => {
+    const proj = realpathSync(mkdtempSync(join(tmpdir(), "bean-open-")));
+    const { chat, other, emit, liveTasks } = ipcHarness({ getEditorApp: () => "", getTerminalApp: () => "" });
+    const { shell } = await import("electron");
+    const reveal = vi.mocked(shell.showItemInFolder);
+    const openPath = vi.mocked(shell.openPath);
+    reveal.mockClear();
+    openPath.mockClear();
+    const settle = () => new Promise((r) => setTimeout(r, 20));
+    emit(IPC.chatAttach, chat, A);
+    liveTasks.projectOf.mockImplementation((m: string) => (m === A ? proj : undefined));
+    emit(IPC.chatOpenPath, other, proj, A); // not the chat window
+    emit(IPC.chatOpenPath, chat, proj, B); // a mount this window doesn't own
+    emit(IPC.chatOpenPath, chat, `file://${proj}`, A); // a URI scheme
+    emit(IPC.chatOpenPath, chat, join(proj, "missing.md"), A); // missing = no-op
+    await settle();
+    expect([reveal.mock.calls.length, openPath.mock.calls.length]).toEqual([0, 0]);
+    emit(IPC.chatOpenPath, chat, `${proj}:3`, A);
+    emit(IPC.chatOpenPath, chat, ".", A); // relative, against the live project
+    await settle();
+    expect(openPath.mock.calls).toEqual([[proj], [proj]]);
+    expect(liveTasks.projectOf.mock.calls.every(([m]) => m === A)).toBe(true);
+    // A file with no editor set is revealed, never opened.
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(join(proj, "a.sh"), "echo hi");
+    emit(IPC.chatOpenPath, chat, "a.sh", A);
+    await settle();
+    expect(reveal.mock.calls).toEqual([[join(proj, "a.sh")]]);
   });
 
   it("two mounts in one window: separate threads, per-mount incognito, delete refuses both, release frees them", async () => {

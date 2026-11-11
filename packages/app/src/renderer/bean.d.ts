@@ -48,6 +48,9 @@ declare global {
       terminalRunning(mountId: string, tabId?: string): Promise<string[]>;
       /** http(s) only; anything else is ignored. */
       terminalOpenLink(url: string, mountId: string): void;
+      /** A Cmd+clicked path from the chat: main validates and resolves it, then opens a directory in
+       * Finder, a file in the configured editor, or reveals it. Invalid or missing = ignored. */
+      chatOpenPath(raw: string, mountId: string): void;
       onTerminalEvent(cb: (e: TerminalEvent) => void): void;
       availableClis(): Promise<CliName[]>;
       detectedClis(): Promise<CliName[]>;

@@ -17,6 +17,7 @@ import {
   HANDOFF_ITEMS, agentModels, canContinueLive, handoffItems, imageLabel, isLiveAgent, mappedImageLabels, offerAgent, parseSlash, type ImageLabels,
 } from "./agent-mode.js";
 import { SECTION_TITLES, slashMenu, type SlashEntry } from "./slash-commands.js";
+import { useCmdLinks } from "./chat-links.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 import type { ChatDrop, DroppedImage } from "../../../channels.js";
@@ -245,6 +246,7 @@ export function ChatPanel({
   onStopTurn: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  useCmdLinks(scrollRef, mountId);
   const [pendingImages, setPendingImages] = useState<Array<{ attachment: ImageAttachment; dataUrl: string }>>([]);
   const [imageError, setImageError] = useState<string | null>(null);
   // FileReader is async — a submit racing an unfinished read would send the text without its
@@ -617,6 +619,7 @@ export function ChatPanel({
         {items.length === 0 ? (
           <PanelEmptyState message="What are we brewing today?">
             <div class="bean-panel-empty-text">Ask Bean to do something, or just say hi.</div>
+            <div class="bean-panel-empty-text">⌘-click a link or path to open it</div>
           </PanelEmptyState>
         ) : null}
         {items.map((it, i) => {
