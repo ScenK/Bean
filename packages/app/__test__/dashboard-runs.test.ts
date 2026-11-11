@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { attemptSessions, attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, observedLanes, reviewRuns, runFlowOverlay, sessionSummary, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
+import { attemptSessions, attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, reviewRuns, sessionSummary, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
 import type { RoutineStep, RunRecord } from "@bean/core";
 import { stepFlow } from "@bean/core/routine-graph";
 import type { RoutineStateView } from "../src/ipc.js";
@@ -207,125 +207,6 @@ describe("gated runs", () => {
   });
 });
 
-describe("runFlowOverlay", () => {
-  type Rec = RunRecord["steps"][number];
-  const s = (id: string, extra: Partial<RoutineStep> = {}): RoutineStep => ({ kind: "chat", id, instruction: "x", ...extra } as RoutineStep);
-  const r = (id: string, extra: Partial<Rec> = {}): Rec => ({ kind: "chat", id, round: 1, ok: true, summary: "", ...extra });
-  // Lit edges as readable `from>to:kind` strings, in edge order.
-  const lit = (steps: RoutineStep[], recs: Rec[]): string[] | "drift" => {
-    const o = runFlowOverlay({ steps: recs }, steps);
-    if (o === "drift") return o;
-    return stepFlow(steps).edges.flatMap((e, k) => (o.edges.has(k) ? [`${e.from}>${typeof e.to === "number" ? e.to : e.to}:${e.kind}`] : []));
-  };
-  const overlay = (steps: RoutineStep[], recs: Rec[]) => {
-    const o = runFlowOverlay({ steps: recs }, steps);
-    if (o === "drift") throw new Error("drift");
-    return o;
-  };
-  const line = [s("a"), s("b"), s("c")];
-
-  test("linear ok lights every hop and the end", () => {
-    expect(lit(line, [r("a"), r("b"), r("c")])).toEqual(["0>1:flow", "1>2:flow", "2>end:flow"]);
-    expect(overlay(line, [r("a"), r("b"), r("c")])).toMatchObject({ counts: [1, 1, 1], failed: [false, false, false] });
-  });
-
-  test("failed mid-way: the step is ✗, later steps never reached, no end", () => {
-    const o = overlay(line, [r("a"), r("b", { ok: false })]);
-    expect(o).toMatchObject({ counts: [1, 1, 0], failed: [false, true, false] });
-    expect(lit(line, [r("a"), r("b", { ok: false })])).toEqual(["0>1:flow"]);
-  });
-
-  const gated = [s("impl"), s("test", { gate: { onFail: { goto: "impl", maxRounds: 3 } } }), s("ship")];
-  test("gate loop round 2 lights the loop and counts ×2", () => {
-    const recs = [r("impl"), r("test", { verdict: "FAIL" }), r("impl", { round: 2 }), r("test", { round: 2, verdict: "PASS" }), r("ship")];
-    expect(lit(gated, recs)).toEqual(["0>1:flow", "1>2:pass", "1>0:loop", "2>end:flow"]);
-    expect(overlay(gated, recs)).toMatchObject({ counts: [2, 2, 1], failed: [false, false, false] });
-  });
-
-  test("an exhausted loop leaves the gate ✗ and the rest dimmed", () => {
-    const recs = [r("impl"), r("test", { verdict: "FAIL" }), r("impl", { round: 2 }), r("test", { round: 2, verdict: "FAIL" })];
-    expect(overlay(gated, recs)).toMatchObject({ counts: [2, 2, 0], failed: [false, true, false] });
-  });
-
-  const routed = [
-    s("triage", { route: { paths: [{ when: "bug", goto: "fix" }, { when: "spec", goto: "spec" }] } }),
-    s("fix", { next: "end" }),
-    s("spec"),
-  ];
-  test("a route lights the path it chose", () => {
-    expect(lit(routed, [r("triage", { chose: "spec", verdict: "spec" }), r("spec")])).toEqual(["0>2:path", "2>end:flow"]);
-    expect(overlay(routed, [r("triage", { chose: "spec" }), r("spec")]).counts).toEqual([1, 0, 1]);
-  });
-
-  test("no-match stop (needs-attention) lights the stop cap", () => {
-    expect(lit(routed, [r("triage")])).toEqual(["0>stop:otherwise"]);
-    const stopGate = [s("a", { gate: { onFail: "stop" } }), s("b")];
-    expect(lit(stopGate, [r("a", { verdict: "FAIL" })])).toEqual(["0>stop:fail"]);
-  });
-
-  test("todo-driven runs union their passes and count ×N", () => {
-    const recs = [r("a"), r("b"), r("c"), r("a"), r("b", { ok: false }), r("a"), r("b"), r("c")];
-    const o = overlay(line, recs);
-    expect(o).toMatchObject({ counts: [3, 3, 2], failed: [false, true, false] });
-    expect(lit(line, recs)).toEqual(["0>1:flow", "1>2:flow", "2>end:flow"]);
-  });
-
-  test("legacy runs without ids map by position when the kinds line up", () => {
-    const legacy: RoutineStep[] = [{ kind: "chat", instruction: "x" }, { kind: "command", command: "make" }];
-    const recs: Rec[] = [{ kind: "chat", ok: true, summary: "" }, { kind: "command", ok: false, summary: "" }];
-    expect(overlay(legacy, recs)).toMatchObject({ counts: [1, 1], failed: [false, true] });
-    // A todo pass that failed starts the next pass over at step 1.
-    const todo = (kind: "chat" | "command", ok: boolean): Rec => ({ kind, ok, summary: "[todo: t] out" });
-    expect(overlay(legacy, [todo("chat", false), todo("chat", true), todo("command", true)]).counts).toEqual([2, 1]);
-    expect(runFlowOverlay({ steps: [{ kind: "command", ok: true, summary: "" }] }, legacy)).toBe("drift");
-    // A plain run has one pass: more records than steps means steps were removed since.
-    expect(runFlowOverlay({ steps: [...recs, ...recs] }, legacy)).toBe("drift");
-    expect(runFlowOverlay({ steps: [{ kind: "chat", ok: true, summary: "" }] }, gated)).toBe("drift");
-  });
-
-  const grouped = [s("plan"), s("lint"), s("test", { alongside: true }), s("review", { alongside: true }), s("merge")];
-  test("a group run lights every fork and join, failed members included, with no drift", () => {
-    const recs = [r("plan"), r("lint"), r("test", { ok: false }), r("review"), r("merge")];
-    expect(lit(grouped, recs)).toEqual(["0>1:fork", "0>2:fork", "0>3:fork", "1>4:join", "2>4:join", "3>4:join", "4>end:flow"]);
-    expect(overlay(grouped, recs)).toMatchObject({ counts: [1, 1, 1, 1, 1], failed: [false, false, true, false, false] });
-    // A group that ends the run lights its joins to ● end.
-    expect(lit(grouped.slice(0, 4), recs.slice(0, 4))).toContain("3>end:join");
-    // Not the whole group, or out of step order: the record doesn't fit.
-    expect(runFlowOverlay({ steps: [r("plan"), r("lint"), r("review"), r("test"), r("merge")] }, grouped)).toBe("drift");
-    expect(runFlowOverlay({ steps: [r("plan"), r("lint"), r("test"), r("merge")] }, grouped)).toBe("drift");
-  });
-
-  test("a looped group counts rounds, and a member that errored then passed isn't ✗", () => {
-    const looped = [s("lint"), s("test", { alongside: true }), s("check", { gate: { onFail: { goto: "lint", maxRounds: 3 } } }), s("ship")];
-    const recs = [
-      r("lint"), r("test", { ok: false }), r("check", { verdict: "FAIL" }),
-      r("lint", { round: 2 }), r("test", { round: 2 }), r("check", { round: 2, verdict: "PASS" }), r("ship"),
-    ];
-    expect(overlay(looped, recs)).toMatchObject({ counts: [2, 2, 2, 1], failed: [false, false, false, false] });
-    expect(lit(looped, recs)).toEqual(["0>2:join", "1>2:join", "2>3:pass", "2>0:loop", "3>end:flow"]);
-  });
-
-  test("a legacy record without ids drifts when the definition has a group", () => {
-    const legacy: RoutineStep[] = [{ kind: "chat", instruction: "x" }, { kind: "chat", instruction: "y", alongside: true }];
-    expect(runFlowOverlay({ steps: [{ kind: "chat", ok: true, summary: "" }, { kind: "chat", ok: true, summary: "" }] }, legacy)).toBe("drift");
-  });
-
-  test("executedPath brackets a group the definition shows", () => {
-    const recs = [r("plan"), r("lint"), r("test", { ok: false }), r("review"), r("merge")];
-    expect(executedPath({ steps: recs }, grouped)).toBe("plan ✓ → [lint ✓ | test ✗ | review ✓] → merge ✓");
-    expect(executedPath({ steps: recs })).toBe("plan ✓ → lint ✓ → test ✗ → review ✓ → merge ✓");
-  });
-
-  test("drift: a deleted step or a re-pointed edge draws no highlight", () => {
-    expect(runFlowOverlay({ steps: [r("a"), r("gone")] }, line)).toBe("drift");
-    const repointed = [s("a", { next: "c" }), s("b"), s("c")];
-    expect(runFlowOverlay({ steps: [r("a"), r("b"), r("c")] }, repointed)).toBe("drift");
-    // The last step's chosen label no longer exists.
-    const relabeled = [s("triage", { route: { paths: [{ when: "bug", goto: "end" }, { when: "chore", goto: "end" }] } })];
-    expect(runFlowOverlay({ steps: [r("triage", { chose: "spec" })] }, relabeled)).toBe("drift");
-  });
-});
-
 describe("attempt sessions", () => {
   // 1 chat · 2,4,6 continue one opencode session · 3,5 one claude session.
   const d = (id: string, cli: "opencode" | "claude", continues?: string): RoutineStep =>
@@ -345,7 +226,6 @@ describe("attempt sessions", () => {
       { session: 2, last: false, next: 5 }, { session: 3, last: true }, { session: 2, last: true },
     ]);
     expect(sessionSummary(run)).toBe("2 agent sessions · ↻2 steps 2→4→6 (opencode) · ↻3 steps 3→5 (claude)");
-    expect(observedLanes(run, steps.length)).toEqual([0, 1, 2, 1, 2, 1]);
   });
 
   test("a gate loop's rounds share their session", () => {
@@ -375,7 +255,6 @@ describe("attempt sessions", () => {
   test("an attempt with no resume is never grouped", () => {
     expect(attemptSessions([at(1), at(3)], steps.map((s) => ({ ...s, continues: undefined }) as RoutineStep))).toEqual([{ last: true }, { last: true }]);
     expect(sessionSummary([at(1), at(3)])).toBeUndefined();
-    expect(observedLanes([at(1), at(3)], 6)).toEqual([0, 1, 2, 3, 4, 5]);
   });
 
   test("a definition edited after the run doesn't regroup it", () => {

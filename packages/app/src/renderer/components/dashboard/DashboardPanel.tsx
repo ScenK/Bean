@@ -5,9 +5,8 @@ import { nextRun } from "@bean/core/cron";
 import { Markdown } from "../../shared/Markdown.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
-import { StepFlow } from "../../shared/StepFlow.js";
 import {
-  attemptSessions, attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, observedLanes, pathName, reviewRuns, runFlowOverlay, sessionSummary,
+  attemptSessions, attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, pathName, reviewRuns, sessionSummary,
   splitSteps, stepLabel, stepPassed, unreadRuns,
   type DashRun, type DashStep, type RunBucket,
 } from "./runs.js";
@@ -95,14 +94,12 @@ export function DashboardPanel() {
   // shut; this list holds the runs flipped away from that default. Runs are newest-first, so
   // that's index 0.
   const [flippedDigests, setFlippedDigests] = useState<string[]>([]);
-  // Same default for each run's flow diagram: the latest open, the rest behind "Show flow ▾".
-  const [flippedFlows, setFlippedFlows] = useState<string[]>([]);
   const [reviewed, setReviewed] = useState<string[]>(() => readList(REVIEWED_KEY));
   const [flipped, setFlipped] = useState<string[]>(() => readList(FLIPPED_KEY));
   const [rerunning, setRerunning] = useState(false);
   const [notice, setNotice] = useState("");
-  // Full step outputs live in bean.db, not the run record — fetched when a run's steps are opened,
-  // or its flow is (for the shared-session badges). Keyed by recordId; `openOutputs` is which show.
+  // Full step outputs live in bean.db, not the run record — fetched when a run's steps are opened.
+  // Keyed by recordId; `openOutputs` is which show.
   const [attempts, setAttempts] = useState<Record<string, StepAttemptView[]>>({});
   const [openOutputs, setOpenOutputs] = useState<string[]>([]);
   const loading = useRef(new Set<string>());
@@ -200,12 +197,6 @@ export function DashboardPanel() {
     () => (bucket?.runs ?? []).map((run) => ({ run, ...splitSteps(run) })),
     [bucket],
   );
-  const flowOpenAt = (run: DashRun, index: number): boolean => (index === 0) !== flippedFlows.includes(run.id);
-  // An open flow badges the sessions its run's attempts shared — only delegate steps have one.
-  useEffect(() => {
-    if (!routine?.steps.some((s) => s.kind === "delegate")) return;
-    runViews.forEach(({ run }, i) => { if (run.recordId && flowOpenAt(run, i)) void loadAttempts(run.recordId); });
-  }, [runViews, flippedFlows, routine]);
   const unreadHere = (bucket?.runs ?? []).filter((r) => unreadIds.has(r.id)).length;
   const needsTotal = runViews.reduce((n, v) => n + v.needs.length, 0);
   const attentionTotal = runViews.filter((v) => v.run.status === "needs-attention").length;
@@ -329,10 +320,6 @@ export function DashboardPanel() {
     const ordinal = runViews.length - index;
     const resolvedOpen = openResolved.includes(run.id);
     const digestOpen = (index === 0) !== flippedDigests.includes(run.id);
-    const flowOpen = flowOpenAt(run, index);
-    const overlay = flowOpen && routine ? runFlowOverlay(run, routine.steps) : undefined;
-    // Lanes from what this run's attempts shared, never today's `continues` — and none on a drifted run.
-    const lanes = routine && loaded && overlay && overlay !== "drift" ? observedLanes(loaded, routine.steps.length) : undefined;
     return [
       spineRow(`${run.id}-head`, `run ${ordinal}`, "run", (
         <div class="bean-dash-run-head">
@@ -343,25 +330,6 @@ export function DashboardPanel() {
           {run.steps.length > 0 ? <span class="bean-dash-path">{executedPath(run, routine?.steps)}</span> : null}
         </div>
       )),
-
-      // The executed path above stays the text equivalent; the diagram adds what didn't run.
-      ...(routine && routine.steps.length > 0 && run.steps.length > 0
-        ? [spineRow(`${run.id}-flow`, "", "plain", (
-            <div class="bean-dash-digest bean-dash-flow">
-              <button
-                type="button"
-                class="bean-dash-digest-head"
-                aria-expanded={flowOpen}
-                onClick={() => toggle(flippedFlows, setFlippedFlows, run.id)}
-              >
-                <span class="bean-field-label">FLOW · RUN {ordinal}</span>
-                <span class="bean-dash-resolved-toggle">{flowOpen ? "Hide ▴" : "Show flow ▾"}</span>
-              </button>
-              {overlay === "drift" ? <div class="bean-dash-flow-note">This sprout changed since this run</div> : null}
-              {flowOpen ? <StepFlow steps={routine.steps} overlay={overlay === "drift" ? undefined : overlay} {...(lanes ? { lanes } : {})} /> : null}
-            </div>
-          ))]
-        : []),
 
       ...(attention
         ? [spineRow(`${run.id}-attention`, "gate", "call", (

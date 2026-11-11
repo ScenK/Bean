@@ -1,6 +1,5 @@
-import type { FlowEdge, RoutineStep, RunRecord, StepKind } from "@bean/core";
-import { stepFlow, stepGroups } from "@bean/core/routine-graph";
-import type { FlowOverlay } from "../../shared/StepFlow.js";
+import type { RoutineStep, RunRecord, StepKind } from "@bean/core";
+import { stepGroups } from "@bean/core/routine-graph";
 import type { RoutineStateView, StepAttemptView } from "../../../ipc.js";
 
 /** One routine run, tagged with the routine it came from — the dashboard reads every
@@ -89,107 +88,7 @@ export function executedPath(run: Pick<RunRecord, "steps">, steps: readonly Rout
   return parts.join(" → ");
 }
 
-/** Maps a run's recorded steps onto the sprout's current flow diagram. `"drift"` = the record no
- * longer fits today's definition (an unknown id, a hop with no edge, a legacy run whose kinds
- * don't line up) — draw the diagram plain and say so. Todo-driven runs are the union of their
- * passes; a pass restarts at the first step (round 1). A node is failed when its last execution
- * didn't pass, or it errored in an earlier pass (an error a later round of the same pass got past
- * — a group member retried on a loop — doesn't count). A parallel group's members are recorded together in step order: the
- * block lights every fork into it and every member's join, failed members included. Pure. */
-export function runFlowOverlay(run: Pick<RunRecord, "steps">, steps: RoutineStep[]): FlowOverlay | "drift" {
-  const { edges } = stepFlow(steps);
-  const recs = run.steps;
-  let at: number[];
-  if (recs.every((r) => r.id)) {
-    const ids = idIndex(steps);
-    at = recs.map((r) => ids.get(r.id!) ?? -1);
-  } else if (recs.some((r) => r.id) || steps.some((s) => s.gate || s.next !== undefined || s.route || s.alongside)) {
-    return "drift";
-  } else {
-    // Legacy: positional. A todo pass starts over after the last step or a failed step (the
-    // pipeline abandons that todo); a plain run is one pass that continues past a failure.
-    let p = -1;
-    at = recs.map((r, k) => {
-      const prev = recs[k - 1];
-      const restart = parseStep(r, k).todo !== undefined && (p + 1 >= steps.length || (prev !== undefined && !prev.ok));
-      p = restart ? 0 : p + 1;
-      return steps[p]?.kind === r.kind ? p : -1;
-    });
-  }
-  if (at.includes(-1) || (recs.length > 0 && at[0] !== 0)) return "drift";
 
-  // The edge the runner followed out of a recorded step: a route's chosen path (or otherwise when
-  // nothing matched), a gate's fail/loop on FAIL, else the step's forward edge. Into a group, that
-  // edge is a `fork` that keeps its kind in `via`.
-  const out = (k: number): number => {
-    const r = recs[k]!;
-    const from = at[k]!;
-    const want = (e: FlowEdge): boolean => {
-      const kind = e.kind === "fork" ? e.via : e.kind;
-      return steps[from]!.route ? (r.chose !== undefined ? kind === "path" && e.label === r.chose : kind === "otherwise")
-        : steps[from]!.gate && r.verdict === "FAIL" ? kind === "fail" || kind === "loop"
-        : kind === "flow" || kind === "next" || kind === "pass";
-    };
-    return edges.findIndex((e) => e.from === from && want(e));
-  };
-  const groups = new Map(stepGroups(steps).map((g) => [g.first, g] as const));
-  const counts = steps.map(() => 0);
-  const failed = steps.map(() => false);
-  const errored = new Set<number>(); // errored as of an earlier pass
-  const pass = new Map<number, boolean>(); // this pass: step → its latest attempt errored
-  const lit = new Set<number>();
-  const mark = (k: number): void => {
-    const i = at[k]!;
-    counts[i]!++;
-    pass.set(i, !recs[k]!.ok);
-    failed[i] = errored.has(i) || !stepPassed(recs[k]!);
-  };
-  // No next record, or the next one starts a new todo pass — which closes this pass. Called once per record.
-  const passEnds = (k: number): boolean => {
-    const next = recs[k + 1];
-    const ends = !next || (at[k + 1] === 0 && !(next.round && next.round > 1));
-    if (ends) {
-      for (const [i, err] of pass) if (err) errored.add(i);
-      pass.clear();
-    }
-    return ends;
-  };
-  for (let k = 0; k < recs.length; k++) {
-    const r = recs[k]!;
-    const g = groups.get(at[k]!);
-    if (g) {
-      const last = k + g.last - g.first;
-      for (let j = k; j <= last; j++) {
-        if (at[j] !== g.first + j - k) return "drift"; // not the whole group, in step order
-        mark(j);
-      }
-      // Every member joins at the same place.
-      const joins = edges.flatMap((e, x) => (e.kind === "join" && e.from >= g.first && e.from <= g.last ? [x] : []));
-      const to = edges[joins[0]!]?.to;
-      if (!passEnds(last)) {
-        if (to !== at[last + 1]) return "drift";
-        joins.forEach((x) => lit.add(x));
-      } else if (typeof to !== "number") joins.forEach((x) => lit.add(x)); // the group ended the run
-      k = last;
-      continue;
-    }
-    mark(k);
-    const e = out(k);
-    if (!passEnds(k)) {
-      // A hop with no matching edge today: the sprout was re-pointed since this run.
-      if (e < 0 || edges[e]!.to !== at[k + 1]) return "drift";
-      const hop = edges[e]!;
-      // Into a group: the fork to every member, not just the first.
-      edges.forEach((f, x) => { if (x === e || (hop.kind === "fork" && f.kind === "fork" && f.from === hop.from && f.via === hop.via && f.label === hop.label)) lit.add(x); });
-    } else if (r.ok) {
-      if (e < 0) return "drift"; // e.g. the route label it chose is gone
-      if (typeof edges[e]!.to !== "number") lit.add(e); // ended at ● end or ■ stop
-    }
-  }
-  return { counts, failed, edges: lit };
-}
-
-/** Where one step attempt sits among a run's agent sessions (see attemptSessions). */
 export interface AttemptSession {
   /** Step number of the session's first attempt — set only on a session more than one attempt shares. */
   session?: number;
@@ -238,20 +137,6 @@ export function sessionSummary(attempts: readonly (SessionAttempt & { cli?: stri
     return `↻${nums[0]} steps ${nums.join("→")}${cli ? ` (${cli})` : ""}`;
   };
   return [`${sessions.size} agent session${sessions.size === 1 ? "" : "s"}`, ...shared.map(lane)].join(" · ");
-}
-
-/** StepFlow's `lanes` for a past run, from what its attempts actually shared rather than today's
- * `continues`: each step → the first step of the session its first shared attempt was in. */
-export function observedLanes(attempts: readonly SessionAttempt[], stepCount: number): number[] {
-  const lanes = Array.from({ length: stepCount }, (_, k) => k);
-  const done = new Set<number>();
-  attemptSessions(attempts).forEach(({ session }, i) => {
-    const k = attempts[i]!.stepIndex;
-    if (session === undefined || k >= stepCount || done.has(k)) return;
-    lanes[k] = session - 1;
-    done.add(k);
-  });
-  return lanes;
 }
 
 /** A gate stopped (or exhausted) this run: where it stopped and the verdict it stopped on — the
