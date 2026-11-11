@@ -5,12 +5,19 @@ on:
     branches: [main]
   pull_request:
 
+# A new push to a pull request supersedes its running checks; pushes to main all run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # the dependabot lockfile push below
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,4 +68,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - run: pnpm --filter @bean/app run test:e2e
+      # Tiered (.memory/convention-e2e-tiers.md): pull requests run the small @ci set,
+      # pushes to main run the full suite.
+      - run: pnpm --filter @bean/app run ${{ github.event_name == 'pull_request' && 'test:e2e:ci' || 'test:e2e' }}

@@ -113,6 +113,12 @@ export function ChatWindow() {
     return () => document.removeEventListener("keydown", onKey);
   }, [narrow, overlayOpen]);
 
+  // Layout effect: main's first close is cancelled and only completes through this hand-off, so the
+  // listener must exist by the first commit — a passive effect lags it, and a close in that gap is lost.
+  useLayoutEffect(() => {
+    window.bean.onReviewBeforeClose(() => void reviewBeforeClose());
+  }, []);
+
   useEffect(() => {
     const setTheme = (theme: string): void => {
       document.documentElement.dataset.theme = theme;
@@ -154,7 +160,6 @@ export function ChatWindow() {
     window.bean.onMemoryUpdated((saved, from) => onMemoryUpdated(saved, from));
     // Progress for a chat that's gone is dropped, never shown in another one.
     window.bean.onChatImageProgress((from) => sessions.get(from)?.imageProgress());
-    window.bean.onReviewBeforeClose(() => void reviewBeforeClose());
     // An avatar bubble's click: show the chat that owns that task, the way a sidebar pick would.
     window.bean.onShowChatMount((mountId) => {
       // An idle owner may be evicted by now (a finished task's bubble outlives it): its thread reopens.

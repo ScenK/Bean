@@ -3,8 +3,9 @@
 The Playwright e2e specs live in `packages/app/e2e/`, **outside** `src/`, and they locate
 elements by the renderer's own class names (`.bean-notes-idx-title`, `.bean-skills-row`, …).
 A rename that only greps `packages/app/src` looks clean, passes `pnpm test` and
-`pnpm typecheck`, and then fails in the advisory `e2e` CI job — the two gates in AGENTS.md
-cannot see it, because CSS classes are neither typed nor unit-tested.
+`pnpm typecheck`, and then fails the full e2e run (local, or CI on `main` — pull-request CI runs
+only the `@ci` tier, see [convention-e2e-tiers.md](convention-e2e-tiers.md)). `pnpm test` and
+`pnpm typecheck` cannot see it, because CSS classes are neither typed nor unit-tested.
 
 So when you rename or delete a renderer class:
 

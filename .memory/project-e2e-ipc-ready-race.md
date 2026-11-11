@@ -26,3 +26,11 @@ Two more CI-only races of the same shape (#520): component windows are `show: fa
 before asserting on it (`chat-history.e2e.ts` `openChat`). And theme colors transition (the orb
 body's `fill .3s`), so a contrast scan right after a theme flip reads a blended color — await
 the document's `CSSTransition`s first (`contrast.e2e.ts` `setTheme`).
+
+Same shape, other direction (#784): a renderer listener main *depends on* must subscribe in a
+layout effect, not a passive one. Chat's close is a hand-off (main cancels the first close and
+pushes `reviewBeforeClose`); a close landing before a passive effect ran was lost and the window
+never closed. And a spec probing a page across `webContents.reload()` gets "Render frame was
+disposed" — wait for main's reload to finish (`avatar-visibility.e2e.ts` reads `avatar.log`).
+Match windows by `getURL().endsWith("/chat.html")`, never `includes("chat")` — a worktree path
+can contain "chat".
