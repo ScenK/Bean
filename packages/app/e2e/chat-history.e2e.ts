@@ -255,7 +255,7 @@ test("chat history: active card keeps its height on hover; a draft survives a sw
     const resting = (await card.boundingBox())!.height;
     await card.hover();
     await expect(card.locator(".bean-chat-sidebar-row-rename")).toBeVisible();
-    expect((await card.boundingBox())!.height).toBe(resting);
+    expect((await card.boundingBox())!.height).toBeCloseTo(resting, 1); // layout rounds sub-pixel: 54 vs 54.0000076
 
     const shown = chat.locator(".bean-chat:not([hidden])");
     await shown.locator(".bean-agent-chip").click();

@@ -432,6 +432,9 @@ export function ChatSession({
     if (flushRef.current) { flushRef.current = false; void saveThread(); return; }
     saveTimerRef.current ??= setTimeout(() => void saveThread(), THREAD_SAVE_MS);
   }, [items, linkedNote]);
+  // Every unmount path writes first (evict, closeOut) or must not write (discard), so a debounced
+  // save still pending then is stale: left alone it fires a second later against whatever is mounted.
+  useEffect(() => () => clearTimeout(saveTimerRef.current), []);
 
   useEffect(() => {
     window.bean.getModel().then(setModel);
