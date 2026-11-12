@@ -100,6 +100,20 @@ export function resolveSlash(text: string, mode: AgentId, c: SlashCatalogs): Sla
   return m[1] ? { kind: "unknown", of: "skill", slug } : undefined;
 }
 
+/** The `/word` the caret sits right after when it opens the composer ("" = none) — what the menu
+ * filters on. Text after the caret is ignored, so a `/` typed in front of a draft still opens it. */
+export function slashToken(value: string, caret: number): string {
+  const head = value.slice(0, caret);
+  return /^\/\S*$/.test(head) ? head : "";
+}
+
+/** The composer text after a menu pick: `command` in place of the typed token, the draft behind
+ * it kept as the command's instruction. */
+export function slashPick(value: string, token: string, command: string): string {
+  const tail = value.startsWith(token) ? value.slice(token.length).trim() : "";
+  return tail ? `${command} ${tail}` : command;
+}
+
 /** The `/` menu for the text typed so far (`/`, `/rev`, `/skill:re`): every match, by section —
  * Skills, Switch to — prefix matches before description matches. The row a typed command
  * resolves to (its exact bare/qualified command) leads, with its section, so Enter on the first
