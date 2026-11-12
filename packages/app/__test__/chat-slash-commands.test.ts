@@ -4,7 +4,7 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { availableModels, resolveDelegateSelection, type CliModels, type CliName, type Project, type Skill } from "@bean/core";
 import {
-  resolveSlash, slashEntries, slashMenu, slugify, terminalDestination, type SlashCatalogs, type SlashDelegate,
+  resolveSlash, slashEntries, slashMenu, slashPick, slashToken, slugify, terminalDestination, type SlashCatalogs, type SlashDelegate,
 } from "../src/renderer/components/chat/slash-commands.js";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
 
@@ -346,5 +346,38 @@ describe("ChatWindow slash commands", () => {
     await type("/rev");
     await key("Enter", { isComposing: true });
     expect(bean.chat).toHaveBeenCalledTimes(1); // only the /quiet pick above
+  });
+
+  it("opens on a / typed in front of a draft and keeps the draft as the instruction", () => {
+    expect(slashToken("/rev1234", 4)).toBe("/rev");
+    expect(slashToken("/ 1234", 1)).toBe("/");
+    expect(slashToken("/rev", 4)).toBe("/rev");
+    expect(slashToken("/rev 1234", 9)).toBe(""); // past the command: closed
+    expect(slashToken("1234/", 5)).toBe("");
+    expect(slashPick("/rev1234", "/rev", "/review-code")).toBe("/review-code 1234");
+    expect(slashPick("/ 1234", "/", "/claude")).toBe("/claude 1234");
+    expect(slashPick("/rev", "/rev", "/review-code")).toBe("/review-code");
+  });
+
+  it("menu: opens on a / typed before a draft; a caret that left the /word makes Enter a plain send", async () => {
+    await mount();
+    const typeAt = async (text: string, caret: number): Promise<void> => {
+      const ta = composer();
+      ta.value = text;
+      ta.selectionStart = ta.selectionEnd = caret;
+      await act(async () => { ta.dispatchEvent(new Event("input", { bubbles: true })); });
+      await flush();
+    };
+    await typeAt("/1234", 1);
+    expect(root.querySelector(".bean-slash-menu")?.textContent).toContain("Switch to");
+    composer().selectionStart = composer().selectionEnd = 5;
+    await key("Enter");
+    expect(bean.chat!.mock.calls.map((c) => c[0].message)).toEqual(["/1234"]);
+
+    // A pick keeps the draft as the skill's instruction.
+    await typeAt("/quiet1234", 6);
+    await key("Enter");
+    expect(bean.chat!.mock.calls[1]![0].message).toContain("1234");
+    expect(bean.chat!.mock.calls[1]![0].message).toContain("# quiet");
   });
 });

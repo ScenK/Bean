@@ -26,3 +26,7 @@ are easy to break:
   main's `resolveDelegateSelection` (a test pins the parity). No project → `""`, which
   `delegate-tasks.ts` maps to the real scratch path. Browser access stays main's re-derivation
   from `skillName`; never send a flag from the renderer.
+- **The menu keys on the `/word` before the caret** (`slashToken`), not the whole composer, so a
+  `/` typed in front of a draft opens it; a pick keeps the draft as the instruction (`slashPick`).
+  `slashText` is state and the caret moves without input events — every pick path must re-check
+  it against the live caret (`live` in the keydown handler), or a stale menu runs a skill.

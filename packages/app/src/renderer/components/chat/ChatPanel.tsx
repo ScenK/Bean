@@ -16,7 +16,7 @@ import { MAX_IMAGES_PER_MESSAGE, PDF_MIME, PDF_NO_PATH, formatSize, imageFileGua
 import {
   HANDOFF_ITEMS, agentModels, canContinueLive, handoffItems, imageLabel, isLiveAgent, mappedImageLabels, offerAgent, parseSlash, type ImageLabels,
 } from "./agent-mode.js";
-import { SECTION_TITLES, slashMenu, type SlashEntry } from "./slash-commands.js";
+import { SECTION_TITLES, slashMenu, slashPick, slashToken, type SlashEntry } from "./slash-commands.js";
 import { useCmdLinks } from "./chat-links.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
@@ -268,7 +268,7 @@ export function ChatPanel({
   const modelName = (id: string): string => runModels.find((m) => m.id === id)?.label ?? id;
   // The chip names the running session's actual model, else the next start's; none = the default.
   const chipModel = live ? live.model : agentModel;
-  // The `/` menu: the composer text while it's a lone `/word` ("" = closed), and the picked row.
+  // The `/` menu: the `/word` before the caret at the composer's start ("" = closed), and the picked row.
   const [slashText, setSlashText] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
   // Hidden while Bean answers, like the chip — switching mid-turn isn't allowed.
@@ -289,8 +289,8 @@ export function ChatPanel({
   const escHint = (kind: StopTarget["kind"]) =>
     escArmed && stopTarget?.kind === kind ? <span class="bean-agent-banner-hint">Esc again to stop</span> : null;
   useEffect(() => () => clearTimeout(escTimer.current), []);
-  const onComposerInput = (value: string): void => {
-    const next = /^\/\S*$/.test(value) ? value : "";
+  const onComposerInput = (el: HTMLTextAreaElement): void => {
+    const next = slashToken(el.value, el.selectionStart);
     if (next && !slashText) onSlashOpen();
     if (next !== slashText) setSlashIndex(0);
     setSlashText(next);
@@ -514,7 +514,9 @@ export function ChatPanel({
   // A menu pick runs its command as if typed: an agent switches, a skill runs with no instruction.
   const pickEntry = (entry: SlashEntry): void => {
     if (!inputRef.current) return;
-    inputRef.current.value = entry.command;
+    inputRef.current.value = slashPick(inputRef.current.value, slashText, entry.command);
+    // Re-sync the token to the replaced text: a blocked submit (an image still reading) leaves it in the composer.
+    onComposerInput(inputRef.current);
     submit();
     inputRef.current.focus();
   };
@@ -946,21 +948,27 @@ export function ChatPanel({
             placeholder={!agentMode ? "Message Bean · type / for skills" : live
               ? `Message ${agentName}…`
               : `Message ${agentName}… (Bean will hand over up to ${Math.min(handoffItems(items).filter((h) => h.text.trim()).length, HANDOFF_ITEMS)} messages)`}
-            onInput={(e) => { resizeInput(); onComposerInput((e.target as HTMLTextAreaElement).value); }}
+            onInput={(e) => { resizeInput(); onComposerInput(e.target as HTMLTextAreaElement); }}
             onPaste={pasteImages}
             onDragOver={(e) => { if (droppedPath(e)) e.preventDefault(); }}
             onDrop={dropPathIntoComposer}
             onBlur={disarmEsc}
+            // The caret can leave the `/word` without an input event: follow it.
+            onClick={(e) => onComposerInput(e.currentTarget)}
+            onKeyUp={(e) => { if (/^(Arrow|Home|End|Page)/.test(e.key)) onComposerInput(e.currentTarget); }}
             onKeyDown={(e) => {
               // IME-safe: Enter/arrows while composing belong to the input method.
               if (e.isComposing || e.keyCode === 229) return;
-              if (menu && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              // A menu whose `/word` the caret has left is stale: this key is not a pick.
+              const live = !!slashText && slashToken(e.currentTarget.value, e.currentTarget.selectionStart) === slashText;
+              if (slashText && !live) setSlashText("");
+              if (live && menu && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
                 e.preventDefault();
                 const at = activeEntry ? pickable.indexOf(activeEntry) : 0;
                 setSlashIndex(at + (e.key === "ArrowDown" ? 1 : -1));
                 return;
               }
-              if (menu && e.key === "Escape") { e.preventDefault(); setSlashText(""); return; }
+              if (live && menu && e.key === "Escape") { e.preventDefault(); setSlashText(""); return; }
               if (e.key === "Escape" && canStop) {
                 if (e.repeat) return;
                 if (escArmed) { e.preventDefault(); disarmEsc(); onStopTurn(); return; }
@@ -970,16 +978,18 @@ export function ChatPanel({
                 return;
               }
               if (escArmed) disarmEsc();
-              if (activeEntry && e.key === "Tab") {
+              if (live && activeEntry && e.key === "Tab") {
                 e.preventDefault();
                 const el = e.currentTarget;
-                el.value = `${activeEntry.command} `;
-                onComposerInput(el.value);
+                const tail = slashPick(el.value, slashText, "").trimStart();
+                el.value = `${activeEntry.command} ${tail}`;
+                el.selectionStart = el.selectionEnd = activeEntry.command.length + 1;
+                onComposerInput(el);
                 return;
               }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                if (activeEntry) pickEntry(activeEntry);
+                if (live && activeEntry) pickEntry(activeEntry);
                 else submit();
               }
             }}
