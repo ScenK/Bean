@@ -4,7 +4,7 @@ import type {
   RememberedCardInput, ReminderCardInput,
   SkillProposalCardInput, SkillResultCardInput, SproutRunCardInput, SendCardInput, TodoProposalCardInput, TodoResultCardInput,
   RoutineProposalCardInput, RoutineResultCardInput,
-  LiveSessionProposalCardInput, LiveSessionResultCardInput,
+  LiveSessionProposalCardInput, LiveSessionResultCardInput, CardBuilders,
 } from "@bean/core";
 import { BROWSER_SKILL_NOTE, rememberedScopeLine } from "@bean/core";
 
@@ -497,3 +497,9 @@ export function liveSessionResultCard(input: LiveSessionResultCardInput): object
     ...(input.outcome === "ended" && input.resumeLiveId ? { actions: continueLiveActions(input.resumeLiveId) } : {}),
   };
 }
+
+export const teamsCards: CardBuilders = {
+  proposalCard, runningCard, finishedCard, noteProposalCard, noteResultCard, noteArchiveProposalCard, noteArchiveResultCard, rememberedCard, reminderCard,
+  skillProposalCard, skillResultCard, todoProposalCard, todoResultCard, sproutRunCard, sendCard, routineProposalCard, routineResultCard,
+  liveSessionProposalCard, liveSessionResultCard,
+};
