@@ -14,7 +14,7 @@ import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import { ChipMenu } from "../../shared/ChipMenu.js";
 import { MAX_IMAGES_PER_MESSAGE, PDF_MIME, PDF_NO_PATH, formatSize, imageFileGuard, pdfFileGuard, insertDroppedPath, readImageFile, itemAgent, type PinnedPdf, startsAgentRun, type AgentId, type ChatItem } from "../../shared/chat-types.js";
 import {
-  HANDOFF_ITEMS, agentModels, canContinueLive, handoffItems, imageLabel, isLiveAgent, mappedImageLabels, offerAgent, parseSlash, type ImageLabels,
+  HANDOFF_ITEMS, agentModels, canContinueLive, chatHeader, handoffItems, imageLabel, isLiveAgent, mappedImageLabels, offerAgent, parseSlash, type ImageLabels,
 } from "./agent-mode.js";
 import { SECTION_TITLES, slashMenu, slashPick, slashToken, type SlashEntry } from "./slash-commands.js";
 import { useCmdLinks } from "./chat-links.js";
@@ -571,17 +571,18 @@ export function ChatPanel({
       </div>
     );
   };
+  const header = chatHeader({ live, status, model });
   const speaker = (it: ChatItem) => <span class="bean-sr-only">{AGENT_NAMES[itemAgent(it) ?? "bean"]}: </span>;
 
   return (
     <div class={`bean-chat${terminalOpen ? " bean-chat--term" : ""}`} hidden={hidden}>
       {/* Pinned below the drag band, not inside it — no drag region here. */}
       <div class="bean-chat-meta">
-        <AgentAvatar agent="bean" size={18} />
-        <span class="bean-chat-name">Bean</span>
+        <AgentAvatar agent={header.agent} size={18} />
+        <span class="bean-chat-name">{AGENT_NAMES[header.agent]}</span>
         <span class="bean-chat-status">
-          <span class={`bean-chat-state bean-chat-state--${status}`} />
-          {status}
+          <span class={`bean-chat-state bean-chat-state--${header.status}`} />
+          {header.status}
         </span>
         <span class="bean-chat-meta-spacer" />
         {/* The linked-note chip replaces the model id (mockup 1d) — both don't fit. */}
@@ -591,7 +592,7 @@ export function ChatPanel({
             <button type="button" class="bean-chat-unlink" aria-label="Unlink note" onClick={onUnlink}>✕</button>
           </span>
         ) : (
-          <span class="bean-chat-model">{model}</span>
+          <span class="bean-chat-model">{header.model ? modelName(header.model) : ""}</span>
         )}
         <span class="bean-chat-meta-divider" />
         <button

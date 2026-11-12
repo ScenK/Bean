@@ -4,7 +4,7 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { ChatTurn, LiveCli } from "@bean/core";
 import {
-  AGENT_FINAL_CHARS, applyLiveEvent, consumeLive, canContinueLive, chatTurns, handoffLines, liveModelKey, liveProjectKey, offerAgent, offerLaunch,
+  AGENT_FINAL_CHARS, applyLiveEvent, consumeLive, canContinueLive, chatHeader, chatTurns, handoffLines, liveModelKey, liveProjectKey, offerAgent, offerLaunch,
   parseSlash, turnFooter, validModel, validProject, handoffItems, nextImageNumber, withImagePaths, mappedImageLabels, IMAGE_NOT_HANDED, pdfNotHanded,
 } from "../src/renderer/components/chat/agent-mode.js";
 import { slashMenu } from "../src/renderer/components/chat/slash-commands.js";
@@ -17,6 +17,16 @@ let n = 0;
 const id = (): string => `t${++n}`;
 
 describe("agent-mode helpers", () => {
+  it("chatHeader shows whoever is answering: Bean's own turn, else the live agent, else Bean (#794)", () => {
+    const bean = { status: "idle" as const, model: "gpt-5" };
+    expect(chatHeader(bean)).toEqual({ agent: "bean", status: "idle", model: "gpt-5" });
+    expect(chatHeader({ ...bean, live: { agent: "claude", model: "opus", busy: true } })).toEqual({ agent: "claude", status: "working", model: "opus" });
+    expect(chatHeader({ ...bean, live: { agent: "codex", model: "o3", busy: false } })).toEqual({ agent: "codex", status: "idle", model: "o3" });
+    expect(chatHeader({ ...bean, live: { agent: "codex", busy: false, stopping: true } })).toEqual({ agent: "codex", status: "working" });
+    expect(chatHeader({ ...bean, live: { agent: "opencode", busy: false } })).toEqual({ agent: "opencode", status: "idle" });
+    expect(chatHeader({ status: "working", model: "gpt-5", live: { agent: "claude", busy: false } })).toEqual({ agent: "bean", status: "working", model: "gpt-5" });
+    expect(chatHeader({ ...bean, status: "error", live: undefined })).toEqual({ agent: "bean", status: "error", model: "gpt-5" });
+  });
   it("parses only the four aliases, bare or with text", () => {
     expect(parseSlash("/claude")).toEqual({ agent: "claude", rest: "" });
     expect(parseSlash("/claude fix X\nplease")).toEqual({ agent: "claude", rest: "fix X\nplease" });
