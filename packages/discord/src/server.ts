@@ -1,13 +1,16 @@
 import {
-  beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir,
-  skillsDir, projectsFile, personaFile, dbFile, modelMemoryFile, routinesDir, remindersFile,
-  loadLayeredSkills, loadProjects, loadPersona, loadMemories, ownerSubjectIds, loadModelMemory, saveModelMemory, saveNote, saveNoteImage, searchNotes, archiveNote, restoreNoteOutcome, NoteArchiveProposalStore, appendMemories, deleteMemories, shareMemory,
-  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, saveSkill, addTodo, listOpenTodos, cancelPendingTodo, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine, createRoutine,
-  buildTeamsBot, exitWhenOrphaned, ConversationStore, ConversationCatalog, type ConversationPlace, maybeCompact, NoteProposalStore, ProposalStore,
-  RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, parseDeskContinue, type DeskAckResult, SkillProposalStore, TodoProposalStore, type BotEffects, loadCliModels, clisFile,
-  LiveSessionProposalStore, type PendingLiveSession, isLiveCli, LiveSessionRegistry, findDelegateRun, recordDelegateSession, availableModels, MAX_INSTRUCTION_CHARS, type PendingProposal, type ProposedLiveSession, imagesDir, threadTitle, makeOpenAIImageGen, makeOpenAISpeak, makeOpenAITranscribe, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
-  makeRoles, makeChatter, makeTurnCap, makeChunkGroups, localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand, parseRoutineCommand, parseChatterCommand, RoutineProposalStore, SproutRunProposalStore, type Role,
-  parentSproutTrigger, processParentPort, sproutRunFacts, recordDestination, forgetDestination, listDestinations, SendProposalStore,
+  beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir, skillsDir,
+  projectsFile, dbFile, loadLayeredSkills, loadProjects, detectClis, type CliName, runDelegate, drainOutbox,
+  recoverOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, buildTeamsBot, exitWhenOrphaned,
+  ConversationStore, type ConversationPlace, maybeCompact, ProposalStore, RunRegistry, parentActivitySink,
+  parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, parseDeskContinue, type DeskAckResult,
+  type BotEffects, loadCliModels, clisFile, LiveSessionProposalStore, type PendingLiveSession, isLiveCli,
+  LiveSessionRegistry, findDelegateRun, recordDelegateSession, availableModels, MAX_INSTRUCTION_CHARS,
+  type PendingProposal, type ProposedLiveSession, threadTitle, makeOpenAISpeak, makeOpenAITranscribe,
+  MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeTurnCap, makeChunkGroups,
+  localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand,
+  parseRoutineCommand, parseChatterCommand, SproutRunProposalStore, type Role, parentSproutTrigger, processParentPort,
+  sproutRunFacts, recordDestination, forgetDestination, sharedBotDeps,
 } from "@bean/core";
 import {
   ChannelType, Client, GatewayIntentBits, MessageReferenceType, Partials, PermissionFlagsBits, ThreadAutoArchiveDuration,
@@ -56,7 +59,6 @@ const runs = new RunRegistry(runDelegate, { dir, botKind: "discord", onActivity:
 const converseChat = makeOpenAIConverse(beanConfig.openaiApiKey, beanConfig.reasoningEffort);
 // onChange tells the desktop app a history changed (a conversation id only, never text).
 const conversations = new ConversationStore(dbFile(dir), { onChange: parentSavedSink });
-const noteProposals = new NoteProposalStore();
 const liveSessions = new LiveSessionRegistry(undefined, { dir, onActivity: parentActivitySink, surface: "discord", proseOnly: true });
 // Hoisted (not inline in deps) so the /live-session card's project/model dropdowns and the
 // edit-prompt modal can read and mutate the pending proposal before Start claims it.
@@ -81,45 +83,15 @@ let capNoticeDay = "";
 const transcribe = makeOpenAITranscribe(beanConfig.openaiApiKey);
 const speak = makeOpenAISpeak(beanConfig.openaiApiKey);
 
+const shared = sharedBotDeps({ dir, builtinDir, surface: "discord", config: beanConfig });
 const bot = buildTeamsBot({
-  onActivity: parentActivitySink,
+  ...shared,
   chat: converseChat,
-  model: beanConfig.model,
-  loadSkills: () => loadLayeredSkills(skillsDir(builtinDir), skillsDir(dir)),
-  loadProjects: () => loadProjects(projectsFile(dir)),
-  loadPersona: () => loadPersona(personaFile(dir), personaFile(builtinDir)),
-  loadMemories: (subject) => loadMemories(dbFile(dir), subject),
-  ownerSubjectIds: () => ownerSubjectIds(dbFile(dir), dir),
-  loadModelMemory: () => loadModelMemory(modelMemoryFile(dir)),
-  saveModelMemory: (m) => saveModelMemory(modelMemoryFile(dir), m),
   detectClis: clis,
   cliModels,
   runs,
   proposals,
-  noteProposals,
-  saveNote: (draft) => saveNote(dbFile(dir), draft),
-  saveNoteImage: (bytes) => saveNoteImage(dbFile(dir), bytes),
-  searchNotes: (query) => searchNotes(dbFile(dir), query),
-  noteArchiveProposals: new NoteArchiveProposalStore(),
-  archiveNote: (slug) => archiveNote(dbFile(dir), slug),
-  restoreNote: (slug) => restoreNoteOutcome(dbFile(dir), slug),
-  todoProposals: new TodoProposalStore(),
-  queueTodo: async (routine, text, createdBy) => {
-    const target = resolveTodoRoutine(await loadRoutines(routinesDir(dir)), routine, createdBy !== undefined);
-    await addTodo(dbFile(dir), routine, text, undefined, undefined, createdBy);
-    return target;
-  },
-  listTodoRoutines: async (member) => (await loadRoutines(routinesDir(dir)))
-    .filter((r) => (member ? memberTodoEligible(r) : r.todoDriven)).map((r) => r.name),
-  listOpenTodos: (createdBy) => listOpenTodos(dbFile(dir), createdBy),
-  cancelTodo: (id, createdBy) => cancelPendingTodo(dbFile(dir), id, createdBy),
-  skillProposals: new SkillProposalStore(),
-  saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
-  appendMemories: (m) => appendMemories(dbFile(dir), m),
-  deleteMemories: (ids, subject) => deleteMemories(dbFile(dir), ids, subject),
-  shareMemory: (id, actor) => shareMemory(dbFile(dir), id, actor),
   conversations,
-  catalog: new ConversationCatalog(dbFile(dir), "discord"),
   liveSessions,
   liveSessionProposals,
   // Always on for Discord (no `liveSessions` opt-in) when a live-capable CLI (claude, codex or opencode)
@@ -129,34 +101,13 @@ const bot = buildTeamsBot({
   recordDelegateRun: (row) => recordDelegateSession(dbFile(dir), row),
   scratchPath,
   cards: discordCards,
-  reminders: { file: remindersFile(dir), transport: "discord" },
-  systemControlsEnabled: () => beanConfig.systemControls,
-  webSearchEnabled: () => beanConfig.webSearch,
-  // Re-read per DM so a Settings toggle applies without a restart; unreadable config = off.
-  autoMemoryEnabled: () => loadConfig(configFile(dir), dir).then((c) => c.autoMemory, () => false),
-  imageGen: { generate: makeOpenAIImageGen(beanConfig.openaiApiKey), model: beanConfig.imageModel, imagesDir: imagesDir(dir) },
   roles,
-  // Owner-DM sends by name (#689): Discord destinations only, delivered by this bot's own outbox drain.
-  send: {
-    transport: "discord",
-    destinations: () => listDestinations(dbFile(dir), "discord"),
-    enqueue: (msg) => enqueueOutbox(outboxDir(beanDir()), msg, () => randomUUID()),
-    proposals: new SendProposalStore(),
-  },
-  chatter: makeChatter({ dbPath: dbFile(dir), surface: "discord" }),
   routines: {
-    transport: "discord",
-    load: () => loadRoutines(routinesDir(dir)),
-    save: (r) => saveRoutine(routinesDir(dir), r),
-    create: (r) => createRoutine(routinesDir(dir), r),
-    // No channel = the owner's DM.
-    notifyOwner: async (body) => { await enqueueOutbox(outboxDir(beanDir()), { transport: "discord", body }, () => randomUUID()); },
+    ...shared.routines,
     // The owner and household members — the only people a routine may DM — by display name.
     recipients: () => Promise.all([discordConfig.ownerId, ...discordConfig.memberIds].map(async (id) => ({
       id, name: await client.users.fetch(id).then((u) => u.displayName, () => id),
     }))),
-    destinations: () => listDestinations(dbFile(dir), "discord"),
-    proposals: new RoutineProposalStore(),
     // Headless: this process owns the scheduler. App-spawned: the app does. Standalone without
     // headless routines: nothing to trigger.
     ...(headless ? {

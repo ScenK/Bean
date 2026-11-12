@@ -32,7 +32,7 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   same `captureDm` (private to the owner, categorized, receipt card in the thread); a co-driver's
   steering is never captured.
 - Config `autoMemory` gates DM capture only (explicit tools stay on): `deps.autoMemoryEnabled`,
-  which each server wires to a per-turn `loadConfig` re-read (unreadable = off), so a Settings
+  which core `sharedBotDeps` (`chatops/bot-deps.ts`) wires to a per-turn `loadConfig` re-read (unreadable = off), so a Settings
   toggle applies without restarting the bot.
 
 - `bot.ts` builds `makeMemoryTools()` (core `memory/tools.ts`) per converse turn with
