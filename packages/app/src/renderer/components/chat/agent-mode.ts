@@ -20,6 +20,20 @@ export const AGENT_FINAL_CHARS = 4000;
 const MEMORY_FINAL_CHARS = 1000;
 const TAIL_LINES = 30;
 
+type ChatStatus = "idle" | "working" | "done" | "error";
+/** Who the chat header shows (#794): Bean while Bean's own turn runs, else the open live session's
+ * agent (working while it runs or stops; model = its launch `--model`, unset = the agent's default),
+ * else Bean with its own status and model. */
+export function chatHeader(p: {
+  live?: { agent: LiveCli; model?: string; busy: boolean; stopping?: boolean };
+  status: ChatStatus;
+  model: string;
+}): { agent: AgentId; status: ChatStatus; model?: string } {
+  const { live, status, model } = p;
+  if (status === "working" || !live) return { agent: "bean", status, model };
+  return { agent: live.agent, status: live.busy || live.stopping ? "working" : "idle", ...(live.model ? { model: live.model } : {}) };
+}
+
 /** The engine a hand-off offer starts: Claude Code when it's enabled, else the first enabled live agent. */
 export function offerAgent(enabled: readonly CliName[]): LiveCli | undefined {
   return enabled.includes("claude") ? "claude" : LIVE_AGENTS.find((a) => enabled.includes(a));
