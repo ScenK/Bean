@@ -1,7 +1,8 @@
 import { chmodSync, lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PassThrough } from "node:stream";
+import { createServer } from "node:net";
+import { PassThrough, Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAttachments } from "../src/attachments.js";
 import { buildHandshake, CONTRACT_VERSION } from "../src/contract.js";
@@ -98,6 +99,7 @@ describe("remote attach over the unix socket", () => {
     });
     const send = attachments.push(() => {});
     push = send;
+    const getModel = vi.fn(() => "gpt-test");
     const handlers = {
       chat: {
         attach: (c: number, m: string) => { mounts.set(m, c); },
@@ -108,11 +110,11 @@ describe("remote attach over the unix socket", () => {
         },
       },
       getConfig,
-      getModel: () => "gpt-test",
+      getModel,
     } as unknown as HostHandlers;
     const server = await listenRemote(dir, { handshake: buildHandshake("1.0.0", "linux", []), attachments, handlers });
     close = server.close;
-    return { path: server.path, getConfig, attachments };
+    return { path: server.path, getConfig, getModel, attachments };
   }
 
   it("runs a chat turn through `bean-core attach` and receives its events", async () => {
@@ -159,6 +161,37 @@ describe("remote attach over the unix socket", () => {
     await b.closed;
   });
 
+  it("a frame that throws closes only its own connection, never the core", async () => {
+    const { path } = await serve();
+    const a = shellOverBridge(path);
+    a.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION });
+    await a.next((m) => m.type === "attached");
+    a.send({ type: { toString: 0 } }); // String() of this throws
+    a.send({ type: "call", id: 1, op: { toString: 0 }, args: [] });
+    expect(await a.next((m) => m.type === "error")).toMatchObject({ message: "unknown frame type" });
+    await a.closed;
+    const b = shellOverBridge(path);
+    b.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION });
+    await b.next((m) => m.type === "attached");
+    expect(await b.call("getModel")).toMatchObject({ ok: true, value: "gpt-test" });
+    expect(await b.call({ toString: 0 } as unknown as string)).toMatchObject({ ok: false, error: expect.stringContaining("not allowed") });
+    b.end();
+    await b.closed;
+  });
+
+  it("ignores frames after a refusal, even in the same chunk", async () => {
+    const { path, getModel } = await serve();
+    const stdin = new PassThrough();
+    const closed = attachStdio(path, stdin, new PassThrough());
+    stdin.write(Buffer.concat([
+      encodeFrame({ type: "nope" })!,
+      encodeFrame({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION })!,
+      encodeFrame({ type: "call", id: 1, op: "getModel", args: [] })!,
+    ]));
+    await closed;
+    expect(getModel).not.toHaveBeenCalled();
+  });
+
   it("listens only inside the 0700 directory, on a 0600 socket, and no TCP port", async () => {
     const { path } = await serve();
     expect(path).toBe(join(dir, "core.sock"));
@@ -177,5 +210,27 @@ describe("remote attach over the unix socket", () => {
     await expect(listenRemote(dir, { handshake: buildHandshake("1", "linux", []), attachments: {} as never, handlers: {} as never }))
       .rejects.toThrow(/private \(0700\)/);
     expect(readdirSync(dir)).toEqual([]);
+  });
+});
+
+describe("attachStdio", () => {
+  it("resolves only after a slow output has written everything the core sent", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bean-bridge-"));
+    const path = join(dir, "s.sock");
+    const payload = Buffer.alloc(512 * 1024, 7);
+    const server = createServer((sock) => sock.end(payload));
+    await new Promise<void>((r) => server.listen(path, r));
+    let got = 0;
+    const slow = new Writable({
+      highWaterMark: 1024,
+      write: (chunk: Buffer, _enc, cb) => { setTimeout(() => { got += chunk.length; cb(); }, 20); },
+    });
+    try {
+      await attachStdio(path, new PassThrough(), slow);
+      expect(got).toBe(payload.length);
+    } finally {
+      server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -128,14 +128,21 @@ export interface RemoteDeps {
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+// Never String() wire data: a frame like {"toString":0} makes the coercion throw.
+const message = (err: unknown): string => (err instanceof Error ? err.message : "The call failed.");
 
 /** One shell connection: the attach handshake first, then calls, heartbeats, resume and detach. */
 export function serveConnection(sock: Socket, deps: RemoteDeps): void {
   let attached: { generation: number; clientId: ClientId } | undefined;
   let inFlight = 0;
+  // Set on a refusal, detach or revocation: frames already read (same chunk) are ignored after it.
+  let closed = false;
+  const close = (): void => {
+    closed = true;
+    sock.end();
+  };
   const send = (m: unknown): boolean => {
-    if (sock.destroyed) return true;
+    if (sock.destroyed || sock.writableEnded) return true;
     if (sock.writableLength > MAX_OUTBOX_BYTES) { sock.destroy(); return true; }
     const frame = encodeFrame(m);
     if (!frame) return false;
@@ -144,19 +151,18 @@ export function serveConnection(sock: Socket, deps: RemoteDeps): void {
   };
   const fail = (why: string): void => {
     send({ type: "error", message: why });
-    sock.end();
+    close();
   };
   const hello = (msg: unknown): void => {
     if (!isObj(msg) || msg.type !== "attach") return fail("The first frame must be the attach handshake.");
     if (msg.contract !== CONTRACT_VERSION) {
       send({ type: "error", handshake: deps.handshake, message: `Contract version mismatch: the core speaks v${CONTRACT_VERSION}.` });
-      sock.end();
-      return;
+      return close();
     }
     try {
       attached = deps.attachments.attach(msg.shellId, (m) => {
         send(m);
-        if (m.type === "revoked") sock.end(); // displaced: its later requests would be stale anyway
+        if (m.type === "revoked") close(); // displaced: its later requests would be stale anyway
       });
     } catch (err) { return fail(message(err)); }
     send({ type: "attached", handshake: deps.handshake, ...attached });
@@ -169,7 +175,7 @@ export function serveConnection(sock: Socket, deps: RemoteDeps): void {
     };
     const name = msg.op;
     const remote = typeof name === "string" && Object.hasOwn(REMOTE_OPS, name) ? REMOTE_OPS[name] : undefined;
-    if (!remote) return reply({ ok: false, error: `${String(name)} is not allowed over a remote attach.` });
+    if (!remote) return reply({ ok: false, error: `${typeof name === "string" ? name : "That operation"} is not allowed over a remote attach.` });
     const args = msg.args ?? [];
     if (!Array.isArray(args) || !argsOk(remote.args, args)) return reply({ ok: false, error: `Malformed arguments for ${name}.` });
     if (inFlight >= MAX_IN_FLIGHT) return reply({ ok: false, error: "Too many calls in flight." });
@@ -181,7 +187,7 @@ export function serveConnection(sock: Socket, deps: RemoteDeps): void {
   const lifecycle = (fn: () => void): void => {
     try { fn(); } catch (err) { fail(message(err)); }
   };
-  sock.on("data", frameReader((msg) => {
+  const frame = (msg: unknown): void => {
     if (!attached) return hello(msg);
     const a = attached;
     if (!isObj(msg)) return fail("malformed frame");
@@ -191,10 +197,14 @@ export function serveConnection(sock: Socket, deps: RemoteDeps): void {
       case "resume": return lifecycle(() => deps.attachments.resume(a.generation, msg.acks));
       case "detach":
         lifecycle(() => deps.attachments.detach(a.generation));
-        sock.end();
-        return;
-      default: return fail(`unknown frame type ${String(msg.type)}`);
+        return close();
+      default: return fail("unknown frame type");
     }
+  };
+  sock.on("data", frameReader((msg) => {
+    if (closed) return;
+    // Whatever a frame does, a throw closes only this connection — never the core.
+    try { frame(msg); } catch { fail("malformed frame"); }
   }, fail));
   // A dropped connection is not a detach: the heartbeat watchdog disconnects it and its chats get the grace.
   sock.on("error", () => {});
@@ -239,15 +249,16 @@ async function clearStale(path: string): Promise<void> {
 }
 
 /** `bean-core attach`: pipes stdio to the core's socket, byte for byte (the core enforces the frames).
- * Resolves when the core closes the connection. */
+ * Resolves when the core has closed the connection and everything it sent is written to `output`. */
 export function attachStdio(path: string, input: Readable, output: Writable): Promise<void> {
   return new Promise((resolve, reject) => {
     const sock = connect(path);
     sock.once("error", reject);
     sock.once("connect", () => {
       input.pipe(sock);
-      sock.pipe(output);
+      sock.pipe(output, { end: false });
     });
-    sock.once("close", () => resolve());
+    // Resolve once the output has flushed: exiting on the socket's close alone truncates a slow stdout.
+    sock.once("close", () => output.end(() => resolve()));
   });
 }
