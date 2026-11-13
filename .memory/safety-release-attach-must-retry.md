@@ -24,3 +24,7 @@ suspect an actual GitHub API incident (check status), not the build.
 `win-installer.yml` (#814) runs the same loop on the same tag, so either workflow may create the
 release; the other uploads into it. Windows also appends the unsigned-SmartScreen note to the body
 (once — it checks for "SmartScreen" first).
+
+The same step also attaches `bean-core-<ver>.tar.gz` + `.sig` (#835, `scripts/pack-bean-core.mjs`).
+Add new release assets to this `assets=(…)` list — never a second uploader step. Their names must
+not end in `-arm64-mac.zip` (the desktop updater's selector, `core/src/updater.ts`).

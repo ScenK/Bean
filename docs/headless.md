@@ -44,6 +44,12 @@ Use this when the core runs on the machine that has your projects, toolchains, S
 logins. Build once from the checkout: `pnpm install && pnpm build`. The entry is
 `<checkout>/packages/host/dist/bean-core.js`. Rebuild after `git pull`, then restart the service.
 
+No checkout: each release attaches `bean-core-<ver>.tar.gz` (+ `.sig`, Ed25519, same key as the
+desktop update). Extract it anywhere; the entry is `bean-core-<ver>/packages/host/dist/bean-core.js`,
+and it needs only Node 24 (one artifact for macOS and Linux). Keep the extracted tree intact: the
+bots and built-in `.bean` are found beside the entry. `pnpm pack:core` builds the same tarball
+into `release/`. `bean-core --version` prints `bean-core <ver> contract <n>` and reads nothing.
+
 To attach a desktop shell later, also put a `bean-core` command on the `PATH` that a
 non-interactive SSH session sees. That `PATH` is minimal (`/usr/bin:/bin:…` on macOS; zsh reads
 only `~/.zshenv`), so use a wrapper with absolute paths rather than a symlink:

@@ -43,6 +43,15 @@ test("checkForUpdate reports the zip+sig asset URLs when a newer release exists"
   });
 });
 
+test("checkForUpdate ignores the bean-core tarball attached to the same release", () => {
+  const r = release();
+  r.assets.unshift(
+    { name: "bean-core-0.8.13.tar.gz", browserDownloadUrl: "https://example.com/core" },
+    { name: "bean-core-0.8.13.tar.gz.sig", browserDownloadUrl: "https://example.com/core-sig" },
+  );
+  expect(checkForUpdate("0.8.12", r)).toMatchObject({ zipUrl: "https://example.com/zip", sigUrl: "https://example.com/sig" });
+});
+
 test("checkForUpdate errors when the release has no arm64 mac zip asset", () => {
   const r = release({ assets: [{ name: "Bean-0.8.13-arm64.dmg", browserDownloadUrl: "https://example.com/dmg" }] });
   expect(checkForUpdate("0.8.12", r)).toEqual({

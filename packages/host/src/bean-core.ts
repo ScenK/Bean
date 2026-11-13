@@ -3,14 +3,24 @@
 // reminders under the bean.db lease, plus the Discord / Teams bots whose config files exist.
 // Native (launchd / systemd) and in the container; setup in docs/headless.md.
 // `bean-core attach` (#809) instead pipes stdio to a running bean-core's socket, for a shell over SSH.
+// `bean-core --version` (#835) prints the core and contract versions and touches nothing (no ~/.bean,
+// TZ or config): it is the installer's preflight.
 import { beanDir, configFile, coreSocketFile, ensurePrivateBeanDir, loadRoutines, projectBeanDir, routinesDir } from "@bean/core";
 import { existsSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname } from "node:path";
-import { buildHandshake } from "./contract.js";
+import { buildHandshake, CONTRACT_VERSION } from "./contract.js";
 import { createHost } from "./host.js";
 import { botLogger, cliAuthPresent, configuredBots, jobLogger, ownerNotices, tzProblem } from "./headless.js";
 import { attachStdio, listenRemote } from "./remote.js";
+
+// Set by the esbuild bundle (the app's version, so a shell and a core from one release match).
+const version = process.env.BEAN_CORE_VERSION ?? "dev";
+
+if (process.argv[2] === "--version") {
+  console.log(`bean-core ${version} contract ${CONTRACT_VERSION}`);
+  process.exit(0);
+}
 
 if (process.argv[2] === "attach") {
   const path = coreSocketFile(beanDir());
@@ -75,8 +85,8 @@ const host = await createHost({
 // The remote attach socket (#809). No socket = no remote shells; the scheduler and bots still run.
 try {
   const remote = await listenRemote(dir, {
-    // Set by the esbuild bundle; no host capabilities headless (no Terminal.app, pty or path opens).
-    handshake: buildHandshake(process.env.BEAN_CORE_VERSION ?? "dev", process.platform, []),
+    // No host capabilities headless (no Terminal.app, pty or path opens).
+    handshake: buildHandshake(version, process.platform, []),
     attachments: host.attachments,
     handlers: host.handlers,
   });
