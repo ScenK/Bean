@@ -31,17 +31,11 @@ describe("spawnEnv", () => {
   });
 
   it("no spawn site spreads the full process.env", () => {
-    // Bean's own chatops servers and devtunnel are trusted children and keep the full env.
-    const trusted = new Set(["chatops-servers.ts", "devtunnel.ts"]);
-    const root = join(import.meta.dirname, "..", "..");
-    const offenders: string[] = [];
-    for (const pkg of ["core", "app", "discord", "teams"]) {
-      const dir = join(root, pkg, "src");
-      for (const f of readdirSync(dir, { recursive: true }) as string[]) {
-        if (!f.endsWith(".ts") || trusted.has(f.split("/").pop() ?? "")) continue;
-        if (readFileSync(join(dir, f), "utf8").includes("...process.env")) offenders.push(`${pkg}/${f}`);
-      }
-    }
+    // Each package checks its own src (a test reads only its own package's files); see
+    // spawn-env.test.ts in host, app, discord and teams.
+    const dir = join(import.meta.dirname, "..", "src");
+    const offenders = (readdirSync(dir, { recursive: true }) as string[])
+      .filter((f) => f.endsWith(".ts") && readFileSync(join(dir, f), "utf8").includes("...process.env"));
     expect(offenders).toEqual([]);
   });
 });

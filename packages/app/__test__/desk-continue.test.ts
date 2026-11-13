@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DeskContinueBody, DeskContinueResult, Destination } from "@bean/core";
 import { buildDeskContinueHandler } from "../src/desk-continue.js";
-import { buildCarryTail, type LiveHandover } from "../src/live-tasks.js";
+import { buildCarryTail, type LiveHandover } from "@bean/host";
 
 const A = { clientId: 1, mountId: "m1" };
 const dest = (over: Partial<Destination>): Destination =>

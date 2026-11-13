@@ -36,7 +36,7 @@ export type SyncedSendResult = DeskAckResult | { failed: string };
 
 /** Push to the chat window: re-read this conversation (or, without an id, the whole surface).
  * `saved` = its history changed (an unread dot when it isn't shown). Ids only, never text. */
-export interface SyncedChatEvent { surface: ChatopsSurface; conversationId?: string; saved?: boolean }
+export type { SyncedChatEvent } from "@bean/host";
 
 const SUMMARY_PREFIX = formatSummaryBlock("");
 const LIVE_PREFIX = "[live session] ";

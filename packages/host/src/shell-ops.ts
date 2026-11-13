@@ -16,3 +16,8 @@ export interface ShellOps {
   /** Grows/shrinks the client's window to `height` (width kept), clamped to its display's work area. */
   fitHeight: (clientId: ClientId, height: number) => void;
 }
+
+/** A host push to one chat (mount): the shell adapter maps each kind to its channel and routes it
+ * to the client that holds (or last held) the mount. */
+export type MountPushKind = "delegate" | "live" | "memory" | "imageProgress";
+export type HostPush = (mountId: string, kind: MountPushKind, payload: unknown) => void;

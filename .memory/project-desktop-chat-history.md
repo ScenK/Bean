@@ -72,7 +72,7 @@ native `<label>` (checkbox + title, no row controls, not draggable, no F2), sync
 form bar (count, name input with a `<datalist>` of groups, Group, Cancel) replaces New chat. The
 selection is a `Set` of thread ids; only ids still in `threads` count, so deleted/pruned rows drop out
 on their own. Group sends one `chatThreadGroup(ids, name)` (stars too); over `GROUP_SELECT_MAX` (100,
-main's cap) is refused in the bar. `onGroup` settles with the error message (else undefined), so a
+the host's cap) is refused in the bar. `onGroup` settles with the error message (else undefined), so a
 failure keeps the mode, selection and name. Escape: the name input's moves focus to Cancel, then the
 nav's leaves the mode — both default-prevented so the overlay stays.
 
@@ -82,13 +82,13 @@ gets the "— turn interrupted" footer), delegate `taskId`/`tail`, status `exiti
 URL (user/reply images → `[image attached]` appended to the text once; note-card images dropped). Pending
 proposal/delegate/note/skill/todo/offer cards become `expired`, starting/running delegates
 `interrupted`, memory rows `kept` (no Undo). Delegate and live-status **receipts are kept** — Continue
-live resumes through main's `findDelegateRun(…, "desktop")`, never through restored JSON. Each text is
+live resumes through the host's `findDelegateRun(…, "desktop")`, never through restored JSON. Each text is
 capped at 20k chars, the list at 500 items (oldest dropped), the JSON at 2 MB (renderer copy of
 `DESKTOP_CHAT_MAX_BYTES`). `restoreItems` remaps every id with `newId()` (a restored `item-3` would
 collide with the new load's counter) and drops `source` from user turns, so restored turns are context
 only for memory extraction. A restored done delegate has no `taskId`, so no event can loop it back.
 
-**Chat mounts (#515) — `buildChatMounts` (`ipc.ts`).** Main keys per-chat state by a **mount id** (a
+**Chat mounts (#515) — `buildChatMounts` / `createChatSessions` (`@bean/host`, #804).** The host keys per-chat state by a **mount id** (a
 renderer-made UUID per chat session, `chatAttach`/`chatRelease`), not by webContents id, so one window
 can hold several chats. Every per-chat request (chat, thread save/get/pending, incognito, remember on
 close, delegate start) carries the mount id as its trailing arg and is refused unless it's the chat
@@ -100,7 +100,7 @@ released mount never lands in the chat now shown: the shell maps evicted mount �
 until that thread is restored (then it's a live row with Undo, saved), or shows it at once if that
 thread is already back on screen. Held per window lifetime only.
 
-**Main — `buildChatThreadHandlers` (`ipc.ts`).** Sender must be the chat window (`isChatSender`), the id
+**Host — `buildChatThreadHandlers` (`host/src/chat.ts`).** Sender must be the chat window (`isChatSender`), the id
 a UUID, the payload ≤ 2 MB, and one chat (mount) writes one thread (pinned by its first save or its
 restore) that no other open chat may save, restore (`chatThreadGet`) or delete.
 The **sticky unsavable latch** is per mount: incognito toggle-on sets it *before* deleting the row, every
@@ -147,7 +147,7 @@ eviction save only. Tests and e2e must scope queries to `.bean-chat:not([hidden]
 in the DOM. The list loads on mount
 and the active row follows the save ack (`withSaveAck`) — no push channel; listing's per-thread agents
 come from SQL (`json_each`) so transcripts never cross IPC for the picker. Delete refuses a thread any
-open chat holds, in main. Inline at ≥640px (collapse remembered in `localStorage`), overlay below
+open chat holds, in the host (`chat.ts`). Inline at ≥640px (collapse remembered in `localStorage`), overlay below
 (always opens collapsed; Escape closes it via a layout effect — a passive effect missed a quick Escape
 in e2e). e2e: match the chat window by `endsWith("/chat.html")`, not `includes("chat")` — a worktree
 path like `.worktrees/516-chat-…` matches every window. `BEAN_E2E_EXECUTABLE` runs the specs against a
