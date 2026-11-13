@@ -41,7 +41,12 @@ jobs:
           exe="$(find "$(cygpath -u "$LOCALAPPDATA")/Programs" -maxdepth 2 -name Bean.exe | head -1)"
           [ -n "$exe" ] || { echo "::error::Bean.exe not installed under %LOCALAPPDATA%/Programs"; exit 1; }
           echo "installed: $exe"
-          BEAN_E2E_EXECUTABLE="$(cygpath -w "$exe")" pnpm --filter @bean/app exec playwright test e2e/no-core.e2e.ts
+          DEBUG=pw:browser BEAN_E2E_EXECUTABLE="$(cygpath -w "$exe")" pnpm --filter @bean/app exec playwright test e2e/no-core.e2e.ts --trace retain-on-failure
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-test-results
+          path: packages/app/test-results
       - uses: actions/upload-artifact@v4
         with:
           name: bean-win
