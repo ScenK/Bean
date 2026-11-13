@@ -507,6 +507,9 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     isRunning: (name: string): boolean => count(name) > 0 || checking.has(name),
     /** Live runs of the routine (its taken slots) — the panel's "2/3 running". */
     runningCount: count,
+    /** Routines with a taken slot — from the instant fill() admits a run, before its status bubble
+     * exists (a core update's busy check, #837). */
+    runningNames: (): string[] => [...running].filter(([, n]) => n > 0).map(([name]) => name),
     pollFailures: (name: string): number => failures.get(name) ?? 0,
     /** Refuses only when every slot is taken; otherwise fills the free ones and resolves once
      * they finish, with their worst status (none when no run happened) and whether one was stopped. */

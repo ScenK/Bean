@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { AppInfo, Theme, UpdateStatus } from "../../../channels.js";
+import { CoreUpdate } from "./CoreUpdate.js";
 
 type UpdateUiState =
   | { phase: "idle" }
@@ -121,6 +122,7 @@ export function AboutWindow() {
             )}
           </div>
         )}
+        <CoreUpdate />
       </div>
     </div>
   );

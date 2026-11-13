@@ -3,7 +3,7 @@ import type {
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
-import type { Theme, ComponentKind, DashboardTarget, ChatDrop, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult, CoreListing, CoreStatus, CoreSwitchOutcome } from "../channels.js";
+import type { Theme, ComponentKind, DashboardTarget, ChatDrop, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult, CoreListing, CoreStatus, CoreSwitchOutcome, CoreUpdateStatus, RemoteUpdateResult } from "../channels.js";
 import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "@bean/host";
 import type { TerminalEvent, TerminalStartResult } from "../terminal-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "@bean/host";
@@ -128,6 +128,10 @@ declare global {
       onCoreStatus(cb: (s: CoreStatus) => void): void;
       /** After another machine took the core over: attach again. */
       coreTakeBack(): void;
+      /** A remote core (#838): its version, a newer release if any, and what an update would stop. */
+      coreUpdateStatus(): Promise<CoreUpdateStatus>;
+      /** Update the remote core; `force` stops its busy work. "updated" = it's restarting. */
+      coreUpdateApply(force: boolean): Promise<RemoteUpdateResult>;
       /** Live notes; `includeArchived` adds archived ones (each with `archivedAt`). */
       listNotes(opts?: { includeArchived?: boolean }): Promise<Note[]>;
       saveNote(draft: NoteDraft, images?: ImageAttachment[]): Promise<string>;

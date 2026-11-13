@@ -1,7 +1,8 @@
 # bean-core installer: one script, links + restart
 
 `packages/host/install.sh` (#836) ships at the top of `bean-core-<ver>.tar.gz` (`scripts/pack-bean-core.mjs`)
-and owns the whole native lifecycle: install/upgrade, `--uninstall`, and `--rollback`.
+and owns the whole native lifecycle: install/upgrade, `--uninstall`, `--rollback`, and `--restart`
+(used by `bean-core update` when no core was running — [convention-core-self-update.md](convention-core-self-update.md)).
 
 - Versions live in `~/.local/share/bean-core/versions/<ver>/`; the LaunchAgent, the systemd unit and
   the `/usr/local/bin/bean-core` wrapper all run `current/…`, so upgrade and rollback are a symlink

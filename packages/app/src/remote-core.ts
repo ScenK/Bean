@@ -36,6 +36,9 @@ export interface RemoteCoreDeps {
   shellId: string;
   /** Shown while ssh can't attach unattended (core-store.ts `oneTimeCommand`). */
   setupCommand: string;
+  /** Runs `bean-core` on the core's machine from a terminal here (core-store.ts `coreCli`): a contract
+   * mismatch offers `<cli> bean-core update --yes`, About its rollback. */
+  cli?: string;
   onPush: (mountId: string, kind: MountPushKind, payload: unknown) => void;
   onStatus: (status: CoreStatus) => void;
   /** Delegates or agent sessions this shell started are running on the core. */
@@ -82,6 +85,9 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
     ...(message ? { message } : {}),
     // The setup hint only while ssh has never attached: after that, a drop is the network, not the keys.
     ...(!everAttached && state === "reconnecting" ? { command: deps.setupCommand } : {}),
+    // A mismatch: the box's own update needs no attach (and takes any contract) — the recovery.
+    ...(state === "mismatch" && deps.cli ? { command: `${deps.cli} bean-core update --yes` } : {}),
+    ...(deps.cli ? { cli: deps.cli } : {}),
   });
   const setState = (next: State, msg?: string): void => {
     state = next;

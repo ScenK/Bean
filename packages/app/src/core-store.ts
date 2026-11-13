@@ -84,6 +84,11 @@ export function sshArgs(core: Pick<RemoteCore, "host" | "container">): string[] 
   ];
 }
 
+/** How a person runs a `bean-core` subcommand on the core's machine from a terminal here (#838):
+ * `ssh me@box`, or into its container. */
+export const coreCli = (core: Pick<RemoteCore, "host" | "container">): string =>
+  `ssh ${core.host}${core.container ? ` docker exec -i ${core.container}` : ""}`;
+
 /** The one-time command to run in a terminal when ssh can't attach unattended: it asks to accept the
  * host key and installs this machine's SSH key on the core host. Windows' OpenSSH has no ssh-copy-id,
  * so there it's the PowerShell equivalent (an existing ed25519 key; `ssh-keygen` makes one). */
