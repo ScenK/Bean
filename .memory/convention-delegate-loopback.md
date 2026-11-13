@@ -20,7 +20,7 @@ Key contracts:
   history for chaining.
 - **Tasks live for the chat window, not the shown chat — no ghosts:** switching chats keeps a
   chat with a running delegate mounted, hidden (#517); every event carries the starting chat's
-  `mountId` (stamped by `delegate-tasks` from the task, set by main) and the shell routes it there,
+  `mountId` (stamped by `delegate-tasks` from the task, set by the host's `chat-sessions.ts`) and the shell routes it there,
   so the loopback runs in that chat at once. Closing the window with tasks in any chat shows one
   Keep working / Stop & close card counting them; main calls `cancelAll()` on chat-window `closed`
   as the hard backstop, and a chat's release `cancelMount`s its own. The renderer only buffers a
@@ -48,7 +48,7 @@ Key contracts:
   resolve lands elsewhere (disabled since render). Never send a remembered model as an explicit
   `model` next to a picked CLI: an explicit model moves the run to whichever CLI offers it.
   Routine steps and the card-less path omit `cli` and keep the Settings preference.
-- **The cwd is registry-checked in main:** `delegate-tasks` `start` spawns only when
-  `projectAllowed` (main's shared check, also used by live-tasks: Bean's scratch workspace or a
+- **The cwd is registry-checked in the host:** `delegate-tasks` `start` spawns only when
+  `projectAllowed` (`host.ts`'s shared check, also used by live-tasks: Bean's scratch workspace or a
   `projects.json` path, re-read per start) passes; anything else fails the card with zero spawns
   (#588). The renderer's `projectPath` is never a trusted cwd — same rule as chatops cards.

@@ -9,18 +9,18 @@ No retention job. A failed write is logged without values and never alters the r
 
 Incognito (#506): a desktop run started from an off-the-record (🕶) chat still gets its row —
 skipping it would break resume and the card's Continue live — but with `instruction` = `""`.
-Main reads the sender window's live chip (`memoryHandlers.isIncognito`) at `bean:delegate-start`
-and sets `offRecord`; the renderer's request is never trusted for it. Live sessions record no
-rows today; when they do (#503), apply the same rule.
+The host (`chat-sessions.ts`) reads the chat's live chip (`memory.isIncognito`) at delegate start
+and sets `offRecord`; the renderer's request is never trusted for it. Live sessions (#503) record
+rows but don't apply this rule yet (`live-tasks.ts`).
 
 Receipts (terminal states only — copying mid-run would put two writers on one transcript):
 - **Desktop** delegate card: `claude · 3f2a…` chip + Copy → `cd '<path>' && claude --resume <id>`.
-  Computed in main (`delegate-tasks.ts`), carried on the `done`/`failed`/`cancelled` event;
+  Computed in the host (`delegate-tasks.ts`), carried on the `done`/`failed`/`cancelled` event;
   never in loopback text or the memory transcript.
 - **Discord/Teams** finished card: `Resume (<project name>)` + the command. **Never a path**
   (shared channel) — an unregistered project falls back to the folder basename.
 - **Routines**: Dashboard only. Each `step_attempts` row keeps its session id and the Dashboard
-  builds the resume command from it (app `main.ts`). The digest carries **no** session/step
+  builds the resume command from it (host `host.ts`). The digest carries **no** session/step
   footer — it goes to chatops, notes and notifications, where nobody resumes a session. Don't
   put one back.
 
