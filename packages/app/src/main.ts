@@ -43,7 +43,9 @@ const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url))
 // for Cmd, and the updater only links to the releases page (#813).
 const IS_MAC = process.platform === "darwin";
 // Windows toasts are attributed by AppUserModelID; without it they show as Electron (or not at all).
-if (process.platform === "win32") app.setAppUserModelId(pkg.build.appId);
+// Literal, not pkg.build.appId: electron-builder strips `build` from the packaged package.json, so
+// that read threw at boot in the installed app (keep in sync with package.json build.appId).
+if (process.platform === "win32") app.setAppUserModelId("dev.scenk.bean");
 
 // Module-level so the Tray isn't garbage-collected (which removes it from the menu bar).
 let tray: Tray | undefined;

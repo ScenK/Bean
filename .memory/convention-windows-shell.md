@@ -27,3 +27,7 @@ an arm64 Mac. The remote-only shell ships nothing but `dist/` + `assets/`: `extr
 the Windows shell needs must be re-included there. The workflow silently installs the `.exe` and runs
 `e2e/no-core.e2e.ts` against the installed `Bean.exe` (`BEAN_E2E_EXECUTABLE`), so keep that spec
 platform-neutral (`USERPROFILE`, no "This Mac" row off darwin).
+
+The packaged `package.json` has no `build` field (electron-builder strips it) — never read
+`pkg.build.*` at runtime. A throw in `main.ts` before `ready` shows Electron's modal "Error" box, so
+the smoke hangs in `electron.launch` (no `DevTools listening` line) instead of failing fast.
