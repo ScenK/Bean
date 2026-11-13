@@ -227,7 +227,14 @@ export const CHANNEL_CONTRACT = {
   checkForUpdate: shell,
   installUpdate: shell,
   openUpdateReleasePage: shell,
-  useLocalCore: shell,
+  coreList: shell,
+  coreAdd: shell,
+  coreRemove: shell,
+  coreSwitch: shell,
+  coreStatus: shell,
+  coreStatusChanged: shell,
+  coreTakeBack: shell,
+  chatCloseKept: shell,
 } satisfies Record<keyof typeof IPC, ChannelContract>;
 
 const BY_CHANNEL = new Map<string, ChannelContract>(

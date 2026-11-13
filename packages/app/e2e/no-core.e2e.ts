@@ -32,6 +32,15 @@ test("no core attached: boots without a data directory and shows Add a core", as
     await expect(cores.locator(".bean-cores")).toContainText("Add a core");
     await expect(cores.getByRole("button", { name: "Use this Mac" })).toBeVisible();
 
+    // Add a remote core (#811): a malformed host is refused; a good one is listed, not yet in use.
+    await cores.getByLabel("Host").fill("-oProxyCommand=x");
+    await cores.getByRole("button", { name: "Add core" }).click();
+    await expect(cores.locator(".bean-about-update-error")).toContainText("user@host");
+    await cores.getByLabel("Host").fill("me@box");
+    await cores.getByLabel("Docker container (optional)").fill("bean");
+    await cores.getByRole("button", { name: "Add core" }).click();
+    await expect(cores.locator(".bean-cores-row", { hasText: "me@box · bean" }).getByRole("button", { name: "Use" })).toBeVisible();
+
     // Every core window lands on that same panel; only About opens on its own.
     for (const kind of ["chat", "skills", "persona", "projects", "notes", "plan", "settings", "routines", "dashboard"]) {
       await avatar.evaluate((k) => (window as unknown as Bean).bean.openComponent(k), kind);

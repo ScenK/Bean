@@ -24,7 +24,7 @@ const COMPONENT_WINDOW_SIZE: Record<ComponentKind, Size> = {
   about: { width: 420, height: 380 },
   routines: PANEL_SIZE,
   dashboard: PANEL_SIZE,
-  cores: { width: 420, height: 380 },
+  cores: { width: 440, height: 520 },
 };
 // Chat's composer and transcript need room; the rest only need to stay usable.
 const CHAT_MIN_SIZE: Size = { width: 440, height: 520 };
@@ -41,7 +41,7 @@ const COMPONENT_WINDOW_TITLE: Record<ComponentKind, string> = {
   about: "About Bean",
   routines: "Sprouts",
   dashboard: "Dashboard",
-  cores: "Add a Core",
+  cores: "Cores",
 };
 
 // Default spawn spot: top-right of the primary display, inset so the bean doesn't sit flush

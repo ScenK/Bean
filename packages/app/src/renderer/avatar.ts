@@ -2,7 +2,7 @@ import { createOrb } from "./orb.js";
 import { createTaskBubbles, liveBadgeAgent } from "./task-bubbles.js";
 import { h, render } from "preact";
 import { AgentAvatar } from "./shared/AgentAvatar.js";
-import { isNoCore, type AvatarMode, type ComponentKind, type DroppedImage } from "../channels.js";
+import { isNoCore, type AvatarMode, type ComponentKind, type CoreStatus, type DroppedImage } from "../channels.js";
 import { PDF_MIME, imageFileGuard, pdfFileGuard, readImageFile } from "./shared/chat-types.js";
 import { createDragPreparationGate } from "../drag-preparation.js";
 import { createDragWatchdog } from "../drag-watchdog.js";
@@ -86,6 +86,23 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
   // core), and a drag gets no tiles — the drop lands on the bean, whose chat drop main sends there too.
   let noCore = false;
   window.bean.handshake().catch((err: unknown) => { noCore = isNoCore(err); });
+
+  // A remote core (#811): its host on the box title and tooltip, and a dot on the orb (dim while the
+  // shell is reconnecting or was taken over).
+  const title = el.querySelector<HTMLElement>(".bean-box-title");
+  const hostDot = document.createElement("span");
+  hostDot.className = "bean-orb-host";
+  hostDot.hidden = true;
+  orbSlot.append(hostDot);
+  const showCore = (s: CoreStatus): void => {
+    const host = s.kind === "remote" ? s.host : undefined;
+    if (title) title.textContent = host ? `Bean · ${host}` : "Bean";
+    el.title = host ? `Bean on ${host}` : "Bean";
+    hostDot.hidden = !host;
+    hostDot.classList.toggle("bean-orb-host--off", s.kind === "remote" && s.state !== "attached");
+  };
+  window.bean.onCoreStatus(showCore);
+  window.bean.coreStatus().then(showCore, () => {});
 
   // Avatar mode: "normal" (collapsed bean) | "hover" (proximity box, no tiles) | "menu"
   // (quick-action tiles) | "drag" (skill/quick-action tiles).

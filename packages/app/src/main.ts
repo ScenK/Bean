@@ -1,10 +1,11 @@
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { release } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { buildSyncedChatHandlers } from "./synced-chats.js";
-import { buildHandshake, createHost, type ChatopsBot, type ChatopsState, type Host } from "@bean/host";
+import { buildHandshake, createHost, shellClientId, type ChatopsBot, type ChatopsState, type Host } from "@bean/host";
 import { buildDeskContinueHandler } from "./desk-continue.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { installAvatarControls } from "./avatar-window.js";
@@ -19,15 +20,16 @@ import {
 import type { RouteSuggestion, Transport } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import { registerIpc, registerShellIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens, buildPendingUpdateStore, type ChatPromptPayload } from "./ipc.js";
-import { IPC, SHELL_ONLY_KINDS, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop } from "./channels.js";
+import { IPC, SHELL_ONLY_KINDS, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type CoreStatus } from "./channels.js";
 import { registerNoCore } from "./channel-contract.js";
-import { coreFile, loadCoreChoice, saveCoreChoice } from "./core-store.js";
+import { addCore, coreFile, coreLabel, loadCoreChoice, oneTimeCommand, parseRemoteCore, saveCoreChoice, sshArgs, type CoreChoice } from "./core-store.js";
+import { createRemoteCore, registerRemoteIpc, type RemoteCore } from "./remote-core.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import {
   hasRequestedNotificationPermission, markNotificationPermissionRequested, notificationPermissionFile,
 } from "./notification-permission-store.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
-import { createPush, hostPush } from "./push.js";
+import { createPush, hostPush, HOST_PUSH_CHANNELS } from "./push.js";
 import { createTerminalTasks, type PtyFactory, type TerminalTasks } from "./terminal-tasks.js";
 import { createShellOps } from "./shell-ops.js";
 import { createKeepAwake, keepAwakeFile, keepAwakeTooltip, loadKeepAwake, saveKeepAwake, type KeepAwakeState } from "./keep-awake.js";
@@ -63,10 +65,13 @@ app.on("web-contents-created", (_e, contents) => {
 
 app.whenReady().then(async () => {
   // Boot is the shell (windows, tray, theme, updater) plus, only when it's the selected core, the local
-  // core (#810). With no core attached Bean never touches ~/.bean: the avatar opens Add a core instead.
+  // core (#810), or a remote core over SSH (#811). With no core attached Bean never touches ~/.bean: the
+  // avatar opens Add a core instead. Switching cores saves the pick and restarts Bean.
   const userData = app.getPath("userData");
   const corePath = coreFile(userData);
-  const localCore = (await loadCoreChoice(corePath, process.platform)).selected === "local";
+  let coreChoice: CoreChoice = await loadCoreChoice(corePath, process.platform);
+  const localCore = coreChoice.selected === "local";
+  const remoteTarget = coreChoice.cores.find((c) => c.id === coreChoice.selected);
   const dir = beanDir();
   if (localCore) {
     ensurePrivateBeanDir(dir); // before anything below creates ~/.bean world-readable
@@ -79,7 +84,20 @@ app.whenReady().then(async () => {
   const projectDir = app.isPackaged ? join(process.resourcesPath, "builtin") : projectBeanDir();
 
   let quitting = false;
-  app.on("before-quit", () => { quitting = true; });
+  // Attached to a remote core, a quit is a deliberate detach (the core stops this shell's work), so it
+  // goes through the chat window's Keep/Stop review first, like a core switch.
+  let remote: RemoteCore | undefined;
+  let quitReviewed = false;
+  app.on("before-quit", (e) => {
+    // `remote` first: a boot that fails before componentWindows exists still quits (no TDZ throw here).
+    const chat = remote && !quitReviewed ? componentWindows.get("chat") : undefined;
+    if (chat && !chat.isDestroyed()) {
+      e.preventDefault();
+      closeChatThen(() => { quitReviewed = true; app.quit(); });
+      return;
+    }
+    quitting = true;
+  });
   const avatar = createAvatarWindow();
   // Evidence for a vanished avatar (#757): renderer/GPU deaths, sleep, displays, each recovery click.
   const avatarLogPath = avatarLogFile(localCore ? dir : userData);
@@ -118,8 +136,11 @@ app.whenReady().then(async () => {
   // Main → renderer pushes, by client and chat (mount) id (push.ts). Client = webContents id here
   // only; which client holds a mount comes from the host's chat mounts, once the host exists.
   let host: Host | undefined;
+  // Remote core: chat mount id → the window (webContents id) holding it (remote-core.ts).
+  const remoteMounts = new Map<string, number>();
+  let remoteIpc: ReturnType<typeof registerRemoteIpc> | undefined;
   const push = createPush({
-    clientOfMount: (mountId) => host?.handlers.chat.clientOf(mountId),
+    clientOfMount: (mountId) => host?.handlers.chat.clientOf(mountId) ?? remoteMounts.get(mountId),
     client: (id) => webContents.fromId(id),
     clients: () => BrowserWindow.getAllWindows().map((w) => w.webContents),
   });
@@ -249,8 +270,19 @@ app.whenReady().then(async () => {
     try { n = listSkillProposals(dbFile(dir)).length; } catch (err) { console.error("skill proposals count failed:", err); }
     return n ? [{ label: `${n} Skill Proposal${n === 1 ? "" : "s"} Waiting`, icon: symbol("sparkles"), click: () => openComponent("skills") }] : [];
   };
+  // The core list (#811): this Mac (macOS only), the saved remote cores, and Add Core… A pick restarts Bean
+  // on that core, after the chat window's Keep/Stop review.
+  const buildCoreSubmenu = (): MenuItemConstructorOptions[] => [
+    ...(process.platform === "darwin"
+      ? [{ label: "This Mac", type: "radio" as const, checked: coreChoice.selected === "local", click: () => switchCore("local") }] : []),
+    ...coreChoice.cores.map((c) => ({ label: coreLabel(c), type: "radio" as const, checked: c.id === coreChoice.selected, click: () => switchCore(c.id) })),
+    { type: "separator" },
+    { label: "Add Core…", click: () => openComponent("cores") },
+  ];
+  const coreRowLabel = (): string => (remoteTarget ? `Core: ${coreLabel(remoteTarget)}` : localCore ? "Core: This Mac" : "Core: None");
   const buildTrayMenu = (): Menu => Menu.buildFromTemplate([
     { label: "Bring Bean Back", icon: symbol("location"), click: () => avatarControls.bringBack() },
+    { label: coreRowLabel(), icon: symbol("server.rack"), submenu: buildCoreSubmenu() },
     ...proposalRows(),
     { label: "Settings", icon: symbol("gearshape"), accelerator: "Cmd+,", click: () => openComponent("settings") },
     ...(localCore ? [{ label: "Chat Bots", icon: symbol("message"), submenu: buildChatopsSubmenu() }] : []),
@@ -311,6 +343,38 @@ app.whenReady().then(async () => {
   });
 
   const componentWindows = new Map<ComponentKind, BrowserWindow>();
+  // A core switch or a remote quit waits for the chat window to close through its Keep/Stop review;
+  // "Keep working" (chatCloseKept) calls it off.
+  let afterChatClose: (() => void) | undefined;
+  const closeChatThen = (action: () => void): void => {
+    const chat = componentWindows.get("chat");
+    if (!chat || chat.isDestroyed()) { action(); return; }
+    afterChatClose = action;
+    chat.close();
+  };
+  // Every cores.json write goes through one chain, each with the whole current choice.
+  let coreSave: Promise<void> = Promise.resolve();
+  const saveCores = (): Promise<void> => {
+    const snapshot = coreChoice;
+    coreSave = coreSave.catch(() => {}).then(() => saveCoreChoice(corePath, snapshot));
+    return coreSave;
+  };
+  const switchCore = (id: unknown): void => {
+    const known = id === "local" ? process.platform === "darwin" : coreChoice.cores.some((c) => c.id === id);
+    if (!known || id === coreChoice.selected) return;
+    closeChatThen(() => {
+      const before = coreChoice.selected;
+      coreChoice = { ...coreChoice, selected: id as string };
+      saveCores().then(
+        () => { app.relaunch(); app.quit(); },
+        (e: unknown) => {
+          coreChoice = { ...coreChoice, selected: before };
+          dialog.showErrorBox("Bean", `Couldn't switch cores: ${e instanceof Error ? e.message : String(e)}`);
+        },
+      );
+    });
+  };
+  const coreStatus = (): CoreStatus => (remote ? remote.status() : host ? { kind: "local" } : { kind: "none" });
   // Same drop-race fix as planStore below: a URL dropped on the avatar can reach a chat window
   // whose renderer hasn't mounted (and subscribed to componentDroppedUrl) yet, silently losing
   // the push. droppedUrlStore.get() is stashed alongside every push so the renderer can pull it
@@ -321,7 +385,7 @@ app.whenReady().then(async () => {
   let pendingDashboardTarget: DashboardTarget | undefined;
   const openComponent = (requested: ComponentKind, requestedPayload?: ChatDrop | DashboardTarget): void => {
     // No core attached: every window that needs one opens Add a core instead (#810).
-    const noCore = !host && !SHELL_ONLY_KINDS.includes(requested);
+    const noCore = !host && !remote && !SHELL_ONLY_KINDS.includes(requested);
     const kind = noCore ? "cores" : requested;
     const payload = noCore ? undefined : requestedPayload;
     const droppedUrl = typeof payload === "string" || Array.isArray(payload) ? payload : undefined;
@@ -368,6 +432,10 @@ app.whenReady().then(async () => {
         host?.delegateTasks.cancelAll();
         host?.liveTasks.stopClient(clientId);
         host?.handlers.chat.releaseClient(clientId);
+        remoteIpc?.releaseClient(clientId);
+        const next = afterChatClose;
+        afterChatClose = undefined;
+        next?.();
       });
     }
     if (droppedUrl && kind === "chat") {
@@ -561,6 +629,27 @@ app.whenReady().then(async () => {
           handover: (owner, sessionId) => h.liveTasks.handover(owner, sessionId),
         }),
       });
+    } else if (remoteTarget) {
+      // A core on another machine (#811): every window's calls and the core's pushes over one ssh child.
+      mkdirSync(userData, { recursive: true });
+      const r = remote = createRemoteCore({
+        label: coreLabel(remoteTarget),
+        spawn: () => spawn("ssh", sshArgs(remoteTarget), { stdio: ["pipe", "pipe", "pipe"] }),
+        shellId: shellClientId(join(userData, "shell-id")),
+        setupCommand: oneTimeCommand(remoteTarget),
+        onPush: (mountId, kind, payload) => {
+          if (Object.hasOwn(HOST_PUSH_CHANNELS, kind)) push.send(mountId, HOST_PUSH_CHANNELS[kind], payload);
+        },
+        onStatus: (status) => {
+          push.broadcast(IPC.coreStatusChanged, status);
+          if (status.kind === "remote" && status.state === "attached") remoteIpc?.reattach();
+        },
+        onWorking: (working) => keepAwake.setWorking(working),
+      });
+      remoteIpc = registerRemoteIpc(ipcMain, { core: r, mounts: remoteMounts });
+      app.on("before-quit", () => { if (quitting) r.detach(); });
+      stopCore = () => r.detach();
+      r.connect();
     } else {
       registerNoCore(ipcMain);
     }
@@ -604,15 +693,30 @@ app.whenReady().then(async () => {
       runInChat,
       getPendingChatPrompt: chatPromptStore.get,
       getPendingInterruptedRunNotices: interruptedRunStore.get,
-      // Add a core → "Use this Mac": a Mac's only core is in-process, so save the choice and restart.
-      ...(process.platform === "darwin" && !localCore ? {
-        useLocalCore: () => {
-          saveCoreChoice(corePath, { selected: "local" }).then(
-            () => { app.relaunch(); app.quit(); },
-            (e: unknown) => dialog.showErrorBox("Bean", `Couldn't switch to this Mac's core: ${e instanceof Error ? e.message : String(e)}`),
-          );
+      cores: {
+        list: async () => ({
+          selected: coreChoice.selected,
+          cores: coreChoice.cores.map((c) => ({ id: c.id, label: coreLabel(c) })),
+          canUseLocal: process.platform === "darwin",
+        }),
+        add: async (hostName, container) => {
+          const parsed = parseRemoteCore(hostName, container);
+          if ("error" in parsed) return parsed;
+          const { choice, core } = addCore(coreChoice, parsed);
+          coreChoice = choice;
+          await saveCores();
+          return { id: core.id };
         },
-      } : {}),
+        remove: async (id) => {
+          if (id === coreChoice.selected) return; // switch away first
+          coreChoice = { ...coreChoice, cores: coreChoice.cores.filter((c) => c.id !== id) };
+          await saveCores();
+        },
+        switchTo: switchCore,
+        status: coreStatus,
+        takeBack: () => remote?.takeBack(),
+        closeKept: () => { afterChatClose = undefined; },
+      },
     });
 
     await loadAvatarWindow(avatar);

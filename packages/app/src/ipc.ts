@@ -10,7 +10,7 @@ import { execFile } from "node:child_process";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
-import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type AppInfo, type UpdateStatus, type InstallUpdateResult, type CoreListing, type CoreStatus } from "./channels.js";
 import { terminalLink, type TerminalTasks } from "./terminal-tasks.js";
 import { chatPathTarget, openChatPath } from "./chat-open-path.js";
 import type { ChatopsBot, ChatopsState } from "@bean/host";
@@ -284,8 +284,18 @@ export interface ShellIpcDeps extends ThemeHandlerDeps, UpdateHandlerDeps {
   getPendingChatPrompt: () => ChatPromptPayload | undefined;
   getPendingInterruptedRunNotices: () => InterruptedRunNotice[] | undefined;
   getAppInfo: () => AppInfo;
-  /** "Use this Mac" in the Add a core panel; absent = not offered (no local core on this platform). */
-  useLocalCore?: () => void;
+  /** The core list and the attachment's state (#811) — main.ts; every argument is unchecked here. */
+  cores: {
+    list: () => Promise<CoreListing>;
+    add: (host: unknown, container: unknown) => Promise<{ id: string } | { error: string }>;
+    remove: (id: unknown) => Promise<void>;
+    /** Saves the pick and restarts Bean, once the chat window's Keep/Stop review lets it close. */
+    switchTo: (id: unknown) => void;
+    status: () => CoreStatus;
+    takeBack: () => void;
+    /** The Keep/Stop card's "Keep working": whatever was waiting on the chat closing is off. */
+    closeKept: () => void;
+  };
 }
 
 export interface RegisterDeps extends ChatopsHandlerDeps {
@@ -568,7 +578,13 @@ export function registerShellIpc(electronIpc: IpcLike, deps: ShellIpcDeps): void
   ipcMain.on(IPC.runInChat, (_e, payload: ChatPromptPayload) => deps.runInChat(payload));
   ipcMain.handle(IPC.getPendingChatPrompt, () => deps.getPendingChatPrompt());
   ipcMain.handle(IPC.getPendingInterruptedRunNotices, () => deps.getPendingInterruptedRunNotices());
-  ipcMain.on(IPC.useLocalCore, () => deps.useLocalCore?.());
+  ipcMain.handle(IPC.coreList, () => deps.cores.list());
+  ipcMain.handle(IPC.coreAdd, (_e, host: unknown, container: unknown) => deps.cores.add(host, container));
+  ipcMain.handle(IPC.coreRemove, (_e, id: unknown) => deps.cores.remove(id));
+  ipcMain.on(IPC.coreSwitch, (_e, id: unknown) => deps.cores.switchTo(id));
+  ipcMain.handle(IPC.coreStatus, () => deps.cores.status());
+  ipcMain.on(IPC.coreTakeBack, () => deps.cores.takeBack());
+  ipcMain.on(IPC.chatCloseKept, () => deps.cores.closeKept());
 
   // Lets a component window grow to fit its own content (e.g. About growing when an update
   // notice appears) instead of clipping it.

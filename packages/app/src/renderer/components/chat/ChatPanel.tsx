@@ -19,6 +19,7 @@ import {
 import { SECTION_TITLES, slashMenu, slashPick, slashToken, type SlashEntry } from "./slash-commands.js";
 import { useCmdLinks } from "./chat-links.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
+import { coreOffline, useCoreStatus } from "../../shared/core-status.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 import type { ChatDrop, DroppedImage } from "../../../channels.js";
 
@@ -486,10 +487,13 @@ export function ChatPanel({
     if (!terminalOpen && !hidden) inputRef.current?.focus();
   }, [terminalOpen]);
 
+  // A remote core (#811): its host on the header; while it's unreachable the composer is read-only.
+  const core = useCoreStatus();
+  const offline = coreOffline(core);
   const submit = (): void => {
     const el = inputRef.current;
     // Type-ahead: while Bean answers the draft and images stay put — return before clearing.
-    if (!el || busy || imageReadsInFlight > 0) return;
+    if (!el || busy || offline || imageReadsInFlight > 0) return;
     // An agent's image labels mean nothing to Bean: refuse a Bean-bound send that holds them.
     const slashTo = parseSlash(el.value)?.agent;
     const stray = (slashTo ? slashTo !== "bean" : isLiveAgent(mode)) ? [] : mappedImageLabels(el.value, imageLabels);
@@ -584,6 +588,9 @@ export function ChatPanel({
           <span class={`bean-chat-state bean-chat-state--${header.status}`} />
           {header.status}
         </span>
+        {core.kind === "remote" ? (
+          <span class={`bean-chat-host${offline ? " bean-chat-host--off" : ""}`} title={`This chat runs on ${core.host}`}>{core.host}</span>
+        ) : null}
         <span class="bean-chat-meta-spacer" />
         {/* The linked-note chip replaces the model id (mockup 1d) — both don't fit. */}
         {linkedNote ? (
@@ -946,7 +953,8 @@ export function ChatPanel({
             ref={inputRef}
             class="bean-input bean-input--composer"
             rows={1}
-            placeholder={!agentMode ? "Message Bean · type / for skills" : live
+            readOnly={offline}
+            placeholder={offline ? `Waiting for ${core.kind === "remote" ? core.host : "the core"}…` : !agentMode ? "Message Bean · type / for skills" : live
               ? `Message ${agentName}…`
               : `Message ${agentName}… (Bean will hand over up to ${Math.min(handoffItems(items).filter((h) => h.text.trim()).length, HANDOFF_ITEMS)} messages)`}
             onInput={(e) => { resizeInput(); onComposerInput(e.target as HTMLTextAreaElement); }}
@@ -1054,7 +1062,7 @@ export function ChatPanel({
               disabled={busy || !items.some((it) => it.kind === "reply")}
               onClick={onSaveToNotes}
             >Save to notes</button>
-            <button type="button" class="bean-send" aria-label="Send" disabled={busy || imageReadsInFlight > 0} onClick={submit}>
+            <button type="button" class="bean-send" aria-label="Send" disabled={busy || offline || imageReadsInFlight > 0} onClick={submit}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg>
             </button>
           </div>
