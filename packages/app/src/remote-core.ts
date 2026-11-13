@@ -289,13 +289,15 @@ export type RemoteCore = ReturnType<typeof createRemoteCore>;
 
 /** The IPC adapter for a remote core: the remote-safe core channels go over the wire, with the chat
  * mounts' windows tracked here so the core's pushes reach the window that holds each chat. Every other
- * core or host-bound channel rejects (capability-gated UI is #812). Each call passes the contract
+ * core or host-bound channel rejects; the renderer hides host-bound controls (`useCapabilities`, #812). Each call passes the contract
  * first, as the local adapter's do. Both an invoke handler and a send listener are registered per
  * remote op (whichever the preload uses is the one that fires); a send's failure is only logged. */
 export function registerRemoteIpc(electronIpc: IpcLike, deps: {
   core: Pick<RemoteCore, "call" | "handshake">;
   /** mount id → the webContents id that attached it. */
   mounts: Map<string, number>;
+  /** A Settings save went through on the core. */
+  onConfigSaved?: () => void;
 }) {
   const ipc = guardIpc(electronIpc, []);
   const call = (key: string, sender: number, args: unknown[]): Promise<unknown> => {
@@ -303,7 +305,8 @@ export function registerRemoteIpc(electronIpc: IpcLike, deps: {
     // Recorded before the call: a chat opened while reconnecting is attached again once the core is back.
     if (key === "chatAttach" && typeof mountId === "string") deps.mounts.set(mountId, sender);
     if (key === "chatRelease" && typeof mountId === "string" && deps.mounts.get(mountId) === sender) deps.mounts.delete(mountId);
-    return deps.core.call(key, args);
+    const done = deps.core.call(key, args);
+    return key === "saveConfig" ? done.then((v) => { deps.onConfigSaved?.(); return v; }) : done;
   };
   for (const [key, c] of Object.entries(CHANNEL_CONTRACT)) {
     if (c.owner === "shell") continue;

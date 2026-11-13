@@ -1,5 +1,6 @@
 import { coreSocketFile } from "@bean/core";
-import { chmodSync, lstatSync, unlinkSync } from "node:fs";
+import { chmodSync, lstatSync, statSync, unlinkSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { connect, createServer, type Socket } from "node:net";
 import type { Readable, Writable } from "node:stream";
 import type { Attachments } from "./attachments.js";
@@ -17,8 +18,9 @@ import type { ClientId } from "./shell-ops.js";
 //   core → shell: {type:"attached", handshake, generation, clientId}, {type:"result", id, ok, value|error},
 //                 the attachment's {type:"push"…} / {type:"revoked"}, and {type:"error", message} before a close
 //
-// Only the operations in REMOTE_OPS run (default deny): core channels a remote chat needs, never raw
-// config / API-key reads, path opens, pty or the Terminal hand-off.
+// Only the operations in REMOTE_OPS run (default deny): core channels a remote shell needs, never raw
+// config / API-key reads, path opens, pty or the Terminal hand-off. Settings (#812) reads the config
+// with the key blanked and saves a patch — the key is write-only from here.
 
 /** One frame's body. Chat requests carry base64 images, hence well above a text turn. */
 export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
@@ -91,6 +93,26 @@ const liveStart = shape({
   history: opt(arr(shape({ role: oneOf("user", "reply"), text: str, agent: opt(str) }))),
 });
 
+const configPatch = shape({
+  openaiApiKey: opt(str), model: opt(str), terminalApp: opt(str), editorApp: opt(str), delegateCli: opt(str),
+  systemControls: opt(bool), reasoningEffort: opt(str), routineDigestContext: opt(bool), disabledClis: opt(arr(str)),
+  webSearch: opt(bool), autoMemory: opt(bool),
+});
+const project = shape({ name: str, path: str, defaultSkill: opt(str), skills: opt(arr(str)) });
+
+/** A remote shell types a project's path (it has no folder picker on this machine): a new or changed
+ * path must be an absolute directory here. Paths already saved pass, so a moved repo can't block an
+ * unrelated edit. */
+export async function checkRemoteProjects(h: Pick<HostHandlers, "listProjects">, next: { path: string }[]): Promise<void> {
+  const saved = new Set((await h.listProjects()).map((p) => p.path));
+  for (const { path } of next) {
+    if (saved.has(path)) continue;
+    let dir = false;
+    try { dir = isAbsolute(path) && statSync(path).isDirectory(); } catch { /* missing */ }
+    if (!dir) throw new Error(`No folder at "${path}" on the core — use an absolute path on that machine.`);
+  }
+}
+
 interface RemoteOp {
   args: readonly Guard[];
   // `any[]`: the arguments have passed `args` by the time this runs; the handlers check contents.
@@ -115,8 +137,16 @@ export const REMOTE_OPS: Readonly<Record<string, RemoteOp>> = {
   liveInterrupt: op((h, c, sessionId, mountId, turns) => h.chat.liveInterrupt(c, mountId, sessionId, turns), str, str, num),
   liveResume: op((h, c, sessionId, mountId) => h.chat.liveResume(c, mountId, sessionId), str, str),
   getModel: op((h) => h.getModel()),
+  // Never the key itself: `apiKeySet` says whether one is saved.
+  getConfig: op((h) => ({ ...h.getConfig(), openaiApiKey: "" })),
+  saveConfig: op((h, _c, patch) => h.applyConfig(patch), configPatch),
+  detectedClis: op((h) => h.detectedClis()),
   listSkills: op((h) => h.listSkills()),
   listProjects: op((h) => h.listProjects()),
+  saveProjects: op(async (h, _c, projects) => {
+    await checkRemoteProjects(h, projects);
+    return h.saveProjects(projects);
+  }, arr(project)),
   availableClis: op((h) => h.availableClis()),
   availableModels: op((h) => h.models()),
 };

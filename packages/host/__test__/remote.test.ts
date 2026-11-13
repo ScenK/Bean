@@ -90,7 +90,11 @@ describe("remote attach over the unix socket", () => {
     chmodSync(dir, 0o700);
     // A stand-in host: one chat per client, a turn that pushes an event before it answers.
     const mounts = new Map<string, number>();
-    const getConfig = vi.fn(() => ({ openaiApiKey: "sk-secret" }));
+    const getConfig = vi.fn(() => ({ openaiApiKey: "sk-secret", model: "m", apiKeySet: true }));
+    const applyConfig = vi.fn(async () => {});
+    const projectDir = mkdtempSync(join(tmpdir(), "bean-remote-proj-"));
+    const listProjects = vi.fn(async () => [{ name: "old", path: "/gone/elsewhere" }]);
+    const saveProjects = vi.fn(async () => {});
     let push: (mountId: string, kind: "delegate", payload: unknown) => void = () => {};
     const attachments = createAttachments({
       holder: (id) => mounts.get(id),
@@ -110,11 +114,14 @@ describe("remote attach over the unix socket", () => {
         },
       },
       getConfig,
+      applyConfig,
+      listProjects,
+      saveProjects,
       getModel,
     } as unknown as HostHandlers;
     const server = await listenRemote(dir, { handshake: buildHandshake("1.0.0", "linux", []), attachments, handlers });
     close = server.close;
-    return { path: server.path, getConfig, getModel, attachments };
+    return { path: server.path, getConfig, applyConfig, saveProjects, projectDir, getModel, attachments };
   }
 
   it("runs a chat turn through `bean-core attach` and receives its events", async () => {
@@ -139,12 +146,37 @@ describe("remote attach over the unix socket", () => {
     const shell = shellOverBridge(path);
     shell.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION });
     await shell.next((m) => m.type === "attached");
-    for (const op of ["getConfig", "saveConfig", "launch", "terminalStart", "chatOpenPath", "revealInFinder", "__proto__", "constructor"]) {
+    for (const op of ["launch", "terminalStart", "chatOpenPath", "revealInFinder", "pickProjectFolder", "__proto__", "constructor"]) {
       expect(await shell.call(op)).toMatchObject({ ok: false, error: expect.stringContaining("not allowed") });
     }
     expect(getConfig).not.toHaveBeenCalled();
     expect(await shell.call("chat", { message: 1 }, "m1")).toMatchObject({ ok: false, error: expect.stringMatching(/Malformed/) });
     expect(await shell.call("chat", { history: [], message: "hi" }, "m1")).toMatchObject({ ok: false, error: "not your chat" });
+    shell.end();
+    await shell.closed;
+  });
+
+  it("Settings over a remote attach (#812): the key never leaves, a save is a patch, typed project paths are checked", async () => {
+    const { path, getConfig, applyConfig, saveProjects, projectDir } = await serve();
+    const shell = shellOverBridge(path);
+    shell.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION });
+    await shell.next((m) => m.type === "attached");
+    const view = await shell.call("getConfig");
+    expect(getConfig).toHaveBeenCalled();
+    expect(view).toMatchObject({ ok: true, value: { openaiApiKey: "", apiKeySet: true, model: "m" } });
+    expect(JSON.stringify(view)).not.toContain("sk-secret");
+    expect(await shell.call("saveConfig", { model: "gpt-5" })).toMatchObject({ ok: true });
+    expect(applyConfig).toHaveBeenCalledWith({ model: "gpt-5" });
+    expect(await shell.call("saveConfig", { openaiApiKey: 42 })).toMatchObject({ ok: false, error: expect.stringMatching(/Malformed/) });
+    // A saved path that's gone passes; a new one must be a directory on the core.
+    const kept = { name: "old", path: "/gone/elsewhere" };
+    expect(await shell.call("saveProjects", [kept, { name: "x", path: "/no/such/dir" }]))
+      .toMatchObject({ ok: false, error: expect.stringContaining("No folder at") });
+    expect(await shell.call("saveProjects", [kept, { name: "x", path: "relative/dir" }])).toMatchObject({ ok: false });
+    expect(saveProjects).not.toHaveBeenCalled();
+    expect(await shell.call("saveProjects", [kept, { name: "x", path: projectDir }])).toMatchObject({ ok: true });
+    expect(saveProjects).toHaveBeenCalledTimes(1);
+    rmSync(projectDir, { recursive: true, force: true });
     shell.end();
     await shell.closed;
   });

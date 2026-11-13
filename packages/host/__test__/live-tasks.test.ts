@@ -494,7 +494,9 @@ describe("live-session teardown", () => {
 
   it("force-kills live sessions on quit and on the update relaunch", () => {
     expect(block(src("../src/host.ts"), "deps.onQuit(() => {\n    delegateTasks.interruptAll();")).toContain("liveTasks.forceKillAll();");
-    expect(block(src("../../app/src/main.ts"), "relaunch: () => {")).toContain("h.liveTasks.forceKillAll();");
+    // The update relaunch goes through stopCore (#811), which force-kills them.
+    expect(block(src("../../app/src/main.ts"), "relaunch: () => {")).toContain("stopCore();");
+    expect(src("../../app/src/main.ts").slice(src("../../app/src/main.ts").indexOf("stopCore = () => {")).split("};")[0]).toContain("h.liveTasks.forceKillAll();");
   });
 });
 
