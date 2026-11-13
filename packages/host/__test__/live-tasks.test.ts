@@ -487,16 +487,13 @@ describe("buildHandoff", () => {
 });
 
 describe("live-session teardown", () => {
-  // Guard the two exits that must SIGKILL live trees: the host's quit hook, and the app's update
-  // relaunch (app.relaunch() + app.exit() skip before-quit).
+  // The host's quit hook must SIGKILL live trees. The app's update relaunch (which skips
+  // before-quit) is guarded in packages/app/__test__/live-teardown.test.ts.
   const src = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
   const block = (text: string, start: string): string => text.slice(text.indexOf(start), text.indexOf("});", text.indexOf(start)));
 
-  it("force-kills live sessions on quit and on the update relaunch", () => {
+  it("force-kills live sessions on quit", () => {
     expect(block(src("../src/host.ts"), "deps.onQuit(() => {\n    delegateTasks.interruptAll();")).toContain("liveTasks.forceKillAll();");
-    // The update relaunch goes through stopCore (#811), which force-kills them.
-    expect(block(src("../../app/src/main.ts"), "relaunch: () => {")).toContain("stopCore();");
-    expect(src("../../app/src/main.ts").slice(src("../../app/src/main.ts").indexOf("stopCore = () => {")).split("};")[0]).toContain("h.liveTasks.forceKillAll();");
   });
 });
 
