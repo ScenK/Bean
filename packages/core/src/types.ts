@@ -74,6 +74,10 @@ export interface BeanConfig {
    * models without reasoning (gpt-4o-mini, gpt-5.4-nano) reject the parameter outright. */
   reasoningEffort: string;
   imageModel: string; // Images API model for generate_image; no Settings UI — edit config.json
+  /** Identity of Bean's CLI commits (author, committer, Co-Authored-By trailer).
+   * "" = default `Bean <bean@localhost>`. */
+  gitName: string;
+  gitEmail: string;
 
   /** Opt-in: a routine digest delivered to a chatops conversation is also appended to that
    * conversation's history, so a follow-up question about it has the digest as context.

@@ -50,7 +50,7 @@ process.stdin.on("data", (d) => {
     }
     const config = {
       openaiApiKey: "", apiKeySet: true, model: "gpt-remote", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false,
-      reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true,
+      reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "",
       paths: { config: "/srv/.bean/config.json", skills: "/srv/.bean/skills", projects: "/srv/.bean/projects.json", persona: "/srv/.bean/persona.json" },
     };
     const value = m.op === "getModel" ? "gpt-remote" : m.op === "getConfig" ? config

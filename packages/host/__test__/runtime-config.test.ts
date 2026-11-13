@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { BEAN_GIT_IDENTITY } from "@bean/core";
 import { createRuntimeConfig } from "../src/runtime-config.js";
 import type { RuntimeConfig } from "../src/runtime-config.js";
 
@@ -8,7 +9,7 @@ test("apply saves config and rebuilds clients with the new key", async () => {
   const saved: RuntimeUpdate[] = [];
   const madeConverse: string[] = [];
   const rt = createRuntimeConfig(
-    { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },
+    { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], gitName: "", gitEmail: "" },
     {
       makeConverse: (k) => { madeConverse.push(k); return (async () => ({ content: "", toolCalls: [] })) as never; },
       saveConfigFile: async (u) => { saved.push(u); },
@@ -21,7 +22,7 @@ test("apply saves config and rebuilds clients with the new key", async () => {
 
   await rt.apply({ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] });
 
-  expect(saved).toEqual([{ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] }]);
+  expect(saved).toEqual([{ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], gitName: "", gitEmail: "" }]);
   expect(rt.getModel()).toBe("gpt-5");
   expect(rt.getApiKey()).toBe("sk-new");
   expect(madeConverse).toEqual(["sk-old", "sk-new"]);
@@ -30,7 +31,7 @@ test("apply saves config and rebuilds clients with the new key", async () => {
 test("apply is a patch (#812): an omitted key — or any omitted field — keeps its value", async () => {
   const saved: RuntimeUpdate[] = [];
   const rt = createRuntimeConfig(
-    { openaiApiKey: "sk-keep", model: "gpt-4o-mini", terminalApp: "/T.app", editorApp: "", delegateCli: "", systemControls: true, reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true },
+    { openaiApiKey: "sk-keep", model: "gpt-4o-mini", terminalApp: "/T.app", editorApp: "", delegateCli: "", systemControls: true, reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "" },
     { makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never, saveConfigFile: async (u) => { saved.push(u); } },
   );
   await rt.apply({ model: "gpt-5" });
@@ -45,11 +46,26 @@ test("apply is a patch (#812): an omitted key — or any omitted field — keeps
   expect(rt.getWebSearch()).toBe(true);
 });
 
+test("gitName/gitEmail set Bean's commit identity at start and on apply", async () => {
+  const saved = { ...BEAN_GIT_IDENTITY };
+  try {
+    const rt = createRuntimeConfig(
+      { openaiApiKey: "", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true, gitName: "Sprout", gitEmail: "s@x" },
+      { makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never, saveConfigFile: async () => {} },
+    );
+    expect(BEAN_GIT_IDENTITY.GIT_AUTHOR_NAME).toBe("Sprout");
+    await rt.apply({ gitName: "", gitEmail: "me@example.com" });
+    expect(BEAN_GIT_IDENTITY).toMatchObject({ GIT_COMMITTER_NAME: "Bean", GIT_COMMITTER_EMAIL: "me@example.com" });
+  } finally {
+    Object.assign(BEAN_GIT_IDENTITY, saved);
+  }
+});
+
 test("overlapping patches apply in order, each onto the one before (#812)", async () => {
   let release: () => void = () => {};
   const saved: RuntimeUpdate[] = [];
   const rt = createRuntimeConfig(
-    { openaiApiKey: "sk-old", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true },
+    { openaiApiKey: "sk-old", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "" },
     {
       makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
       saveConfigFile: async (u) => { saved.push(u); if (saved.length === 1) await new Promise<void>((r) => { release = r; }); },
@@ -67,7 +83,7 @@ test("overlapping patches apply in order, each onto the one before (#812)", asyn
 
 test("the stable converse wrapper delegates to the current client after apply", async () => {
   const rt = createRuntimeConfig(
-    { openaiApiKey: "a", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },
+    { openaiApiKey: "a", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], gitName: "", gitEmail: "" },
     {
       makeConverse: (k) => (async () => "R:" + k) as never,
       saveConfigFile: async () => {},
@@ -84,7 +100,7 @@ test("the stable converse wrapper delegates to the current client after apply", 
 test("apply builds clients before persisting: a failing makeConverse leaves disk and state untouched", async () => {
   let saved = 0;
   const rt = createRuntimeConfig(
-    { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },
+    { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], gitName: "", gitEmail: "" },
     {
       makeConverse: (k) => { if (k === "bad") throw new Error("bad key"); return (async () => ({ content: "", toolCalls: [] })) as never; },
       saveConfigFile: async () => { saved++; },
@@ -99,7 +115,7 @@ test("apply builds clients before persisting: a failing makeConverse leaves disk
 test("getTerminalApp reflects the initial value and updates after apply", async () => {
   const saved: RuntimeUpdate[] = [];
   const rt = createRuntimeConfig(
-    { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },
+    { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], gitName: "", gitEmail: "" },
     {
       makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
       saveConfigFile: async (u) => { saved.push(u); },
@@ -111,12 +127,12 @@ test("getTerminalApp reflects the initial value and updates after apply", async 
   await rt.apply({ openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "/Applications/iTerm.app", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] });
 
   expect(rt.getTerminalApp()).toBe("/Applications/iTerm.app");
-  expect(saved).toEqual([{ openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "/Applications/iTerm.app", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] }]);
+  expect(saved).toEqual([{ openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "/Applications/iTerm.app", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], gitName: "", gitEmail: "" }]);
 });
 
 test("getEditorApp reflects the initial value and updates after apply", async () => {
   const rt = createRuntimeConfig(
-    { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },
+    { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], gitName: "", gitEmail: "" },
     {
       makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
       saveConfigFile: async () => {},
@@ -133,7 +149,7 @@ test("getEditorApp reflects the initial value and updates after apply", async ()
 test("getDelegateCli reflects the initial value and updates after apply", async () => {
   const saved: RuntimeUpdate[] = [];
   const rt = createRuntimeConfig(
-    { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },
+    { openaiApiKey: "sk-old", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], gitName: "", gitEmail: "" },
     {
       makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
       saveConfigFile: async (u) => { saved.push(u); },
@@ -159,6 +175,8 @@ test("disabledClis is exposed and updated by apply", async () => {
       delegateCli: "",
       systemControls: false,
       disabledClis: ["codex"],
+      gitName: "",
+      gitEmail: "",
     },
     {
       makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
@@ -196,6 +214,8 @@ test("reasoning effort reaches the converse client and is rebuilt on save", asyn
       routineDigestContext: false,
       disabledClis: [],
       webSearch: false,
+      gitName: "",
+      gitEmail: "",
     },
     {
       makeConverse: (_k, effort) => { madeConverse.push(effort); return (async () => ({ content: "", toolCalls: [] })) as never; },

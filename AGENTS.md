@@ -167,7 +167,8 @@ call paths and signatures.
     desktop chat, live channels in chatops).
   - Runtime agent rules live in `agent-rules.ts`: fixed, compiled-in constants (no loader, no
     user override) sent to the brain as `instructions` and appended to delegate prompts and
-    live-session openings via `withCliRules`. Advisory only — enforcement stays in code.
+    live-session openings via `withCliRules`. Advisory only — enforcement stays in code. (Exception:
+    the commit identity in the git trailer is the user's Settings "Commit as" value.)
   - `system-control.ts` — the model never writes AppleScript; it picks a verb from a closed union
     and each maps to a fixed, validated `execFile` argv. Keep it that way.
   - `chatops/` — only an explicit @mention, reply, or DM gets a turn; untagged channel chatter is

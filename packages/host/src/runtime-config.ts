@@ -1,4 +1,4 @@
-import type { ConverseDeps } from "@bean/core";
+import { setBeanGitIdentity, type ConverseDeps } from "@bean/core";
 import type { ConfigFields, ConfigUpdate } from "./config.js";
 
 export interface RuntimeConfigDeps {
@@ -19,6 +19,8 @@ export interface RuntimeConfig {
   getDisabledClis: () => string[];
   getWebSearch: () => boolean;
   getAutoMemory: () => boolean;
+  getGitName: () => string;
+  getGitEmail: () => string;
   /** A patch: omitted (undefined) fields keep their current value. */
   apply: (update: ConfigUpdate) => Promise<void>;
 }
@@ -41,6 +43,9 @@ export function createRuntimeConfig(
   let disabledClis = initial.disabledClis;
   let webSearch = initial.webSearch;
   let autoMemory = initial.autoMemory;
+  let gitName = initial.gitName;
+  let gitEmail = initial.gitEmail;
+  setBeanGitIdentity(gitName, gitEmail);
   // ponytail: the OpenAI SDK throws in its constructor when apiKey is "", so building the
   // clients eagerly would crash startup before the user ever gets to Settings. Build lazily
   // per-call instead; a missing key just surfaces as an auth error from the actual chat call.
@@ -65,6 +70,8 @@ export function createRuntimeConfig(
     getDisabledClis: () => disabledClis,
     getWebSearch: () => webSearch,
     getAutoMemory: () => autoMemory,
+    getGitName: () => gitName,
+    getGitEmail: () => gitEmail,
     apply: (patch) => {
       const run = saving.then(() => applyNow(patch));
       saving = run.catch(() => {});
@@ -75,7 +82,7 @@ export function createRuntimeConfig(
   async function applyNow(patch: ConfigUpdate): Promise<void> {
     const update: ConfigFields = {
       openaiApiKey: apiKey, model, terminalApp, editorApp, delegateCli, systemControls, reasoningEffort,
-      routineDigestContext, disabledClis, webSearch, autoMemory,
+      routineDigestContext, disabledClis, webSearch, autoMemory, gitName, gitEmail,
     };
     for (const [k, v] of Object.entries(patch)) if (v !== undefined && Object.hasOwn(update, k)) (update as unknown as Record<string, unknown>)[k] = v;
     const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey, update.reasoningEffort) : null;
@@ -91,6 +98,9 @@ export function createRuntimeConfig(
     disabledClis = update.disabledClis;
     webSearch = update.webSearch;
     autoMemory = update.autoMemory;
+    gitName = update.gitName;
+    gitEmail = update.gitEmail;
+    setBeanGitIdentity(gitName, gitEmail);
     converseClient = nextConverseClient;
   }
 }

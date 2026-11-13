@@ -20,7 +20,7 @@ export interface DelegateRequest {
 }
 
 // Moved to agent-rules.ts; re-exported for existing importers.
-export { BEAN_GIT_IDENTITY, GIT_TRAILER_INSTRUCTION, FAILED_SENTINEL_INSTRUCTION } from "./agent-rules.js";
+export { BEAN_GIT_IDENTITY, gitTrailerInstruction, FAILED_SENTINEL_INSTRUCTION } from "./agent-rules.js";
 
 export const OPENCODE_BROWSER_REFUSAL = "This skill needs the browser; opencode can't — pick a claude or codex model.";
 

@@ -34,7 +34,7 @@ const persona = shape({ name: str, tags: arr(str) });
 const configUpdate = shape({
   openaiApiKey: opt(str), model: opt(str), terminalApp: opt(str), editorApp: opt(str), delegateCli: opt(str),
   systemControls: opt(bool), reasoningEffort: opt(str), routineDigestContext: opt(bool), disabledClis: opt(arr(str)),
-  webSearch: opt(bool), autoMemory: opt(bool),
+  webSearch: opt(bool), autoMemory: opt(bool), gitName: opt(str), gitEmail: opt(str),
 });
 const noteDraft = shape({ title: str, body: str, project: opt(str), source: opt(oneOf("chat", "manual")), slug: opt(str) });
 const memory = shape({

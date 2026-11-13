@@ -165,7 +165,7 @@ export async function createHost(deps: HostDeps) {
   if (!existsSync(cfgPath)) await saveConfig(cfgPath, { openaiApiKey: "", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "" });
   const cfg = await loadConfig(cfgPath, dir);
   const runtime = createRuntimeConfig(
-    { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, reasoningEffort: cfg.reasoningEffort, routineDigestContext: cfg.routineDigestContext, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch, autoMemory: cfg.autoMemory },
+    { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, reasoningEffort: cfg.reasoningEffort, routineDigestContext: cfg.routineDigestContext, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch, autoMemory: cfg.autoMemory, gitName: cfg.gitName, gitEmail: cfg.gitEmail },
     { makeConverse: makeOpenAIConverse, saveConfigFile: (update) => saveConfig(cfgPath, update) },
   );
   const enabledClis = (): CliName[] => detectedClis().filter((cli) => !runtime.getDisabledClis().includes(cli));
@@ -471,6 +471,8 @@ export async function createHost(deps: HostDeps) {
     disabledClis: runtime.getDisabledClis(),
     webSearch: runtime.getWebSearch(),
     autoMemory: runtime.getAutoMemory(),
+    gitName: runtime.getGitName(),
+    gitEmail: runtime.getGitEmail(),
     apiKeySet: runtime.getApiKey() !== "",
     paths: { config: cfgPath, skills: skillsDir(dir), projects: projectsFile(dir), persona: personaFile(dir) },
   });
