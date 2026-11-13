@@ -1,0 +1,181 @@
+import { chmodSync, lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PassThrough } from "node:stream";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createAttachments } from "../src/attachments.js";
+import { buildHandshake, CONTRACT_VERSION } from "../src/contract.js";
+import type { HostHandlers } from "../src/host.js";
+import { attachStdio, encodeFrame, frameReader, listenRemote, MAX_FRAME_BYTES } from "../src/remote.js";
+
+const SHELL = "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b";
+
+describe("frames", () => {
+  it("splits a stream into frames across any chunking", () => {
+    const got: unknown[] = [];
+    const read = frameReader((m) => got.push(m), () => { throw new Error("no error expected"); });
+    const bytes = Buffer.concat([encodeFrame({ a: 1 })!, encodeFrame("two")!, encodeFrame([3])!]);
+    for (const b of bytes) read(Buffer.from([b]));
+    read(Buffer.concat([encodeFrame(4)!, encodeFrame(null)!]));
+    expect(got).toEqual([{ a: 1 }, "two", [3], 4, null]);
+  });
+
+  it("refuses an oversized frame on its header, before buffering the body", () => {
+    const onFrame = vi.fn();
+    const onError = vi.fn();
+    const read = frameReader(onFrame, onError);
+    const head = Buffer.alloc(4);
+    head.writeUInt32BE(MAX_FRAME_BYTES + 1);
+    read(head);
+    expect(onError).toHaveBeenCalledWith(expect.stringMatching(/over the .* cap/));
+    read(encodeFrame({ later: true })!); // dead after a failure
+    expect(onFrame).not.toHaveBeenCalled();
+    expect(encodeFrame("x".repeat(MAX_FRAME_BYTES))).toBeUndefined();
+  });
+
+  it("refuses a malformed body", () => {
+    const onError = vi.fn();
+    const body = Buffer.from("{nope");
+    const head = Buffer.alloc(4);
+    head.writeUInt32BE(body.length);
+    frameReader(() => {}, onError)(Buffer.concat([head, body]));
+    expect(onError).toHaveBeenCalledWith("malformed frame");
+  });
+});
+
+// A shell on the other end of `bean-core attach`: frames in through the bridge's stdin, out of its stdout.
+function shellOverBridge(path: string) {
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const frames: Record<string, unknown>[] = [];
+  const waiters: (() => void)[] = [];
+  stdout.on("data", frameReader((m) => {
+    frames.push(m as Record<string, unknown>);
+    for (const w of waiters.splice(0)) w();
+  }, (why) => { throw new Error(why); }));
+  const closed = attachStdio(path, stdin, stdout);
+  const next = async (pred: (m: Record<string, unknown>) => boolean): Promise<Record<string, unknown>> => {
+    for (;;) {
+      const i = frames.findIndex(pred);
+      if (i >= 0) return frames.splice(i, 1)[0]!;
+      await new Promise<void>((r) => waiters.push(r));
+    }
+  };
+  let id = 0;
+  return {
+    send: (m: unknown) => stdin.write(encodeFrame(m)!),
+    next,
+    call: async (op: string, ...args: unknown[]) => {
+      const n = ++id;
+      stdin.write(encodeFrame({ type: "call", id: n, op, args })!);
+      return next((m) => m.type === "result" && m.id === n);
+    },
+    end: () => stdin.end(),
+    closed,
+  };
+}
+
+describe("remote attach over the unix socket", () => {
+  let dir: string;
+  let close: (() => void) | undefined;
+  afterEach(() => {
+    close?.();
+    close = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function serve() {
+    dir = mkdtempSync(join(tmpdir(), "bean-remote-"));
+    chmodSync(dir, 0o700);
+    // A stand-in host: one chat per client, a turn that pushes an event before it answers.
+    const mounts = new Map<string, number>();
+    const getConfig = vi.fn(() => ({ openaiApiKey: "sk-secret" }));
+    let push: (mountId: string, kind: "delegate", payload: unknown) => void = () => {};
+    const attachments = createAttachments({
+      holder: (id) => mounts.get(id),
+      ofClient: (c) => [...mounts].filter(([, v]) => v === c).map(([k]) => k),
+      abortTurn: () => {}, expire: () => {}, release: (c) => { for (const [k, v] of mounts) if (v === c) mounts.delete(k); },
+    });
+    const send = attachments.push(() => {});
+    push = send;
+    const handlers = {
+      chat: {
+        attach: (c: number, m: string) => { mounts.set(m, c); },
+        chat: async (c: number, m: string, req: { message: string }) => {
+          if (mounts.get(m) !== c) throw new Error("not your chat");
+          push(m, "delegate", { taskId: "t1", type: "started", mountId: m });
+          return { reply: `echo: ${req.message}` };
+        },
+      },
+      getConfig,
+      getModel: () => "gpt-test",
+    } as unknown as HostHandlers;
+    const server = await listenRemote(dir, { handshake: buildHandshake("1.0.0", "linux", []), attachments, handlers });
+    close = server.close;
+    return { path: server.path, getConfig, attachments };
+  }
+
+  it("runs a chat turn through `bean-core attach` and receives its events", async () => {
+    const { path } = await serve();
+    const shell = shellOverBridge(path);
+    shell.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION });
+    const hello = await shell.next((m) => m.type === "attached");
+    expect(hello.handshake).toMatchObject({ contract: CONTRACT_VERSION, core: "1.0.0", capabilities: [] });
+    expect(await shell.call("chatAttach", "m1")).toMatchObject({ ok: true });
+    shell.send({ type: "resume", acks: {} });
+    const result = await shell.call("chat", { history: [], message: "hi", source: "typed" }, "m1");
+    expect(result).toMatchObject({ ok: true, value: { reply: "echo: hi" } });
+    const event = await shell.next((m) => m.type === "push");
+    expect(event).toMatchObject({ mountId: "m1", seq: 1, kind: "delegate", payload: { taskId: "t1", type: "started" } });
+    expect(await shell.call("getModel")).toMatchObject({ ok: true, value: "gpt-test" });
+    shell.send({ type: "detach" });
+    await shell.closed;
+  });
+
+  it("refuses operations outside the allowlist even when called directly", async () => {
+    const { path, getConfig } = await serve();
+    const shell = shellOverBridge(path);
+    shell.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION });
+    await shell.next((m) => m.type === "attached");
+    for (const op of ["getConfig", "saveConfig", "launch", "terminalStart", "chatOpenPath", "revealInFinder", "__proto__", "constructor"]) {
+      expect(await shell.call(op)).toMatchObject({ ok: false, error: expect.stringContaining("not allowed") });
+    }
+    expect(getConfig).not.toHaveBeenCalled();
+    expect(await shell.call("chat", { message: 1 }, "m1")).toMatchObject({ ok: false, error: expect.stringMatching(/Malformed/) });
+    expect(await shell.call("chat", { history: [], message: "hi" }, "m1")).toMatchObject({ ok: false, error: "not your chat" });
+    shell.end();
+    await shell.closed;
+  });
+
+  it("requires the handshake as the first frame and a matching contract", async () => {
+    const { path } = await serve();
+    const a = shellOverBridge(path);
+    a.send({ type: "call", id: 1, op: "getModel", args: [] });
+    expect(await a.next((m) => m.type === "error")).toMatchObject({ message: expect.stringMatching(/first frame/) });
+    await a.closed;
+    const b = shellOverBridge(path);
+    b.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION + 1 });
+    expect(await b.next((m) => m.type === "error")).toMatchObject({ handshake: { contract: CONTRACT_VERSION } });
+    await b.closed;
+  });
+
+  it("listens only inside the 0700 directory, on a 0600 socket, and no TCP port", async () => {
+    const { path } = await serve();
+    expect(path).toBe(join(dir, "core.sock"));
+    const st = lstatSync(path);
+    expect(st.isSocket()).toBe(true);
+    expect(st.mode & 0o777).toBe(0o600);
+    expect(readdirSync(dir)).toEqual(["core.sock"]);
+    // A second core on the same data dir doesn't steal a live socket.
+    await expect(listenRemote(dir, { handshake: buildHandshake("1", "linux", []), attachments: {} as never, handlers: {} as never }))
+      .rejects.toThrow(/already serving/);
+  });
+
+  it("refuses a directory others can read", async () => {
+    dir = mkdtempSync(join(tmpdir(), "bean-remote-"));
+    chmodSync(dir, 0o755);
+    await expect(listenRemote(dir, { handshake: buildHandshake("1", "linux", []), attachments: {} as never, handlers: {} as never }))
+      .rejects.toThrow(/private \(0700\)/);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+});

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { REMOTE_OPS } from "@bean/host";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { IPC } from "../src/channels.js";
@@ -9,6 +10,15 @@ describe("service contract (#807)", () => {
   it("classifies every channel — a new one without an entry fails here", () => {
     expect(Object.keys(CHANNEL_CONTRACT).sort()).toEqual(Object.keys(IPC).sort());
     expect(contractRefusal("bean:not-a-channel", [], [])).toMatch(/not in the contract/);
+  });
+
+  it("a remote attach (#809) only reaches core channels, with the contract's arity", () => {
+    for (const [name, op] of Object.entries(REMOTE_OPS)) {
+      const c = (CHANNEL_CONTRACT as Record<string, (typeof CHANNEL_CONTRACT)[keyof typeof CHANNEL_CONTRACT]>)[name];
+      expect(c?.owner, name).toBe("core");
+      expect(c?.owner === "core" ? c.args.length : -1, name).toBe(op.args.length);
+    }
+    for (const denied of ["getConfig", "saveConfig", "launch", "terminalStart", "chatOpenPath"]) expect(Object.hasOwn(REMOTE_OPS, denied)).toBe(false);
   });
 
   it("every channel main registers or the preload calls is in IPC (no string-literal side doors)", () => {

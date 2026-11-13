@@ -127,6 +127,22 @@ messaging endpoint to `https://<your-host>/api/messages`, or run `devtunnel host
 Docker host and use its URL plus `/api/messages`. The image does not include `devtunnel`, so the
 `"devtunnel"` key in `teams.json` does not work inside the container.
 
+## Remote attach (SSH only)
+
+`bean-core` listens on a unix socket, `~/.bean/core.sock` (0600, inside the 0700 data directory).
+It opens no TCP port. A shell on another machine reaches it through SSH, which pipes stdio to that
+socket:
+
+```bash
+ssh <host> bean-core attach                         # native (bean-core on the remote PATH)
+ssh <host> docker exec -i bean bean-core attach     # container
+```
+
+The socket refuses everything outside a small allowlist (chat turns, agent sessions, delegates and
+read-only catalogs). Config and API-key reads, path opens, terminals and the Terminal.app hand-off
+are never reachable remotely. If another `bean-core` is already serving the same data directory, the
+second one logs `bean-core: remote attach is off — …` and keeps running without a socket.
+
 ## Owner checklist
 
 In the container, write files into the volume with `docker exec -it bean sh` (or a throwaway
