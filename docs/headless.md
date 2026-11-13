@@ -41,90 +41,63 @@ One data directory runs one scheduler, so run one core per `~/.bean` (or per vol
 ## Native service (a core used for coding)
 
 Use this when the core runs on the machine that has your projects, toolchains, SSH keys and CLI
-logins. Build once from the checkout: `pnpm install && pnpm build`. The entry is
-`<checkout>/packages/host/dist/bean-core.js`. Rebuild after `git pull`, then restart the service.
+logins. It needs Node 24 or newer (`brew install node` on macOS; NodeSource's Node 24.x on Linux).
+Each release attaches `bean-core-<ver>.tar.gz` (+ `.sig`, Ed25519, same key as the desktop
+update): one artifact for macOS and Linux. `pnpm pack:core` builds the same tarball into `release/`.
 
-To attach a desktop shell later, also put a `bean-core` command on the `PATH` that a
-non-interactive SSH session sees. That `PATH` is minimal (`/usr/bin:/bin:…` on macOS; zsh reads
-only `~/.zshenv`), so use a wrapper with absolute paths rather than a symlink:
-
-```bash
-sudo tee /usr/local/bin/bean-core >/dev/null <<'SH'
-#!/bin/sh
-exec /opt/homebrew/bin/node /Users/you/Bean/packages/host/dist/bean-core.js "$@"
-SH
-sudo chmod +x /usr/local/bin/bean-core
-```
-
-Replace the node path (`which node`) and the checkout path. The wrapper survives rebuilds.
-
-### macOS (launchd)
-
-Save as `~/Library/LaunchAgents/dev.bean.core.plist`. Replace the node path (`which node`), the
-checkout path, the user name and the time zone:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>dev.bean.core</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/opt/homebrew/bin/node</string>
-    <string>/Users/you/Bean/packages/host/dist/bean-core.js</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict><key>TZ</key><string>America/Toronto</string></dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/Users/you/Library/Logs/bean-core.log</string>
-  <key>StandardErrorPath</key><string>/Users/you/Library/Logs/bean-core.log</string>
-</dict>
-</plist>
-```
+Install as the account the core will serve (not root; the installer calls `sudo` itself):
 
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.bean.core.plist
-launchctl kickstart -k gui/$(id -u)/dev.bean.core   # restart after a rebuild
-launchctl bootout gui/$(id -u)/dev.bean.core        # stop and unload
+tar xzf bean-core-<ver>.tar.gz
+./bean-core-<ver>/install.sh            # --tz America/Toronto to override the detected time zone
 ```
 
-A LaunchAgent starts at login. To keep Bean running across a reboot with nobody at the screen,
-turn on automatic login for that account. Do not run the desktop app on the same `~/.bean`: it
-stands by while `bean-core` holds the lease.
+It checks Node (missing or older than 24: it prints how to install it and changes nothing), then:
 
-### Linux (systemd)
+- copies the release to `~/.local/share/bean-core/versions/<ver>/` and points `current` at it
+  (the version it replaces becomes `previous`);
+- writes `/usr/local/bin/bean-core` (sudo), a wrapper with absolute paths, because a
+  non-interactive SSH session's `PATH` is minimal and `bean-core attach` must still resolve;
+- writes `~/.bean/config.json` as `{ "openaiApiKey": "" }` (0600) if there is none, so the
+  service boots; paste the key in the shell's Settings;
+- installs and starts the service with the system time zone as `TZ`:
+  - **macOS:** LaunchAgent `~/Library/LaunchAgents/dev.bean.core.plist` (`RunAtLoad`,
+    `KeepAlive`), log `~/Library/Logs/bean-core.log`. A LaunchAgent starts at login, so to keep
+    Bean running across a reboot with nobody at the screen, turn on automatic login for that
+    account. Install from a logged-in session (a LaunchAgent needs the GUI session).
+  - **Linux:** `/etc/systemd/system/bean-core.service` (sudo; `User=` you, `Restart=always`),
+    enabled and started. Log: `journalctl -u bean-core -f`.
+- waits for the boot line (`bean-core on: …`) and prints it, or the first error, then
+  `Add this core in Bean: <user>@<host>`.
 
-Save as `/etc/systemd/system/bean-core.service`. Replace the user, node path, checkout path and
-time zone:
-
-```ini
-[Unit]
-Description=Bean core (sprouts, reminders, chat bots)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-User=you
-WorkingDirectory=/home/you
-Environment=TZ=America/Toronto
-ExecStart=/usr/bin/node /home/you/Bean/packages/host/dist/bean-core.js
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
+Day to day:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now bean-core
-journalctl -u bean-core -f
+bean-core update                 # latest signed release; lists running work and asks before stopping it
+bean-core update --yes           # same, stops running work without asking
+./bean-core-<newer>/install.sh   # upgrade from a tarball: installs that version, flips current/previous, restarts
+bean-core rollback               # swap current and previous, restart
+bean-core --version              # prints `bean-core <ver> contract <n>`; reads nothing
+./bean-core-<ver>/install.sh --uninstall   # or ~/.local/share/bean-core/current/install.sh --uninstall
 ```
 
-If `node` comes from nvm, point `ExecStart` at that node binary
-(`~/.nvm/versions/node/<version>/bin/node`). The CLIs it finds come from the user's login shell.
+`bean-core update` asks the running core to update itself: it downloads the latest release's
+`bean-core-<ver>.tar.gz`, verifies its signature, unpacks it beside the others and runs its
+`--version`. Only then does it stop accepting new work and check what is running. Busy (a
+delegate, sprout run, chat turn, open agent session, or a bot's run) → it lists the work and
+changes nothing unless you confirm (or passed `--yes`). Otherwise it flips the links and exits;
+launchd / systemd start the new version. With no core running, the command updates the links
+itself and restarts the service.
+
+`--uninstall` stops and removes the service, the wrapper and every installed version. It keeps
+`~/.bean` (config, memories, notes, sprouts) and the macOS log; delete them yourself.
+
+If `node` comes from nvm, the installer warns: the service runs that exact binary and breaks when
+that Node version is removed. Re-run the installer after switching Node. Do not run the desktop
+app's local core on the same `~/.bean`: it stands by while `bean-core` holds the lease.
+
+Restart by hand: `launchctl kickstart -k gui/$(id -u)/dev.bean.core` (macOS) or
+`sudo systemctl restart bean-core` (Linux).
 
 ## Container
 
@@ -179,7 +152,7 @@ ssh <user@host> docker exec -i bean bean-core attach     # container named bean
 1. `bean-core` is running (service or container) as the user you'll SSH in as — the socket lives
    in that user's `~/.bean`.
 2. SSH is on. macOS: System Settings → General → Sharing → Remote Login. Linux: `sshd`.
-3. Native: the `bean-core` wrapper from [Native service](#native-service-a-core-used-for-coding).
+3. Native: the `bean-core` wrapper the installer writes ([Native service](#native-service-a-core-used-for-coding)).
    Container: the SSH user can run `docker` (in the `docker` group).
 
 **On the shell's machine — SSH keys only** (Bean never asks for or stores a password):

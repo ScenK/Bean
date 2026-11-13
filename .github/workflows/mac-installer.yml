@@ -25,7 +25,10 @@ jobs:
           # ponytail: unsigned build; add CSC_LINK/CSC_KEY_PASSWORD secrets when a
           # Developer ID cert exists.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      - run: node packages/app/scripts/sign-release.mjs packages/app/release/*.zip
+      # bean-core-<ver>.tar.gz (#835): dist:mac already built host + bots. Never matches the
+      # desktop updater's `-arm64-mac.zip` selector.
+      - run: node scripts/pack-bean-core.mjs
+      - run: node packages/app/scripts/sign-release.mjs packages/app/release/*.zip release/bean-core-*.tar.gz
         # `secrets` isn't an allowed context in `if:` (GitHub Actions restricts it to
         # env/with/run) — route it through `env` first, which `if:` can read.
         if: ${{ env.UPDATE_ED_PRIVATE_KEY != '' }}
@@ -38,13 +41,15 @@ jobs:
             packages/app/release/*.dmg
             packages/app/release/*.zip
             packages/app/release/*.zip.sig
+            release/bean-core-*.tar.gz
+            release/bean-core-*.tar.gz.sig
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
-          assets=(packages/app/release/*.dmg packages/app/release/*.zip packages/app/release/*.zip.sig)
+          assets=(packages/app/release/*.dmg packages/app/release/*.zip packages/app/release/*.zip.sig release/bean-core-*.tar.gz release/bean-core-*.tar.gz.sig)
 
           # GitHub's API intermittently returns 5xx (v0.20.0/v0.20.1 both died here
           # on a transient HTTP 503 after a fully successful build). Retry with

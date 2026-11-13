@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { generateKeyPairSync, sign as cryptoSign } from "node:crypto";
-import { compareVersions, checkForUpdate, verifyUpdateSignature } from "../src/updater.js";
+import { compareVersions, checkForUpdate, checkForCoreUpdate, checkCorePreflight, verifyUpdateSignature } from "../src/updater.js";
 import type { GithubReleaseInfo } from "../src/updater.js";
 
 test("compareVersions orders by major, then minor, then patch", () => {
@@ -41,6 +41,15 @@ test("checkForUpdate reports the zip+sig asset URLs when a newer release exists"
     zipUrl: "https://example.com/zip",
     sigUrl: "https://example.com/sig",
   });
+});
+
+test("checkForUpdate ignores the bean-core tarball attached to the same release", () => {
+  const r = release();
+  r.assets.unshift(
+    { name: "bean-core-0.8.13.tar.gz", browserDownloadUrl: "https://example.com/core" },
+    { name: "bean-core-0.8.13.tar.gz.sig", browserDownloadUrl: "https://example.com/core-sig" },
+  );
+  expect(checkForUpdate("0.8.12", r)).toMatchObject({ zipUrl: "https://example.com/zip", sigUrl: "https://example.com/sig" });
 });
 
 test("checkForUpdate errors when the release has no arm64 mac zip asset", () => {
@@ -89,4 +98,32 @@ test("verifyUpdateSignature rejects tampered data", () => {
 
 test("verifyUpdateSignature returns false instead of throwing on a malformed public key", () => {
   expect(verifyUpdateSignature(Buffer.from("x"), "not-base64!!", "not a pem key")).toBe(false);
+});
+
+test("checkForCoreUpdate picks the bean-core tarball and its signature (#837)", () => {
+  const r = release({
+    assets: [
+      ...release().assets,
+      { name: "bean-core-0.8.13.tar.gz", browserDownloadUrl: "https://example.com/core" },
+      { name: "bean-core-0.8.13.tar.gz.sig", browserDownloadUrl: "https://example.com/core-sig" },
+    ],
+  });
+  expect(checkForCoreUpdate("0.8.12", r)).toEqual({ status: "available", version: "0.8.13", tarUrl: "https://example.com/core", sigUrl: "https://example.com/core-sig" });
+  expect(checkForCoreUpdate("0.8.13", r)).toEqual({ status: "up-to-date", version: "0.8.13" });
+  expect(checkForCoreUpdate("0.9.0", r)).toEqual({ status: "up-to-date", version: "0.8.13" });
+});
+
+test("checkForCoreUpdate refuses a release without the tarball or its signature, or with an unsafe tag", () => {
+  expect(checkForCoreUpdate("0.8.12", release())).toMatchObject({ status: "error", message: expect.stringContaining("bean-core-0.8.13.tar.gz") });
+  const noSig = release({ assets: [{ name: "bean-core-0.8.13.tar.gz", browserDownloadUrl: "https://example.com/core" }] });
+  expect(checkForCoreUpdate("0.8.12", noSig)).toMatchObject({ status: "error", message: expect.stringContaining(".sig") });
+  for (const tagName of ["v../../x", "..", "1.0/2"]) expect(checkForCoreUpdate("0.0.1", release({ tagName }))).toMatchObject({ status: "error" });
+});
+
+test("checkCorePreflight wants the promised version, and the same contract only when asked", () => {
+  expect(checkCorePreflight("bean-core 0.8.13 contract 1\n", { version: "0.8.13", contract: 1 })).toBeUndefined();
+  expect(checkCorePreflight("bean-core 0.8.13 contract 2\n", { version: "0.8.13" })).toBeUndefined();
+  expect(checkCorePreflight("bean-core 0.8.13 contract 2", { version: "0.8.13", contract: 1 })).toMatch(/contract v2/);
+  expect(checkCorePreflight("bean-core 0.8.12 contract 1", { version: "0.8.13" })).toMatch(/0\.8\.12, not 0\.8\.13/);
+  expect(checkCorePreflight("Error: boom", { version: "0.8.13" })).toMatch(/printed "Error: boom"/);
 });

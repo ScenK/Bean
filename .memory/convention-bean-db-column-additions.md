@@ -1,5 +1,8 @@
 # Adding a column to an existing `bean.db`
 
+**Keep migrations additive** (add tables/columns, never drop, rename or retype): `bean-core rollback`
+(#836/#837) runs the previous build against a `bean.db` the newer one already migrated.
+
 `db.ts`'s `SCHEMA` is `CREATE TABLE IF NOT EXISTS`, so a column added to a table that already
 shipped **never reaches an existing `~/.bean/bean.db`** — the CREATE is skipped wholesale. The
 column needs its own `ALTER TABLE` in `openDb()`, and that migration has two traps:

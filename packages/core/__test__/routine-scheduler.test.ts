@@ -135,6 +135,23 @@ describe("routine scheduler", () => {
     vi.useRealTimers();
   });
 
+  it("runningNames lists a routine from the moment a tick admits it, before its state write lands (#837)", async () => {
+    let unblock = (): void => {};
+    const blocked = new Promise<void>((r) => { unblock = r; });
+    const { deps } = makeDeps({
+      loadStates: async () => ({ morning: { lastRun: d(6, 30, 11).toISOString(), history: [] } }),
+      saveStates: async () => { await blocked; },
+    });
+    const sched = createRoutineScheduler(deps);
+    expect(sched.runningNames()).toEqual([]);
+    const ticked = sched.tick();
+    await vi.waitFor(() => expect(sched.runningNames()).toEqual(["morning"]));
+    expect(deps.runRoutine).not.toHaveBeenCalled(); // still stamping: no status bubble yet
+    unblock();
+    await ticked;
+    expect(sched.runningNames()).toEqual([]);
+  });
+
   it("runNow runs immediately, refuses while running, and reports unknown names", async () => {
     const { deps } = makeDeps();
     const sched = createRoutineScheduler(deps);
