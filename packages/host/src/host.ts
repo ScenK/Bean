@@ -21,6 +21,7 @@ import {
   type RoutineTriggerAnswer, type Transport,
 } from "@bean/core";
 import { buildActionTools } from "./action-tools.js";
+import { createAttachments } from "./attachments.js";
 import { buildChatHandler, buildChatThreadHandlers, buildModelMemoryHandlers, buildModelsHandler } from "./chat.js";
 import { createChatSessions } from "./chat-sessions.js";
 import type { ConfigView } from "./config.js";
@@ -32,6 +33,7 @@ import {
 } from "./handlers.js";
 import { createLiveTasks, LIVE_AGENT_NAMES } from "./live-tasks.js";
 import { buildMemoryHandlers } from "./memory.js";
+import { startBots, type HostBotsOptions } from "./bots.js";
 import { buildNotesHandlers } from "./notes.js";
 import { createRoutineBuilder } from "./routine-builder.js";
 import { buildRoutineHandlers } from "./routines.js";
@@ -58,17 +60,34 @@ export interface HostDeps {
   firstAutoMemory: () => Promise<boolean>;
   /** Shell-owned per-chat state to drop with a released chat (the desktop's terminals). */
   onChatRelease?: (mountId: string) => void;
+  /** The Discord and Teams bots, which the host supervises and autostarts (#805). */
+  bots: HostBotsOptions;
+  /** No desktop shell (`bean-core`, #806): the lease is labelled for it, a lost lease calls this
+   * (the service manager restarts the process, which then stands by), and missed sprouts get a
+   * notice and are rebased to their next slot — there is no Run-now button to clear them. */
+  headless?: { onLeaseLost: () => void };
 }
 
+export const missedNotice = (names: string[]): string =>
+  `Missed while Bean was down (not run — no catch-up): ${names.map((n) => `"${n}"`).join(", ")}. They resume at their next slot.`;
+
 /** The Electron-free host: the stateful registries (chat mounts and turns, delegates, live sessions,
- * status bubbles, runtime config, routine builder), the scheduler lease, the reminder loop and the
- * sprout scheduler, and every handler the shell's IPC adapter wires to a channel. Throws when the
- * config can't load. */
+ * status bubbles, runtime config, routine builder), the scheduler lease, the reminder loop, the
+ * sprout scheduler, the Discord and Teams bots, and every handler the shell's IPC adapter wires to a
+ * channel. Throws when the config can't load. */
 export async function createHost(deps: HostDeps) {
   const { dir, builtinDir: projectDir } = deps;
   const db = dbFile(dir);
   // What Bean is working on, and what failed (design 2a).
   const taskStatus = createTaskStatus(deps.onJobs);
+  // A remote shell's attachment (#808): its chats' pushes are numbered and buffered for a replay, and
+  // a lost shell's work waits out the grace. Local windows never attach; their pushes pass through.
+  const attachments = createAttachments({
+    holder: (id) => sessions.holder(id), ofClient: (c) => sessions.ofClient(c), abortTurn: (id) => sessions.abortTurn(id),
+    expire: (c) => sessions.expireClient(c), release: (c) => sessions.releaseClient(c),
+  });
+  const push = attachments.push(deps.push);
+  const isChatClient = (c: ClientId): boolean => deps.isChatClient(c) || attachments.isClient(c);
 
   // Finder-launched Electron gets a minimal PATH missing whatever the user's shell profile
   // adds (nvm, npm/pnpm global bins, ~/.local/bin, ...) — ask the login shell for its real
@@ -87,14 +106,14 @@ export async function createHost(deps: HostDeps) {
     const why = err instanceof Error ? err.message : String(err);
     taskStatus.error("reminder:error", { kind: "reminder", name: "Reminder", line: `Couldn't deliver: ${r.text}`, detail: why });
   };
-  // One data directory, one scheduler + reminder loop (#800): a headless bot on this ~/.bean can
+  // One data directory, one scheduler + reminder loop (#800): a bean-core on this ~/.bean can
   // hold the same bean.db lease. Refused = standby with a notice; this host takes over (and starts
   // the sprout scheduler) once the holder quits or its heartbeat expires. Lost = stop, relaunch.
   let schedulerLeaseHeld = false;
   let startScheduler: (() => void) | undefined;
   let stopScheduler: (() => void) | undefined;
   const schedulerLease = holdSchedulerLease({
-    file: db, label: "desktop app",
+    file: db, label: deps.headless ? "bean-core" : "desktop app",
     onAcquired: () => {
       schedulerLeaseHeld = true;
       taskStatus.dismiss("scheduler:lease");
@@ -113,6 +132,7 @@ export async function createHost(deps: HostDeps) {
           ? `${by.label} took over the scheduler for this data directory. Relaunch Bean to resume here.`
           : "Bean couldn't write its scheduler heartbeat to bean.db before it expired. Relaunch Bean to resume.",
       });
+      deps.headless?.onLeaseLost();
     },
   });
   deps.onQuit(() => schedulerLease.stop());
@@ -165,7 +185,7 @@ export async function createHost(deps: HostDeps) {
       } else if (event.type === "done") taskStatus.finish(event.taskId, "done", "Done");
       else if (event.type === "failed") taskStatus.finish(event.taskId, "failed", event.message);
       else taskStatus.finish(event.taskId, "failed", "Stopped", false); // the user's own Stop isn't a failure to chase
-      if (event.mountId) deps.push(event.mountId, "delegate", event);
+      if (event.mountId) push(event.mountId, "delegate", event);
     },
     newId: () => randomUUID(),
   });
@@ -196,7 +216,7 @@ export async function createHost(deps: HostDeps) {
         // the receipt and prose are for the chat window only
       } else if (event.reason === "failed") taskStatus.finish(id, "failed", event.error ?? "Session died");
       else taskStatus.finish(id, "done", event.reason === "stopped" ? "Session ended" : "Session ended on its own", false);
-      deps.push(event.mountId, "live", event);
+      push(event.mountId, "live", event);
     },
   });
   // Synchronous on purpose (see delegate-tasks.ts's interruptAll): no preventDefault-then-requeue.
@@ -247,6 +267,14 @@ export async function createHost(deps: HostDeps) {
         void deps.notification.send({ title: `Sprout: ${routine.name}`, body: `Can't check for new items — ${error}`, meta: { open: "routines" } });
       }
     },
+    // Headless: rebase each to its next slot (still no catch-up), or the scheduler's missed guard
+    // would skip it forever.
+    ...(deps.headless ? {
+      onMissed: (names: string[]) => {
+        void deps.notification.send({ body: missedNotice(names) });
+        void routines.scheduler.clearMissed(names).catch((err: unknown) => console.error("bean: clearing missed routines failed", err));
+      },
+    } : {}),
   });
   const routineScheduler = routines.scheduler;
   // A bot's sprout-run tap (#637). The host runs the scheduler, so it also posts the finish reply,
@@ -357,9 +385,11 @@ export async function createHost(deps: HostDeps) {
     beanDirPath: dir,
     delegateAvailable: () => enabledClis().length > 0,
     // A live CLI is enabled and this chat could open a session now (#478, cap #517).
-    liveSessionAvailable: (clientId, mountId) => deps.isChatClient(clientId)
+    liveSessionAvailable: (clientId, mountId) => isChatClient(clientId)
       && enabledClis().some(isLiveCli) && liveTasks.canStart({ clientId, mountId }),
     webSearch: () => runtime.getWebSearch(),
+    // A remote shell has no Terminal.app of ours to hand off to (#812): terminal skills become delegates.
+    runAvailable: (clientId) => !attachments.isClient(clientId),
     loadRoutines: () => loadRoutines(routinesPath),
     sproutFacts: (r) => sproutRunFacts(db, r),
     proposeSend: sends.propose,
@@ -370,7 +400,7 @@ export async function createHost(deps: HostDeps) {
       imagesDir: imagesDir(dir),
       saveNoteImage: (bytes) => saveNoteImage(db, bytes),
       onStart: (mountId) => {
-        if (mountId !== undefined) deps.push(mountId, "imageProgress", mountId);
+        if (mountId !== undefined) push(mountId, "imageProgress", mountId);
         const turnId = mountId === undefined ? undefined : chatTurnIds.get(mountId);
         if (turnId) taskStatus.upsert(turnId, { line: "Drawing an image…" });
       },
@@ -382,7 +412,7 @@ export async function createHost(deps: HostDeps) {
     renameDesktopChatGroup, listDesktopChats,
   });
   const sessions = createChatSessions({
-    isChatClient: deps.isChatClient, chat, memory, threads, delegateTasks, liveTasks, push: deps.push,
+    isChatClient, chat, memory, threads, delegateTasks, liveTasks, push,
     onRelease: deps.onChatRelease,
     onChatTurn: (mountId) => {
       const id = `chat:${randomUUID()}`;
@@ -409,6 +439,7 @@ export async function createHost(deps: HostDeps) {
     disabledClis: runtime.getDisabledClis(),
     webSearch: runtime.getWebSearch(),
     autoMemory: runtime.getAutoMemory(),
+    apiKeySet: runtime.getApiKey() !== "",
     paths: { config: cfgPath, skills: skillsDir(dir), projects: projectsFile(dir), persona: personaFile(dir) },
   });
 
@@ -503,6 +534,11 @@ export async function createHost(deps: HostDeps) {
     liveProjectOf: liveTasks.projectOf,
   };
 
+  // Last: a replayed autostart may answer a sprout tap at once, so the scheduler must exist.
+  const bots = await startBots({
+    ...deps.bots, dir, builtinDir: projectDir, resolvedPath, taskStatus, onQuit: deps.onQuit, onRoutineTrigger: answerSproutTrigger,
+  });
+
   return {
     handlers,
     taskStatus,
@@ -513,8 +549,9 @@ export async function createHost(deps: HostDeps) {
     projectAllowed,
     delegateTasks,
     liveTasks,
+    attachments,
     schedulerLease,
-    answerSproutTrigger,
+    bots,
   };
 }
 

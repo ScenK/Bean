@@ -94,7 +94,9 @@ export function applyDelegateEventToItems(
   const match = items.find(
     (it): it is Extract<ChatItem, { kind: "delegate" }> => it.kind === "delegate" && it.taskId === e.taskId,
   );
-  if (!match) return { items };
+  // A settled task takes no more events: a replayed `done` after a reconnect (#808) must not loop
+  // its result back into the chat a second time — loopbacks are deduplicated by task id.
+  if (!match || match.state === "done" || match.state === "failed" || match.state === "cancelled") return { items };
   return {
     items: items.map((it) => {
       if (it.kind !== "delegate" || it.taskId !== e.taskId) return it;
@@ -983,6 +985,11 @@ export function ChatSession({
       const result = attachDelegateTaskId(itemsRef.current, id, taskId, prompt, buffered);
       setItems(result.items);
       for (const loopback of result.loopbacks) void sendRef.current(loopback.text, loopback.display, true, undefined, loopback.source);
+    } catch (err) {
+      // Refused, or (remote core) the connection dropped before the core confirmed it: the card says so
+      // instead of sitting on "Starting…".
+      const error = err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "") : String(err);
+      setItems((prev) => prev.map((it) => (it.kind === "delegate" && it.id === id && it.state === "starting" ? { ...it, state: "failed" as const, error } : it)));
     } finally {
       pendingDelegateStartsRef.current.delete(id);
     }

@@ -19,3 +19,6 @@ and IPC handlers never touch `webContents`: they emit events, and `main.ts` rout
 `push.send(mountId, …)` / `push.broadcast(…)`; callers are identified by client id
 (`isChatClient`). A new `ipcRenderer.on` channel must be added to `PUSH_ROUTES` —
 `__test__/push.test.ts` fails otherwise.
+
+Every channel also needs a `CHANNEL_CONTRACT` entry (owner + guards) — see
+`convention-service-contract.md`.

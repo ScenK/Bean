@@ -186,15 +186,22 @@ for (const [name, trigger, why] of [
   });
 }
 
-test("the Space hop restores per-Space visibility even when show() throws", () => {
-  const { win, controls } = fixture();
-  win.show.mockImplementation(() => { throw new Error("boom"); });
-  expect(() => controls.bringBack()).toThrow("boom");
-  expect(win.setVisibleOnAllWorkspaces.mock.calls).toEqual([
-    [true, { skipTransformProcessType: true }],
-    [false, { skipTransformProcessType: true }],
-  ]);
-  win.emit("closed");
+// The platform is pinned: the hop is macOS-only, and CI's unit job runs on Linux.
+test.each([
+  ["darwin", [[true, { skipTransformProcessType: true }], [false, { skipTransformProcessType: true }]]],
+  ["win32", []],
+] as const)("on %s the Space hop restores per-Space visibility even when show() throws", (platform, calls) => {
+  const real = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...real, value: platform });
+  try {
+    const { win, controls } = fixture();
+    win.show.mockImplementation(() => { throw new Error("boom"); });
+    expect(() => controls.bringBack()).toThrow("boom");
+    expect(win.setVisibleOnAllWorkspaces.mock.calls).toEqual(calls);
+    win.emit("closed");
+  } finally {
+    Object.defineProperty(process, "platform", real);
+  }
 });
 
 test("bring back before the page first loads is a silent no-op; a destroyed window reports failure", () => {

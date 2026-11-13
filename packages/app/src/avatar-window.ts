@@ -185,11 +185,13 @@ export function installAvatarControls(win: BrowserWindow, hooks: AvatarRecoveryH
     wc.on("did-fail-load", failedLoad);
     wc.on("render-process-gone", gone);
     try { wc.reload(); } catch (err) { finish(`failed:${err instanceof Error ? err.message : "reload"}`); }
+    // The Space hop is macOS-only (Spaces); elsewhere a plain show.
+    const hop = process.platform === "darwin";
     try {
-      win.setVisibleOnAllWorkspaces(true, SPACE_HOP);
+      if (hop) win.setVisibleOnAllWorkspaces(true, SPACE_HOP);
       win.show();
     } finally {
-      win.setVisibleOnAllWorkspaces(false, SPACE_HOP);
+      if (hop) win.setVisibleOnAllWorkspaces(false, SPACE_HOP);
     }
     win.focus();
   };

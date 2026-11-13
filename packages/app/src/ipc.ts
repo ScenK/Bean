@@ -1,24 +1,24 @@
 import {
-  launchInTerminal, scratchDir, availableModels, pickModel,
+  launchInTerminal, scratchDir, availableModels, pickModel, planForDroppedSkill,
   type Project, type RouteSuggestion, type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type NoteDraft,
   type Persona, type Routine, type CliModels, type RoutineBrief, type RoutineWatch, type ChatRequest,
 } from "@bean/core";
 import {
-  buildConfigHandlers, type ConfigUpdate, type DelegateStartRequest, type HostHandlers, type ShellOps,
+  buildConfigHandlers, type ConfigUpdate, type DelegateStartRequest, type Handshake, type HostHandlers, type ShellOps,
 } from "@bean/host";
 import { execFile } from "node:child_process";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
-import type { IpcMain } from "electron";
-import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type AppInfo, type UpdateStatus, type InstallUpdateResult, type CoreListing, type CoreStatus, type CoreSwitchOutcome } from "./channels.js";
 import { terminalLink, type TerminalTasks } from "./terminal-tasks.js";
 import { chatPathTarget, openChatPath } from "./chat-open-path.js";
-import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
+import type { ChatopsBot, ChatopsState } from "@bean/host";
 import type { UpdateCheckOutcome } from "./updater.js";
 import type { buildSyncedChatHandlers } from "./synced-chats.js";
 import type { buildDeskContinueHandler } from "./desk-continue.js";
 import type { Push } from "./push.js";
+import { guardIpc, type IpcLike } from "./channel-contract.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -269,9 +269,9 @@ export function buildChatopsHandlers(deps: ChatopsHandlerDeps) {
   };
 }
 
-export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, UpdateHandlerDeps {
-  /** The Electron-free host's handlers (`@bean/host` createHost): chats, registries, stores. */
-  host: HostHandlers;
+/** The shell's own channels (theme, updates, windows and their pull-on-mount stores, About): they work
+ * with or without a core attached. */
+export interface ShellIpcDeps extends ThemeHandlerDeps, UpdateHandlerDeps {
   push: Push;
   /** Dialogs, Finder, the browser and window sizing — Electron, injected (app/src/shell-ops.ts). */
   shell: ShellOps;
@@ -283,8 +283,31 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   runInChat: (payload: ChatPromptPayload) => void;
   getPendingChatPrompt: () => ChatPromptPayload | undefined;
   getPendingInterruptedRunNotices: () => InterruptedRunNotice[] | undefined;
-  planFromDrop: (skillName: string, droppedUrl: string) => void;
   getAppInfo: () => AppInfo;
+  /** The core list and the attachment's state (#811) — main.ts; every argument is unchecked here. */
+  cores: {
+    list: () => Promise<CoreListing>;
+    add: (host: unknown, container: unknown) => Promise<{ id: string } | { error: string }>;
+    remove: (id: unknown) => Promise<void>;
+    /** Saves the pick and restarts Bean, once the chat window's Keep/Stop review lets it close.
+     * "kept" = Keep working called it off; "refused" = not a core to switch to; "failed" = the save failed. */
+    switchTo: (id: unknown) => Promise<CoreSwitchOutcome>;
+    status: () => CoreStatus;
+    takeBack: () => void;
+    /** The Keep/Stop card's "Keep working": whatever was waiting on the chat closing is off. */
+    closeKept: () => void;
+  };
+}
+
+export interface RegisterDeps extends ChatopsHandlerDeps {
+  /** The Electron-free host's handlers (`@bean/host` createHost): chats, registries, stores. */
+  host: HostHandlers;
+  push: Push;
+  /** What this host offers (contract version, core version, platform, capabilities); its capabilities
+   * gate the host-bound channels. */
+  handshake: Handshake;
+  /** Dialogs, Finder, the browser and window sizing — Electron, injected (app/src/shell-ops.ts). */
+  shell: ShellOps;
   spawnLaunch?: LaunchSpawnFn;
   getTerminalApp: () => string;
   getEditorApp: () => string;
@@ -301,10 +324,14 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   deskContinue?: ReturnType<typeof buildDeskContinueHandler>;
 }
 
-/** The Electron IPC adapter: every channel (channels.ts) to its host handler, with the sender's
- * webContents id as the client id. Per-chat state and its checks live in the host (`host.chat`). */
-export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
+/** The Electron IPC adapter for a local core: every core and host-bound channel (channels.ts) to its host
+ * handler, with the sender's webContents id as the client id. Each call passes the contract
+ * (channel-contract.ts) first. Per-chat state and its checks live in the host (`host.chat`). The shell's
+ * own channels are `registerShellIpc`'s. */
+export function registerIpc(electronIpc: IpcLike, deps: RegisterDeps): void {
   const { host } = deps;
+  const ipcMain = guardIpc(electronIpc, deps.handshake.capabilities);
+  ipcMain.handle(IPC.handshake, () => deps.handshake);
   const chats = host.chat;
   ipcMain.on(IPC.chatAttach, (e, mountId: unknown) => chats.attach(e.sender.id, mountId));
   ipcMain.on(IPC.chatRelease, (e, mountId: unknown) => chats.release(e.sender.id, mountId));
@@ -467,14 +494,6 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   });
   ipcMain.handle(IPC.getConfig, () => configHandlers.get());
   ipcMain.handle(IPC.saveConfig, (_e, update: ConfigUpdate) => configHandlers.save(update));
-  ipcMain.handle(IPC.getAppInfo, () => deps.getAppInfo());
-
-  const theme = buildThemeHandlers(deps);
-  ipcMain.handle(IPC.getTheme, () => theme.get());
-  ipcMain.handle(IPC.setTheme, async (_e, next: Theme) => {
-    await theme.set(next);
-    deps.push.broadcast(IPC.themeChanged, next);
-  });
 
   const chatopsHandlers = buildChatopsHandlers(deps);
   ipcMain.handle(IPC.chatopsStatus, () => chatopsHandlers.status());
@@ -495,10 +514,6 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.destinationsRetarget, (_e, alias: unknown, surface: unknown, conversationId: unknown) =>
     destinations.retarget(alias, surface, conversationId));
 
-  const updateHandlers = buildUpdateHandlers(deps);
-  ipcMain.handle(IPC.checkForUpdate, () => updateHandlers.check());
-  ipcMain.handle(IPC.installUpdate, () => updateHandlers.install());
-  ipcMain.on(IPC.openUpdateReleasePage, () => updateHandlers.openReleasesPage());
 
   const proposals = host.skillProposals;
   ipcMain.handle(IPC.skillProposalsList, () => proposals.list());
@@ -533,15 +548,44 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
   ipcMain.handle(IPC.todosClearFinished, (_e, routine: string) => todos.clearFinished(routine));
   ipcMain.handle(IPC.todosRetry, (_e, id: string) => todos.retry(id));
 
+  // Core half of a drop on a skill tile: the plan, from the host's skills and projects. The avatar
+  // shows it through the shell's proposeRun.
+  ipcMain.handle(IPC.planDrop, async (_e, skillName: string, droppedUrl: string) =>
+    planForDroppedSkill(skillName, droppedUrl, await host.listSkills(), await host.listProjects()));
+}
+
+/** The shell's own channels: theme, updates, About, opening windows and their pull-on-mount stores. */
+export function registerShellIpc(electronIpc: IpcLike, deps: ShellIpcDeps): void {
+  const ipcMain = guardIpc(electronIpc, []);
+  ipcMain.handle(IPC.getAppInfo, () => deps.getAppInfo());
+
+  const theme = buildThemeHandlers(deps);
+  ipcMain.handle(IPC.getTheme, () => theme.get());
+  ipcMain.handle(IPC.setTheme, async (_e, next: Theme) => {
+    await theme.set(next);
+    deps.push.broadcast(IPC.themeChanged, next);
+  });
+
+  const updateHandlers = buildUpdateHandlers(deps);
+  ipcMain.handle(IPC.checkForUpdate, () => updateHandlers.check());
+  ipcMain.handle(IPC.installUpdate, () => updateHandlers.install());
+  ipcMain.on(IPC.openUpdateReleasePage, () => updateHandlers.openReleasesPage());
+
   ipcMain.handle(IPC.openComponent, (_e, kind: ComponentKind, payload?: unknown) => deps.openComponent(kind, openComponentPayload(kind, payload)));
   ipcMain.on(IPC.proposeRun, (_e, suggestion: RouteSuggestion) => deps.proposeRun(suggestion));
   ipcMain.handle(IPC.getPendingPlan, () => deps.getPendingPlan());
   ipcMain.handle(IPC.getPendingDroppedUrl, () => deps.getPendingDroppedUrl());
   ipcMain.handle(IPC.getPendingDashboardTarget, () => deps.getPendingDashboardTarget());
-  ipcMain.on(IPC.planFromDrop, (_e, skillName: string, droppedUrl: string) => deps.planFromDrop(skillName, droppedUrl));
   ipcMain.on(IPC.runInChat, (_e, payload: ChatPromptPayload) => deps.runInChat(payload));
   ipcMain.handle(IPC.getPendingChatPrompt, () => deps.getPendingChatPrompt());
   ipcMain.handle(IPC.getPendingInterruptedRunNotices, () => deps.getPendingInterruptedRunNotices());
+  ipcMain.handle(IPC.coreList, () => deps.cores.list());
+  ipcMain.handle(IPC.coreAdd, (_e, host: unknown, container: unknown) => deps.cores.add(host, container));
+  ipcMain.handle(IPC.coreRemove, (_e, id: unknown) => deps.cores.remove(id));
+  ipcMain.handle(IPC.coreSwitch, (_e, id: unknown) => deps.cores.switchTo(id));
+  ipcMain.handle(IPC.coreStatus, () => deps.cores.status());
+  ipcMain.on(IPC.coreTakeBack, () => deps.cores.takeBack());
+  ipcMain.on(IPC.chatCloseKept, () => deps.cores.closeKept());
 
   // Lets a component window grow to fit its own content (e.g. About growing when an update
   // notice appears) instead of clipping it.

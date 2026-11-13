@@ -20,7 +20,7 @@ export function watchCliAvailability(
 ): void {
   const refresh = (): void => {
     void Promise.all([api.availableClis(), api.availableModels()])
-      .then(([clis, models]) => onChange({ clis, models }));
+      .then(([clis, models]) => onChange({ clis, models }), () => {}); // e.g. a remote core not attached yet: the next change refetches
   };
   refresh();
   api.onCliAvailabilityChanged(refresh);

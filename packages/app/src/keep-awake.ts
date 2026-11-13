@@ -7,7 +7,7 @@ export type KeepAwakeHeld = { system: boolean; display: boolean };
 export type KeepAwakeState = { alwaysOn: boolean; display: boolean };
 
 // Keeps the Mac from idle-sleeping (#188): the system blocker is held while Bean runs
-// delegate/routine work, or always when the tray's Keep Mac Awake is checked. The display blocker
+// delegate/routine work (or, attached to a remote core, its delegates and agent sessions), or always when the tray's Keep Mac Awake is checked. The display blocker
 // (#202) is held only while Keep Mac Awake *and* Keep Display On are both checked — work never
 // holds the display. At most one id per type — every streamed delegate line re-sends the job list,
 // so a naive start() per update would leak assertions. The assertions die with the process, so
@@ -53,6 +53,8 @@ export function createKeepAwake(deps: {
       working = jobs.some((j) => (j.kind === "delegate" || j.kind === "routine") && j.state === "running");
       reconcile();
     },
+    /** A remote core (#811): work this shell started there is running — it has no local job list. */
+    setWorking(on: boolean): void { working = on; reconcile(); },
     alwaysOn: (): boolean => alwaysOn,
     display: (): boolean => display,
     held,
@@ -79,7 +81,7 @@ export async function loadKeepAwake(file: string): Promise<KeepAwakeState> {
   }
 }
 
-/** Write-then-rename, like chatops-enabled-store.ts; callers chain writes so the fixed temp name is safe. */
+/** Write-then-rename, like @bean/host's chatops-enabled-store.ts; callers chain writes so the fixed temp name is safe. */
 export async function saveKeepAwake(file: string, state: KeepAwakeState): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   const tmp = `${file}.tmp`;

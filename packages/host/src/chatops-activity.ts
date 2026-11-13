@@ -1,6 +1,6 @@
 import type { ChatopsActivity } from "@bean/core";
 import type { ChatopsBot } from "./chatops-servers.js";
-import type { createTaskStatus } from "@bean/host";
+import type { createTaskStatus } from "./task-status.js";
 
 type TaskStatus = ReturnType<typeof createTaskStatus>;
 const SURFACE: Record<ChatopsBot, string> = { discord: "Discord", teams: "Teams" };

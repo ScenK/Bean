@@ -7,6 +7,8 @@ import { createPush, PUSH_ROUTES } from "../src/push.js";
 
 const A = "a0000000-0000-4000-8000-000000000001";
 const B = "b0000000-0000-4000-8000-000000000002";
+const live = (n: number) => ({ sessionId: "s", agent: "claude", mountId: A, seq: n, type: "turn-start" });
+const saved = { saved: [{ id: "1", text: "t" }], mountId: B };
 
 describe("push routing (#801)", () => {
   it("classifies every channel the preload subscribes to", () => {
@@ -23,15 +25,15 @@ describe("push routing (#801)", () => {
     const push = createPush({ clientOfMount: mounts.clientOf, client: (id) => [one, two].find((c) => c.id === id), clients: () => [one, two] });
     mounts.attach(1, A);
     mounts.attach(2, B);
-    push.send(A, IPC.liveEvent, "x");
+    push.send(A, IPC.liveEvent, live(1));
     mounts.release(2, B);
-    push.send(B, IPC.memoryUpdated, "late"); // a receipt for a chat switched away from
-    push.send("never-attached", IPC.liveEvent, "lost");
-    expect(one.send.mock.calls).toEqual([[IPC.liveEvent, "x"]]);
-    expect(two.send.mock.calls).toEqual([[IPC.memoryUpdated, "late"]]);
+    push.send(B, IPC.memoryUpdated, saved); // a receipt for a chat switched away from
+    push.send("never-attached", IPC.liveEvent, live(2));
+    expect(one.send.mock.calls).toEqual([[IPC.liveEvent, live(1)]]);
+    expect(two.send.mock.calls).toEqual([[IPC.memoryUpdated, saved]]);
     two.destroyed = true;
     push.broadcast(IPC.themeChanged, "graphite");
-    push.send(B, IPC.liveEvent, "gone");
+    push.send(B, IPC.liveEvent, live(3));
     expect(one.send).toHaveBeenLastCalledWith(IPC.themeChanged, "graphite");
     expect(two.send).toHaveBeenCalledTimes(1);
   });

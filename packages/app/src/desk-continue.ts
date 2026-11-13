@@ -14,7 +14,7 @@ export type DeskContinueReply = DeskContinueResult | { failed: string };
 
 export interface DeskContinueDeps {
   listDestinations: () => Destination[];
-  /** chatopsServers.deskContinue for the Discord bot — rejects when it isn't running or doesn't ack. */
+  /** The host's bots.deskContinue for the Discord bot — rejects when it isn't running or doesn't ack. */
   deskContinue: (body: DeskContinueBody) => Promise<DeskContinueResult>;
   handover: (owner: LiveOwner, sessionId: unknown) => Promise<LiveHandover>;
 }

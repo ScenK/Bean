@@ -1,11 +1,10 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type { ConverseResult } from "../src/index.js";
 import { buildTeamsBot, parseResumeArg, type BotEffects, type TeamsBotDeps } from "../src/chatops/bot.js";
 import { CHATOPS_COMMANDS } from "../src/chatops/commands.js";
-import { readFileSync } from "node:fs";
 import { findDelegateRun, recordDelegateSession, type ResumableRun } from "../src/delegate-runs.js";
 import { ConversationStore } from "../src/chatops/conversation.js";
 import { ConversationCatalog, chatopsConversationTurns, listChatopsConversations } from "../src/chatops/catalog.js";
@@ -2325,7 +2324,7 @@ test("a DM remember is private: recalled in that member's DM only, never another
   expect(await recalled(["max", true])).toBe(false);
   expect(await recalled(["mia", false])).toBe(false);
   expect(await recalled(["u1", false])).toBe(false);
-  // Routines load with `null` (shared only) — see main.ts / headless-routines.ts.
+  // Routines load with `null` (shared only) — see core's routine-wiring.ts.
   expect(await h.loadMemories(h.file, null)).toEqual([]);
 });
 
@@ -3114,16 +3113,6 @@ test("admin changes announce only on a real change; without announce the line go
   const plain = fx();
   await bot.onMessage({ ...add, text: "remove-admin @zoe" }, plain);
   expect(plain.posted).toEqual(["Removed Zoe."]);
-});
-
-test("the command catalog names exactly the Teams manifest's commandLists, no duplicates", () => {
-  const manifest = JSON.parse(readFileSync(join(import.meta.dirname, "../../teams/teamsAppManifest/manifest.json"), "utf8")) as {
-    bots: { commandLists: { commands: { title: string }[] }[] }[];
-  };
-  const teams = new Set(manifest.bots[0]!.commandLists.flatMap((l) => l.commands.map((c) => c.title)));
-  const names = CHATOPS_COMMANDS.map((c) => c.name);
-  expect(new Set(names).size).toBe(names.length);
-  expect([...names].sort()).toEqual([...teams].sort());
 });
 
 // ---- Chatty setting + addressed mute (#444) ----

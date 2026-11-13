@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getDesktopChat, saveDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, DESKTOP_CHAT_MAX_BYTES } from "@bean/core";
 import {
-  buildChatHandler, buildChatThreadHandlers, buildMemoryHandlers, createChatSessions,
+  buildChatHandler, buildChatThreadHandlers, buildHandshake, buildMemoryHandlers, CAPABILITIES, createChatSessions,
   type ChatHandlerDeps, type HostHandlers, type MemoryHandlerDeps,
 } from "@bean/host";
 import { registerIpc, type RegisterDeps } from "../src/ipc.js";
@@ -214,7 +214,8 @@ function ipcHarness(given: Partial<RegisterDeps> & Partial<BrainDeps> = {}) {
   });
   clientOfMount = sessions.clientOf;
   const host = fallback<HostHandlers>({ chat: sessions, threads: handlers, memory, liveProjectOf: liveTasks.projectOf, cancelDelegate: delegateTasks.cancel });
-  registerIpc(ipcMain as never, fallback<RegisterDeps>({ host, isChatClient, push, shell, terminalTasks, ...given }));
+  const handshake = buildHandshake("test", "darwin", [...CAPABILITIES]);
+  registerIpc(ipcMain as never, fallback<RegisterDeps>({ host, isChatClient, push, shell, terminalTasks, handshake, ...given }));
   const releaseChatClient = sessions.releaseClient;
   const invoke = (ch: string, sender: unknown, ...args: unknown[]): unknown => handles.get(ch)!({ sender }, ...args);
   const emit = (ch: string, sender: unknown, ...args: unknown[]): unknown => ons.get(ch)!({ sender }, ...args);
@@ -230,7 +231,7 @@ describe("chat thread IPC", () => {
     expect(() => invoke(IPC.chatThreadSave, other, save(), A)).toThrow(/chat window/);
     expect(() => invoke(IPC.chatThreadSave, chat, save(), B)).toThrow(/unknown chat session/);
     expect(() => invoke(IPC.chatThreadSave, chat, save(), "not-a-uuid")).toThrow(/unknown chat session/);
-    expect(() => invoke(IPC.chatThreadSave, chat, save())).toThrow(/unknown chat session/);
+    expect(() => invoke(IPC.chatThreadSave, chat, save())).toThrow(/malformed payload/); // no mount id: refused before the host
     expect(() => invoke(IPC.chatThreadGet, other, ID, A)).toThrow(/chat window/);
     expect(() => invoke(IPC.chatThreadGet, chat, ID, B)).toThrow(/unknown chat session/);
     expect(() => invoke(IPC.delegateStart, chat, { projectPath: "", prompt: "p", instruction: "i" }, B)).toThrow(/unknown chat session/);
@@ -340,11 +341,11 @@ describe("chat thread IPC", () => {
       expect.objectContaining({ mountId: B, offRecord: false }),
     ]);
     // Live sessions are owned by (window, mount); an unattached mount or another window is refused.
-    await invoke(IPC.liveStart, chat, { agent: "claude" }, B);
-    expect(await invoke(IPC.liveStart, chat, { agent: "claude" }, "not-a-uuid")).toEqual({ error: expect.stringMatching(/chat window/) });
-    expect(await invoke(IPC.liveStart, other, { agent: "claude" }, B)).toEqual({ error: expect.stringMatching(/chat window/) });
+    await invoke(IPC.liveStart, chat, { agent: "claude", projectPath: "", ask: "hi" }, B);
+    expect(await invoke(IPC.liveStart, chat, { agent: "claude", projectPath: "", ask: "hi" }, "not-a-uuid")).toEqual({ error: expect.stringMatching(/chat window/) });
+    expect(await invoke(IPC.liveStart, other, { agent: "claude", projectPath: "", ask: "hi" }, B)).toEqual({ error: expect.stringMatching(/chat window/) });
     emit(IPC.liveStop, chat, "s1", B);
-    expect(liveTasks.start.mock.calls).toEqual([[{ clientId: chat.id, mountId: B }, { agent: "claude" }]]);
+    expect(liveTasks.start.mock.calls).toEqual([[{ clientId: chat.id, mountId: B }, { agent: "claude", projectPath: "", ask: "hi" }]]);
     expect(liveTasks.stop.mock.calls).toEqual([[{ clientId: chat.id, mountId: B }, "s1"]]);
     // Stop / Esc Esc: same ownership gate; refused senders and mounts never reach live-tasks.
     expect(invoke(IPC.liveInterrupt, other, "s1", B, 0)).toBe(false);
