@@ -8,7 +8,7 @@ metadata:
 `BEAN_GIT_IDENTITY` (`packages/core/src/delegate.ts`) sets
 `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL` to `Bean
 <bean@localhost>`. It's merged into the spawn `env` in both `defaultDelegateSpawn` (core) and
-`resolvedPathSpawnFn` (`packages/app/src/delegate-tasks.ts`) — the two places a delegate child
+`resolvedPathSpawnFn` (`packages/host/src/delegate-tasks.ts`) — the two places a delegate child
 actually gets spawned. Any new delegate spawn path must merge it too, or that path's commits
 will fall back to the host's global git config identity.
 

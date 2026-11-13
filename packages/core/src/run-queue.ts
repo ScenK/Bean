@@ -100,24 +100,6 @@ export function sweepDeadRuns(dir: string): number {
   return swept;
 }
 
-/** Headless boot only (the bot owns ~/.bean alone): kill each recorded run's process group, then
- * delete every record (legacy per-project hash files included). After a container restart pids
- * start low again, so a stale record's pid can match an unrelated live process. Returns the
- * cleared project paths. Skips this process and pid ≤ 1. */
-export function clearReservations(dir: string, kill: (pid: number) => void = (pid) => process.kill(-pid, "SIGKILL")): string[] {
-  const cleared: string[] = [];
-  for (const f of runFiles(dir)) {
-    const path = join(runsDir(dir), f);
-    const r = readRun(path);
-    if (r && r.pid > 1 && r.pid !== process.pid) {
-      try { kill(r.pid); } catch { /* already gone, or not a group leader */ }
-    }
-    rmSync(path, { force: true });
-    cleared.push(r?.projectPath ?? f);
-  }
-  return cleared;
-}
-
 const MAX_DISPLAY_INSTRUCTION = 140;
 
 /** The message an interrupted run leaves for whichever surface requested it. `full` keeps the

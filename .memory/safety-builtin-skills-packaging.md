@@ -8,7 +8,7 @@ walk lands outside the app bundle — and `<repo-root>/.bean` was never copied i
 the first place (`packages/app/package.json`'s electron-builder `files` list only had
 `dist/**`, `assets/**`, `package.json`).
 
-Fix: `package.json`'s `build.extraResources` copies `../../.bean` → `Resources/builtin`, and
+Fix: `package.json`'s `build.mac.extraResources` (macOS-only — the Windows shell has no local core) copies `../../.bean` → `Resources/builtin`, and
 `main.ts` picks the dir at runtime:
 
 ```ts

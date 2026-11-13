@@ -1,0 +1,35 @@
+{
+  "name": "@bean/host",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "bean-core": "./dist/bean-core.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./task-status": {
+      "types": "./dist/task-status.d.ts",
+      "default": "./dist/task-status.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node esbuild.config.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/bean-core.js"
+  },
+  "dependencies": {
+    "@bean/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

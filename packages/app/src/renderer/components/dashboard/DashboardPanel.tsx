@@ -10,7 +10,7 @@ import {
   splitSteps, stepLabel, stepPassed, unreadRuns,
   type DashRun, type DashStep, type RunBucket,
 } from "./runs.js";
-import type { RoutineStateView, StepAttemptView } from "../../../ipc.js";
+import type { RoutineStateView, StepAttemptView } from "@bean/host";
 import type { DashboardTarget } from "../../../channels.js";
 import { watchDashboardText } from "../routines/watch-status.js";
 

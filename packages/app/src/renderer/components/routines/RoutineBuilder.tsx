@@ -2,8 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import type {
   AvailableModel, CliName, Project, Routine, RoutineBrief, RoutineSinks, RoutineStep, Skill, WatchItem,
 } from "@bean/core";
-import type { RoutineStateView, SinkRecipients } from "../../../ipc.js";
-import type { RoutineBuildView } from "../../../routine-builder.js";
+import type { RoutineStateView, SinkRecipients, RoutineBuildView } from "@bean/host";
 import { ROUTINE_EXAMPLES, exampleRoutine } from "@bean/core/routine-examples";
 import { StepsEditor } from "./StepsEditor.js";
 import { remapStepMissing, stepProblemsText, withStepIds } from "./step-ids.js";

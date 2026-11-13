@@ -3,7 +3,7 @@ import { PERSONA_TAGS, type Persona, type PersonaTag } from "@bean/core/persona"
 import type { DreamDigest, Memory, Project } from "@bean/core";
 import { memorySections, OWNER_CATEGORY, OWNER_PIN_LIMIT } from "@bean/core/memory";
 import { projectsByName } from "@bean/core/project-select";
-import type { MemoryBatch } from "../../../ipc.js";
+import type { MemoryBatch } from "@bean/host";
 
 const ago = (iso: string): string => {
   const min = Math.round((Date.now() - Date.parse(iso)) / 60_000);

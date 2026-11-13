@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import type { Routine, RoutineChatopsSink } from "@bean/core";
-import type { DestinationView } from "../../../destinations.js";
+import type { DestinationView } from "@bean/host";
 
 const KIND_GROUP = { channel: "Channels", thread: "Threads", group: "Group chats", meeting: "Meetings", dm: "Direct messages" } as const;
 const tidy = (s: string): string => s.replace(/\s+/g, " ").trim();

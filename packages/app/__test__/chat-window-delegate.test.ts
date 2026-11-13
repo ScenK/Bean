@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { addDelegateProposal, applyDelegateEventToItems, attachDelegateTaskId, hasActiveDelegates, markDelegateStarting } from "../src/renderer/components/chat/ChatSession.js";
 import { insertDroppedPath, type ChatItem } from "../src/renderer/shared/chat-types.js";
-import type { DelegateEvent } from "../src/delegate-tasks.js";
+import type { DelegateEvent } from "@bean/host";
 
 const delegate = {
   kind: "delegate",
@@ -34,6 +34,14 @@ describe("ChatWindow delegate state", () => {
       display: "📦 Delegate finished",
       source: "loopback",
     });
+  });
+
+  it("loops a task's result back once: a replayed done is ignored", () => {
+    const event = { taskId: "t1", type: "done", result: "fixed" } satisfies DelegateEvent;
+    const first = applyDelegateEventToItems([delegate], event);
+    const replayed = applyDelegateEventToItems(first.items, event);
+    expect(replayed.loopback).toBeUndefined();
+    expect(replayed.items).toBe(first.items);
   });
 
   it("keeps the resume receipt on the card but never in the loopback text", () => {

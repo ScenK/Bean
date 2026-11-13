@@ -15,7 +15,7 @@ injected run output must not be able to widen it.
   their evidence runs' `routine_step_attempts`; unpinning/applying is the Skills-panel inbox (#263).
 - `baseHash` = sha256 of the effective skill body (same hash as `StepAttempt.skillHash`) — the
   apply-time stale check.
-- The digest footer ("N skill proposal(s) waiting in Bean → Skills") is appended by the app via
+- The digest footer ("N skill proposal(s) waiting in Bean → Skills") is appended by core's `routine-host.ts` via
   `withProposalFooter` — never model text.
 - **Inbox (#263)** — Skills panel → Proposals; tray row when any wait. `approveSkillProposal`
   re-hashes the *effective* layered body against `baseHash` (stale → refuse; UI offers Regenerate =

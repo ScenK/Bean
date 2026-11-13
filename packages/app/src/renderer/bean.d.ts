@@ -3,23 +3,22 @@ import type {
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
-import type { Theme, ComponentKind, DashboardTarget, ChatDrop, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
-import type { DelegateEvent, DelegateStartRequest } from "../delegate-tasks.js";
-import type { LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult } from "../live-tasks.js";
+import type { Theme, ComponentKind, DashboardTarget, ChatDrop, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult, CoreListing, CoreStatus, CoreSwitchOutcome } from "../channels.js";
+import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "@bean/host";
 import type { TerminalEvent, TerminalStartResult } from "../terminal-tasks.js";
-import type { TaskJob } from "../task-status.js";
-import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
-import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "../ipc.js";
-import type { RoutineBuildView } from "../routine-builder.js";
+import type { ChatopsBot, ChatopsEvent, ChatopsState } from "@bean/host";
+import type { InterruptedRunNotice } from "../ipc.js";
+import type { SkillProposalView, StepAttemptView, RoutineStateView, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, RoutineBuildView, DestinationView, NameRawResult, SendResult } from "@bean/host";
 import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "../synced-chats.js";
 import type { DeskContinueReply, DeskContinueRequest } from "../desk-continue.js";
-import type { DestinationView, NameRawResult, SendResult } from "../destinations.js";
 import type { AliasResult } from "@bean/core";
 import type { DesktopChatListing, RunStatus, WatchCheckResult } from "@bean/core";
 
 declare global {
   interface Window {
     bean: {
+      /** The host's contract version, core version, platform and capabilities (channel-contract.ts). */
+      handshake(): Promise<Handshake>;
       launch(req: LaunchRequest): void;
       delegateStart(req: DelegateStartRequest, mountId: string): Promise<string>;
       delegateCancel(taskId: string): void;
@@ -92,7 +91,8 @@ declare global {
       /** Focus the chat window and show the chat (mount) that owns a bubble's task. */
       openChatMount(mountId: string): void;
       onShowChatMount(cb: (mountId: string) => void): void;
-      planFromDrop(skillName: string, droppedUrl: string): void;
+      /** The plan for a URL dropped on a skill tile (show it with proposeRun). */
+      planDrop(skillName: string, droppedUrl: string): Promise<RouteSuggestion>;
       runInChat(prompt: string, label: string, noteSlug?: string): void;
       getPendingChatPrompt(): Promise<{ prompt: string; label: string; noteSlug?: string } | undefined>;
       onChatPrompt(cb: (p: { prompt: string; label: string; noteSlug?: string }) => void): void;
@@ -116,6 +116,18 @@ declare global {
       checkForUpdate(): Promise<UpdateStatus>;
       installUpdate(): Promise<InstallUpdateResult | undefined>;
       openUpdateReleasePage(): void;
+      /** Cores panel (#811): the saved cores and which one is selected. */
+      coreList(): Promise<CoreListing>;
+      /** Saves a remote core (`user@host`, optional Docker container); doesn't switch to it. */
+      coreAdd(host: string, container?: string): Promise<{ id: string } | { error: string }>;
+      coreRemove(id: string): Promise<void>;
+      /** Switch to a core ("local" = this Mac): the chat window's Keep/Stop review, then Bean restarts. */
+      coreSwitch(id: string): Promise<CoreSwitchOutcome>;
+      /** The attachment's state: host badge, reconnect bar, takeover and version banners. */
+      coreStatus(): Promise<CoreStatus>;
+      onCoreStatus(cb: (s: CoreStatus) => void): void;
+      /** After another machine took the core over: attach again. */
+      coreTakeBack(): void;
       /** Live notes; `includeArchived` adds archived ones (each with `archivedAt`). */
       listNotes(opts?: { includeArchived?: boolean }): Promise<Note[]>;
       saveNote(draft: NoteDraft, images?: ImageAttachment[]): Promise<string>;
@@ -206,6 +218,8 @@ declare global {
       dreamDetails(): Promise<{ before: string[]; after?: string }[]>;
       onReviewBeforeClose(cb: () => void): void;
       allowChatClose(): void;
+      /** The Keep/Stop card's "Keep working": a switch or quit waiting on the close is called off. */
+      chatCloseKept(): void;
       chatopsStatus(): Promise<Record<ChatopsBot, ChatopsState>>;
       /** Settings → ChatOps → Destinations: every conversation the bots have seen. */
       destinationsList(): Promise<DestinationView[]>;
