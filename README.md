@@ -3,6 +3,7 @@
 <div align="center">
   <img src="docs/icon.png" alt="Bean app icon" width="128" height="128" />
   <blockquote>Gets to know you, gets things done, and always asks before it acts.</blockquote>
+  <p><a href="https://scenk.github.io/Bean/"><b>Website</b></a> · <a href="https://scenk.github.io/Bean/#get"><b>Download</b></a> · <a href="docs/headless.md">Headless core</a></p>
 </div>
 
 **Bean is a personal agent that lives on your desktop as a tiny pet.**
@@ -80,7 +81,7 @@ Set it up once; it quietly covers everything from the family calendar to the spr
 
 ## Getting started
 
-1. **Install Bean.** Grab it from the releases panel.
+1. **Install Bean.** Pick your platform on the [download page](https://scenk.github.io/Bean/#get).
 2. **Open it.** Bean sits on your desktop as a small always-on-top avatar.
    Hover for a box, click for petals — chat, skills, projects, notes.
 3. **Add your key.** Open **Settings**, paste your OpenAI key, pick a model.
