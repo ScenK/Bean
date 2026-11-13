@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDb } from "../src/db.js";
@@ -74,6 +75,34 @@ describe("scheduler lease", () => {
     held = true;
     await sched.tick();
     expect(runRoutine).toHaveBeenCalledOnce();
+  });
+
+  it("a lease lost while a tick awaits admits nothing", async () => {
+    let held = true;
+    const runRoutine = vi.fn(async (): Promise<RoutineRunResult> => ({
+      record: { startedAt: "", finishedAt: "", status: "ok", digest: "d", steps: [] }, digest: "d", results: [],
+    }));
+    const make = (onLoadStates: () => void) => createRoutineScheduler({
+      loadRoutines: async () => [{ name: "morning", enabled: true, cron: "30 6 * * *", steps: [{ kind: "chat", instruction: "x" }], sinks: {} }],
+      loadStates: async () => { onLoadStates(); return { morning: { lastRun: new Date(2026, 6, 11, 6, 30).toISOString(), history: [] } }; },
+      saveStates: async () => {}, runRoutine, deliverDigest: async () => {}, now: () => new Date(2026, 6, 12, 6, 31),
+      canSchedule: () => held,
+    });
+    await make(() => { held = false; }).tick();
+    expect(runRoutine).not.toHaveBeenCalled();
+  });
+
+  it("a db error on the first claim fires neither callback (callers must not treat it as acquired)", () => {
+    const cb = { acquired: vi.fn(), blocked: vi.fn(), lost: vi.fn() };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // A path under a regular file: openDb's mkdir fails.
+    const plain = join(dir, "plain");
+    writeFileSync(plain, "");
+    const lease = holdSchedulerLease({ file: join(plain, "nope", "bean.db"), label: "X", onAcquired: cb.acquired, onBlocked: cb.blocked, onLost: cb.lost });
+    lease.stop();
+    spy.mockRestore();
+    expect(cb.acquired).not.toHaveBeenCalled();
+    expect(cb.blocked).not.toHaveBeenCalled();
   });
 
   it("a refused process stands by and takes over after a crashed holder's lease expires; the stalled holder learns it lost", () => {

@@ -14,13 +14,23 @@ export const SCHEDULER_LEASE_HEARTBEAT_MS = 30_000;
  * Returns undefined on success, else the current holder. */
 export function claimSchedulerLease(file: string, holder: string, label: string, nowMs: number, ttlMs: number): LeaseHolder | undefined {
   const db = openDb(file);
-  const res = db.prepare(
-    `INSERT INTO leases (name, holder, label, expires) VALUES ('scheduler', ?, ?, ?)
-     ON CONFLICT(name) DO UPDATE SET holder = excluded.holder, label = excluded.label, expires = excluded.expires
-     WHERE leases.expires < ? OR leases.holder = ?`,
-  ).run(holder, label, nowMs + ttlMs, nowMs, holder);
-  if (Number(res.changes) > 0) return undefined;
-  return db.prepare("SELECT holder, label, expires FROM leases WHERE name = 'scheduler'").get() as unknown as LeaseHolder;
+  // One write transaction around the claim and the read-back: otherwise the holder can release
+  // between them and an empty SELECT would read as "acquired" without owning the row.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(
+      `INSERT INTO leases (name, holder, label, expires) VALUES ('scheduler', ?, ?, ?)
+       ON CONFLICT(name) DO UPDATE SET holder = excluded.holder, label = excluded.label, expires = excluded.expires
+       WHERE leases.expires < ? OR leases.holder = ?`,
+    ).run(holder, label, nowMs + ttlMs, nowMs, holder);
+    const row = db.prepare("SELECT holder, label, expires FROM leases WHERE name = 'scheduler'").get() as LeaseHolder | undefined;
+    db.exec("COMMIT");
+    if (!row) throw new Error("scheduler lease row missing after claim");
+    return row.holder === holder ? undefined : { holder: row.holder, label: row.label, expires: Number(row.expires) };
+  } catch (err) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 /** Drops the lease only if `holder` still has it. */

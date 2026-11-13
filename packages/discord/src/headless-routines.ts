@@ -39,6 +39,8 @@ export const clearedNotice = (paths: string[]): string =>
 export const leaseBlockedNotice = (by: LeaseHolder): string =>
   `bean: another scheduler already runs on this data directory — ${by.label}. Not scheduling; exiting. ` +
   "Stop it, or wait ~90s if it crashed (its lease expires).";
+export const leaseClaimFailedNotice =
+  "bean: couldn't take the scheduler lease in bean.db (see the error above). Not scheduling; exiting.";
 export const leaseLostNotice = (by: LeaseHolder): string =>
   `bean: the scheduler lease was taken over by ${by.label} (this process stalled past its heartbeat). Stopping; exiting.`;
 
@@ -68,14 +70,17 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
   const { dir } = deps;
   // First, before boot cleanup: a refused process must not clear the holder's run reservations.
   // Throws (one line) when another process holds it; the caller logs it and exits non-zero.
+  // Only an explicit acquisition counts: a db error on the first claim fires neither callback.
+  let acquired = false;
   let blockedBy: LeaseHolder | undefined;
   const lease = holdSchedulerLease({
     file: dbFile(dir), label: "headless Discord bot",
-    onAcquired: () => {}, onBlocked: (by) => { blockedBy = by; }, onLost: (by) => deps.onLeaseLost(leaseLostNotice(by)),
+    onAcquired: () => { acquired = true; }, onBlocked: (by) => { blockedBy = by; },
+    onLost: (by) => deps.onLeaseLost(leaseLostNotice(by)),
   });
-  if (blockedBy) {
+  if (!acquired) {
     lease.stop();
-    throw new Error(leaseBlockedNotice(blockedBy));
+    throw new Error(blockedBy ? leaseBlockedNotice(blockedBy) : leaseClaimFailedNotice);
   }
   const ownerDm = (body: string, title?: string): Promise<void> =>
     enqueueOutbox(outboxDir(dir), { transport: "discord", body, ...(title ? { title } : {}) }, randomUUID)

@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { withFinishReply } from "@bean/core";
-import { cliAuthPresent, headlessRoutinesOn, leaseBlockedNotice, leaseLostNotice, missedNotice, tzProblem } from "../src/headless-routines.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  cliAuthPresent, headlessRoutinesOn, leaseBlockedNotice, leaseClaimFailedNotice, leaseLostNotice, missedNotice,
+  startHeadlessRoutines, tzProblem,
+} from "../src/headless-routines.js";
 
 describe("headless routines boot checks", () => {
   it("is off unless BEAN_HEADLESS_ROUTINES=1", () => {
@@ -21,6 +27,22 @@ describe("headless routines boot checks", () => {
     for (const line of [leaseBlockedNotice(by), leaseLostNotice(by)]) {
       expect(line).toContain("desktop app (pid 42 on mac)");
       expect(line).not.toContain("\n");
+    }
+  });
+
+  it("refuses to start (no cleanup, no scheduler) when the lease claim errors", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bean-headless-"));
+    const dir = join(tmp, "plain"); // a regular file: bean.db under it can't open
+    writeFileSync(dir, "");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(startHeadlessRoutines({
+        dir, builtinDir: tmp, converse: vi.fn(), model: "m", clis: () => [], cliModels: [], delegateCli: "",
+        routineDigestContext: false, ownerId: "1", onLeaseLost: vi.fn(),
+      })).rejects.toThrow(leaseClaimFailedNotice);
+    } finally {
+      spy.mockRestore();
+      rmSync(tmp, { recursive: true, force: true });
     }
   });
 

@@ -824,9 +824,6 @@ app.whenReady().then(async () => {
     const routinesPath = routinesDir(dir);
     const routineStatePath = routineStateFile(dir);
 
-    // Anything stuck `running` was interrupted by the previous quit — fail it visibly (retryable).
-    const recovered = await recoverInterruptedTodos(dbFile(dir));
-    if (recovered > 0) console.warn(`bean: marked ${recovered} interrupted todo(s) as failed`);
     // Run records a crash left behind (run-queue.ts). Never kills: the bots share runs/.
     sweepDeadRuns(dir);
 
@@ -930,10 +927,18 @@ app.whenReady().then(async () => {
       },
     });
     app.on("before-quit", () => routineBuilder.cancelAll());
-    // Started by whichever comes second: this line, or the lease being acquired (standby).
-    startScheduler = () => routineScheduler.start();
+    // Started by whichever comes second: this line, or the lease being acquired (standby). Only
+    // the lease holder recovers todos: anything stuck `running` was interrupted by the previous
+    // holder (quit/crash) — fail it visibly (retryable). A standby app must not touch them: the
+    // current holder is still running them.
+    startScheduler = () => {
+      void recoverInterruptedTodos(dbFile(dir))
+        .then((n) => { if (n > 0) console.warn(`bean: marked ${n} interrupted todo(s) as failed`); },
+          (err: unknown) => console.error("bean: interrupted-todo recovery failed", err))
+        .then(() => { if (schedulerLeaseHeld) routineScheduler.start(); });
+    };
     stopScheduler = () => routineScheduler.stop();
-    if (schedulerLeaseHeld) routineScheduler.start();
+    if (schedulerLeaseHeld) startScheduler();
     app.on("before-quit", () => routineScheduler.stop());
 
     // Checked after each auto-save (close batch or per-turn capture) — no timer, no boot cost.
