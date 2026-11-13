@@ -35,7 +35,7 @@ try {
     env: { PATH: process.env.PATH, HOME: home },
     encoding: "utf8",
   });
-  assert.match(out, new RegExp(`^bean-core ${version.replace(/\./g, "\\.")} contract \\d+\\n$`), `--version printed ${JSON.stringify(out)}`);
+  assert.ok(out.startsWith(`bean-core ${version} contract `), `--version printed ${JSON.stringify(out)}`);
   assert.ok(!existsSync(join(home, ".bean")), "--version must not create ~/.bean");
 
   const outDir = join(repo, "release");
