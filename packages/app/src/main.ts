@@ -22,7 +22,7 @@ import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./w
 import { registerIpc, registerShellIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens, buildPendingUpdateStore, type ChatPromptPayload } from "./ipc.js";
 import { IPC, SHELL_ONLY_KINDS, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type CoreStatus, type CoreSwitchOutcome } from "./channels.js";
 import { registerNoCore } from "./channel-contract.js";
-import { addCore, coreFile, coreLabel, loadCoreChoice, oneTimeCommand, parseRemoteCore, saveCoreChoice, sshArgs, type CoreChoice } from "./core-store.js";
+import { addCore, coreCli, coreFile, coreLabel, loadCoreChoice, oneTimeCommand, parseRemoteCore, saveCoreChoice, sshArgs, type CoreChoice } from "./core-store.js";
 import { createRemoteCore, registerRemoteIpc, type RemoteCore } from "./remote-core.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import {
@@ -651,6 +651,7 @@ app.whenReady().then(async () => {
         spawn: () => spawn("ssh", sshArgs(remoteTarget), { stdio: ["pipe", "pipe", "pipe"] }),
         shellId: shellClientId(join(userData, "shell-id")),
         setupCommand: oneTimeCommand(remoteTarget),
+        cli: coreCli(remoteTarget),
         onPush: (mountId, kind, payload) => {
           if (Object.hasOwn(HOST_PUSH_CHANNELS, kind)) push.send(mountId, HOST_PUSH_CHANNELS[kind], payload);
         },

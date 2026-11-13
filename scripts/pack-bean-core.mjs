@@ -2,7 +2,8 @@
 // Packs the built bean-core (#835) as release/bean-core-<ver>.tar.gz: one artifact for macOS and
 // Linux (no native modules). Keeps the checkout layout under bean-core-<ver>/ because the bundle
 // finds .bean at ../../../.bean and the bots at packages/<bot>/dist beside it — same set as the
-// Dockerfile. Run after `pnpm build` (or `pnpm dist:mac`); `pnpm pack:core` does both.
+// Dockerfile — plus the installer (#836) at the top, from packages/host/install.sh. Run after
+// `pnpm build` (or `pnpm dist:mac`); `pnpm pack:core` does both.
 import { execFileSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,6 +28,9 @@ try {
   }
   const entry = join(stage, name, files[0]);
   chmodSync(entry, 0o755);
+  const installer = join(stage, name, "install.sh");
+  cpSync(join(repo, "packages/host/install.sh"), installer);
+  chmodSync(installer, 0o755);
 
   // The preflight must work on a box with no ~/.bean, TZ or config (the installer's first call).
   const home = join(stage, "home");
@@ -41,8 +45,9 @@ try {
   const outDir = join(repo, "release");
   mkdirSync(outDir, { recursive: true });
   const tarball = join(outDir, `${name}.tar.gz`);
-  // COPYFILE_DISABLE: macOS tar would otherwise add AppleDouble ._ files for extended attributes.
-  execFileSync("tar", ["-czf", tarball, "-C", stage, name], { env: { ...process.env, COPYFILE_DISABLE: "1" }, stdio: "inherit" });
+  // COPYFILE_DISABLE + --no-xattrs: macOS tar would otherwise add AppleDouble ._ files and pax xattr
+  // headers (com.apple.provenance), which GNU tar warns about on every file when extracting.
+  execFileSync("tar", ["--no-xattrs", "-czf", tarball, "-C", stage, name], { env: { ...process.env, COPYFILE_DISABLE: "1" }, stdio: "inherit" });
   console.log(`packed ${tarball} (${out.trim()})`);
 } finally {
   rmSync(stage, { recursive: true, force: true });

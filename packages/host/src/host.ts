@@ -16,7 +16,7 @@ import {
   deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, detectTools,
   fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, ownerSubjectIds, listDestinations, destinationLabel,
   matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems, loadChatopsOwners, loadModelMemory,
-  saveModelMemory, resolveDelegateSelection,
+  saveModelMemory, resolveDelegateSelection, liveRuns,
   type CliModels, type CliName, type ChatopsSurface, type DreamDigest, type Reminder, type Routine, type RoutineTrigger,
   type RoutineTriggerAnswer, type Transport,
 } from "@bean/core";
@@ -40,6 +40,7 @@ import { buildRoutineHandlers } from "./routines.js";
 import type { ClientId, HostPush } from "./shell-ops.js";
 import { createRoutineBubbles, createTaskStatus, type TaskJob } from "./task-status.js";
 import { createRuntimeConfig } from "./runtime-config.js";
+import { busyWork, UPDATING, type CoreLatch } from "./core-update.js";
 
 export interface HostDeps {
   /** The data directory (`~/.bean`), already created private. */
@@ -80,6 +81,18 @@ export async function createHost(deps: HostDeps) {
   const db = dbFile(dir);
   // What Bean is working on, and what failed (design 2a).
   const taskStatus = createTaskStatus(deps.onJobs);
+  // A core update's admission latch (#837, core-update.ts): closed from its busy check until the
+  // process exits (or the update is refused / fails). Closed = no new starts, no scheduled fires.
+  let updating = false;
+  const refuseStart = (): string | undefined => (updating ? UPDATING : undefined);
+  // Starts admitted while open whose work isn't a running job yet (async checks before a delegate or
+  // live session registers, a sprout run before its bubble, a builder agent that never gets one):
+  // busy until they settle, or a latch closed in that gap would read idle.
+  let pendingStarts = 0;
+  const track = <T>(start: Promise<T>): Promise<T> => {
+    pendingStarts++;
+    return start.finally(() => { pendingStarts--; });
+  };
   // A remote shell's attachment (#808): its chats' pushes are numbered and buffered for a replay, and
   // a lost shell's work waits out the grace. Local windows never attach; their pushes pass through.
   const attachments = createAttachments({
@@ -261,7 +274,7 @@ export async function createHost(deps: HostDeps) {
     notify: async ({ target, ...msg }) => {
       if (deps.notification.available()) await deps.notification.send({ ...msg, ...(target ? { meta: { open: "dashboard", target } } : {}) });
     },
-    canSchedule: schedulerLease.held, // fails closed past the last good renewal
+    canSchedule: () => schedulerLease.held() && !updating, // fails closed past the last good renewal
     alarm: (routine, error) => {
       if (deps.notification.available()) {
         void deps.notification.send({ title: `Sprout: ${routine.name}`, body: `Can't check for new items — ${error}`, meta: { open: "routines" } });
@@ -282,7 +295,17 @@ export async function createHost(deps: HostDeps) {
   const answerSproutTrigger = (bot: ChatopsSurface, req: RoutineTrigger): Promise<RoutineTriggerAnswer> => answerRoutineTrigger(req, {
     load: () => loadRoutines(routinesPath),
     facts: (r) => sproutRunFacts(db, r),
-    trigger: withFinishReply(routineScheduler.trigger, (msg) => enqueueOutbox(outboxDir(dir), { transport: bot, ...msg }, randomUUID)),
+    trigger: withFinishReply(
+      (name, action) => {
+        if (action !== "run") return routineScheduler.trigger(name, action);
+        if (updating) return Promise.resolve({ status: "refused" as const, reason: UPDATING });
+        // Busy until the admitted run finishes, not just until it is admitted.
+        let finished: Promise<unknown> = Promise.resolve();
+        const admitted = routineScheduler.trigger(name, action).then((t) => { if (t.status === "started") finished = t.done; return t; });
+        void track(admitted.then(() => finished)).catch(() => {});
+        return admitted;
+      },
+      (msg) => enqueueOutbox(outboxDir(dir), { transport: bot, ...msg }, randomUUID)),
   });
   const tools = detectTools(resolvedPath);
   const routineBuilder = createRoutineBuilder({
@@ -296,13 +319,20 @@ export async function createHost(deps: HostDeps) {
     // Not recorded in delegate_runs: the builder is internal tooling whose scratch session the
     // user never asked to revisit (see .memory/project-delegate-session-receipts.md).
     startAgent: (prompt, brief, onLine) => {
+      if (updating) return { done: Promise.reject(new Error(UPDATING)), cancel: () => {} };
       const choice = resolveDelegateSelection(cliModels, enabledClis(), brief.builder?.cli ?? runtime.getDelegateCli(), brief.builder?.model);
       if (!choice) return { done: Promise.reject(new Error("No enabled delegate CLI found — enable one in Settings.")), cancel: () => {} };
       const cwd = join(scratchDir(dir), `build-${brief.name}`); // name validated kebab-case in builder.start
       mkdirSync(cwd, { recursive: true });
       let cancel = (): void => {};
+      // Busy until the agent's process is gone (no status job of its own) — a cancel never settles `done`.
+      let untrack = (): void => {};
+      void track(new Promise<void>((r) => { untrack = r; }));
       const done = new Promise<string>((resolve, reject) => {
-        const cleanup = (): void => rmSync(cwd, { recursive: true, force: true });
+        const cleanup = (): void => {
+          untrack();
+          rmSync(cwd, { recursive: true, force: true });
+        };
         const handle = runDelegate(
           { cli: choice.cli, projectPath: cwd, prompt, ...(choice.model ? { model: choice.model } : {}) },
           { onOutput: onLine, onDone: (out) => { cleanup(); resolve(out); }, onError: (err) => { cleanup(); reject(err); } },
@@ -414,6 +444,8 @@ export async function createHost(deps: HostDeps) {
   const sessions = createChatSessions({
     isChatClient, chat, memory, threads, delegateTasks, liveTasks, push,
     onRelease: deps.onChatRelease,
+    refuseStart,
+    track,
     onChatTurn: (mountId) => {
       const id = `chat:${randomUUID()}`;
       chatTurnIds.set(mountId, id);
@@ -471,7 +503,7 @@ export async function createHost(deps: HostDeps) {
         const todos = await listTodos(db, name);
         return { pending: todos.filter((t) => t.status === "pending").length, running: todos.filter((t) => t.status === "running").length };
       },
-      runNow: (name) => routineScheduler.runNow(name),
+      runNow: (name) => (updating ? Promise.resolve({ started: false, reason: UPDATING }) : track(routineScheduler.runNow(name))),
       stopRuns: (name) => {
         routineBubbles.stopping(name);
         routineScheduler.stopRuns(name);
@@ -552,6 +584,14 @@ export async function createHost(deps: HostDeps) {
     attachments,
     schedulerLease,
     bots,
+    coreUpdate: {
+      close: () => { updating = true; },
+      open: () => { updating = false; },
+      busy: () => [
+        ...busyWork(taskStatus.list(), liveRuns(dir), routineScheduler.runningNames()),
+        ...(pendingStarts > 0 ? [{ kind: "request", name: `${pendingStarts} start request(s) in progress` }] : []),
+      ],
+    } satisfies CoreLatch,
   };
 }
 

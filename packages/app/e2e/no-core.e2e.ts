@@ -54,6 +54,7 @@ test("no core attached: boots without a data directory and shows Add a core", as
       avatar.evaluate(() => (window as unknown as Bean).bean.openComponent("about")),
     ]);
     await expect(about.locator(".bean-about-name")).toHaveText("Bean");
+    await expect(about.locator(".bean-about-core")).toHaveCount(0); // a remote core's update only (#838)
 
     const rejected = await avatar.evaluate(() => (window as unknown as Bean).bean.listNotes().then(() => "", (e: Error) => e.message));
     expect(rejected).toContain("No core attached");

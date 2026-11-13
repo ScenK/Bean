@@ -236,6 +236,8 @@ export const CHANNEL_CONTRACT = {
   coreStatus: shell,
   coreStatusChanged: shell,
   coreTakeBack: shell,
+  coreUpdateStatus: core(),
+  coreUpdateApply: core(bool),
   chatCloseKept: shell,
 } satisfies Record<keyof typeof IPC, ChannelContract>;
 

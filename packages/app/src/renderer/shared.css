@@ -1942,6 +1942,10 @@ button, input, textarea, select, a {
   color: var(--bean-accent-text);
 }
 
+/* A remote core's own update (#838), under the shell's. */
+.bean-about-core { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--bean-border); width: 100%; max-width: 360px; }
+.bean-about-core .bean-about-update-msg { margin-top: 0; }
+
 /* Cores panel (#811). */
 .bean-cores { justify-content: flex-start; }
 .bean-cores-status { max-width: 360px; font-size: 12px; color: var(--bean-text-dim); overflow-wrap: anywhere; }

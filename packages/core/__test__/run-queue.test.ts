@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { recordRun, releaseRun, updateRunPid, interruptedRunNotice, sweepDeadRuns } from "../src/run-queue.js";
+import { recordRun, releaseRun, updateRunPid, interruptedRunNotice, sweepDeadRuns, liveRuns } from "../src/run-queue.js";
 import { runsDir } from "../src/config.js";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "bean-runqueue-"));
@@ -17,6 +17,16 @@ describe("run-queue", () => {
     expect(readdirSync(runsDir(dir)).sort()).toEqual(["a.json", "b.json"]);
     expect(read(dir, "a.json")).toMatchObject({ id: "a", projectPath: "/p", pid: process.pid });
     expect(typeof read(dir, "a.json").createdAt).toBe("string");
+  });
+
+  it("liveRuns lists only records whose process is alive, and deletes nothing", () => {
+    const dir = tmp();
+    expect(liveRuns(dir)).toEqual([]); // no runs/ yet
+    recordRun(dir, "live", "/p", process.pid);
+    recordRun(dir, "dead", "/q", DEAD);
+    writeFileSync(join(runsDir(dir), "junk.json"), "{nope");
+    expect(liveRuns(dir).map((r) => r.id)).toEqual(["live"]);
+    expect(readdirSync(runsDir(dir))).toHaveLength(3);
   });
 
   it("release removes only that run; releasing an unknown run is a no-op", () => {
