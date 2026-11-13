@@ -30,9 +30,11 @@ const chatRequest = shape({
 });
 const project = shape({ name: str, path: str, defaultSkill: opt(str), skills: opt(arr(str)) });
 const persona = shape({ name: str, tags: arr(str) });
+// A patch (#812): each field optional, an omitted one keeps its value — `{}` changes nothing.
 const configUpdate = shape({
-  openaiApiKey: str, model: str, terminalApp: str, editorApp: str, delegateCli: str, systemControls: bool,
-  reasoningEffort: str, routineDigestContext: bool, disabledClis: arr(str), webSearch: bool, autoMemory: bool,
+  openaiApiKey: opt(str), model: opt(str), terminalApp: opt(str), editorApp: opt(str), delegateCli: opt(str),
+  systemControls: opt(bool), reasoningEffort: opt(str), routineDigestContext: opt(bool), disabledClis: opt(arr(str)),
+  webSearch: opt(bool), autoMemory: opt(bool),
 });
 const noteDraft = shape({ title: str, body: str, project: opt(str), source: opt(oneOf("chat", "manual")), slug: opt(str) });
 const memory = shape({
@@ -227,7 +229,14 @@ export const CHANNEL_CONTRACT = {
   checkForUpdate: shell,
   installUpdate: shell,
   openUpdateReleasePage: shell,
-  useLocalCore: shell,
+  coreList: shell,
+  coreAdd: shell,
+  coreRemove: shell,
+  coreSwitch: shell,
+  coreStatus: shell,
+  coreStatusChanged: shell,
+  coreTakeBack: shell,
+  chatCloseKept: shell,
 } satisfies Record<keyof typeof IPC, ChannelContract>;
 
 const BY_CHANNEL = new Map<string, ChannelContract>(

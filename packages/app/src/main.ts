@@ -1,10 +1,11 @@
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { release } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { buildSyncedChatHandlers } from "./synced-chats.js";
-import { buildHandshake, createHost, type ChatopsBot, type ChatopsState, type Host } from "@bean/host";
+import { buildHandshake, createHost, shellClientId, type ChatopsBot, type ChatopsState, type Host } from "@bean/host";
 import { buildDeskContinueHandler } from "./desk-continue.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { installAvatarControls } from "./avatar-window.js";
@@ -19,22 +20,30 @@ import {
 import type { RouteSuggestion, Transport } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import { registerIpc, registerShellIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens, buildPendingUpdateStore, type ChatPromptPayload } from "./ipc.js";
-import { IPC, SHELL_ONLY_KINDS, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop } from "./channels.js";
+import { IPC, SHELL_ONLY_KINDS, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type CoreStatus, type CoreSwitchOutcome } from "./channels.js";
 import { registerNoCore } from "./channel-contract.js";
-import { coreFile, loadCoreChoice, saveCoreChoice } from "./core-store.js";
+import { addCore, coreFile, coreLabel, loadCoreChoice, oneTimeCommand, parseRemoteCore, saveCoreChoice, sshArgs, type CoreChoice } from "./core-store.js";
+import { createRemoteCore, registerRemoteIpc, type RemoteCore } from "./remote-core.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import {
   hasRequestedNotificationPermission, markNotificationPermissionRequested, notificationPermissionFile,
 } from "./notification-permission-store.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
-import { createPush, hostPush } from "./push.js";
+import { createPush, hostPush, HOST_PUSH_CHANNELS } from "./push.js";
 import { createTerminalTasks, type PtyFactory, type TerminalTasks } from "./terminal-tasks.js";
 import { createShellOps } from "./shell-ops.js";
 import { createKeepAwake, keepAwakeFile, keepAwakeTooltip, loadKeepAwake, saveKeepAwake, type KeepAwakeState } from "./keep-awake.js";
 import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
+import { TRAY_TINT, tintBitmap } from "./tray-icon.js";
 
 // dist/main.js sits next to package.json (esbuild output isn't relocated).
 const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"));
+
+// The shell's own OS. Off macOS (Windows) the shell is remote-only: no local core, no SF Symbols, Ctrl
+// for Cmd, and the updater only links to the releases page (#813).
+const IS_MAC = process.platform === "darwin";
+// Windows toasts are attributed by AppUserModelID; without it they show as Electron (or not at all).
+if (process.platform === "win32") app.setAppUserModelId(pkg.build.appId);
 
 // Module-level so the Tray isn't garbage-collected (which removes it from the menu bar).
 let tray: Tray | undefined;
@@ -63,10 +72,13 @@ app.on("web-contents-created", (_e, contents) => {
 
 app.whenReady().then(async () => {
   // Boot is the shell (windows, tray, theme, updater) plus, only when it's the selected core, the local
-  // core (#810). With no core attached Bean never touches ~/.bean: the avatar opens Add a core instead.
+  // core (#810), or a remote core over SSH (#811). With no core attached Bean never touches ~/.bean: the
+  // avatar opens Add a core instead. Switching cores saves the pick and restarts Bean.
   const userData = app.getPath("userData");
   const corePath = coreFile(userData);
-  const localCore = (await loadCoreChoice(corePath, process.platform)).selected === "local";
+  let coreChoice: CoreChoice = await loadCoreChoice(corePath, process.platform);
+  const localCore = coreChoice.selected === "local";
+  const remoteTarget = coreChoice.cores.find((c) => c.id === coreChoice.selected);
   const dir = beanDir();
   if (localCore) {
     ensurePrivateBeanDir(dir); // before anything below creates ~/.bean world-readable
@@ -79,7 +91,20 @@ app.whenReady().then(async () => {
   const projectDir = app.isPackaged ? join(process.resourcesPath, "builtin") : projectBeanDir();
 
   let quitting = false;
-  app.on("before-quit", () => { quitting = true; });
+  // Attached to a remote core, a quit is a deliberate detach (the core stops this shell's work), so it
+  // goes through the chat window's Keep/Stop review first, like a core switch.
+  let remote: RemoteCore | undefined;
+  let quitReviewed = false;
+  app.on("before-quit", (e) => {
+    // `remote` first: a boot that fails before componentWindows exists still quits (no TDZ throw here).
+    const chat = remote && !quitReviewed ? componentWindows.get("chat") : undefined;
+    if (chat && !chat.isDestroyed()) {
+      e.preventDefault();
+      closeChatThen(() => { quitReviewed = true; app.quit(); });
+      return;
+    }
+    quitting = true;
+  });
   const avatar = createAvatarWindow();
   // Evidence for a vanished avatar (#757): renderer/GPU deaths, sleep, displays, each recovery click.
   const avatarLogPath = avatarLogFile(localCore ? dir : userData);
@@ -118,8 +143,11 @@ app.whenReady().then(async () => {
   // Main → renderer pushes, by client and chat (mount) id (push.ts). Client = webContents id here
   // only; which client holds a mount comes from the host's chat mounts, once the host exists.
   let host: Host | undefined;
+  // Remote core: chat mount id → the window (webContents id) holding it (remote-core.ts).
+  const remoteMounts = new Map<string, number>();
+  let remoteIpc: ReturnType<typeof registerRemoteIpc> | undefined;
   const push = createPush({
-    clientOfMount: (mountId) => host?.handlers.chat.clientOf(mountId),
+    clientOfMount: (mountId) => host?.handlers.chat.clientOf(mountId) ?? remoteMounts.get(mountId),
     client: (id) => webContents.fromId(id),
     clients: () => BrowserWindow.getAllWindows().map((w) => w.webContents),
   });
@@ -145,22 +173,27 @@ app.whenReady().then(async () => {
   });
 
   // Monochrome template image (regenerate with scripts/generate-icons.mjs); macOS inverts
-  // it automatically for light/dark menu bars. Falls back to 🫘 text if the asset is missing.
-  // Representations are added explicitly so retina reliably gets the @2x instead of an
-  // upscaled 16px (createFromPath's DPI-suffix detection proved flaky here).
+  // it automatically for light/dark menu bars, elsewhere it's tinted bean orange instead. Falls back
+  // to 🫘 text (macOS) if the asset is missing. Representations are added explicitly so retina
+  // reliably gets the @2x instead of an upscaled 16px (createFromPath's DPI-suffix detection proved
+  // flaky here).
   const assetsPath = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
   const trayIcon = nativeImage.createEmpty();
   for (const [scaleFactor, file] of [[1, "beanTemplate.png"], [2, "beanTemplate@2x.png"]] as const) {
     const png = join(assetsPath, file);
-    if (existsSync(png)) trayIcon.addRepresentation({ scaleFactor, buffer: readFileSync(png) });
+    if (!existsSync(png)) continue;
+    const buffer = readFileSync(png);
+    if (IS_MAC) { trayIcon.addRepresentation({ scaleFactor, buffer }); continue; }
+    const img = nativeImage.createFromBuffer(buffer);
+    trayIcon.addRepresentation({ scaleFactor, ...img.getSize(), buffer: tintBitmap(img.toBitmap(), TRAY_TINT) });
   }
-  trayIcon.setTemplateImage(true);
+  if (IS_MAC) trayIcon.setTemplateImage(true);
   // Settings/Persona/About/Exit — the avatar's left-click quick actions (Chat/Skills/Projects/
   // Notes, see QUICK_ACTIONS in renderer/avatar.ts) cover the rest. No right-click on the tray.
-  // Icons are SF Symbols via createMenuSymbol (macOS-native, no asset files needed); accelerators
-  // follow macOS convention (⌘, for preferences, ⌘Q for quit) — About has none, matching the
-  // system App menu, where About never gets a shortcut either.
-  const symbol = (name: string) => nativeImage.createMenuSymbol(name);
+  // Icons are SF Symbols via createMenuSymbol (macOS-native, no asset files needed; no icons
+  // elsewhere); accelerators follow macOS convention (⌘, for preferences, ⌘Q for quit, Ctrl off
+  // macOS) — About has none, matching the system App menu, where About never gets a shortcut either.
+  const symbol = (name: string) => (IS_MAC ? nativeImage.createMenuSymbol(name) : undefined);
   // Discord/Teams start/stop, folded into one "Chat Bots" submenu item instead of one tray
   // row per bot. Mirrors SettingsWindow.tsx's own Start/Stop toggle — same host bot
   // supervisor, so both surfaces stay in sync. Rebuilt fresh in buildTrayMenu() below (not just
@@ -194,11 +227,11 @@ app.whenReady().then(async () => {
   };
   // Open at Login: the OS login-item registration is the source of truth (no Bean state), read
   // fresh on every rebuild so removing Bean in System Settings → Login Items shows here. Packaged
-  // only — dev would register node_modules' Electron.app — and only from /Applications, since a
-  // DMG or translocated copy registers a path that later disappears.
+  // only — dev would register node_modules' Electron.app — and on macOS only from /Applications,
+  // since a DMG or translocated copy registers a path that later disappears.
   const buildLoginItemRows = (): MenuItemConstructorOptions[] => {
     if (!app.isPackaged) return [];
-    if (!app.isInApplicationsFolder()) {
+    if (IS_MAC && !app.isInApplicationsFolder()) {
       return [{ label: "Move Bean to Applications to open at login", icon: symbol("power"), enabled: false }];
     }
     const { openAtLogin, status } = app.getLoginItemSettings();
@@ -249,18 +282,29 @@ app.whenReady().then(async () => {
     try { n = listSkillProposals(dbFile(dir)).length; } catch (err) { console.error("skill proposals count failed:", err); }
     return n ? [{ label: `${n} Skill Proposal${n === 1 ? "" : "s"} Waiting`, icon: symbol("sparkles"), click: () => openComponent("skills") }] : [];
   };
+  // The core list (#811): this Mac (macOS only), the saved remote cores, and Add Core… A pick restarts Bean
+  // on that core, after the chat window's Keep/Stop review.
+  const buildCoreSubmenu = (): MenuItemConstructorOptions[] => [
+    ...(IS_MAC
+      ? [{ label: "This Mac", type: "radio" as const, checked: coreChoice.selected === "local", click: () => void switchCore("local") }] : []),
+    ...coreChoice.cores.map((c) => ({ label: coreLabel(c), type: "radio" as const, checked: c.id === coreChoice.selected, click: () => void switchCore(c.id) })),
+    { type: "separator" },
+    { label: "Add Core…", click: () => openComponent("cores") },
+  ];
+  const coreRowLabel = (): string => (remoteTarget ? `Core: ${coreLabel(remoteTarget)}` : localCore ? "Core: This Mac" : "Core: None");
   const buildTrayMenu = (): Menu => Menu.buildFromTemplate([
     { label: "Bring Bean Back", icon: symbol("location"), click: () => avatarControls.bringBack() },
+    { label: coreRowLabel(), icon: symbol("server.rack"), submenu: buildCoreSubmenu() },
     ...proposalRows(),
-    { label: "Settings", icon: symbol("gearshape"), accelerator: "Cmd+,", click: () => openComponent("settings") },
+    { label: "Settings", icon: symbol("gearshape"), accelerator: "CmdOrCtrl+,", click: () => openComponent("settings") },
     ...(localCore ? [{ label: "Chat Bots", icon: symbol("message"), submenu: buildChatopsSubmenu() }] : []),
-    { label: "Keep Mac Awake", icon: symbol("cup.and.saucer"), type: "checkbox", checked: keepAwake.alwaysOn(), click: (item) => toggleKeepAwake("alwaysOn", item.checked) },
+    { label: IS_MAC ? "Keep Mac Awake" : "Keep PC Awake", icon: symbol("cup.and.saucer"), type: "checkbox", checked: keepAwake.alwaysOn(), click: (item) => toggleKeepAwake("alwaysOn", item.checked) },
     // Greyed (no click, no beep) while Keep Mac Awake is off; the remembered choice still shows.
     { label: "Keep Display On", icon: symbol("display"), type: "checkbox", checked: keepAwake.display(), enabled: keepAwake.alwaysOn(), click: (item) => toggleKeepAwake("display", item.checked) },
     ...buildLoginItemRows(),
-    { label: "Persona", icon: symbol("person.crop.circle"), accelerator: "Cmd+P", click: () => openComponent("persona") },
+    { label: "Persona", icon: symbol("person.crop.circle"), accelerator: "CmdOrCtrl+P", click: () => openComponent("persona") },
     { label: "About", icon: symbol("info.circle"), click: () => openComponent("about") },
-    { label: "Exit", icon: symbol("rectangle.portrait.and.arrow.right"), accelerator: "Cmd+Q", click: () => app.quit() },
+    { label: "Exit", icon: symbol("rectangle.portrait.and.arrow.right"), accelerator: "CmdOrCtrl+Q", click: () => app.quit() },
   ]);
   let trayMenu = buildTrayMenu();
   tray = new Tray(trayIcon);
@@ -311,6 +355,40 @@ app.whenReady().then(async () => {
   });
 
   const componentWindows = new Map<ComponentKind, BrowserWindow>();
+  // A core switch or a remote quit waits for the chat window to close through its Keep/Stop review;
+  // "Keep working" (chatCloseKept) calls it off.
+  let afterChatClose: { run: () => void; kept?: () => void } | undefined;
+  const closeChatThen = (run: () => void, kept?: () => void): void => {
+    const chat = componentWindows.get("chat");
+    if (!chat || chat.isDestroyed()) { run(); return; }
+    afterChatClose?.kept?.(); // a newer close supersedes it
+    afterChatClose = { run, kept };
+    chat.close();
+  };
+  // Every cores.json write goes through one chain, each with the whole current choice.
+  let coreSave: Promise<void> = Promise.resolve();
+  const saveCores = (): Promise<void> => {
+    const snapshot = coreChoice;
+    coreSave = coreSave.catch(() => {}).then(() => saveCoreChoice(corePath, snapshot));
+    return coreSave;
+  };
+  const switchCore = (id: unknown): Promise<CoreSwitchOutcome> => {
+    const known = id === "local" ? IS_MAC : coreChoice.cores.some((c) => c.id === id);
+    if (!known || id === coreChoice.selected) return Promise.resolve("refused");
+    return new Promise((resolve) => closeChatThen(() => {
+      const before = coreChoice.selected;
+      coreChoice = { ...coreChoice, selected: id as string };
+      saveCores().then(
+        () => { resolve("restarting"); app.relaunch(); app.quit(); },
+        (e: unknown) => {
+          coreChoice = { ...coreChoice, selected: before };
+          resolve("failed");
+          dialog.showErrorBox("Bean", `Couldn't switch cores: ${e instanceof Error ? e.message : String(e)}`);
+        },
+      );
+    }, () => resolve("kept")));
+  };
+  const coreStatus = (): CoreStatus => (remote ? remote.status() : host ? { kind: "local" } : { kind: "none" });
   // Same drop-race fix as planStore below: a URL dropped on the avatar can reach a chat window
   // whose renderer hasn't mounted (and subscribed to componentDroppedUrl) yet, silently losing
   // the push. droppedUrlStore.get() is stashed alongside every push so the renderer can pull it
@@ -321,7 +399,7 @@ app.whenReady().then(async () => {
   let pendingDashboardTarget: DashboardTarget | undefined;
   const openComponent = (requested: ComponentKind, requestedPayload?: ChatDrop | DashboardTarget): void => {
     // No core attached: every window that needs one opens Add a core instead (#810).
-    const noCore = !host && !SHELL_ONLY_KINDS.includes(requested);
+    const noCore = !host && !remote && !SHELL_ONLY_KINDS.includes(requested);
     const kind = noCore ? "cores" : requested;
     const payload = noCore ? undefined : requestedPayload;
     const droppedUrl = typeof payload === "string" || Array.isArray(payload) ? payload : undefined;
@@ -368,6 +446,10 @@ app.whenReady().then(async () => {
         host?.delegateTasks.cancelAll();
         host?.liveTasks.stopClient(clientId);
         host?.handlers.chat.releaseClient(clientId);
+        remoteIpc?.releaseClient(clientId);
+        const next = afterChatClose;
+        afterChatClose = undefined;
+        next?.run();
       });
     }
     if (droppedUrl && kind === "chat") {
@@ -561,6 +643,35 @@ app.whenReady().then(async () => {
           handover: (owner, sessionId) => h.liveTasks.handover(owner, sessionId),
         }),
       });
+    } else if (remoteTarget) {
+      // A core on another machine (#811): every window's calls and the core's pushes over one ssh child.
+      mkdirSync(userData, { recursive: true });
+      const r = remote = createRemoteCore({
+        label: coreLabel(remoteTarget),
+        spawn: () => spawn("ssh", sshArgs(remoteTarget), { stdio: ["pipe", "pipe", "pipe"] }),
+        shellId: shellClientId(join(userData, "shell-id")),
+        setupCommand: oneTimeCommand(remoteTarget),
+        onPush: (mountId, kind, payload) => {
+          if (Object.hasOwn(HOST_PUSH_CHANNELS, kind)) push.send(mountId, HOST_PUSH_CHANNELS[kind], payload);
+        },
+        onStatus: (status) => {
+          push.broadcast(IPC.coreStatusChanged, status);
+          if (status.kind === "remote" && status.state === "attached") {
+            remoteIpc?.reattach();
+            // A window that asked for the CLI catalog before the core was reachable refetches it now.
+            push.broadcast(IPC.cliAvailabilityChanged, undefined);
+          }
+        },
+        onWorking: (working) => keepAwake.setWorking(working),
+      });
+      remoteIpc = registerRemoteIpc(ipcMain, {
+        core: r, mounts: remoteMounts,
+        // As the local save does: a CLI switched off in Settings leaves every picker.
+        onConfigSaved: () => push.broadcast(IPC.cliAvailabilityChanged, undefined),
+      });
+      app.on("before-quit", () => { if (quitting) r.detach(); });
+      stopCore = () => r.detach();
+      r.connect();
     } else {
       registerNoCore(ipcMain);
     }
@@ -573,10 +684,14 @@ app.whenReady().then(async () => {
         author: pkg.author,
         description: pkg.description,
         isPackaged: app.isPackaged,
+        selfUpdate: IS_MAC,
       }),
       currentVersion: pkg.version,
       isPackaged: app.isPackaged,
-      checkAndDownloadUpdate: (currentVersion: string) => checkAndDownloadUpdate(currentVersion),
+      // The install is a macOS bundle swap (ditto + codesign); off macOS nothing is downloaded, so
+      // install has nothing to swap either — About shows only the releases link there.
+      checkAndDownloadUpdate: (currentVersion: string) => (IS_MAC ? checkAndDownloadUpdate(currentVersion)
+        : Promise.resolve({ result: { status: "error" as const, message: "Download new versions from the releases page." } })),
       // The install ends in app.relaunch() + app.exit(), which skips before-quit — so the only
       // thing that would reap the chatops children is each server's 5s exitWhenOrphaned() poll,
       // and the replacement app can autostart Teams inside that window and lose the port to the
@@ -604,15 +719,34 @@ app.whenReady().then(async () => {
       runInChat,
       getPendingChatPrompt: chatPromptStore.get,
       getPendingInterruptedRunNotices: interruptedRunStore.get,
-      // Add a core → "Use this Mac": a Mac's only core is in-process, so save the choice and restart.
-      ...(process.platform === "darwin" && !localCore ? {
-        useLocalCore: () => {
-          saveCoreChoice(corePath, { selected: "local" }).then(
-            () => { app.relaunch(); app.quit(); },
-            (e: unknown) => dialog.showErrorBox("Bean", `Couldn't switch to this Mac's core: ${e instanceof Error ? e.message : String(e)}`),
-          );
+      cores: {
+        list: async () => ({
+          selected: coreChoice.selected,
+          cores: coreChoice.cores.map((c) => ({ id: c.id, label: coreLabel(c) })),
+          canUseLocal: IS_MAC,
+        }),
+        add: async (hostName, container) => {
+          const parsed = parseRemoteCore(hostName, container);
+          if ("error" in parsed) return parsed;
+          const { choice, core } = addCore(coreChoice, parsed);
+          coreChoice = choice;
+          await saveCores();
+          return { id: core.id };
         },
-      } : {}),
+        remove: async (id) => {
+          if (id === coreChoice.selected) return; // switch away first
+          coreChoice = { ...coreChoice, cores: coreChoice.cores.filter((c) => c.id !== id) };
+          await saveCores();
+        },
+        switchTo: switchCore,
+        status: coreStatus,
+        takeBack: () => remote?.takeBack(),
+        closeKept: () => {
+          const kept = afterChatClose?.kept;
+          afterChatClose = undefined;
+          kept?.();
+        },
+      },
     });
 
     await loadAvatarWindow(avatar);
@@ -642,6 +776,6 @@ app.whenReady().then(async () => {
 
 ipcMain.on(IPC.quit, () => app.quit());
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+// Never quit when the windows close (on any OS): the avatar only hides, and the tray's Exit is the one
+// way out. A listener is required — without one Electron quits on window-all-closed off macOS.
+app.on("window-all-closed", () => {});

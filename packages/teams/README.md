@@ -175,7 +175,7 @@ chat context (including ambient chatter) so the next message starts fresh.
 The owner can describe a sprout ("every weekday at 9, summarize my inbox here") and get a
 card to save it; its digest posts to the channel or group chat it was drafted in, or DMs the
 owner from a 1:1 chat. `sprouts`, `enable <name>` and `disable <name>` list and switch them
-(typing the old `routines` still works). Sprouts run only while the desktop app is open. A
+(typing the old `routines` still works). Sprouts run only while a Bean core runs (the desktop app's local core or `bean-core`). A
 channel or group-chat admin can draft a new sprout too: it saves switched off (never replacing an existing one), and the owner gets a DM
 with `enable <name>`. **DM the bot once as the owner** so it knows your 1:1 chat — until then
 those notices (and channel-less digests) wait in the outbox.
@@ -183,12 +183,13 @@ those notices (and channel-less digests) wait in the outbox.
 Members can ask for a reminder ("remind me at 5 to call the vet") in a channel thread, a group
 chat, or a 1:1 chat; it fires back into that same place (a thread reminder replies in the thread)
 with a receipt card whose **Cancel** works for whoever set it or the owner. `list_reminders` in a
-channel shows only that channel's reminders. Reminders fire only while Bean.app is running — one
-due while it was off fires late, on the next launch.
+channel shows only that channel's reminders. Reminders fire only while a Bean core is running — one
+due while it was off fires late, on the next start.
 
-In the packaged desktop app, the tray menu's **Teams** toggle spawns this exact same built
-`dist/server.js` (via Electron's bundled Node) — don't also run `pnpm --filter @bean/teams
-start` at the same time, they'll fight over port 3978.
+A Bean core (the desktop app's local core, or `bean-core`) spawns this exact same built
+`dist/server.js` when the Teams bot is on — don't also run `pnpm --filter @bean/teams start` at
+the same time, they'll fight over port 3978. Headless setup and Teams ingress (port 3978 from a
+container): [`docs/headless.md`](../../docs/headless.md).
 
 ## Troubleshooting "Bad Request" when adding the bot to a chat
 
@@ -230,4 +231,4 @@ silently with the same generic Teams error and guessing wastes a round trip:
       card; Save → `sprouts` lists it; its digest lands as a new channel post.
 - [ ] "@Bean remind me in 2 minutes to stretch" in a channel thread, a group chat and a 1:1
       chat → "⏰ Reminder set" card with a local time; each fires back in the same place (thread
-      reply for the thread) while Bean.app runs; Cancel on another one → "Reminder cancelled".
+      reply for the thread) while a Bean core runs; Cancel on another one → "Reminder cancelled".

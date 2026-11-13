@@ -19,7 +19,7 @@ describe("service contract (#807)", () => {
       expect(c?.owner, name).toBe("core");
       expect(c?.owner === "core" ? c.args.length : -1, name).toBe(op.args.length);
     }
-    for (const denied of ["getConfig", "saveConfig", "launch", "terminalStart", "chatOpenPath"]) expect(Object.hasOwn(REMOTE_OPS, denied)).toBe(false);
+    for (const denied of ["launch", "terminalStart", "chatOpenPath", "revealInFinder", "pickProjectFolder"]) expect(Object.hasOwn(REMOTE_OPS, denied)).toBe(false);
   });
 
   it("every channel main registers or the preload calls is in IPC (no string-literal side doors)", () => {
@@ -60,7 +60,7 @@ describe("service contract (#807)", () => {
     const ipc = guardIpc({ handle: (c, f) => { handles.set(c, f as never); }, on: () => {} }, []);
     for (const ch of [IPC.saveConfig, IPC.saveProjects, IPC.chat]) ipc.handle(ch, fn);
     const call = (ch: string, ...a: unknown[]) => () => handles.get(ch)!({ sender: { id: 1 } }, ...a);
-    expect(call(IPC.saveConfig, {})).toThrow(/malformed/); // would have blanked the API key
+    expect(call(IPC.saveConfig, { openaiApiKey: 42 })).toThrow(/malformed/);
     expect(call(IPC.saveProjects, [{ name: 42, path: false }])).toThrow(/malformed/);
     expect(call(IPC.chat, {}, "m")).toThrow(/malformed/);
     expect(call(IPC.chat, { history: [{ role: "user", content: 1 }], message: "hi" }, "m")).toThrow(/malformed/);
@@ -70,9 +70,10 @@ describe("service contract (#807)", () => {
       reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true,
     };
     call(IPC.saveConfig, config)();
+    call(IPC.saveConfig, {})(); // a patch (#812): changes nothing, keeps the key
     call(IPC.saveProjects, [{ name: "bean", path: "/p", skills: ["a"] }])();
     call(IPC.chat, { history: [{ role: "user", content: "x" }], message: "hi" }, "m")();
-    expect(fn).toHaveBeenCalledTimes(3);
+    expect(fn).toHaveBeenCalledTimes(4);
     // Events too.
     const all = ["systemControls", "terminalHandoff", "pty", "pathOpen"] as const;
     expect(contractRefusal(IPC.memoryUpdated, [{ saved: 42, mountId: "m" }], all)).toMatch(/malformed/);

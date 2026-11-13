@@ -5,6 +5,7 @@ import { ChipMenu } from "../../shared/ChipMenu.js";
 import { AgentAvatar } from "../../shared/AgentAvatar.js";
 import type { CliName, Project } from "@bean/core";
 import { pickModel, resolveCliModelSelection } from "@bean/core/models";
+import { useCoreStatus } from "../../shared/core-status.js";
 
 type DelegateItem = Extract<ChatItem, { kind: "delegate" }>;
 
@@ -111,6 +112,9 @@ export function DelegateCard({
     return () => clearInterval(t);
   }, [item.state]);
 
+  // A remote core (#812): the run is on its machine, and outlives a dropped shell only by the grace
+  // (@bean/host DISCONNECT_GRACE_MS).
+  const core = useCoreStatus();
   const starting = item.state === "starting";
   const running = item.state === "running";
   const mmss = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
@@ -149,6 +153,11 @@ export function DelegateCard({
           <span class="bean-chip">project · {projectName}</span>
         )}
         {item.proposal.skillName ? <span class="bean-chip">skill · {item.proposal.skillName}</span> : null}
+        {core.kind === "remote" && (pending || starting || running) ? (
+          <span class="bean-chip" title={`Stops 30 minutes after this shell disconnects from ${core.host}`}>
+            runs on {core.host} · stops 30 min after a disconnect
+          </span>
+        ) : null}
         {browser ? (
           <span class="bean-chip">{pending && cli === "codex" ? "🌐 uses your browser and computer" : "🌐 uses your browser"}</span>
         ) : null}

@@ -9,6 +9,32 @@ import { isTerminalToggle, tabShortcut } from "./TerminalPane.js";
 import type { DesktopChatListing } from "@bean/core";
 import type { ChatDrop } from "../../../channels.js";
 import type { SyncedChatListing } from "../../../synced-chats.js";
+import type { CoreStatus } from "../../../channels.js";
+import { useCoreStatus } from "../../shared/core-status.js";
+
+/** A remote core's bar over the chat (#811): reconnecting (the composer is read-only meanwhile) or taken
+ * over by another machine. Nothing for a local core or an attached remote one; a version mismatch is
+ * the blocking card instead. */
+export function CoreBar({ status }: { status: CoreStatus }) {
+  if (status.kind !== "remote" || status.state === "attached" || status.state === "mismatch") return null;
+  if (status.state === "revoked") {
+    return (
+      <div class="bean-core-bar" role="status">
+        <span class="bean-core-bar-text">Attached from another machine</span>
+        <button type="button" class="bean-btn bean-core-bar-btn" onClick={() => window.bean.coreTakeBack()}>Take back</button>
+      </div>
+    );
+  }
+  return (
+    <div class="bean-core-bar" role="status">
+      <span class="bean-core-bar-text">
+        {status.state === "connecting" ? "Connecting" : "Reconnecting"} to {status.host}…
+        {status.message ? <span class="bean-core-bar-detail"> {status.message}</span> : null}
+        {status.command ? <span class="bean-core-bar-detail"> Run once in Terminal: <code>{status.command}</code></span> : null}
+      </span>
+    </div>
+  );
+}
 
 /** The window-close card for the chats with running tasks (one entry per chat). */
 export function closeCard(busy: ChatTasks[]): { title: string; stop: string } {
@@ -43,6 +69,7 @@ export function ChatWindow() {
   const [live, setLive] = useState<Record<string, string>>({}); // mount → thread with an open agent session
   const [shells, setShells] = useState<Set<string>>(new Set()); // mounts with a live terminal shell
   const [closing, setClosing] = useState<{ title: string; stop: string } | null>(null);
+  const coreStatus = useCoreStatus();
   const [droppedUrl, setDroppedUrl] = useState<ChatDrop | undefined>(undefined);
   // A per-turn memory receipt is tagged with the mount that asked. One for a chat switched away
   // mid-capture follows its thread: shown at once if that thread is back on screen, otherwise held
@@ -399,8 +426,20 @@ export function ChatWindow() {
           <div class="bean-memory-review-card">
             <div class="bean-memory-review-title">{closing.title}</div>
             <div class="bean-card-actions">
-              <button type="button" class="bean-btn" onClick={() => setClosing(null)}>Keep working</button>
+              <button type="button" class="bean-btn" onClick={() => { setClosing(null); window.bean.chatCloseKept(); }}>Keep working</button>
               <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void stopAndClose()}>{closing.stop}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <CoreBar status={coreStatus} />
+      {coreStatus.kind === "remote" && coreStatus.state === "mismatch" ? (
+        <div class="bean-memory-review" role="alertdialog">
+          <div class="bean-memory-review-card">
+            <div class="bean-memory-review-title">Bean can't talk to {coreStatus.host}</div>
+            <p class="bean-core-mismatch">{coreStatus.message}</p>
+            <div class="bean-card-actions">
+              <button type="button" class="bean-btn" onClick={() => void window.bean.openComponent("cores")}>Switch core</button>
             </div>
           </div>
         </div>

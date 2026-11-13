@@ -7,6 +7,7 @@ import type { ChatThreadAck } from "@bean/host";
 import { agoText } from "../routines/watch-status.js";
 import type { SyncedChatListing } from "../../../synced-chats.js";
 import { kindChip, SURFACE_NAMES, syncedKey } from "./SyncedChat.js";
+import { MOD_LABEL, modKey } from "../../shared/mod-key.js";
 
 /** Below this window width the sidebar is an overlay (always opening collapsed). */
 export const SIDEBAR_INLINE_MIN = 640;
@@ -440,12 +441,12 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
                     // ⌘-click (or ⌘-Enter on the focused row — Chromium sends no click for it) picks rows
                     // to group; a plain click drops the selection and opens as usual.
                     onKeyDown={(e) => {
-                      if (!e.metaKey || e.key !== "Enter") return;
+                      if (!modKey(e) || e.key !== "Enter") return;
                       e.preventDefault();
                       toggleSelected(t.id);
                     }}
                     onClick={(e) => {
-                      if (e.metaKey) { toggleSelected(t.id); return; }
+                      if (modKey(e)) { toggleSelected(t.id); return; }
                       if (selecting) endSelect();
                       if (!active) onOpen(t.id);
                     }}
@@ -541,7 +542,7 @@ export function ChatSidebar({ threads, synced, activeId, busy, working, unread, 
           </div>
         </form>
       ) : <button ref={newRef} type="button" class="bean-btn bean-chat-sidebar-new" disabled={busy} onClick={onNew}>+ New chat</button>}
-      <div class="bean-chat-sidebar-foot">Kept 90 days unless starred · incognito chats never kept · ⌘-click chats to group them</div>
+      <div class="bean-chat-sidebar-foot">Kept 90 days unless starred · incognito chats never kept · {MOD_LABEL}-click chats to group them</div>
     </nav>
   );
 }
