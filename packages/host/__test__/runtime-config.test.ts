@@ -45,6 +45,26 @@ test("apply is a patch (#812): an omitted key — or any omitted field — keeps
   expect(rt.getWebSearch()).toBe(true);
 });
 
+test("overlapping patches apply in order, each onto the one before (#812)", async () => {
+  let release: () => void = () => {};
+  const saved: RuntimeUpdate[] = [];
+  const rt = createRuntimeConfig(
+    { openaiApiKey: "sk-old", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true },
+    {
+      makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never,
+      saveConfigFile: async (u) => { saved.push(u); if (saved.length === 1) await new Promise<void>((r) => { release = r; }); },
+    },
+  );
+  const first = rt.apply({ openaiApiKey: "sk-new" });
+  const second = rt.apply({ webSearch: true });
+  await new Promise((r) => setTimeout(r, 0));
+  release();
+  await Promise.all([first, second]);
+  expect(saved[1]).toMatchObject({ openaiApiKey: "sk-new", webSearch: true });
+  expect(rt.getApiKey()).toBe("sk-new");
+  expect(rt.getWebSearch()).toBe(true);
+});
+
 test("the stable converse wrapper delegates to the current client after apply", async () => {
   const rt = createRuntimeConfig(
     { openaiApiKey: "a", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },

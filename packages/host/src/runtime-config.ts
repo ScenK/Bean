@@ -45,6 +45,9 @@ export function createRuntimeConfig(
   // clients eagerly would crash startup before the user ever gets to Settings. Build lazily
   // per-call instead; a missing key just surfaces as an auth error from the actual chat call.
   let converseClient = apiKey ? deps.makeConverse(apiKey, reasoningEffort) : null;
+  // One save at a time (#812): each patch merges onto the result of the one before it, or two
+  // overlapping saves would both start from the same snapshot and the later one undo the earlier.
+  let saving: Promise<unknown> = Promise.resolve();
 
   return {
     converse: ((...args: Parameters<ConverseDeps["chat"]>) => {
@@ -62,26 +65,32 @@ export function createRuntimeConfig(
     getDisabledClis: () => disabledClis,
     getWebSearch: () => webSearch,
     getAutoMemory: () => autoMemory,
-    apply: async (patch) => {
-      const update: ConfigFields = {
-        openaiApiKey: apiKey, model, terminalApp, editorApp, delegateCli, systemControls, reasoningEffort,
-        routineDigestContext, disabledClis, webSearch, autoMemory,
-      };
-      for (const [k, v] of Object.entries(patch)) if (v !== undefined && Object.hasOwn(update, k)) (update as unknown as Record<string, unknown>)[k] = v;
-      const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey, update.reasoningEffort) : null;
-      await deps.saveConfigFile(update);
-      apiKey = update.openaiApiKey;
-      model = update.model;
-      terminalApp = update.terminalApp;
-      editorApp = update.editorApp;
-      delegateCli = update.delegateCli;
-      systemControls = update.systemControls;
-      reasoningEffort = update.reasoningEffort;
-      routineDigestContext = update.routineDigestContext;
-      disabledClis = update.disabledClis;
-      webSearch = update.webSearch;
-      autoMemory = update.autoMemory;
-      converseClient = nextConverseClient;
+    apply: (patch) => {
+      const run = saving.then(() => applyNow(patch));
+      saving = run.catch(() => {});
+      return run;
     },
   };
+
+  async function applyNow(patch: ConfigUpdate): Promise<void> {
+    const update: ConfigFields = {
+      openaiApiKey: apiKey, model, terminalApp, editorApp, delegateCli, systemControls, reasoningEffort,
+      routineDigestContext, disabledClis, webSearch, autoMemory,
+    };
+    for (const [k, v] of Object.entries(patch)) if (v !== undefined && Object.hasOwn(update, k)) (update as unknown as Record<string, unknown>)[k] = v;
+    const nextConverseClient = update.openaiApiKey ? deps.makeConverse(update.openaiApiKey, update.reasoningEffort) : null;
+    await deps.saveConfigFile(update);
+    apiKey = update.openaiApiKey;
+    model = update.model;
+    terminalApp = update.terminalApp;
+    editorApp = update.editorApp;
+    delegateCli = update.delegateCli;
+    systemControls = update.systemControls;
+    reasoningEffort = update.reasoningEffort;
+    routineDigestContext = update.routineDigestContext;
+    disabledClis = update.disabledClis;
+    webSearch = update.webSearch;
+    autoMemory = update.autoMemory;
+    converseClient = nextConverseClient;
+  }
 }
