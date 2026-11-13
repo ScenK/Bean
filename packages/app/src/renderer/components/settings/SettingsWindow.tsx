@@ -69,6 +69,8 @@ export function SettingsWindow() {
   const [routineDigestContext, setRoutineDigestContext] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [autoMemory, setAutoMemory] = useState(true);
+  const [gitName, setGitName] = useState("");
+  const [gitEmail, setGitEmail] = useState("");
   const [detectedClis, setDetectedClis] = useState<CliName[]>([]);
   const [disabledClis, setDisabledClis] = useState<string[]>([]);
   const [paths, setPaths] = useState<ConfigView["paths"] | undefined>(undefined);
@@ -112,6 +114,9 @@ export function SettingsWindow() {
       setRoutineDigestContext(c.routineDigestContext);
       setWebSearch(c.webSearch);
       setAutoMemory(c.autoMemory);
+      // An older remote core has no identity fields.
+      setGitName(c.gitName ?? "");
+      setGitEmail(c.gitEmail ?? "");
       setDisabledClis(c.disabledClis);
       setPaths(c.paths);
       setLoaded(true);
@@ -142,6 +147,7 @@ export function SettingsWindow() {
       // Only what this window shows: a hidden field (and an untouched key) keeps its saved value.
       const patch: ConfigUpdate = {
         model: model.trim(), delegateCli, reasoningEffort, routineDigestContext, disabledClis, webSearch, autoMemory,
+        gitName: gitName.trim(), gitEmail: gitEmail.trim(),
         ...(apiKeyEdited ? { openaiApiKey: apiKey.trim() } : {}),
         ...(handoff ? { terminalApp: terminalApp.trim(), editorApp: editorApp.trim() } : {}),
         ...(macCore ? { systemControls } : {}),
@@ -266,6 +272,25 @@ export function SettingsWindow() {
                   <option value={delegateCli} disabled>{delegateCli} (not available, using Auto)</option>
                 )}
               </select>
+            </div>
+          </div>
+          <div class="bean-settings-row">
+            <span class="bean-settings-row-label">Commit as</span>
+            <div class="bean-settings-row-control" title="Author, committer and Co-Authored-By trailer of commits made by Bean's delegates and live sessions. Takes effect on the next run.">
+              <input
+                class="bean-input"
+                type="text"
+                value={gitName}
+                placeholder="Bean"
+                onInput={(e) => { setGitName((e.target as HTMLInputElement).value); setSave("idle"); }}
+              />
+              <input
+                class="bean-input"
+                type="email"
+                value={gitEmail}
+                placeholder="bean@localhost"
+                onInput={(e) => { setGitEmail((e.target as HTMLInputElement).value); setSave("idle"); }}
+              />
             </div>
           </div>
         </section>

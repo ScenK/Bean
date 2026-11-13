@@ -11,6 +11,8 @@ export interface ConfigView {
   disabledClis: string[];
   webSearch: boolean;
   autoMemory: boolean;
+  gitName: string;
+  gitEmail: string;
   /** Whether a key is saved — a remote shell gets `openaiApiKey: ""` (#812), never the key itself. */
   apiKeySet: boolean;
   paths: { config: string; skills: string; projects: string; persona: string };
@@ -28,6 +30,8 @@ export interface ConfigFields {
   disabledClis: string[];
   webSearch: boolean;
   autoMemory: boolean;
+  gitName: string;
+  gitEmail: string;
 }
 /** A Settings save is a patch (#812): an omitted field — the API key above all — keeps its value. */
 export type ConfigUpdate = Partial<ConfigFields>;

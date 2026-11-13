@@ -33,12 +33,13 @@ test("defaults imageModel to gpt-image-2 and imagesDir joins dir/images", async 
   expect(imagesDir("/b")).toBe("/b/images");
 });
 
-test("preserves imageModel across a saveConfig that omits it", async () => {
+test("preserves imageModel and git identity across a saveConfig that omits it", async () => {
   const file = join(dir, "config.json");
-  await writeFile(file, JSON.stringify({ openaiApiKey: "sk-x", imageModel: "custom-img" }));
+  await writeFile(file, JSON.stringify({ openaiApiKey: "sk-x", imageModel: "custom-img", gitName: "Sprout", gitEmail: "s@x" }));
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
   const cfg = await loadConfig(file, "/b");
   expect(cfg.imageModel).toBe("custom-img");
+  expect([cfg.gitName, cfg.gitEmail]).toEqual(["Sprout", "s@x"]);
 });
 
 test("throws when missing", async () => {
@@ -63,7 +64,7 @@ test("saveConfig writes only persisted config fields (no beanDir)", async () => 
   const file = join(dir, "config.json");
   await saveConfig(file, { openaiApiKey: "sk-x", model: "m", terminalApp: "" });
   const parsed = JSON.parse(await readFile(file, "utf8"));
-  expect(Object.keys(parsed).sort()).toEqual(["autoMemory", "delegateCli", "disabledClis", "editorApp", "imageModel", "model", "openaiApiKey", "reasoningEffort", "routineDigestContext", "systemControls", "terminalApp", "webSearch"]);
+  expect(Object.keys(parsed).sort()).toEqual(["autoMemory", "delegateCli", "disabledClis", "editorApp", "gitEmail", "gitName", "imageModel", "model", "openaiApiKey", "reasoningEffort", "routineDigestContext", "systemControls", "terminalApp", "webSearch"]);
 });
 
 test("loads config and defaults terminalApp to empty string", async () => {

@@ -3,6 +3,7 @@ import {
   configFile, dbFile, imagesDir, loadConfig, modelMemoryFile, outboxDir, personaFile, projectsFile, remindersFile,
   routinesDir, skillsDir,
 } from "../config.js";
+import { setBeanGitIdentity } from "../agent-rules.js";
 import { listDestinations } from "../destinations.js";
 import { appendMemories, deleteMemories, loadMemories, shareMemory } from "../memory/store.js";
 import { loadModelMemory, saveModelMemory } from "../model-memory.js";
@@ -52,6 +53,9 @@ export function sharedBotDeps(opts: {
   config: BeanConfig;
 }): SharedBotDeps {
   const { dir, builtinDir, surface: transport, config } = opts;
+  // A bot is its own process: its delegates and live sessions commit as Settings' identity too.
+  // ponytail: read at bot start like webSearch; restart the bot after changing it
+  setBeanGitIdentity(config.gitName, config.gitEmail);
   const db = dbFile(dir);
   const enqueue = (msg: Parameters<typeof enqueueOutbox>[1]) => enqueueOutbox(outboxDir(dir), msg, () => randomUUID());
   return {

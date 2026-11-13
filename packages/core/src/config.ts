@@ -78,6 +78,8 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
     systemControls: parsed.systemControls ?? false,
     reasoningEffort: parsed.reasoningEffort ?? "",
     imageModel: parsed.imageModel ?? "gpt-image-2",
+    gitName: parsed.gitName ?? "",
+    gitEmail: parsed.gitEmail ?? "",
     routineDigestContext: parsed.routineDigestContext ?? false,
     disabledClis: Array.isArray(parsed.disabledClis)
       ? parsed.disabledClis.filter((c): c is CliName => (CLI_NAMES as readonly string[]).includes(c as string))
@@ -90,7 +92,7 @@ export async function loadConfig(file: string, beanDirPath: string): Promise<Bea
 
 export async function saveConfig(
   file: string,
-  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; reasoningEffort?: string; imageModel?: string; routineDigestContext?: boolean; disabledClis?: string[]; webSearch?: boolean; autoMemory?: boolean },
+  config: { openaiApiKey: string; model: string; terminalApp?: string; editorApp?: string; delegateCli?: string; systemControls?: boolean; reasoningEffort?: string; imageModel?: string; gitName?: string; gitEmail?: string; routineDigestContext?: boolean; disabledClis?: string[]; webSearch?: boolean; autoMemory?: boolean },
 ): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   // Settings has no toggle for some fields (e.g. reasoningEffort, imageModel), so a desktop
@@ -109,6 +111,8 @@ export async function saveConfig(
     systemControls: config.systemControls ?? false,
     reasoningEffort: config.reasoningEffort ?? existing.reasoningEffort ?? "",
     imageModel: config.imageModel ?? existing.imageModel ?? "gpt-image-2",
+    gitName: config.gitName ?? existing.gitName ?? "",
+    gitEmail: config.gitEmail ?? existing.gitEmail ?? "",
     routineDigestContext: config.routineDigestContext ?? existing.routineDigestContext ?? false,
     disabledClis: config.disabledClis ?? existing.disabledClis ?? [],
     webSearch: config.webSearch ?? existing.webSearch ?? false,

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { sharedBotDeps } from "../src/chatops/bot-deps.js";
+import { BEAN_GIT_IDENTITY } from "../src/agent-rules.js";
 import { configFile, loadConfig, outboxDir } from "../src/config.js";
 
 test("discord and teams get the same keys; only the surface tag differs", async () => {
@@ -27,4 +28,16 @@ test("discord and teams get the same keys; only the surface tag differs", async 
   await teams.routines.notifyOwner("hi");
   const [file] = readdirSync(outboxDir(dir)).filter((f) => f.endsWith(".json"));
   expect(JSON.parse(readFileSync(join(outboxDir(dir), file!), "utf8"))).toMatchObject({ transport: "teams", body: "hi" });
+});
+
+test("a bot process commits as the configured identity", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-bot-deps-git-"));
+  writeFileSync(configFile(dir), JSON.stringify({ openaiApiKey: "sk-test", gitName: "Sprout", gitEmail: "s@x" }));
+  const saved = { ...BEAN_GIT_IDENTITY };
+  try {
+    sharedBotDeps({ dir, builtinDir: dir, surface: "discord", config: await loadConfig(configFile(dir), dir) });
+    expect(BEAN_GIT_IDENTITY).toMatchObject({ GIT_AUTHOR_NAME: "Sprout", GIT_COMMITTER_EMAIL: "s@x" });
+  } finally {
+    Object.assign(BEAN_GIT_IDENTITY, saved);
+  }
 });

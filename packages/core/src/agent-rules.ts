@@ -4,6 +4,8 @@
 // decides how to work, and the real guards stay in code (roles, confirm cards, spawnEnv, …).
 
 // Bean commits under its own identity, not the local user's — see .memory (git identity for delegate commits).
+// Mutable on purpose: spawn sites spread it at spawn time, so setBeanGitIdentity (Settings'
+// commit name/email, applied by the host's runtime config) reaches every one without threading a param.
 export const BEAN_GIT_IDENTITY = {
   GIT_AUTHOR_NAME: "Bean",
   GIT_AUTHOR_EMAIL: "bean@localhost",
@@ -15,9 +17,16 @@ export const BEAN_GIT_IDENTITY = {
 // GitHub only renders a contributor badge for a name that also appears in the message body —
 // same reason Claude Code's own commits carry a Co-Authored-By trailer. The delegated CLI writes
 // the commit message itself, so the only way to get the trailer in is to ask for it in the prompt.
-export const GIT_TRAILER_INSTRUCTION =
-  "\n\nIf this task involves a git commit, append this trailer to the commit message: " +
-  `Co-Authored-By: ${BEAN_GIT_IDENTITY.GIT_AUTHOR_NAME} <${BEAN_GIT_IDENTITY.GIT_AUTHOR_EMAIL}>`;
+export function gitTrailerInstruction(): string {
+  return "\n\nIf this task involves a git commit, append this trailer to the commit message: " +
+    `Co-Authored-By: ${BEAN_GIT_IDENTITY.GIT_AUTHOR_NAME} <${BEAN_GIT_IDENTITY.GIT_AUTHOR_EMAIL}>`;
+}
+
+/** Set Bean's commit identity (author, committer and trailer). "" = the default `Bean <bean@localhost>`. */
+export function setBeanGitIdentity(name: string, email: string): void {
+  BEAN_GIT_IDENTITY.GIT_AUTHOR_NAME = BEAN_GIT_IDENTITY.GIT_COMMITTER_NAME = name.trim() || "Bean";
+  BEAN_GIT_IDENTITY.GIT_AUTHOR_EMAIL = BEAN_GIT_IDENTITY.GIT_COMMITTER_EMAIL = email.trim() || "bean@localhost";
+}
 
 // A headless run that can't do its job still exits 0, so the model must say so in-band:
 // runDelegate turns a final answer whose first line starts with `FAILED:` into onError.
@@ -46,6 +55,6 @@ export const REPO_PRECEDENCE =
 /** A CLI prompt with Bean's rules appended: rules → precedence → trailer → (delegate only) sentinel.
  * Delegates append it to every prompt; live sessions to the opening turn only. */
 export function withCliRules(prompt: string, kind: "delegate" | "live"): string {
-  return `${prompt}\n\n${AGENT_RULES}\n\n${REPO_PRECEDENCE}${GIT_TRAILER_INSTRUCTION}` +
+  return `${prompt}\n\n${AGENT_RULES}\n\n${REPO_PRECEDENCE}${gitTrailerInstruction()}` +
     (kind === "delegate" ? FAILED_SENTINEL_INSTRUCTION : "");
 }

@@ -19,7 +19,7 @@ import {
   defaultDelegateSpawn,
   killAllDelegates,
   DELEGATE_TIMEOUT_MS,
-  GIT_TRAILER_INSTRUCTION as GIT_TRAILER,
+  gitTrailerInstruction,
   FAILED_SENTINEL_INSTRUCTION,
   OPENCODE_BROWSER_REFUSAL,
   failedReason,
@@ -32,7 +32,7 @@ const ps = vi.hoisted(() => ({ out: "" }));
 vi.mock("node:child_process", async (orig) => ({ ...(await orig<typeof import("node:child_process")>()), execFileSync: () => ps.out }));
 
 // Every delegate prompt carries Bean's rules, the repo-precedence line and both contract suffixes.
-const GIT_TRAILER_INSTRUCTION = `\n\n${AGENT_RULES}\n\n${REPO_PRECEDENCE}` + GIT_TRAILER + FAILED_SENTINEL_INSTRUCTION;
+const GIT_TRAILER_INSTRUCTION = `\n\n${AGENT_RULES}\n\n${REPO_PRECEDENCE}` + gitTrailerInstruction() + FAILED_SENTINEL_INSTRUCTION;
 
 class FakeChild extends EventEmitter {
   stdout = new EventEmitter();

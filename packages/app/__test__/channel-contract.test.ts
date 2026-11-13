@@ -67,7 +67,7 @@ describe("service contract (#807)", () => {
     expect(fn).not.toHaveBeenCalled();
     const config = {
       openaiApiKey: "k", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false,
-      reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true,
+      reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true, gitName: "", gitEmail: "",
     };
     call(IPC.saveConfig, config)();
     call(IPC.saveConfig, {})(); // a patch (#812): changes nothing, keeps the key
