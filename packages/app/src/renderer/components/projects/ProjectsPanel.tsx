@@ -4,6 +4,7 @@ import { projectsByName } from "@bean/core/project-select";
 import { truncateMiddle } from "./truncate-path.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
+import { copyPath, useCapabilities } from "../../shared/capabilities.js";
 
 const LAUNCH_CHIPS: { mode: LaunchMode; label: string; needsPrompt: boolean }[] = [
   { mode: "opencode", label: "opencode", needsPrompt: true },
@@ -24,6 +25,12 @@ export function ProjectsPanel({
   const [projects, setProjects] = useState<Project[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const { clis } = useCliAvailability();
+  // A remote core (#812): no folder picker, Finder or Terminal hand-off across machines — the path is
+  // typed and the core checks it.
+  const caps = useCapabilities();
+  const pickFolder = caps.has("pathOpen");
+  const handoff = caps.has("terminalHandoff");
+  const [copied, setCopied] = useState(false);
   const [selected, setSelected] = useState<string | undefined>(undefined);
   const [formMode, setFormMode] = useState<LaunchMode | undefined>(undefined);
   const [prompt, setPrompt] = useState("");
@@ -180,10 +187,10 @@ export function ProjectsPanel({
                   class="bean-input bean-input--boxed"
                   type="text"
                   value={editing.form.path}
-                  placeholder="/path/to/project"
+                  placeholder={pickFolder ? "/path/to/project" : `/path/on/${caps.host ?? "the core"}`}
                   onInput={(e) => setEditing({ ...editing, form: { ...editing.form, path: (e.target as HTMLInputElement).value } })}
                 />
-                <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void browsePath()}>Browse…</button>
+                {pickFolder ? <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void browsePath()}>Browse…</button> : null}
               </div>
             </label>
             <label class="bean-field">
@@ -205,9 +212,9 @@ export function ProjectsPanel({
           </div>
         ) : selectedProject ? (
           <div>
-            <div class="bean-launch-label">LAUNCH</div>
+            {handoff ? <div class="bean-launch-label">LAUNCH</div> : null}
             <div class="bean-launch-chips">
-              {chips.map((c) => (
+              {(handoff ? chips : []).map((c) => (
                 <button
                   key={c.mode}
                   type="button"
@@ -217,13 +224,24 @@ export function ProjectsPanel({
                   {c.label}
                 </button>
               ))}
-              <button
-                type="button"
-                class="bean-launch-chip"
-                onClick={() => window.bean.revealInFinder(selectedProject.path)}
-              >
-                Reveal in Finder
-              </button>
+              {pickFolder ? (
+                <button
+                  type="button"
+                  class="bean-launch-chip"
+                  onClick={() => window.bean.revealInFinder(selectedProject.path)}
+                >
+                  Reveal in Finder
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  class="bean-launch-chip"
+                  onClick={() => { copyPath(selectedProject.path).then(() => setCopied(true), () => {}); }}
+                  onBlur={() => setCopied(false)}
+                >
+                  {copied ? "Copied" : "Copy path"}
+                </button>
+              )}
             </div>
             {formMode ? (
               <div class="bean-launch-form">

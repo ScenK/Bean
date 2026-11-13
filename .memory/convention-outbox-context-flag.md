@@ -5,7 +5,7 @@ history by default, so a follow-up question about it ("what did step 2 mean?") r
 with no idea what you're referring to. Three independent gaps produce that, and all three are
 deliberate:
 
-1. `deliverDigest` (`app/src/main.ts`) enqueues an `OutboxMessage`; it never goes through
+1. `deliverDigest` (core `routine-host.ts`) enqueues an `OutboxMessage`; it never goes through
    `chatops/`'s conversation layer.
 2. Each bot's outbox drain only appends to `ConversationStore` when the message says to.
 3. Discord's ambient `fetchRecent` filters `!m.author.bot`, so Bean's own post is not ambient

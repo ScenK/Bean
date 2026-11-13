@@ -151,8 +151,6 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
     // under plain Node it is ignored.
     const child = doSpawn(process.execPath, [entry], deps.repoRoot, {
       ...process.env, ...deps.extraEnv, PATH: deps.resolvedPath, ELECTRON_RUN_AS_NODE: "1",
-      // The host owns the scheduler: a spawned bot must never start a second one (#279).
-      BEAN_HEADLESS_ROUTINES: undefined,
     });
     child.stderr?.on("data", (chunk) => { lastErr = chunk.toString().trim() || lastErr; });
     // A child process is a trust boundary: only well-formed activity gets through.
