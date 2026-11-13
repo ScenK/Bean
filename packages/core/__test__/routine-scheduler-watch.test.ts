@@ -108,6 +108,29 @@ describe("watch triggers", () => {
     }
   });
 
+  it("a lease lost while a notify watch saves its history record delivers nothing and marks nothing seen", async () => {
+    let held = true;
+    let lose = false;
+    let saved: Record<string, RoutineState> = {};
+    const t = setup([notify()], {
+      canSchedule: () => held,
+      saveStates: async (s) => { saved = s; if (lose && s.yt?.history.length) held = false; },
+      loadStates: async () => saved,
+    });
+    t.setItems([{ id: "a", text: "A" }]);
+    await t.sched.tick(); // seed
+    t.setItems([{ id: "a", text: "A" }, { id: "b", text: "B" }]);
+    lose = true;
+    t.advance(15);
+    await t.sched.tick();
+    expect(t.deps.deliverDigest).not.toHaveBeenCalled();
+    held = true;
+    lose = false;
+    t.advance(15);
+    await t.sched.tick();
+    expect(t.deps.deliverDigest).toHaveBeenCalledOnce(); // b still unseen → offered again
+  });
+
   it("respects the interval between polls", async () => {
     const t = setup([notify()]);
     await t.sched.tick();

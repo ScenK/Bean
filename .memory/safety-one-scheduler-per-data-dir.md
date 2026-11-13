@@ -10,8 +10,9 @@ Only an explicit `onAcquired` means held: a db error on a claim fires neither ca
 Holder-only work: the scheduler, reminders, and `recoverInterruptedTodos` (a standby process would
 fail the holder's live `running` todos). Gate on `lease.held()`, not a flag: it fails closed at the
 last good renewal's expiry even while heartbeats error (then `onLost(undefined)`). `canSchedule` is
-re-checked after `tick()`'s awaits and inside automatic watch polls before any side effect (notify,
-todo, seen-mark, state) — a lost poll drops its results so the new holder re-offers them.
+re-checked after `tick()`'s awaits and inside automatic watch polls before every side effect (todo,
+notify delivery — also after its history save —, seen-mark, state). A lost poll drops its results
+so the new holder re-offers them.
 
 - **Desktop** (`main.ts`): refused → standby + a sticky "Sprouts and reminders paused" bubble, takes
   over (recover todos, then start) when the holder releases or expires. Lost (Mac slept past the TTL and the bot took it) →

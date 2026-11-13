@@ -287,13 +287,18 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
 
   /** New items on a notify-only watch: the digest is built here (no model, no runRoutine) and
    * one RunRecord is written per fire, so the Dashboard and run list show it. */
-  async function fireNotify(routine: Routine, items: WatchItem[], at: string): Promise<void> {
+  /** False = `lost()` turned true before delivery started (lease gone): nothing was delivered. */
+  async function fireNotify(routine: Routine, items: WatchItem[], at: string, lost: () => boolean): Promise<boolean> {
     const digest = watchDigest(items);
     const fired = checkSinks(routine, {
       digest, results: [], record: { startedAt: at, finishedAt: now().toISOString(), status: "ok", digest, steps: [] },
     });
     await appendAndPrune(routine.name, fired.record, () => count(routine.name) > 0);
+    // ponytail: a lease lost during the history save leaves that one record undelivered; the new
+    // holder re-offers the items (not marked seen). Delivery itself, once started, can't be recalled.
+    if (lost()) return false;
     await deps.deliverDigest(routine, fired);
+    return true;
   }
 
   /** One poll: seed on first sight (fires nothing), otherwise diff against the seen-set.
@@ -342,7 +347,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         // At-least-once: an item is marked seen only after its todo/digest is handed off, so a
         // crash or failed insert re-offers it next poll instead of silently dropping it.
         if (fresh.length > 0 && routine.steps.length === 0) {
-          await fireNotify(routine, fresh, at);
+          if (!(await fireNotify(routine, fresh, at, lost))) return { newItems: 0 };
         } else {
           for (const item of fresh) {
             if (lost()) return { newItems: 0 }; // the rest stay unseen for the new holder
