@@ -39,7 +39,7 @@ Bean writes a temp shell script and opens it in Terminal.app (or launches `zed` 
 open mode). Bean does not stream or track the launched process's output. The exception is
 **delegation**: `converse()` can also propose a delegate run (`propose_delegate`) — a headless
 `claude -p` / `opencode run` / `codex exec` process that Bean spawns, streams, and cancels via core's `delegate.ts` +
-app's `delegate-tasks.ts`, with the result fed back into the chat when it finishes.
+`@bean/host`'s `delegate-tasks.ts`, with the result fed back into the chat when it finishes.
 
 The desktop app is one of **three surfaces**, all sharing the same core brain:
 
@@ -58,7 +58,7 @@ It's a **pnpm-workspace monorepo** with five packages:
 | Package | Path | Purpose |
 |---------|------|---------|
 | **`@bean/core`** | `packages/core/` | Routing + IO logic. Pure ESM, zero Electron, `tsc`-built. |
-| **`@bean/host`** | `packages/host/` | Electron-free IPC handler builders over core; Electron ops injected as `ShellOps`. `tsc`-built. |
+| **`@bean/host`** | `packages/host/` | Electron-free host: `createHost()` (chat mounts/turns, delegate + live registries, scheduler, handlers); Electron ops injected. `tsc`-built. |
 | **`@bean/app`** | `packages/app/` | Electron shell (main + preload + renderer). esbuild-bundled. |
 | **`@bean/discord`** | `packages/discord/` | Discord bot server. Node, tsc+esbuild-built. |
 | **`@bean/teams`** | `packages/teams/` | Teams bot server. Node, tsc+esbuild-built. |

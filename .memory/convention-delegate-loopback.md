@@ -10,7 +10,7 @@ classifier doesn't run headless (verified on v2.1.214 — every would-ask action
 even in-cwd writes). The confirm-first proposal card is the authorization boundary.
 Revisit if a Claude Code release runs the auto classifier headless. `runDelegate()` lives in
 `delegate.ts` (pure/DI, sibling of the untouched `launcher.ts`). Unlike Terminal launches,
-Bean **does** track these: `app/src/delegate-tasks.ts` keeps a task registry and pushes
+Bean **does** track these: `host/src/delegate-tasks.ts` keeps a task registry and pushes
 `started/output/done/failed/cancelled` over `bean:delegate-event` (Bean's first main→renderer
 push channel) to the chat's DelegateCard.
 

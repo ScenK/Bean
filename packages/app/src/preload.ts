@@ -5,12 +5,10 @@ import type {
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
-import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
-import type { LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult } from "./live-tasks.js";
+import type { DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "@bean/host";
 import type { TerminalEvent, TerminalStartResult } from "./terminal-tasks.js";
-import type { TaskJob } from "./task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
-import type { InterruptedRunNotice, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "./ipc.js";
+import type { InterruptedRunNotice } from "./ipc.js";
 import type { SkillProposalView, StepAttemptView, RoutineStateView, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, RoutineBuildView, DestinationView, NameRawResult, SendResult } from "@bean/host";
 import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "./synced-chats.js";
 import type { DeskContinueReply, DeskContinueRequest } from "./desk-continue.js";

@@ -4,7 +4,7 @@ import {
   spawnEnv, BEAN_GIT_IDENTITY, TURN_QUEUE_FULL, dbFile, isLiveSessionId, recordDelegateSession, cliOffersModel,
 } from "@bean/core";
 import type { CliModels, CliName, LiveCli, LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest, LiveSessionSpawnFn, ResumableRun } from "@bean/core";
-import type { ClientId } from "./push.js";
+import type { ClientId } from "./shell-ops.js";
 
 // Desktop live agent sessions: Claude Code / Codex / opencode streaming into the chat window.
 // The desktop sibling of chatops' LiveSessionRegistry, without its Discord-shaped parts

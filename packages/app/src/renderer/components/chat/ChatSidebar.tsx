@@ -3,7 +3,7 @@ import { Fragment } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { AgentAvatar, AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import type { AgentId, ChatItem } from "../../shared/chat-types.js";
-import type { ChatThreadAck } from "../../../ipc.js";
+import type { ChatThreadAck } from "@bean/host";
 import { agoText } from "../routines/watch-status.js";
 import type { SyncedChatListing } from "../../../synced-chats.js";
 import { kindChip, SURFACE_NAMES, syncedKey } from "./SyncedChat.js";

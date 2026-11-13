@@ -247,7 +247,7 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
 
 ## Desktop (#476, epic #472)
 
-- `app/src/live-tasks.ts` `createLiveTasks` hosts desktop sessions over core's `startLiveEngine`
+- `host/src/live-tasks.ts` `createLiveTasks` hosts desktop sessions over core's `startLiveEngine`
   — not `LiveSessionRegistry` (its 1900-char rollover, 1.5s throttle and co-drivers are
   Discord/multi-user shapes). Registry is keyed by **session id**; "one session per chat" is only a
   check in `start()`/`resume()` (owner `LiveOwner` = sender `webContents.id` + chat mount id, #517;

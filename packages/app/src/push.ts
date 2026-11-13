@@ -1,4 +1,4 @@
-import type { ClientId } from "@bean/host";
+import type { ClientId, HostPush, MountPushKind } from "@bean/host";
 import { IPC } from "./channels.js";
 
 /** Main → renderer pushes are routed by client and chat (mount) id, never by Electron's
@@ -44,6 +44,12 @@ export interface Push {
   send: (mountId: string, channel: MountPush, payload: unknown) => void;
   broadcast: (channel: BroadcastPush, payload: unknown) => void;
 }
+
+/** The host's mount pushes (`HostPush`), by kind → channel. */
+export const HOST_PUSH_CHANNELS: Record<MountPushKind, MountPush> = {
+  delegate: IPC.delegateEvent, live: IPC.liveEvent, memory: IPC.memoryUpdated, imageProgress: IPC.chatImageProgress,
+};
+export const hostPush = (push: Push): HostPush => (mountId, kind, payload) => push.send(mountId, HOST_PUSH_CHANNELS[kind], payload);
 
 interface Client { isDestroyed: () => boolean; send: (channel: string, payload: unknown) => void }
 

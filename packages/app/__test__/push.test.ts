@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { IPC } from "../src/channels.js";
-import { buildChatMounts } from "../src/ipc.js";
+import { buildChatMounts } from "@bean/host";
 import { createPush, PUSH_ROUTES } from "../src/push.js";
 
 const A = "a0000000-0000-4000-8000-000000000001";

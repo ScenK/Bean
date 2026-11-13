@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { TaskJob } from "./task-status.js";
+import type { TaskJob } from "@bean/host";
 
 type Blocker = "prevent-app-suspension" | "prevent-display-sleep";
 export type KeepAwakeHeld = { system: boolean; display: boolean };

@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { attemptSessions, attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, reviewRuns, sessionSummary, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
 import type { RoutineStep, RunRecord } from "@bean/core";
 import { stepFlow } from "@bean/core/routine-graph";
-import type { RoutineStateView } from "../src/ipc.js";
+import type { RoutineStateView } from "@bean/host";
 
 const record = (startedAt: string, finishedAt: string, ok: boolean[]) => ({
   startedAt,

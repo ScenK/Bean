@@ -1,5 +1,5 @@
 import type { AvailableModel, CliName, LiveCli } from "@bean/core";
-import type { HandoffItem, LiveEvent } from "../../../live-tasks.js";
+import type { HandoffItem, LiveEvent } from "@bean/host";
 import type { CloseTurn } from "@bean/host";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import type { AgentId, ChatItem } from "../../shared/chat-types.js";

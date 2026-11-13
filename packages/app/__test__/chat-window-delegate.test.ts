@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { addDelegateProposal, applyDelegateEventToItems, attachDelegateTaskId, hasActiveDelegates, markDelegateStarting } from "../src/renderer/components/chat/ChatSession.js";
 import { insertDroppedPath, type ChatItem } from "../src/renderer/shared/chat-types.js";
-import type { DelegateEvent } from "../src/delegate-tasks.js";
+import type { DelegateEvent } from "@bean/host";
 
 const delegate = {
   kind: "delegate",

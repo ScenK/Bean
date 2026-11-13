@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { applyChatopsActivity, clearBotJobs } from "../src/chatops-activity.js";
-import { createTaskStatus, FINISHED_LINGER_MS } from "../src/task-status.js";
+import { createTaskStatus, FINISHED_LINGER_MS } from "@bean/host";
 
 afterEach(() => { vi.useRealTimers(); });
 

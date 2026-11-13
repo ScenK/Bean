@@ -88,7 +88,7 @@ capped at 20k chars, the list at 500 items (oldest dropped), the JSON at 2 MB (r
 collide with the new load's counter) and drops `source` from user turns, so restored turns are context
 only for memory extraction. A restored done delegate has no `taskId`, so no event can loop it back.
 
-**Chat mounts (#515) — `buildChatMounts` (`ipc.ts`).** Main keys per-chat state by a **mount id** (a
+**Chat mounts (#515) — `buildChatMounts` / `createChatSessions` (`@bean/host`, #804).** The host keys per-chat state by a **mount id** (a
 renderer-made UUID per chat session, `chatAttach`/`chatRelease`), not by webContents id, so one window
 can hold several chats. Every per-chat request (chat, thread save/get/pending, incognito, remember on
 close, delegate start) carries the mount id as its trailing arg and is refused unless it's the chat
@@ -100,7 +100,7 @@ released mount never lands in the chat now shown: the shell maps evicted mount �
 until that thread is restored (then it's a live row with Undo, saved), or shows it at once if that
 thread is already back on screen. Held per window lifetime only.
 
-**Main — `buildChatThreadHandlers` (`ipc.ts`).** Sender must be the chat window (`isChatSender`), the id
+**Host — `buildChatThreadHandlers` (`host/src/chat.ts`).** Sender must be the chat window (`isChatSender`), the id
 a UUID, the payload ≤ 2 MB, and one chat (mount) writes one thread (pinned by its first save or its
 restore) that no other open chat may save, restore (`chatThreadGet`) or delete.
 The **sticky unsavable latch** is per mount: incognito toggle-on sets it *before* deleting the row, every

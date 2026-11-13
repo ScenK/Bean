@@ -11,7 +11,6 @@ import {
   ASK_LIMIT, LABEL_LIMIT, HANDOFF_CHARS, HANDOFF_ITEMS, LIVE_CAP_REACHED, LIVE_SESSION_CAP, buildHandoff, createLiveTasks, liveSpawnFn,
   type HandoffItem, type LiveEvent,
 } from "../src/live-tasks.js";
-import { liveBadgeAgent } from "../src/renderer/task-bubbles.js";
 import type { TaskJob } from "../src/task-status.js";
 
 const A = { clientId: 1, mountId: "m1" };
@@ -487,28 +486,15 @@ describe("buildHandoff", () => {
   });
 });
 
-describe("liveBadgeAgent", () => {
-  const job = (p: Partial<TaskJob>): TaskJob => ({ id: "j", kind: "live", name: "", line: "", detail: "", startedAt: 0, state: "running", ...p });
-
-  it("wears the newest running desktop session's agent, and clears on end or crash", () => {
-    expect(liveBadgeAgent([job({ agent: "claude", startedAt: 1 }), job({ agent: "codex", startedAt: 2 })])).toBe("codex");
-    expect(liveBadgeAgent([job({ agent: "claude", state: "done" }), job({ agent: "codex", state: "failed" })])).toBeUndefined();
-  });
-
-  it("ignores chatops live sessions (reported as delegate jobs)", () => {
-    expect(liveBadgeAgent([job({ kind: "delegate", name: "proj · live" })])).toBeUndefined();
-  });
-});
-
-describe("main.ts live-session teardown", () => {
-  // main.ts isn't unit-testable; guard the two exits that must SIGKILL live trees. The update
-  // install ends in app.relaunch() + app.exit(), which skips before-quit.
-  const main = readFileSync(fileURLToPath(new URL("../src/main.ts", import.meta.url)), "utf8");
-  const block = (start: string): string => main.slice(main.indexOf(start), main.indexOf("});", main.indexOf(start)));
+describe("live-session teardown", () => {
+  // Guard the two exits that must SIGKILL live trees: the host's quit hook, and the app's update
+  // relaunch (app.relaunch() + app.exit() skip before-quit).
+  const src = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+  const block = (text: string, start: string): string => text.slice(text.indexOf(start), text.indexOf("});", text.indexOf(start)));
 
   it("force-kills live sessions on quit and on the update relaunch", () => {
-    expect(block('app.on("before-quit", () => {\n    interruptAllDelegates();')).toContain("forceKillLive();");
-    expect(block("relaunch: () => {")).toContain("forceKillLive();");
+    expect(block(src("../src/host.ts"), "deps.onQuit(() => {\n    delegateTasks.interruptAll();")).toContain("liveTasks.forceKillAll();");
+    expect(block(src("../../app/src/main.ts"), "relaunch: () => {")).toContain("h.liveTasks.forceKillAll();");
   });
 });
 

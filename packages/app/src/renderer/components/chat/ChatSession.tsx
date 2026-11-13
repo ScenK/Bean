@@ -19,8 +19,7 @@ import type {
   AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { ChatDrop } from "../../../channels.js";
-import type { DelegateEvent } from "../../../delegate-tasks.js";
-import type { LiveEvent, LiveReceipt, LiveStartResult } from "../../../live-tasks.js";
+import type { DelegateEvent, LiveEvent, LiveReceipt, LiveStartResult } from "@bean/host";
 import type { InterruptedRunNotice } from "../../../ipc.js";
 import type { CloseTurn } from "@bean/host";
 

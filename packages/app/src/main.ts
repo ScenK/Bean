@@ -1,13 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { homedir, release } from "node:os";
+import { release } from "node:os";
 import { fileURLToPath } from "node:url";
-import { basename, join, dirname } from "node:path";
+import { join, dirname } from "node:path";
 import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./chatops-enabled-store.js";
 import { createChatopsServers } from "./chatops-servers.js";
 import { buildSyncedChatHandlers, type SyncedChatEvent } from "./synced-chats.js";
-import { buildDestinationHandlers, buildSendHandlers } from "@bean/host";
+import { createHost, type Host } from "@bean/host";
 import { buildDeskContinueHandler } from "./desk-continue.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
@@ -17,44 +16,22 @@ import { createAvatarLog } from "./avatar-log.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker, powerMonitor, screen, webContents } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import {
-  beanDir, ensurePrivateBeanDir, avatarLogFile, configFile, projectsFile, skillsDir, personaFile, projectBeanDir, dbFile, remindersFile,
-  isValidSessionId, resumeCommand, listSkillProposals, pruneStepAttempts, listStepAttempts, CLI_NAMES,
-  modelMemoryFile, loadCliModels, clisFile, type CliModels,
-  loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
-  makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory, deleteMemories, extractMemories,
-  maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, type DreamDigest,
-  loadReminders, updateReminders, holdSchedulerLease, enqueueOutbox, type Reminder, extractPageText,
-  answerRoutineTrigger, sproutRunFacts, withFinishReply, type RoutineTrigger, type RoutineTriggerAnswer,
-  loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
-  loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates,
-  routinesDir, routineStateFile, outboxDir, claimOutbox, ackOutbox, runDelegate, killAllDelegates, killAllCommands,
-  scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
-  addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
-  deleteTodosForRoutine, sweepDeadRuns,
-  isWatchSeeded, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats,
-  detectTools, fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, safeFetch,
-  listChatopsConversations, chatopsConversationTurns, loadChatopsOwners, ownerSubjectIds,
-  listDestinations, destinationLabel, matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems,
+  beanDir, ensurePrivateBeanDir, avatarLogFile, projectsFile, skillsDir, projectBeanDir, dbFile, listSkillProposals,
+  loadLayeredSkills, loadProjects, planForDroppedSkill, scratchDir, outboxDir, claimOutbox, ackOutbox,
+  listChatopsConversations, chatopsConversationTurns, loadChatopsOwners, listDestinations,
 } from "@bean/core";
-import type { RouteSuggestion, ActionTool, Transport, CliName, Routine } from "@bean/core";
+import type { RouteSuggestion, Transport } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
-import { registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens, buildPendingUpdateStore, buildChatThreadHandlers, type ChatPromptPayload } from "./ipc.js";
-import { buildRoutineHandlers, buildSkillProposalHandlers, buildTodoHandlers } from "@bean/host";
+import { registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens, buildPendingUpdateStore, type ChatPromptPayload } from "./ipc.js";
 import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import {
   hasRequestedNotificationPermission, markNotificationPermissionRequested, notificationPermissionFile,
 } from "./notification-permission-store.js";
-import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
-import { createPush, type ClientId } from "./push.js";
-import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } from "./delegate-tasks.js";
-import { createLiveTasks, LIVE_AGENT_NAMES } from "./live-tasks.js";
-import { createTerminalTasks, type PtyFactory } from "./terminal-tasks.js";
-import { createRoutineBuilder } from "./routine-builder.js";
+import { createPush, hostPush } from "./push.js";
+import { createTerminalTasks, type PtyFactory, type TerminalTasks } from "./terminal-tasks.js";
 import { createShellOps } from "./shell-ops.js";
-import { createTaskStatus, createRoutineBubbles } from "./task-status.js";
 import { createKeepAwake, keepAwakeFile, keepAwakeTooltip, loadKeepAwake, saveKeepAwake, type KeepAwakeState } from "./keep-awake.js";
 import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
 
@@ -115,8 +92,8 @@ app.whenReady().then(async () => {
   screen.on("display-removed", () => avatarLog("display-removed"));
   const avatarControls = installAvatarControls(avatar, {
     log: (event, fields) => avatarLog(event, event === "bring-back" ? { ...fields, version: pkg.version, os: release() } : fields),
-    // Hoisted closure: only runs after a reload, long after taskStatus exists.
-    replay: () => push.broadcast(IPC.taskStatus, taskStatus.list()),
+    // Only runs after a reload, long after the host exists.
+    replay: () => push.broadcast(IPC.taskStatus, host?.taskStatus.list() ?? []),
     // Non-blocking: main keeps streaming delegates/sessions while this is open.
     fail: () => void dialog.showMessageBox({
       type: "warning",
@@ -134,22 +111,13 @@ app.whenReady().then(async () => {
     onChange: (held) => tray?.setToolTip(keepAwakeTooltip(held)),
   });
   // Main → renderer pushes, by client and chat (mount) id (push.ts). Client = webContents id here
-  // only; which client holds a mount comes from registerIpc's mount table, set further down.
-  let clientOfMount: (mountId: string) => ClientId | undefined = () => undefined;
+  // only; which client holds a mount comes from the host's chat mounts, once the host exists.
+  let host: Host | undefined;
   const push = createPush({
-    clientOfMount: (mountId) => clientOfMount(mountId),
+    clientOfMount: (mountId) => host?.handlers.chat.clientOf(mountId),
     client: (id) => webContents.fromId(id),
     clients: () => BrowserWindow.getAllWindows().map((w) => w.webContents),
   });
-  // What Bean is working on, and what failed — pushed to the avatar's status bubbles (design 2a).
-  const taskStatus = createTaskStatus((jobs) => {
-    keepAwake.setJobs(jobs); // before the avatar check: the hold must track work even without a window
-    // Mid-reload the old document is gone; the finished reload replays the current list.
-    if (!avatarControls.reloading()) push.broadcast(IPC.taskStatus, jobs);
-  });
-  ipcMain.on(IPC.dismissTask, (_e, id: unknown) => { if (typeof id === "string") taskStatus.dismiss(id); });
-  // The running turn per chat (mount id), so image progress can find its bubble.
-  const chatTurnIds = new Map<string, string>();
   let avatarReady = false;
   // Hoisted out of the `try` block below (where it's created) so the tray menu's click
   // handler — built further up in this function, long before that `try` runs — can read
@@ -327,28 +295,12 @@ app.whenReady().then(async () => {
     avatarControls.reveal();
   });
 
-  // Reassigned once delegateTasks exists (below); a quit requested before that point has
-  // nothing in-flight to interrupt, so the no-op default is correct, not just a placeholder.
-  // Synchronous (see delegate-tasks.ts's interruptAll doc comment) — deliberately NOT a
-  // preventDefault()-then-requeue dance: Electron's before-quit is known flaky around terminal
-  // signals on this menu-bar/tray app already (see the SIGINT/SIGTERM handlers above), and
-  // blocking the quit sequence on an async continuation is its own source of hangs. Every other
-  // before-quit hook in this file is plain synchronous fire-and-forget; this matches that.
-  let interruptAllDelegates: () => void = () => {};
-  let forceKillLive: () => void = () => {};
+  // The host registers its own synchronous teardown (delegates, live sessions, the scheduler and
+  // its lease, the routine builder) through `onQuit`; the shell-owned pieces stop here.
   let killAllTerminals: () => void = () => {};
   app.on("before-quit", () => {
-    interruptAllDelegates();
-    // Live agent sessions run permissions-bypassed in their own process groups: SIGKILL every
-    // tree now (no outbox notice — the next boot's sweepDeadRuns clears their records silently).
-    forceKillLive();
-    // Chat terminals' shells and their jobs, likewise.
+    // Chat terminals' shells and their jobs.
     killAllTerminals();
-    // Delegates run in their own process group (detached) and would outlive us — routine steps
-    // and builder agents included, and so do routine command steps. SIGKILL them now; cancel()'s
-    // 5s escalation can't fire after exit.
-    killAllDelegates();
-    killAllCommands();
     // Spawned chatops servers do NOT die with us — without this they survive as launchd-owned
     // orphans, holding port 3978 and answering webhooks with whatever build they booted with.
     // The servers' own exitWhenOrphaned() watchdog covers the paths that never reach here
@@ -364,9 +316,6 @@ app.whenReady().then(async () => {
   });
 
   const componentWindows = new Map<ComponentKind, BrowserWindow>();
-  let cancelAllDelegates: () => void = () => {};
-  let stopLiveClient: (clientId: ClientId) => void = () => {};
-  let releaseChatClient: (clientId: ClientId) => void = () => {};
   // Same drop-race fix as planStore below: a URL dropped on the avatar can reach a chat window
   // whose renderer hasn't mounted (and subscribed to componentDroppedUrl) yet, silently losing
   // the push. droppedUrlStore.get() is stashed alongside every push so the renderer can pull it
@@ -375,8 +324,6 @@ app.whenReady().then(async () => {
   // A run to open in the Dashboard: pulled on mount by a fresh (or still-loading) window, pushed to
   // an open one. A mounted window never stores it — that would make a later reopen jump to an old run.
   let pendingDashboardTarget: DashboardTarget | undefined;
-  // Desktop chat history: per-chat thread pins and incognito latches (ipc.ts).
-  const chatThreadHandlers = buildChatThreadHandlers({ dbFile: dbFile(dir), saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats });
   const openComponent = (kind: ComponentKind, payload?: ChatDrop | DashboardTarget): void => {
     const droppedUrl = typeof payload === "string" || Array.isArray(payload) ? payload : undefined;
     const target = typeof payload === "object" && !Array.isArray(payload) && kind === "dashboard" ? payload : undefined;
@@ -419,9 +366,9 @@ app.whenReady().then(async () => {
       // Captured now: the webContents is destroyed by the time `closed` fires.
       const clientId = win.webContents.id;
       win.on("closed", () => {
-        cancelAllDelegates();
-        stopLiveClient(clientId);
-        releaseChatClient(clientId);
+        host?.delegateTasks.cancelAll();
+        host?.liveTasks.stopClient(clientId);
+        host?.handlers.chat.releaseClient(clientId);
       });
     }
     if (droppedUrl && kind === "chat") {
@@ -490,12 +437,7 @@ app.whenReady().then(async () => {
     push.broadcast(IPC.themeChanged, next);
   });
 
-  // Reminder action tools (executed by converse()'s tool loop) + a 30s poll that fires
-  // due ones as desktop notifications. Polling the file means set_reminder never has to
-  // wake a scheduler. ponytail: 30s granularity; tighten if minute-exact ever matters.
-  const remindersPath = remindersFile(dir);
-  // Message fanout: deliver() sends to every available() transport. Only Notification is
-  // real today; the rest are honest stubs the routine feature will implement.
+  // Desktop notifications: reminders, sprout digests and alarms (the host's `notification`).
   const shownNotifications = new Set<Notification>();
   const notificationTransport: Transport = {
     name: "notification",
@@ -527,242 +469,47 @@ app.whenReady().then(async () => {
     await markNotificationPermissionRequested(notifPermissionPath);
   })();
 
-  // ponytail: stub seam — no avatar message-bubble UI exists yet. Add real IPC +
-  // renderer rendering when the routine feature needs it.
-  const bubbleTransport: Transport = { name: "bubble", available: () => false, send: () => {} };
-  // ponytail: stub seams — bots are inbound-only, no main->bot outbound push path exists yet.
-  // Build the main->server channel when the routine feature lands.
-  const discordTransport: Transport = { name: "discord", available: () => false, send: () => {} };
-  const teamsTransport: Transport = { name: "teams", available: () => false, send: () => {} };
-  const transports: Transport[] = [notificationTransport, bubbleTransport, discordTransport, teamsTransport];
-  const actionTools: ActionTool[] = [
-    {
-      spec: {
-        name: "set_reminder",
-        description: "Set a desktop-notification reminder for the user at a specific time.",
-        parameters: {
-          type: "object",
-          properties: {
-            text: { type: "string", description: "what to remind the user about" },
-            at: { type: "string", description: "when to fire, as an ISO 8601 timestamp with timezone offset" },
-          },
-          required: ["text", "at"],
-        },
-      },
-      run: async (args) => {
-        const { text, at } = (args ?? {}) as { text?: unknown; at?: unknown };
-        if (typeof text !== "string" || typeof at !== "string" || Number.isNaN(Date.parse(at))) {
-          return "error: set_reminder needs { text, at } with `at` a valid ISO 8601 timestamp";
-        }
-        await updateReminders(remindersPath, (all) => { all.push({ id: randomUUID(), text, at }); });
-        return `reminder saved for ${at}`;
-      },
-    },
-    {
-      spec: {
-        name: "list_reminders",
-        description: "List the user's pending (not yet fired) reminders.",
-        parameters: { type: "object", properties: {} },
-      },
-      run: async () => {
-        const pending = (await loadReminders(remindersPath)).filter((r) => !r.firedAt);
-        return pending.length === 0 ? "no pending reminders" : JSON.stringify(pending);
-      },
-    },
-    retrieveNoteTool((q) => searchNotes(dbFile(dir), q)),
-  ];
-  actionTools.push({
-    spec: {
-      name: "fetch_url",
-      description:
-        "Fetch a web page and return its readable text. Use whenever you need the actual " +
-        "content behind an http(s) URL (summarizing, explaining, extracting from a page).",
-      parameters: {
-        type: "object",
-        properties: { url: { type: "string", description: "the http(s) URL to fetch" } },
-        required: ["url"],
-      },
-    },
-    run: async (args, ctx) => {
-      const { url } = (args ?? {}) as { url?: unknown };
-      let parsed: URL;
-      try {
-        parsed = new URL(typeof url === "string" ? url : "");
-      } catch {
-        return "error: fetch_url needs a valid absolute URL";
-      }
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        return `error: only http(s) URLs can be fetched, got ${parsed.protocol}`;
-      }
-      try {
-        // safeFetch refuses loopback/LAN/metadata addresses (also after redirects) and caps the body.
-        const res = await safeFetch(parsed.toString(), { timeoutMs: 15_000, maxBytes: 5 * 1024 * 1024, signal: ctx?.signal });
-        if (!res.ok) return `error: fetch failed with HTTP ${res.status}`;
-        const text = extractPageText(res.body);
-        return text || "error: page had no readable text";
-      } catch (err) {
-        return `error: fetch failed — ${err instanceof Error ? err.message : String(err)}`;
-      }
-    },
-  });
-
-  // Finder-launched Electron gets a minimal PATH missing whatever the user's shell profile
-  // adds (nvm, npm/pnpm global bins, ~/.local/bin, ...) — ask the login shell for its real
-  // PATH once. CLI detection is re-scanned per resolution (cheap sync stat) so a CLI
-  // installed after boot is picked up without a relaunch.
-  const resolvedPath = resolveCliPath(process.env.PATH ?? "", loginShellPath(), homedir());
-  const detectedClis = (): CliName[] => detectClis(resolvedPath);
-
-  // Same repo-default + ~/.bean override layering as skills/persona; loaded once at boot
-  // (no live reload — restart Bean after editing clis.json).
-  const cliModels: CliModels[] = await loadCliModels(clisFile(projectDir), clisFile(dir));
-
-  // Chatops reminders (a `target`) go to the outbox for their bot (Discord / Teams) to deliver; untargeted
-  // ones stay desktop notifications.
-  const reminderFailed = (r: Reminder, err: unknown): void => {
-    console.error("bean: reminder delivery failed", r.id, err);
-    const why = err instanceof Error ? err.message : String(err);
-    taskStatus.error("reminder:error", { kind: "reminder", name: "Reminder", line: `Couldn't deliver: ${r.text}`, detail: why });
-  };
-  // One data directory, one scheduler + reminder loop (#800): a headless bot on this ~/.bean can
-  // hold the same bean.db lease. Refused = standby with a notice; this app takes over (and starts
-  // the sprout scheduler) once the holder quits or its heartbeat expires. Lost = stop, relaunch.
-  let schedulerLeaseHeld = false;
-  let startScheduler: (() => void) | undefined;
-  let stopScheduler: (() => void) | undefined;
-  const schedulerLease = holdSchedulerLease({
-    file: dbFile(dir), label: "desktop app",
-    onAcquired: () => {
-      schedulerLeaseHeld = true;
-      taskStatus.dismiss("scheduler:lease");
-      startScheduler?.();
-    },
-    onBlocked: (by) => taskStatus.error("scheduler:lease", {
-      kind: "routine", name: "Sprouts", line: "Sprouts and reminders paused: another Bean is scheduling",
-      detail: `${by.label} runs the scheduler for this data directory. Bean takes over when it stops.`,
-    }),
-    onLost: (by) => {
-      schedulerLeaseHeld = false;
-      stopScheduler?.();
-      taskStatus.error("scheduler:lease", {
-        kind: "routine", name: "Sprouts", line: by ? "Sprouts and reminders stopped: another Bean took over" : "Sprouts and reminders stopped: couldn't renew the scheduler lease",
-        detail: by
-          ? `${by.label} took over the scheduler for this data directory. Relaunch Bean to resume here.`
-          : "Bean couldn't write its scheduler heartbeat to bean.db before it expired. Relaunch Bean to resume.",
-      });
-    },
-  });
-  app.on("before-quit", () => schedulerLease.stop());
-  startReminderLoop({
-    dir, canRun: schedulerLease.held,
-    untargeted: (r) => {
-      void deliver({ body: r.text }, transports).then((outcomes) => {
-        for (const o of outcomes) if (!o.ok) reminderFailed(r, `${o.name}: ${o.error instanceof Error ? o.error.message : String(o.error)}`);
-      });
-    },
-    failed: reminderFailed,
-  });
-
   try {
-    const cfgPath = configFile(dir);
-    // ponytail: first launch has no ~/.bean yet — bootstrap an empty-key config so
-    // loadConfig (which throws on missing file) has something to read instead of crashing.
-    if (!existsSync(cfgPath)) await saveConfig(cfgPath, { openaiApiKey: "", model: "gpt-4o-mini", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, reasoningEffort: "" });
-    const cfg = await loadConfig(cfgPath, dir);
-
-    const runtime = createRuntimeConfig(
-      { openaiApiKey: cfg.openaiApiKey, model: cfg.model, terminalApp: cfg.terminalApp, editorApp: cfg.editorApp, delegateCli: cfg.delegateCli, systemControls: cfg.systemControls, reasoningEffort: cfg.reasoningEffort, routineDigestContext: cfg.routineDigestContext, disabledClis: cfg.disabledClis, webSearch: cfg.webSearch, autoMemory: cfg.autoMemory },
-      {
-        makeConverse: makeOpenAIConverse,
-        saveConfigFile: (update) => saveConfig(configFile(dir), update),
-      },
-    );
-    const enabledClis = (): CliName[] => detectedClis().filter((cli) => !runtime.getDisabledClis().includes(cli));
-    // Gated per call on the live Settings toggle, so flipping it needs no restart.
-    actionTools.push(systemControlTool(() => runtime.getSystemControls()));
-
-    // Shared by createDelegateTasks (chat window's delegate button) and the routine
-    // delegate-step adapter below — one resolver, not two copies of this preference logic.
-    // A configured project's path or Bean's scratch workspace — the only cwds a chat delegate or
-    // live session may spawn in, whatever path the renderer sent.
-    const projectAllowed = async (path: string): Promise<boolean> =>
-      path === scratchDir(dir) || (await loadProjects(projectsFile(dir))).some((p) => p.path === path);
-    const resolveDelegateCli = (model?: string, cli?: CliName) =>
-      resolveDelegateSelection(cliModels, enabledClis(), cli ?? runtime.getDelegateCli(), model);
-
-    const delegateTasks = createDelegateTasks({
-      resolvedPath,
+    // Chat windows' terminals die with their chat: release (incl. the window's `closed`, which
+    // releases every chat it held), before-quit, and the update relaunch below. Created after the
+    // host (it needs projectAllowed); a chat released before then has no terminals.
+    let terminalTasks: TerminalTasks | undefined;
+    const isChatClient = (clientId: number): boolean => componentWindows.get("chat")?.webContents.id === clientId;
+    // The Electron-free host: chats, delegates, live sessions, routines + scheduler, memory (@bean/host).
+    const h = host = await createHost({
       dir,
-      scratchPath: scratchDir(dir),
-      projectAllowed,
-      resolveCli: resolveDelegateCli,
-      skillBrowser: async (name) =>
-        (await loadLayeredSkills(skillsDir(projectDir), skillsDir(dir))).find((s) => s.name === name)?.browser === true,
-      send: (event) => {
-        if (event.type === "started") {
-          taskStatus.upsert(event.taskId, {
-            kind: "delegate", name: event.projectPath ? basename(event.projectPath) : "delegate",
-            line: "Starting…", detail: event.instruction, startedAt: Date.now(), state: "running",
-            ...(event.mountId ? { mountId: event.mountId } : {}),
-          });
-        } else if (event.type === "output") {
-          const line = event.line.trim();
-          if (line) taskStatus.upsert(event.taskId, { line });
-        } else if (event.type === "done") taskStatus.finish(event.taskId, "done", "Done");
-        else if (event.type === "failed") taskStatus.finish(event.taskId, "failed", event.message);
-        else taskStatus.finish(event.taskId, "failed", "Stopped", false); // the user's own Stop isn't a failure to chase
-        if (event.mountId) push.send(event.mountId, IPC.delegateEvent, event);
+      builtinDir: projectDir,
+      push: hostPush(push),
+      onJobs: (jobs) => {
+        keepAwake.setJobs(jobs); // before the avatar check: the hold must track work even without a window
+        // Mid-reload the old document is gone; the finished reload replays the current list.
+        if (!avatarControls.reloading()) push.broadcast(IPC.taskStatus, jobs);
       },
-      newId: () => randomUUID(),
-    });
-    cancelAllDelegates = delegateTasks.cancelAll;
-    interruptAllDelegates = delegateTasks.interruptAll;
-
-    const liveTasks = createLiveTasks({
-      resolvedPath,
-      dir,
-      enabledClis,
-      cliModels: () => cliModels,
-      scratchPath: scratchDir(dir),
-      findResumable: (sessionId) => findDelegateRun(dbFile(dir), sessionId, undefined, "desktop"),
-      modelOffered: (cli, model) => (cliModels.find((e) => e.provider === cli)?.models ?? []).includes(model),
-      projectAllowed,
-      newId: () => randomUUID(),
-      send: (event) => {
-        const id = `live:${event.sessionId}`;
-        if (event.type === "started") {
-          taskStatus.upsert(id, {
-            kind: "live", agent: event.agent, name: `${LIVE_AGENT_NAMES[event.agent]} · ${basename(event.projectPath) || "scratch"}`,
-            line: "Starting…", detail: event.projectPath, startedAt: Date.now(), state: "running", mountId: event.mountId,
-          });
-        } else if (event.type === "output") {
-          const line = event.line.trim();
-          if (line) taskStatus.upsert(id, { line });
-        } else if (event.type === "turn") {
-          taskStatus.upsert(id, { line: event.interrupted ? "Turn stopped" : event.failed ? "Turn failed" : "Waiting for you" });
-        } else if (event.type === "session" || event.type === "text" || event.type === "turn-start" || event.type === "consumed") {
-          // the receipt and prose are for the chat window only
-        } else if (event.reason === "failed") taskStatus.finish(id, "failed", event.error ?? "Session died");
-        else taskStatus.finish(id, "done", event.reason === "stopped" ? "Session ended" : "Session ended on its own", false);
-        push.send(event.mountId, IPC.liveEvent, event);
+      notification: notificationTransport,
+      isChatClient,
+      onQuit: (fn) => app.on("before-quit", fn),
+      // One-time heads-up the first time memory saves itself (same one-shot flag-file shape as the
+      // notification-permission prompt).
+      firstAutoMemory: async () => {
+        const first = !(await hasRequestedNotificationPermission(memoryNoticePath));
+        if (first) await markNotificationPermissionRequested(memoryNoticePath);
+        return first;
       },
+      onChatRelease: (mountId) => { void terminalTasks?.stopMount(mountId); }, // never rejects; the entry is held until the shell is gone
     });
-    stopLiveClient = liveTasks.stopClient;
-    forceKillLive = liveTasks.forceKillAll;
+    const { taskStatus, runtime } = h;
 
     // node-pty is loaded on first use, not at boot: a broken native module fails that terminal's
     // start, never the whole app. Packaged, it resolves from app.asar (spawn-helper unpacked).
     const requireNative = createRequire(import.meta.url);
     const spawnPty: PtyFactory = (file, args, opts) => (requireNative("node-pty") as typeof import("node-pty")).spawn(file, args, opts);
-    // Chat windows' terminals die with their chat: release (incl. the window's `closed`, which
-    // releases every chat it held), before-quit, and the update relaunch below.
-    const terminalTasks = createTerminalTasks({
+    const terminals = terminalTasks = createTerminalTasks({
       spawn: spawnPty,
-      projectAllowed,
+      projectAllowed: h.projectAllowed,
       scratchPath: scratchDir(dir),
       send: (event) => push.send(event.mountId, IPC.terminalEvent, event),
     });
-    killAllTerminals = terminalTasks.killAll;
+    killAllTerminals = terminals.killAll;
 
     const chatopsRoot = app.isPackaged ? process.resourcesPath : dirname(projectBeanDir());
     const chatopsEnabledPath = chatopsEnabledFile(app.getPath("userData"));
@@ -773,13 +520,11 @@ app.whenReady().then(async () => {
     const syncedChanged = (e: SyncedChatEvent): void => {
       push.broadcast(IPC.syncedChatEvent, e);
     };
-    // A spawned bot's sprout-run tap (#637), answered once the scheduler below exists; before
-    // that (the bots autostart first) the bot is told the app isn't reachable.
-    let answerSproutTrigger: ((bot: ChatopsBot, req: RoutineTrigger) => Promise<RoutineTriggerAnswer>) | undefined;
     chatopsServers = createChatopsServers({
       repoRoot: chatopsRoot,
-      onRoutineTrigger: (bot, req) => answerSproutTrigger?.(bot, req) ?? Promise.resolve({ status: "refused", reason: "unavailable" }),
-      resolvedPath,
+      // A spawned bot's sprout-run tap (#637), answered by the host's scheduler.
+      onRoutineTrigger: h.answerSproutTrigger,
+      resolvedPath: h.resolvedPath,
       onActivity: (bot, e) => {
         applyChatopsActivity(taskStatus, bot, e);
         if (e.type !== "live") return;
@@ -811,216 +556,26 @@ app.whenReady().then(async () => {
         extraEnv: { BEAN_BUILTIN_DIR: projectDir },
       } : {}),
     });
-    app.on("before-quit", () => chatopsServers?.stopAll());
     // Bring back whatever the user had switched on. Every restart path lands here — plain quit,
     // dev relaunch, and an update install (`app.relaunch()` skips before-quit, but each server's
     // exitWhenOrphaned() reaps it) — so the bots don't quietly stay off after an update.
     for (const bot of await loadChatopsEnabled(chatopsEnabledPath)) chatopsServers.start(bot);
 
-    // --- Routines: cron-scheduled multi-step automations (see .memory/project-routines.md). ---
-    const routinesPath = routinesDir(dir);
-    const routineStatePath = routineStateFile(dir);
-
-    // Run records a crash left behind (run-queue.ts). Never kills: the bots share runs/.
-    sweepDeadRuns(dir);
-
-    // User-facing saves (editor, builder) refuse a chat sink naming an unknown destination.
-    const saveKnownSinks = async (r: Routine, models?: CliModels[]): Promise<void> => {
-      const problem = sinkAliasProblems(r, listDestinations(dbFile(dir)))[0];
-      if (problem) throw new Error(problem);
-      await saveRoutine(routinesPath, r, models);
-    };
-    const routineBubbles = createRoutineBubbles(taskStatus);
-    // Routine host + scheduler (core routine-wiring.ts), on the same resolved login-shell PATH
-    // spawn as delegate-tasks (safety-packaged-app-path-detection).
-    const routines = createRoutineWiring({
-      dir,
-      builtinDir: projectDir,
-      converse: runtime.converse,
-      getModel: () => runtime.getModel(),
-      clis: enabledClis,
-      cliModels,
-      getDelegateCli: () => runtime.getDelegateCli(),
-      path: resolvedPath,
-      spawnFn: resolvedPathSpawnFn(resolvedPath),
-      tools: actionTools,
-      getRoutineDigestContext: () => runtime.getRoutineDigestContext(),
-      onStatus: routineBubbles.onStatus,
-      notify: async ({ target, ...msg }) => {
-        if (notificationTransport.available()) await notificationTransport.send({ ...msg, ...(target ? { meta: { open: "dashboard", target } } : {}) });
-      },
-      canSchedule: schedulerLease.held, // fails closed past the last good renewal
-      alarm: (routine, error) => {
-        if (notificationTransport.available()) {
-          void notificationTransport.send({ title: `Sprout: ${routine.name}`, body: `Can't check for new items — ${error}`, meta: { open: "routines" } });
-        }
-      },
-    });
-    const routineScheduler = routines.scheduler;
-    // The app hosts the scheduler, so it also posts the finish reply, to the asking conversation.
-    answerSproutTrigger = (bot, req) => answerRoutineTrigger(req, {
-      load: () => loadRoutines(routinesPath),
-      facts: (r) => sproutRunFacts(dbFile(dir), r),
-      trigger: withFinishReply(routineScheduler.trigger, (msg) => enqueueOutbox(outboxDir(dir), { transport: bot, ...msg }, randomUUID)),
-    });
-    const tools = detectTools(resolvedPath);
-    const routineBuilder = createRoutineBuilder({
-      loadRoutines: () => loadRoutines(routinesPath),
-      saveRoutine: (r) => saveKnownSinks(r),
-      loadSkills: () => loadLayeredSkills(skillsDir(projectDir), skillsDir(dir)),
-      saveSkill: (name, md) => saveSkill(skillsDir(dir), name, md),
-      pollWatch: routines.pollWatch,
-      fetchText,
-      tools: () => tools,
-      // Not recorded in delegate_runs: the builder is internal tooling whose scratch session the
-      // user never asked to revisit (see .memory/project-delegate-session-receipts.md).
-      startAgent: (prompt, brief, onLine) => {
-        const choice = resolveDelegateSelection(cliModels, enabledClis(), brief.builder?.cli ?? runtime.getDelegateCli(), brief.builder?.model);
-        if (!choice) return { done: Promise.reject(new Error("No enabled delegate CLI found — enable one in Settings.")), cancel: () => {} };
-        const cwd = join(scratchDir(dir), `build-${brief.name}`); // name validated kebab-case in builder.start
-        mkdirSync(cwd, { recursive: true });
-        let cancel = (): void => {};
-        const done = new Promise<string>((resolve, reject) => {
-          const cleanup = (): void => rmSync(cwd, { recursive: true, force: true });
-          const handle = runDelegate(
-            { cli: choice.cli, projectPath: cwd, prompt, ...(choice.model ? { model: choice.model } : {}) },
-            { onOutput: onLine, onDone: (out) => { cleanup(); resolve(out); }, onError: (err) => { cleanup(); reject(err); } },
-            resolvedPathSpawnFn(resolvedPath),
-            ROUTINE_STEP_TIMEOUT_MS,
-          );
-          cancel = () => handle.cancel(cleanup);
-        });
-        return { done, cancel: () => cancel() };
-      },
-    });
-    app.on("before-quit", () => routineBuilder.cancelAll());
-    // Started by whichever comes second: this line, or the lease being acquired (standby). Only
-    // the lease holder recovers todos: anything stuck `running` was interrupted by the previous
-    // holder (quit/crash) — fail it visibly (retryable). A standby app must not touch them: the
-    // current holder is still running them.
-    startScheduler = () => { void routines.start(); };
-    stopScheduler = () => routineScheduler.stop();
-    if (schedulerLeaseHeld) startScheduler();
-    app.on("before-quit", () => routineScheduler.stop());
-
-    // Checked after each auto-save (close batch or per-turn capture) — no timer, no boot cost.
-    // The digest goes to a bubble + Persona only, never into a transcript (it would be
-    // re-extracted as a "fact").
-    const checkDream = async (pendingIds: () => string[]): Promise<void> => {
-      const dream = await maybeDream({
-        dbFile: dbFile(dir), chat: runtime.converse, model: runtime.getModel(), exclude: pendingIds,
-      });
-      if (!dream) return;
-      const parts = [
-        dream.merged ? `merged ${dream.merged}` : "", dream.rewritten ? `rewrote ${dream.rewritten}` : "",
-        dream.removed ? `removed ${dream.removed}` : "",
-      ].filter(Boolean).join(", ");
-      taskStatus.upsert("memory:dream", { kind: "memory", name: "Memory", startedAt: Date.now(), state: "running" });
-      taskStatus.finish("memory:dream", "done", `🌙 Tidied memory: ${parts} · click to review`);
-    };
-
-    const sendHandlers = buildSendHandlers({
-      dbFile: dbFile(dir), listDestinations: (file) => listDestinations(file), destinationLabel, matchDestination,
-      enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID), newId: randomUUID,
-    });
-    ({ releaseChatClient, clientOfMount } = registerIpc(ipcMain, {
-      proposeSend: sendHandlers.propose, sendHandlers, shell: createShellOps(),
-      loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
-      loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory, deleteMemories, extractMemories, restoreDreamRun, dreamDetails,
-      ownerSubjectIds: () => ownerSubjectIds(dbFile(dir), dir),
-      getLastDream: async (file) => (await getMemoryMeta(file, "lastDream")) as DreamDigest | undefined,
-      autoMemory: () => runtime.getAutoMemory(),
-      onTurnBatch: (pendingIds) => {
-        checkDream(pendingIds).catch((err) => console.error("memory dream failed:", err));
-      },
-      onMemoryBatch: (batch, pendingIds) => {
-        void (async () => {
-          // One-time heads-up the first time memory saves itself (same one-shot flag-file shape
-          // as the notification-permission prompt).
-          const first = !(await hasRequestedNotificationPermission(memoryNoticePath));
-          if (first) await markNotificationPermissionRequested(memoryNoticePath);
-          const id = "memory:batch";
-          taskStatus.upsert(id, { kind: "memory", name: "Memory", startedAt: Date.now(), state: "running" });
-          taskStatus.finish(id, "done", first
-            ? "I remember things automatically now · click to review or turn off"
-            : `🧠 Remembered ${batch.length} · click to review`);
-          await checkDream(pendingIds);
-        })().catch((err) => console.error("memory bubble/dream failed:", err));
-      },
-      onMemoryFailure: () => taskStatus.error("memory:error", { kind: "memory", name: "Memory", line: "Couldn't update memory" }),
-      loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage,
-      dbFile: dbFile(dir),
-      converse: runtime.converse,
-      getModel: runtime.getModel,
-      projectSkillsDir: skillsDir(projectDir),
-      skillsDir: skillsDir(dir),
-      projectsFile: projectsFile(dir),
-      personaFile: personaFile(dir),
-      projectPersonaFile: personaFile(projectDir),
-      actions: actionTools,
-      imageGen: {
-        generate: (a) => makeOpenAIImageGen(runtime.getApiKey())(a),
-        // ponytail: imageModel read at boot; move into runtime-config if a Settings field ever exists
-        getModel: () => cfg.imageModel,
-        imagesDir: imagesDir(dir),
-        saveNoteImage: (bytes) => saveNoteImage(dbFile(dir), bytes),
-        onStart: (mountId) => {
-          if (mountId !== undefined) push.send(mountId, IPC.chatImageProgress, mountId);
-          const turnId = mountId === undefined ? undefined : chatTurnIds.get(mountId);
-          if (turnId) taskStatus.upsert(turnId, { line: "Drawing an image…" });
-        },
-      },
-      getConfig: () => ({
-        openaiApiKey: runtime.getApiKey(),
-        model: runtime.getModel(),
-        terminalApp: runtime.getTerminalApp(),
-        editorApp: runtime.getEditorApp(),
-        delegateCli: runtime.getDelegateCli(),
-        systemControls: runtime.getSystemControls(),
-        reasoningEffort: runtime.getReasoningEffort(),
-        routineDigestContext: runtime.getRoutineDigestContext(),
-        disabledClis: runtime.getDisabledClis(),
-        webSearch: runtime.getWebSearch(),
-        autoMemory: runtime.getAutoMemory(),
-        paths: {
-          config: configFile(dir),
-          skills: skillsDir(dir),
-          projects: projectsFile(dir),
-          persona: personaFile(dir),
-        },
-      }),
-      applyConfig: (update) => runtime.apply(update),
-      getTerminalApp: () => runtime.getTerminalApp(),
-      getEditorApp: () => runtime.getEditorApp(),
-      getAvailableClis: () => enabledClis(),
-      getDetectedClis: detectedClis,
-      getCliModels: () => cliModels,
-      beanDirPath: dir,
-      modelMemoryFile: modelMemoryFile(dir),
-      delegateTasks,
-      liveTasks,
-      terminalTasks,
-      isChatClient: (clientId) => componentWindows.get("chat")?.webContents.id === clientId,
-      delegateAvailable: () => enabledClis().length > 0,
-      // A live CLI is enabled and this chat could open a session now (#478, cap #517).
-      liveSessionAvailable: (clientId, mountId) => componentWindows.get("chat")?.webContents.id === clientId
-        && enabledClis().some(isLiveCli) && liveTasks.canStart({ clientId, mountId }),
-      webSearch: () => runtime.getWebSearch(),
-      onChatTurn: (mountId) => {
-        const id = `chat:${randomUUID()}`;
-        chatTurnIds.set(mountId, id);
-        taskStatus.upsert(id, { kind: "chat", name: "Chat", line: "Thinking…", startedAt: Date.now(), state: "running" });
-        return (error) => {
-          if (chatTurnIds.get(mountId) === id) chatTurnIds.delete(mountId);
-          // The reply is already in the chat window — a done bubble would only echo it.
-          taskStatus.dismiss(id);
-          if (error) taskStatus.error("chat:error", { kind: "chat", name: "Chat", line: error, detail: error });
-        };
-      },
+    registerIpc(ipcMain, {
+      host: h.handlers,
+      push,
+      shell: createShellOps(),
+      terminalTasks: terminals,
+      isChatClient,
       onLaunchError: (req, err) => {
         const label = req.mode === "open" ? "open the project in your editor" : `launch (${req.mode})`;
         dialog.showErrorBox("Bean", `Couldn't ${label}: ${err.message}`);
       },
+      getTerminalApp: () => runtime.getTerminalApp(),
+      getEditorApp: () => runtime.getEditorApp(),
+      getAvailableClis: h.enabledClis,
+      getCliModels: () => h.cliModels,
+      beanDirPath: dir,
       getAppInfo: () => ({
         version: pkg.version,
         author: pkg.author,
@@ -1044,10 +599,10 @@ app.whenReady().then(async () => {
       installUpdate: (extractedAppPath: string) => installAndRelaunch(extractedAppPath, {
         relaunch: () => {
           chatopsServers?.stopAll();
-          forceKillLive();
+          h.liveTasks.forceKillAll();
           killAllTerminals();
           // exit() skips before-quit: release now, or the new app waits out the lease's TTL.
-          schedulerLease.stop();
+          h.schedulerLease.stop();
           app.relaunch();
         },
       }),
@@ -1057,78 +612,13 @@ app.whenReady().then(async () => {
       chatopsStatus: chatopsServers.status,
       chatopsStart: chatopsServers.start,
       chatopsStop: chatopsServers.stop,
-      getCurrentTheme, setCurrentTheme, push, openComponent, proposeRun, planFromDrop,
+      getCurrentTheme, setCurrentTheme, openComponent, proposeRun, planFromDrop,
       getPendingPlan: planStore.get,
       getPendingDroppedUrl: droppedUrlStore.get,
       getPendingDashboardTarget: () => { const t = pendingDashboardTarget; pendingDashboardTarget = undefined; return t; },
       runInChat,
       getPendingChatPrompt: chatPromptStore.get,
       getPendingInterruptedRunNotices: interruptedRunStore.get,
-      loadRoutines: () => loadRoutines(routinesPath),
-      sproutFacts: (r) => sproutRunFacts(dbFile(dir), r),
-      skillProposalHandlers: buildSkillProposalHandlers({
-        loadSkills: loadLayeredSkills, projectSkillsDir: skillsDir(projectDir), skillsDir: skillsDir(dir), dbFile: dbFile(dir),
-      }),
-      routineHandlers: buildRoutineHandlers({
-        loadRoutines: () => loadRoutines(routinesPath),
-        // Model check only when enabling/enabled: pausing must never be blocked by a model that
-        // has since left clis.json (the run itself refuses either way).
-        saveRoutine: (r) => saveKnownSinks(r, r.enabled ? cliModels : undefined),
-        deleteRoutine: (name) => deleteRoutine(routinesPath, name),
-        loadStates: () => loadRoutineStates(routineStatePath),
-        isRunning: (name) => routineScheduler.isRunning(name),
-        runningCount: (name) => routineScheduler.runningCount(name),
-        queueCounts: async (name) => {
-          const todos = await listTodos(dbFile(dir), name);
-          return { pending: todos.filter((t) => t.status === "pending").length, running: todos.filter((t) => t.status === "running").length };
-        },
-        runNow: (name) => routineScheduler.runNow(name),
-        stopRuns: (name) => {
-          routineBubbles.stopping(name);
-          routineScheduler.stopRuns(name);
-        },
-        onRoutineDeleted: async (name) => {
-          await deleteTodosForRoutine(dbFile(dir), name);
-          clearWatch(dbFile(dir), name);
-          pruneStepAttempts(dbFile(dir), name, []);
-        },
-        attempts: (runId) => listStepAttempts(dbFile(dir), runId).map((a) => ({
-          stepIndex: a.stepIndex, round: a.round, kind: a.kind, ok: a.ok, output: a.output,
-          ...(a.stepId ? { stepId: a.stepId } : {}), ...(a.cli ? { cli: a.cli } : {}), ...(a.verdict ? { verdict: a.verdict } : {}),
-          ...(a.cli && a.sessionId && isValidSessionId(a.sessionId) && CLI_NAMES.includes(a.cli as CliName)
-            ? { resume: resumeCommand(a.cli as CliName, a.sessionId) } : {}),
-        })),
-        watch: {
-          isSeeded: (r) => (r.watch ? isWatchSeeded(dbFile(dir), r.name, watchSourceKey(r.watch)) : true),
-          pollFailures: (name) => routineScheduler.pollFailures(name),
-          checkNow: (name) => routineScheduler.checkNow(name),
-          previewWatch: routines.pollWatch,
-          enableWatch: (name, queueExisting) => routineScheduler.enableWatch(name, queueExisting),
-          sinkRecipients: () => sinkRecipients(dir),
-          draftBrief: async (sentence, previous) => {
-            const [skills, projects] = await Promise.all([
-              loadLayeredSkills(skillsDir(projectDir), skillsDir(dir)), loadProjects(projectsFile(dir)),
-            ]);
-            const ctx = {
-              tools,
-              projects: projects.map((p) => ({ name: p.name, path: p.path })),
-              skills: skills.filter((s) => !s.hidden && s.enabled !== false).map((s) => ({ name: s.name, description: s.description })),
-              clis: enabledClis(),
-            };
-            // Plain structured-output call on /v1/responses with no tools — not a propose_* tool,
-            // so converse()'s byte-stable tool list is untouched.
-            const res = await runtime.converse({ model: runtime.getModel(), messages: briefMessages(sentence, ctx, previous), tools: [] });
-            return { brief: parseBrief(res.content, ctx), tools };
-          },
-          builds: routineBuilder,
-        },
-      }),
-      todoHandlers: buildTodoHandlers({
-        dbFile: dbFile(dir),
-        loadRoutines: () => loadRoutines(routinesPath),
-        addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
-      }),
-      chatThreadHandlers,
       syncedChatHandlers: buildSyncedChatHandlers({
         dbFile: dbFile(dir),
         owners: () => loadChatopsOwners(dir),
@@ -1138,20 +628,12 @@ app.whenReady().then(async () => {
         deskTurn: (surface, id, text) => chatopsServers!.deskTurn(surface, id, text),
         deskResume: (surface, id) => chatopsServers!.deskResume(surface, id),
       }),
-      destinationHandlers: buildDestinationHandlers({
-        dbFile: dbFile(dir),
-        loadRoutines: () => loadRoutines(routinesPath),
-        saveRoutine: (r) => saveRoutine(routinesPath, r),
-        owners: () => loadChatopsOwners(dir),
-        listDestinations: (file) => listDestinations(file), destinationLabel, ambientSpeakers: (file, id) => ambientSpeakers(file, id),
-        setAlias, clearAlias, retargetAlias,
-      }),
       deskContinue: buildDeskContinueHandler({
         listDestinations: () => listDestinations(dbFile(dir)),
         deskContinue: (body) => chatopsServers!.deskContinue("discord", body),
-        handover: (owner, sessionId) => liveTasks.handover(owner, sessionId),
+        handover: (owner, sessionId) => h.liveTasks.handover(owner, sessionId),
       }),
-    }));
+    });
 
     await loadAvatarWindow(avatar);
     avatarReady = true;

@@ -2,7 +2,7 @@ import {
   briefToRoutine, buildStageFromLine, composePrompt, describeRoutineError, discoverFeedUrl, looksLikeFeed,
   parseBuildResult,
 } from "@bean/core";
-import type { RoutineBuildView } from "@bean/host";
+import type { RoutineBuildView } from "./routines.js";
 import type { Routine, RoutineBrief, RoutineWatch, Skill, WatchItem } from "@bean/core";
 
 export interface AgentHandle { done: Promise<string>; cancel: () => void }
