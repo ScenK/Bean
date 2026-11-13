@@ -8,6 +8,7 @@ export * from "./chat-sessions.js";
 export * from "./chatops-servers.js";
 export * from "./config.js";
 export * from "./contract.js";
+export type { CoreUpdateStatus } from "./core-update.js";
 export * from "./delegate-tasks.js";
 export * from "./destinations.js";
 export * from "./handlers.js";

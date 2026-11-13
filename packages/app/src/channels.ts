@@ -12,11 +12,13 @@ export const isNoCore = (err: unknown): boolean => err instanceof Error && err.m
 /** Which core the shell is attached to, and how that attachment is doing (#811). Remote states:
  * `connecting` (first attach), `attached`, `reconnecting` (lost; retrying — the composer is read-only),
  * `revoked` (another machine took the core over; no automatic reconnect), `mismatch` (contract version
- * differs; blocking). `message` is the last ssh error; `command` the one-time setup to run in a terminal. */
+ * differs; blocking). `message` is the last ssh error; `command` the one-time setup to run in a terminal
+ * (on a mismatch: the core's own update). `cli` runs a `bean-core` subcommand on the core's machine
+ * from a terminal here (`ssh me@box`), for the About window's recovery hints (#838). */
 export type CoreStatus =
   | { kind: "local" }
   | { kind: "none" }
-  | { kind: "remote"; host: string; state: "connecting" | "attached" | "reconnecting" | "revoked" | "mismatch"; message?: string; command?: string };
+  | { kind: "remote"; host: string; state: "connecting" | "attached" | "reconnecting" | "revoked" | "mismatch"; message?: string; command?: string; cli?: string };
 /** How a core switch ended: the app restarts, or the panel can offer the cores again. */
 export type CoreSwitchOutcome = "restarting" | "kept" | "refused" | "failed";
 /** The Cores panel's list: the saved remote cores, which one is selected, and whether this machine can
@@ -36,7 +38,7 @@ export interface DroppedImage { path: string; mimeType: string; size: number; da
 /** What a drop on the avatar hands the chat: a path/URL as text, or image/PDF files to attach. */
 export type ChatDrop = string | DroppedImage[];
 
-export type { ConfigView, ConfigUpdate } from "@bean/host";
+export type { ConfigView, ConfigUpdate, CoreUpdateStatus, RemoteUpdateResult } from "@bean/host";
 export interface AppInfo {
   version: string;
   author: string;
@@ -235,6 +237,9 @@ export const IPC = {
   // The attachment's state (host badge, reconnect bar, takeover and version banners), pulled + pushed.
   coreStatus: "bean:core-status",
   coreStatusChanged: "bean:core-status-changed",
+  // A remote core's own update from About (#838): its version + a newer release + busy work, then apply.
+  coreUpdateStatus: "bean:core-update-status",
+  coreUpdateApply: "bean:core-update-apply",
   // "Take back" after another machine took the core over.
   coreTakeBack: "bean:core-take-back",
   // Chat → main: the Keep/Stop card's "Keep working" — a close waiting on it (a core switch, a quit) is off.

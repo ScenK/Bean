@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult, type CoreListing, type CoreStatus, type CoreSwitchOutcome } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult, type CoreListing, type CoreStatus, type CoreSwitchOutcome, type CoreUpdateStatus, type RemoteUpdateResult } from "./channels.js";
 import type {
   RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
@@ -127,6 +127,8 @@ contextBridge.exposeInMainWorld("bean", {
   coreStatus: (): Promise<CoreStatus> => ipcRenderer.invoke(IPC.coreStatus),
   onCoreStatus: (cb: (s: CoreStatus) => void) => ipcRenderer.on(IPC.coreStatusChanged, (_e, s: CoreStatus) => cb(s)),
   coreTakeBack: (): void => ipcRenderer.send(IPC.coreTakeBack),
+  coreUpdateStatus: (): Promise<CoreUpdateStatus> => ipcRenderer.invoke(IPC.coreUpdateStatus),
+  coreUpdateApply: (force: boolean): Promise<RemoteUpdateResult> => ipcRenderer.invoke(IPC.coreUpdateApply, force),
   chatCloseKept: (): void => ipcRenderer.send(IPC.chatCloseKept),
   listNotes: (opts?: { includeArchived?: boolean }): Promise<Note[]> => ipcRenderer.invoke(IPC.listNotes, opts),
   saveNote: (draft: NoteDraft, images?: ImageAttachment[]): Promise<string> => ipcRenderer.invoke(IPC.saveNote, draft, images),

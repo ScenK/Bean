@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addCore, coreFile, coreLabel, loadCoreChoice, oneTimeCommand, parseRemoteCore, saveCoreChoice, sshArgs } from "../src/core-store.js";
+import { addCore, coreCli, coreFile, coreLabel, loadCoreChoice, oneTimeCommand, parseRemoteCore, saveCoreChoice, sshArgs } from "../src/core-store.js";
 
 describe("core choice (#810, #811)", async () => {
   const dir = await mkdtemp(join(tmpdir(), "bean-core-store-"));
@@ -61,6 +61,13 @@ describe("remote core entries", () => {
     expect(args).toContain("StrictHostKeyChecking=yes");
     expect(args.slice(args.indexOf("--"))).toEqual(["--", "me@box", "docker", "exec", "-i", "bean", "bean-core", "attach"]);
     expect(sshArgs({ host: "box" }).slice(-3)).toEqual(["box", "bean-core", "attach"]);
+  });
+});
+
+describe("coreCli (#838)", () => {
+  it("runs bean-core on the core's machine, or in its container", () => {
+    expect(coreCli({ host: "me@box" })).toBe("ssh me@box");
+    expect(coreCli({ host: "me@box", container: "bean" })).toBe("ssh me@box docker exec -i bean");
   });
 });
 

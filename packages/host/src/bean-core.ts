@@ -14,7 +14,7 @@ import { createInterface } from "node:readline/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname } from "node:path";
 import { buildHandshake, CONTRACT_VERSION } from "./contract.js";
-import { busyWork, installRoot, updateCore, type CoreUpdateResult } from "./core-update.js";
+import { busyWork, coreUpdateStatus, installRoot, updateCore, type CoreUpdateResult } from "./core-update.js";
 import { createHost } from "./host.js";
 import { botLogger, cliAuthPresent, configuredBots, jobLogger, ownerNotices, tzProblem } from "./headless.js";
 import { attachStdio, listenRemote, requestUpdate } from "./remote.js";
@@ -131,10 +131,11 @@ const host = await createHost({
 // The self-update (#837): one at a time; "updated" leaves the latch closed and the process exits
 // once the answer is out (or after a 5 s backstop, if the requester vanished).
 let updateRunning = false;
-const update = async (force: boolean): Promise<CoreUpdateResult> => {
+// A shell's update (#838) passes its contract: the new core must speak it, or the shell can't reattach.
+const update = async (force: boolean, contract?: number): Promise<CoreUpdateResult> => {
   if (updateRunning) return { status: "error", message: "An update is already running." };
   updateRunning = true;
-  const r = await updateCore(force, { root: installRoot(), currentVersion: version, latch: host.coreUpdate })
+  const r = await updateCore(force, { root: installRoot(), currentVersion: version, latch: host.coreUpdate, ...(contract !== undefined ? { contract } : {}) })
     .catch((err: unknown): CoreUpdateResult => ({ status: "error", message: err instanceof Error ? err.message : String(err) }));
   if (r.status === "updated") {
     console.log(`bean-core: updated to ${r.version}${r.stopped.length ? `, stopping ${r.stopped.length} running job(s)` : ""}; restarting.`);
@@ -153,6 +154,7 @@ try {
     attachments: host.attachments,
     handlers: host.handlers,
     update,
+    updateStatus: () => coreUpdateStatus({ currentVersion: version, latch: host.coreUpdate }),
     onUpdated: () => shutdown(0),
   });
   quit.push(remote.close);

@@ -43,6 +43,23 @@ export function busyWork(jobs: readonly TaskJob[], runs: readonly TrackedRun[], 
   return items;
 }
 
+/** One busy item as a shell shows it ("delegate fix-login", "sprout nightly"). */
+export const busyLabel = (b: BusyItem): string => `${b.kind === "routine" ? "sprout" : b.kind === "live" ? "agent" : b.kind} ${b.name}`;
+
+/** What a shell's About asks a remote core (#838): its version, a newer release if there is one, and
+ * what an update would stop right now. `error` = the release check failed (the rest still holds). */
+export interface CoreUpdateStatus { current: string; latest?: string; busy: string[]; error?: string }
+
+/** The release check alone: nothing is downloaded and the latch isn't touched. */
+export async function coreUpdateStatus(deps: Pick<CoreUpdateDeps, "currentVersion" | "latch" | "fetch">): Promise<CoreUpdateStatus> {
+  const base = { current: deps.currentVersion, busy: deps.latch.busy().map(busyLabel) };
+  let release: GithubReleaseInfo;
+  try { release = await fetchRelease(deps.fetch ?? fetch); } catch (err) { return { ...base, error: `Couldn't reach GitHub: ${why(err)}` }; }
+  const check = checkForCoreUpdate(deps.currentVersion, release);
+  if (check.status === "error") return { ...base, error: check.message };
+  return check.status === "available" ? { ...base, latest: check.version } : base;
+}
+
 /** The running host's admission latch: closed, new delegate / live session / chat turn / sprout
  * starts are refused and the scheduler fires nothing. */
 export interface CoreLatch { close: () => void; open: () => void; busy: () => BusyItem[] }

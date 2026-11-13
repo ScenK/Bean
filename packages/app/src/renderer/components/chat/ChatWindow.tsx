@@ -438,6 +438,7 @@ export function ChatWindow() {
           <div class="bean-memory-review-card">
             <div class="bean-memory-review-title">Bean can't talk to {coreStatus.host}</div>
             <p class="bean-core-mismatch">{coreStatus.message}</p>
+            {coreStatus.command ? <p class="bean-core-mismatch">Or update the core from a terminal: <code class="bean-cores-command">{coreStatus.command}</code></p> : null}
             <div class="bean-card-actions">
               <button type="button" class="bean-btn" onClick={() => void window.bean.openComponent("cores")}>Switch core</button>
             </div>

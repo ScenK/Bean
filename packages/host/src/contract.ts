@@ -26,7 +26,8 @@ export type HandshakeCheck =
   | { ok: false; reason: "version" | "malformed"; message: string };
 
 /** A shell's check of the handshake a host sent: a contract version mismatch is reported as such,
- * apart from a malformed reply. */
+ * apart from a malformed reply. A capability this shell doesn't know is dropped, not refused (#838):
+ * adding one to a newer core mustn't break every older shell. */
 export function checkHandshake(v: unknown, expected = CONTRACT_VERSION): HandshakeCheck {
   if (!obj(v) || typeof v.contract !== "number") return { ok: false, reason: "malformed", message: "The core sent a malformed handshake." };
   if (v.contract !== expected) {
@@ -37,10 +38,11 @@ export function checkHandshake(v: unknown, expected = CONTRACT_VERSION): Handsha
   }
   const caps = v.capabilities;
   if (typeof v.core !== "string" || typeof v.platform !== "string" || !Array.isArray(caps)
-    || !caps.every((c) => (CAPABILITIES as readonly unknown[]).includes(c))) {
+    || !caps.every((c) => typeof c === "string")) {
     return { ok: false, reason: "malformed", message: "The core sent a malformed handshake." };
   }
-  return { ok: true, handshake: { contract: v.contract, core: v.core, platform: v.platform, capabilities: caps as Capability[] } };
+  const known = caps.filter((c): c is Capability => (CAPABILITIES as readonly unknown[]).includes(c));
+  return { ok: true, handshake: { contract: v.contract, core: v.core, platform: v.platform, capabilities: known } };
 }
 
 // Hand-written guards (no schema dependency). Shallow on purpose: they check what crosses the wire
