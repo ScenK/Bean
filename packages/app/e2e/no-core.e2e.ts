@@ -9,11 +9,13 @@ type Bean = { bean: { openComponent: (k: string) => Promise<void>; listNotes: ()
 
 // #810: with the local core switched off, the shell boots with no ~/.bean, the avatar opens Add a core,
 // every window that needs a core opens Add a core instead, and a core call rejects with NO_CORE.
+// win-installer.yml also runs this spec against the installed Windows Bean.exe (#814).
 test("no core attached: boots without a data directory and shows Add a core", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "bean-e2e-home-"));
   const userDataDir = await mkdtemp(join(tmpdir(), "bean-e2e-userdata-"));
   await writeFile(join(userDataDir, "cores.json"), JSON.stringify({ selected: null }));
-  const app = await launchBean({ HOME: homeDir }, userDataDir);
+  // USERPROFILE: os.homedir() reads it, not HOME, on Windows.
+  const app = await launchBean({ HOME: homeDir, USERPROFILE: homeDir }, userDataDir);
   const errors: string[] = [];
   const watch = (p: Page): void => { p.on("pageerror", (e) => errors.push(`${p.url()}: ${e.message}`)); };
   app.on("window", watch);
@@ -30,7 +32,8 @@ test("no core attached: boots without a data directory and shows Add a core", as
       window.dispatchEvent(new MouseEvent("mouseup"));
     })]);
     await expect(cores.locator(".bean-cores")).toContainText("Add a core");
-    await expect(cores.getByRole("button", { name: "Use this Mac" })).toBeVisible();
+    // Local core is macOS-only (#813): no "This Mac" row elsewhere.
+    await expect(cores.getByRole("button", { name: "Use this Mac" })).toHaveCount(process.platform === "darwin" ? 1 : 0);
 
     // Add a remote core (#811): a malformed host is refused; a good one is listed, not yet in use.
     await cores.getByLabel("Host").fill("-oProxyCommand=x");
