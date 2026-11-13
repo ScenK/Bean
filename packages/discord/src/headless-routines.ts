@@ -3,15 +3,15 @@ import {
   isWatchSeeded, listTodos, loadLayeredSkills, loadMemories, loadRoutines, loadRoutineStates, makeRoutineSteps, markNewItems,
   outboxDir, fireDueReminders, remindersFile, pinnedStepSelection, pollWatch, pruneStepAttempts, recoverInterruptedTodos, resolveDelegateSelection,
   retrieveNoteTool, routinesDir, routineStateFile, availableModels, saveRoutine, saveRoutineStates, searchNotes, seedWatch,
-  skillsDir, sproutRunFacts, unseenIds, withFinishReply,
-  type CliModels, type CliName, type Routine, type RoutineHostDeps, type SproutTrigger,
+  skillsDir, sproutRunFacts, unseenIds, withFinishReply, holdSchedulerLease,
+  type CliModels, type CliName, type LeaseHolder, type Routine, type RoutineHostDeps, type SproutTrigger,
 } from "@bean/core";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 /** The bot-server switch. Off by default: on the Mac the desktop app owns the scheduler and
- * spawns this bot, and two schedulers on one ~/.bean would double-fire every routine. */
+ * spawns this bot. The bean.db scheduler lease (#800) refuses a second scheduler on one ~/.bean. */
 export const HEADLESS_ROUTINES_ENV = "BEAN_HEADLESS_ROUTINES";
 export const headlessRoutinesOn = (env: NodeJS.ProcessEnv): boolean => env[HEADLESS_ROUTINES_ENV] === "1";
 
@@ -35,6 +35,13 @@ export const missedNotice = (names: string[]): string =>
 export const clearedNotice = (paths: string[]): string =>
   `Cleared ${paths.length} stale run reservation(s) left by the last shutdown: ${paths.join(", ")}. Those runs were stopped.`;
 
+/** One line each: a second scheduler on this data directory refuses to start / stops (#800). */
+export const leaseBlockedNotice = (by: LeaseHolder): string =>
+  `bean: another scheduler already runs on this data directory — ${by.label}. Not scheduling; exiting. ` +
+  "Stop it, or wait ~90s if it crashed (its lease expires).";
+export const leaseLostNotice = (by: LeaseHolder): string =>
+  `bean: the scheduler lease was taken over by ${by.label} (this process stalled past its heartbeat). Stopping; exiting.`;
+
 export interface HeadlessRoutineDeps {
   dir: string;
   builtinDir: string;
@@ -46,6 +53,8 @@ export interface HeadlessRoutineDeps {
   delegateCli: string;
   routineDigestContext: boolean;
   ownerId: string;
+  /** Another process took the scheduler lease from this one: shut down and exit non-zero. */
+  onLeaseLost: (message: string) => void;
 }
 
 /** The bot server as a routine host (#279): one scheduler + routine host in this process, so it
@@ -57,6 +66,17 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
   sprouts: { trigger: SproutTrigger; facts: (r: Routine) => Promise<{ pending: number; seeded: boolean }> };
 }> {
   const { dir } = deps;
+  // First, before boot cleanup: a refused process must not clear the holder's run reservations.
+  // Throws (one line) when another process holds it; the caller logs it and exits non-zero.
+  let blockedBy: LeaseHolder | undefined;
+  const lease = holdSchedulerLease({
+    file: dbFile(dir), label: "headless Discord bot",
+    onAcquired: () => {}, onBlocked: (by) => { blockedBy = by; }, onLost: (by) => deps.onLeaseLost(leaseLostNotice(by)),
+  });
+  if (blockedBy) {
+    lease.stop();
+    throw new Error(leaseBlockedNotice(blockedBy));
+  }
   const ownerDm = (body: string, title?: string): Promise<void> =>
     enqueueOutbox(outboxDir(dir), { transport: "discord", body, ...(title ? { title } : {}) }, randomUUID)
       .then(() => {}, (err: unknown) => console.error("bean: owner notice failed", err));
@@ -150,6 +170,7 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
     // cleanup would kill whatever survived anyway.
     killAllDelegates();
     killAllCommands();
+    lease.stop(); // last: a successor may start scheduling as soon as this row is gone
   };
   return { shutdown, sprouts };
 }

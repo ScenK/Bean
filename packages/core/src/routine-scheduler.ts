@@ -44,6 +44,9 @@ export interface RoutineSchedulerDeps {
   /** Fired once when a watch fails ALARM_AFTER polls in a row (desktop notification only —
    * never chatops sinks). Best-effort: the panel's status line is the guarantee. */
   alarm?: (routine: Routine, error: string) => void;
+  /** Automatic fires gate: false = tick() does nothing (a host standing by for the scheduler
+   * lease — a manual run's follow-up tick or Check now must not fire due routines). Absent = always. */
+  canSchedule?: () => boolean;
   /** Fired once at start() with every routine just flagged missed (headless hosts DM the owner). */
   onMissed?: (names: string[]) => void;
 }
@@ -135,7 +138,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
 
   // Every .state.json write goes through one chain: ticks overlap (a long run keeps one tick
   // awaiting while the next starts polling), so bare load→save pairs would drop each other's
-  // fields. ponytail: in-process only — the bots never write .state.json.
+  // fields. In-process only: the scheduler lease (scheduler-lease.ts) keeps it to one process.
   let stateChain: Promise<unknown> = Promise.resolve();
   const withStates = (fn: (all: Record<string, RoutineState>) => Record<string, RoutineState> | undefined): Promise<void> => {
     const run = stateChain.then(async () => {
@@ -353,6 +356,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   }
 
   async function tick(): Promise<void> {
+    if (deps.canSchedule && !deps.canSchedule()) return;
     // Flag candidates right after the routines load (before the states await) so an isRunning()
     // check made while a tick is still in flight sees them.
     const routines = await deps.loadRoutines();

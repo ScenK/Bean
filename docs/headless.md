@@ -26,8 +26,10 @@ docker run -d --name bean --restart unless-stopped \
 docker logs -f bean
 ```
 
-Run one container per volume. Never point the desktop app at this volume: two schedulers on one
-`~/.bean` fire every sprout twice.
+Run one container per volume. One data directory runs one scheduler: the sprout scheduler and
+reminder loop hold a heartbeat lease in `bean.db`. A second bot on the same volume logs
+`bean: another scheduler already runs on this data directory — …` and exits non-zero. After a
+crash, a restart waits ~90s for the dead holder's lease to expire.
 
 ## Owner checklist
 

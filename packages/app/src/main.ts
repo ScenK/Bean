@@ -23,7 +23,7 @@ import {
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory, deleteMemories, extractMemories,
   maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, type DreamDigest,
-  loadReminders, updateReminders, fireDueReminders, enqueueOutbox, type Reminder, extractPageText,
+  loadReminders, updateReminders, fireDueReminders, holdSchedulerLease, enqueueOutbox, type Reminder, extractPageText,
   answerRoutineTrigger, sproutRunFacts, withFinishReply, type RoutineTrigger, type RoutineTriggerAnswer,
   loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
   loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
@@ -620,7 +620,35 @@ app.whenReady().then(async () => {
     const why = err instanceof Error ? err.message : String(err);
     taskStatus.error("reminder:error", { kind: "reminder", name: "Reminder", line: `Couldn't deliver: ${r.text}`, detail: why });
   };
+  // One data directory, one scheduler + reminder loop (#800): a headless bot on this ~/.bean can
+  // hold the same bean.db lease. Refused = standby with a notice; this app takes over (and starts
+  // the sprout scheduler) once the holder quits or its heartbeat expires. Lost = stop, relaunch.
+  let schedulerLeaseHeld = false;
+  let startScheduler: (() => void) | undefined;
+  let stopScheduler: (() => void) | undefined;
+  const schedulerLease = holdSchedulerLease({
+    file: dbFile(dir), label: "desktop app",
+    onAcquired: () => {
+      schedulerLeaseHeld = true;
+      taskStatus.dismiss("scheduler:lease");
+      startScheduler?.();
+    },
+    onBlocked: (by) => taskStatus.error("scheduler:lease", {
+      kind: "routine", name: "Sprouts", line: "Sprouts and reminders paused: another Bean is scheduling",
+      detail: `${by.label} runs the scheduler for this data directory. Bean takes over when it stops.`,
+    }),
+    onLost: (by) => {
+      schedulerLeaseHeld = false;
+      stopScheduler?.();
+      taskStatus.error("scheduler:lease", {
+        kind: "routine", name: "Sprouts", line: "Sprouts and reminders stopped: another Bean took over",
+        detail: `${by.label} took over the scheduler for this data directory. Relaunch Bean to resume here.`,
+      });
+    },
+  });
+  app.on("before-quit", () => schedulerLease.stop());
   setInterval(() => {
+    if (!schedulerLeaseHeld) return;
     fireDueReminders(remindersPath, new Date(), {
       untargeted: (r) => {
         void deliver({ body: r.text }, transports).then((outcomes) => {
@@ -858,6 +886,7 @@ app.whenReady().then(async () => {
       },
       addTodo: async (r, text) => { await addTodo(dbFile(dir), r, text); },
       saveRoutine: (r) => saveRoutine(routinesPath, r),
+      canSchedule: () => schedulerLeaseHeld,
       alarm: (routine, error) => {
         if (notificationTransport.available()) {
           void notificationTransport.send({ title: `Sprout: ${routine.name}`, body: `Can't check for new items — ${error}`, meta: { open: "routines" } });
@@ -901,7 +930,10 @@ app.whenReady().then(async () => {
       },
     });
     app.on("before-quit", () => routineBuilder.cancelAll());
-    routineScheduler.start();
+    // Started by whichever comes second: this line, or the lease being acquired (standby).
+    startScheduler = () => routineScheduler.start();
+    stopScheduler = () => routineScheduler.stop();
+    if (schedulerLeaseHeld) routineScheduler.start();
     app.on("before-quit", () => routineScheduler.stop());
 
     // Checked after each auto-save (close batch or per-turn capture) — no timer, no boot cost.
@@ -1047,6 +1079,8 @@ app.whenReady().then(async () => {
           chatopsServers?.stopAll();
           forceKillLive();
           killAllTerminals();
+          // exit() skips before-quit: release now, or the new app waits out the lease's TTL.
+          schedulerLease.stop();
           app.relaunch();
         },
       }),

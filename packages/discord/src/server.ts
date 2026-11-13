@@ -853,6 +853,14 @@ if (headless) {
   const started = await startHeadlessRoutines({
     dir, builtinDir, converse: converseChat, model: beanConfig.model, clis, cliModels,
     delegateCli: beanConfig.delegateCli, routineDigestContext: beanConfig.routineDigestContext, ownerId: discordConfig.ownerId,
+    onLeaseLost: (message) => {
+      console.error(message);
+      void (stopRoutines?.() ?? Promise.resolve()).finally(() => process.exit(1));
+    },
+  }).catch((err: unknown) => {
+    // One data directory, one scheduler (#800): a second one logs why and exits non-zero.
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
   });
   stopRoutines = started.shutdown;
   headlessSprouts = started.sprouts;

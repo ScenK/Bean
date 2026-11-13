@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { withFinishReply } from "@bean/core";
-import { cliAuthPresent, headlessRoutinesOn, missedNotice, tzProblem } from "../src/headless-routines.js";
+import { cliAuthPresent, headlessRoutinesOn, leaseBlockedNotice, leaseLostNotice, missedNotice, tzProblem } from "../src/headless-routines.js";
 
 describe("headless routines boot checks", () => {
   it("is off unless BEAN_HEADLESS_ROUTINES=1", () => {
@@ -14,6 +14,14 @@ describe("headless routines boot checks", () => {
     const err = tzProblem({});
     expect(err).toMatch(/TZ/);
     expect(err).not.toContain("\n");
+  });
+
+  it("names the other scheduler's holder in one line when refused or taken over", () => {
+    const by = { holder: "x", label: "desktop app (pid 42 on mac)", expires: 0 };
+    for (const line of [leaseBlockedNotice(by), leaseLostNotice(by)]) {
+      expect(line).toContain("desktop app (pid 42 on mac)");
+      expect(line).not.toContain("\n");
+    }
   });
 
   it("detects CLI auth from env or the credentials file", () => {
