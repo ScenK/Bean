@@ -309,15 +309,14 @@ describe("chat thread IPC", () => {
     expect([reveal.mock.calls.length, openPath.mock.calls.length]).toEqual([0, 0]);
     emit(IPC.chatOpenPath, chat, `${proj}:3`, A);
     emit(IPC.chatOpenPath, chat, ".", A); // relative, against the live project
-    await settle();
-    expect(openPath.mock.calls).toEqual([[proj], [proj]]);
+    // openChatPath is fire-and-forget (realpath + stat): poll, a fixed sleep flakes on a busy runner.
+    await vi.waitFor(() => expect(openPath.mock.calls).toEqual([[proj], [proj]]));
     expect(liveTasks.projectOf.mock.calls.every(([m]) => m === A)).toBe(true);
     // A file with no editor set is revealed, never opened.
     const { writeFileSync } = await import("node:fs");
     writeFileSync(join(proj, "a.sh"), "echo hi");
     emit(IPC.chatOpenPath, chat, "a.sh", A);
-    await settle();
-    expect(reveal.mock.calls).toEqual([[join(proj, "a.sh")]]);
+    await vi.waitFor(() => expect(reveal.mock.calls).toEqual([[join(proj, "a.sh")]]));
   });
 
   it("two mounts in one window: separate threads, per-mount incognito, delete refuses both, release frees them", async () => {
