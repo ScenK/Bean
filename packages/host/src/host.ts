@@ -21,6 +21,7 @@ import {
   type RoutineTriggerAnswer, type Transport,
 } from "@bean/core";
 import { buildActionTools } from "./action-tools.js";
+import { createAttachments } from "./attachments.js";
 import { buildChatHandler, buildChatThreadHandlers, buildModelMemoryHandlers, buildModelsHandler } from "./chat.js";
 import { createChatSessions } from "./chat-sessions.js";
 import type { ConfigView } from "./config.js";
@@ -79,6 +80,14 @@ export async function createHost(deps: HostDeps) {
   const db = dbFile(dir);
   // What Bean is working on, and what failed (design 2a).
   const taskStatus = createTaskStatus(deps.onJobs);
+  // A remote shell's attachment (#808): its chats' pushes are numbered and buffered for a replay, and
+  // a lost shell's work waits out the grace. Local windows never attach; their pushes pass through.
+  const attachments = createAttachments({
+    holder: (id) => sessions.holder(id), ofClient: (c) => sessions.ofClient(c), abortTurn: (id) => sessions.abortTurn(id),
+    expire: (c) => sessions.expireClient(c), release: (c) => sessions.releaseClient(c),
+  });
+  const push = attachments.push(deps.push);
+  const isChatClient = (c: ClientId): boolean => deps.isChatClient(c) || attachments.isClient(c);
 
   // Finder-launched Electron gets a minimal PATH missing whatever the user's shell profile
   // adds (nvm, npm/pnpm global bins, ~/.local/bin, ...) — ask the login shell for its real
@@ -176,7 +185,7 @@ export async function createHost(deps: HostDeps) {
       } else if (event.type === "done") taskStatus.finish(event.taskId, "done", "Done");
       else if (event.type === "failed") taskStatus.finish(event.taskId, "failed", event.message);
       else taskStatus.finish(event.taskId, "failed", "Stopped", false); // the user's own Stop isn't a failure to chase
-      if (event.mountId) deps.push(event.mountId, "delegate", event);
+      if (event.mountId) push(event.mountId, "delegate", event);
     },
     newId: () => randomUUID(),
   });
@@ -207,7 +216,7 @@ export async function createHost(deps: HostDeps) {
         // the receipt and prose are for the chat window only
       } else if (event.reason === "failed") taskStatus.finish(id, "failed", event.error ?? "Session died");
       else taskStatus.finish(id, "done", event.reason === "stopped" ? "Session ended" : "Session ended on its own", false);
-      deps.push(event.mountId, "live", event);
+      push(event.mountId, "live", event);
     },
   });
   // Synchronous on purpose (see delegate-tasks.ts's interruptAll): no preventDefault-then-requeue.
@@ -376,9 +385,11 @@ export async function createHost(deps: HostDeps) {
     beanDirPath: dir,
     delegateAvailable: () => enabledClis().length > 0,
     // A live CLI is enabled and this chat could open a session now (#478, cap #517).
-    liveSessionAvailable: (clientId, mountId) => deps.isChatClient(clientId)
+    liveSessionAvailable: (clientId, mountId) => isChatClient(clientId)
       && enabledClis().some(isLiveCli) && liveTasks.canStart({ clientId, mountId }),
     webSearch: () => runtime.getWebSearch(),
+    // A remote shell has no Terminal.app of ours to hand off to (#812): terminal skills become delegates.
+    runAvailable: (clientId) => !attachments.isClient(clientId),
     loadRoutines: () => loadRoutines(routinesPath),
     sproutFacts: (r) => sproutRunFacts(db, r),
     proposeSend: sends.propose,
@@ -389,7 +400,7 @@ export async function createHost(deps: HostDeps) {
       imagesDir: imagesDir(dir),
       saveNoteImage: (bytes) => saveNoteImage(db, bytes),
       onStart: (mountId) => {
-        if (mountId !== undefined) deps.push(mountId, "imageProgress", mountId);
+        if (mountId !== undefined) push(mountId, "imageProgress", mountId);
         const turnId = mountId === undefined ? undefined : chatTurnIds.get(mountId);
         if (turnId) taskStatus.upsert(turnId, { line: "Drawing an image…" });
       },
@@ -401,7 +412,7 @@ export async function createHost(deps: HostDeps) {
     renameDesktopChatGroup, listDesktopChats,
   });
   const sessions = createChatSessions({
-    isChatClient: deps.isChatClient, chat, memory, threads, delegateTasks, liveTasks, push: deps.push,
+    isChatClient, chat, memory, threads, delegateTasks, liveTasks, push,
     onRelease: deps.onChatRelease,
     onChatTurn: (mountId) => {
       const id = `chat:${randomUUID()}`;
@@ -428,6 +439,7 @@ export async function createHost(deps: HostDeps) {
     disabledClis: runtime.getDisabledClis(),
     webSearch: runtime.getWebSearch(),
     autoMemory: runtime.getAutoMemory(),
+    apiKeySet: runtime.getApiKey() !== "",
     paths: { config: cfgPath, skills: skillsDir(dir), projects: projectsFile(dir), persona: personaFile(dir) },
   });
 
@@ -537,6 +549,7 @@ export async function createHost(deps: HostDeps) {
     projectAllowed,
     delegateTasks,
     liveTasks,
+    attachments,
     schedulerLease,
     bots,
   };

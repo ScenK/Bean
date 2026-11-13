@@ -80,6 +80,7 @@ export async function startBots(deps: BotsDeps) {
   deps.onQuit(() => servers.stopAll());
   // Every restart path lands here (quit, dev relaunch, update install), so the bots don't quietly stay off.
   for (const bot of await loadChatopsEnabled(enabledFile)) servers.start(bot);
+  await save; // the replay's own enabled-set writes have landed before the host reports booted
   return {
     ...servers,
     /** Conversations with a live session running on a bot (the synced-chat sidebar's live dot). */

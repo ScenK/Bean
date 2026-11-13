@@ -8,7 +8,7 @@ breaks rules the rest of the app gets for free. All four of these are load-beari
   `packages/app/scripts/pty-spawn-helper.mjs` chmods it twice: `postinstall` (dev `node_modules`)
   and electron-builder `afterPack` (inside `app.asar.unpacked`, before `afterSign` codesigns; it
   throws if no helper is found). node-pty looks for it in `app.asar.unpacked` itself.
-- **Shipped, not bundled:** a real `dependencies` entry, esbuild `external`, `asarUnpack:
+- **Shipped, not bundled:** a real `dependencies` entry, esbuild `external`, `mac.asarUnpack:
   node_modules/node-pty/**`. `allowBuilds: node-pty: false` — its install script would
   `node-gyp rebuild`; the N-API prebuilds already load under Electron. Same reason for
   `npmRebuild: false` in the electron-builder config (its rebuild also dies on `node-abi` not

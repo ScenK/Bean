@@ -39,14 +39,14 @@ channel id). Not `chatops_conversations` — that one is the owner-only continua
   retarget applies to the next run). Unknown alias / wrong platform: the scheduler's
   `sinkProblems` dep marks the run needs-attention with `⚠` lines in the digest *before* the
   record is saved, and the sink posts nowhere — never fall back to the owner DM (an alias-less
-  sink means DM). User saves (editor, builder) refuse an unknown alias in `main.ts`
+  sink means DM). User saves (editor, builder) refuse an unknown alias in host `host.ts`
   (`saveKnownSinks`); `chatRoutineProblem` resolves via the bot's `routines.destinations` first.
   Editor (`DestinationPicker.tsx`): picking an unnamed row names it immediately (label, `" 2"` on
   a clash); a raw id with a known row gets "Name it" (`destinationsNameRaw`), which rewrites that
   id → alias in every sprout using it.
 - **Desktop send (#688):** `propose_send { destination, text }` is a static spec (no names — an enum
   would bust the prompt cache), offered only when the surface passes `sendAvailable` (desktop:
-  `ChatHandlerDeps.proposeSend`). Main (`buildSendHandlers` in `host/src/destinations.ts`) matches the
+  `ChatHandlerDeps.proposeSend`). The host (`buildSendHandlers` in `host/src/destinations.ts`) matches the
   spoken name and keeps the proposal (body + opaque option id → row, capped at 50); the renderer's
   `SendCard` sends back only the card id + option id, so it can't edit the body or name an unoffered
   row. Send re-resolves the row (forgotten since → refused), is one-shot, and enqueues

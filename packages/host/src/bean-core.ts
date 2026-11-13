@@ -2,12 +2,26 @@
 // bean-core (#806): the host with no Electron and no required chat bot — the sprout scheduler and
 // reminders under the bean.db lease, plus the Discord / Teams bots whose config files exist.
 // Native (launchd / systemd) and in the container; setup in docs/headless.md.
-import { beanDir, configFile, ensurePrivateBeanDir, loadRoutines, projectBeanDir, routinesDir } from "@bean/core";
+// `bean-core attach` (#809) instead pipes stdio to a running bean-core's socket, for a shell over SSH.
+import { beanDir, configFile, coreSocketFile, ensurePrivateBeanDir, loadRoutines, projectBeanDir, routinesDir } from "@bean/core";
 import { existsSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname } from "node:path";
+import { buildHandshake } from "./contract.js";
 import { createHost } from "./host.js";
 import { botLogger, cliAuthPresent, configuredBots, jobLogger, ownerNotices, tzProblem } from "./headless.js";
+import { attachStdio, listenRemote } from "./remote.js";
+
+if (process.argv[2] === "attach") {
+  const path = coreSocketFile(beanDir());
+  try {
+    await attachStdio(path, process.stdin, process.stdout);
+    process.exit(0);
+  } catch (err) {
+    console.error(`bean-core attach: no bean-core is listening on ${path} (${(err as Error).message}).`);
+    process.exit(1);
+  }
+}
 
 const tz = tzProblem(process.env);
 if (tz) {
@@ -57,6 +71,19 @@ const host = await createHost({
   // Exit non-zero: the service manager restarts it, and the new process stands by for the lease.
   headless: { onLeaseLost: () => shutdown(1) },
 });
+
+// The remote attach socket (#809). No socket = no remote shells; the scheduler and bots still run.
+try {
+  const remote = await listenRemote(dir, {
+    // Set by the esbuild bundle; no host capabilities headless (no Terminal.app, pty or path opens).
+    handshake: buildHandshake(process.env.BEAN_CORE_VERSION ?? "dev", process.platform, []),
+    attachments: host.attachments,
+    handlers: host.handlers,
+  });
+  quit.push(remote.close);
+} catch (err) {
+  console.error(`bean-core: remote attach is off — ${(err as Error).message}`);
+}
 
 const bots = configuredBots(dir);
 for (const bot of bots) host.bots.start(bot);

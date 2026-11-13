@@ -22,6 +22,8 @@ export const PUSH_ROUTES = {
   [IPC.chatopsEvent]: "broadcast",
   [IPC.cliAvailabilityChanged]: "broadcast",
   [IPC.syncedChatEvent]: "broadcast",
+  // The shell's own attachment state (#811) — every window may show the host badge or a banner.
+  [IPC.coreStatusChanged]: "broadcast",
   [IPC.componentDroppedUrl]: "window",
   [IPC.dashboardTarget]: "window",
   [IPC.proposeRun]: "window",

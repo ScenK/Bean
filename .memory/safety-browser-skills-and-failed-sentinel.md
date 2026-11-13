@@ -8,9 +8,9 @@ gives browser + computer on every run); opencode is refused in `runDelegate()` *
 (synchronous `onError`, no timer, no `liveKills` entry). Combined with the permission bypass this
 hands an unattended agent the user's logged-in sessions, so:
 
-- Only the skill file can turn it on, re-resolved at launch in main/core — routines from the
+- Only the skill file can turn it on, re-resolved at launch in host/core — routines from the
   step's `Skill`, chatops `startRun` from its re-loaded skill, desktop via
-  `DelegateStartRequest.skillName` → main's `skillBrowser()`. Never infer it from instruction
+  `DelegateStartRequest.skillName` → the host's `skillBrowser()` (`host.ts`). Never infer it from instruction
   text and never accept a renderer-, card-, or model-supplied boolean.
 - Terminal launches and the routine builder deliberately don't get `--chrome`. Claude **live
   sessions always do** (#597, every surface) — they're steered turn by turn, so a `browser: true`

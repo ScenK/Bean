@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { buildChatMounts, type buildChatHandler, type buildChatThreadHandlers } from "./chat.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { createLiveTasks, LiveOwner } from "./live-tasks.js";
-import { toTranscript, type buildMemoryHandlers } from "./memory.js";
+import { toTranscript, type buildMemoryHandlers, type CloseTurn } from "./memory.js";
 import type { ClientId, HostPush } from "./shell-ops.js";
 
 export interface ChatSessionsDeps {
@@ -24,6 +24,9 @@ export interface ChatSessionsDeps {
 }
 
 const NOT_LIVE = "Agent sessions run from the chat window.";
+// ponytail: the newest turns kept per chat for a host-run close catch-up; a longer chat's oldest
+// turns are only covered by their per-turn captures.
+const TRANSCRIPT_TURNS = 100;
 
 /** Every chat (mount) in a client: attach/release, Bean's turn and its Stop, the incognito latch,
  * and the per-chat starts of delegates and live sessions. Every call names its client and mount id
@@ -42,10 +45,15 @@ export function createChatSessions(deps: ChatSessionsDeps) {
   };
   // Bean's running turn per chat (mount key), so Stop / Esc Esc and a release can abort it.
   const beanTurns = new Map<string, { turnId: unknown; ctl: AbortController }>();
+  // The Bean turns each chat ran through this host (in memory only, dropped at release), for the
+  // close catch-up a lost shell can't send itself (#808). A turn per-turn capture handled carries its
+  // id, so the catch-up treats it as context; nothing typed = nothing to extract.
+  const transcripts = new Map<string, { turns: CloseTurn[]; typed: boolean }>();
   const release = (client: ClientId, mountId: unknown): void => {
     if (!mounts.release(client, mountId)) return;
     const id = mountId as string;
     beanTurns.get(id)?.ctl.abort();
+    transcripts.delete(id);
     deps.memory.release(id);
     deps.threads.release(id);
     deps.delegateTasks.cancelMount(id);
@@ -72,6 +80,23 @@ export function createChatSessions(deps: ChatSessionsDeps) {
     release,
     /** A chat window is gone: release every chat it still had attached. */
     releaseClient: (client: ClientId): void => { for (const id of mounts.ofClient(client)) release(client, id); },
+    /** The client a chat is attached to now (never a released one). */
+    holder: mounts.holder,
+    ofClient: mounts.ofClient,
+    /** The shell holding this chat dropped: abort Bean's turn in flight (its reply has nowhere to go). */
+    abortTurn: (mountId: string): void => beanTurns.get(mountId)?.ctl.abort(),
+    /** A lost shell's grace ran out: each chat gets the close catch-up it would have sent, then is
+     * released (delegates cancelled, live session stopped). */
+    expireClient: (client: ClientId): void => {
+      for (const id of mounts.ofClient(client)) {
+        const t = transcripts.get(id);
+        if (t?.typed) {
+          deps.memory.rememberOnClose(t.turns, { incognito: deps.memory.isIncognito(id), rejected: [], key: id })
+            .catch((err) => console.error("auto-remember failed:", err));
+        }
+        release(client, id);
+      }
+    },
     chat: async (client: ClientId, mountId: unknown, req: ChatRequest): Promise<ConverseResult> => {
       const k = key(client, mountId);
       // Registered before any await, so a Stop that lands while the loaders run still aborts.
@@ -83,6 +108,14 @@ export function createChatSessions(deps: ChatSessionsDeps) {
         end?.(result.error);
         // Stopped by the user: no error bubble, and nothing of this turn is captured as memory.
         if (result.stopped) return result;
+        if (!result.error && mounts.holder(k) !== undefined) {
+          const t = transcripts.get(k) ?? { turns: [], typed: false };
+          t.turns.push({ role: "user", content: req.message, source: req.source, ...(req.turnId ? { id: req.turnId } : {}) });
+          t.turns.push({ role: "assistant", content: result.reply });
+          t.turns.splice(0, t.turns.length - TRANSCRIPT_TURNS);
+          t.typed ||= req.source === "typed";
+          transcripts.set(k, t);
+        }
         // Fire-and-forget, off the reply path: the reply returns now, the receipt row follows —
         // tagged with its chat, which may no longer be the visible one.
         deps.memory.captureTurn(k, req, result).then((batch) => {

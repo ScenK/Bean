@@ -2,7 +2,23 @@
 
 `bean-core` is Bean with no desktop app: the sprout scheduler and reminders, plus the Discord and
 Teams bots. It runs natively as a service (launchd on macOS, systemd on Linux) or in a Linux
-container. This page is the owner's setup checklist.
+container. A desktop app on a Mac or a Windows PC can attach to it over SSH. This page is the
+owner's setup checklist: pick a core, run it, then (optionally) attach a shell.
+
+## Which core to run
+
+- **Native, on a development machine — for coding.** Delegates and live sessions run on the core's
+  machine, so they need that machine's projects, toolchains, SSH keys and CLI logins. Run the core
+  natively where that work lives ([Native service](#native-service-a-core-used-for-coding)).
+- **Docker — for an isolated chat and sprout core** (a household or team bot). The container sees
+  only its volume: no projects, no personal logins ([Container](#container)). Don't bind-mount a
+  host directory into it to "give it a project": the container's `node` user (uid 1000) often
+  doesn't match the owner's uid (a macOS user is 501), so files come out unreadable or
+  wrong-owned; file sharing on macOS Docker is slow; and delegates run with permissions skipped,
+  so the mount hands that whole directory to anyone who can run a delegate. Need projects? Run a
+  native core instead.
+
+One data directory runs one scheduler, so run one core per `~/.bean` (or per volume).
 
 ## What `bean-core` does
 
@@ -27,6 +43,20 @@ container. This page is the owner's setup checklist.
 Use this when the core runs on the machine that has your projects, toolchains, SSH keys and CLI
 logins. Build once from the checkout: `pnpm install && pnpm build`. The entry is
 `<checkout>/packages/host/dist/bean-core.js`. Rebuild after `git pull`, then restart the service.
+
+To attach a desktop shell later, also put a `bean-core` command on the `PATH` that a
+non-interactive SSH session sees. That `PATH` is minimal (`/usr/bin:/bin:…` on macOS; zsh reads
+only `~/.zshenv`), so use a wrapper with absolute paths rather than a symlink:
+
+```bash
+sudo tee /usr/local/bin/bean-core >/dev/null <<'SH'
+#!/bin/sh
+exec /opt/homebrew/bin/node /Users/you/Bean/packages/host/dist/bean-core.js "$@"
+SH
+sudo chmod +x /usr/local/bin/bean-core
+```
+
+Replace the node path (`which node`) and the checkout path. The wrapper survives rebuilds.
 
 ### macOS (launchd)
 
@@ -119,13 +149,64 @@ docker run -d --name bean --restart unless-stopped \
 docker logs -f bean
 ```
 
-Run one container per volume.
+Run one container per volume. The image puts `bean-core` on `/usr/local/bin` for remote attach.
 
-**Teams in the container.** Microsoft's Bot Service must reach the bot's messaging endpoint. Either
-publish the port (`-p 3978:3978`) behind your own HTTPS reverse proxy and set the Azure Bot
-messaging endpoint to `https://<your-host>/api/messages`, or run `devtunnel host -p 3978` on the
-Docker host and use its URL plus `/api/messages`. The image does not include `devtunnel`, so the
-`"devtunnel"` key in `teams.json` does not work inside the container.
+## Teams ingress
+
+Discord needs no inbound port. Teams does: Microsoft's Bot Service must reach the bot's messaging
+endpoint (port 3978 by default, `port` in `teams.json`), at `https://<public-host>/api/messages` set
+as the Azure Bot messaging endpoint.
+
+- **Native:** set the `"devtunnel"` key in `teams.json` and the bot runs `devtunnel host` for you
+  (setup in `packages/teams/README.md`), or put your own HTTPS reverse proxy in front of 3978.
+- **Container:** the image does not include `devtunnel`, so the `"devtunnel"` key does not work
+  inside it. Either publish the port (`-p 3978:3978`) behind your own HTTPS reverse proxy, or run
+  `devtunnel host -p 3978` on the Docker host and use its URL plus `/api/messages`.
+
+## Attach a desktop shell (SSH only)
+
+`bean-core` listens on a unix socket, `~/.bean/core.sock` (0600, inside the 0700 data directory).
+It opens no TCP port. A desktop app on another machine reaches it through SSH, which pipes stdio
+to that socket:
+
+```bash
+ssh <user@host> bean-core attach                         # native (bean-core on the remote PATH)
+ssh <user@host> docker exec -i bean bean-core attach     # container named bean
+```
+
+**On the core's machine:**
+
+1. `bean-core` is running (service or container) as the user you'll SSH in as — the socket lives
+   in that user's `~/.bean`.
+2. SSH is on. macOS: System Settings → General → Sharing → Remote Login. Linux: `sshd`.
+3. Native: the `bean-core` wrapper from [Native service](#native-service-a-core-used-for-coding).
+   Container: the SSH user can run `docker` (in the `docker` group).
+
+**On the shell's machine — SSH keys only** (Bean never asks for or stores a password):
+
+- **macOS:** `ssh-keygen -t ed25519` (skip if `~/.ssh/id_ed25519` exists), then
+  `ssh-copy-id <user@host>`. It accepts the host key and installs your key.
+- **Windows:** the built-in OpenSSH client (Settings → System → Optional features → OpenSSH
+  Client). In PowerShell, `ssh-keygen -t ed25519`, then
+  `type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh <user@host> "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"`.
+- Check: `ssh <user@host> command -v bean-core` prints a path with no password prompt. Bean runs
+  SSH with `BatchMode=yes` and `StrictHostKeyChecking=yes`, so an unknown host key or a missing
+  key fails instead of prompting.
+
+**In Bean:** open the **Cores** panel (tray → Core → Add Core…, or the avatar when no core is
+attached), enter `user@host` and, for Docker, the container name, then **Add core** and **Use**.
+Bean restarts attached to it. If the first attach fails, the panel shows SSH's error and the
+one-time setup line above for this OS. The Windows app has no local core, so it always attaches.
+
+One shell is attached at a time: attaching from a second machine takes over, and the first one
+shows "Attached from another machine" with a Take back button. A dropped connection keeps the
+core's delegates and live sessions running for 30 minutes and replays their output on reconnect.
+
+The socket refuses everything outside a small allowlist (chat turns, agent sessions, delegates,
+read-only catalogs, and Settings with the API key write-only). Path opens, terminals, Mac control
+and the Terminal.app hand-off are never reachable remotely, so the shell hides them. If another
+`bean-core` is already serving the same data directory, the second one logs
+`bean-core: remote attach is off — …` and keeps running without a socket.
 
 ## Owner checklist
 

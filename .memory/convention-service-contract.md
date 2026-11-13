@@ -23,4 +23,4 @@ plan: `planDrop` (core, returns the plan) + the shell's `proposeRun` (shows it).
 The handshake (`IPC.handshake`, `@bean/host` `buildHandshake`/`checkHandshake`) carries
 `CONTRACT_VERSION`, the core version, platform and capabilities; bump `CONTRACT_VERSION` on any
 breaking argument/result/event change. `checkHandshake` reports a version mismatch as `reason:
-"version"`, apart from a malformed reply. Nothing in the renderer consumes it yet (#810/#812 will).
+"version"`, apart from a malformed reply. The renderer reads it through `useCapabilities()` ([convention-capability-gated-ui](convention-capability-gated-ui.md)).

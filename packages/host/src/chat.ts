@@ -29,6 +29,8 @@ export interface ChatHandlerDeps {
   delegateAvailable?: () => boolean;
   /** Offer propose_live_session (the hand-off card) to this chat — per request, by sender + mount. */
   liveSessionAvailable?: (clientId: ClientId, mountId: string) => boolean;
+  /** Whether this chat's client can take a Terminal.app hand-off (core `runAvailable`); default yes. */
+  runAvailable?: (clientId: ClientId) => boolean;
   /** Config `webSearch`, read per chat request so a Settings toggle applies without restart. */
   webSearch?: () => boolean;
   /** Its scratch workspace hosts delegates that aren't about a project (main.ts creates it). */
@@ -108,6 +110,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       todoRoutines,
       sproutCatalog: deps.sproutFacts ? routines.map((r) => ({ name: r.name, description: r.description })) : [],
       webSearch: deps.webSearch?.() ?? false,
+      runAvailable: clientId === undefined || (deps.runAvailable?.(clientId) ?? true),
       sendAvailable: deps.proposeSend !== undefined,
       signal,
     });
@@ -230,6 +233,8 @@ export function buildChatMounts() {
       return true;
     },
     ofClient: (clientId: ClientId): string[] => [...mounts].flatMap(([id, c]) => (c === clientId ? [id] : [])),
+    /** The client a mount is attached to now (never a released one). */
+    holder: (id: string): ClientId | undefined => mounts.get(id),
     /** Where a mount-tagged push goes: the client holding the mount, or the one that last held it. */
     clientOf: (id: string): ClientId | undefined => mounts.get(id) ?? released.get(id),
   };

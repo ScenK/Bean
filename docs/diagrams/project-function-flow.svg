@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
   <title id="title">How Bean is built</title>
-  <desc id="desc">Architecture of Bean: three surfaces (desktop app, Discord, Teams) all call into one pure core package, which reaches out to OpenAI, coding agents, the user's Mac, and the ~/.bean file store. A scheduler drives routines through the same core.</desc>
+  <desc id="desc">Architecture of Bean: the desktop shell (local or attached over SSH), Discord and Teams all reach one host process (@bean/host, inside the Mac app or headless as bean-core) built on the pure core package, which reaches out to OpenAI, coding agents, the user's Mac, and the ~/.bean file store. The host's scheduler drives routines through the same core.</desc>
   <defs>
     <style>
       .bg { fill: #f7f5ef; }
@@ -41,12 +41,12 @@
   <rect class="bg" width="1200" height="760"/>
 
   <text x="60" y="58" class="title">How Bean is built</text>
-  <text x="60" y="86" class="subtitle">Three surfaces, one pure core. Every way you reach Bean — the desktop pet, a Discord bot, a Teams bot, the scheduler that runs your sprouts — </text>
-  <text x="60" y="107" class="subtitle">funnels into the same Electron-free brain.</text>
+  <text x="60" y="86" class="subtitle">Three surfaces, one host. Every way you reach Bean — the desktop shell, a Discord bot, a Teams bot, the scheduler that runs your sprouts — </text>
+  <text x="60" y="107" class="subtitle">funnels into one Electron-free host process: in the Mac app, or headless as bean-core.</text>
 
   <!-- column captions -->
   <text x="60" y="146" class="col">SURFACES — how you reach it</text>
-  <text x="470" y="146" class="col">CORE — the shared brain</text>
+  <text x="470" y="146" class="col">HOST + CORE — the shared brain</text>
   <text x="900" y="146" class="col">REACH — what it drives</text>
 
   <!-- SURFACES -->
@@ -57,10 +57,10 @@
     <rect x="60" y="520" width="300" height="92" rx="12" class="box-ui"/>
   </g>
 
-  <text x="84" y="202" class="box-title">Desktop pet</text>
+  <text x="84" y="202" class="box-title">Desktop shell</text>
   <text x="270" y="202" class="pkg" text-anchor="end">@bean/app</text>
-  <text x="84" y="226" class="box-text">Always-on-top avatar. Hover, click for</text>
-  <text x="84" y="245" class="box-text">petals, drop a URL. Electron shell.</text>
+  <text x="84" y="226" class="box-text">Avatar + windows on Mac or Windows. Uses</text>
+  <text x="84" y="245" class="box-text">a local core, or attaches over SSH.</text>
 
   <text x="84" y="318" class="box-title">Discord bot</text>
   <text x="340" y="318" class="pkg" text-anchor="end">@bean/discord</text>
@@ -71,7 +71,7 @@
   <text x="84" y="451" class="box-text">Message Bean from your work chat.</text>
 
   <text x="84" y="552" class="box-title">Scheduler</text>
-  <text x="340" y="552" class="pkg" text-anchor="end">routine-scheduler</text>
+  <text x="340" y="552" class="pkg" text-anchor="end">@bean/host</text>
   <text x="84" y="576" class="box-text">Fires sprouts on a schedule or a watched</text>
   <text x="84" y="595" class="box-text">feed and drains to-do queues — hands-free.</text>
 
@@ -79,8 +79,8 @@
   <g class="shadow">
     <rect x="440" y="170" width="320" height="442" rx="16" class="box-core"/>
   </g>
-  <text x="600" y="212" class="core-title" text-anchor="middle">@bean/core</text>
-  <text x="600" y="236" class="core-text" text-anchor="middle">Pure ESM · zero Electron · dependency-injected</text>
+  <text x="600" y="212" class="core-title" text-anchor="middle">@bean/host · @bean/core</text>
+  <text x="600" y="236" class="core-text" text-anchor="middle">Zero Electron · core is pure and injected</text>
 
   <g class="shadow">
     <rect x="468" y="262" width="264" height="40" rx="9" class="chip-bg"/>
@@ -97,7 +97,7 @@
   <text x="600" y="487" class="chip" text-anchor="middle">system-control — drive the Mac</text>
   <text x="600" y="537" class="chip" text-anchor="middle">skills · projects · persona loaders</text>
 
-  <text x="600" y="588" class="core-text" text-anchor="middle">One brain, shared by every surface.</text>
+  <text x="600" y="588" class="core-text" text-anchor="middle">One host per data dir, shared by every surface.</text>
 
   <!-- REACH -->
   <g class="shadow">
@@ -136,6 +136,6 @@
   <g class="shadow">
     <rect x="60" y="656" width="1080" height="66" rx="12" fill="#ffffff" stroke="#d2cdc1"/>
   </g>
-  <text x="84" y="684" class="foot">The split is the point: all IO and routing logic lives in @bean/core as pure, testable functions. The surfaces (app / discord / teams) are thin — they</text>
-  <text x="84" y="704" class="foot">wire OS access to core and render results. Add a new surface without touching the brain; add a new skill by dropping a markdown file into ~/.bean/skills.</text>
+  <text x="84" y="684" class="foot">The split is the point: all IO and routing lives in @bean/core; @bean/host runs it as one process (scheduler, bots, sessions). The desktop app is a thin</text>
+  <text x="84" y="704" class="foot">shell that attaches to a host, locally or over SSH. Add a surface without touching the brain; add a skill by dropping a markdown file into ~/.bean/skills.</text>
 </svg>
