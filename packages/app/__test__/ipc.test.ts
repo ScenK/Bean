@@ -76,7 +76,7 @@ test("chat handler offers the desktop hand-off only to a chat that can open a li
     projectPersonaFile: "/b/project-persona.json",
     loadMemories: async () => [],
     dbFile: "/b/memory.json",
-    liveSessionAvailable: (senderId, mountId) => senderId === 7 && mountId === "m1",
+    liveSessionAvailable: (clientId, mountId) => clientId === 7 && mountId === "m1",
   });
   await handler({ history: [], message: "build it" }, 7, "m1");
   expect(toolNames).toContain("propose_live_session");

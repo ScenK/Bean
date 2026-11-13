@@ -5,8 +5,8 @@ import {
   type PtyProcess, type PtySpawnOptions, type TerminalEvent, type TerminalTasksDeps,
 } from "../src/terminal-tasks.js";
 
-const A = { senderId: 1, mountId: "m1" };
-const B = { senderId: 1, mountId: "m2" };
+const A = { clientId: 1, mountId: "m1" };
+const B = { clientId: 1, mountId: "m2" };
 const tab = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const T = tab(1);
 
@@ -35,7 +35,7 @@ function harness(over: Partial<TerminalTasksDeps> = {}) {
     },
     projectAllowed: async (p) => p === "/proj",
     scratchPath: "/scratch",
-    send: (_s, e) => { events.push(e); },
+    send: (e) => { events.push(e); },
     shell: "/bin/zsh",
     foreground: async () => new Map(),
     busyPollMs: 60_000,

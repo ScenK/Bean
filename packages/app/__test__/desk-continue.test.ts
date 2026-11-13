@@ -3,7 +3,7 @@ import type { DeskContinueBody, DeskContinueResult, Destination } from "@bean/co
 import { buildDeskContinueHandler } from "../src/desk-continue.js";
 import { buildCarryTail, type LiveHandover } from "../src/live-tasks.js";
 
-const A = { senderId: 1, mountId: "m1" };
+const A = { clientId: 1, mountId: "m1" };
 const dest = (over: Partial<Destination>): Destination =>
   ({ surface: "discord", conversationId: "c1", kind: "channel", platformName: "general", lastSeen: "2026-11-05T00:00:00Z", ...over });
 

@@ -50,6 +50,7 @@ import {
 } from "./notification-permission-store.js";
 import { createRuntimeConfig } from "./runtime-config.js";
 import { sendToWindow, trackComponentWindow } from "./component-window-registry.js";
+import { createPush, type ClientId } from "./push.js";
 import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } from "./delegate-tasks.js";
 import { createLiveTasks, LIVE_AGENT_NAMES } from "./live-tasks.js";
 import { createTerminalTasks, type PtyFactory } from "./terminal-tasks.js";
@@ -116,7 +117,7 @@ app.whenReady().then(async () => {
   const avatarControls = installAvatarControls(avatar, {
     log: (event, fields) => avatarLog(event, event === "bring-back" ? { ...fields, version: pkg.version, os: release() } : fields),
     // Hoisted closure: only runs after a reload, long after taskStatus exists.
-    replay: () => { if (!avatar.isDestroyed()) avatar.webContents.send(IPC.taskStatus, taskStatus.list()); },
+    replay: () => push.broadcast(IPC.taskStatus, taskStatus.list()),
     // Non-blocking: main keeps streaming delegates/sessions while this is open.
     fail: () => void dialog.showMessageBox({
       type: "warning",
@@ -133,11 +134,19 @@ app.whenReady().then(async () => {
     stop: (id) => powerSaveBlocker.stop(id),
     onChange: (held) => tray?.setToolTip(keepAwakeTooltip(held)),
   });
+  // Main → renderer pushes, by client and chat (mount) id (push.ts). Client = webContents id here
+  // only; which client holds a mount comes from registerIpc's mount table, set further down.
+  let clientOfMount: (mountId: string) => ClientId | undefined = () => undefined;
+  const push = createPush({
+    clientOfMount: (mountId) => clientOfMount(mountId),
+    client: (id) => webContents.fromId(id),
+    clients: () => BrowserWindow.getAllWindows().map((w) => w.webContents),
+  });
   // What Bean is working on, and what failed — pushed to the avatar's status bubbles (design 2a).
   const taskStatus = createTaskStatus((jobs) => {
     keepAwake.setJobs(jobs); // before the avatar check: the hold must track work even without a window
     // Mid-reload the old document is gone; the finished reload replays the current list.
-    if (!avatar.isDestroyed() && !avatarControls.reloading()) avatar.webContents.send(IPC.taskStatus, jobs);
+    if (!avatarControls.reloading()) push.broadcast(IPC.taskStatus, jobs);
   });
   ipcMain.on(IPC.dismissTask, (_e, id: unknown) => { if (typeof id === "string") taskStatus.dismiss(id); });
   // The running turn per chat (mount id), so image progress can find its bubble.
@@ -357,8 +366,8 @@ app.whenReady().then(async () => {
 
   const componentWindows = new Map<ComponentKind, BrowserWindow>();
   let cancelAllDelegates: () => void = () => {};
-  let stopLiveOwner: (ownerId: number) => void = () => {};
-  let releaseChatSender: (senderId: number) => void = () => {};
+  let stopLiveClient: (clientId: ClientId) => void = () => {};
+  let releaseChatClient: (clientId: ClientId) => void = () => {};
   // Same drop-race fix as planStore below: a URL dropped on the avatar can reach a chat window
   // whose renderer hasn't mounted (and subscribed to componentDroppedUrl) yet, silently losing
   // the push. droppedUrlStore.get() is stashed alongside every push so the renderer can pull it
@@ -409,11 +418,11 @@ app.whenReady().then(async () => {
         sendToWindow(win, IPC.reviewBeforeClose, undefined);
       });
       // Captured now: the webContents is destroyed by the time `closed` fires.
-      const ownerId = win.webContents.id;
+      const clientId = win.webContents.id;
       win.on("closed", () => {
         cancelAllDelegates();
-        stopLiveOwner(ownerId);
-        releaseChatSender(ownerId);
+        stopLiveClient(clientId);
+        releaseChatClient(clientId);
       });
     }
     if (droppedUrl && kind === "chat") {
@@ -427,8 +436,7 @@ app.whenReady().then(async () => {
   ipcMain.on(IPC.openChatMount, (_e, mountId: unknown) => {
     if (typeof mountId !== "string") return;
     openComponent("chat");
-    const chat = componentWindows.get("chat");
-    if (chat && !chat.isDestroyed() && !chat.webContents.isLoading()) sendToWindow(chat, IPC.showChatMount, mountId);
+    push.send(mountId, IPC.showChatMount, mountId);
   });
   // "Run skill" (Skills panel) is the only caller of window.bean.proposeRun() — it opens the
   // single-purpose Plan popup (just the proposal card), not the multi-turn Chat window.
@@ -472,9 +480,6 @@ app.whenReady().then(async () => {
     currentTheme = theme;
     await saveTheme(themePath, theme);
   };
-  const broadcast = (channel: string, payload: unknown): void => {
-    for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload);
-  };
 
   // Tie the in-app theme to the OS light/dark setting: whenever the system
   // appearance changes, follow it live (the manual toggle still works, but a
@@ -483,7 +488,7 @@ app.whenReady().then(async () => {
     const next = systemTheme();
     if (next === currentTheme) return;
     currentTheme = next;
-    broadcast(IPC.themeChanged, next);
+    push.broadcast(IPC.themeChanged, next);
   });
 
   // Reminder action tools (executed by converse()'s tool loop) + a 30s poll that fires
@@ -710,8 +715,7 @@ app.whenReady().then(async () => {
         } else if (event.type === "done") taskStatus.finish(event.taskId, "done", "Done");
         else if (event.type === "failed") taskStatus.finish(event.taskId, "failed", event.message);
         else taskStatus.finish(event.taskId, "failed", "Stopped", false); // the user's own Stop isn't a failure to chase
-        const chat = componentWindows.get("chat");
-        if (chat && !chat.isDestroyed()) sendToWindow(chat, IPC.delegateEvent, event); // the shell routes it by mountId
+        if (event.mountId) push.send(event.mountId, IPC.delegateEvent, event);
       },
       newId: () => randomUUID(),
     });
@@ -728,7 +732,7 @@ app.whenReady().then(async () => {
       modelOffered: (cli, model) => (cliModels.find((e) => e.provider === cli)?.models ?? []).includes(model),
       projectAllowed,
       newId: () => randomUUID(),
-      send: (senderId, event) => {
+      send: (event) => {
         const id = `live:${event.sessionId}`;
         if (event.type === "started") {
           taskStatus.upsert(id, {
@@ -744,11 +748,10 @@ app.whenReady().then(async () => {
           // the receipt and prose are for the chat window only
         } else if (event.reason === "failed") taskStatus.finish(id, "failed", event.error ?? "Session died");
         else taskStatus.finish(id, "done", event.reason === "stopped" ? "Session ended" : "Session ended on its own", false);
-        const owner = webContents.fromId(senderId);
-        if (owner && !owner.isDestroyed()) owner.send(IPC.liveEvent, event);
+        push.send(event.mountId, IPC.liveEvent, event);
       },
     });
-    stopLiveOwner = liveTasks.stopOwner;
+    stopLiveClient = liveTasks.stopClient;
     forceKillLive = liveTasks.forceKillAll;
 
     // node-pty is loaded on first use, not at boot: a broken native module fails that terminal's
@@ -761,10 +764,7 @@ app.whenReady().then(async () => {
       spawn: spawnPty,
       projectAllowed,
       scratchPath: scratchDir(dir),
-      send: (senderId, event) => {
-        const owner = webContents.fromId(senderId);
-        if (owner && !owner.isDestroyed()) owner.send(IPC.terminalEvent, event);
-      },
+      send: (event) => push.send(event.mountId, IPC.terminalEvent, event),
     });
     killAllTerminals = terminalTasks.killAll;
 
@@ -775,8 +775,7 @@ app.whenReady().then(async () => {
     // `live` activity (its id is the conversation id), and the pushes that re-read the sidebar.
     const liveConvs: Record<ChatopsBot, Set<string>> = { discord: new Set(), teams: new Set() };
     const syncedChanged = (e: SyncedChatEvent): void => {
-      const chat = componentWindows.get("chat");
-      if (chat && !chat.isDestroyed()) chat.webContents.send(IPC.syncedChatEvent, e);
+      push.broadcast(IPC.syncedChatEvent, e);
     };
     // A spawned bot's sprout-run tap (#637), answered once the scheduler below exists; before
     // that (the bots autostart first) the bot is told the app isn't reachable.
@@ -802,7 +801,7 @@ app.whenReady().then(async () => {
           taskStatus.error(`bot:${event.bot}`, { kind: "bot", name: event.bot === "discord" ? "Discord" : "Teams", line: event.error, detail: event.error });
         } else delete chatopsErrorSince[event.bot];
         if (!event.running) clearBotJobs(taskStatus, event.bot);
-        broadcast(IPC.chatopsEvent, event);
+        push.broadcast(IPC.chatopsEvent, event);
       },
       // Chained, not fire-and-forget: replaying two bots at boot (or a fast toggle) would
       // otherwise put two mkdir+writeFile calls on the same path in flight, where an older
@@ -963,7 +962,7 @@ app.whenReady().then(async () => {
       dbFile: dbFile(dir), listDestinations: (file) => listDestinations(file), destinationLabel, matchDestination,
       enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID), newId: randomUUID,
     });
-    ({ releaseChatSender } = registerIpc(ipcMain, {
+    ({ releaseChatClient, clientOfMount } = registerIpc(ipcMain, {
       proposeSend: sendHandlers.propose, sendHandlers,
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
       loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory, deleteMemories, extractMemories, restoreDreamRun, dreamDetails,
@@ -1005,7 +1004,7 @@ app.whenReady().then(async () => {
         imagesDir: imagesDir(dir),
         saveNoteImage: (bytes) => saveNoteImage(dbFile(dir), bytes),
         onStart: (mountId) => {
-          componentWindows.get("chat")?.webContents.send(IPC.chatImageProgress, mountId);
+          if (mountId !== undefined) push.send(mountId, IPC.chatImageProgress, mountId);
           const turnId = mountId === undefined ? undefined : chatTurnIds.get(mountId);
           if (turnId) taskStatus.upsert(turnId, { line: "Drawing an image…" });
         },
@@ -1040,11 +1039,11 @@ app.whenReady().then(async () => {
       delegateTasks,
       liveTasks,
       terminalTasks,
-      isChatSender: (sender) => componentWindows.get("chat")?.webContents === sender,
+      isChatClient: (clientId) => componentWindows.get("chat")?.webContents.id === clientId,
       delegateAvailable: () => enabledClis().length > 0,
       // A live CLI is enabled and this chat could open a session now (#478, cap #517).
-      liveSessionAvailable: (senderId, mountId) => componentWindows.get("chat")?.webContents.id === senderId
-        && enabledClis().some(isLiveCli) && liveTasks.canStart({ senderId, mountId }),
+      liveSessionAvailable: (clientId, mountId) => componentWindows.get("chat")?.webContents.id === clientId
+        && enabledClis().some(isLiveCli) && liveTasks.canStart({ clientId, mountId }),
       webSearch: () => runtime.getWebSearch(),
       onChatTurn: (mountId) => {
         const id = `chat:${randomUUID()}`;
@@ -1097,7 +1096,7 @@ app.whenReady().then(async () => {
       chatopsStatus: chatopsServers.status,
       chatopsStart: chatopsServers.start,
       chatopsStop: chatopsServers.stop,
-      getCurrentTheme, setCurrentTheme, broadcast, openComponent, proposeRun, planFromDrop,
+      getCurrentTheme, setCurrentTheme, push, openComponent, proposeRun, planFromDrop,
       getPendingPlan: planStore.get,
       getPendingDroppedUrl: droppedUrlStore.get,
       getPendingDashboardTarget: () => { const t = pendingDashboardTarget; pendingDashboardTarget = undefined; return t; },

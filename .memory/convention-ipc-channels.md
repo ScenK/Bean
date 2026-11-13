@@ -11,3 +11,11 @@ call — a typo on one side is a silent no-op that's painful to debug.
 `chat` is request/response (`ipcMain.handle` ↔ `ipcRenderer.invoke`). `launch` is one-way,
 fire-and-forget (`ipcMain.on` ↔ `ipcRenderer.send`) — Bean hands the run off to Terminal.app
 and doesn't track it further; see `convention-launch-hands-off-to-terminal.md`.
+
+**Main → renderer pushes** carry a route in `PUSH_ROUTES` (`packages/app/src/push.ts`, #801):
+`mount` (tagged with a chat's mount id, delivered to the client that holds — or last held — it),
+`broadcast`, or `window` (the shell's own window chrome / open-this-window payloads). Registries
+and IPC handlers never touch `webContents`: they emit events, and `main.ts` routes them through
+`push.send(mountId, …)` / `push.broadcast(…)`; callers are identified by client id
+(`isChatClient`). A new `ipcRenderer.on` channel must be added to `PUSH_ROUTES` —
+`__test__/push.test.ts` fails otherwise.

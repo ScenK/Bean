@@ -19,7 +19,7 @@ import { mkdir, mkdtemp, readFile, realpath, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { join } from "node:path";
-import { BrowserWindow, dialog, screen, shell, type IpcMain, type WebContents } from "electron";
+import { BrowserWindow, dialog, screen, shell, type IpcMain } from "electron";
 import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { createLiveTasks } from "./live-tasks.js";
@@ -29,6 +29,7 @@ import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import type { UpdateCheckOutcome } from "./updater.js";
 import type { buildSyncedChatHandlers } from "./synced-chats.js";
 import type { buildDeskContinueHandler } from "./desk-continue.js";
+import type { ClientId, Push } from "./push.js";
 import type { buildDestinationHandlers, buildSendHandlers } from "./destinations.js";
 
 const execFileAsync = promisify(execFile);
@@ -217,7 +218,7 @@ export interface ChatHandlerDeps {
   actions?: ActionTool[];
   delegateAvailable?: () => boolean;
   /** Offer propose_live_session (the hand-off card) to this chat — per request, by sender + mount. */
-  liveSessionAvailable?: (senderId: number, mountId: string) => boolean;
+  liveSessionAvailable?: (clientId: ClientId, mountId: string) => boolean;
   /** Config `webSearch`, read per chat request so a Settings toggle applies without restart. */
   webSearch?: () => boolean;
   /** Its scratch workspace hosts delegates that aren't about a project (main.ts creates it). */
@@ -237,7 +238,7 @@ export interface ChatHandlerDeps {
 
 export function buildChatHandler(deps: ChatHandlerDeps) {
   // signal = the turn's Stop (registerIpc's per-mount controller); converse() then resolves `stopped`.
-  return async (req: ChatRequest, senderId?: number, mountId?: string, signal?: AbortSignal): Promise<ConverseResult> => {
+  return async (req: ChatRequest, clientId?: ClientId, mountId?: string, signal?: AbortSignal): Promise<ConverseResult> => {
     // The renderer's imageFileGuard is UX only; main re-checks before anything reaches OpenAI (#733).
     if (req.images !== undefined) checkImageAttachments(req.images);
     // Renderer input is untrusted: a spoofed (non-%PDF-) or oversize document fails the turn here.
@@ -292,7 +293,7 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
       linkedNote: req.linkedNote,
       delegateAvailable: deps.delegateAvailable?.() ?? false,
       scratchPath: deps.beanDirPath ? scratchDir(deps.beanDirPath) : undefined,
-      liveSessionAvailable: senderId !== undefined && mountId !== undefined && (deps.liveSessionAvailable?.(senderId, mountId) ?? false),
+      liveSessionAvailable: clientId !== undefined && mountId !== undefined && (deps.liveSessionAvailable?.(clientId, mountId) ?? false),
       liveSessionHost: "desktop",
       todoRoutines,
       sproutCatalog: deps.sproutFacts ? routines.map((r) => ({ name: r.name, description: r.description })) : [],
@@ -745,32 +746,35 @@ export interface ChatThreadHandlerDeps {
 const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Chat sessions ("mounts") inside chat windows. A mount id is a renderer-made UUID attached to
- * exactly one sender; every per-chat request names it, and main keys that chat's thread pin,
- * incognito latch, memory state and delegate tasks by it — so one window can hold several chats. */
+ * exactly one client (push.ts); every per-chat request names it, and main keys that chat's thread
+ * pin, incognito latch, memory state and delegate tasks by it — so one window can hold several chats. */
 export function buildChatMounts() {
-  const mounts = new Map<string, number>(); // mount id → sender (webContents) id
-  // ponytail: one UUID per chat mount per app run; kept so a released id can't be re-attached.
-  const released = new Set<string>();
+  const mounts = new Map<string, ClientId>(); // mount id → the client it's attached to
+  // ponytail: one UUID per chat mount per app run; kept so a released id can't be re-attached, and
+  // so a late push for it (a memory receipt, a cancelled task) still reaches the window that held it.
+  const released = new Map<string, ClientId>();
   return {
     /** False = refused: not a UUID, already attached, or released. */
-    attach: (senderId: number, id: unknown): boolean => {
+    attach: (clientId: ClientId, id: unknown): boolean => {
       if (typeof id !== "string" || !THREAD_ID.test(id) || mounts.has(id) || released.has(id)) return false;
-      mounts.set(id, senderId);
+      mounts.set(id, clientId);
       return true;
     },
-    /** The state key for a request — throws unless `id` is a mount attached to this sender. */
-    key: (senderId: number, id: unknown): string => {
-      if (typeof id !== "string" || mounts.get(id) !== senderId) throw new Error("unknown chat session");
+    /** The state key for a request — throws unless `id` is a mount attached to this client. */
+    key: (clientId: ClientId, id: unknown): string => {
+      if (typeof id !== "string" || mounts.get(id) !== clientId) throw new Error("unknown chat session");
       return id;
     },
-    /** True = it was this sender's mount (the caller then drops that chat's state). */
-    release: (senderId: number, id: unknown): boolean => {
-      if (typeof id !== "string" || mounts.get(id) !== senderId) return false;
+    /** True = it was this client's mount (the caller then drops that chat's state). */
+    release: (clientId: ClientId, id: unknown): boolean => {
+      if (typeof id !== "string" || mounts.get(id) !== clientId) return false;
       mounts.delete(id);
-      released.add(id);
+      released.set(id, clientId);
       return true;
     },
-    ofSender: (senderId: number): string[] => [...mounts].flatMap(([id, s]) => (s === senderId ? [id] : [])),
+    ofClient: (clientId: ClientId): string[] => [...mounts].flatMap(([id, c]) => (c === clientId ? [id] : [])),
+    /** Where a mount-tagged push goes: the client holding the mount, or the one that last held it. */
+    clientOf: (id: string): ClientId | undefined => mounts.get(id) ?? released.get(id),
   };
 }
 
@@ -1154,7 +1158,7 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   sproutFacts?: ChatHandlerDeps["sproutFacts"];
   proposeSend?: ChatHandlerDeps["proposeSend"];
   sendHandlers?: ReturnType<typeof buildSendHandlers>;
-  broadcast: (channel: string, payload: unknown) => void;
+  push: Push;
   openComponent: (kind: ComponentKind, payload?: ChatDrop | DashboardTarget) => void;
   proposeRun: (suggestion: RouteSuggestion) => void;
   getPendingPlan: () => RouteSuggestion | undefined;
@@ -1183,8 +1187,8 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   };
   liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "interrupt" | "resume" | "stopMount" | "projectOf">;
   terminalTasks: Pick<TerminalTasks, "start" | "write" | "resize" | "ack" | "stop" | "stopMount" | "runningCommand">;
-  /** Whether an IPC sender is the chat window — the only window that may drive an agent session. */
-  isChatSender: (sender: WebContents) => boolean;
+  /** Whether a client is the chat window — the only window that may drive an agent session. */
+  isChatClient: (clientId: ClientId) => boolean;
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
   /** Called as a chat (mount) turn starts; the returned fn is called when it ends (with the failure, if any). */
   onChatTurn?: (mountId: string) => (error?: string) => void;
@@ -1199,25 +1203,29 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   deskContinue?: ReturnType<typeof buildDeskContinueHandler>;
 }
 
-/** `releaseChatSender` = a chat window is gone: release every chat it still had attached. */
-export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChatSender: (senderId: number) => void } {
+/** `releaseChatClient` = a chat window is gone: release every chat it still had attached.
+ * `clientOfMount` = where a mount-tagged push goes (push.ts). */
+export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): {
+  releaseChatClient: (clientId: ClientId) => void;
+  clientOfMount: (mountId: string) => ClientId | undefined;
+} {
   const chatHandler = buildChatHandler(deps);
   const memoryHandlers = buildMemoryHandlers(deps);
   // Every per-chat request names its chat's mount id (see buildChatMounts). Refused unless it comes
   // from the chat window and that mount is attached to it.
   const mounts = buildChatMounts();
-  const chatKey = (sender: WebContents, mountId: unknown): string => {
-    if (!deps.isChatSender(sender)) throw new Error("Chats run in the chat window.");
-    return mounts.key(sender.id, mountId);
+  const chatKey = (client: ClientId, mountId: unknown): string => {
+    if (!deps.isChatClient(client)) throw new Error("Chats run in the chat window.");
+    return mounts.key(client, mountId);
   };
   // For fire-and-forget channels: a refused request is dropped, never thrown into the void.
-  const tryChatKey = (sender: WebContents, mountId: unknown): string | undefined => {
-    try { return chatKey(sender, mountId); } catch { return undefined; }
+  const tryChatKey = (client: ClientId, mountId: unknown): string | undefined => {
+    try { return chatKey(client, mountId); } catch { return undefined; }
   };
   // Bean's running turn per chat (mount key), so Stop / Esc Esc and a release can abort it.
   const beanTurns = new Map<string, { turnId: unknown; ctl: AbortController }>();
-  const releaseChat = (senderId: number, mountId: string): void => {
-    if (!mounts.release(senderId, mountId)) return;
+  const releaseChat = (clientId: ClientId, mountId: string): void => {
+    if (!mounts.release(clientId, mountId)) return;
     beanTurns.get(mountId)?.ctl.abort();
     memoryHandlers.release(mountId);
     deps.chatThreadHandlers.release(mountId);
@@ -1226,13 +1234,13 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     void deps.terminalTasks.stopMount(mountId); // never rejects; the entry is held until the shell is gone
   };
   ipcMain.on(IPC.chatAttach, (e, mountId: unknown) => {
-    if (deps.isChatSender(e.sender) && !mounts.attach(e.sender.id, mountId)) console.error("chat attach refused");
+    if (deps.isChatClient(e.sender.id) && !mounts.attach(e.sender.id, mountId)) console.error("chat attach refused");
   });
   ipcMain.on(IPC.chatRelease, (e, mountId: unknown) => {
     if (typeof mountId === "string") releaseChat(e.sender.id, mountId);
   });
   ipcMain.handle(IPC.chat, async (e, req: ChatRequest, mountId: unknown) => {
-    const key = chatKey(e.sender, mountId);
+    const key = chatKey(e.sender.id, mountId);
     // Registered before any await, so a Stop that lands while the loaders run still aborts.
     const turn = { turnId: req?.turnId, ctl: new AbortController() };
     beanTurns.set(key, turn);
@@ -1244,10 +1252,9 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
       if (result.stopped) return result;
       // Fire-and-forget, off the reply path: the reply returns now, the receipt row follows —
       // tagged with its chat, which may no longer be the visible one.
-      const sender = e.sender;
       memoryHandlers.captureTurn(key, req, result).then((batch) => {
-        if (batch.length > 0 && !sender.isDestroyed()) {
-          sender.send(IPC.memoryUpdated, batch.map(({ id, text, category }) => ({ id, text, category })), key);
+        if (batch.length > 0) {
+          deps.push.send(key, IPC.memoryUpdated, { saved: batch.map(({ id, text, category }) => ({ id, text, category })), mountId: key });
         }
       }).catch((err) => console.error("per-turn memory capture failed:", err));
       return result;
@@ -1260,7 +1267,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   });
   // Only the running turn it names: a late Stop must not abort the next turn.
   ipcMain.on(IPC.chatStop, (e, mountId: unknown, turnId: unknown) => {
-    const key = tryChatKey(e.sender, mountId);
+    const key = tryChatKey(e.sender.id, mountId);
     const turn = key === undefined ? undefined : beanTurns.get(key);
     if (turn && typeof turnId === "string" && turn.turnId === turnId) turn.ctl.abort();
   });
@@ -1268,7 +1275,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   // temp dir (one per app run) and the agent reads it by path. stageImages checks mime + size.
   let stageDir: Promise<string> | undefined;
   ipcMain.handle(IPC.chatStageImage, async (e, data: unknown, mime: unknown, mountId: unknown) => {
-    chatKey(e.sender, mountId);
+    chatKey(e.sender.id, mountId);
     if (typeof data !== "string" || typeof mime !== "string") throw new Error("malformed image");
     stageDir ??= mkdtemp(join(tmpdir(), "bean-images-")).catch((err: unknown) => { stageDir = undefined; throw err; });
     const [path] = await stageImages([{ data, mimeType: mime }], await stageDir);
@@ -1331,74 +1338,74 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   const launchHandler = buildLaunchHandler(deps);
   ipcMain.on(IPC.launch, (_e, req: LaunchRequest) => launchHandler(req));
   ipcMain.handle(IPC.delegateStart, (e, req: DelegateStartRequest, mountId: unknown) => {
-    const key = chatKey(e.sender, mountId);
+    const key = chatKey(e.sender.id, mountId);
     return deps.delegateTasks.start({ ...req, offRecord: memoryHandlers.isIncognito(key), mountId: key });
   });
   ipcMain.on(IPC.delegateCancel, (_e, taskId: string) => deps.delegateTasks.cancel(taskId));
   // Sessions belong to one chat (sender + attached mount); every payload is validated in live-tasks.
-  const liveOwner = (sender: WebContents, mountId: unknown) => {
-    const key = tryChatKey(sender, mountId);
-    return key === undefined ? undefined : { senderId: sender.id, mountId: key };
+  const liveOwner = (client: ClientId, mountId: unknown) => {
+    const key = tryChatKey(client, mountId);
+    return key === undefined ? undefined : { clientId: client, mountId: key };
   };
   const notLive = "Agent sessions run from the chat window.";
   ipcMain.handle(IPC.liveStart, (e, req: unknown, mountId: unknown) => {
-    const o = liveOwner(e.sender, mountId);
+    const o = liveOwner(e.sender.id, mountId);
     return o ? deps.liveTasks.start(o, req) : { error: notLive };
   });
   ipcMain.handle(IPC.liveSend, (e, sessionId: unknown, text: unknown, mountId: unknown) => {
-    const o = liveOwner(e.sender, mountId);
+    const o = liveOwner(e.sender.id, mountId);
     return o ? deps.liveTasks.send(o, sessionId, text) : notLive;
   });
   ipcMain.on(IPC.liveStop, (e, sessionId: unknown, mountId: unknown) => {
-    const o = liveOwner(e.sender, mountId);
+    const o = liveOwner(e.sender.id, mountId);
     if (o) deps.liveTasks.stop(o, sessionId);
   });
   ipcMain.handle(IPC.liveInterrupt, (e, sessionId: unknown, mountId: unknown, turns: unknown) => {
-    const o = liveOwner(e.sender, mountId);
+    const o = liveOwner(e.sender.id, mountId);
     return o ? deps.liveTasks.interrupt(o, sessionId, turns) : false;
   });
   ipcMain.handle(IPC.liveResume, (e, sessionId: unknown, mountId: unknown) => {
-    const o = liveOwner(e.sender, mountId);
+    const o = liveOwner(e.sender.id, mountId);
     return o ? deps.liveTasks.resume(o, sessionId) : { error: notLive };
   });
   // A chat's terminals: every call names an attached mount of the chat window, plus the tab;
   // payloads and tab ids are validated in terminal-tasks. Refused fire-and-forget calls are dropped.
   ipcMain.handle(IPC.terminalStart, (e, projectPath: unknown, cols: unknown, rows: unknown, mountId: unknown, tabId: unknown) => {
-    const key = tryChatKey(e.sender, mountId);
+    const key = tryChatKey(e.sender.id, mountId);
     return key === undefined
       ? { error: "Terminals run from the chat window." }
-      : deps.terminalTasks.start({ senderId: e.sender.id, mountId: key }, tabId, projectPath, cols, rows);
+      : deps.terminalTasks.start({ clientId: e.sender.id, mountId: key }, tabId, projectPath, cols, rows);
   });
   ipcMain.on(IPC.terminalWrite, (e, data: unknown, mountId: unknown, tabId: unknown) => {
-    const key = tryChatKey(e.sender, mountId);
+    const key = tryChatKey(e.sender.id, mountId);
     if (key !== undefined) deps.terminalTasks.write(key, tabId, data);
   });
   ipcMain.on(IPC.terminalResize, (e, cols: unknown, rows: unknown, mountId: unknown, tabId: unknown) => {
-    const key = tryChatKey(e.sender, mountId);
+    const key = tryChatKey(e.sender.id, mountId);
     if (key !== undefined) deps.terminalTasks.resize(key, tabId, cols, rows);
   });
   ipcMain.on(IPC.terminalAck, (e, chars: unknown, mountId: unknown, tabId: unknown) => {
-    const key = tryChatKey(e.sender, mountId);
+    const key = tryChatKey(e.sender.id, mountId);
     if (key !== undefined) deps.terminalTasks.ack(key, tabId, chars);
   });
   // No tab = every tab of the chat.
   ipcMain.handle(IPC.terminalStop, async (e, mountId: unknown, tabId?: unknown) => {
-    const key = tryChatKey(e.sender, mountId);
+    const key = tryChatKey(e.sender.id, mountId);
     if (key === undefined) return;
     await (tabId === undefined ? deps.terminalTasks.stopMount(key) : deps.terminalTasks.stop(key, tabId));
   });
   // The close cards' fresh check: what runs in this chat's terminals (or one tab's) right now.
   ipcMain.handle(IPC.terminalRunning, (e, mountId: unknown, tabId?: unknown) => {
-    const key = tryChatKey(e.sender, mountId);
+    const key = tryChatKey(e.sender.id, mountId);
     return key === undefined ? [] : deps.terminalTasks.runningCommand(key, tabId);
   });
   ipcMain.on(IPC.terminalOpenLink, (e, url: unknown, mountId: unknown) => {
-    const href = tryChatKey(e.sender, mountId) === undefined ? undefined : terminalLink(url);
+    const href = tryChatKey(e.sender.id, mountId) === undefined ? undefined : terminalLink(url);
     if (href) shell.openExternal(href).catch((err: unknown) => console.error("terminal link failed:", err));
   });
   // Cmd+click on a path in the chat log (#779): validated and resolved here, never by the renderer.
   ipcMain.on(IPC.chatOpenPath, (e, raw: unknown, mountId: unknown) => {
-    const key = tryChatKey(e.sender, mountId);
+    const key = tryChatKey(e.sender.id, mountId);
     const abs = key === undefined ? undefined : chatPathTarget(raw, deps.liveTasks.projectOf(key), homedir());
     if (!abs) return;
     void openChatPath(abs, {
@@ -1437,49 +1444,49 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   // Fire-and-forget: the chat window is already closing. A failure already raised its bubble
   // (onMemoryFailure); this only logs it.
   ipcMain.on(IPC.chatIncognito, (e, on: unknown, mountId: unknown) => {
-    const key = tryChatKey(e.sender, mountId);
+    const key = tryChatKey(e.sender.id, mountId);
     if (key === undefined) return;
     memoryHandlers.setIncognito(key, on === true);
     try { deps.chatThreadHandlers.setIncognito(key, on === true); } catch (err) { console.error("chat history delete failed:", err); }
   });
   const notChat = (): never => { throw new Error("Chat history is for the chat window."); };
   ipcMain.handle(IPC.chatThreadSave, (e, req: unknown, mountId: unknown) =>
-    deps.chatThreadHandlers.save(chatKey(e.sender, mountId), req));
+    deps.chatThreadHandlers.save(chatKey(e.sender.id, mountId), req));
   ipcMain.handle(IPC.chatThreadGet, (e, id: unknown, mountId: unknown) =>
-    deps.chatThreadHandlers.get(chatKey(e.sender, mountId), id));
-  ipcMain.handle(IPC.chatThreadList, (e) => deps.isChatSender(e.sender) ? deps.chatThreadHandlers.list() : notChat());
+    deps.chatThreadHandlers.get(chatKey(e.sender.id, mountId), id));
+  ipcMain.handle(IPC.chatThreadList, (e) => deps.isChatClient(e.sender.id) ? deps.chatThreadHandlers.list() : notChat());
   ipcMain.handle(IPC.chatThreadDelete, (e, id: unknown) =>
-    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.delete(id) : notChat());
+    deps.isChatClient(e.sender.id) ? deps.chatThreadHandlers.delete(id) : notChat());
   ipcMain.handle(IPC.chatThreadStar, (e, id: unknown, starred: unknown) =>
-    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.star(id, starred) : notChat());
+    deps.isChatClient(e.sender.id) ? deps.chatThreadHandlers.star(id, starred) : notChat());
   ipcMain.handle(IPC.chatThreadRename, (e, id: unknown, title: unknown) =>
-    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.rename(id, title) : notChat());
+    deps.isChatClient(e.sender.id) ? deps.chatThreadHandlers.rename(id, title) : notChat());
   ipcMain.handle(IPC.chatThreadGroup, (e, ids: unknown, name: unknown) =>
-    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.group(ids, name) : notChat());
+    deps.isChatClient(e.sender.id) ? deps.chatThreadHandlers.group(ids, name) : notChat());
   ipcMain.handle(IPC.chatThreadGroupRename, (e, from: unknown, to: unknown) =>
-    deps.isChatSender(e.sender) ? deps.chatThreadHandlers.groupRename(from, to) : notChat());
-  ipcMain.handle(IPC.syncedChatList, (e) => deps.isChatSender(e.sender) ? deps.syncedChatHandlers.list() : notChat());
+    deps.isChatClient(e.sender.id) ? deps.chatThreadHandlers.groupRename(from, to) : notChat());
+  ipcMain.handle(IPC.syncedChatList, (e) => deps.isChatClient(e.sender.id) ? deps.syncedChatHandlers.list() : notChat());
   ipcMain.handle(IPC.syncedChatGet, (e, surface: unknown, conversationId: unknown, mountId: unknown) => {
-    chatKey(e.sender, mountId);
+    chatKey(e.sender.id, mountId);
     return deps.syncedChatHandlers.get(surface, conversationId);
   });
   ipcMain.handle(IPC.syncedChatSend, (e, surface: unknown, conversationId: unknown, text: unknown, mountId: unknown) => {
-    chatKey(e.sender, mountId);
+    chatKey(e.sender.id, mountId);
     return deps.syncedChatHandlers.send(surface, conversationId, text);
   });
   ipcMain.handle(IPC.syncedChatResume, (e, surface: unknown, conversationId: unknown, mountId: unknown) => {
-    chatKey(e.sender, mountId);
+    chatKey(e.sender.id, mountId);
     return deps.syncedChatHandlers.resume(surface, conversationId);
   });
   // Continue in Discord: one chat (sender + attached mount), its incognito latch read here, not sent.
   ipcMain.handle(IPC.deskContinue, (e, req: unknown, mountId: unknown) => {
-    const key = chatKey(e.sender, mountId);
+    const key = chatKey(e.sender.id, mountId);
     if (!deps.deskContinue) return { failed: "Continue in Discord isn't available." };
-    return deps.deskContinue({ senderId: e.sender.id, mountId: key }, memoryHandlers.isIncognito(key), req);
+    return deps.deskContinue({ clientId: e.sender.id, mountId: key }, memoryHandlers.isIncognito(key), req);
   });
   ipcMain.on(IPC.rememberOnClose, (e, transcript: unknown, opts: unknown) => {
     const o = opts as { incognito?: unknown; rejected?: unknown; mountId?: unknown } | null;
-    const key = tryChatKey(e.sender, o?.mountId);
+    const key = tryChatKey(e.sender.id, o?.mountId);
     if (key === undefined) return;
     const incognito = o?.incognito === true;
     const rejected = Array.isArray(o?.rejected) ? o.rejected.filter((t): t is string => typeof t === "string") : [];
@@ -1509,7 +1516,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   const configHandlers = buildConfigHandlers({
     getConfig: deps.getConfig,
     applyConfig: deps.applyConfig,
-    onApplied: () => deps.broadcast(IPC.cliAvailabilityChanged, undefined),
+    onApplied: () => deps.push.broadcast(IPC.cliAvailabilityChanged, undefined),
   });
   ipcMain.handle(IPC.getConfig, () => configHandlers.get());
   ipcMain.handle(IPC.saveConfig, (_e, update: ConfigUpdate) => configHandlers.save(update));
@@ -1519,7 +1526,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.handle(IPC.getTheme, () => theme.get());
   ipcMain.handle(IPC.setTheme, async (_e, next: Theme) => {
     await theme.set(next);
-    deps.broadcast(IPC.themeChanged, next);
+    deps.push.broadcast(IPC.themeChanged, next);
   });
 
   const chatopsHandlers = buildChatopsHandlers(deps);
@@ -1534,7 +1541,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
   ipcMain.handle(IPC.destinationsNameRaw, (_e, surface: unknown, conversationId: unknown, alias: unknown) =>
     deps.destinationHandlers.nameRaw(surface, conversationId, alias));
   ipcMain.handle(IPC.sendToDestination, (e, proposalId: unknown, optionId: unknown) => {
-    if (!deps.isChatSender(e.sender) || !deps.sendHandlers) throw new Error("Sends are confirmed in the chat window.");
+    if (!deps.isChatClient(e.sender.id) || !deps.sendHandlers) throw new Error("Sends are confirmed in the chat window.");
     return deps.sendHandlers.send(proposalId, optionId);
   });
   ipcMain.handle(IPC.destinationsRetarget, (_e, alias: unknown, surface: unknown, conversationId: unknown) =>
@@ -1596,5 +1603,8 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): { releaseChat
     win.setContentSize(width ?? 0, Math.min(Math.round(height), workArea.height), true);
   });
 
-  return { releaseChatSender: (senderId) => { for (const id of mounts.ofSender(senderId)) releaseChat(senderId, id); } };
+  return {
+    releaseChatClient: (clientId) => { for (const id of mounts.ofClient(clientId)) releaseChat(clientId, id); },
+    clientOfMount: mounts.clientOf,
+  };
 }

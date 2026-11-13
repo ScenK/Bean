@@ -14,8 +14,8 @@ import {
 import { liveBadgeAgent } from "../src/renderer/task-bubbles.js";
 import type { TaskJob } from "../src/task-status.js";
 
-const A = { senderId: 1, mountId: "m1" };
-const B = { senderId: 2, mountId: "m2" };
+const A = { clientId: 1, mountId: "m1" };
+const B = { clientId: 2, mountId: "m2" };
 const tmp = (): string => mkdtempSync(join(tmpdir(), "bean-live-tasks-"));
 const record = (dir: string, id: string): { pid: number } | undefined => {
   const f = join(dir, "runs", `${id}.json`);
@@ -32,7 +32,7 @@ function harness(opts: {
   interruptOk?: boolean;
 } = {}) {
   const dir = tmp();
-  const events: Array<{ owner: number; e: LiveEvent }> = [];
+  const events: Array<{ e: LiveEvent }> = [];
   const reqs: LiveSessionRequest[] = [];
   const cbs: LiveSessionCallbacks[] = [];
   const sent: string[] = [];
@@ -51,7 +51,7 @@ function harness(opts: {
     scratchPath: "/scratch",
     ...(opts.findResumable ? { findResumable: opts.findResumable } : {}),
     ...(opts.modelOffered ? { modelOffered: opts.modelOffered } : {}),
-    send: (owner, e) => { events.push({ owner, e }); },
+    send: (e) => { events.push({ e }); },
     newId: () => `s${++n}`,
     engine: (req, c) => {
       reqs.push(req);
@@ -73,7 +73,7 @@ describe("createLiveTasks", () => {
     const h = harness();
     const picks = [["claude", "opus"], ["codex", "gpt-5.5"], ["opencode", "anthropic/claude-sonnet-4-5"]] as const;
     for (const [i, [agent, model]] of picks.entries()) {
-      expect(await h.live.start({ senderId: 1, mountId: `m${i}` }, { agent, projectPath: "/proj", ask: "go", model })).toMatchObject({ sessionId: `s${i + 1}` });
+      expect(await h.live.start({ clientId: 1, mountId: `m${i}` }, { agent, projectPath: "/proj", ask: "go", model })).toMatchObject({ sessionId: `s${i + 1}` });
     }
     await h.live.start(B, { agent: "claude", projectPath: "/proj", ask: "go" });
     expect(h.reqs.map((r) => [r.cli, r.model])).toEqual([...picks, ["claude", undefined]]);
@@ -96,7 +96,7 @@ describe("createLiveTasks", () => {
     const res = await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "fix the bug" });
     expect(res).toEqual({ sessionId: "s1", handedOver: 0 });
     expect(h.reqs[0]).toEqual({ cli: "claude", projectPath: "/proj", prompt: "fix the bug" });
-    expect(h.events[0]).toEqual({ owner: 1, e: { type: "started", sessionId: "s1", agent: "claude", mountId: "m1", seq: 1, projectPath: "/proj", handedOver: 0 } });
+    expect(h.events[0]).toEqual({ e: { type: "started", sessionId: "s1", agent: "claude", mountId: "m1", seq: 1, projectPath: "/proj", handedOver: 0 } });
 
     h.cbs[0]!.onOutput("reading files");
     h.cbs[0]!.onTurnComplete({ result: "done", durationMs: 1200 });
@@ -155,7 +155,7 @@ describe("createLiveTasks", () => {
 
   it("one session per chat, several chats in one window at once, at most LIVE_SESSION_CAP across them", async () => {
     const h = harness({ findResumable: () => ({ run: { cli: "claude", projectPath: "/proj", sessionId: "sess-r" } } as ResumableRun) });
-    const chat = (i: number) => ({ senderId: 1, mountId: `c${i}` });
+    const chat = (i: number) => ({ clientId: 1, mountId: `c${i}` });
     for (let i = 0; i < LIVE_SESSION_CAP - 1; i++) expect(await h.live.start(chat(i), { agent: "codex", projectPath: "/proj", ask: "a" })).toMatchObject({ sessionId: `s${i + 1}` });
     expect(await h.live.start(chat(0), { agent: "codex", projectPath: "/proj", ask: "b" })).toEqual({ error: expect.stringMatching(/already has an agent/) });
     // A pending start counts: it's registered before its project check resolves.
@@ -190,7 +190,7 @@ describe("createLiveTasks", () => {
     let allow!: (ok: boolean) => void;
     const h = harness({ allowed: () => new Promise((r) => { allow = r; }) });
     const pending = h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "a" });
-    h.live.stopOwner(1);
+    h.live.stopClient(1);
     allow(true);
     expect(await pending).toEqual({ error: "Stopped before it started." });
     expect(h.reqs).toHaveLength(0);
@@ -371,8 +371,8 @@ describe("createLiveTasks interrupt (Stop / Esc Esc)", () => {
     const h = harness();
     await h.live.start(A, { agent: "claude", projectPath: "/proj", ask: "go" });
     expect(h.live.interrupt(B, "s1", 0)).toBe(false);
-    expect(h.live.interrupt({ senderId: 1, mountId: "other" }, "s1", 0)).toBe(false);
-    expect(h.live.interrupt({ senderId: 2, mountId: "m1" }, "s1", 0)).toBe(false);
+    expect(h.live.interrupt({ clientId: 1, mountId: "other" }, "s1", 0)).toBe(false);
+    expect(h.live.interrupt({ clientId: 2, mountId: "m1" }, "s1", 0)).toBe(false);
     for (const turns of ["0", undefined, 0.5, Number.NaN]) expect(h.live.interrupt(A, "s1", turns)).toBe(false);
     expect(h.live.interrupt(A, "nope", 0)).toBe(false);
     expect(h.interrupts()).toBe(0);

@@ -127,7 +127,7 @@ describe("synced chat IPC", () => {
     };
     const { h, deps: sDeps } = handlers();
     const chat = { id: 1 }, other = { id: 2 };
-    const all: Partial<RegisterDeps> = { isChatSender: (s) => s === (chat as never), syncedChatHandlers: h };
+    const all: Partial<RegisterDeps> = { isChatClient: (id) => id === chat.id, syncedChatHandlers: h };
     const deps = new Proxy(all, { get: (t, k) => (k in t ? t[k as keyof typeof t] : vi.fn()) }) as RegisterDeps;
     registerIpc(ipcMain as never, deps);
     const invoke = (ch: string, sender: unknown, ...args: unknown[]): unknown => handles.get(ch)!({ sender }, ...args);
