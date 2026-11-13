@@ -9,7 +9,7 @@ one control: a running sprout's **Stop** (no Pause — a routine has no pause st
   button is its sibling inside `.bean-bubble-item`, overlaid on room the detail reserves
   (`.bean-bubble-stop-room`). It stops by `TaskJob.routine` (the sprout's real name from the
   host's start event — `name` may be a todo's text), says "Stop all N runs" when N bubbles share
-  it, and keeps keyboard focus across re-renders. Main's `createRoutineBubbles` flips the bubbles
+  it, and keeps keyboard focus across re-renders. The host's `createRoutineBubbles` (`task-status.ts`) flips the bubbles
   to "Stopping…" at once and drops step events until the finish; a `stopped` finish is non-sticky.
 
 - **Purpose: "Bean is alive / Bean is broken", not a mirror of any one window.** Sources:
@@ -22,7 +22,7 @@ one control: a running sprout's **Stop** (no Pause — a routine has no pause st
   { routine, startedAt })`). `TaskJob.runStartedAt` is the run record's `startedAt`, carried on core's
   `finish` event; the bubble id is reused per routine, so `start` and `finish` set it explicitly
   (never inherit the previous run's). Absent = the run wasn't recorded (threw).
-- **A chat's delegate/live bubble opens its chat.** `TaskJob.mountId` (set by main from the
+- **A chat's delegate/live bubble opens its chat.** `TaskJob.mountId` (set by the host from the
   delegate/live event) makes the click call `openChatMount` → main focuses the chat window and pushes
   `showChatMount` → `ChatWindow` opens that mount's thread like a sidebar pick (a hidden chat with
   work is just shown). Running bubbles stay; finished ones dismiss on the click. An evicted owner reopens via
@@ -36,9 +36,9 @@ one control: a running sprout's **Stop** (no Pause — a routine has no pause st
   the bots with `"ipc"` in stdio; the servers pass core's `parentActivitySink` (a no-op when run
   standalone, and callback-form `process.send` so a closed channel can't crash the bot) as
   `onActivity` to `buildTeamsBot` (converse turns only — commands/live-session steering don't
-  count), `RunRegistry` and `LiveSessionRegistry`. Main validates every message with
+  count), `RunRegistry` and `LiveSessionRegistry`. The host validates every message with
   `parseChatopsActivity` (string type/phase checked before the `Object.hasOwn` lookup — a
-  crafted key object would throw in main — known values, 300-char caps) and `chatops-activity.ts` maps it to
+  crafted key object would throw in the host — known values, 300-char caps) and `chatops-activity.ts` maps it to
   bubbles under `<bot>:<type>:<id>` ids. Privacy: sender + channel name and phases only —
   never message text, delegate output, or any error text (CLI stderr and thrown errors can quote
   messages or secrets; codex flagged each in turn). Failures show "… — details in Discord". When a bot stops, `clearBotJobs` closes its still-running bubbles ("Bot stopped").

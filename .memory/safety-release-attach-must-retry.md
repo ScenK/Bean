@@ -20,3 +20,7 @@ Because of that, the step now:
 Don't collapse this back to a single bare `gh release create` — a one-shot call re-introduces
 the "one 503 nukes the whole release" failure. If a release still fails here after all retries,
 suspect an actual GitHub API incident (check status), not the build.
+
+`win-installer.yml` (#814) runs the same loop on the same tag, so either workflow may create the
+release; the other uploads into it. Windows also appends the unsigned-SmartScreen note to the body
+(once — it checks for "SmartScreen" first).

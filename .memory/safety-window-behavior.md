@@ -6,7 +6,7 @@ The Electron windowing has several non-obvious behaviors. Don't "fix" them away.
 `avatar.html` is loaded once and stays loaded for the app's lifetime — except that the tray's
 **Bring Bean Back** reloads that same page (see "Bring Bean Back reloads" below). Double-click is
 intentionally not wired on the bean body; component opens still call `window.bean.openComponent(kind,
-droppedUrl?)` (IPC), which opens or focuses one of 4 separate singleton component
+droppedUrl?)` (IPC), which opens or focuses one of the separate singleton component
 `BrowserWindow`s — it does not `location.href` the avatar window anywhere. There is no more
 single "dashboard" window (retired in SP8).
 
@@ -24,8 +24,8 @@ trust CSS-inheritance reasoning here: set `-webkit-app-region: no-drag` on the a
 with the clickable box, not on an ancestor wrapper, however confident the cascade argument
 seems — verify empirically (a code review alone missed this).
 
-**Component windows do not respawn on close.** Like the old dashboard window, closing any of
-the 4 component windows just clears its entry from `main.ts`'s `componentWindows` map; a later
+**Component windows do not respawn on close.** Like the old dashboard window, closing any
+component window just clears its entry from `main.ts`'s `componentWindows` map; a later
 `openComponent(kind)` call creates a fresh one. There is intentionally no auto-respawn.
 
 **Cmd+W hides the avatar, it does not destroy it.** The avatar's `close` event is
@@ -37,8 +37,8 @@ hidden, else pops the menu). Don't revert this to a plain destroy: destroying it
 (Settings/Persona/About) was clicked afterward, and left no way to get the pet back. A
 belt-and-suspenders `avatar.isDestroyed()` guard also wraps that `getBounds()` call.
 
-**Closing the avatar does not quit the app** (macOS-style); the app only quits on
-`window-all-closed` off-darwin. Intentional.
+**Closing the avatar does not quit the app** on any OS: `window-all-closed` has a deliberately empty
+listener (without one Electron quits off macOS), so the tray's Exit is the only quit. Intentional (#813).
 
 **Theme state lives in `main.ts`, not per-window.** `getCurrentTheme`/`setCurrentTheme`
 are closures over a single `currentTheme` variable in `main.ts`; every window's theme
@@ -54,11 +54,10 @@ purely visual (`pointer-events: none`) and hit-tested by math, not by being sepa
 targets, because a fragmented/zero-size target is exactly what broke the bubble menu buttons
 before.
 
-**A Plan window's "Run" hands off to Chat, it doesn't have its own console.** `runOpencode`'s
-progress always streams to the Chat window's `webContents` (`ipc.ts`'s `IPC.run` handler
-hardcodes `deps.chatSender()`), regardless of which window called `run()`. The Plan window
-confirming a run also calls `openComponent("chat")` so the user sees the existing console
-immediately, rather than growing a second, duplicate console view.
+**A Plan window's confirm hands off, it doesn't have its own console.** A chat-target skill goes
+through `window.bean.runInChat` → `main.ts`'s `runInChat` (stashes the prompt in `chatPromptStore`
+for pull-on-mount, then `openComponent("chat")`); a terminal skill goes to `launch`. The Plan window
+then closes rather than growing a second, duplicate console view.
 
 **Avatar visibility and edge placement (2026-09):** `avatar-window.ts` owns mode, original idle
 anchor, cursor polling, native movement, and display recovery. Main loads the renderer only

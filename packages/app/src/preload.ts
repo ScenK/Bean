@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult, type CoreListing, type CoreStatus, type CoreSwitchOutcome } from "./channels.js";
 import type {
   RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
@@ -120,6 +120,14 @@ contextBridge.exposeInMainWorld("bean", {
   checkForUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke(IPC.checkForUpdate),
   installUpdate: (): Promise<InstallUpdateResult | undefined> => ipcRenderer.invoke(IPC.installUpdate),
   openUpdateReleasePage: (): void => ipcRenderer.send(IPC.openUpdateReleasePage),
+  coreList: (): Promise<CoreListing> => ipcRenderer.invoke(IPC.coreList),
+  coreAdd: (host: string, container?: string): Promise<{ id: string } | { error: string }> => ipcRenderer.invoke(IPC.coreAdd, host, container),
+  coreRemove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.coreRemove, id),
+  coreSwitch: (id: string): Promise<CoreSwitchOutcome> => ipcRenderer.invoke(IPC.coreSwitch, id),
+  coreStatus: (): Promise<CoreStatus> => ipcRenderer.invoke(IPC.coreStatus),
+  onCoreStatus: (cb: (s: CoreStatus) => void) => ipcRenderer.on(IPC.coreStatusChanged, (_e, s: CoreStatus) => cb(s)),
+  coreTakeBack: (): void => ipcRenderer.send(IPC.coreTakeBack),
+  chatCloseKept: (): void => ipcRenderer.send(IPC.chatCloseKept),
   listNotes: (opts?: { includeArchived?: boolean }): Promise<Note[]> => ipcRenderer.invoke(IPC.listNotes, opts),
   saveNote: (draft: NoteDraft, images?: ImageAttachment[]): Promise<string> => ipcRenderer.invoke(IPC.saveNote, draft, images),
   saveNoteImage: (bytes: Uint8Array): Promise<string> => ipcRenderer.invoke(IPC.saveNoteImage, bytes),

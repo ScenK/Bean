@@ -388,6 +388,8 @@ export async function createHost(deps: HostDeps) {
     liveSessionAvailable: (clientId, mountId) => isChatClient(clientId)
       && enabledClis().some(isLiveCli) && liveTasks.canStart({ clientId, mountId }),
     webSearch: () => runtime.getWebSearch(),
+    // A remote shell has no Terminal.app of ours to hand off to (#812): terminal skills become delegates.
+    runAvailable: (clientId) => !attachments.isClient(clientId),
     loadRoutines: () => loadRoutines(routinesPath),
     sproutFacts: (r) => sproutRunFacts(db, r),
     proposeSend: sends.propose,
@@ -437,6 +439,7 @@ export async function createHost(deps: HostDeps) {
     disabledClis: runtime.getDisabledClis(),
     webSearch: runtime.getWebSearch(),
     autoMemory: runtime.getAutoMemory(),
+    apiKeySet: runtime.getApiKey() !== "",
     paths: { config: cfgPath, skills: skillsDir(dir), projects: projectsFile(dir), persona: personaFile(dir) },
   });
 

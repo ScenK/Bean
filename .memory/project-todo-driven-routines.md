@@ -6,7 +6,7 @@ that todo but the next still runs — note the asymmetry with plain routines' co
 Queue items are plain text in `bean.db`'s `todos` table (`todo-store.ts`; SQLite not JSON per
 safety-memory-append-vs-replace). Scheduler consumes an empty-queue fire by advancing lastRun
 WITHOUT recording a run; `runNow` relies on the runner's own empty-queue no-op instead.
-`running` items are failed as "interrupted" at startup (`recoverInterruptedTodos` in main.ts) —
+`running` items are failed as "interrupted" at startup (`recoverInterruptedTodos`, run by core `routine-wiring.ts`'s `start` on the lease holder) —
 retry is always manual. Chat/chatops capture is confirm-first `propose_todo` (enum-gated to
 todoDriven routine names); routine runs themselves never get propose_* tools. Deleting a routine
 cascades its todos (`onRoutineDeleted`); renames don't exist in the panel, so
@@ -19,7 +19,7 @@ code (Model → `Routine.todoDriven`/`isValidRoutine` in `routine-store.ts` + `T
 `routine-scheduler.ts`'s `hasPendingTodos` skip; Chat capture → `propose_todo` in `converse.ts`
 plus `TodoCard`/`TodoProposalCardInput` in the chat window, Teams, and Discord; UI → the type
 toggle and Queue section in `RoutinesPanel.tsx`, including the disabled-Run-now-on-empty-queue
-hint; Wiring → `channels.ts`/`buildTodoHandlers`/`main.ts`'s startup recovery + delete cascade +
+hint; Wiring → `channels.ts`/host `buildTodoHandlers`/`routine-wiring.ts`'s startup recovery + `host.ts`'s delete cascade +
 runner-deps injection; Testing → `routine-runner.test.ts`'s "todo-driven routines" describe block
 covers per-todo ordering, prior-output scoping, failure isolation, and empty-queue no-op at the
 unit level. One item never got real interactive coverage: the end-to-end `pnpm dev` click-through
@@ -69,8 +69,7 @@ validates the name. The host freezes the card with `planSproutRun(routine, pendi
 `sprout-trigger.ts`): paused watch → "off", never-reviewed watch → "review", empty todo queue →
 "empty" (each surface words its own text reply, no card). Desktop: `buildChatHandler` sets
 `ConverseResult.sproutRun`; the chat card taps the existing `routinesRunNow`/`routinesCheckNow`.
-Chatops (#636): headless Discord's `startHeadlessRoutines` returns `sprouts` (`trigger` wrapped by
-`withFinishReply`, plus `facts` for `planSproutRun`); bot.ts posts the card (`sproutRunCard`, same
-contents as desktop) and words blocked sprouts itself ("say `enable X` first"). App-spawned bots
-(#637) trigger over IPC instead (`chatops/sprout-bridge.ts`); `withFinishReply` and
-`sproutRunFacts` live in core so both scheduler hosts share them.
+Chatops (#636): bot.ts posts the card (`sproutRunCard`, same contents as desktop) and words blocked
+sprouts itself ("say `enable X` first"). Bots never schedule (#637): they trigger over IPC
+(`chatops/sprout-bridge.ts`) to the host's `answerSproutTrigger` (`host.ts`: `trigger` wrapped by
+`withFinishReply`, plus `sproutRunFacts` for `planSproutRun`); both helpers live in core.
