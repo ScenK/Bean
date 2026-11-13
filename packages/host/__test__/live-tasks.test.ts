@@ -268,10 +268,10 @@ describe("createLiveTasks resume (Continue live)", () => {
     recordDelegateSession(file, { surface: "desktop", cli: "claude", sessionId: "sess-m", projectPath: proj, instruction: "x", model: "opus" });
     const find = (id: string) => findDelegateRun(file, id, undefined, "desktop");
     const offered = harness({ findResumable: find, modelOffered: (cli, m) => cli === "claude" && m === "opus" });
-    offered.live.resume(A, "sess-m");
+    expect(offered.live.resume(A, "sess-m")).toMatchObject({ model: "opus" }); // the chat header names it
     expect(offered.reqs[0]).toEqual({ cli: "claude", projectPath: proj, prompt: "", model: "opus", resume: "sess-m" });
     const dropped = harness({ findResumable: find, modelOffered: () => false });
-    dropped.live.resume(A, "sess-m");
+    expect(dropped.live.resume(A, "sess-m")).not.toHaveProperty("model");
     expect(dropped.reqs[0]).not.toHaveProperty("model");
   });
 

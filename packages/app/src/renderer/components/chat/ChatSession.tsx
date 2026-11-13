@@ -42,7 +42,7 @@ export const THREAD_SAVE_MS = 1000;
  * resumed from a receipt (Continue live). `receipt` = the CLI's own session, from the `session` event.
  * `unopened` = texts sent to a continued session before its resume was accepted (it opens lazily, on
  * the first send) — handed back to the composer if the host rejects the id. `model` = the `--model` it
- * launched with (unset = the agent's default, or a resumed session). `stopping` = a Stop is in flight,
+ * launched with, or the recorded one a resume kept (unset = the agent's default). `stopping` = a Stop is in flight,
  * until the next `turn`/`ended` or main refuses it. Its user rows carry `pending: key` until the agent
  * picks them up (`consumed`), the send is refused, or the session ends (#746). */
 interface LiveState {
@@ -872,7 +872,7 @@ export function ChatSession({
     knownSessionsRef.current.add(res.sessionId);
     const cur = liveRef.current;
     if (cur?.key !== l.key) { window.bean.liveStop(res.sessionId, mountId); return; } // ended while starting
-    setLive({ ...cur, sessionId: res.sessionId, projectPath: res.projectPath, queued: [] });
+    setLive({ ...cur, sessionId: res.sessionId, projectPath: res.projectPath, ...(res.model ? { model: res.model } : {}), queued: [] });
     if (projects.some((p) => p.path === res.projectPath)) rememberProject(res.projectPath);
     for (const q of cur.queued) await deliver(res.sessionId, agent, q.text, q.rowId);
   };
