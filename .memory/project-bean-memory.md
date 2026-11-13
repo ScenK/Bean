@@ -10,7 +10,7 @@ see `db.ts`'s `migrateFromFiles`.
 
 - **Automatic, no confirm card (#177):** closing the chat window is instant — the renderer sends
   `rememberOnClose(transcript, { incognito })` fire-and-forget and calls `allowChatClose` (the
-  `reviewBeforeClose` intercept survives only for the running-delegates Keep/Stop prompt). Main
+  `reviewBeforeClose` intercept survives only for the running-delegates Keep/Stop prompt). The host
   (`buildMemoryHandlers` in `host/src/memory.ts`) runs `extractMemories` → `appendMemories` and keeps the id
   batch in memory; a non-empty batch shows a `kind: "memory"` avatar bubble whose click opens
   Persona (never undoes — its old click meaning was dismiss). Persona's **Just remembered · Undo**
@@ -20,12 +20,12 @@ see `db.ts`'s `migrateFromFiles`.
   ("Couldn't update memory") via `onMemoryFailure`; nothing worth saving shows no bubble. Logs
   carry the rejected *count* only, never fact text.
 - **Per-turn capture (#461):** after each typed, non-incognito chat reply (autoMemory on, no
-  explicit `remember` that turn, no converse error), `registerIpc`'s chat handler fires
+  explicit `remember` that turn, no converse error), the host's chat sessions (`chat-sessions.ts`) fire
   `captureTurn` off the reply path: `extractMemories(…, { latestTurn: true })` cites only the
   latest turn (≤6 prior turns ride as context), appends, and sends `memoryUpdated` to that chat
   window → a `🧠 Memory updated — … · Undo` row (Undo = `deleteMemories` on exactly those ids). No
   avatar bubble; a per-turn failure only logs (close retries it) — unless the window already
-  closed, then it raises the `memory:error` bubble. Main tracks, per window (webContents id), the
+  closed, then it raises the `memory:error` bubble. `memory.ts` tracks, per chat (mount id), the
   turn ids captured/in flight, the saved ids (pending for dream until the window closes), the live
   🕶 chip (`chatIncognito` channel — a request's `incognito` is a send-time snapshot, so it's
   re-checked before the model call and the insert; a closed window's id is remembered so a reply
@@ -85,7 +85,7 @@ see `db.ts`'s `migrateFromFiles`.
   category exactly `You` are pinned ahead of the top-30 (outside it). Channels, member DMs,
   chime-ins and routines never pin. Pinned rows ride the same user-role recall message; the
   system message is untouched (cache-stable).
-- **Enabled-skills filter** lives in `buildChatHandler` (app `ipc.ts`), not in `converse()`.
+- **Enabled-skills filter** lives in `buildChatHandler` (host `chat.ts`), not in `converse()`.
 - **Edit surface:** Persona's MEMORY section, per-row `updateMemory`/`updateMemoryCategory`/
   `deleteMemories`/`appendMemories` (+ one-statement `renameMemoryCategory`) only — see
   [[safety-memory-append-vs-replace]]. Sections come from core's renderer-safe
@@ -110,5 +110,3 @@ see `db.ts`'s `migrateFromFiles`.
   restores only groups whose after-image (text, project, category) is still intact and reports the rest as kept edits. The
   digest is a `memory:dream` bubble + Persona's "Last dream" row — never written into a transcript
   (it would be re-extracted).
-
-- Gotcha: app `RegisterDeps` (ipc.ts) re-declares `ChatHandlerDeps` fields instead of extending it, so a new chat-handler dep (e.g. `loadMemories`/`dbFile`) must be added to BOTH interfaces and to the `registerIpc` deps object in `main.ts`.

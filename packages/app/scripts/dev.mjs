@@ -17,7 +17,8 @@ const processes = createDevProcessManager();
 // and Electron — directly. Detaching them shields them from Ctrl+C, and since pnpm kills this
 // orchestrator before its own SIGINT handler runs, they'd orphan. See
 // safety-dev-children-not-detached.md.
-const spawnInherited = (cmd, args) => processes.track(spawn(cmd, args, { stdio: "inherit", cwd: appDir }));
+// Windows: `pnpm` is a .cmd shim, which spawn only runs through a shell (fixed args, nothing user-supplied).
+const spawnInherited = (cmd, args) => processes.track(spawn(cmd, args, { stdio: "inherit", cwd: appDir, shell: process.platform === "win32" }));
 const shutdown = () => { processes.killAll(); process.exit(); };
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);

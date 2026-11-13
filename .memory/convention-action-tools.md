@@ -1,8 +1,8 @@
 # Action tools vs propose_run
 
 `converse()` (core) now takes an optional `actions: ActionTool[]` — tools Bean executes
-itself in the Electron main process (first ones: `set_reminder`/`list_reminders` over
-`~/.bean/reminders.json`, wired in `app/src/main.ts`). They differ from `propose_run`:
+itself in the host (first ones: `set_reminder`/`list_reminders` over
+`~/.bean/reminders.json`, built in `host/src/action-tools.ts`). They differ from `propose_run`:
 
 - **propose_run** is confirm-first: it short-circuits out of `converse()` as a
   `proposedRun` and renders as a ProposalCard; the user confirms before anything runs.
@@ -19,7 +19,7 @@ own chat instead of the terminal. `Skill.target` → copied onto `RouteSuggestio
 `window.bean.runInChat`, which stores the prompt in `buildChatPromptStore()` — same
 pull-on-mount race fix as the plan/dropped-url stores — and opens the chat). The transcript
 shows a collapsed `▶ <skill>` label (`ChatItem.display`) while the model gets the full
-prompt. `fetch_url` (main.ts, backed by core's pure `extractPageText()`) is the action tool
+prompt. `fetch_url` (host `action-tools.ts`, backed by core's pure `extractPageText()`) is the action tool
 that lets chat-target skills actually read dropped URLs. Built-in content skills
 (`bean`, `generate-skill` in repo `.bean/skills/`) are chat-target;
 `builtin-skills.test.ts` enumerates them, so adding a built-in means updating that test.
@@ -27,8 +27,8 @@ that lets chat-target skills actually read dropped URLs. Built-in content skills
 Tool results use the OpenAI `tool_call_id` protocol: `converse()` preserves the assistant
 tool-call turn, appends one `role: "tool"` result per executed action, and
 `openai-chat.ts` translates Bean's camelCase internal shape to OpenAI's snake_case API
-shape. Reminders fire from a 30s poll (`fireDueReminders`) in `main.ts` — or in the headless
-Discord host — via Electron `Notification`.
+shape. Reminders fire from a 30s poll (`fireDueReminders`, core `routine-wiring.ts`'s
+`startReminderLoop`, started by `createHost` under the scheduler lease) via the host's notification sink.
 
 **Chatops reminders (#282, Teams #344).** Discord and Teams members+ get `set_reminder`/`list_reminders`/
 `cancel_reminder` (`chatops/reminder-tools.ts`); the receipt's Cancel button carries the id.

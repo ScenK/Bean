@@ -7,7 +7,7 @@ Verified with a throwaway script against the built `dist/`: two concurrent list+
 lost one write; two concurrent `appendMemories` calls did not.
 
 With automatic memory (#177) there are always background writers — auto-remember at chat close
-(desktop main), the `remember`/`forget_memory` tools (every surface), and the Persona panel — so
+(the host's desktop-chat memory handlers), the `remember`/`forget_memory` tools (every surface), and the Persona panel — so
 the rule is now absolute for everything except consolidation apply:
 
 - adding facts → `appendMemories` (insert-only);

@@ -34,9 +34,16 @@ import { createTerminalTasks, type PtyFactory, type TerminalTasks } from "./term
 import { createShellOps } from "./shell-ops.js";
 import { createKeepAwake, keepAwakeFile, keepAwakeTooltip, loadKeepAwake, saveKeepAwake, type KeepAwakeState } from "./keep-awake.js";
 import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
+import { TRAY_TINT, tintBitmap } from "./tray-icon.js";
 
 // dist/main.js sits next to package.json (esbuild output isn't relocated).
 const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"));
+
+// The shell's own OS. Off macOS (Windows) the shell is remote-only: no local core, no SF Symbols, Ctrl
+// for Cmd, and the updater only links to the releases page (#813).
+const IS_MAC = process.platform === "darwin";
+// Windows toasts are attributed by AppUserModelID; without it they show as Electron (or not at all).
+if (process.platform === "win32") app.setAppUserModelId(pkg.build.appId);
 
 // Module-level so the Tray isn't garbage-collected (which removes it from the menu bar).
 let tray: Tray | undefined;
@@ -166,22 +173,27 @@ app.whenReady().then(async () => {
   });
 
   // Monochrome template image (regenerate with scripts/generate-icons.mjs); macOS inverts
-  // it automatically for light/dark menu bars. Falls back to 🫘 text if the asset is missing.
-  // Representations are added explicitly so retina reliably gets the @2x instead of an
-  // upscaled 16px (createFromPath's DPI-suffix detection proved flaky here).
+  // it automatically for light/dark menu bars, elsewhere it's tinted bean orange instead. Falls back
+  // to 🫘 text (macOS) if the asset is missing. Representations are added explicitly so retina
+  // reliably gets the @2x instead of an upscaled 16px (createFromPath's DPI-suffix detection proved
+  // flaky here).
   const assetsPath = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
   const trayIcon = nativeImage.createEmpty();
   for (const [scaleFactor, file] of [[1, "beanTemplate.png"], [2, "beanTemplate@2x.png"]] as const) {
     const png = join(assetsPath, file);
-    if (existsSync(png)) trayIcon.addRepresentation({ scaleFactor, buffer: readFileSync(png) });
+    if (!existsSync(png)) continue;
+    const buffer = readFileSync(png);
+    if (IS_MAC) { trayIcon.addRepresentation({ scaleFactor, buffer }); continue; }
+    const img = nativeImage.createFromBuffer(buffer);
+    trayIcon.addRepresentation({ scaleFactor, ...img.getSize(), buffer: tintBitmap(img.toBitmap(), TRAY_TINT) });
   }
-  trayIcon.setTemplateImage(true);
+  if (IS_MAC) trayIcon.setTemplateImage(true);
   // Settings/Persona/About/Exit — the avatar's left-click quick actions (Chat/Skills/Projects/
   // Notes, see QUICK_ACTIONS in renderer/avatar.ts) cover the rest. No right-click on the tray.
-  // Icons are SF Symbols via createMenuSymbol (macOS-native, no asset files needed); accelerators
-  // follow macOS convention (⌘, for preferences, ⌘Q for quit) — About has none, matching the
-  // system App menu, where About never gets a shortcut either.
-  const symbol = (name: string) => nativeImage.createMenuSymbol(name);
+  // Icons are SF Symbols via createMenuSymbol (macOS-native, no asset files needed; no icons
+  // elsewhere); accelerators follow macOS convention (⌘, for preferences, ⌘Q for quit, Ctrl off
+  // macOS) — About has none, matching the system App menu, where About never gets a shortcut either.
+  const symbol = (name: string) => (IS_MAC ? nativeImage.createMenuSymbol(name) : undefined);
   // Discord/Teams start/stop, folded into one "Chat Bots" submenu item instead of one tray
   // row per bot. Mirrors SettingsWindow.tsx's own Start/Stop toggle — same host bot
   // supervisor, so both surfaces stay in sync. Rebuilt fresh in buildTrayMenu() below (not just
@@ -215,11 +227,11 @@ app.whenReady().then(async () => {
   };
   // Open at Login: the OS login-item registration is the source of truth (no Bean state), read
   // fresh on every rebuild so removing Bean in System Settings → Login Items shows here. Packaged
-  // only — dev would register node_modules' Electron.app — and only from /Applications, since a
-  // DMG or translocated copy registers a path that later disappears.
+  // only — dev would register node_modules' Electron.app — and on macOS only from /Applications,
+  // since a DMG or translocated copy registers a path that later disappears.
   const buildLoginItemRows = (): MenuItemConstructorOptions[] => {
     if (!app.isPackaged) return [];
-    if (!app.isInApplicationsFolder()) {
+    if (IS_MAC && !app.isInApplicationsFolder()) {
       return [{ label: "Move Bean to Applications to open at login", icon: symbol("power"), enabled: false }];
     }
     const { openAtLogin, status } = app.getLoginItemSettings();
@@ -273,7 +285,7 @@ app.whenReady().then(async () => {
   // The core list (#811): this Mac (macOS only), the saved remote cores, and Add Core… A pick restarts Bean
   // on that core, after the chat window's Keep/Stop review.
   const buildCoreSubmenu = (): MenuItemConstructorOptions[] => [
-    ...(process.platform === "darwin"
+    ...(IS_MAC
       ? [{ label: "This Mac", type: "radio" as const, checked: coreChoice.selected === "local", click: () => void switchCore("local") }] : []),
     ...coreChoice.cores.map((c) => ({ label: coreLabel(c), type: "radio" as const, checked: c.id === coreChoice.selected, click: () => void switchCore(c.id) })),
     { type: "separator" },
@@ -284,15 +296,15 @@ app.whenReady().then(async () => {
     { label: "Bring Bean Back", icon: symbol("location"), click: () => avatarControls.bringBack() },
     { label: coreRowLabel(), icon: symbol("server.rack"), submenu: buildCoreSubmenu() },
     ...proposalRows(),
-    { label: "Settings", icon: symbol("gearshape"), accelerator: "Cmd+,", click: () => openComponent("settings") },
+    { label: "Settings", icon: symbol("gearshape"), accelerator: "CmdOrCtrl+,", click: () => openComponent("settings") },
     ...(localCore ? [{ label: "Chat Bots", icon: symbol("message"), submenu: buildChatopsSubmenu() }] : []),
-    { label: "Keep Mac Awake", icon: symbol("cup.and.saucer"), type: "checkbox", checked: keepAwake.alwaysOn(), click: (item) => toggleKeepAwake("alwaysOn", item.checked) },
+    { label: IS_MAC ? "Keep Mac Awake" : "Keep PC Awake", icon: symbol("cup.and.saucer"), type: "checkbox", checked: keepAwake.alwaysOn(), click: (item) => toggleKeepAwake("alwaysOn", item.checked) },
     // Greyed (no click, no beep) while Keep Mac Awake is off; the remembered choice still shows.
     { label: "Keep Display On", icon: symbol("display"), type: "checkbox", checked: keepAwake.display(), enabled: keepAwake.alwaysOn(), click: (item) => toggleKeepAwake("display", item.checked) },
     ...buildLoginItemRows(),
-    { label: "Persona", icon: symbol("person.crop.circle"), accelerator: "Cmd+P", click: () => openComponent("persona") },
+    { label: "Persona", icon: symbol("person.crop.circle"), accelerator: "CmdOrCtrl+P", click: () => openComponent("persona") },
     { label: "About", icon: symbol("info.circle"), click: () => openComponent("about") },
-    { label: "Exit", icon: symbol("rectangle.portrait.and.arrow.right"), accelerator: "Cmd+Q", click: () => app.quit() },
+    { label: "Exit", icon: symbol("rectangle.portrait.and.arrow.right"), accelerator: "CmdOrCtrl+Q", click: () => app.quit() },
   ]);
   let trayMenu = buildTrayMenu();
   tray = new Tray(trayIcon);
@@ -361,7 +373,7 @@ app.whenReady().then(async () => {
     return coreSave;
   };
   const switchCore = (id: unknown): Promise<CoreSwitchOutcome> => {
-    const known = id === "local" ? process.platform === "darwin" : coreChoice.cores.some((c) => c.id === id);
+    const known = id === "local" ? IS_MAC : coreChoice.cores.some((c) => c.id === id);
     if (!known || id === coreChoice.selected) return Promise.resolve("refused");
     return new Promise((resolve) => closeChatThen(() => {
       const before = coreChoice.selected;
@@ -652,7 +664,11 @@ app.whenReady().then(async () => {
         },
         onWorking: (working) => keepAwake.setWorking(working),
       });
-      remoteIpc = registerRemoteIpc(ipcMain, { core: r, mounts: remoteMounts });
+      remoteIpc = registerRemoteIpc(ipcMain, {
+        core: r, mounts: remoteMounts,
+        // As the local save does: a CLI switched off in Settings leaves every picker.
+        onConfigSaved: () => push.broadcast(IPC.cliAvailabilityChanged, undefined),
+      });
       app.on("before-quit", () => { if (quitting) r.detach(); });
       stopCore = () => r.detach();
       r.connect();
@@ -668,10 +684,14 @@ app.whenReady().then(async () => {
         author: pkg.author,
         description: pkg.description,
         isPackaged: app.isPackaged,
+        selfUpdate: IS_MAC,
       }),
       currentVersion: pkg.version,
       isPackaged: app.isPackaged,
-      checkAndDownloadUpdate: (currentVersion: string) => checkAndDownloadUpdate(currentVersion),
+      // The install is a macOS bundle swap (ditto + codesign); off macOS nothing is downloaded, so
+      // install has nothing to swap either — About shows only the releases link there.
+      checkAndDownloadUpdate: (currentVersion: string) => (IS_MAC ? checkAndDownloadUpdate(currentVersion)
+        : Promise.resolve({ result: { status: "error" as const, message: "Download new versions from the releases page." } })),
       // The install ends in app.relaunch() + app.exit(), which skips before-quit — so the only
       // thing that would reap the chatops children is each server's 5s exitWhenOrphaned() poll,
       // and the replacement app can autostart Teams inside that window and lose the port to the
@@ -703,7 +723,7 @@ app.whenReady().then(async () => {
         list: async () => ({
           selected: coreChoice.selected,
           cores: coreChoice.cores.map((c) => ({ id: c.id, label: coreLabel(c) })),
-          canUseLocal: process.platform === "darwin",
+          canUseLocal: IS_MAC,
         }),
         add: async (hostName, container) => {
           const parsed = parseRemoteCore(hostName, container);
@@ -756,6 +776,6 @@ app.whenReady().then(async () => {
 
 ipcMain.on(IPC.quit, () => app.quit());
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+// Never quit when the windows close (on any OS): the avatar only hides, and the tray's Exit is the one
+// way out. A listener is required — without one Electron quits on window-all-closed off macOS.
+app.on("window-all-closed", () => {});

@@ -3,7 +3,7 @@
 `main.ts` boots the **shell** (avatar, tray, theme, updater, windows) always and the **local core**
 (`~/.bean`, `createHost()`, terminals, outbox claim) only when `userData/cores.json` selects it
 (`core-store.ts`: `{ "selected": "local" | <remote id> | null, "cores": [...] }`; no/corrupt file = local on
-macOS, none elsewhere). A remote selection boots the remote adapter instead ([convention-remote-core-shell](convention-remote-core-shell.md)).
+macOS, none elsewhere; a saved `"local"` off macOS also loads as none — local is macOS-only). A remote selection boots the remote adapter instead ([convention-remote-core-shell](convention-remote-core-shell.md)).
 
 - With no core, nothing may touch `~/.bean`: tray rows that read it (proposals, Chat Bots) are hidden
   and the avatar log goes to `userData/logs/`. The no-core e2e (`no-core.e2e.ts`) asserts the dir is

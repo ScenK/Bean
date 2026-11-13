@@ -29,8 +29,8 @@ Decisions worth keeping:
   delegate with the hidden `build-routine` skill, which never writes `~/.bean` — Bean parses the
   last ```json fence, keeps the brief's name/interval/sinks, re-runs the command itself, saves
   drafted skills only under free names, and saves the routine **disabled**. Feed briefs skip the
-  agent (`discoverFeedUrl`). Schedule briefs just open the manual editor. Builds live in main
-  (`app/routine-builder.ts`) so closing the window doesn't lose them.
+  agent (`discoverFeedUrl`). Schedule briefs just open the manual editor. Builds live in the host
+  (`host/src/routine-builder.ts`) so closing the window doesn't lose them.
 - **Hand-off is at-least-once**: an item is marked seen only after its todo insert / digest
   delivery succeeded; a failed hand-off counts as a poll failure (status line + alarm) and the
   item is re-offered next poll. Results of a poll whose source was edited mid-flight are dropped.

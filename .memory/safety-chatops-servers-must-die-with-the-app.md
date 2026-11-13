@@ -52,7 +52,7 @@ Update installs go `app.relaunch()` + `app.exit()`, which **skips `before-quit`*
 (`exitWhenOrphaned()`) is what reaps the old servers there, not `stopAll()`. Autostart then spawns
 fresh ones. Don't "simplify" the orphan guard away on the theory that `before-quit` covers it.
 
-Because of that, **`installUpdate` in `main.ts` calls `host.bots.stopAll()` itself** — passed as
+Because of that, **`installUpdate` in `main.ts` calls `stopCore()` (→ `h.bots.stopAll()`) itself** — passed as
 `installAndRelaunch`'s `relaunch` hook, not run up front. Relying on the orphan guard there isn't
 enough: its poll is 5s, and the replacement app autostarts within that window, so Teams would lose
 :3978 to a server that is already doomed. Two writers, one port, and the loser is the one the user
@@ -100,7 +100,7 @@ to say no. Two corollaries, both of which were bugs first:
 `saveChatopsEnabled` writes to `<file>.tmp` and renames over the target. `writeFile` truncates
 first, so an interrupted write (force quit, crash, the update exit) leaves a partial file — and
 `loadChatopsEnabled` reads anything unparseable as "nothing enabled", which switches every bot off
-without saying so. Chaining the writes in `main.ts` orders them; only the rename makes each one
+without saying so. Chaining the writes in `@bean/host`'s `bots.ts` orders them; only the rename makes each one
 all-or-nothing.
 
 **When debugging "my chatops change didn't take effect": check the process, not just the code.**
