@@ -190,7 +190,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     void deps.loadRoutines().then(async (all) => {
       const current = all.find((r) => r.name === routine.name);
       if (!current?.enabled || !current.watch || stopped || !mayFire()) return;
-      await poll(current);
+      await poll(current, true);
       if (!stopped) await tick();
     }).catch((err: unknown) => console.error(`bean: watch "${routine.name}" post-run check failed`, err));
   };
@@ -298,8 +298,11 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
 
   /** One poll: seed on first sight (fires nothing), otherwise diff against the seen-set.
    * Todo-driven watches only queue — the queue is the due signal tick() drains. */
-  async function poll(routine: Routine): Promise<WatchCheckResult> {
+  /** `auto` = a scheduled/post-run poll: a lease lost mid-poll drops its results with no side
+   * effects (nothing marked seen, so the new holder's next poll re-offers them). Check now isn't. */
+  async function poll(routine: Routine, auto = false): Promise<WatchCheckResult> {
     const watch = routine.watch;
+    const lost = (): boolean => auto && !mayFire();
     if (!watch || !deps.pollWatch || !deps.watchSeen) return { newItems: 0, error: "watch polling isn't available" };
     if (polling.has(routine.name)) return { newItems: 0, error: "already checking" };
     const at = now().toISOString();
@@ -307,6 +310,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     // shows on the status line and counts toward the alarm, and nothing gets marked seen.
     const fail = async (err: unknown): Promise<WatchCheckResult> => {
       const error = err instanceof Error ? err.message : String(err);
+      if (lost()) return { newItems: 0, error };
       const count = (failures.get(routine.name) ?? 0) + 1;
       failures.set(routine.name, count);
       if (count === ALARM_AFTER) deps.alarm?.(routine, error);
@@ -325,6 +329,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       // them rather than seeding/stamping the new one with them.
       const current = (await deps.loadRoutines()).find((r) => r.name === routine.name);
       if (!current?.watch || watchSourceKey(current.watch) !== watchSourceKey(watch)) return { newItems: 0 };
+      if (lost()) return { newItems: 0 };
       const unique = [...new Map(items.map((i) => [i.id, i])).values()];
       const ids = unique.map((i) => i.id);
       const source = watchSourceKey(watch);
@@ -340,6 +345,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
           await fireNotify(routine, fresh, at);
         } else {
           for (const item of fresh) {
+            if (lost()) return { newItems: 0 }; // the rest stay unseen for the new holder
             await deps.addTodo?.(routine.name, watchTodoText(item));
             deps.watchSeen.markNew(routine.name, [item.id]);
           }
@@ -398,7 +404,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         // No cron, no missed-marking: a watch is due when its queue has work. The window gates
         // scheduled polls only (read against now(), since earlier polls this pass may be slow);
         // a skipped poll leaves lastPoll/failures alone, and draining is never gated.
-        if (pollDue({ ...routine, watch: routine.watch }, state, nowT) && inWatchWindow(routine.watch.window, now())) await poll(routine);
+        if (pollDue({ ...routine, watch: routine.watch }, state, nowT) && inWatchWindow(routine.watch.window, now())) await poll(routine, true);
         const hasWork = routine.steps.length > 0 && routine.todoDriven && deps.hasPendingTodos
           ? await deps.hasPendingTodos(routine.name) : false;
         if (hasWork) due.push(routine);

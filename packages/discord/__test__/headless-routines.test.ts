@@ -28,6 +28,7 @@ describe("headless routines boot checks", () => {
       expect(line).toContain("desktop app (pid 42 on mac)");
       expect(line).not.toContain("\n");
     }
+    expect(leaseLostNotice(undefined)).toMatch(/couldn't renew/);
   });
 
   it("refuses to start (no cleanup, no scheduler) when the lease claim errors", async () => {

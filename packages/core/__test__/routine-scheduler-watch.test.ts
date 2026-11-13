@@ -86,6 +86,28 @@ describe("watch triggers", () => {
     expect(t.states().yt?.history[0]?.steps).toEqual([]);
   });
 
+  it("a lease lost while an automatic poll is in flight drops its results (no notify, no todos, nothing seen)", async () => {
+    let held = true;
+    for (const r of [notify(), queue()]) {
+      held = true;
+      const t = setup([r], { canSchedule: () => held });
+      t.setItems([{ id: "a", text: "A" }]);
+      await t.sched.tick(); // seed
+      t.setItems([{ id: "a", text: "A" }, { id: "b", text: "B" }]);
+      vi.mocked(t.deps.pollWatch).mockImplementationOnce(async () => { held = false; return [{ id: "a", text: "A" }, { id: "b", text: "B" }]; });
+      t.advance(15);
+      await t.sched.tick();
+      expect(t.deps.deliverDigest).not.toHaveBeenCalled();
+      expect(t.deps.addTodo).not.toHaveBeenCalled();
+      expect(t.states()[r.name]?.history ?? []).toHaveLength(0);
+      // The item stayed unseen: the next holder's poll still offers it.
+      held = true;
+      t.advance(15);
+      await t.sched.tick();
+      expect(r.steps.length === 0 ? t.deps.deliverDigest : t.deps.addTodo).toHaveBeenCalledOnce();
+    }
+  });
+
   it("respects the interval between polls", async () => {
     const t = setup([notify()]);
     await t.sched.tick();

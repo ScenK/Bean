@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDb } from "../src/db.js";
+import { closeDb, openDb } from "../src/db.js";
 import { claimSchedulerLease, holdSchedulerLease } from "../src/scheduler-lease.js";
 import { createRoutineScheduler } from "../src/routine-scheduler.js";
 import type { Routine, RoutineRunResult, RoutineState } from "../src/index.js";
@@ -103,6 +103,24 @@ describe("scheduler lease", () => {
     spy.mockRestore();
     expect(cb.acquired).not.toHaveBeenCalled();
     expect(cb.blocked).not.toHaveBeenCalled();
+  });
+
+  it("renewals that keep failing fail closed at the last good expiry: held() goes false, onLost(undefined)", () => {
+    vi.useFakeTimers({ now: 0 });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const cb = { acquired: vi.fn(), blocked: vi.fn(), lost: vi.fn() };
+    const lease = holdSchedulerLease({ file, label: "A", ttlMs: TTL, heartbeatMs: 40_000, onAcquired: cb.acquired, onBlocked: cb.blocked, onLost: cb.lost });
+    expect(lease.held()).toBe(true);
+    openDb(file).exec("DROP TABLE leases"); // every claim now throws
+    vi.advanceTimersByTime(80_000); // failed beats at 40s/80s: still inside the 90s expiry
+    expect(lease.held()).toBe(true);
+    expect(cb.lost).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(10_000); // 90s, between beats: held() is already false
+    expect(lease.held()).toBe(false);
+    vi.advanceTimersByTime(30_000); // 120s beat fails too → lost
+    expect(cb.lost).toHaveBeenCalledWith(undefined);
+    lease.stop();
+    spy.mockRestore();
   });
 
   it("a refused process stands by and takes over after a crashed holder's lease expires; the stalled holder learns it lost", () => {

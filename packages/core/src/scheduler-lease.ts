@@ -46,8 +46,9 @@ export interface HoldSchedulerLeaseOpts {
   onAcquired: () => void;
   /** Fired once, on the first failed claim. Keeps retrying every heartbeat (standby) until stop(). */
   onBlocked: (by: LeaseHolder) => void;
-  /** A renewal found someone else holding it (we stalled past the TTL and were taken over). Terminal. */
-  onLost: (by: LeaseHolder) => void;
+  /** A renewal found someone else holding it (we stalled past the TTL and were taken over), or
+   * renewals kept failing until our last good expiry passed (`by` undefined). Terminal. */
+  onLost: (by: LeaseHolder | undefined) => void;
   ttlMs?: number;
   heartbeatMs?: number;
   now?: () => number;
@@ -56,29 +57,37 @@ export interface HoldSchedulerLeaseOpts {
 /** Takes the scheduler lease and heartbeats it. A refused process stands by and takes over once
  * the holder's heartbeat expires (crash) or it releases (clean quit). A sleeping Mac's own expired
  * lease is just renewed on wake, unless another process took it meanwhile (→ onLost). */
-export function holdSchedulerLease(opts: HoldSchedulerLeaseOpts): { stop: () => void } {
+export function holdSchedulerLease(opts: HoldSchedulerLeaseOpts): { stop: () => void; held: () => boolean } {
   const ttl = opts.ttlMs ?? SCHEDULER_LEASE_TTL_MS;
   const now = opts.now ?? Date.now;
   const holder = randomUUID();
   const label = `${opts.label} (pid ${process.pid} on ${hostname()})`;
   let state: "waiting" | "held" | "done" = "waiting";
   let blocked = false;
+  // Expiry of our last successful claim: past it, another process may hold the row.
+  let heldUntil = 0;
+  const lose = (by: LeaseHolder | undefined): void => {
+    state = "done";
+    clearInterval(timer);
+    opts.onLost(by);
+  };
   const beat = (): void => {
     let by: LeaseHolder | undefined;
+    const t = now();
     try {
-      by = claimSchedulerLease(opts.file, holder, label, now(), ttl);
+      by = claimSchedulerLease(opts.file, holder, label, t, ttl);
     } catch (err) {
-      // A busy/locked db: try again next beat. A holder that can't renew for a full TTL loses it.
+      // A busy/locked db: try again next beat — but fail closed once our last good expiry passes.
       console.error("bean: scheduler lease heartbeat failed", err);
+      if (state === "held" && now() >= heldUntil) lose(undefined);
       return;
     }
+    if (!by) heldUntil = t + ttl;
     if (state === "waiting") {
       if (!by) { state = "held"; opts.onAcquired(); }
       else if (!blocked) { blocked = true; opts.onBlocked(by); }
     } else if (state === "held" && by) {
-      state = "done";
-      clearInterval(timer);
-      opts.onLost(by);
+      lose(by);
     }
   };
   const timer = setInterval(beat, opts.heartbeatMs ?? SCHEDULER_LEASE_HEARTBEAT_MS);
@@ -92,5 +101,6 @@ export function holdSchedulerLease(opts: HoldSchedulerLeaseOpts): { stop: () => 
     state = "done";
   };
   beat();
-  return { stop };
+  // Fails closed between beats too: a stalled renewal stops scheduling at the old expiry.
+  return { stop, held: () => state === "held" && now() < heldUntil };
 }

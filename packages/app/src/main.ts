@@ -641,14 +641,16 @@ app.whenReady().then(async () => {
       schedulerLeaseHeld = false;
       stopScheduler?.();
       taskStatus.error("scheduler:lease", {
-        kind: "routine", name: "Sprouts", line: "Sprouts and reminders stopped: another Bean took over",
-        detail: `${by.label} took over the scheduler for this data directory. Relaunch Bean to resume here.`,
+        kind: "routine", name: "Sprouts", line: by ? "Sprouts and reminders stopped: another Bean took over" : "Sprouts and reminders stopped: couldn't renew the scheduler lease",
+        detail: by
+          ? `${by.label} took over the scheduler for this data directory. Relaunch Bean to resume here.`
+          : "Bean couldn't write its scheduler heartbeat to bean.db before it expired. Relaunch Bean to resume.",
       });
     },
   });
   app.on("before-quit", () => schedulerLease.stop());
   setInterval(() => {
-    if (!schedulerLeaseHeld) return;
+    if (!schedulerLease.held()) return;
     fireDueReminders(remindersPath, new Date(), {
       untargeted: (r) => {
         void deliver({ body: r.text }, transports).then((outcomes) => {
@@ -883,7 +885,7 @@ app.whenReady().then(async () => {
       },
       addTodo: async (r, text) => { await addTodo(dbFile(dir), r, text); },
       saveRoutine: (r) => saveRoutine(routinesPath, r),
-      canSchedule: () => schedulerLeaseHeld,
+      canSchedule: schedulerLease.held, // fails closed past the last good renewal
       alarm: (routine, error) => {
         if (notificationTransport.available()) {
           void notificationTransport.send({ title: `Sprout: ${routine.name}`, body: `Can't check for new items — ${error}`, meta: { open: "routines" } });

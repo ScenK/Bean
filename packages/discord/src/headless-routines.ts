@@ -41,8 +41,9 @@ export const leaseBlockedNotice = (by: LeaseHolder): string =>
   "Stop it, or wait ~90s if it crashed (its lease expires).";
 export const leaseClaimFailedNotice =
   "bean: couldn't take the scheduler lease in bean.db (see the error above). Not scheduling; exiting.";
-export const leaseLostNotice = (by: LeaseHolder): string =>
-  `bean: the scheduler lease was taken over by ${by.label} (this process stalled past its heartbeat). Stopping; exiting.`;
+export const leaseLostNotice = (by: LeaseHolder | undefined): string => by
+  ? `bean: the scheduler lease was taken over by ${by.label} (this process stalled past its heartbeat). Stopping; exiting.`
+  : "bean: couldn't renew the scheduler lease in bean.db before it expired (see the errors above). Stopping; exiting.";
 
 export interface HeadlessRoutineDeps {
   dir: string;
@@ -113,6 +114,7 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
   });
   const watchPoll = { fetchText, exec: execWatchCommand(process.env.PATH ?? "") };
   const scheduler = createRoutineScheduler({
+    canSchedule: lease.held, // fails closed between a missed renewal and the exit
     loadRoutines: () => loadRoutines(routinesDir(dir)),
     loadStates: () => loadRoutineStates(routineStateFile(dir)),
     saveStates: (s) => saveRoutineStates(routineStateFile(dir), s),
@@ -153,6 +155,7 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
   // Reminders: the desktop app's 30s loop, here. Targeted ones go through the outbox this
   // process drains; untargeted (desktop-set) ones become owner DMs like the other notices.
   const reminderTimer = setInterval(() => {
+    if (!lease.held()) return;
     fireDueReminders(remindersFile(dir), new Date(), {
       untargeted: (r) => ownerDm(r.text, "⏰ Reminder"),
       enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID),
