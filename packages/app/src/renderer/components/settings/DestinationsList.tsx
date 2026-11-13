@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import type { AliasResult } from "@bean/core";
-import type { DestinationView } from "../../../destinations.js";
+import type { DestinationView } from "@bean/host";
 
 // Settings → ChatOps → Destinations (#686). Platform names are untrusted display data: they only
 // ever land in text nodes / attributes, never as markup.

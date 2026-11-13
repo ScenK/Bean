@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import type { ProposalOutcome } from "@bean/core";
-import type { SkillProposalView, StepAttemptView } from "../../../ipc.js";
+import type { SkillProposalView, StepAttemptView } from "@bean/host";
 import { lineDiff } from "./line-diff.js";
 
 export interface ProposalLists {

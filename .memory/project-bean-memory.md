@@ -11,7 +11,7 @@ see `db.ts`'s `migrateFromFiles`.
 - **Automatic, no confirm card (#177):** closing the chat window is instant — the renderer sends
   `rememberOnClose(transcript, { incognito })` fire-and-forget and calls `allowChatClose` (the
   `reviewBeforeClose` intercept survives only for the running-delegates Keep/Stop prompt). Main
-  (`buildMemoryHandlers` in `ipc.ts`) runs `extractMemories` → `appendMemories` and keeps the id
+  (`buildMemoryHandlers` in `host/src/memory.ts`) runs `extractMemories` → `appendMemories` and keeps the id
   batch in memory; a non-empty batch shows a `kind: "memory"` avatar bubble whose click opens
   Persona (never undoes — its old click meaning was dismiss). Persona's **Just remembered · Undo**
   deletes exactly that batch's ids; the Undo window lasts until the next batch or app restart.

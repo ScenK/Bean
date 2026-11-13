@@ -16,3 +16,11 @@ When adding logic: if it's pure routing/IO that could be tested in isolation, it
 `core` as a dependency-injected function. If it's Electron window/IPC wiring, it belongs in
 `app/`. Don't blur the two — a single `electron` import in `core` breaks the test setup for
 the whole package.
+
+**`@bean/host` (#803)** is the second Electron-free layer: the IPC handler builders (notes,
+memory, skills, skill proposals, persona, projects, routines, todos, destinations, config view)
+that a headless host will serve too. It depends on `@bean/core` only — `electron` isn't a
+dependency, and `host/__test__/electron-free.test.ts` fails on any import. Anything that needs
+a dialog, Finder, the browser or a window goes through the injected `ShellOps` interface
+(`host/src/shell-ops.ts`), implemented once in `app/src/shell-ops.ts`. The app's `registerIpc`
+only wires channels (`channels.ts`) to these builders; `ipc.ts` imports `electron` for types only.

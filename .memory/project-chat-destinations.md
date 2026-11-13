@@ -20,7 +20,7 @@ channel id). Not `chatops_conversations` — that one is the owner-only continua
   stay until forgotten.
   Lost access or `channelDelete` → `forgetDestination`, which never deletes an aliased row.
   Every call is wrapped — a failed record must not fail a turn or throw a delivery into retry.
-- **Settings UI (#686):** `app/src/destinations.ts` (IPC `destinations*`) feeds core the sprout
+- **Settings UI (#686):** `host/src/destinations.ts` (IPC `destinations*`) feeds core the sprout
   references (`aliasUsers` over `loadRoutines`: a chat sink's `alias`) and a
   "1:1 · <speaker>" hint from `ambientSpeakers` for rows with no platform name. The renderer
   (`settings/DestinationsList.tsx`) disables Rename/Clear for referenced aliases; core still
@@ -46,7 +46,7 @@ channel id). Not `chatops_conversations` — that one is the owner-only continua
   id → alias in every sprout using it.
 - **Desktop send (#688):** `propose_send { destination, text }` is a static spec (no names — an enum
   would bust the prompt cache), offered only when the surface passes `sendAvailable` (desktop:
-  `ChatHandlerDeps.proposeSend`). Main (`buildSendHandlers` in `app/src/destinations.ts`) matches the
+  `ChatHandlerDeps.proposeSend`). Main (`buildSendHandlers` in `host/src/destinations.ts`) matches the
   spoken name and keeps the proposal (body + opaque option id → row, capped at 50); the renderer's
   `SendCard` sends back only the card id + option id, so it can't edit the body or name an unoffered
   row. Send re-resolves the row (forgotten since → refused), is one-shot, and enqueues

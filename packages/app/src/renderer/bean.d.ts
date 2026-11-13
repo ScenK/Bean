@@ -9,11 +9,10 @@ import type { LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult } f
 import type { TerminalEvent, TerminalStartResult } from "../terminal-tasks.js";
 import type { TaskJob } from "../task-status.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "../chatops-servers.js";
-import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "../ipc.js";
-import type { RoutineBuildView } from "../routine-builder.js";
+import type { InterruptedRunNotice, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "../ipc.js";
+import type { SkillProposalView, StepAttemptView, RoutineStateView, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, RoutineBuildView, DestinationView, NameRawResult, SendResult } from "@bean/host";
 import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "../synced-chats.js";
 import type { DeskContinueReply, DeskContinueRequest } from "../desk-continue.js";
-import type { DestinationView, NameRawResult, SendResult } from "../destinations.js";
 import type { AliasResult } from "@bean/core";
 import type { DesktopChatListing, RunStatus, WatchCheckResult } from "@bean/core";
 

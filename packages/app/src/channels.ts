@@ -10,33 +10,7 @@ export interface DroppedImage { path: string; mimeType: string; size: number; da
 /** What a drop on the avatar hands the chat: a path/URL as text, or image/PDF files to attach. */
 export type ChatDrop = string | DroppedImage[];
 
-export interface ConfigView {
-  openaiApiKey: string;
-  model: string;
-  terminalApp: string;
-  editorApp: string;
-  delegateCli: string;
-  systemControls: boolean;
-  reasoningEffort: string;
-  routineDigestContext: boolean;
-  disabledClis: string[];
-  webSearch: boolean;
-  autoMemory: boolean;
-  paths: { config: string; skills: string; projects: string; persona: string };
-}
-export interface ConfigUpdate {
-  openaiApiKey: string;
-  model: string;
-  terminalApp: string;
-  editorApp: string;
-  delegateCli: string;
-  systemControls: boolean;
-  reasoningEffort: string;
-  routineDigestContext: boolean;
-  disabledClis: string[];
-  webSearch: boolean;
-  autoMemory: boolean;
-}
+export type { ConfigView, ConfigUpdate } from "@bean/host";
 export interface AppInfo {
   version: string;
   author: string;

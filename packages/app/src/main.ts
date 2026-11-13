@@ -7,7 +7,7 @@ import { basename, join, dirname } from "node:path";
 import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./chatops-enabled-store.js";
 import { createChatopsServers } from "./chatops-servers.js";
 import { buildSyncedChatHandlers, type SyncedChatEvent } from "./synced-chats.js";
-import { buildDestinationHandlers, buildSendHandlers } from "./destinations.js";
+import { buildDestinationHandlers, buildSendHandlers } from "@bean/host";
 import { buildDeskContinueHandler } from "./desk-continue.js";
 import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
@@ -39,10 +39,8 @@ import {
 } from "@bean/core";
 import type { RouteSuggestion, ActionTool, Transport, CliName, Routine } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
-import {
-  registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens,
-  buildRoutineHandlers, buildSkillProposalHandlers, buildTodoHandlers, buildPendingUpdateStore, buildChatThreadHandlers, type ChatPromptPayload,
-} from "./ipc.js";
+import { registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens, buildPendingUpdateStore, buildChatThreadHandlers, type ChatPromptPayload } from "./ipc.js";
+import { buildRoutineHandlers, buildSkillProposalHandlers, buildTodoHandlers } from "@bean/host";
 import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop } from "./channels.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import {
@@ -55,6 +53,7 @@ import { createDelegateTasks, resolveDelegateSelection, resolvedPathSpawnFn } fr
 import { createLiveTasks, LIVE_AGENT_NAMES } from "./live-tasks.js";
 import { createTerminalTasks, type PtyFactory } from "./terminal-tasks.js";
 import { createRoutineBuilder } from "./routine-builder.js";
+import { createShellOps } from "./shell-ops.js";
 import { createTaskStatus, createRoutineBubbles } from "./task-status.js";
 import { createKeepAwake, keepAwakeFile, keepAwakeTooltip, loadKeepAwake, saveKeepAwake, type KeepAwakeState } from "./keep-awake.js";
 import { checkAndDownloadUpdate, installAndRelaunch, cleanupExtractedBundle } from "./updater.js";
@@ -925,7 +924,7 @@ app.whenReady().then(async () => {
       enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID), newId: randomUUID,
     });
     ({ releaseChatClient, clientOfMount } = registerIpc(ipcMain, {
-      proposeSend: sendHandlers.propose, sendHandlers,
+      proposeSend: sendHandlers.propose, sendHandlers, shell: createShellOps(),
       loadSkills: loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
       loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory, deleteMemories, extractMemories, restoreDreamRun, dreamDetails,
       ownerSubjectIds: () => ownerSubjectIds(dbFile(dir), dir),

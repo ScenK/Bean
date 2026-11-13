@@ -8,7 +8,8 @@ import { IPC } from "../src/channels.js";
 import { createPush } from "../src/push.js";
 import type { Memory } from "@bean/core";
 
-vi.mock("electron", () => ({ shell: { openExternal: vi.fn(async () => {}), openPath: vi.fn(async () => ""), showItemInFolder: vi.fn() } }));
+// The injected Electron side (app/src/shell-ops.ts) — registerIpc never imports electron itself.
+const shell = { openExternal: vi.fn(async () => {}), openPath: vi.fn(async () => {}), reveal: vi.fn(), pickFolder: vi.fn(), pickApp: vi.fn(), fitHeight: vi.fn() };
 
 const ID = "0b6c4a52-1f5e-4c55-9a3e-2c6f0d9e7a10";
 const OTHER = "9f1d7c2e-3b4a-4e6f-8a1b-5c2d3e4f5a6b";
@@ -193,7 +194,7 @@ function ipcHarness(given: Partial<RegisterDeps> = {}) {
   // The real adapter over fake clients, so mount-tagged pushes route through registerIpc's mount table.
   let clientOfMount: (mountId: string) => number | undefined = () => undefined;
   const push = createPush({ clientOfMount: (m) => clientOfMount(m), client: (id) => [chat, other].find((c) => c.id === id), clients: () => [chat, other] });
-  const all: Partial<RegisterDeps> = { isChatClient: (id) => id === chat.id, push, chatThreadHandlers: handlers, delegateTasks, liveTasks, terminalTasks, ...given };
+  const all: Partial<RegisterDeps> = { isChatClient: (id) => id === chat.id, push, shell, chatThreadHandlers: handlers, delegateTasks, liveTasks, terminalTasks, ...given };
   // Every other dep is a no-op: registration only stores handlers.
   const deps = new Proxy(all, { get: (t, k) => (k in t ? t[k as keyof typeof t] : vi.fn()) }) as RegisterDeps;
   const registered = registerIpc(ipcMain as never, deps);
@@ -232,7 +233,8 @@ describe("chat thread IPC", () => {
 
   it("terminal calls need the chat window and an attached mount; release and window close stop every tab", async () => {
     const { chat, other, invoke, emit, terminalTasks, releaseChatClient } = ipcHarness();
-    const openExternal = vi.mocked((await import("electron")).shell.openExternal);
+    const { openExternal } = shell;
+    openExternal.mockClear();
     const T = "d0000000-0000-4000-8000-000000000001";
     emit(IPC.chatAttach, chat, A);
     emit(IPC.chatAttach, chat, B);
@@ -276,9 +278,7 @@ describe("chat thread IPC", () => {
   it("chatOpenPath: only the owning chat, validated in main, relative paths only against the chat's live project", async () => {
     const proj = realpathSync(mkdtempSync(join(tmpdir(), "bean-open-")));
     const { chat, other, emit, liveTasks } = ipcHarness({ getEditorApp: () => "", getTerminalApp: () => "" });
-    const { shell } = await import("electron");
-    const reveal = vi.mocked(shell.showItemInFolder);
-    const openPath = vi.mocked(shell.openPath);
+    const { reveal, openPath } = shell;
     reveal.mockClear();
     openPath.mockClear();
     const settle = () => new Promise((r) => setTimeout(r, 20));

@@ -1,6 +1,6 @@
 import type { RoutineStep, RunRecord, StepKind } from "@bean/core";
 import { stepGroups } from "@bean/core/routine-graph";
-import type { RoutineStateView, StepAttemptView } from "../../../ipc.js";
+import type { RoutineStateView, StepAttemptView } from "@bean/host";
 
 /** One routine run, tagged with the routine it came from — the dashboard reads every
  * routine's history as a single newest-first stream, not one routine at a time. */

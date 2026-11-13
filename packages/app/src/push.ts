@@ -1,3 +1,4 @@
+import type { ClientId } from "@bean/host";
 import { IPC } from "./channels.js";
 
 /** Main → renderer pushes are routed by client and chat (mount) id, never by Electron's
@@ -37,7 +38,7 @@ export type MountPush = ChannelsOf<"mount">;
 export type BroadcastPush = ChannelsOf<"broadcast">;
 
 /** A renderer client. Electron: its webContents id — only the adapter below knows that. */
-export type ClientId = number;
+export type { ClientId };
 
 export interface Push {
   send: (mountId: string, channel: MountPush, payload: unknown) => void;

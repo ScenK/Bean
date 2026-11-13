@@ -1,5 +1,5 @@
 import type { RoutineChatopsSink, RoutineSinks } from "@bean/core";
-import type { SinkRecipients } from "../../../ipc.js";
+import type { SinkRecipients } from "@bean/host";
 
 const LABEL = { discord: "Discord", teams: "Teams" } as const;
 const ROOM = { discord: "channel", teams: "conversation" } as const;

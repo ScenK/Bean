@@ -21,7 +21,8 @@ import type {
 import type { ChatDrop } from "../../../channels.js";
 import type { DelegateEvent } from "../../../delegate-tasks.js";
 import type { LiveEvent, LiveReceipt, LiveStartResult } from "../../../live-tasks.js";
-import type { CloseTurn, InterruptedRunNotice } from "../../../ipc.js";
+import type { InterruptedRunNotice } from "../../../ipc.js";
+import type { CloseTurn } from "@bean/host";
 
 // Leaving an off-the-record chat discards it, so a running delegate, live session or terminal command
 // asks Keep/Stop first (`switchTo` = the pick). Any other chat with work stays mounted, hidden. `null` = no card.

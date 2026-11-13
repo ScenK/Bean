@@ -1,16 +1,12 @@
 import { describe, expect, it, test, vi } from "vitest";
 import {
-  buildThemeHandlers, buildChatHandler,
-  buildListSkillsHandler, buildListProjectsHandler, buildSaveProjectsHandler, buildSaveSkillHandler,
-  buildDeleteSkillHandler,
-  buildPersonaHandlers, buildLaunchHandler, buildConfigHandlers, buildPlanStore, buildMemoryHandlers,
-  buildDroppedUrlStore, buildChatPromptStore, buildNotesHandlers,
-  buildModelsHandler, buildModelMemoryHandlers, buildRoutineHandlers,
-  buildPendingUpdateStore, buildUpdateHandlers, buildTodoHandlers,
+  buildThemeHandlers, buildChatHandler, buildLaunchHandler, buildPlanStore,
+  buildDroppedUrlStore, buildChatPromptStore, buildModelsHandler, buildModelMemoryHandlers,
+  buildPendingUpdateStore, buildUpdateHandlers,
   parseDashboardTarget, openComponentPayload, notificationOpens, type ChatHandlerDeps,
 } from "../src/ipc.js";
-import type { ConfigView, ConfigUpdate } from "../src/channels.js";
-import type { Project, RouteSuggestion, Skill, Persona, Memory, MemoryCandidate, Routine, ChatTurn } from "@bean/core";
+import { buildMemoryHandlers } from "@bean/host";
+import type { Project, RouteSuggestion, Skill, Persona, Memory } from "@bean/core";
 import type { LaunchSpawnFn } from "@bean/core";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
@@ -460,75 +456,6 @@ describe("chat handler sprout runs", () => {
   });
 });
 
-test("note image handlers accept raw bytes only and serve stored rows as data: URLs", async () => {
-  const stored: Uint8Array[] = [];
-  const saves: { body: string }[] = [];
-  const handlers = buildNotesHandlers({
-    loadNotes: async () => [],
-    saveNote: async (_f, draft) => { saves.push({ body: draft.body }); return "s"; },
-    archiveNote: async () => true, restoreNote: async () => true, purgeNote: async () => true,
-    starNote: async () => {},
-    loadNoteHistory: async () => [],
-    saveNoteImage: async (_f, bytes) => { stored.push(bytes); return "abcdef12-2222-4333-8444-555555555555"; },
-    loadNoteImage: async (_f, id) => (id === "known" ? { mime: "image/png", bytes: Uint8Array.from([1, 2]) } : undefined),
-    dbFile: "/b/bean.db",
-  });
-  await expect(handlers.saveImage("/Users/me/secret.png")).rejects.toThrow(/raw bytes/);
-  await expect(handlers.saveImage({ path: "/etc/passwd" })).rejects.toThrow(/raw bytes/);
-  await expect(handlers.saveImage(new Uint8Array(10 * 1024 * 1024 + 1))).rejects.toThrow(/10 MB/);
-  expect(stored).toHaveLength(0);
-  expect(await handlers.saveImage(Uint8Array.from([9]))).toMatch(/^abcdef12/);
-  expect(await handlers.image("known")).toBe("data:image/png;base64,AQI=");
-  expect(await handlers.image("missing")).toBeUndefined();
-  expect(await handlers.image(42)).toBeUndefined();
-  await handlers.save({ title: "T", body: "B" }, [{ data: "AQI=", mimeType: "image/png" }]);
-  expect(saves[0]!.body).toBe("B\n\n![image](bean-image:abcdef12-2222-4333-8444-555555555555)\n");
-});
-
-test("notes save copies only known draft fields", async () => {
-  const drafts: unknown[] = [];
-  const handlers = buildNotesHandlers({
-    loadNotes: async () => [], saveNote: async (_f, draft) => { drafts.push(draft); return "s"; },
-    archiveNote: async () => true, restoreNote: async () => true, purgeNote: async () => true,
-    starNote: async () => {}, loadNoteHistory: async () => [],
-    saveNoteImage: async () => "x", loadNoteImage: async () => undefined, dbFile: "/b/bean.db",
-  });
-  await handlers.save({ title: "T", body: "B", slug: "s1", project: "/p", source: "manual", archivedAt: "x", upsert: true } as never);
-  expect(drafts).toEqual([{ title: "T", body: "B", slug: "s1", project: "/p", source: "manual" }]);
-});
-
-test("notes handlers pass the configured dir through to the injected store fns", async () => {
-  const calls: unknown[][] = [];
-  let purged = true;
-  const handlers = buildNotesHandlers({
-    loadNotes: async (dir, opts) => { calls.push(["list", dir, opts]); return []; },
-    saveNote: async (dir, draft) => { calls.push(["save", dir, draft.title]); return "slug"; },
-    archiveNote: async (dir, slug) => { calls.push(["archive", dir, slug]); return true; },
-    restoreNote: async (dir, slug) => { calls.push(["restore", dir, slug]); return true; },
-    purgeNote: async (dir, slug) => { calls.push(["purge", dir, slug]); return purged; },
-    loadNoteHistory: async (dir, slug) => { calls.push(["history", dir, slug]); return []; },
-    dbFile: "/b/notes",
-  });
-  await handlers.list();
-  await handlers.list({ includeArchived: "yes" });
-  await handlers.list({ includeArchived: true });
-  expect(await handlers.save({ title: "T", body: "B" })).toBe("slug");
-  await handlers.archive("t");
-  await handlers.restore("t");
-  await handlers.purge("t");
-  await handlers.history("t");
-  expect(calls).toEqual([
-    ["list", "/b/notes", { includeArchived: false }], ["list", "/b/notes", { includeArchived: false }],
-    ["list", "/b/notes", { includeArchived: true }], ["save", "/b/notes", "T"], ["archive", "/b/notes", "t"],
-    ["restore", "/b/notes", "t"], ["purge", "/b/notes", "t"], ["history", "/b/notes", "t"],
-  ]);
-  // Slugs cross IPC untyped: non-strings never reach core, and a refused purge surfaces.
-  await expect(handlers.restore(42)).rejects.toThrow(/invalid note slug/);
-  await expect(handlers.purge(undefined)).rejects.toThrow(/invalid note slug/);
-  purged = false;
-  await expect(handlers.purge("live")).rejects.toThrow(/archived/);
-});
-
 test("chat handler passes action tools through to converse and executes them", async () => {
   const ran: unknown[] = [];
   const handler = buildChatHandler({
@@ -556,90 +483,6 @@ test("chat handler passes action tools through to converse and executes them", a
   const out = await handler({ history: [], message: "remind me" });
   expect(ran).toEqual([{ text: "t", at: "now" }]);
   expect(out.reply).toBe("done");
-});
-
-test("listSkills handler loads skills from both the project and user skills dirs", async () => {
-  const skills: Skill[] = [{ name: "review-code", description: "r", body: "BODY" }];
-  const handler = buildListSkillsHandler({
-    loadSkills: async (projectDir, userDir) => {
-      expect(projectDir).toBe("/b/project-skills");
-      expect(userDir).toBe("/b/skills");
-      return skills;
-    },
-    projectSkillsDir: "/b/project-skills",
-    skillsDir: "/b/skills",
-  });
-  expect(await handler()).toEqual(skills);
-});
-
-test("listSkills handler filters out hidden skills", async () => {
-  const visible: Skill = { name: "review-code", description: "r", body: "BODY" };
-  const hidden: Skill = { name: "bean", description: "intro", body: "BODY", hidden: true };
-  const handler = buildListSkillsHandler({
-    loadSkills: async () => [visible, hidden],
-    projectSkillsDir: "/b/project-skills",
-    skillsDir: "/b/skills",
-  });
-  expect(await handler()).toEqual([visible]);
-});
-
-test("listProjects handler loads projects from the configured projects file", async () => {
-  const projects: Project[] = [{ name: "api", path: "/work/api" }];
-  const handler = buildListProjectsHandler({
-    loadProjects: async (file) => { expect(file).toBe("/b/projects.json"); return projects; },
-    projectsFile: "/b/projects.json",
-  });
-  expect(await handler()).toBe(projects);
-});
-
-test("saveProjects handler writes through the injected deps with the configured projects file", async () => {
-  const projects: Project[] = [{ name: "api", path: "/work/api" }];
-  const saveProjects = vi.fn(async () => {});
-  const handler = buildSaveProjectsHandler({ saveProjects, projectsFile: "/b/projects.json" });
-  await handler(projects);
-  expect(saveProjects).toHaveBeenCalledWith("/b/projects.json", projects);
-});
-
-test("saveSkill handler writes through the injected deps with the configured skills dir", async () => {
-  const saveSkill = vi.fn(async () => {});
-  const handler = buildSaveSkillHandler({ saveSkill, skillsDir: "/b/skills" });
-  await handler("review-code", "new body");
-  expect(saveSkill).toHaveBeenCalledWith("/b/skills", "review-code", "new body");
-});
-
-test("deleteSkill handler deletes through the injected deps with the configured skills dir", async () => {
-  const deleteSkill = vi.fn(async () => {});
-  const handler = buildDeleteSkillHandler({ deleteSkill, skillsDir: "/b/skills" });
-  await handler("review-code");
-  expect(deleteSkill).toHaveBeenCalledWith("/b/skills", "review-code");
-});
-
-test("getPersona handler loads persona from the user file, falling back to the project file", async () => {
-  const persona: Persona = { name: "Bean", tags: ["Warm"] };
-  const handlers = buildPersonaHandlers({
-    loadPersona: async (userFile, projectFile) => {
-      expect(userFile).toBe("/b/persona.json");
-      expect(projectFile).toBe("/b/project-persona.json");
-      return persona;
-    },
-    savePersona: async () => {},
-    personaFile: "/b/persona.json",
-    projectPersonaFile: "/b/project-persona.json",
-  });
-  expect(await handlers.get()).toBe(persona);
-});
-
-test("savePersona handler writes through the injected deps with the configured persona file", async () => {
-  const persona: Persona = { name: "Bean", tags: ["Warm"] };
-  const savePersona = vi.fn(async () => {});
-  const handlers = buildPersonaHandlers({
-    loadPersona: async () => persona,
-    savePersona,
-    personaFile: "/b/persona.json",
-    projectPersonaFile: "/b/project-persona.json",
-  });
-  await handlers.save(persona);
-  expect(savePersona).toHaveBeenCalledWith("/b/persona.json", persona);
 });
 
 function fakeChild() {
@@ -681,14 +524,41 @@ test("launch handler forwards getTerminalApp() into launchInTerminal's terminalA
   expect(spawnLaunch).toHaveBeenCalledWith("open", expect.arrayContaining(["-a", "/Applications/Warp.app"]));
 });
 
-test("config get handler returns the injected view", () => {
-  const view: ConfigView = {
-    openaiApiKey: "sk-x", model: "m", terminalApp: "", editorApp: "", delegateCli: "",
-    systemControls: false, disabledClis: [],
-    paths: { config: "/b/config.json", skills: "/b/skills", projects: "/b/projects.json", persona: "/b/persona.json" },
-  };
-  const handlers = buildConfigHandlers({ getConfig: () => view, applyConfig: async () => {} });
-  expect(handlers.get()).toBe(view);
+test("a forget receipt's Undo: memory.append of result.forgotten restores the identical row; a second restore fails loud", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const core = await import("@bean/core");
+  const dir = await mkdtemp(join(tmpdir(), "bean-forgot-"));
+  try {
+    const file = join(dir, "bean.db");
+    const row: Memory = { id: "d", text: "dentist on Friday", projectPath: "/work/api", createdAt: "2026-07-03T00:00:00.000Z", subjectId: "u1" };
+    await core.appendMemories(file, [row]);
+    const handler = buildChatHandler({
+      loadSkills: async () => [], loadProjects: async () => [], loadPersona: async () => ({ name: "Bean", tags: [] }) as Persona,
+      converse: async ({ messages, tools }) => {
+        if (tools.length === 0) return { content: '{"remember": false, "forget": true}', toolCalls: [] };
+        return messages.some((m) => m.role === "tool")
+          ? { content: "Forgotten.", toolCalls: [] }
+          : { content: "", toolCalls: [{ id: "1", name: "forget_memory", args: { ids: ["d"] } }] };
+      },
+      getModel: () => "m", projectSkillsDir: "/b/ps", skillsDir: "/b/s", projectsFile: "/b/p.json",
+      personaFile: "/b/persona.json", projectPersonaFile: "/b/pp.json",
+      loadMemories: core.loadMemories, appendMemories: core.appendMemories, deleteMemories: core.deleteMemories,
+      dbFile: file,
+    });
+    const out = await handler({ history: [], message: "forget the dentist", source: "typed" });
+    expect(out.forgotten).toEqual([row]);
+    expect(await core.loadMemories(file)).toEqual([]);
+    const handlers = buildMemoryHandlers({
+      loadMemories: core.loadMemories, appendMemories: core.appendMemories, dbFile: file,
+    } as Parameters<typeof buildMemoryHandlers>[0]);
+    await handlers.append(out.forgotten!);
+    expect(await core.loadMemories(file)).toEqual([row]);
+    await expect(handlers.append(out.forgotten!)).rejects.toThrow(/UNIQUE/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("plan store lets a late subscriber pull the pending plan (drop race fix)", () => {
@@ -722,345 +592,6 @@ test("dropped-url store lets a late subscriber pull the pending drop (same drop-
   expect(store.get()).toBe("/Users/x/photo.png");
   // Consumed once so a later reopen can't replay a stale drop.
   expect(store.get()).toBeUndefined();
-});
-
-function memoryHandlersFor(over: Partial<Parameters<typeof buildMemoryHandlers>[0]> = {}) {
-  const appended: Memory[][] = [];
-  const deleted: string[][] = [];
-  const batches: Memory[][] = [];
-  let failures = 0;
-  const existing: Memory[] = [{ id: "1", text: "prefers pnpm", createdAt: "2026-07-03T00:00:00.000Z" }];
-  const handlers = buildMemoryHandlers({
-    loadMemories: async () => existing,
-    appendMemories: async (_file, additions) => { appended.push(additions); },
-    updateMemory: async () => {},
-    deleteMemories: async (_file, ids) => { deleted.push(ids); return ids; },
-    extractMemories: async (transcript, ex, projects) => {
-      expect(ex).toEqual(existing);
-      expect(projects).toEqual([{ name: "api", path: "/work/api" }]);
-      return { candidates: transcript.length ? [{ text: "new fact", projectPath: undefined }] : [], rejected: 0, failed: false };
-    },
-    loadProjects: async () => [{ name: "api", path: "/work/api" }],
-    converse: async () => ({ content: "", toolCalls: [] }),
-    getModel: () => "m",
-    autoMemory: () => true,
-    onMemoryBatch: (b) => { batches.push(b); },
-    onMemoryFailure: () => { failures++; },
-    getLastDream: async () => undefined,
-    restoreDreamRun: async () => ({ restored: 0, skipped: 0 }),
-    dreamDetails: async () => [],
-    dbFile: "/b/bean.db",
-    projectsFile: "/b/projects.json",
-    ...over,
-  });
-  return { handlers, appended, deleted, batches, existing, failures: () => failures };
-}
-
-test("a forget receipt's Undo: memory.append of result.forgotten restores the identical row; a second restore fails loud", async () => {
-  const { mkdtemp, rm } = await import("node:fs/promises");
-  const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
-  const core = await import("@bean/core");
-  const dir = await mkdtemp(join(tmpdir(), "bean-forgot-"));
-  try {
-    const file = join(dir, "bean.db");
-    const row: Memory = { id: "d", text: "dentist on Friday", projectPath: "/work/api", createdAt: "2026-07-03T00:00:00.000Z", subjectId: "u1" };
-    await core.appendMemories(file, [row]);
-    const handler = buildChatHandler({
-      loadSkills: async () => [], loadProjects: async () => [], loadPersona: async () => ({ name: "Bean", tags: [] }) as Persona,
-      converse: async ({ messages, tools }) => {
-        if (tools.length === 0) return { content: '{"remember": false, "forget": true}', toolCalls: [] };
-        return messages.some((m) => m.role === "tool")
-          ? { content: "Forgotten.", toolCalls: [] }
-          : { content: "", toolCalls: [{ id: "1", name: "forget_memory", args: { ids: ["d"] } }] };
-      },
-      getModel: () => "m", projectSkillsDir: "/b/ps", skillsDir: "/b/s", projectsFile: "/b/p.json",
-      personaFile: "/b/persona.json", projectPersonaFile: "/b/pp.json",
-      loadMemories: core.loadMemories, appendMemories: core.appendMemories, deleteMemories: core.deleteMemories,
-      dbFile: file,
-    });
-    const out = await handler({ history: [], message: "forget the dentist", source: "typed" });
-    expect(out.forgotten).toEqual([row]);
-    expect(await core.loadMemories(file)).toEqual([]);
-    const { handlers } = memoryHandlersFor({ loadMemories: core.loadMemories, appendMemories: core.appendMemories, dbFile: file });
-    await handlers.append(out.forgotten!);
-    expect(await core.loadMemories(file)).toEqual([row]);
-    await expect(handlers.append(out.forgotten!)).rejects.toThrow(/UNIQUE/);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-const typed: ChatTurn[] = [{ role: "user", content: "I prefer pnpm", source: "typed" }];
-
-test("rememberOnClose extracts and appends in the background, then Undo deletes exactly that batch", async () => {
-  const { handlers, appended, deleted, batches } = memoryHandlersFor();
-  const batch = await handlers.rememberOnClose(typed, {});
-  expect(batch.map((m) => m.text)).toEqual(["new fact"]);
-  expect(appended).toEqual([batch]);
-  expect(batches).toEqual([batch]);
-  expect(handlers.batch()?.ids).toEqual(batch.map((m) => m.id));
-  expect(await handlers.undoBatch()).toBe(1);
-  expect(deleted).toEqual([batch.map((m) => m.id)]);
-  expect(handlers.batch()).toBeUndefined();
-  expect(await handlers.undoBatch()).toBe(0);
-});
-
-test("an incognito chat writes nothing and never calls extraction", async () => {
-  let extracted = false;
-  const { handlers, appended, batches, failures } = memoryHandlersFor({ extractMemories: async () => { extracted = true; return { candidates: [], rejected: 0, failed: true }; } });
-  expect(await handlers.rememberOnClose(typed, { incognito: true })).toEqual([]);
-  expect(extracted).toBe(false);
-  expect(appended).toEqual([]);
-  expect(batches).toEqual([]);
-  expect(failures()).toBe(0);
-});
-
-test("autoMemory off means no background extraction", async () => {
-  let extracted = false;
-  const { handlers, appended, batches, failures } = memoryHandlersFor({ autoMemory: () => false, extractMemories: async () => { extracted = true; return { candidates: [], rejected: 0, failed: true }; } });
-  expect(await handlers.rememberOnClose(typed, {})).toEqual([]);
-  expect(extracted).toBe(false);
-  expect(appended).toEqual([]);
-  expect(batches).toEqual([]);
-  expect(failures()).toBe(0);
-});
-
-test("Undo last dream restores the recorded run once; an undone or absent run is a no-op", async () => {
-  const restored: string[] = [];
-  let digest: { runId: string; at: string; merged: number; rewritten: number; removed: number; undone?: boolean } | undefined =
-    { runId: "r1", at: "2026-09-01T00:00:00.000Z", merged: 1, rewritten: 0, removed: 2 };
-  const { handlers } = memoryHandlersFor({
-    getLastDream: async () => digest,
-    restoreDreamRun: async (_f, runId) => { restored.push(runId); return { restored: 2, skipped: 1 }; },
-  });
-  expect(await handlers.undoLastDream()).toEqual({ restored: 2, skipped: 1 });
-  digest = { ...digest!, undone: true };
-  expect(await handlers.undoLastDream()).toEqual({ restored: 0, skipped: 0 });
-  digest = undefined;
-  expect(await handlers.undoLastDream()).toEqual({ restored: 0, skipped: 0 });
-  expect(restored).toEqual(["r1"]);
-});
-
-test("no candidates means no batch and no bubble", async () => {
-  const { handlers, batches, failures } = memoryHandlersFor({ extractMemories: async () => ({ candidates: [], rejected: 2, failed: false }) });
-  expect(await handlers.rememberOnClose(typed, {})).toEqual([]);
-  expect(batches).toEqual([]);
-  expect(failures()).toBe(0);
-  expect(handlers.batch()).toBeUndefined();
-});
-
-test("a failed extraction model call raises exactly one failure bubble", async () => {
-  const { handlers, appended, batches, failures } = memoryHandlersFor({ extractMemories: async () => ({ candidates: [], rejected: 0, failed: true }) });
-  await expect(handlers.rememberOnClose(typed, {})).rejects.toThrow(/extraction/);
-  expect(failures()).toBe(1);
-  expect(appended).toEqual([]);
-  expect(batches).toEqual([]);
-});
-
-test("a store failure raises exactly one failure bubble and leaves no Undo batch", async () => {
-  const { handlers, batches, failures } = memoryHandlersFor({ appendMemories: async () => { throw new Error("SQLITE_BUSY"); } });
-  await expect(handlers.rememberOnClose(typed, {})).rejects.toThrow("SQLITE_BUSY");
-  expect(failures()).toBe(1);
-  expect(batches).toEqual([]);
-  expect(handlers.batch()).toBeUndefined();
-});
-
-const turnReq = { history: [], message: "I live in Seattle", source: "typed" as const, turnId: "item-1" };
-const reply = { reply: "Nice!" };
-
-test("captureTurn saves only the latest typed turn, after the reply, and close catch-up skips it", async () => {
-  const calls: { transcript: ChatTurn[]; opts?: { latestTurn?: boolean; categorize?: boolean } }[] = [];
-  const turnBatches: string[][] = [];
-  const { handlers, appended, batches } = memoryHandlersFor({
-    extractMemories: async (transcript, _ex, _p, _d, opts) => {
-      calls.push({ transcript, opts });
-      return { candidates: transcript.some((t) => t.source === "typed") ? [{ text: "Lives in Seattle", category: "You" }] : [], rejected: 0, failed: false };
-    },
-    onTurnBatch: (pendingIds) => { turnBatches.push(pendingIds()); },
-  });
-  const saved = await handlers.captureTurn("m7", turnReq, reply);
-  expect(saved.map((m) => m.text)).toEqual(["Lives in Seattle"]);
-  // The desktop is an owner path (#648): extraction categorizes and the row keeps the category.
-  expect(calls[0]).toEqual({ transcript: [{ role: "user", content: "I live in Seattle", source: "typed" }], opts: { latestTurn: true, categorize: true } });
-  expect(saved[0]?.category).toBe("You");
-  expect(appended).toEqual([saved]);
-  // Dream sees the still-undoable per-turn ids as pending.
-  expect(turnBatches).toEqual([saved.map((m) => m.id)]);
-  expect(batches).toEqual([]); // no avatar bubble — the chat row is the receipt
-
-  // Close: the captured turn is context only, so nothing is citable and nothing is re-saved.
-  expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { key: "m7" })).toEqual([]);
-  expect(calls[1]?.transcript).toEqual([{ role: "user", content: "I live in Seattle", source: undefined }]);
-  // An uncaptured turn (another id) is still caught up.
-  expect(await handlers.rememberOnClose([{ role: "user", content: "I use vim", source: "typed", id: "item-9" }], { key: "m7" })).toHaveLength(1);
-});
-
-test("captureTurn skips incognito, autoMemory off, non-typed, errored, and explicit-remember turns", async () => {
-  let extracted = 0;
-  const count = { extractMemories: async () => { extracted++; return { candidates: [], rejected: 0, failed: false }; } };
-  const { handlers } = memoryHandlersFor(count);
-  expect(await handlers.captureTurn("m1", { ...turnReq, incognito: true }, reply)).toEqual([]);
-  expect(await handlers.captureTurn("m1", { ...turnReq, source: "loopback" }, reply)).toEqual([]);
-  expect(await handlers.captureTurn("m1", turnReq, { reply: "", error: "boom" })).toEqual([]);
-  expect(await handlers.captureTurn("m1", turnReq, { reply: "ok", remembered: [{ id: "x", text: "Lives in Seattle", createdAt: "" }] })).toEqual([]);
-  const off = memoryHandlersFor({ ...count, autoMemory: () => false });
-  expect(await off.handlers.captureTurn("m1", turnReq, reply)).toEqual([]);
-  expect(extracted).toBe(0);
-});
-
-test("a turn that forgot something is marked handled, so close catch-up can't re-save the fact from its words", async () => {
-  const calls: ChatTurn[][] = [];
-  const { handlers, appended } = memoryHandlersFor({
-    extractMemories: async (transcript) => {
-      calls.push(transcript);
-      return { candidates: transcript.some((t) => t.source === "typed") ? [{ text: "Lives in Seattle" }] : [], rejected: 0, failed: false };
-    },
-  });
-  const forgot = { reply: "Done.", forgotten: [{ id: "x", text: "Lives in Seattle", createdAt: "" }] };
-  expect(await handlers.captureTurn("m3", { ...turnReq, message: "forget that I live in Seattle" }, forgot)).toEqual([]);
-  expect(calls).toEqual([]); // no per-turn extraction either
-  await handlers.rememberOnClose([{ role: "user", content: "forget that I live in Seattle", source: "typed", id: "item-1" }], { key: "m3" });
-  expect(calls[0]).toEqual([{ role: "user", content: "forget that I live in Seattle", source: undefined }]);
-  expect(appended).toEqual([]);
-});
-
-test("a failed per-turn capture is retried by close catch-up and raises no bubble itself", async () => {
-  let fail = true;
-  const { handlers, failures } = memoryHandlersFor({
-    extractMemories: async (transcript) => (fail
-      ? { candidates: [], rejected: 0, failed: true }
-      : { candidates: transcript.some((t) => t.source === "typed") ? [{ text: "Lives in Seattle" }] : [], rejected: 0, failed: false }),
-  });
-  await expect(handlers.captureTurn("m3", turnReq, reply)).rejects.toThrow(/extraction/);
-  expect(failures()).toBe(0);
-  fail = false;
-  expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { key: "m3" })).toHaveLength(1);
-});
-
-function deferredExtract() {
-  const pending: Array<{ text: string; resolve: () => void }> = [];
-  const extractMemories = (_t: ChatTurn[]) => new Promise<{ candidates: { text: string }[]; rejected: number; failed: boolean }>((resolve) => {
-    const text = _t[_t.length - 1]!.content;
-    pending.push({ text, resolve: () => resolve({ candidates: [{ text }], rejected: 0, failed: false }) });
-  });
-  return { pending, extractMemories };
-}
-
-test("switching the chip on while a capture is in flight saves nothing", async () => {
-  const d = deferredExtract();
-  const { handlers, appended } = memoryHandlersFor({ extractMemories: d.extractMemories });
-  const capture = handlers.captureTurn("m4", turnReq, reply);
-  await new Promise((r) => setTimeout(r, 0));
-  handlers.setIncognito("m4", true);
-  d.pending[0]!.resolve();
-  expect(await capture).toEqual([]);
-  expect(appended).toEqual([]);
-  // And later turns in that window are never sent to the model.
-  expect(await handlers.captureTurn("m4", { ...turnReq, turnId: "item-3" }, reply)).toEqual([]);
-  expect(d.pending).toHaveLength(1);
-});
-
-test("isIncognito reports each chat's live chip (delegate starts read it)", () => {
-  const { handlers } = memoryHandlersFor({});
-  expect(handlers.isIncognito("m5")).toBe(false);
-  handlers.setIncognito("m5", true);
-  expect(handlers.isIncognito("m5")).toBe(true);
-  expect(handlers.isIncognito("m6")).toBe(false);
-  handlers.setIncognito("m5", false);
-  expect(handlers.isIncognito("m5")).toBe(false);
-});
-
-test("memory state is per chat mount: closing or releasing one leaves a new mount's capture working", async () => {
-  const { handlers, appended } = memoryHandlersFor({
-    extractMemories: async () => ({ candidates: [{ text: "Lives in Seattle" }], rejected: 0, failed: false }),
-  });
-  handlers.setIncognito("a", true);
-  expect(handlers.isIncognito("b")).toBe(false); // A's chip latches A only
-  expect(await handlers.rememberOnClose([], { key: "a", incognito: true })).toEqual([]);
-  // The same thread reopened in a new mount B (same turn ids) still captures.
-  expect(await handlers.captureTurn("b", turnReq, reply)).toHaveLength(1);
-  handlers.release("b");
-  expect(await handlers.captureTurn("b", turnReq, reply)).toEqual([]); // released: a late reply captures nothing
-  expect(await handlers.captureTurn("c", turnReq, reply)).toHaveLength(1);
-  expect(appended).toHaveLength(2);
-});
-
-test("a reply that settles after its window closed is never captured (close already covered it)", async () => {
-  let extracted = 0;
-  const { handlers, appended } = memoryHandlersFor({
-    extractMemories: async () => { extracted++; return { candidates: [], rejected: 0, failed: false }; },
-  });
-  handlers.setIncognito("m8", true);
-  // Closed incognito: catch-up writes nothing...
-  expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { key: "m8", incognito: true })).toEqual([]);
-  // ...and the late capture (request flag snapshotted before the chip) doesn't revive the window.
-  expect(await handlers.captureTurn("m8", turnReq, reply)).toEqual([]);
-  expect(extracted).toBe(0);
-  expect(appended).toEqual([]);
-});
-
-test("closing incognito stops a capture already in flight, even if the chip IPC never arrived", async () => {
-  const d = deferredExtract();
-  const { handlers, appended } = memoryHandlersFor({ extractMemories: d.extractMemories });
-  const capture = handlers.captureTurn("m9", turnReq, reply);
-  await new Promise((r) => setTimeout(r, 0));
-  expect(await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }], { key: "m9", incognito: true })).toEqual([]);
-  d.pending[0]!.resolve();
-  expect(await capture).toEqual([]);
-  expect(appended).toEqual([]);
-});
-
-test("captures in one window run in turn order, so a later fact is saved later", async () => {
-  const d = deferredExtract();
-  const { handlers, appended } = memoryHandlersFor({ extractMemories: d.extractMemories });
-  const first = handlers.captureTurn("m5", turnReq, reply);
-  const second = handlers.captureTurn("m5", { ...turnReq, message: "I live in Portland now", turnId: "item-3" }, reply);
-  await new Promise((r) => setTimeout(r, 0));
-  expect(d.pending.map((p) => p.text)).toEqual(["I live in Seattle"]); // second waits its turn
-  d.pending[0]!.resolve();
-  await first;
-  await new Promise((r) => setTimeout(r, 0));
-  d.pending[1]!.resolve();
-  await second;
-  expect(appended.map((b) => b[0]!.text)).toEqual(["I live in Seattle", "I live in Portland now"]);
-});
-
-test("a capture that fails after its window closed raises the failure bubble (catch-up skipped it)", async () => {
-  let fail!: () => void;
-  const { handlers, failures } = memoryHandlersFor({
-    extractMemories: (transcript) => (transcript.some((t) => t.source === "typed") && transcript.length === 1
-      ? new Promise((resolve) => { fail = () => resolve({ candidates: [], rejected: 0, failed: true }); })
-      : Promise.resolve({ candidates: [], rejected: 0, failed: false })),
-  });
-  const capture = handlers.captureTurn("m6", turnReq, reply);
-  await new Promise((r) => setTimeout(r, 0));
-  await handlers.rememberOnClose([{ role: "user", content: "I live in Seattle", source: "typed", id: "item-1" }, { role: "assistant", content: "Nice!" }], { key: "m6" });
-  fail();
-  await expect(capture).rejects.toThrow(/extraction/);
-  expect(failures()).toBe(1);
-});
-
-test("facts undone in the window reach close catch-up as already remembered", async () => {
-  let seen: Memory[] = [];
-  const { handlers, existing } = memoryHandlersFor({
-    extractMemories: async (_t, ex) => { seen = ex; return { candidates: [], rejected: 0, failed: false }; },
-  });
-  await handlers.rememberOnClose(typed, { rejected: ["Lives in Seattle"] });
-  expect(seen.map((m) => m.text)).toEqual([...existing.map((m) => m.text), "Lives in Seattle"]);
-});
-
-test("config save handler forwards the update to applyConfig", async () => {
-  const applied: ConfigUpdate[] = [];
-  const notifications: string[] = [];
-  const handlers = buildConfigHandlers({
-    getConfig: () => ({ openaiApiKey: "", model: "", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [], paths: { config: "", skills: "", projects: "", persona: "" } }),
-    applyConfig: async (u) => { applied.push(u); },
-    onApplied: () => { notifications.push("cli-availability-changed"); },
-  });
-  await handlers.save({ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app", delegateCli: "claude", systemControls: false, disabledClis: ["codex"] });
-  expect(applied).toEqual([{ openaiApiKey: "sk-new", model: "gpt-5", terminalApp: "/Applications/iTerm.app", editorApp: "/Applications/Zed.app", delegateCli: "claude", systemControls: false, disabledClis: ["codex"] }]);
-  expect(notifications).toEqual(["cli-availability-changed"]);
 });
 
 test("chat-prompt store lets a late-mounting chat window pull the pending prompt (same race fix)", () => {
@@ -1205,85 +736,6 @@ test("launch handler with no project resolves via a bare scratch dir before laun
   // launchInTerminal writes a real .command script and opens it via `open` — same shape
   // launcher.test.ts already covers; here we're only proving the async resolution ran first.
   expect(spawnLaunch).toHaveBeenCalledWith("open", [expect.stringMatching(/bean-run-.*\.command$/)]);
-});
-
-const routine: Routine = {
-  name: "r", enabled: true, cron: "0 6 * * *",
-  steps: [{ kind: "chat", instruction: "x" }], sinks: {},
-};
-
-test("routine handlers merge in-memory running state into the state view", async () => {
-  const h = buildRoutineHandlers({
-    loadRoutines: async () => [routine],
-    saveRoutine: vi.fn(async () => {}),
-    deleteRoutine: vi.fn(async () => {}),
-    loadStates: async () => ({ r: { lastRun: "2026-07-12T06:30:00.000Z", history: [] } }),
-    isRunning: (name) => name === "r",
-    runningCount: () => 1,
-    runNow: async () => ({ started: true }),
-  });
-  const state = await h.state();
-  expect(state.r).toMatchObject({ lastRun: "2026-07-12T06:30:00.000Z", running: true, runningCount: 1 });
-  expect(state.r?.queue).toBeUndefined(); // not todo-driven
-});
-
-test("routine state fills the queue for every todo-driven sprout, cron included", async () => {
-  const queueCounts = vi.fn(async () => ({ pending: 2, running: 3 }));
-  const h = buildRoutineHandlers({
-    loadRoutines: async () => [{ ...routine, todoDriven: true, maxParallel: 3 }],
-    saveRoutine: vi.fn(async () => {}), deleteRoutine: vi.fn(async () => {}),
-    loadStates: async () => ({}), isRunning: () => true, runningCount: () => 3, queueCounts,
-    runNow: async () => ({ started: true }),
-  });
-  const state = await h.state();
-  expect(state.r).toMatchObject({ running: true, runningCount: 3, queue: { pending: 2, running: 3 } });
-  expect(queueCounts).toHaveBeenCalledWith("r");
-});
-
-test("routine handlers save delegates (validation is core saveRoutine's job); delete and runNow pass through", async () => {
-  const saveRoutine = vi.fn(async () => {});
-  const runNow = vi.fn(async () => ({ started: true }) as const);
-  const h = buildRoutineHandlers({
-    loadRoutines: async () => [], saveRoutine, deleteRoutine: vi.fn(async () => {}),
-    loadStates: async () => ({}), isRunning: () => false, runningCount: () => 0, runNow,
-  });
-  await h.save(routine);
-  expect(saveRoutine).toHaveBeenCalledWith(routine);
-  // A rejection from the real (core) saveRoutine — e.g. an invalid-cron error — propagates
-  // unchanged, so the renderer sees the specific reason rather than a generic message.
-  saveRoutine.mockRejectedValueOnce(new Error(`cron schedule "bad" is not a valid 5-field cron expression`));
-  await expect(h.save({ ...routine, cron: "bad" })).rejects.toThrow("is not a valid 5-field cron expression");
-  await h.runNow("r");
-  expect(runNow).toHaveBeenCalledWith("r");
-});
-
-test("routine stop reaches stopRuns only for a running sprout's name", () => {
-  const stopRuns = vi.fn();
-  const h = buildRoutineHandlers({
-    loadRoutines: async () => [], saveRoutine: vi.fn(async () => {}), deleteRoutine: vi.fn(async () => {}),
-    loadStates: async () => ({}), isRunning: (name) => name === "r", runningCount: () => 1,
-    runNow: vi.fn(async () => ({ started: true })), stopRuns,
-  });
-  for (const bad of [undefined, 42, { name: "r" }, ["r"], "idle"]) h.stop(bad);
-  expect(stopRuns).not.toHaveBeenCalled();
-  h.stop("r");
-  expect(stopRuns).toHaveBeenCalledExactlyOnceWith("r");
-});
-
-it("buildRoutineHandlers.remove cascades to onRoutineDeleted", async () => {
-  const deleted: string[] = [];
-  const h = buildRoutineHandlers({
-    loadRoutines: async () => [],
-    saveRoutine: async () => {},
-    deleteRoutine: async () => {},
-    loadStates: async () => ({}),
-    isRunning: () => false,
-    runningCount: () => 0,
-    runNow: async () => ({ started: true }),
-    onRoutineDeleted: async (name) => { deleted.push(name); },
-  });
-  await h.remove("nightly");
-  expect(deleted).toEqual(["nightly"]);
 });
 
 test("buildPendingUpdateStore returns undefined until set, then the same value on repeated get (not consumed)", () => {
@@ -1472,44 +924,6 @@ test("buildUpdateHandlers.check does not clean up when the new result has no ext
   await handlers.check();
   expect(cleanedUp).toEqual([]);
   expect(store.get()).toBe("/tmp/bean-update-1/Bean.app");
-});
-
-describe("buildTodoHandlers", () => {
-  const routines = [
-    { name: "nightly", enabled: true, cron: "0 2 * * *", todoDriven: true, steps: [{ kind: "chat" as const, instruction: "x" }], sinks: {} },
-    { name: "plain", enabled: true, cron: "0 8 * * *", steps: [{ kind: "chat" as const, instruction: "x" }], sinks: {} },
-  ];
-  const makeDeps = () => {
-    const added: { routine: string; text: string }[] = [];
-    return {
-      added,
-      deps: {
-        dbFile: "/tmp/unused.db",
-        loadRoutines: async () => routines,
-        addTodo: async (_f: string, routine: string, text: string) => {
-          added.push({ routine, text });
-          return { id: "1", routine, text, status: "pending" as const, createdAt: "", order: 1 };
-        },
-        listTodos: async () => [], listAllTodos: async () => [],
-        editTodoText: async () => {}, deleteTodo: async () => {}, reorderTodo: async () => {},
-        clearFinishedTodos: async () => {}, retryTodo: async () => {},
-      },
-    };
-  };
-
-  it("add inserts into a todo-driven routine's queue", async () => {
-    const { deps, added } = makeDeps();
-    const h = buildTodoHandlers(deps);
-    await h.add("nightly", "do the thing");
-    expect(added).toEqual([{ routine: "nightly", text: "do the thing" }]);
-  });
-
-  it("add rejects unknown and non-todo-driven routines", async () => {
-    const { deps } = makeDeps();
-    const h = buildTodoHandlers(deps);
-    await expect(h.add("ghost", "x")).rejects.toThrow();
-    await expect(h.add("plain", "x")).rejects.toThrow();
-  });
 });
 
 // Dashboard deep links cross renderer → main (bubble click) and ride notification `meta`: both are

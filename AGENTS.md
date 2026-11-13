@@ -53,11 +53,12 @@ The desktop app is one of **three surfaces**, all sharing the same core brain:
 - **System control** — `system-control.ts` lets `converse()` drive the Mac (volume, mute,
   media playback, launch/quit apps) via a closed verb union, opt-in behind a Settings toggle.
 
-It's a **pnpm-workspace monorepo** with four packages:
+It's a **pnpm-workspace monorepo** with five packages:
 
 | Package | Path | Purpose |
 |---------|------|---------|
 | **`@bean/core`** | `packages/core/` | Routing + IO logic. Pure ESM, zero Electron, `tsc`-built. |
+| **`@bean/host`** | `packages/host/` | Electron-free IPC handler builders over core; Electron ops injected as `ShellOps`. `tsc`-built. |
 | **`@bean/app`** | `packages/app/` | Electron shell (main + preload + renderer). esbuild-bundled. |
 | **`@bean/discord`** | `packages/discord/` | Discord bot server. Node, tsc+esbuild-built. |
 | **`@bean/teams`** | `packages/teams/` | Teams bot server. Node, tsc+esbuild-built. |

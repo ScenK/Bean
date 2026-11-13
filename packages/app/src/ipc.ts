@@ -1,26 +1,25 @@
 import {
   converse, checkPdfAttachment, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
-  attachNoteImages, MAX_NOTE_IMAGE_BYTES, stageImages, checkImageAttachments, type ImageAttachment,
-  availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine, planSproutRun, type SproutRunBlock,
-  listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash,
-  type SkillProposal, type ProposalOutcome,
-  type Project, type RouteSuggestion, type Skill,
-  type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
-  type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type ExtractResult, type ChatTurn,
-  type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
-  type TodoItem, type StepKind, type CliModels, type DreamDigest, type RoutineBrief, type RoutineWatch, type WatchItem,
+  stageImages, checkImageAttachments, availableModels, pickModel, loadModelMemory, saveModelMemory, planSproutRun, type SproutRunBlock,
+  type Project, type RouteSuggestion, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
+  type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type ActionTool, type NoteDraft, type AvailableModel, type Routine,
+  type CliModels, type RoutineBrief, type RoutineWatch, type SendCard,
   DESKTOP_CHAT_MAX_BYTES, type DesktopChat, type DesktopChatInput, type DesktopChatListing,
 } from "@bean/core";
-import type { RoutineBuildView } from "./routine-builder.js";
-import type { RunStatus, WatchCheckResult, SendCard } from "@bean/core";
-import { randomUUID } from "node:crypto";
+import {
+  buildConfigHandlers, buildDeleteSkillHandler, buildListProjectsHandler, buildListSkillsHandler, buildMemoryHandlers,
+  buildNotesHandlers, buildPersonaHandlers, buildSaveProjectsHandler, buildSaveSkillHandler, toTranscript,
+  type buildDestinationHandlers, type buildRoutineHandlers, type buildSendHandlers, type buildSkillProposalHandlers,
+  type buildTodoHandlers, type ClientId, type ConfigUpdate, type ConfigView, type MemoryHandlerDeps, type NotesHandlerDeps,
+  type ShellOps,
+} from "@bean/host";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { join } from "node:path";
-import { BrowserWindow, dialog, screen, shell, type IpcMain } from "electron";
-import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
+import type { IpcMain } from "electron";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { createLiveTasks } from "./live-tasks.js";
 import { terminalLink, type TerminalTasks } from "./terminal-tasks.js";
@@ -29,8 +28,7 @@ import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import type { UpdateCheckOutcome } from "./updater.js";
 import type { buildSyncedChatHandlers } from "./synced-chats.js";
 import type { buildDeskContinueHandler } from "./desk-continue.js";
-import type { ClientId, Push } from "./push.js";
-import type { buildDestinationHandlers, buildSendHandlers } from "./destinations.js";
+import type { Push } from "./push.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -338,86 +336,6 @@ async function planSproutCard(
   else result.reply = SPROUT_BLOCKED[out.blocked](name);
 }
 
-export interface ListSkillsHandlerDeps {
-  loadSkills: (projectDir: string, userDir: string) => Promise<Skill[]>;
-  projectSkillsDir: string;
-  skillsDir: string;
-}
-
-export function buildListSkillsHandler(deps: ListSkillsHandlerDeps) {
-  // `hidden: true` skills (e.g. the built-in self-intro skill) stay in converse()'s routing
-  // catalog (buildChatHandler loads skills separately) but never reach any UI surface — every
-  // renderer skill list/picker/quick-launch goes through this one IPC call.
-  return async (): Promise<Skill[]> => (await deps.loadSkills(deps.projectSkillsDir, deps.skillsDir)).filter((s) => !s.hidden);
-}
-
-export interface ListProjectsHandlerDeps {
-  loadProjects: (file: string) => Promise<Project[]>;
-  projectsFile: string;
-}
-
-export function buildListProjectsHandler(deps: ListProjectsHandlerDeps) {
-  return (): Promise<Project[]> => deps.loadProjects(deps.projectsFile);
-}
-
-export interface SaveProjectsHandlerDeps {
-  saveProjects: (file: string, projects: Project[]) => Promise<void>;
-  projectsFile: string;
-}
-
-export function buildSaveProjectsHandler(deps: SaveProjectsHandlerDeps) {
-  return (projects: Project[]): Promise<void> => deps.saveProjects(deps.projectsFile, projects);
-}
-
-export interface SaveSkillHandlerDeps {
-  saveSkill: (dir: string, name: string, body: string) => Promise<void>;
-  skillsDir: string;
-}
-
-export function buildSaveSkillHandler(deps: SaveSkillHandlerDeps) {
-  return (name: string, body: string): Promise<void> => deps.saveSkill(deps.skillsDir, name, body);
-}
-
-export interface DeleteSkillHandlerDeps {
-  deleteSkill: (dir: string, name: string) => Promise<void>;
-  skillsDir: string;
-}
-
-export function buildDeleteSkillHandler(deps: DeleteSkillHandlerDeps) {
-  return (name: string): Promise<void> => deps.deleteSkill(deps.skillsDir, name);
-}
-
-/** A retro proposal as the Skills inbox shows it: the skill's current effective body to diff
- * against, and whether that body already moved past the one the proposal was drafted on. */
-export interface SkillProposalView extends SkillProposal {
-  current?: string;
-  stale: boolean;
-}
-
-export interface SkillProposalHandlerDeps {
-  loadSkills: (projectDir: string, userDir: string) => Promise<Skill[]>;
-  projectSkillsDir: string;
-  skillsDir: string;
-  dbFile: string;
-}
-
-export function buildSkillProposalHandlers(deps: SkillProposalHandlerDeps) {
-  const dirs = { projectDir: deps.projectSkillsDir, userDir: deps.skillsDir };
-  return {
-    list: async (): Promise<{ pending: SkillProposalView[]; applied: SkillProposalView[] }> => {
-      const skills = await deps.loadSkills(deps.projectSkillsDir, deps.skillsDir);
-      const view = (p: SkillProposal): SkillProposalView => {
-        const current = skills.find((s) => s.name === p.skill)?.body;
-        return { ...p, ...(current !== undefined ? { current } : {}), stale: current === undefined || skillHash(current) !== p.baseHash };
-      };
-      return { pending: listSkillProposals(deps.dbFile).map(view), applied: listSkillProposals(deps.dbFile, "applied").map(view) };
-    },
-    approve: (id: string): Promise<ProposalOutcome> => approveSkillProposal(deps.dbFile, dirs, id),
-    reject: (id: string): Promise<ProposalOutcome> => rejectSkillProposal(deps.dbFile, id),
-    undo: (id: string): Promise<ProposalOutcome> => undoSkillProposal(deps.dbFile, deps.skillsDir, id),
-  };
-}
-
 export interface LaunchHandlerDeps {
   spawnLaunch?: LaunchSpawnFn;
   getTerminalApp?: () => string;
@@ -506,222 +424,6 @@ export function buildModelMemoryHandlers(deps: ModelMemoryHandlerDeps) {
       return next;
     },
   };
-}
-
-export interface PersonaHandlerDeps {
-  loadPersona: (userFile: string, projectFile: string) => Promise<Persona>;
-  savePersona: (file: string, persona: Persona) => Promise<void>;
-  personaFile: string;
-  projectPersonaFile: string;
-}
-
-export function buildPersonaHandlers(deps: PersonaHandlerDeps) {
-  return {
-    get: (): Promise<Persona> => deps.loadPersona(deps.personaFile, deps.projectPersonaFile),
-    save: (persona: Persona): Promise<void> => deps.savePersona(deps.personaFile, persona),
-  };
-}
-
-export interface MemoryHandlerDeps {
-  loadMemories: (file: string) => Promise<Memory[]>;
-  // Every write is insert-only or per-row: auto-remember, a chatops bot, and the Persona panel
-  // can all write at once, and a whole-list replace would silently drop one of them
-  // (.memory/safety-memory-append-vs-replace.md).
-  appendMemories: (file: string, additions: Memory[]) => Promise<void>;
-  updateMemory: (file: string, id: string, text: string) => Promise<void>;
-  updateMemoryCategory: (file: string, id: string, category: string | null) => Promise<void>;
-  renameMemoryCategory: (file: string, from: string, to: string) => Promise<number>;
-  ownerSubjectIds?: () => Promise<string[]>;
-  deleteMemories: (file: string, ids: string[]) => Promise<string[]>;
-  extractMemories: (
-    transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps, opts?: { latestTurn?: boolean; categorize?: boolean },
-  ) => Promise<ExtractResult>;
-  loadProjects: (file: string) => Promise<Project[]>;
-  converse: ConverseDeps["chat"];
-  getModel: () => string;
-  /** Config `autoMemory`, read per close so a Settings toggle applies without restart. */
-  autoMemory: () => boolean;
-  /** A non-empty auto-remember batch landed — main shows the avatar bubble (and checks dream).
-   * `pendingIds` reads the batch whose Undo is live *now* (a later close may have replaced it). */
-  onMemoryBatch?: (batch: Memory[], pendingIds: () => string[]) => void;
-  /** A close-time save broke (model call or store) — main shows a sticky failure bubble, so
-   * "broken" no longer looks like "nothing worth saving". */
-  onMemoryFailure?: () => void;
-  /** A per-turn capture saved something — main checks dream (no bubble: the chat's
-   * "Memory updated" row is the receipt). */
-  onTurnBatch?: (pendingIds: () => string[]) => void;
-  getLastDream: (file: string) => Promise<DreamDigest | undefined>;
-  restoreDreamRun: (file: string, runId: string) => Promise<{ restored: number; skipped: number }>;
-  dreamDetails: (file: string, runId: string) => Promise<{ before: string[]; after?: string }[]>;
-  dbFile: string;
-  projectsFile: string;
-}
-
-/** The latest auto-remember batch — Persona's "Just remembered" + Undo. Held in main's memory
- * only: the Undo window lasts until the next batch (or an app restart). */
-export interface MemoryBatch { ids: string[]; at: string }
-
-/** A close-time transcript turn; `id` = the renderer's turn id (typed turns), matched against
- * the turns per-turn capture already handled. */
-export type CloseTurn = ChatTurn & { id?: string };
-
-export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
-  let lastBatch: MemoryBatch | undefined;
-  // Per chat (mount id — see buildChatMounts), dropped at its close or release: typed turns whose
-  // per-turn capture is in flight or done (close catch-up won't re-cite them), and the ids those
-  // captures saved — still undoable from the chat's "Memory updated" rows, so dream leaves them alone.
-  // `incognito` = the chat's live 🕶 chip (a request's flag is a send-time snapshot); `queue`
-  // runs captures one at a time so facts are saved — and timestamped — in turn order.
-  type ChatWindowState = { turns: Set<string>; ids: string[]; incognito: boolean; queue: Promise<unknown> };
-  const windows = new Map<string, ChatWindowState>();
-  // Chats already closed/released: a reply that settles after close must not recreate their state
-  // (and lose the chip) — close catch-up already covered that turn under the close-time flag.
-  // ponytail: one UUID per chat mount per app run; mount ids are never re-attached.
-  const closed = new Set<string>();
-  const windowState = (key: string): ChatWindowState => {
-    let w = windows.get(key);
-    if (!w) windows.set(key, w = { turns: new Set(), ids: [], incognito: false, queue: Promise.resolve() });
-    return w;
-  };
-  const close = (key: string): void => {
-    windows.delete(key);
-    closed.add(key);
-  };
-  const pendingIds = (): string[] => [...(lastBatch?.ids ?? []), ...[...windows.values()].flatMap((w) => w.ids)];
-  const extract = async (transcript: ChatTurn[], extra: Memory[], latestTurn: boolean): Promise<Memory[]> => {
-    const [existing, projects] = await Promise.all([
-      deps.loadMemories(deps.dbFile),
-      deps.loadProjects(deps.projectsFile),
-    ]);
-    const { candidates, rejected, failed } = await deps.extractMemories(
-      transcript, extra.length ? [...existing, ...extra] : existing, projects,
-      { chat: deps.converse, model: deps.getModel() }, { latestTurn, categorize: true },
-    );
-    // Counts only — a rejected candidate's text may be exactly what validation refused to keep.
-    if (rejected > 0) console.warn(`auto-remember: rejected ${rejected} candidate(s)`);
-    if (failed) throw new Error("auto-remember: extraction model call failed");
-    const at = new Date().toISOString();
-    return candidates.map((c) => ({
-      id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at, ...(c.category ? { category: c.category } : {}),
-    }));
-  };
-  const remember = async (transcript: ChatTurn[], extra: Memory[]): Promise<Memory[]> => {
-    const batch = await extract(transcript, extra, false);
-    if (batch.length === 0) return [];
-    const at = batch[0]!.createdAt;
-    // Pending before the insert lands, so a dream snapshot can never see these rows without
-    // also seeing them as the live Undo batch it must leave alone.
-    const prevBatch = lastBatch;
-    lastBatch = { ids: batch.map((m) => m.id), at };
-    try {
-      await deps.appendMemories(deps.dbFile, batch);
-    } catch (err) {
-      lastBatch = prevBatch;
-      throw err;
-    }
-    deps.onMemoryBatch?.(batch, pendingIds);
-    return batch;
-  };
-  return {
-    list: (): Promise<Memory[]> => deps.loadMemories(deps.dbFile),
-    append: (additions: Memory[]): Promise<void> => deps.appendMemories(deps.dbFile, additions),
-    update: (id: string, text: string): Promise<void> => deps.updateMemory(deps.dbFile, id, text),
-    updateCategory: (id: string, category: string | null): Promise<void> => deps.updateMemoryCategory(deps.dbFile, id, category),
-    renameCategory: (from: string, to: string): Promise<number> => deps.renameMemoryCategory(deps.dbFile, from, to),
-    ownerIds: (): Promise<string[]> => deps.ownerSubjectIds?.() ?? Promise.resolve([]),
-    delete: async (ids: string[]): Promise<number> => (await deps.deleteMemories(deps.dbFile, ids)).length,
-    /** After a chat reply: capture this typed turn's facts (only it is citable; a few prior
-     * turns are context). Skipped when the turn used the explicit remember/forget tools or errored. */
-    captureTurn: async (key: string, req: ChatRequest, result: ConverseResult): Promise<Memory[]> => {
-      if (req.source !== "typed" || req.incognito || !deps.autoMemory() || result.error) return [];
-      if (closed.has(key)) return [];
-      const w = windowState(key);
-      if (w.incognito) return [];
-      if (req.turnId) w.turns.add(req.turnId);
-      // Handled before skipping: close catch-up must not re-cite a turn that just saved or
-      // forgot something explicitly (a forgotten fact would be re-saved from its own words).
-      if (result.remembered?.length || result.forgotten?.length) return [];
-      // Re-checked before the model call and again before the insert: the chip can be switched
-      // on while this turn waits or extracts.
-      const offRecord = (): boolean => w.incognito || !deps.autoMemory();
-      const run = w.queue.then(async (): Promise<Memory[]> => {
-        if (offRecord()) return [];
-        const batch = await extract([...req.history, { role: "user", content: req.message, source: "typed" }], [], true);
-        if (batch.length === 0 || offRecord()) return [];
-        w.ids.push(...batch.map((m) => m.id)); // pending before the insert, same as the close batch
-        await deps.appendMemories(deps.dbFile, batch);
-        deps.onTurnBatch?.(pendingIds);
-        return batch;
-      }).catch((err: unknown) => {
-        if (req.turnId) w.turns.delete(req.turnId);
-        // Chat still open: close catch-up retries this turn. Already closed: catch-up skipped
-        // it as in flight, so nothing will — surface it like a failed close save.
-        if (windows.get(key) !== w) deps.onMemoryFailure?.();
-        throw err;
-      });
-      w.queue = run.catch(() => {});
-      return run;
-    },
-    /** A chat's 🕶 chip changed — gates its per-turn captures from now on. */
-    setIncognito: (key: string, on: boolean): void => {
-      if (!closed.has(key)) windowState(key).incognito = on;
-    },
-    /** A chat's live 🕶 chip — also keeps its delegate instructions out of `delegate_runs`. */
-    isIncognito: (key: string): boolean => windows.get(key)?.incognito ?? false,
-    /** The chat mount is gone without a close catch-up: drop its state; a late reply captures nothing. */
-    release: close,
-    /** Chat close: a catch-up — extract → validate → append in the background, no review
-     * card. Turns per-turn capture handled stay as context only; `rejected` = facts the user
-     * undid in this chat, shown to extraction as already remembered so they aren't re-saved. */
-    rememberOnClose: async (
-      transcript: CloseTurn[], opts: { incognito?: boolean; rejected?: string[]; key?: string },
-    ): Promise<Memory[]> => {
-      const w = opts.key === undefined ? undefined : windows.get(opts.key);
-      // An in-flight capture keeps its own reference to `w` — the close-time chip must reach it.
-      if (w && opts.incognito) w.incognito = true;
-      if (opts.key !== undefined) close(opts.key);
-      if (opts.incognito || !deps.autoMemory()) return [];
-      const turns = transcript.map(({ id, ...t }): ChatTurn => (id && w?.turns.has(id) ? { ...t, source: undefined } : t));
-      const rejected = (opts.rejected ?? []).map((text): Memory => ({ id: "", text, createdAt: "" }));
-      try {
-        return await remember(turns, rejected);
-      } catch (err) {
-        deps.onMemoryFailure?.();
-        throw err;
-      }
-    },
-    batch: (): MemoryBatch | undefined => lastBatch,
-    lastDream: (): Promise<DreamDigest | undefined> => deps.getLastDream(deps.dbFile),
-    /** Undo last dream: restores only groups untouched since; `skipped` = kept user edits. */
-    undoLastDream: async (): Promise<{ restored: number; skipped: number }> => {
-      const d = await deps.getLastDream(deps.dbFile);
-      return d && !d.undone ? deps.restoreDreamRun(deps.dbFile, d.runId) : { restored: 0, skipped: 0 };
-    },
-    dreamDetails: async (): Promise<{ before: string[]; after?: string }[]> => {
-      const d = await deps.getLastDream(deps.dbFile);
-      return d ? deps.dreamDetails(deps.dbFile, d.runId) : [];
-    },
-    /** Deletes exactly the last batch's ids (rows edited since are still that batch's rows). */
-    undoBatch: async (): Promise<number> => {
-      if (!lastBatch) return 0;
-      const n = (await deps.deleteMemories(deps.dbFile, lastBatch.ids)).length;
-      lastBatch = undefined;
-      return n;
-    },
-  };
-}
-
-// Renderer payloads are erased types by the time they cross IPC — keep only well-formed turns.
-function toTranscript(v: unknown): CloseTurn[] {
-  if (!Array.isArray(v)) return [];
-  const sources = new Set(["typed", "loopback", "ambient", "skill", "summary"]);
-  return v.flatMap((t): CloseTurn[] => {
-    const o = t as Partial<CloseTurn> | null;
-    if (!o || (o.role !== "user" && o.role !== "assistant") || typeof o.content !== "string") return [];
-    const turn: CloseTurn = { role: o.role, content: o.content, source: sources.has(o.source as string) ? o.source : undefined };
-    if (typeof o.id === "string") turn.id = o.id;
-    return [turn];
-  });
 }
 
 /** A chat window's transcript save. `items` are the renderer's normalized ChatItems — opaque here. */
@@ -869,80 +571,6 @@ export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
   };
 }
 
-export interface NotesHandlerDeps {
-  loadNotes: (file: string, opts?: { includeArchived?: boolean }) => Promise<Note[]>;
-  saveNote: (file: string, draft: NoteDraft) => Promise<string>;
-  archiveNote: (file: string, slug: string) => Promise<boolean>;
-  restoreNote: (file: string, slug: string) => Promise<boolean>;
-  purgeNote: (file: string, slug: string) => Promise<boolean>;
-  starNote: (file: string, slug: string, starred: boolean) => Promise<void>;
-  loadNoteHistory: (file: string, slug: string) => Promise<Note[]>;
-  saveNoteImage: (file: string, bytes: Uint8Array) => Promise<string>;
-  loadNoteImage: (file: string, id: string) => Promise<{ mime: string; bytes: Uint8Array } | undefined>;
-  dbFile: string;
-}
-
-// Slugs cross IPC untyped; core re-checks traversal, this rejects non-strings before it.
-function noteSlug(slug: unknown): string {
-  if (typeof slug !== "string" || slug === "") throw new Error("invalid note slug");
-  return slug;
-}
-
-export function buildNotesHandlers(deps: NotesHandlerDeps) {
-  const storeImage = (bytes: Uint8Array): Promise<string> => deps.saveNoteImage(deps.dbFile, bytes);
-  return {
-    list: (opts?: unknown): Promise<Note[]> =>
-      deps.loadNotes(deps.dbFile, { includeArchived: (opts as { includeArchived?: unknown } | undefined)?.includeArchived === true }),
-    // `images` = the chat's latest attached images carried into a desktop propose_note save;
-    // core stores them and appends code-written bean-image refs (limits re-checked there).
-    save: async (draft: NoteDraft, images?: unknown): Promise<string> => {
-      const valid = Array.isArray(images)
-        ? images.filter((i): i is ImageAttachment => typeof (i as ImageAttachment)?.data === "string")
-        : [];
-      const body = valid.length > 0 ? await attachNoteImages(storeImage, draft.body, valid) : draft.body;
-      // Copy known fields only — never spread the renderer payload into core.
-      const { title, project, source, slug } = draft;
-      return deps.saveNote(deps.dbFile, { title, body, project, source, slug });
-    },
-    // Trust boundary for editor paste/drop: bytes only, never a path; size capped here before
-    // storing, format checked by magic bytes in core.
-    saveImage: (bytes: unknown): Promise<string> => {
-      if (!(bytes instanceof Uint8Array)) return Promise.reject(new Error("note image must be raw bytes"));
-      if (bytes.byteLength > MAX_NOTE_IMAGE_BYTES) return Promise.reject(new Error("image is larger than 10 MB"));
-      return storeImage(bytes);
-    },
-    /** A stored note image as a data: URL, or undefined for an unknown/malformed id. */
-    image: async (id: unknown): Promise<string | undefined> => {
-      if (typeof id !== "string") return undefined;
-      const img = await deps.loadNoteImage(deps.dbFile, id);
-      return img ? `data:${img.mime};base64,${Buffer.from(img.bytes).toString("base64")}` : undefined;
-    },
-    archive: async (slug: unknown): Promise<void> => { await deps.archiveNote(deps.dbFile, noteSlug(slug)); },
-    restore: async (slug: unknown): Promise<void> => { await deps.restoreNote(deps.dbFile, noteSlug(slug)); },
-    purge: async (slug: unknown): Promise<void> => {
-      if (!(await deps.purgeNote(deps.dbFile, noteSlug(slug)))) throw new Error("only an archived note can be deleted permanently");
-    },
-    star: (slug: string, starred: boolean): Promise<void> => deps.starNote(deps.dbFile, slug, starred),
-    history: (slug: string): Promise<Note[]> => deps.loadNoteHistory(deps.dbFile, slug),
-  };
-}
-
-export interface ConfigHandlerDeps {
-  getConfig: () => ConfigView;
-  applyConfig: (update: ConfigUpdate) => Promise<void>;
-  onApplied?: () => void;
-}
-
-export function buildConfigHandlers(deps: ConfigHandlerDeps) {
-  return {
-    get: (): ConfigView => deps.getConfig(),
-    save: async (update: ConfigUpdate): Promise<void> => {
-      await deps.applyConfig(update);
-      deps.onApplied?.();
-    },
-  };
-}
-
 export interface ThemeHandlerDeps {
   getCurrentTheme: () => Theme;
   setCurrentTheme: (theme: Theme) => Promise<void>;
@@ -966,147 +594,6 @@ export function buildChatopsHandlers(deps: ChatopsHandlerDeps) {
     status: (): Record<ChatopsBot, ChatopsState> => deps.chatopsStatus(),
     start: (bot: ChatopsBot): void => deps.chatopsStart(bot),
     stop: (bot: ChatopsBot): void => deps.chatopsStop(bot),
-  };
-}
-
-export interface RoutineStateView {
-  lastRun?: string; missed?: boolean; history: RunRecord[]; running: boolean;
-  /** Live runs (taken slots); `running` also covers a tick still deciding. */
-  runningCount: number;
-  /** Todo-driven routines only. */
-  queue?: { pending: number; running: number };
-  /** Watch routines only. */
-  lastPoll?: string; pollError?: string; pollFailures?: number;
-  /** false = never enabled since its source was set — the list shows "needs review". */
-  seeded?: boolean;
-}
-
-/** One executed step of a run, for the Dashboard's full-output view. `resume` is Bean's own
- * resume command for a delegate session (never model-written). */
-export interface StepAttemptView {
-  stepIndex: number; stepId?: string; round: number; kind: StepKind; cli?: string;
-  ok: boolean; verdict?: string; output: string; resume?: string;
-}
-
-/** Who a chatops sink with no channel reaches (counts only — the app can't look up names). */
-export interface SinkRecipients { discord?: number; teams?: number }
-export interface BriefDraft { brief: RoutineBrief; tools: string[] }
-
-/** Watch + builder verbs. Optional so tests (and a boot without them) can omit the lot. */
-export interface RoutineWatchDeps {
-  isSeeded: (routine: Routine) => boolean;
-  pollFailures: (name: string) => number;
-  checkNow: (name: string) => Promise<WatchCheckResult>;
-  previewWatch: (watch: RoutineWatch) => Promise<WatchItem[]>;
-  enableWatch: (name: string, queueExisting: boolean) => Promise<{ count: number }>;
-  sinkRecipients: () => Promise<SinkRecipients>;
-  draftBrief: (sentence: string, previous?: RoutineBrief) => Promise<BriefDraft>;
-  builds: {
-    list: () => RoutineBuildView[];
-    start: (brief: RoutineBrief) => Promise<void>;
-    cancel: (name: string) => void;
-    dismiss: (name: string) => void;
-  };
-}
-
-export interface RoutineHandlerDeps {
-  loadRoutines: () => Promise<Routine[]>;
-  saveRoutine: (routine: Routine) => Promise<void>;
-  deleteRoutine: (name: string) => Promise<void>;
-  loadStates: () => Promise<Record<string, RoutineState>>;
-  isRunning: (name: string) => boolean;
-  runningCount: (name: string) => number;
-  queueCounts?: (name: string) => Promise<{ pending: number; running: number }>;
-  runNow: (name: string) => Promise<{ started: boolean; reason?: string; status?: RunStatus; stopped?: true }>;
-  /** Stops the sprout's live runs (the scheduler's `stopRuns`); only called for a running name. */
-  stopRuns?: (name: string) => void;
-  onRoutineDeleted?: (name: string) => Promise<void>;
-  /** A run's step attempts (bean.db), oldest first. */
-  attempts?: (runId: string) => StepAttemptView[];
-  watch?: RoutineWatchDeps;
-}
-
-export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
-  const watch = (): RoutineWatchDeps => {
-    if (!deps.watch) throw new Error("watch sprouts aren't available");
-    return deps.watch;
-  };
-  return {
-    list: (): Promise<Routine[]> => deps.loadRoutines(),
-    save: async (routine: Routine): Promise<void> => {
-      await deps.saveRoutine(routine);
-    },
-    remove: async (name: string): Promise<void> => {
-      await deps.deleteRoutine(name);
-      await deps.onRoutineDeleted?.(name);
-    },
-    state: async (): Promise<Record<string, RoutineStateView>> => {
-      const [routines, states] = await Promise.all([deps.loadRoutines(), deps.loadStates()]);
-      const out: Record<string, RoutineStateView> = {};
-      for (const r of routines) {
-        const s = states[r.name];
-        out[r.name] = {
-          lastRun: s?.lastRun, missed: s?.missed, history: s?.history ?? [],
-          running: deps.isRunning(r.name), runningCount: deps.runningCount(r.name),
-          ...(r.todoDriven && deps.queueCounts ? { queue: await deps.queueCounts(r.name) } : {}),
-        };
-        if (r.watch && deps.watch) {
-          Object.assign(out[r.name]!, {
-            lastPoll: s?.lastPoll, pollError: s?.pollError, pollFailures: deps.watch.pollFailures(r.name),
-            seeded: deps.watch.isSeeded(r),
-          });
-        }
-      }
-      return out;
-    },
-    runNow: (name: string): Promise<{ started: boolean; reason?: string; status?: RunStatus; stopped?: true }> => deps.runNow(name),
-    /** A renderer payload: anything but a running sprout's name is ignored. */
-    stop: (name: unknown): void => {
-      if (typeof name === "string" && deps.isRunning(name)) deps.stopRuns?.(name);
-    },
-    attempts: (runId: string): StepAttemptView[] => (typeof runId === "string" && runId ? deps.attempts?.(runId) ?? [] : []),
-    checkNow: (name: string): Promise<WatchCheckResult> => watch().checkNow(name),
-    previewWatch: (w: RoutineWatch): Promise<WatchItem[]> => watch().previewWatch(w),
-    enableWatch: (name: string, queueExisting: boolean): Promise<{ count: number }> => watch().enableWatch(name, queueExisting === true),
-    sinkRecipients: (): Promise<SinkRecipients> => watch().sinkRecipients(),
-    draftBrief: (sentence: string, previous?: RoutineBrief): Promise<BriefDraft> => {
-      if (typeof sentence !== "string" || !sentence.trim()) throw new Error("describe the sprout first");
-      return watch().draftBrief(sentence.trim().slice(0, 2000), previous);
-    },
-    build: (brief: RoutineBrief): Promise<void> => watch().builds.start(brief),
-    builds: (): RoutineBuildView[] => deps.watch?.builds.list() ?? [],
-    cancelBuild: (name: string): void => watch().builds.cancel(name),
-    dismissBuild: (name: string): void => watch().builds.dismiss(name),
-  };
-}
-
-export interface TodoHandlerDeps {
-  dbFile: string;
-  loadRoutines: () => Promise<Routine[]>;
-  addTodo: (file: string, routine: string, text: string) => Promise<TodoItem>;
-  listTodos: (file: string, routine: string) => Promise<TodoItem[]>;
-  listAllTodos: (file: string) => Promise<TodoItem[]>;
-  editTodoText: (file: string, id: string, text: string) => Promise<void>;
-  deleteTodo: (file: string, id: string) => Promise<void>;
-  reorderTodo: (file: string, id: string, newOrder: number) => Promise<void>;
-  clearFinishedTodos: (file: string, routine: string) => Promise<void>;
-  retryTodo: (file: string, id: string) => Promise<void>;
-}
-
-export function buildTodoHandlers(deps: TodoHandlerDeps) {
-  return {
-    list: (routine: string): Promise<TodoItem[]> => deps.listTodos(deps.dbFile, routine),
-    listAll: (): Promise<TodoItem[]> => deps.listAllTodos(deps.dbFile),
-    // Routine existence/type is enforced here, not in the store (store stays dumb, per spec).
-    add: async (routine: string, text: string): Promise<TodoItem> => {
-      resolveTodoRoutine(await deps.loadRoutines(), routine);
-      return deps.addTodo(deps.dbFile, routine, text);
-    },
-    edit: (id: string, text: string): Promise<void> => deps.editTodoText(deps.dbFile, id, text),
-    remove: (id: string): Promise<void> => deps.deleteTodo(deps.dbFile, id),
-    reorder: (id: string, newOrder: number): Promise<void> => deps.reorderTodo(deps.dbFile, id, newOrder),
-    clearFinished: (routine: string): Promise<void> => deps.clearFinishedTodos(deps.dbFile, routine),
-    retry: (id: string): Promise<void> => deps.retryTodo(deps.dbFile, id),
   };
 }
 
@@ -1159,6 +646,8 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   proposeSend?: ChatHandlerDeps["proposeSend"];
   sendHandlers?: ReturnType<typeof buildSendHandlers>;
   push: Push;
+  /** Dialogs, Finder, the browser and window sizing — Electron, injected (app/src/shell-ops.ts). */
+  shell: ShellOps;
   openComponent: (kind: ComponentKind, payload?: ChatDrop | DashboardTarget) => void;
   proposeRun: (suggestion: RouteSuggestion) => void;
   getPendingPlan: () => RouteSuggestion | undefined;
@@ -1292,42 +781,11 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): {
   const saveProjectsHandler = buildSaveProjectsHandler(deps);
   ipcMain.handle(IPC.saveProjects, (_e, projects: Project[]) => saveProjectsHandler(projects));
 
-  // Native folder picker so "add project" can browse instead of hand-typing a path.
-  ipcMain.handle(IPC.pickProjectFolder, async (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    const result = win
-      ? await dialog.showOpenDialog(win, { properties: ["openDirectory"] })
-      : await dialog.showOpenDialog({ properties: ["openDirectory"] });
-    return result.canceled ? undefined : result.filePaths[0];
-  });
-
-  // Native .app picker for the Settings "Terminal App" field — same shape as pickProjectFolder,
-  // just filtered to application bundles and defaulted to /Applications.
-  ipcMain.handle(IPC.pickTerminalApp, async (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    const opts = {
-      properties: ["openFile"] as ("openFile")[],
-      filters: [{ name: "Applications", extensions: ["app"] }],
-      defaultPath: "/Applications",
-    };
-    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
-    return result.canceled ? undefined : result.filePaths[0];
-  });
-
-  // Same picker as pickTerminalApp, for the Settings "Editor App" field.
-  ipcMain.handle(IPC.pickEditorApp, async (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    const opts = {
-      properties: ["openFile"] as ("openFile")[],
-      filters: [{ name: "Applications", extensions: ["app"] }],
-      defaultPath: "/Applications",
-    };
-    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
-    return result.canceled ? undefined : result.filePaths[0];
-  });
-
-  // "Reveal in Finder" from the Projects panel — just hands the path to Finder, no launch involved.
-  ipcMain.on(IPC.revealInFinder, (_e, path: string) => shell.showItemInFolder(path));
+  // Native pickers (Settings' Terminal/Editor App fields, "add project") and Finder reveal.
+  ipcMain.handle(IPC.pickProjectFolder, (e) => deps.shell.pickFolder(e.sender.id));
+  ipcMain.handle(IPC.pickTerminalApp, (e) => deps.shell.pickApp(e.sender.id));
+  ipcMain.handle(IPC.pickEditorApp, (e) => deps.shell.pickApp(e.sender.id));
+  ipcMain.on(IPC.revealInFinder, (_e, path: string) => deps.shell.reveal(path));
 
   const saveSkillHandler = buildSaveSkillHandler(deps);
   ipcMain.handle(IPC.saveSkill, (_e, name: string, body: string) => saveSkillHandler(name, body));
@@ -1401,7 +859,7 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): {
   });
   ipcMain.on(IPC.terminalOpenLink, (e, url: unknown, mountId: unknown) => {
     const href = tryChatKey(e.sender.id, mountId) === undefined ? undefined : terminalLink(url);
-    if (href) shell.openExternal(href).catch((err: unknown) => console.error("terminal link failed:", err));
+    if (href) deps.shell.openExternal(href).catch((err: unknown) => console.error("terminal link failed:", err));
   });
   // Cmd+click on a path in the chat log (#779): validated and resolved here, never by the renderer.
   ipcMain.on(IPC.chatOpenPath, (e, raw: unknown, mountId: unknown) => {
@@ -1413,8 +871,8 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): {
       stat,
       editorApp: deps.getEditorApp(),
       terminalApp: deps.getTerminalApp(),
-      openDir: async (p) => { const err = await shell.openPath(p); if (err) throw new Error(err); },
-      reveal: (p) => shell.showItemInFolder(p),
+      openDir: deps.shell.openPath,
+      reveal: deps.shell.reveal,
       openInEditor: (app, p) => execFileAsync("/usr/bin/open", ["-a", app, p]),
     });
   });
@@ -1593,15 +1051,8 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): {
   ipcMain.handle(IPC.getPendingInterruptedRunNotices, () => deps.getPendingInterruptedRunNotices());
 
   // Lets a component window grow to fit its own content (e.g. About growing when an update
-  // notice appears) instead of clipping it. Width is left alone; height only grows/shrinks to
-  // what the renderer measured, clamped to the display's work area.
-  ipcMain.on(IPC.resizeWindowToContent, (e, height: number) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    if (!win) return;
-    const [width] = win.getContentSize();
-    const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
-    win.setContentSize(width ?? 0, Math.min(Math.round(height), workArea.height), true);
-  });
+  // notice appears) instead of clipping it.
+  ipcMain.on(IPC.resizeWindowToContent, (e, height: number) => deps.shell.fitHeight(e.sender.id, height));
 
   return {
     releaseChatClient: (clientId) => { for (const id of mounts.ofClient(clientId)) releaseChat(clientId, id); },
