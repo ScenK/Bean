@@ -7,7 +7,9 @@ is an UPSERT (modeled on the dream lease) plus its read-back inside one `BEGIN I
 separate SELECT could see the holder's release and read "no row" as acquired. Wall-clock epoch ms.
 Only an explicit `onAcquired` means held: a db error on a claim fires neither callback.
 
-Holder-only work: the scheduler, reminders, and `recoverInterruptedTodos` (a standby process would
+Both hosts build the scheduler through core's `createRoutineWiring` (its `start()` = recover todos, then
+start if `canSchedule()`) and `startReminderLoop` (`routine-wiring.ts`); only the lease handling
+differs per host. Holder-only work: the scheduler, reminders, and `recoverInterruptedTodos` (a standby process would
 fail the holder's live `running` todos). Gate on `lease.held()`, not a flag: it fails closed at the
 last good renewal's expiry even while heartbeats error (then `onLost(undefined)`). `canSchedule` is
 re-checked after `tick()`'s awaits and inside automatic watch polls before every side effect (todo,

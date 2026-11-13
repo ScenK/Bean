@@ -1,9 +1,6 @@
 import {
-  addTodo, claimTodo, clearReservations, killAllCommands, killAllDelegates, createRoutineHost, createRoutineScheduler, dbFile, enqueueOutbox, execWatchCommand, fetchText,
-  isWatchSeeded, listTodos, loadLayeredSkills, loadMemories, loadRoutines, loadRoutineStates, makeRoutineSteps, markNewItems,
-  outboxDir, fireDueReminders, remindersFile, pinnedStepSelection, pollWatch, pruneStepAttempts, recoverInterruptedTodos, resolveDelegateSelection,
-  retrieveNoteTool, routinesDir, routineStateFile, availableModels, saveRoutine, saveRoutineStates, searchNotes, seedWatch,
-  skillsDir, sproutRunFacts, unseenIds, withFinishReply, holdSchedulerLease,
+  clearReservations, killAllCommands, killAllDelegates, createRoutineWiring, dbFile, enqueueOutbox, loadRoutines, outboxDir,
+  retrieveNoteTool, routinesDir, searchNotes, sproutRunFacts, startReminderLoop, withFinishReply, holdSchedulerLease,
   type CliModels, type CliName, type LeaseHolder, type Routine, type RoutineHostDeps, type SproutTrigger,
 } from "@bean/core";
 import { randomUUID } from "node:crypto";
@@ -87,52 +84,22 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
     enqueueOutbox(outboxDir(dir), { transport: "discord", body, ...(title ? { title } : {}) }, randomUUID)
       .then(() => {}, (err: unknown) => console.error("bean: owner notice failed", err));
 
-  const recovered = await recoverInterruptedTodos(dbFile(dir));
-  if (recovered > 0) console.warn(`bean: marked ${recovered} interrupted todo(s) as failed`);
   const cleared = clearReservations(dir);
   if (cleared.length > 0) await ownerDm(clearedNotice(cleared));
 
-  const steps = makeRoutineSteps({
+  const routines = createRoutineWiring({
     dir,
-    selectCli: (req) => req.cli
-      ? pinnedStepSelection({ cli: req.cli, model: req.model }, deps.clis(), availableModels(deps.cliModels, deps.clis()))
-      : resolveDelegateSelection(deps.cliModels, deps.clis(), deps.delegateCli, req.model),
-    path: process.env.PATH ?? "",
-  });
-  const host = createRoutineHost({
-    dir,
+    builtinDir: deps.builtinDir,
     converse: deps.converse,
     getModel: () => deps.model,
-    delegateStep: steps.delegateStep,
-    commandStep: steps.commandStep,
+    clis: deps.clis,
+    cliModels: deps.cliModels,
+    getDelegateCli: () => deps.delegateCli,
+    path: process.env.PATH ?? "",
     tools: [retrieveNoteTool((q) => searchNotes(dbFile(dir), q))],
-    loadSkills: () => loadLayeredSkills(skillsDir(deps.builtinDir), skillsDir(dir)),
-    // Household-shared memories only — never a member's private facts.
-    memories: () => loadMemories(dbFile(dir), null),
     getRoutineDigestContext: () => deps.routineDigestContext,
     notify: (msg) => ownerDm(msg.body, msg.title),
-  });
-  const watchPoll = { fetchText, exec: execWatchCommand(process.env.PATH ?? "") };
-  const scheduler = createRoutineScheduler({
     canSchedule: lease.held, // fails closed between a missed renewal and the exit
-    loadRoutines: () => loadRoutines(routinesDir(dir)),
-    loadStates: () => loadRoutineStates(routineStateFile(dir)),
-    saveStates: (s) => saveRoutineStates(routineStateFile(dir), s),
-    runRoutine: host.runOneRoutine,
-    deliverDigest: host.deliverDigest,
-    sinkProblems: host.sinkProblems,
-    pruneAttempts: (r, keep) => pruneStepAttempts(dbFile(dir), r, keep),
-    hasPendingTodos: async (r) => (await listTodos(dbFile(dir), r)).some((t) => t.status === "pending"),
-    claimTodo: (r) => claimTodo(dbFile(dir), r),
-    pollWatch: (w) => pollWatch(w, watchPoll),
-    watchSeen: {
-      isSeeded: (r, source) => isWatchSeeded(dbFile(dir), r, source),
-      seed: (r, source, ids) => seedWatch(dbFile(dir), r, source, ids),
-      unseen: (r, ids) => unseenIds(dbFile(dir), r, ids),
-      markNew: (r, ids) => markNewItems(dbFile(dir), r, ids),
-    },
-    addTodo: async (r, text) => { await addTodo(dbFile(dir), r, text); },
-    saveRoutine: (r) => saveRoutine(routinesDir(dir), r),
     alarm: (routine, error) => void ownerDm(`Can't check for new items — ${error}`, `Sprout: ${routine.name}`),
     // No Run-now button here: rebase each to its next slot (still no catch-up), or the scheduler's
     // missed guard would skip it forever.
@@ -141,27 +108,23 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
       void scheduler.clearMissed(names).catch((err: unknown) => console.error("bean: clearing missed routines failed", err));
     },
   });
+  const { scheduler } = routines;
 
   const clis = deps.clis();
   const home = process.env.HOME ?? "";
   const auth = clis.map((c) => `${c}=${cliAuthPresent(c, process.env, home) ? "yes" : "no"}`).join(" ");
-  const routines = await loadRoutines(routinesDir(dir));
+  const loaded = await loadRoutines(routinesDir(dir));
   console.log(
     `@bean/discord headless routines on: TZ=${process.env.TZ}, clis: ${clis.join(", ") || "none"} (auth ${auth || "n/a"}), ` +
-      `${routines.length} routine(s) (${routines.filter((r) => r.enabled).length} enabled), owner ${deps.ownerId}`,
+      `${loaded.length} routine(s) (${loaded.filter((r) => r.enabled).length} enabled), owner ${deps.ownerId}`,
   );
-  scheduler.start();
+  await routines.start();
 
-  // Reminders: the desktop app's 30s loop, here. Targeted ones go through the outbox this
-  // process drains; untargeted (desktop-set) ones become owner DMs like the other notices.
-  const reminderTimer = setInterval(() => {
-    if (!lease.held()) return;
-    fireDueReminders(remindersFile(dir), new Date(), {
-      untargeted: (r) => ownerDm(r.text, "⏰ Reminder"),
-      enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID),
-      failed: (r, err) => console.error(`bean: reminder ${r.id} not delivered`, err),
-    }).catch((err: unknown) => console.error("bean: reminder loop failed", err));
-  }, 30_000);
+  // Reminders: untargeted (desktop-set) ones become owner DMs like the other notices.
+  const stopReminders = startReminderLoop({
+    dir, canRun: lease.held, untargeted: (r) => ownerDm(r.text, "⏰ Reminder"),
+    failed: (r, err) => console.error(`bean: reminder ${r.id} not delivered`, err),
+  });
 
   const sprouts = {
     trigger: withFinishReply(scheduler.trigger, (msg) =>
@@ -170,7 +133,7 @@ export async function startHeadlessRoutines(deps: HeadlessRoutineDeps): Promise<
   };
 
   const shutdown = async (): Promise<void> => {
-    clearInterval(reminderTimer);
+    stopReminders();
     scheduler.stop();
     // A state write stuck on a dead disk must not hang shutdown past the container's grace period.
     await Promise.race([scheduler.settle(), new Promise((r) => setTimeout(r, 5_000))]);

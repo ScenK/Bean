@@ -23,17 +23,17 @@ import {
   loadConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona, saveConfig,
   makeOpenAIConverse, planForDroppedSkill, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory, deleteMemories, extractMemories,
   maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, type DreamDigest,
-  loadReminders, updateReminders, fireDueReminders, holdSchedulerLease, enqueueOutbox, type Reminder, extractPageText,
+  loadReminders, updateReminders, holdSchedulerLease, enqueueOutbox, type Reminder, extractPageText,
   answerRoutineTrigger, sproutRunFacts, withFinishReply, type RoutineTrigger, type RoutineTriggerAnswer,
   loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, searchNotes, retrieveNoteTool, detectClis, loginShellPath, resolveCliPath, deliver,
-  loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates, saveRoutineStates,
+  loadRoutines, saveRoutine, deleteRoutine, loadRoutineStates,
   routinesDir, routineStateFile, outboxDir, claimOutbox, ackOutbox, runDelegate, killAllDelegates, killAllCommands,
   scratchDir, ROUTINE_STEP_TIMEOUT_MS, systemControlTool, imagesDir, makeOpenAIImageGen,
-  addTodo, claimTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
-  recoverInterruptedTodos, deleteTodosForRoutine, sweepDeadRuns,
-  pollWatch, isWatchSeeded, seedWatch, markNewItems, unseenIds, clearWatch, watchSourceKey, briefMessages, parseBrief,
-  availableModels, pinnedStepSelection, isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats,
-  createRoutineScheduler, createRoutineHost, makeRoutineSteps, detectTools, execWatchCommand, fetchText, sinkRecipients, safeFetch,
+  addTodo, listTodos, listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo,
+  deleteTodosForRoutine, sweepDeadRuns,
+  isWatchSeeded, clearWatch, watchSourceKey, briefMessages, parseBrief,
+  isLiveCli, findDelegateRun, saveDesktopChat, getDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats,
+  detectTools, fetchText, createRoutineWiring, startReminderLoop, sinkRecipients, safeFetch,
   listChatopsConversations, chatopsConversationTurns, loadChatopsOwners, ownerSubjectIds,
   listDestinations, destinationLabel, matchDestination, ambientSpeakers, setAlias, clearAlias, retargetAlias, sinkAliasProblems,
 } from "@bean/core";
@@ -654,18 +654,15 @@ app.whenReady().then(async () => {
     },
   });
   app.on("before-quit", () => schedulerLease.stop());
-  setInterval(() => {
-    if (!schedulerLease.held()) return;
-    fireDueReminders(remindersPath, new Date(), {
-      untargeted: (r) => {
-        void deliver({ body: r.text }, transports).then((outcomes) => {
-          for (const o of outcomes) if (!o.ok) reminderFailed(r, `${o.name}: ${o.error instanceof Error ? o.error.message : String(o.error)}`);
-        });
-      },
-      enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID),
-      failed: reminderFailed,
-    }).catch((err: unknown) => console.error("bean: reminder loop failed", err));
-  }, 30_000);
+  startReminderLoop({
+    dir, canRun: schedulerLease.held,
+    untargeted: (r) => {
+      void deliver({ body: r.text }, transports).then((outcomes) => {
+        for (const o of outcomes) if (!o.ok) reminderFailed(r, `${o.name}: ${o.error instanceof Error ? o.error.message : String(o.error)}`);
+      });
+    },
+    failed: reminderFailed,
+  });
 
   try {
     const cfgPath = configFile(dir);
@@ -828,18 +825,6 @@ app.whenReady().then(async () => {
     // Run records a crash left behind (run-queue.ts). Never kills: the bots share runs/.
     sweepDeadRuns(dir);
 
-    // Delegate/command step adapters (core routine-steps.ts), on the same resolved login-shell
-    // PATH spawn as delegate-tasks (safety-packaged-app-path-detection).
-    const { delegateStep, commandStep } = makeRoutineSteps({
-      dir,
-      // A pinned harness refuses here, before any reservation or spawn — never a silent swap.
-      selectCli: (req) => req.cli
-        ? pinnedStepSelection({ cli: req.cli, model: req.model }, enabledClis(), availableModels(cliModels, enabledClis()))
-        : resolveDelegateCli(req.model),
-      spawnFn: resolvedPathSpawnFn(resolvedPath),
-      path: resolvedPath,
-    });
-
     // User-facing saves (editor, builder) refuse a chat sink naming an unknown destination.
     const saveKnownSinks = async (r: Routine, models?: CliModels[]): Promise<void> => {
       const problem = sinkAliasProblems(r, listDestinations(dbFile(dir)))[0];
@@ -847,43 +832,24 @@ app.whenReady().then(async () => {
       await saveRoutine(routinesPath, r, models);
     };
     const routineBubbles = createRoutineBubbles(taskStatus);
-    const { runOneRoutine, deliverDigest, sinkProblems } = createRoutineHost({
+    // Routine host + scheduler (core routine-wiring.ts), on the same resolved login-shell PATH
+    // spawn as delegate-tasks (safety-packaged-app-path-detection).
+    const routines = createRoutineWiring({
       dir,
+      builtinDir: projectDir,
       converse: runtime.converse,
       getModel: () => runtime.getModel(),
-      delegateStep,
-      commandStep,
+      clis: enabledClis,
+      cliModels,
+      getDelegateCli: () => runtime.getDelegateCli(),
+      path: resolvedPath,
+      spawnFn: resolvedPathSpawnFn(resolvedPath),
       tools: actionTools,
-      loadSkills: () => loadLayeredSkills(skillsDir(projectDir), skillsDir(dir)),
-      // Household-shared only: routines never see a member's private facts.
-      memories: () => loadMemories(dbFile(dir), null),
       getRoutineDigestContext: () => runtime.getRoutineDigestContext(),
       onStatus: routineBubbles.onStatus,
       notify: async ({ target, ...msg }) => {
         if (notificationTransport.available()) await notificationTransport.send({ ...msg, ...(target ? { meta: { open: "dashboard", target } } : {}) });
       },
-    });
-
-    const watchPoll = { fetchText, exec: execWatchCommand(resolvedPath) };
-    const routineScheduler = createRoutineScheduler({
-      loadRoutines: () => loadRoutines(routinesPath),
-      loadStates: () => loadRoutineStates(routineStatePath),
-      saveStates: (s) => saveRoutineStates(routineStatePath, s),
-      runRoutine: runOneRoutine,
-      pruneAttempts: (r, keep) => pruneStepAttempts(dbFile(dir), r, keep),
-      deliverDigest,
-      sinkProblems,
-      hasPendingTodos: async (r) => (await listTodos(dbFile(dir), r)).some((t) => t.status === "pending"),
-      claimTodo: (r) => claimTodo(dbFile(dir), r),
-      pollWatch: (w) => pollWatch(w, watchPoll),
-      watchSeen: {
-        isSeeded: (r, source) => isWatchSeeded(dbFile(dir), r, source),
-        seed: (r, source, ids) => seedWatch(dbFile(dir), r, source, ids),
-        unseen: (r, ids) => unseenIds(dbFile(dir), r, ids),
-        markNew: (r, ids) => markNewItems(dbFile(dir), r, ids),
-      },
-      addTodo: async (r, text) => { await addTodo(dbFile(dir), r, text); },
-      saveRoutine: (r) => saveRoutine(routinesPath, r),
       canSchedule: schedulerLease.held, // fails closed past the last good renewal
       alarm: (routine, error) => {
         if (notificationTransport.available()) {
@@ -891,6 +857,7 @@ app.whenReady().then(async () => {
         }
       },
     });
+    const routineScheduler = routines.scheduler;
     // The app hosts the scheduler, so it also posts the finish reply, to the asking conversation.
     answerSproutTrigger = (bot, req) => answerRoutineTrigger(req, {
       load: () => loadRoutines(routinesPath),
@@ -903,7 +870,7 @@ app.whenReady().then(async () => {
       saveRoutine: (r) => saveKnownSinks(r),
       loadSkills: () => loadLayeredSkills(skillsDir(projectDir), skillsDir(dir)),
       saveSkill: (name, md) => saveSkill(skillsDir(dir), name, md),
-      pollWatch: (w) => pollWatch(w, watchPoll),
+      pollWatch: routines.pollWatch,
       fetchText,
       tools: () => tools,
       // Not recorded in delegate_runs: the builder is internal tooling whose scratch session the
@@ -932,12 +899,7 @@ app.whenReady().then(async () => {
     // the lease holder recovers todos: anything stuck `running` was interrupted by the previous
     // holder (quit/crash) — fail it visibly (retryable). A standby app must not touch them: the
     // current holder is still running them.
-    startScheduler = () => {
-      void recoverInterruptedTodos(dbFile(dir))
-        .then((n) => { if (n > 0) console.warn(`bean: marked ${n} interrupted todo(s) as failed`); },
-          (err: unknown) => console.error("bean: interrupted-todo recovery failed", err))
-        .then(() => { if (schedulerLeaseHeld) routineScheduler.start(); });
-    };
+    startScheduler = () => { void routines.start(); };
     stopScheduler = () => routineScheduler.stop();
     if (schedulerLeaseHeld) startScheduler();
     app.on("before-quit", () => routineScheduler.stop());
@@ -1141,7 +1103,7 @@ app.whenReady().then(async () => {
           isSeeded: (r) => (r.watch ? isWatchSeeded(dbFile(dir), r.name, watchSourceKey(r.watch)) : true),
           pollFailures: (name) => routineScheduler.pollFailures(name),
           checkNow: (name) => routineScheduler.checkNow(name),
-          previewWatch: (w) => pollWatch(w, watchPoll),
+          previewWatch: routines.pollWatch,
           enableWatch: (name, queueExisting) => routineScheduler.enableWatch(name, queueExisting),
           sinkRecipients: () => sinkRecipients(dir),
           draftBrief: async (sentence, previous) => {

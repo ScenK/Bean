@@ -78,6 +78,7 @@ export * from "./scheduler-lease.js";
 export * from "./sprout-trigger.js";
 export * from "./routine-host.js";
 export * from "./routine-steps.js";
+export * from "./routine-wiring.js";
 export * from "./watch-io.js";
 export * from "./safe-fetch.js";
 export * from "./spawn-env.js";
