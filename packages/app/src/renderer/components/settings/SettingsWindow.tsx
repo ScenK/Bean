@@ -2,7 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { CliName } from "@bean/core";
 import type { ConfigView } from "../../../channels.js";
 import type { Theme } from "../../../channels.js";
-import type { ChatopsBot, ChatopsState } from "../../../chatops-servers.js";
+import type { ChatopsBot, ChatopsState } from "@bean/host";
 import { PanelHeader } from "../../shared/Panel.js";
 import { DestinationsList } from "./DestinationsList.js";
 

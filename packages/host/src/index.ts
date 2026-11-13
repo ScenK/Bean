@@ -1,8 +1,10 @@
 // @bean/host — the Electron-free host the desktop app (and later a headless host) serves: the
 // stateful registries, the scheduler, and the handlers the shell's IPC adapter wires to channels.
 export * from "./action-tools.js";
+export * from "./bots.js";
 export * from "./chat.js";
 export * from "./chat-sessions.js";
+export * from "./chatops-servers.js";
 export * from "./config.js";
 export * from "./delegate-tasks.js";
 export * from "./destinations.js";

@@ -19,7 +19,7 @@ Bean has two chat adapters over one shared brain:
   wins; only `/live-session` (no project in mind) takes the remembered project. Steering is
   deliberately not remembered (war-room must be a per-card choice).
 - Conversation/proposal state is in-memory by design (POC): restart = amnesia.
-- Settings has a "CHAT BOTS" section (Start/Stop per bot) wired via `packages/app/src/chatops-servers.ts`
+- Settings has a "CHAT BOTS" section (Start/Stop per bot) wired via `packages/host/src/chatops-servers.ts` (supervised by the host)
   (`createChatopsServers`): Electron main spawns a plain child `node` process and tracks running/error
   state, broadcast to renderer via `bean:chatops-event`. Dev uses `packages/{discord,teams}/dist/server.js`;
   packaged builds ship bundled bot servers under `Resources/chatops/{discord,teams}/server.js` and pass
@@ -105,7 +105,7 @@ Bean has two chat adapters over one shared brain:
 - **Sprout triggers** (#637, `chatops/sprout-bridge.ts`): an app-spawned bot has no scheduler
   (`BEAN_HEADLESS_ROUTINES` is cleared), so its sprout-run card tap sends `routine-trigger
   {requestId, name, action, origin}` over the same IPC slot (still no message text bot → app). The app
-  (`chatops-servers.ts` → `main.ts`) re-resolves the name with `loadRoutines()` (gone = `missing`) and
+  (`chatops-servers.ts` → the host's `answerSproutTrigger`) re-resolves the name with `loadRoutines()` (gone = `missing`) and
   re-plans with `planSproutRun` — a sprout whose plan changed since the card (paused, emptied, run ↔
   check) is refused, never run as something the owner didn't confirm — then triggers and posts the
   finish reply itself via the outbox (`withFinishReply`, transport = the asking bot). It answers

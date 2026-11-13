@@ -14,6 +14,7 @@ test("createHost boots on an empty data dir and its quit hooks tear it down", as
     dir, builtinDir: dir, push, onJobs: vi.fn(),
     notification: { name: "notification", available: () => false, send: vi.fn() },
     isChatClient: (id) => id === 1, onQuit: (fn) => quit.push(fn), firstAutoMemory: async () => false,
+    bots: { root: dir, onEvent: vi.fn(), onSynced: vi.fn() },
   });
   try {
     expect(host.handlers.getConfig().paths.config).toBe(join(dir, "config.json"));
@@ -31,6 +32,6 @@ test("createHost boots on an empty data dir and its quit hooks tear it down", as
   } finally {
     for (const fn of quit) fn();
   }
-  expect(quit.length).toBeGreaterThanOrEqual(4); // lease, registries, builder, scheduler
+  expect(quit.length).toBeGreaterThanOrEqual(5); // lease, registries, builder, scheduler, bots
   expect(host.schedulerLease.held()).toBe(false);
 });

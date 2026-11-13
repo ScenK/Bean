@@ -762,7 +762,7 @@ process.on("message", (raw) => {
     .catch((err: unknown) => console.error("desk request error:", err));
 });
 
-// chatopsServers.stop() (packages/app/src/chatops-servers.ts) sends SIGTERM with no other
+// chatopsServers.stop() (packages/host/src/chatops-servers.ts) sends SIGTERM with no other
 // warning — mark any in-flight run interrupted (durable outbox notice to its conversation)
 // before this process disappears, instead of just dying mid-run with the requester left hanging.
 process.on("SIGTERM", () => {

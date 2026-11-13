@@ -32,6 +32,7 @@ import {
 } from "./handlers.js";
 import { createLiveTasks, LIVE_AGENT_NAMES } from "./live-tasks.js";
 import { buildMemoryHandlers } from "./memory.js";
+import { startBots, type HostBotsOptions } from "./bots.js";
 import { buildNotesHandlers } from "./notes.js";
 import { createRoutineBuilder } from "./routine-builder.js";
 import { buildRoutineHandlers } from "./routines.js";
@@ -58,12 +59,14 @@ export interface HostDeps {
   firstAutoMemory: () => Promise<boolean>;
   /** Shell-owned per-chat state to drop with a released chat (the desktop's terminals). */
   onChatRelease?: (mountId: string) => void;
+  /** The Discord and Teams bots, which the host supervises and autostarts (#805). */
+  bots: HostBotsOptions;
 }
 
 /** The Electron-free host: the stateful registries (chat mounts and turns, delegates, live sessions,
- * status bubbles, runtime config, routine builder), the scheduler lease, the reminder loop and the
- * sprout scheduler, and every handler the shell's IPC adapter wires to a channel. Throws when the
- * config can't load. */
+ * status bubbles, runtime config, routine builder), the scheduler lease, the reminder loop, the
+ * sprout scheduler, the Discord and Teams bots, and every handler the shell's IPC adapter wires to a
+ * channel. Throws when the config can't load. */
 export async function createHost(deps: HostDeps) {
   const { dir, builtinDir: projectDir } = deps;
   const db = dbFile(dir);
@@ -503,6 +506,11 @@ export async function createHost(deps: HostDeps) {
     liveProjectOf: liveTasks.projectOf,
   };
 
+  // Last: a replayed autostart may answer a sprout tap at once, so the scheduler must exist.
+  const bots = await startBots({
+    ...deps.bots, dir, builtinDir: projectDir, resolvedPath, taskStatus, onQuit: deps.onQuit, onRoutineTrigger: answerSproutTrigger,
+  });
+
   return {
     handlers,
     taskStatus,
@@ -514,7 +522,7 @@ export async function createHost(deps: HostDeps) {
     delegateTasks,
     liveTasks,
     schedulerLease,
-    answerSproutTrigger,
+    bots,
   };
 }
 

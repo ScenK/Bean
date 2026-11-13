@@ -14,7 +14,7 @@ import type { IpcMain } from "electron";
 import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import { terminalLink, type TerminalTasks } from "./terminal-tasks.js";
 import { chatPathTarget, openChatPath } from "./chat-open-path.js";
-import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
+import type { ChatopsBot, ChatopsState } from "@bean/host";
 import type { UpdateCheckOutcome } from "./updater.js";
 import type { buildSyncedChatHandlers } from "./synced-chats.js";
 import type { buildDeskContinueHandler } from "./desk-continue.js";

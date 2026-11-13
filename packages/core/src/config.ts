@@ -42,6 +42,8 @@ export function routineStateFile(dir: string): string { return join(dir, "routin
 export function outboxDir(dir: string): string { return join(dir, "outbox"); }
 export function runsDir(dir: string): string { return join(dir, "runs"); }
 export function modelMemoryFile(dir: string): string { return join(dir, "model-memory.json"); }
+// The Discord/Teams bots the user switched on — the host restarts them at boot (#805).
+export function chatopsEnabledFile(dir: string): string { return join(dir, "chatops-enabled.json"); }
 // A "no project" run's working directory (2a) — the launched CLI's cwd when no real project
 // was picked. Bean never seeds it (no git clone/page fetch): if the user typed an optional
 // URL, it's folded into the composed prompt instead, and the launched agent (opencode/claude/codex,

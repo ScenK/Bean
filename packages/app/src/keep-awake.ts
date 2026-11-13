@@ -79,7 +79,7 @@ export async function loadKeepAwake(file: string): Promise<KeepAwakeState> {
   }
 }
 
-/** Write-then-rename, like chatops-enabled-store.ts; callers chain writes so the fixed temp name is safe. */
+/** Write-then-rename, like @bean/host's chatops-enabled-store.ts; callers chain writes so the fixed temp name is safe. */
 export async function saveKeepAwake(file: string, state: KeepAwakeState): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   const tmp = `${file}.tmp`;

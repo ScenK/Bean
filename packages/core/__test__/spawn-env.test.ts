@@ -35,7 +35,7 @@ describe("spawnEnv", () => {
     const trusted = new Set(["chatops-servers.ts", "devtunnel.ts"]);
     const root = join(import.meta.dirname, "..", "..");
     const offenders: string[] = [];
-    for (const pkg of ["core", "app", "discord", "teams"]) {
+    for (const pkg of ["core", "host", "app", "discord", "teams"]) {
       const dir = join(root, pkg, "src");
       for (const f of readdirSync(dir, { recursive: true }) as string[]) {
         if (!f.endsWith(".ts") || trusted.has(f.split("/").pop() ?? "")) continue;

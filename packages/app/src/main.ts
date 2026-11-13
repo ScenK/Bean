@@ -3,14 +3,10 @@ import { createRequire } from "node:module";
 import { release } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
-import { chatopsEnabledFile, loadChatopsEnabled, saveChatopsEnabled } from "./chatops-enabled-store.js";
-import { createChatopsServers } from "./chatops-servers.js";
-import { buildSyncedChatHandlers, type SyncedChatEvent } from "./synced-chats.js";
-import { createHost, type Host } from "@bean/host";
+import { buildSyncedChatHandlers } from "./synced-chats.js";
+import { createHost, type ChatopsBot, type ChatopsState, type Host } from "@bean/host";
 import { buildDeskContinueHandler } from "./desk-continue.js";
-import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
-import { applyChatopsActivity, clearBotJobs } from "./chatops-activity.js";
 import { installAvatarControls } from "./avatar-window.js";
 import { createAvatarLog } from "./avatar-log.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker, powerMonitor, screen, webContents } from "electron";
@@ -119,15 +115,10 @@ app.whenReady().then(async () => {
     clients: () => BrowserWindow.getAllWindows().map((w) => w.webContents),
   });
   let avatarReady = false;
-  // Hoisted out of the `try` block below (where it's created) so the tray menu's click
-  // handler — built further up in this function, long before that `try` runs — can read
-  // it. Safe because click handlers only fire on user interaction, after this whole
-  // whenReady() callback (including the try block) has finished running.
-  let chatopsServers: ReturnType<typeof createChatopsServers> | undefined;
   // Mirrors SettingsWindow.tsx's scheduleErrorClear (same 3s window): a tray-only cache of when
   // each bot's current error first appeared, so the submenu can stop showing a stale error even
-  // though chatopsServers' own state (shared with Settings) keeps it until overwritten. Updated
-  // by the `send` callback below; read by buildChatopsSubmenu's displayState.
+  // though the host's bot state (shared with Settings) keeps it until overwritten. Updated by the
+  // host's `bots.onEvent` below; read by buildChatopsSubmenu's displayState.
   const CHATOPS_ERROR_DISPLAY_MS = 3000;
   const chatopsErrorSince: Partial<Record<ChatopsBot, number>> = {};
   // Menu-bar app: Cmd+W (the default app-menu Close role) should tuck the pet away, not destroy
@@ -162,11 +153,11 @@ app.whenReady().then(async () => {
   // system App menu, where About never gets a shortcut either.
   const symbol = (name: string) => nativeImage.createMenuSymbol(name);
   // Discord/Teams start/stop, folded into one "Chat Bots" submenu item instead of one tray
-  // row per bot. Mirrors SettingsWindow.tsx's own Start/Stop toggle — same chatopsServers
-  // object, so both surfaces stay in sync. Rebuilt fresh in buildTrayMenu() below (not just
+  // row per bot. Mirrors SettingsWindow.tsx's own Start/Stop toggle — same host bot
+  // supervisor, so both surfaces stay in sync. Rebuilt fresh in buildTrayMenu() below (not just
   // once here) so the checkbox/dot state is current every time the tray menu opens.
   const buildChatopsSubmenu = (): MenuItemConstructorOptions[] => {
-    const rawStatus = chatopsServers?.status() ?? { discord: { running: false, enabled: false }, teams: { running: false, enabled: false } };
+    const rawStatus = host?.bots.status() ?? { discord: { running: false, enabled: false }, teams: { running: false, enabled: false } };
     // Drop an error once it's past CHATOPS_ERROR_DISPLAY_MS old — see chatopsErrorSince above.
     const displayState = (bot: ChatopsBot, s: ChatopsState): ChatopsState => {
       const since = chatopsErrorSince[bot];
@@ -185,7 +176,7 @@ app.whenReady().then(async () => {
         checked: row.checked,
         click: () => {
           shell.beep();
-          row.checked ? chatopsServers?.stop(row.bot) : chatopsServers?.start(row.bot);
+          row.checked ? host?.bots.stop(row.bot) : host?.bots.start(row.bot);
         },
       });
       if (row.error) items.push({ label: `⚠️ ${row.error}`, enabled: false });
@@ -296,17 +287,11 @@ app.whenReady().then(async () => {
   });
 
   // The host registers its own synchronous teardown (delegates, live sessions, the scheduler and
-  // its lease, the routine builder) through `onQuit`; the shell-owned pieces stop here.
+  // its lease, the routine builder, the Discord and Teams bots) through `onQuit`; the shell-owned
+  // pieces stop here.
   let killAllTerminals: () => void = () => {};
-  app.on("before-quit", () => {
-    // Chat terminals' shells and their jobs.
-    killAllTerminals();
-    // Spawned chatops servers do NOT die with us — without this they survive as launchd-owned
-    // orphans, holding port 3978 and answering webhooks with whatever build they booted with.
-    // The servers' own exitWhenOrphaned() watchdog covers the paths that never reach here
-    // (crash, force-quit, SIGKILL).
-    chatopsServers?.stopAll();
-  });
+  // Chat terminals' shells and their jobs.
+  app.on("before-quit", () => killAllTerminals());
   const allowClose = new WeakSet<BrowserWindow>();
   ipcMain.on(IPC.allowChatClose, (evt) => {
     const w = BrowserWindow.fromWebContents(evt.sender);
@@ -496,8 +481,20 @@ app.whenReady().then(async () => {
         return first;
       },
       onChatRelease: (mountId) => { void terminalTasks?.stopMount(mountId); }, // never rejects; the entry is held until the shell is gone
+      bots: {
+        root: app.isPackaged ? process.resourcesPath : dirname(projectBeanDir()),
+        ...(app.isPackaged ? { serverEntries: { discord: "chatops/discord/server.js", teams: "chatops/teams/server.js" } } : {}),
+        // Where the enabled set lived before the host owned it; copied into ~/.bean once.
+        legacyEnabledFile: join(app.getPath("userData"), "chatops-enabled.json"),
+        onEvent: (event) => {
+          if (event.error) chatopsErrorSince[event.bot] = Date.now(); else delete chatopsErrorSince[event.bot];
+          push.broadcast(IPC.chatopsEvent, event);
+        },
+        // Synced chats (synced-chats.ts): re-read the sidebar.
+        onSynced: (e) => push.broadcast(IPC.syncedChatEvent, e),
+      },
     });
-    const { taskStatus, runtime } = h;
+    const { runtime } = h;
 
     // node-pty is loaded on first use, not at boot: a broken native module fails that terminal's
     // start, never the whole app. Packaged, it resolves from app.asar (spawn-helper unpacked).
@@ -510,56 +507,6 @@ app.whenReady().then(async () => {
       send: (event) => push.send(event.mountId, IPC.terminalEvent, event),
     });
     killAllTerminals = terminals.killAll;
-
-    const chatopsRoot = app.isPackaged ? process.resourcesPath : dirname(projectBeanDir());
-    const chatopsEnabledPath = chatopsEnabledFile(app.getPath("userData"));
-    let chatopsSave: Promise<void> = Promise.resolve();
-    // Synced chats (synced-chats.ts): conversations with a live session running, from the bots'
-    // `live` activity (its id is the conversation id), and the pushes that re-read the sidebar.
-    const liveConvs: Record<ChatopsBot, Set<string>> = { discord: new Set(), teams: new Set() };
-    const syncedChanged = (e: SyncedChatEvent): void => {
-      push.broadcast(IPC.syncedChatEvent, e);
-    };
-    chatopsServers = createChatopsServers({
-      repoRoot: chatopsRoot,
-      // A spawned bot's sprout-run tap (#637), answered by the host's scheduler.
-      onRoutineTrigger: h.answerSproutTrigger,
-      resolvedPath: h.resolvedPath,
-      onActivity: (bot, e) => {
-        applyChatopsActivity(taskStatus, bot, e);
-        if (e.type !== "live") return;
-        if (e.phase === "start") liveConvs[bot].add(e.id); else liveConvs[bot].delete(e.id);
-        syncedChanged({ surface: bot, conversationId: e.id });
-      },
-      onSaved: (bot, conversationId) => syncedChanged({ surface: bot, conversationId, saved: true }),
-      send: (event) => {
-        if (!event.running && liveConvs[event.bot].size > 0) {
-          liveConvs[event.bot].clear();
-          syncedChanged({ surface: event.bot });
-        }
-        if (event.error) {
-          chatopsErrorSince[event.bot] = Date.now();
-          taskStatus.error(`bot:${event.bot}`, { kind: "bot", name: event.bot === "discord" ? "Discord" : "Teams", line: event.error, detail: event.error });
-        } else delete chatopsErrorSince[event.bot];
-        if (!event.running) clearBotJobs(taskStatus, event.bot);
-        push.broadcast(IPC.chatopsEvent, event);
-      },
-      // Chained, not fire-and-forget: replaying two bots at boot (or a fast toggle) would
-      // otherwise put two mkdir+writeFile calls on the same path in flight, where an older
-      // subset can land last — or a torn write leaves JSON that loadChatopsEnabled() reads as
-      // "nothing enabled", silently undoing autostart.
-      onEnabledChange: (bots) => {
-        chatopsSave = chatopsSave.then(() => saveChatopsEnabled(chatopsEnabledPath, bots)).catch(() => {});
-      },
-      ...(app.isPackaged ? {
-        serverEntries: { discord: "chatops/discord/server.js", teams: "chatops/teams/server.js" },
-        extraEnv: { BEAN_BUILTIN_DIR: projectDir },
-      } : {}),
-    });
-    // Bring back whatever the user had switched on. Every restart path lands here — plain quit,
-    // dev relaunch, and an update install (`app.relaunch()` skips before-quit, but each server's
-    // exitWhenOrphaned() reaps it) — so the bots don't quietly stay off after an update.
-    for (const bot of await loadChatopsEnabled(chatopsEnabledPath)) chatopsServers.start(bot);
 
     registerIpc(ipcMain, {
       host: h.handlers,
@@ -598,7 +545,7 @@ app.whenReady().then(async () => {
       // sessions likewise: their permissions-bypassed trees must not outlive their chat window.
       installUpdate: (extractedAppPath: string) => installAndRelaunch(extractedAppPath, {
         relaunch: () => {
-          chatopsServers?.stopAll();
+          h.bots.stopAll();
           h.liveTasks.forceKillAll();
           killAllTerminals();
           // exit() skips before-quit: release now, or the new app waits out the lease's TTL.
@@ -609,9 +556,9 @@ app.whenReady().then(async () => {
       pendingUpdateStore,
       cleanupExtractedBundle: (extractedAppPath: string) => cleanupExtractedBundle(extractedAppPath),
       openReleasesPage: () => { void shell.openExternal("https://github.com/ScenK/Bean/releases"); },
-      chatopsStatus: chatopsServers.status,
-      chatopsStart: chatopsServers.start,
-      chatopsStop: chatopsServers.stop,
+      chatopsStatus: h.bots.status,
+      chatopsStart: h.bots.start,
+      chatopsStop: h.bots.stop,
       getCurrentTheme, setCurrentTheme, openComponent, proposeRun, planFromDrop,
       getPendingPlan: planStore.get,
       getPendingDroppedUrl: droppedUrlStore.get,
@@ -624,13 +571,13 @@ app.whenReady().then(async () => {
         owners: () => loadChatopsOwners(dir),
         listConversations: listChatopsConversations,
         conversationTurns: chatopsConversationTurns,
-        liveIds: (surface) => liveConvs[surface],
-        deskTurn: (surface, id, text) => chatopsServers!.deskTurn(surface, id, text),
-        deskResume: (surface, id) => chatopsServers!.deskResume(surface, id),
+        liveIds: h.bots.liveIds,
+        deskTurn: h.bots.deskTurn,
+        deskResume: h.bots.deskResume,
       }),
       deskContinue: buildDeskContinueHandler({
         listDestinations: () => listDestinations(dbFile(dir)),
-        deskContinue: (body) => chatopsServers!.deskContinue("discord", body),
+        deskContinue: (body) => h.bots.deskContinue("discord", body),
         handover: (owner, sessionId) => h.liveTasks.handover(owner, sessionId),
       }),
     });
