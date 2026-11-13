@@ -1,36 +1,24 @@
 import {
-  converse, checkPdfAttachment, launchInTerminal, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
-  attachNoteImages, MAX_NOTE_IMAGE_BYTES, stageImages, checkImageAttachments, type ImageAttachment,
-  availableModels, pickModel, loadModelMemory, saveModelMemory, resolveTodoRoutine, planSproutRun, type SproutRunBlock,
-  listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash,
-  type SkillProposal, type ProposalOutcome,
-  type Project, type RouteSuggestion, type Skill,
-  type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
-  type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type ExtractResult, type ChatTurn,
-  type ActionTool, type Note, type NoteDraft, type AvailableModel, type Routine, type RoutineState, type RunRecord,
-  type TodoItem, type StepKind, type CliModels, type DreamDigest, type RoutineBrief, type RoutineWatch, type WatchItem,
-  DESKTOP_CHAT_MAX_BYTES, type DesktopChat, type DesktopChatInput, type DesktopChatListing,
+  launchInTerminal, scratchDir, availableModels, pickModel, planForDroppedSkill,
+  type Project, type RouteSuggestion, type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type NoteDraft,
+  type Persona, type Routine, type CliModels, type RoutineBrief, type RoutineWatch, type ChatRequest,
 } from "@bean/core";
-import type { RoutineBuildView } from "./routine-builder.js";
-import type { RunStatus, WatchCheckResult, SendCard } from "@bean/core";
-import { randomUUID } from "node:crypto";
+import {
+  buildConfigHandlers, type ConfigUpdate, type DelegateStartRequest, type Handshake, type HostHandlers, type ShellOps,
+} from "@bean/host";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, stat } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { mkdir, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { promisify } from "node:util";
-import { join } from "node:path";
-import { BrowserWindow, dialog, screen, shell, type IpcMain } from "electron";
-import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
-import type { DelegateStartRequest } from "./delegate-tasks.js";
-import type { createLiveTasks } from "./live-tasks.js";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type AppInfo, type UpdateStatus, type InstallUpdateResult, type CoreListing, type CoreStatus, type CoreSwitchOutcome } from "./channels.js";
 import { terminalLink, type TerminalTasks } from "./terminal-tasks.js";
 import { chatPathTarget, openChatPath } from "./chat-open-path.js";
-import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
+import type { ChatopsBot, ChatopsState } from "@bean/host";
 import type { UpdateCheckOutcome } from "./updater.js";
 import type { buildSyncedChatHandlers } from "./synced-chats.js";
 import type { buildDeskContinueHandler } from "./desk-continue.js";
-import type { ClientId, Push } from "./push.js";
-import type { buildDestinationHandlers, buildSendHandlers } from "./destinations.js";
+import type { Push } from "./push.js";
+import { guardIpc, type IpcLike } from "./channel-contract.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -198,226 +186,6 @@ export function buildUpdateHandlers(deps: UpdateHandlerDeps) {
   };
 }
 
-export interface ChatHandlerDeps {
-  loadSkills: (projectDir: string, userDir: string) => Promise<Skill[]>;
-  loadProjects: (file: string) => Promise<Project[]>;
-  loadPersona: (userFile: string, projectFile: string) => Promise<Persona>;
-  loadMemories: (file: string) => Promise<Memory[]>;
-  /** The owner's chatops ids (core `ownerSubjectIds`), so recalled owner-DM facts read as about the user. */
-  ownerSubjectIds?: () => Promise<string[]>;
-  appendMemories: (file: string, additions: Memory[]) => Promise<void>;
-  deleteMemories: (file: string, ids: string[]) => Promise<string[]>;
-  converse: ConverseDeps["chat"];
-  getModel: () => string;
-  projectSkillsDir: string;
-  skillsDir: string;
-  projectsFile: string;
-  personaFile: string;
-  projectPersonaFile: string;
-  dbFile: string;
-  actions?: ActionTool[];
-  delegateAvailable?: () => boolean;
-  /** Offer propose_live_session (the hand-off card) to this chat — per request, by sender + mount. */
-  liveSessionAvailable?: (clientId: ClientId, mountId: string) => boolean;
-  /** Config `webSearch`, read per chat request so a Settings toggle applies without restart. */
-  webSearch?: () => boolean;
-  /** Its scratch workspace hosts delegates that aren't about a project (main.ts creates it). */
-  beanDirPath?: string;
-  loadRoutines?: () => Promise<Routine[]>;
-  /** A sprout's pending todos and whether its watch is seeded — enables propose_sprout_run. */
-  sproutFacts?: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
-  /** Enables propose_send: matches the spoken destination and keeps the proposal for the Send tap. */
-  proposeSend?: (destination: string, body: string) => SendCard;
-  /** Enables the generate_image action tool. getModel (not a value): imageModel may live
-   * behind runtime config someday; onStart drives the 🎨 working indicator of the chat (mount) that asked. */
-  imageGen?: {
-    generate: ImageGenDeps["generate"]; getModel: () => string; imagesDir: string; onStart?: (mountId?: string) => void;
-    saveNoteImage?: ImageGenDeps["saveNoteImage"];
-  };
-}
-
-export function buildChatHandler(deps: ChatHandlerDeps) {
-  // signal = the turn's Stop (registerIpc's per-mount controller); converse() then resolves `stopped`.
-  return async (req: ChatRequest, clientId?: ClientId, mountId?: string, signal?: AbortSignal): Promise<ConverseResult> => {
-    // The renderer's imageFileGuard is UX only; main re-checks before anything reaches OpenAI (#733).
-    if (req.images !== undefined) checkImageAttachments(req.images);
-    // Renderer input is untrusted: a spoofed (non-%PDF-) or oversize document fails the turn here.
-    const documents = checkPdfAttachment(req.documents);
-    const [skills, projects, persona, memories, routines, ownerIds] = await Promise.all([
-      deps.loadSkills(deps.projectSkillsDir, deps.skillsDir),
-      deps.loadProjects(deps.projectsFile),
-      deps.loadPersona(deps.personaFile, deps.projectPersonaFile),
-      deps.loadMemories(deps.dbFile),
-      deps.loadRoutines?.() ?? Promise.resolve([] as Routine[]),
-      deps.ownerSubjectIds?.() ?? Promise.resolve([]),
-    ]);
-    const enabled = skills.filter((s) => s.enabled !== false);
-    const todoRoutines = routines.filter((r) => r.todoDriven).map((r) => r.name);
-    // Per-request (not shared) so `paths` collects only this turn's generated files.
-    const imageTool = deps.imageGen
-      ? makeGenerateImageTool({
-          generate: deps.imageGen.generate,
-          model: deps.imageGen.getModel(),
-          imagesDir: deps.imageGen.imagesDir,
-          onStart: () => deps.imageGen?.onStart?.(mountId),
-          saveNoteImage: deps.imageGen.saveNoteImage,
-        })
-      : undefined;
-    // Direct remember/forget only on a turn the user typed — never on a delegate loopback or
-    // a composed skill prompt, whose text isn't the user's own words (memory/extract.ts).
-    const memoryTools = req.source === "typed" && req.incognito !== true
-      ? makeMemoryTools({
-          append: (m) => deps.appendMemories(deps.dbFile, m),
-          forget: (ids) => deps.deleteMemories(deps.dbFile, ids),
-          memories, projects, latestUserText: req.message,
-          categorize: true, // the desktop is the owner's own machine (#648)
-          classifier: { chat: deps.converse, model: deps.getModel() },
-        })
-      : undefined;
-    const actions = [...(deps.actions ?? []), ...(imageTool ? [imageTool.tool] : []), ...(memoryTools?.tools ?? [])];
-    const result = await converse({
-      history: req.history,
-      latestUserText: req.message,
-      latestUserImages: req.images,
-      documents,
-      skills: enabled,
-      projects,
-      persona,
-      memories,
-      ownerIds,
-      pinOwnerMemories: true, // the desktop is the owner's own machine (#650)
-      ...(memoryTools ? { memoryCategories: memoryCategories(memories) } : {}),
-      deps: { chat: deps.converse, model: deps.getModel() },
-      droppedUrl: req.droppedUrl,
-      actions,
-      linkedNote: req.linkedNote,
-      delegateAvailable: deps.delegateAvailable?.() ?? false,
-      scratchPath: deps.beanDirPath ? scratchDir(deps.beanDirPath) : undefined,
-      liveSessionAvailable: clientId !== undefined && mountId !== undefined && (deps.liveSessionAvailable?.(clientId, mountId) ?? false),
-      liveSessionHost: "desktop",
-      todoRoutines,
-      sproutCatalog: deps.sproutFacts ? routines.map((r) => ({ name: r.name, description: r.description })) : [],
-      webSearch: deps.webSearch?.() ?? false,
-      sendAvailable: deps.proposeSend !== undefined,
-      signal,
-    });
-    if (result.proposedSend && deps.proposeSend) {
-      result.sendCard = deps.proposeSend(result.proposedSend.destination, result.proposedSend.text);
-      delete result.proposedSend;
-    }
-    if (result.proposedSproutRun && deps.sproutFacts) await planSproutCard(result, routines, deps.sproutFacts);
-    if (imageTool && imageTool.paths.length > 0) {
-      result.generatedImages = await Promise.all(imageTool.paths.map(async (path) => ({
-        path,
-        dataUrl: `data:image/png;base64,${(await readFile(path)).toString("base64")}`,
-      })));
-    }
-    if (memoryTools && memoryTools.remembered.length > 0) result.remembered = memoryTools.remembered;
-    if (memoryTools && memoryTools.forgotten.length > 0) result.forgotten = memoryTools.forgotten;
-    return result;
-  };
-}
-
-const SPROUT_BLOCKED: Record<SproutRunBlock, (name: string) => string> = {
-  off: (name) => `${name} is off — turn it on in Sprouts.`,
-  review: (name) => `${name} needs its first review in Bean's Sprouts panel.`,
-  empty: (name) => `${name}'s queue is empty — queue a todo first.`,
-};
-
-/** Freezes the run-vs-check decision onto the card, or swaps the card for a fixed reply. */
-async function planSproutCard(
-  result: ConverseResult, routines: Routine[], facts: NonNullable<ChatHandlerDeps["sproutFacts"]>,
-): Promise<void> {
-  const name = result.proposedSproutRun!.routine;
-  delete result.proposedSproutRun;
-  const routine = routines.find((r) => r.name === name);
-  if (!routine) return; // converse already refused names outside the catalog
-  const { pending, seeded } = await facts(routine);
-  const out = planSproutRun(routine, pending, seeded);
-  if ("plan" in out) result.sproutRun = out.plan;
-  else result.reply = SPROUT_BLOCKED[out.blocked](name);
-}
-
-export interface ListSkillsHandlerDeps {
-  loadSkills: (projectDir: string, userDir: string) => Promise<Skill[]>;
-  projectSkillsDir: string;
-  skillsDir: string;
-}
-
-export function buildListSkillsHandler(deps: ListSkillsHandlerDeps) {
-  // `hidden: true` skills (e.g. the built-in self-intro skill) stay in converse()'s routing
-  // catalog (buildChatHandler loads skills separately) but never reach any UI surface — every
-  // renderer skill list/picker/quick-launch goes through this one IPC call.
-  return async (): Promise<Skill[]> => (await deps.loadSkills(deps.projectSkillsDir, deps.skillsDir)).filter((s) => !s.hidden);
-}
-
-export interface ListProjectsHandlerDeps {
-  loadProjects: (file: string) => Promise<Project[]>;
-  projectsFile: string;
-}
-
-export function buildListProjectsHandler(deps: ListProjectsHandlerDeps) {
-  return (): Promise<Project[]> => deps.loadProjects(deps.projectsFile);
-}
-
-export interface SaveProjectsHandlerDeps {
-  saveProjects: (file: string, projects: Project[]) => Promise<void>;
-  projectsFile: string;
-}
-
-export function buildSaveProjectsHandler(deps: SaveProjectsHandlerDeps) {
-  return (projects: Project[]): Promise<void> => deps.saveProjects(deps.projectsFile, projects);
-}
-
-export interface SaveSkillHandlerDeps {
-  saveSkill: (dir: string, name: string, body: string) => Promise<void>;
-  skillsDir: string;
-}
-
-export function buildSaveSkillHandler(deps: SaveSkillHandlerDeps) {
-  return (name: string, body: string): Promise<void> => deps.saveSkill(deps.skillsDir, name, body);
-}
-
-export interface DeleteSkillHandlerDeps {
-  deleteSkill: (dir: string, name: string) => Promise<void>;
-  skillsDir: string;
-}
-
-export function buildDeleteSkillHandler(deps: DeleteSkillHandlerDeps) {
-  return (name: string): Promise<void> => deps.deleteSkill(deps.skillsDir, name);
-}
-
-/** A retro proposal as the Skills inbox shows it: the skill's current effective body to diff
- * against, and whether that body already moved past the one the proposal was drafted on. */
-export interface SkillProposalView extends SkillProposal {
-  current?: string;
-  stale: boolean;
-}
-
-export interface SkillProposalHandlerDeps {
-  loadSkills: (projectDir: string, userDir: string) => Promise<Skill[]>;
-  projectSkillsDir: string;
-  skillsDir: string;
-  dbFile: string;
-}
-
-export function buildSkillProposalHandlers(deps: SkillProposalHandlerDeps) {
-  const dirs = { projectDir: deps.projectSkillsDir, userDir: deps.skillsDir };
-  return {
-    list: async (): Promise<{ pending: SkillProposalView[]; applied: SkillProposalView[] }> => {
-      const skills = await deps.loadSkills(deps.projectSkillsDir, deps.skillsDir);
-      const view = (p: SkillProposal): SkillProposalView => {
-        const current = skills.find((s) => s.name === p.skill)?.body;
-        return { ...p, ...(current !== undefined ? { current } : {}), stale: current === undefined || skillHash(current) !== p.baseHash };
-      };
-      return { pending: listSkillProposals(deps.dbFile).map(view), applied: listSkillProposals(deps.dbFile, "applied").map(view) };
-    },
-    approve: (id: string): Promise<ProposalOutcome> => approveSkillProposal(deps.dbFile, dirs, id),
-    reject: (id: string): Promise<ProposalOutcome> => rejectSkillProposal(deps.dbFile, id),
-    undo: (id: string): Promise<ProposalOutcome> => undoSkillProposal(deps.dbFile, deps.skillsDir, id),
-  };
-}
-
 export interface LaunchHandlerDeps {
   spawnLaunch?: LaunchSpawnFn;
   getTerminalApp?: () => string;
@@ -475,474 +243,6 @@ export function buildLaunchHandler(deps: LaunchHandlerDeps) {
   };
 }
 
-export interface ModelsHandlerDeps {
-  getAvailableClis: () => CliName[];
-  getCliModels: () => CliModels[];
-}
-
-export function buildModelsHandler(deps: ModelsHandlerDeps) {
-  return (): AvailableModel[] => availableModels(deps.getCliModels(), deps.getAvailableClis());
-}
-
-export interface ModelMemoryHandlerDeps {
-  loadModelMemory: (file: string) => Promise<Record<string, string>>;
-  saveModelMemory: (file: string, memory: Record<string, string>) => Promise<void>;
-  modelMemoryFile: string;
-}
-
-export function buildModelMemoryHandlers(deps: ModelMemoryHandlerDeps) {
-  // Sets queue on one chain: concurrent load-mutate-saves would otherwise drop each other's keys.
-  let writes: Promise<void> = Promise.resolve();
-  return {
-    get: async (skillName: string): Promise<string | undefined> =>
-      (await deps.loadModelMemory(deps.modelMemoryFile))[skillName],
-    set: (skillName: string, modelId: string): Promise<void> => {
-      const next = writes.then(async () => {
-        const memory = await deps.loadModelMemory(deps.modelMemoryFile);
-        memory[skillName] = modelId;
-        await deps.saveModelMemory(deps.modelMemoryFile, memory);
-      });
-      writes = next.catch(() => {}); // one failed write mustn't wedge the rest
-      return next;
-    },
-  };
-}
-
-export interface PersonaHandlerDeps {
-  loadPersona: (userFile: string, projectFile: string) => Promise<Persona>;
-  savePersona: (file: string, persona: Persona) => Promise<void>;
-  personaFile: string;
-  projectPersonaFile: string;
-}
-
-export function buildPersonaHandlers(deps: PersonaHandlerDeps) {
-  return {
-    get: (): Promise<Persona> => deps.loadPersona(deps.personaFile, deps.projectPersonaFile),
-    save: (persona: Persona): Promise<void> => deps.savePersona(deps.personaFile, persona),
-  };
-}
-
-export interface MemoryHandlerDeps {
-  loadMemories: (file: string) => Promise<Memory[]>;
-  // Every write is insert-only or per-row: auto-remember, a chatops bot, and the Persona panel
-  // can all write at once, and a whole-list replace would silently drop one of them
-  // (.memory/safety-memory-append-vs-replace.md).
-  appendMemories: (file: string, additions: Memory[]) => Promise<void>;
-  updateMemory: (file: string, id: string, text: string) => Promise<void>;
-  updateMemoryCategory: (file: string, id: string, category: string | null) => Promise<void>;
-  renameMemoryCategory: (file: string, from: string, to: string) => Promise<number>;
-  ownerSubjectIds?: () => Promise<string[]>;
-  deleteMemories: (file: string, ids: string[]) => Promise<string[]>;
-  extractMemories: (
-    transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps, opts?: { latestTurn?: boolean; categorize?: boolean },
-  ) => Promise<ExtractResult>;
-  loadProjects: (file: string) => Promise<Project[]>;
-  converse: ConverseDeps["chat"];
-  getModel: () => string;
-  /** Config `autoMemory`, read per close so a Settings toggle applies without restart. */
-  autoMemory: () => boolean;
-  /** A non-empty auto-remember batch landed — main shows the avatar bubble (and checks dream).
-   * `pendingIds` reads the batch whose Undo is live *now* (a later close may have replaced it). */
-  onMemoryBatch?: (batch: Memory[], pendingIds: () => string[]) => void;
-  /** A close-time save broke (model call or store) — main shows a sticky failure bubble, so
-   * "broken" no longer looks like "nothing worth saving". */
-  onMemoryFailure?: () => void;
-  /** A per-turn capture saved something — main checks dream (no bubble: the chat's
-   * "Memory updated" row is the receipt). */
-  onTurnBatch?: (pendingIds: () => string[]) => void;
-  getLastDream: (file: string) => Promise<DreamDigest | undefined>;
-  restoreDreamRun: (file: string, runId: string) => Promise<{ restored: number; skipped: number }>;
-  dreamDetails: (file: string, runId: string) => Promise<{ before: string[]; after?: string }[]>;
-  dbFile: string;
-  projectsFile: string;
-}
-
-/** The latest auto-remember batch — Persona's "Just remembered" + Undo. Held in main's memory
- * only: the Undo window lasts until the next batch (or an app restart). */
-export interface MemoryBatch { ids: string[]; at: string }
-
-/** A close-time transcript turn; `id` = the renderer's turn id (typed turns), matched against
- * the turns per-turn capture already handled. */
-export type CloseTurn = ChatTurn & { id?: string };
-
-export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
-  let lastBatch: MemoryBatch | undefined;
-  // Per chat (mount id — see buildChatMounts), dropped at its close or release: typed turns whose
-  // per-turn capture is in flight or done (close catch-up won't re-cite them), and the ids those
-  // captures saved — still undoable from the chat's "Memory updated" rows, so dream leaves them alone.
-  // `incognito` = the chat's live 🕶 chip (a request's flag is a send-time snapshot); `queue`
-  // runs captures one at a time so facts are saved — and timestamped — in turn order.
-  type ChatWindowState = { turns: Set<string>; ids: string[]; incognito: boolean; queue: Promise<unknown> };
-  const windows = new Map<string, ChatWindowState>();
-  // Chats already closed/released: a reply that settles after close must not recreate their state
-  // (and lose the chip) — close catch-up already covered that turn under the close-time flag.
-  // ponytail: one UUID per chat mount per app run; mount ids are never re-attached.
-  const closed = new Set<string>();
-  const windowState = (key: string): ChatWindowState => {
-    let w = windows.get(key);
-    if (!w) windows.set(key, w = { turns: new Set(), ids: [], incognito: false, queue: Promise.resolve() });
-    return w;
-  };
-  const close = (key: string): void => {
-    windows.delete(key);
-    closed.add(key);
-  };
-  const pendingIds = (): string[] => [...(lastBatch?.ids ?? []), ...[...windows.values()].flatMap((w) => w.ids)];
-  const extract = async (transcript: ChatTurn[], extra: Memory[], latestTurn: boolean): Promise<Memory[]> => {
-    const [existing, projects] = await Promise.all([
-      deps.loadMemories(deps.dbFile),
-      deps.loadProjects(deps.projectsFile),
-    ]);
-    const { candidates, rejected, failed } = await deps.extractMemories(
-      transcript, extra.length ? [...existing, ...extra] : existing, projects,
-      { chat: deps.converse, model: deps.getModel() }, { latestTurn, categorize: true },
-    );
-    // Counts only — a rejected candidate's text may be exactly what validation refused to keep.
-    if (rejected > 0) console.warn(`auto-remember: rejected ${rejected} candidate(s)`);
-    if (failed) throw new Error("auto-remember: extraction model call failed");
-    const at = new Date().toISOString();
-    return candidates.map((c) => ({
-      id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at, ...(c.category ? { category: c.category } : {}),
-    }));
-  };
-  const remember = async (transcript: ChatTurn[], extra: Memory[]): Promise<Memory[]> => {
-    const batch = await extract(transcript, extra, false);
-    if (batch.length === 0) return [];
-    const at = batch[0]!.createdAt;
-    // Pending before the insert lands, so a dream snapshot can never see these rows without
-    // also seeing them as the live Undo batch it must leave alone.
-    const prevBatch = lastBatch;
-    lastBatch = { ids: batch.map((m) => m.id), at };
-    try {
-      await deps.appendMemories(deps.dbFile, batch);
-    } catch (err) {
-      lastBatch = prevBatch;
-      throw err;
-    }
-    deps.onMemoryBatch?.(batch, pendingIds);
-    return batch;
-  };
-  return {
-    list: (): Promise<Memory[]> => deps.loadMemories(deps.dbFile),
-    append: (additions: Memory[]): Promise<void> => deps.appendMemories(deps.dbFile, additions),
-    update: (id: string, text: string): Promise<void> => deps.updateMemory(deps.dbFile, id, text),
-    updateCategory: (id: string, category: string | null): Promise<void> => deps.updateMemoryCategory(deps.dbFile, id, category),
-    renameCategory: (from: string, to: string): Promise<number> => deps.renameMemoryCategory(deps.dbFile, from, to),
-    ownerIds: (): Promise<string[]> => deps.ownerSubjectIds?.() ?? Promise.resolve([]),
-    delete: async (ids: string[]): Promise<number> => (await deps.deleteMemories(deps.dbFile, ids)).length,
-    /** After a chat reply: capture this typed turn's facts (only it is citable; a few prior
-     * turns are context). Skipped when the turn used the explicit remember/forget tools or errored. */
-    captureTurn: async (key: string, req: ChatRequest, result: ConverseResult): Promise<Memory[]> => {
-      if (req.source !== "typed" || req.incognito || !deps.autoMemory() || result.error) return [];
-      if (closed.has(key)) return [];
-      const w = windowState(key);
-      if (w.incognito) return [];
-      if (req.turnId) w.turns.add(req.turnId);
-      // Handled before skipping: close catch-up must not re-cite a turn that just saved or
-      // forgot something explicitly (a forgotten fact would be re-saved from its own words).
-      if (result.remembered?.length || result.forgotten?.length) return [];
-      // Re-checked before the model call and again before the insert: the chip can be switched
-      // on while this turn waits or extracts.
-      const offRecord = (): boolean => w.incognito || !deps.autoMemory();
-      const run = w.queue.then(async (): Promise<Memory[]> => {
-        if (offRecord()) return [];
-        const batch = await extract([...req.history, { role: "user", content: req.message, source: "typed" }], [], true);
-        if (batch.length === 0 || offRecord()) return [];
-        w.ids.push(...batch.map((m) => m.id)); // pending before the insert, same as the close batch
-        await deps.appendMemories(deps.dbFile, batch);
-        deps.onTurnBatch?.(pendingIds);
-        return batch;
-      }).catch((err: unknown) => {
-        if (req.turnId) w.turns.delete(req.turnId);
-        // Chat still open: close catch-up retries this turn. Already closed: catch-up skipped
-        // it as in flight, so nothing will — surface it like a failed close save.
-        if (windows.get(key) !== w) deps.onMemoryFailure?.();
-        throw err;
-      });
-      w.queue = run.catch(() => {});
-      return run;
-    },
-    /** A chat's 🕶 chip changed — gates its per-turn captures from now on. */
-    setIncognito: (key: string, on: boolean): void => {
-      if (!closed.has(key)) windowState(key).incognito = on;
-    },
-    /** A chat's live 🕶 chip — also keeps its delegate instructions out of `delegate_runs`. */
-    isIncognito: (key: string): boolean => windows.get(key)?.incognito ?? false,
-    /** The chat mount is gone without a close catch-up: drop its state; a late reply captures nothing. */
-    release: close,
-    /** Chat close: a catch-up — extract → validate → append in the background, no review
-     * card. Turns per-turn capture handled stay as context only; `rejected` = facts the user
-     * undid in this chat, shown to extraction as already remembered so they aren't re-saved. */
-    rememberOnClose: async (
-      transcript: CloseTurn[], opts: { incognito?: boolean; rejected?: string[]; key?: string },
-    ): Promise<Memory[]> => {
-      const w = opts.key === undefined ? undefined : windows.get(opts.key);
-      // An in-flight capture keeps its own reference to `w` — the close-time chip must reach it.
-      if (w && opts.incognito) w.incognito = true;
-      if (opts.key !== undefined) close(opts.key);
-      if (opts.incognito || !deps.autoMemory()) return [];
-      const turns = transcript.map(({ id, ...t }): ChatTurn => (id && w?.turns.has(id) ? { ...t, source: undefined } : t));
-      const rejected = (opts.rejected ?? []).map((text): Memory => ({ id: "", text, createdAt: "" }));
-      try {
-        return await remember(turns, rejected);
-      } catch (err) {
-        deps.onMemoryFailure?.();
-        throw err;
-      }
-    },
-    batch: (): MemoryBatch | undefined => lastBatch,
-    lastDream: (): Promise<DreamDigest | undefined> => deps.getLastDream(deps.dbFile),
-    /** Undo last dream: restores only groups untouched since; `skipped` = kept user edits. */
-    undoLastDream: async (): Promise<{ restored: number; skipped: number }> => {
-      const d = await deps.getLastDream(deps.dbFile);
-      return d && !d.undone ? deps.restoreDreamRun(deps.dbFile, d.runId) : { restored: 0, skipped: 0 };
-    },
-    dreamDetails: async (): Promise<{ before: string[]; after?: string }[]> => {
-      const d = await deps.getLastDream(deps.dbFile);
-      return d ? deps.dreamDetails(deps.dbFile, d.runId) : [];
-    },
-    /** Deletes exactly the last batch's ids (rows edited since are still that batch's rows). */
-    undoBatch: async (): Promise<number> => {
-      if (!lastBatch) return 0;
-      const n = (await deps.deleteMemories(deps.dbFile, lastBatch.ids)).length;
-      lastBatch = undefined;
-      return n;
-    },
-  };
-}
-
-// Renderer payloads are erased types by the time they cross IPC — keep only well-formed turns.
-function toTranscript(v: unknown): CloseTurn[] {
-  if (!Array.isArray(v)) return [];
-  const sources = new Set(["typed", "loopback", "ambient", "skill", "summary"]);
-  return v.flatMap((t): CloseTurn[] => {
-    const o = t as Partial<CloseTurn> | null;
-    if (!o || (o.role !== "user" && o.role !== "assistant") || typeof o.content !== "string") return [];
-    const turn: CloseTurn = { role: o.role, content: o.content, source: sources.has(o.source as string) ? o.source : undefined };
-    if (typeof o.id === "string") turn.id = o.id;
-    return [turn];
-  });
-}
-
-/** A chat window's transcript save. `items` are the renderer's normalized ChatItems — opaque here. */
-export interface ChatThreadSaveRequest { id: string; title: string; items: unknown[]; noteSlug?: string }
-export interface ChatThreadAck { id: string; title: string; updatedAt: string }
-/** What a chat restores: a saved thread, or `missing` when the picked one is gone (deleted or
- * pruned) — the chat opens empty with a status row. */
-export type PendingChatThread = { id: string; title: string; items: unknown[]; noteSlug: string | null } | { missing: true };
-
-export interface ChatThreadHandlerDeps {
-  saveDesktopChat: (file: string, chat: DesktopChatInput, now?: Date) => string;
-  getDesktopChat: (file: string, id: string) => DesktopChat | undefined;
-  deleteDesktopChat: (file: string, id: string) => void;
-  starDesktopChat: (file: string, id: string, starred: boolean) => string | undefined;
-  renameDesktopChat: (file: string, id: string, title: string) => string | undefined;
-  groupDesktopChats: (file: string, ids: string[], name: string | null) => string[];
-  renameDesktopChatGroup: (file: string, from: string, to: string) => string[];
-  listDesktopChats: (file: string) => DesktopChatListing[];
-  dbFile: string;
-}
-
-const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Chat sessions ("mounts") inside chat windows. A mount id is a renderer-made UUID attached to
- * exactly one client (push.ts); every per-chat request names it, and main keys that chat's thread
- * pin, incognito latch, memory state and delegate tasks by it — so one window can hold several chats. */
-export function buildChatMounts() {
-  const mounts = new Map<string, ClientId>(); // mount id → the client it's attached to
-  // ponytail: one UUID per chat mount per app run; kept so a released id can't be re-attached, and
-  // so a late push for it (a memory receipt, a cancelled task) still reaches the window that held it.
-  const released = new Map<string, ClientId>();
-  return {
-    /** False = refused: not a UUID, already attached, or released. */
-    attach: (clientId: ClientId, id: unknown): boolean => {
-      if (typeof id !== "string" || !THREAD_ID.test(id) || mounts.has(id) || released.has(id)) return false;
-      mounts.set(id, clientId);
-      return true;
-    },
-    /** The state key for a request — throws unless `id` is a mount attached to this client. */
-    key: (clientId: ClientId, id: unknown): string => {
-      if (typeof id !== "string" || mounts.get(id) !== clientId) throw new Error("unknown chat session");
-      return id;
-    },
-    /** True = it was this client's mount (the caller then drops that chat's state). */
-    release: (clientId: ClientId, id: unknown): boolean => {
-      if (typeof id !== "string" || mounts.get(id) !== clientId) return false;
-      mounts.delete(id);
-      released.set(id, clientId);
-      return true;
-    },
-    ofClient: (clientId: ClientId): string[] => [...mounts].flatMap(([id, c]) => (c === clientId ? [id] : [])),
-    /** Where a mount-tagged push goes: the client holding the mount, or the one that last held it. */
-    clientOf: (id: string): ClientId | undefined => mounts.get(id) ?? released.get(id),
-  };
-}
-
-/** Desktop chat history (see .memory/project-desktop-chat-history.md). Per chat (mount key): the
- * one thread it writes — pinned by its first save or its restore, and never held by two chats —
- * and the sticky unsavable latch, set on incognito toggle-on *before* the row is deleted and
- * re-checked on every write, the final close write included. Toggling incognito off never clears it. */
-export function buildChatThreadHandlers(deps: ChatThreadHandlerDeps) {
-  const threads = new Map<string, string>(); // mount key → thread id; dropped at release
-  const unsavable = new Set<string>();
-  const holder = (id: string): string | undefined => [...threads].find(([, t]) => t === id)?.[0];
-  /** A saved thread for this chat to restore (pinned to it), or `missing` when it's gone. */
-  const get = (key: string, id: unknown): PendingChatThread => {
-    if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
-    const pinned = threads.get(key);
-    if (pinned !== undefined && pinned !== id) throw new Error("this chat saves a different chat thread");
-    const other = holder(id);
-    if (other !== undefined && other !== key) throw new Error("that chat is already open");
-    const row = deps.getDesktopChat(deps.dbFile, id);
-    if (!row) return { missing: true };
-    let items: unknown;
-    try { items = JSON.parse(row.itemsJson); } catch { items = []; }
-    if (!unsavable.has(key)) threads.set(key, id);
-    return { id: row.id, title: row.title, items: Array.isArray(items) ? items : [], noteSlug: row.noteSlug };
-  };
-  return {
-    list: (): DesktopChatListing[] => deps.listDesktopChats(deps.dbFile),
-    /** Sidebar delete: never a thread an open chat holds. */
-    delete: (id: unknown): void => {
-      if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
-      if (holder(id) !== undefined) throw new Error("an open chat can't be deleted");
-      deps.deleteDesktopChat(deps.dbFile, id);
-    },
-    /** Sidebar star: any thread, open or not. The thread's `updatedAt`, or undefined when it's gone. */
-    star: (id: unknown, starred: unknown): string | undefined => {
-      if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
-      if (typeof starred !== "boolean") throw new Error("starred must be a boolean");
-      return deps.starDesktopChat(deps.dbFile, id, starred);
-    },
-    /** Sidebar rename: any thread, open or not. The stored title, or undefined when it's gone. */
-    rename: (id: unknown, title: unknown): string | undefined => {
-      if (typeof id !== "string" || !THREAD_ID.test(id)) throw new Error("chat thread id must be a UUID");
-      if (typeof title !== "string") throw new Error("title must be a string");
-      return deps.renameDesktopChat(deps.dbFile, id, title);
-    },
-    /** Sidebar group (stars too) / ungroup (`null`, keeps the star): 1–100 unique UUIDs, open or not.
-     * The ids it updated; gone ones are skipped. */
-    group: (ids: unknown, name: unknown): string[] => {
-      if (!Array.isArray(ids) || ids.length === 0 || ids.length > 100) throw new Error("chat thread ids must be 1–100 UUIDs");
-      if (!ids.every((id) => typeof id === "string" && THREAD_ID.test(id))) throw new Error("chat thread id must be a UUID");
-      if (new Set(ids.map((id: string) => id.toLowerCase())).size !== ids.length) throw new Error("chat thread ids must be unique");
-      if (name !== null && typeof name !== "string") throw new Error("group name must be a string or null");
-      return deps.groupDesktopChats(deps.dbFile, ids as string[], name);
-    },
-    /** Sidebar group rename (onto an existing name, they merge): the moved ids. */
-    groupRename: (from: unknown, to: unknown): string[] => {
-      if (typeof from !== "string" || typeof to !== "string") throw new Error("group names must be strings");
-      return deps.renameDesktopChatGroup(deps.dbFile, from, to);
-    },
-    get,
-    /** Undefined = refused by the latch (quietly: the renderer already stopped saving). */
-    save: (key: string, req: unknown): ChatThreadAck | undefined => {
-      if (unsavable.has(key)) return undefined;
-      const o = req as Partial<ChatThreadSaveRequest> | null;
-      if (!o || typeof o.id !== "string" || !THREAD_ID.test(o.id)) throw new Error("chat thread id must be a UUID");
-      if (typeof o.title !== "string" || !Array.isArray(o.items)) throw new Error("malformed chat thread");
-      if (o.noteSlug !== undefined && o.noteSlug !== null && typeof o.noteSlug !== "string") throw new Error("malformed chat thread");
-      const pinned = threads.get(key);
-      if (pinned !== undefined && pinned !== o.id) throw new Error("this chat saves a different chat thread");
-      const other = holder(o.id);
-      if (other !== undefined && other !== key) throw new Error("another open chat saves this thread");
-      const itemsJson = JSON.stringify(o.items);
-      if (Buffer.byteLength(itemsJson, "utf8") > DESKTOP_CHAT_MAX_BYTES) throw new Error("desktop chat is too large to save");
-      const now = new Date();
-      // The stored title, not the renderer's: a rename since the first save wins over the open chat's copy.
-      const title = deps.saveDesktopChat(deps.dbFile, { id: o.id, title: o.title, itemsJson, noteSlug: o.noteSlug ?? null }, now);
-      threads.set(key, o.id);
-      return { id: o.id, title, updatedAt: now.toISOString() };
-    },
-    /** 🕶 on: latch first, then delete the chat's saved row. Off: nothing — the latch is sticky. */
-    setIncognito: (key: string, on: boolean): void => {
-      if (!on) return;
-      unsavable.add(key);
-      const id = threads.get(key);
-      if (id !== undefined) deps.deleteDesktopChat(deps.dbFile, id);
-    },
-    /** The chat mount is gone: its thread is free to delete or reopen. */
-    release: (key: string): void => {
-      threads.delete(key);
-      unsavable.delete(key);
-    },
-  };
-}
-
-export interface NotesHandlerDeps {
-  loadNotes: (file: string, opts?: { includeArchived?: boolean }) => Promise<Note[]>;
-  saveNote: (file: string, draft: NoteDraft) => Promise<string>;
-  archiveNote: (file: string, slug: string) => Promise<boolean>;
-  restoreNote: (file: string, slug: string) => Promise<boolean>;
-  purgeNote: (file: string, slug: string) => Promise<boolean>;
-  starNote: (file: string, slug: string, starred: boolean) => Promise<void>;
-  loadNoteHistory: (file: string, slug: string) => Promise<Note[]>;
-  saveNoteImage: (file: string, bytes: Uint8Array) => Promise<string>;
-  loadNoteImage: (file: string, id: string) => Promise<{ mime: string; bytes: Uint8Array } | undefined>;
-  dbFile: string;
-}
-
-// Slugs cross IPC untyped; core re-checks traversal, this rejects non-strings before it.
-function noteSlug(slug: unknown): string {
-  if (typeof slug !== "string" || slug === "") throw new Error("invalid note slug");
-  return slug;
-}
-
-export function buildNotesHandlers(deps: NotesHandlerDeps) {
-  const storeImage = (bytes: Uint8Array): Promise<string> => deps.saveNoteImage(deps.dbFile, bytes);
-  return {
-    list: (opts?: unknown): Promise<Note[]> =>
-      deps.loadNotes(deps.dbFile, { includeArchived: (opts as { includeArchived?: unknown } | undefined)?.includeArchived === true }),
-    // `images` = the chat's latest attached images carried into a desktop propose_note save;
-    // core stores them and appends code-written bean-image refs (limits re-checked there).
-    save: async (draft: NoteDraft, images?: unknown): Promise<string> => {
-      const valid = Array.isArray(images)
-        ? images.filter((i): i is ImageAttachment => typeof (i as ImageAttachment)?.data === "string")
-        : [];
-      const body = valid.length > 0 ? await attachNoteImages(storeImage, draft.body, valid) : draft.body;
-      // Copy known fields only — never spread the renderer payload into core.
-      const { title, project, source, slug } = draft;
-      return deps.saveNote(deps.dbFile, { title, body, project, source, slug });
-    },
-    // Trust boundary for editor paste/drop: bytes only, never a path; size capped here before
-    // storing, format checked by magic bytes in core.
-    saveImage: (bytes: unknown): Promise<string> => {
-      if (!(bytes instanceof Uint8Array)) return Promise.reject(new Error("note image must be raw bytes"));
-      if (bytes.byteLength > MAX_NOTE_IMAGE_BYTES) return Promise.reject(new Error("image is larger than 10 MB"));
-      return storeImage(bytes);
-    },
-    /** A stored note image as a data: URL, or undefined for an unknown/malformed id. */
-    image: async (id: unknown): Promise<string | undefined> => {
-      if (typeof id !== "string") return undefined;
-      const img = await deps.loadNoteImage(deps.dbFile, id);
-      return img ? `data:${img.mime};base64,${Buffer.from(img.bytes).toString("base64")}` : undefined;
-    },
-    archive: async (slug: unknown): Promise<void> => { await deps.archiveNote(deps.dbFile, noteSlug(slug)); },
-    restore: async (slug: unknown): Promise<void> => { await deps.restoreNote(deps.dbFile, noteSlug(slug)); },
-    purge: async (slug: unknown): Promise<void> => {
-      if (!(await deps.purgeNote(deps.dbFile, noteSlug(slug)))) throw new Error("only an archived note can be deleted permanently");
-    },
-    star: (slug: string, starred: boolean): Promise<void> => deps.starNote(deps.dbFile, slug, starred),
-    history: (slug: string): Promise<Note[]> => deps.loadNoteHistory(deps.dbFile, slug),
-  };
-}
-
-export interface ConfigHandlerDeps {
-  getConfig: () => ConfigView;
-  applyConfig: (update: ConfigUpdate) => Promise<void>;
-  onApplied?: () => void;
-}
-
-export function buildConfigHandlers(deps: ConfigHandlerDeps) {
-  return {
-    get: (): ConfigView => deps.getConfig(),
-    save: async (update: ConfigUpdate): Promise<void> => {
-      await deps.applyConfig(update);
-      deps.onApplied?.();
-    },
-  };
-}
-
 export interface ThemeHandlerDeps {
   getCurrentTheme: () => Theme;
   setCurrentTheme: (theme: Theme) => Promise<void>;
@@ -969,196 +269,12 @@ export function buildChatopsHandlers(deps: ChatopsHandlerDeps) {
   };
 }
 
-export interface RoutineStateView {
-  lastRun?: string; missed?: boolean; history: RunRecord[]; running: boolean;
-  /** Live runs (taken slots); `running` also covers a tick still deciding. */
-  runningCount: number;
-  /** Todo-driven routines only. */
-  queue?: { pending: number; running: number };
-  /** Watch routines only. */
-  lastPoll?: string; pollError?: string; pollFailures?: number;
-  /** false = never enabled since its source was set — the list shows "needs review". */
-  seeded?: boolean;
-}
-
-/** One executed step of a run, for the Dashboard's full-output view. `resume` is Bean's own
- * resume command for a delegate session (never model-written). */
-export interface StepAttemptView {
-  stepIndex: number; stepId?: string; round: number; kind: StepKind; cli?: string;
-  ok: boolean; verdict?: string; output: string; resume?: string;
-}
-
-/** Who a chatops sink with no channel reaches (counts only — the app can't look up names). */
-export interface SinkRecipients { discord?: number; teams?: number }
-export interface BriefDraft { brief: RoutineBrief; tools: string[] }
-
-/** Watch + builder verbs. Optional so tests (and a boot without them) can omit the lot. */
-export interface RoutineWatchDeps {
-  isSeeded: (routine: Routine) => boolean;
-  pollFailures: (name: string) => number;
-  checkNow: (name: string) => Promise<WatchCheckResult>;
-  previewWatch: (watch: RoutineWatch) => Promise<WatchItem[]>;
-  enableWatch: (name: string, queueExisting: boolean) => Promise<{ count: number }>;
-  sinkRecipients: () => Promise<SinkRecipients>;
-  draftBrief: (sentence: string, previous?: RoutineBrief) => Promise<BriefDraft>;
-  builds: {
-    list: () => RoutineBuildView[];
-    start: (brief: RoutineBrief) => Promise<void>;
-    cancel: (name: string) => void;
-    dismiss: (name: string) => void;
-  };
-}
-
-export interface RoutineHandlerDeps {
-  loadRoutines: () => Promise<Routine[]>;
-  saveRoutine: (routine: Routine) => Promise<void>;
-  deleteRoutine: (name: string) => Promise<void>;
-  loadStates: () => Promise<Record<string, RoutineState>>;
-  isRunning: (name: string) => boolean;
-  runningCount: (name: string) => number;
-  queueCounts?: (name: string) => Promise<{ pending: number; running: number }>;
-  runNow: (name: string) => Promise<{ started: boolean; reason?: string; status?: RunStatus; stopped?: true }>;
-  /** Stops the sprout's live runs (the scheduler's `stopRuns`); only called for a running name. */
-  stopRuns?: (name: string) => void;
-  onRoutineDeleted?: (name: string) => Promise<void>;
-  /** A run's step attempts (bean.db), oldest first. */
-  attempts?: (runId: string) => StepAttemptView[];
-  watch?: RoutineWatchDeps;
-}
-
-export function buildRoutineHandlers(deps: RoutineHandlerDeps) {
-  const watch = (): RoutineWatchDeps => {
-    if (!deps.watch) throw new Error("watch sprouts aren't available");
-    return deps.watch;
-  };
-  return {
-    list: (): Promise<Routine[]> => deps.loadRoutines(),
-    save: async (routine: Routine): Promise<void> => {
-      await deps.saveRoutine(routine);
-    },
-    remove: async (name: string): Promise<void> => {
-      await deps.deleteRoutine(name);
-      await deps.onRoutineDeleted?.(name);
-    },
-    state: async (): Promise<Record<string, RoutineStateView>> => {
-      const [routines, states] = await Promise.all([deps.loadRoutines(), deps.loadStates()]);
-      const out: Record<string, RoutineStateView> = {};
-      for (const r of routines) {
-        const s = states[r.name];
-        out[r.name] = {
-          lastRun: s?.lastRun, missed: s?.missed, history: s?.history ?? [],
-          running: deps.isRunning(r.name), runningCount: deps.runningCount(r.name),
-          ...(r.todoDriven && deps.queueCounts ? { queue: await deps.queueCounts(r.name) } : {}),
-        };
-        if (r.watch && deps.watch) {
-          Object.assign(out[r.name]!, {
-            lastPoll: s?.lastPoll, pollError: s?.pollError, pollFailures: deps.watch.pollFailures(r.name),
-            seeded: deps.watch.isSeeded(r),
-          });
-        }
-      }
-      return out;
-    },
-    runNow: (name: string): Promise<{ started: boolean; reason?: string; status?: RunStatus; stopped?: true }> => deps.runNow(name),
-    /** A renderer payload: anything but a running sprout's name is ignored. */
-    stop: (name: unknown): void => {
-      if (typeof name === "string" && deps.isRunning(name)) deps.stopRuns?.(name);
-    },
-    attempts: (runId: string): StepAttemptView[] => (typeof runId === "string" && runId ? deps.attempts?.(runId) ?? [] : []),
-    checkNow: (name: string): Promise<WatchCheckResult> => watch().checkNow(name),
-    previewWatch: (w: RoutineWatch): Promise<WatchItem[]> => watch().previewWatch(w),
-    enableWatch: (name: string, queueExisting: boolean): Promise<{ count: number }> => watch().enableWatch(name, queueExisting === true),
-    sinkRecipients: (): Promise<SinkRecipients> => watch().sinkRecipients(),
-    draftBrief: (sentence: string, previous?: RoutineBrief): Promise<BriefDraft> => {
-      if (typeof sentence !== "string" || !sentence.trim()) throw new Error("describe the sprout first");
-      return watch().draftBrief(sentence.trim().slice(0, 2000), previous);
-    },
-    build: (brief: RoutineBrief): Promise<void> => watch().builds.start(brief),
-    builds: (): RoutineBuildView[] => deps.watch?.builds.list() ?? [],
-    cancelBuild: (name: string): void => watch().builds.cancel(name),
-    dismissBuild: (name: string): void => watch().builds.dismiss(name),
-  };
-}
-
-export interface TodoHandlerDeps {
-  dbFile: string;
-  loadRoutines: () => Promise<Routine[]>;
-  addTodo: (file: string, routine: string, text: string) => Promise<TodoItem>;
-  listTodos: (file: string, routine: string) => Promise<TodoItem[]>;
-  listAllTodos: (file: string) => Promise<TodoItem[]>;
-  editTodoText: (file: string, id: string, text: string) => Promise<void>;
-  deleteTodo: (file: string, id: string) => Promise<void>;
-  reorderTodo: (file: string, id: string, newOrder: number) => Promise<void>;
-  clearFinishedTodos: (file: string, routine: string) => Promise<void>;
-  retryTodo: (file: string, id: string) => Promise<void>;
-}
-
-export function buildTodoHandlers(deps: TodoHandlerDeps) {
-  return {
-    list: (routine: string): Promise<TodoItem[]> => deps.listTodos(deps.dbFile, routine),
-    listAll: (): Promise<TodoItem[]> => deps.listAllTodos(deps.dbFile),
-    // Routine existence/type is enforced here, not in the store (store stays dumb, per spec).
-    add: async (routine: string, text: string): Promise<TodoItem> => {
-      resolveTodoRoutine(await deps.loadRoutines(), routine);
-      return deps.addTodo(deps.dbFile, routine, text);
-    },
-    edit: (id: string, text: string): Promise<void> => deps.editTodoText(deps.dbFile, id, text),
-    remove: (id: string): Promise<void> => deps.deleteTodo(deps.dbFile, id),
-    reorder: (id: string, newOrder: number): Promise<void> => deps.reorderTodo(deps.dbFile, id, newOrder),
-    clearFinished: (routine: string): Promise<void> => deps.clearFinishedTodos(deps.dbFile, routine),
-    retry: (id: string): Promise<void> => deps.retryTodo(deps.dbFile, id),
-  };
-}
-
-export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, UpdateHandlerDeps {
-  loadSkills: (projectDir: string, userDir: string) => Promise<Skill[]>;
-  loadProjects: (file: string) => Promise<Project[]>;
-  getModel: () => string;
-  projectSkillsDir: string;
-  skillsDir: string;
-  projectsFile: string;
-  converse: ConverseDeps["chat"];
-  saveSkill: (dir: string, name: string, body: string) => Promise<void>;
-  deleteSkill: (dir: string, name: string) => Promise<void>;
-  saveProjects: (file: string, projects: Project[]) => Promise<void>;
-  loadPersona: (userFile: string, projectFile: string) => Promise<Persona>;
-  savePersona: (file: string, persona: Persona) => Promise<void>;
-  personaFile: string;
-  projectPersonaFile: string;
-  loadMemories: (file: string) => Promise<Memory[]>;
-  ownerSubjectIds?: ChatHandlerDeps["ownerSubjectIds"];
-  appendMemories: MemoryHandlerDeps["appendMemories"];
-  updateMemory: MemoryHandlerDeps["updateMemory"];
-  updateMemoryCategory: MemoryHandlerDeps["updateMemoryCategory"];
-  renameMemoryCategory: MemoryHandlerDeps["renameMemoryCategory"];
-  deleteMemories: MemoryHandlerDeps["deleteMemories"];
-  extractMemories: MemoryHandlerDeps["extractMemories"];
-  autoMemory: MemoryHandlerDeps["autoMemory"];
-  onMemoryBatch?: MemoryHandlerDeps["onMemoryBatch"];
-  onMemoryFailure?: MemoryHandlerDeps["onMemoryFailure"];
-  onTurnBatch?: MemoryHandlerDeps["onTurnBatch"];
-  getLastDream: MemoryHandlerDeps["getLastDream"];
-  restoreDreamRun: MemoryHandlerDeps["restoreDreamRun"];
-  dreamDetails: MemoryHandlerDeps["dreamDetails"];
-  loadNotes: NotesHandlerDeps["loadNotes"];
-  saveNote: NotesHandlerDeps["saveNote"];
-  archiveNote: NotesHandlerDeps["archiveNote"];
-  restoreNote: NotesHandlerDeps["restoreNote"];
-  purgeNote: NotesHandlerDeps["purgeNote"];
-  starNote: NotesHandlerDeps["starNote"];
-  loadNoteHistory: NotesHandlerDeps["loadNoteHistory"];
-  saveNoteImage: NotesHandlerDeps["saveNoteImage"];
-  loadNoteImage: NotesHandlerDeps["loadNoteImage"];
-  dbFile: string;
-  actions?: ActionTool[];
-  delegateAvailable?: () => boolean;
-  liveSessionAvailable?: ChatHandlerDeps["liveSessionAvailable"];
-  webSearch?: () => boolean;
-  imageGen?: ChatHandlerDeps["imageGen"];
-  sproutFacts?: ChatHandlerDeps["sproutFacts"];
-  proposeSend?: ChatHandlerDeps["proposeSend"];
-  sendHandlers?: ReturnType<typeof buildSendHandlers>;
+/** The shell's own channels (theme, updates, windows and their pull-on-mount stores, About): they work
+ * with or without a core attached. */
+export interface ShellIpcDeps extends ThemeHandlerDeps, UpdateHandlerDeps {
   push: Push;
+  /** Dialogs, Finder, the browser and window sizing — Electron, injected (app/src/shell-ops.ts). */
+  shell: ShellOps;
   openComponent: (kind: ComponentKind, payload?: ChatDrop | DashboardTarget) => void;
   proposeRun: (suggestion: RouteSuggestion) => void;
   getPendingPlan: () => RouteSuggestion | undefined;
@@ -1167,359 +283,280 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   runInChat: (payload: ChatPromptPayload) => void;
   getPendingChatPrompt: () => ChatPromptPayload | undefined;
   getPendingInterruptedRunNotices: () => InterruptedRunNotice[] | undefined;
-  planFromDrop: (skillName: string, droppedUrl: string) => void;
-  getConfig: () => ConfigView;
-  applyConfig: (update: ConfigUpdate) => Promise<void>;
   getAppInfo: () => AppInfo;
+  /** The core list and the attachment's state (#811) — main.ts; every argument is unchecked here. */
+  cores: {
+    list: () => Promise<CoreListing>;
+    add: (host: unknown, container: unknown) => Promise<{ id: string } | { error: string }>;
+    remove: (id: unknown) => Promise<void>;
+    /** Saves the pick and restarts Bean, once the chat window's Keep/Stop review lets it close.
+     * "kept" = Keep working called it off; "refused" = not a core to switch to; "failed" = the save failed. */
+    switchTo: (id: unknown) => Promise<CoreSwitchOutcome>;
+    status: () => CoreStatus;
+    takeBack: () => void;
+    /** The Keep/Stop card's "Keep working": whatever was waiting on the chat closing is off. */
+    closeKept: () => void;
+  };
+}
+
+export interface RegisterDeps extends ChatopsHandlerDeps {
+  /** The Electron-free host's handlers (`@bean/host` createHost): chats, registries, stores. */
+  host: HostHandlers;
+  push: Push;
+  /** What this host offers (contract version, core version, platform, capabilities); its capabilities
+   * gate the host-bound channels. */
+  handshake: Handshake;
+  /** Dialogs, Finder, the browser and window sizing — Electron, injected (app/src/shell-ops.ts). */
+  shell: ShellOps;
   spawnLaunch?: LaunchSpawnFn;
   getTerminalApp: () => string;
   getEditorApp: () => string;
   getAvailableClis: () => CliName[];
-  getDetectedClis: () => CliName[];
   getCliModels: () => CliModels[];
   beanDirPath: string;
-  modelMemoryFile: string;
-  delegateTasks: {
-    start: (req: DelegateStartRequest) => Promise<string>;
-    cancel: (taskId: string) => void;
-    /** Stops every task one chat (mount) started — its release. */
-    cancelMount: (mountId: string) => void;
-  };
-  liveTasks: Pick<ReturnType<typeof createLiveTasks>, "start" | "send" | "stop" | "interrupt" | "resume" | "stopMount" | "projectOf">;
-  terminalTasks: Pick<TerminalTasks, "start" | "write" | "resize" | "ack" | "stop" | "stopMount" | "runningCommand">;
-  /** Whether a client is the chat window — the only window that may drive an agent session. */
-  isChatClient: (clientId: ClientId) => boolean;
   onLaunchError?: (req: LaunchRequest, err: Error) => void;
-  /** Called as a chat (mount) turn starts; the returned fn is called when it ends (with the failure, if any). */
-  onChatTurn?: (mountId: string) => (error?: string) => void;
-  loadRoutines?: () => Promise<Routine[]>;
-  routineHandlers: ReturnType<typeof buildRoutineHandlers>;
-  skillProposalHandlers: ReturnType<typeof buildSkillProposalHandlers>;
-  todoHandlers: ReturnType<typeof buildTodoHandlers>;
-  chatThreadHandlers: ReturnType<typeof buildChatThreadHandlers>;
+  /** The chat's pty terminals — shell-owned (node-pty), keyed by the host's chat mounts. */
+  terminalTasks: Pick<TerminalTasks, "start" | "write" | "resize" | "ack" | "stop" | "stopMount" | "runningCommand">;
+  /** Whether a client is the chat window. */
+  isChatClient: (clientId: number) => boolean;
   syncedChatHandlers: ReturnType<typeof buildSyncedChatHandlers>;
-  destinationHandlers: ReturnType<typeof buildDestinationHandlers>;
   /** Continue in Discord; absent = not offered (refused). */
   deskContinue?: ReturnType<typeof buildDeskContinueHandler>;
 }
 
-/** `releaseChatClient` = a chat window is gone: release every chat it still had attached.
- * `clientOfMount` = where a mount-tagged push goes (push.ts). */
-export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): {
-  releaseChatClient: (clientId: ClientId) => void;
-  clientOfMount: (mountId: string) => ClientId | undefined;
-} {
-  const chatHandler = buildChatHandler(deps);
-  const memoryHandlers = buildMemoryHandlers(deps);
-  // Every per-chat request names its chat's mount id (see buildChatMounts). Refused unless it comes
-  // from the chat window and that mount is attached to it.
-  const mounts = buildChatMounts();
-  const chatKey = (client: ClientId, mountId: unknown): string => {
-    if (!deps.isChatClient(client)) throw new Error("Chats run in the chat window.");
-    return mounts.key(client, mountId);
-  };
-  // For fire-and-forget channels: a refused request is dropped, never thrown into the void.
-  const tryChatKey = (client: ClientId, mountId: unknown): string | undefined => {
-    try { return chatKey(client, mountId); } catch { return undefined; }
-  };
-  // Bean's running turn per chat (mount key), so Stop / Esc Esc and a release can abort it.
-  const beanTurns = new Map<string, { turnId: unknown; ctl: AbortController }>();
-  const releaseChat = (clientId: ClientId, mountId: string): void => {
-    if (!mounts.release(clientId, mountId)) return;
-    beanTurns.get(mountId)?.ctl.abort();
-    memoryHandlers.release(mountId);
-    deps.chatThreadHandlers.release(mountId);
-    deps.delegateTasks.cancelMount(mountId);
-    deps.liveTasks.stopMount(mountId);
-    void deps.terminalTasks.stopMount(mountId); // never rejects; the entry is held until the shell is gone
-  };
-  ipcMain.on(IPC.chatAttach, (e, mountId: unknown) => {
-    if (deps.isChatClient(e.sender.id) && !mounts.attach(e.sender.id, mountId)) console.error("chat attach refused");
-  });
-  ipcMain.on(IPC.chatRelease, (e, mountId: unknown) => {
-    if (typeof mountId === "string") releaseChat(e.sender.id, mountId);
-  });
-  ipcMain.handle(IPC.chat, async (e, req: ChatRequest, mountId: unknown) => {
-    const key = chatKey(e.sender.id, mountId);
-    // Registered before any await, so a Stop that lands while the loaders run still aborts.
-    const turn = { turnId: req?.turnId, ctl: new AbortController() };
-    beanTurns.set(key, turn);
-    const end = deps.onChatTurn?.(key);
-    try {
-      const result = await chatHandler(req, e.sender.id, key, turn.ctl.signal);
-      end?.(result.error);
-      // Stopped by the user: no error bubble, and nothing of this turn is captured as memory.
-      if (result.stopped) return result;
-      // Fire-and-forget, off the reply path: the reply returns now, the receipt row follows —
-      // tagged with its chat, which may no longer be the visible one.
-      memoryHandlers.captureTurn(key, req, result).then((batch) => {
-        if (batch.length > 0) {
-          deps.push.send(key, IPC.memoryUpdated, { saved: batch.map(({ id, text, category }) => ({ id, text, category })), mountId: key });
-        }
-      }).catch((err) => console.error("per-turn memory capture failed:", err));
-      return result;
-    } catch (err) {
-      end?.(err instanceof Error ? err.message : String(err));
-      throw err;
-    } finally {
-      if (beanTurns.get(key) === turn) beanTurns.delete(key);
-    }
-  });
-  // Only the running turn it names: a late Stop must not abort the next turn.
-  ipcMain.on(IPC.chatStop, (e, mountId: unknown, turnId: unknown) => {
-    const key = tryChatKey(e.sender.id, mountId);
-    const turn = key === undefined ? undefined : beanTurns.get(key);
-    if (turn && typeof turnId === "string" && turn.turnId === turnId) turn.ctl.abort();
-  });
-  // Agent-mode images: a paste or browser drag has no file on disk, so it's written to a private
-  // temp dir (one per app run) and the agent reads it by path. stageImages checks mime + size.
-  let stageDir: Promise<string> | undefined;
-  ipcMain.handle(IPC.chatStageImage, async (e, data: unknown, mime: unknown, mountId: unknown) => {
-    chatKey(e.sender.id, mountId);
-    if (typeof data !== "string" || typeof mime !== "string") throw new Error("malformed image");
-    stageDir ??= mkdtemp(join(tmpdir(), "bean-images-")).catch((err: unknown) => { stageDir = undefined; throw err; });
-    const [path] = await stageImages([{ data, mimeType: mime }], await stageDir);
-    return path;
-  });
-  ipcMain.handle(IPC.getModel, () => deps.getModel());
+/** The Electron IPC adapter for a local core: every core and host-bound channel (channels.ts) to its host
+ * handler, with the sender's webContents id as the client id. Each call passes the contract
+ * (channel-contract.ts) first. Per-chat state and its checks live in the host (`host.chat`). The shell's
+ * own channels are `registerShellIpc`'s. */
+export function registerIpc(electronIpc: IpcLike, deps: RegisterDeps): void {
+  const { host } = deps;
+  const ipcMain = guardIpc(electronIpc, deps.handshake.capabilities);
+  ipcMain.handle(IPC.handshake, () => deps.handshake);
+  const chats = host.chat;
+  ipcMain.on(IPC.chatAttach, (e, mountId: unknown) => chats.attach(e.sender.id, mountId));
+  ipcMain.on(IPC.chatRelease, (e, mountId: unknown) => chats.release(e.sender.id, mountId));
+  ipcMain.handle(IPC.chat, (e, req: ChatRequest, mountId: unknown) => chats.chat(e.sender.id, mountId, req));
+  ipcMain.on(IPC.chatStop, (e, mountId: unknown, turnId: unknown) => chats.stop(e.sender.id, mountId, turnId));
+  ipcMain.handle(IPC.chatStageImage, (e, data: unknown, mime: unknown, mountId: unknown) => chats.stageImage(e.sender.id, mountId, data, mime));
+  ipcMain.handle(IPC.getModel, () => host.getModel());
+  ipcMain.on(IPC.dismissTask, (_e, id: unknown) => { if (typeof id === "string") host.dismissTask(id); });
 
-  const listSkillsHandler = buildListSkillsHandler(deps);
-  ipcMain.handle(IPC.listSkills, () => listSkillsHandler());
+  ipcMain.handle(IPC.listSkills, () => host.listSkills());
+  ipcMain.handle(IPC.listProjects, () => host.listProjects());
+  ipcMain.handle(IPC.saveProjects, (_e, projects: Project[]) => host.saveProjects(projects));
 
-  const listProjectsHandler = buildListProjectsHandler(deps);
-  ipcMain.handle(IPC.listProjects, () => listProjectsHandler());
+  // Native pickers (Settings' Terminal/Editor App fields, "add project") and Finder reveal.
+  ipcMain.handle(IPC.pickProjectFolder, (e) => deps.shell.pickFolder(e.sender.id));
+  ipcMain.handle(IPC.pickTerminalApp, (e) => deps.shell.pickApp(e.sender.id));
+  ipcMain.handle(IPC.pickEditorApp, (e) => deps.shell.pickApp(e.sender.id));
+  ipcMain.on(IPC.revealInFinder, (_e, path: string) => deps.shell.reveal(path));
 
-  const saveProjectsHandler = buildSaveProjectsHandler(deps);
-  ipcMain.handle(IPC.saveProjects, (_e, projects: Project[]) => saveProjectsHandler(projects));
-
-  // Native folder picker so "add project" can browse instead of hand-typing a path.
-  ipcMain.handle(IPC.pickProjectFolder, async (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    const result = win
-      ? await dialog.showOpenDialog(win, { properties: ["openDirectory"] })
-      : await dialog.showOpenDialog({ properties: ["openDirectory"] });
-    return result.canceled ? undefined : result.filePaths[0];
-  });
-
-  // Native .app picker for the Settings "Terminal App" field — same shape as pickProjectFolder,
-  // just filtered to application bundles and defaulted to /Applications.
-  ipcMain.handle(IPC.pickTerminalApp, async (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    const opts = {
-      properties: ["openFile"] as ("openFile")[],
-      filters: [{ name: "Applications", extensions: ["app"] }],
-      defaultPath: "/Applications",
-    };
-    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
-    return result.canceled ? undefined : result.filePaths[0];
-  });
-
-  // Same picker as pickTerminalApp, for the Settings "Editor App" field.
-  ipcMain.handle(IPC.pickEditorApp, async (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    const opts = {
-      properties: ["openFile"] as ("openFile")[],
-      filters: [{ name: "Applications", extensions: ["app"] }],
-      defaultPath: "/Applications",
-    };
-    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
-    return result.canceled ? undefined : result.filePaths[0];
-  });
-
-  // "Reveal in Finder" from the Projects panel — just hands the path to Finder, no launch involved.
-  ipcMain.on(IPC.revealInFinder, (_e, path: string) => shell.showItemInFolder(path));
-
-  const saveSkillHandler = buildSaveSkillHandler(deps);
-  ipcMain.handle(IPC.saveSkill, (_e, name: string, body: string) => saveSkillHandler(name, body));
-
-  const deleteSkillHandler = buildDeleteSkillHandler(deps);
-  ipcMain.handle(IPC.deleteSkill, (_e, name: string) => deleteSkillHandler(name));
+  ipcMain.handle(IPC.saveSkill, (_e, name: string, body: string) => host.saveSkill(name, body));
+  ipcMain.handle(IPC.deleteSkill, (_e, name: string) => host.deleteSkill(name));
 
   const launchHandler = buildLaunchHandler(deps);
   ipcMain.on(IPC.launch, (_e, req: LaunchRequest) => launchHandler(req));
-  ipcMain.handle(IPC.delegateStart, (e, req: DelegateStartRequest, mountId: unknown) => {
-    const key = chatKey(e.sender.id, mountId);
-    return deps.delegateTasks.start({ ...req, offRecord: memoryHandlers.isIncognito(key), mountId: key });
-  });
-  ipcMain.on(IPC.delegateCancel, (_e, taskId: string) => deps.delegateTasks.cancel(taskId));
-  // Sessions belong to one chat (sender + attached mount); every payload is validated in live-tasks.
-  const liveOwner = (client: ClientId, mountId: unknown) => {
-    const key = tryChatKey(client, mountId);
-    return key === undefined ? undefined : { clientId: client, mountId: key };
-  };
-  const notLive = "Agent sessions run from the chat window.";
-  ipcMain.handle(IPC.liveStart, (e, req: unknown, mountId: unknown) => {
-    const o = liveOwner(e.sender.id, mountId);
-    return o ? deps.liveTasks.start(o, req) : { error: notLive };
-  });
-  ipcMain.handle(IPC.liveSend, (e, sessionId: unknown, text: unknown, mountId: unknown) => {
-    const o = liveOwner(e.sender.id, mountId);
-    return o ? deps.liveTasks.send(o, sessionId, text) : notLive;
-  });
-  ipcMain.on(IPC.liveStop, (e, sessionId: unknown, mountId: unknown) => {
-    const o = liveOwner(e.sender.id, mountId);
-    if (o) deps.liveTasks.stop(o, sessionId);
-  });
-  ipcMain.handle(IPC.liveInterrupt, (e, sessionId: unknown, mountId: unknown, turns: unknown) => {
-    const o = liveOwner(e.sender.id, mountId);
-    return o ? deps.liveTasks.interrupt(o, sessionId, turns) : false;
-  });
-  ipcMain.handle(IPC.liveResume, (e, sessionId: unknown, mountId: unknown) => {
-    const o = liveOwner(e.sender.id, mountId);
-    return o ? deps.liveTasks.resume(o, sessionId) : { error: notLive };
-  });
+  ipcMain.handle(IPC.delegateStart, (e, req: DelegateStartRequest, mountId: unknown) => chats.delegateStart(e.sender.id, mountId, req));
+  ipcMain.on(IPC.delegateCancel, (_e, taskId: string) => host.cancelDelegate(taskId));
+  ipcMain.handle(IPC.liveStart, (e, req: unknown, mountId: unknown) => chats.liveStart(e.sender.id, mountId, req));
+  ipcMain.handle(IPC.liveSend, (e, sessionId: unknown, text: unknown, mountId: unknown) => chats.liveSend(e.sender.id, mountId, sessionId, text));
+  ipcMain.on(IPC.liveStop, (e, sessionId: unknown, mountId: unknown) => chats.liveStop(e.sender.id, mountId, sessionId));
+  ipcMain.handle(IPC.liveInterrupt, (e, sessionId: unknown, mountId: unknown, turns: unknown) => chats.liveInterrupt(e.sender.id, mountId, sessionId, turns));
+  ipcMain.handle(IPC.liveResume, (e, sessionId: unknown, mountId: unknown) => chats.liveResume(e.sender.id, mountId, sessionId));
   // A chat's terminals: every call names an attached mount of the chat window, plus the tab;
   // payloads and tab ids are validated in terminal-tasks. Refused fire-and-forget calls are dropped.
   ipcMain.handle(IPC.terminalStart, (e, projectPath: unknown, cols: unknown, rows: unknown, mountId: unknown, tabId: unknown) => {
-    const key = tryChatKey(e.sender.id, mountId);
+    const key = chats.tryKey(e.sender.id, mountId);
     return key === undefined
       ? { error: "Terminals run from the chat window." }
       : deps.terminalTasks.start({ clientId: e.sender.id, mountId: key }, tabId, projectPath, cols, rows);
   });
   ipcMain.on(IPC.terminalWrite, (e, data: unknown, mountId: unknown, tabId: unknown) => {
-    const key = tryChatKey(e.sender.id, mountId);
+    const key = chats.tryKey(e.sender.id, mountId);
     if (key !== undefined) deps.terminalTasks.write(key, tabId, data);
   });
   ipcMain.on(IPC.terminalResize, (e, cols: unknown, rows: unknown, mountId: unknown, tabId: unknown) => {
-    const key = tryChatKey(e.sender.id, mountId);
+    const key = chats.tryKey(e.sender.id, mountId);
     if (key !== undefined) deps.terminalTasks.resize(key, tabId, cols, rows);
   });
   ipcMain.on(IPC.terminalAck, (e, chars: unknown, mountId: unknown, tabId: unknown) => {
-    const key = tryChatKey(e.sender.id, mountId);
+    const key = chats.tryKey(e.sender.id, mountId);
     if (key !== undefined) deps.terminalTasks.ack(key, tabId, chars);
   });
   // No tab = every tab of the chat.
   ipcMain.handle(IPC.terminalStop, async (e, mountId: unknown, tabId?: unknown) => {
-    const key = tryChatKey(e.sender.id, mountId);
+    const key = chats.tryKey(e.sender.id, mountId);
     if (key === undefined) return;
     await (tabId === undefined ? deps.terminalTasks.stopMount(key) : deps.terminalTasks.stop(key, tabId));
   });
   // The close cards' fresh check: what runs in this chat's terminals (or one tab's) right now.
   ipcMain.handle(IPC.terminalRunning, (e, mountId: unknown, tabId?: unknown) => {
-    const key = tryChatKey(e.sender.id, mountId);
+    const key = chats.tryKey(e.sender.id, mountId);
     return key === undefined ? [] : deps.terminalTasks.runningCommand(key, tabId);
   });
   ipcMain.on(IPC.terminalOpenLink, (e, url: unknown, mountId: unknown) => {
-    const href = tryChatKey(e.sender.id, mountId) === undefined ? undefined : terminalLink(url);
-    if (href) shell.openExternal(href).catch((err: unknown) => console.error("terminal link failed:", err));
+    const href = chats.tryKey(e.sender.id, mountId) === undefined ? undefined : terminalLink(url);
+    if (href) deps.shell.openExternal(href).catch((err: unknown) => console.error("terminal link failed:", err));
   });
   // Cmd+click on a path in the chat log (#779): validated and resolved here, never by the renderer.
   ipcMain.on(IPC.chatOpenPath, (e, raw: unknown, mountId: unknown) => {
-    const key = tryChatKey(e.sender.id, mountId);
-    const abs = key === undefined ? undefined : chatPathTarget(raw, deps.liveTasks.projectOf(key), homedir());
+    const key = chats.tryKey(e.sender.id, mountId);
+    const abs = key === undefined ? undefined : chatPathTarget(raw, host.liveProjectOf(key), homedir());
     if (!abs) return;
     void openChatPath(abs, {
       realpath,
       stat,
       editorApp: deps.getEditorApp(),
       terminalApp: deps.getTerminalApp(),
-      openDir: async (p) => { const err = await shell.openPath(p); if (err) throw new Error(err); },
-      reveal: (p) => shell.showItemInFolder(p),
+      openDir: deps.shell.openPath,
+      reveal: deps.shell.reveal,
       openInEditor: (app, p) => execFileAsync("/usr/bin/open", ["-a", app, p]),
     });
   });
-  ipcMain.handle(IPC.availableClis, () => deps.getAvailableClis());
-  ipcMain.handle(IPC.detectedClis, () => deps.getDetectedClis());
+  ipcMain.handle(IPC.availableClis, () => host.availableClis());
+  ipcMain.handle(IPC.detectedClis, () => host.detectedClis());
+  ipcMain.handle(IPC.availableModels, () => host.models());
+  ipcMain.handle(IPC.getModelMemory, (_e, skillName: string) => host.modelMemory.get(skillName));
+  ipcMain.handle(IPC.setModelMemory, (_e, skillName: string, modelId: string) => host.modelMemory.set(skillName, modelId));
 
-  const modelsHandler = buildModelsHandler(deps);
-  ipcMain.handle(IPC.availableModels, () => modelsHandler());
+  ipcMain.handle(IPC.getPersona, () => host.persona.get());
+  ipcMain.handle(IPC.savePersona, (_e, p: Persona) => host.persona.save(p));
 
-  const modelMemoryHandlers = buildModelMemoryHandlers({
-    loadModelMemory, saveModelMemory, modelMemoryFile: deps.modelMemoryFile,
-  });
-  ipcMain.handle(IPC.getModelMemory, (_e, skillName: string) => modelMemoryHandlers.get(skillName));
-  ipcMain.handle(IPC.setModelMemory, (_e, skillName: string, modelId: string) => modelMemoryHandlers.set(skillName, modelId));
-
-  const personaHandlers = buildPersonaHandlers(deps);
-  ipcMain.handle(IPC.getPersona, () => personaHandlers.get());
-  ipcMain.handle(IPC.savePersona, (_e, p: Persona) => personaHandlers.save(p));
-
-  ipcMain.handle(IPC.listMemories, () => memoryHandlers.list());
-  ipcMain.handle(IPC.appendMemories, (_e, additions: Memory[]) => memoryHandlers.append(additions));
-  ipcMain.handle(IPC.updateMemory, (_e, id: string, text: string) => memoryHandlers.update(id, text));
-  ipcMain.handle(IPC.deleteMemories, (_e, ids: string[]) => memoryHandlers.delete(ids));
-  ipcMain.handle(IPC.updateMemoryCategory, (_e, id: string, category: string | null) => memoryHandlers.updateCategory(id, category));
-  ipcMain.handle(IPC.renameMemoryCategory, (_e, from: string, to: string) => memoryHandlers.renameCategory(from, to));
-  ipcMain.handle(IPC.memoryOwnerIds, () => memoryHandlers.ownerIds());
-  // Fire-and-forget: the chat window is already closing. A failure already raised its bubble
-  // (onMemoryFailure); this only logs it.
-  ipcMain.on(IPC.chatIncognito, (e, on: unknown, mountId: unknown) => {
-    const key = tryChatKey(e.sender.id, mountId);
-    if (key === undefined) return;
-    memoryHandlers.setIncognito(key, on === true);
-    try { deps.chatThreadHandlers.setIncognito(key, on === true); } catch (err) { console.error("chat history delete failed:", err); }
-  });
+  const memory = host.memory;
+  ipcMain.handle(IPC.listMemories, () => memory.list());
+  ipcMain.handle(IPC.appendMemories, (_e, additions: Memory[]) => memory.append(additions));
+  ipcMain.handle(IPC.updateMemory, (_e, id: string, text: string) => memory.update(id, text));
+  ipcMain.handle(IPC.deleteMemories, (_e, ids: string[]) => memory.delete(ids));
+  ipcMain.handle(IPC.updateMemoryCategory, (_e, id: string, category: string | null) => memory.updateCategory(id, category));
+  ipcMain.handle(IPC.renameMemoryCategory, (_e, from: string, to: string) => memory.renameCategory(from, to));
+  ipcMain.handle(IPC.memoryOwnerIds, () => memory.ownerIds());
+  ipcMain.on(IPC.chatIncognito, (e, on: unknown, mountId: unknown) => chats.incognito(e.sender.id, mountId, on));
   const notChat = (): never => { throw new Error("Chat history is for the chat window."); };
-  ipcMain.handle(IPC.chatThreadSave, (e, req: unknown, mountId: unknown) =>
-    deps.chatThreadHandlers.save(chatKey(e.sender.id, mountId), req));
-  ipcMain.handle(IPC.chatThreadGet, (e, id: unknown, mountId: unknown) =>
-    deps.chatThreadHandlers.get(chatKey(e.sender.id, mountId), id));
-  ipcMain.handle(IPC.chatThreadList, (e) => deps.isChatClient(e.sender.id) ? deps.chatThreadHandlers.list() : notChat());
+  const threads = host.threads;
+  ipcMain.handle(IPC.chatThreadSave, (e, req: unknown, mountId: unknown) => chats.threadSave(e.sender.id, mountId, req));
+  ipcMain.handle(IPC.chatThreadGet, (e, id: unknown, mountId: unknown) => chats.threadGet(e.sender.id, mountId, id));
+  ipcMain.handle(IPC.chatThreadList, (e) => deps.isChatClient(e.sender.id) ? threads.list() : notChat());
   ipcMain.handle(IPC.chatThreadDelete, (e, id: unknown) =>
-    deps.isChatClient(e.sender.id) ? deps.chatThreadHandlers.delete(id) : notChat());
+    deps.isChatClient(e.sender.id) ? threads.delete(id) : notChat());
   ipcMain.handle(IPC.chatThreadStar, (e, id: unknown, starred: unknown) =>
-    deps.isChatClient(e.sender.id) ? deps.chatThreadHandlers.star(id, starred) : notChat());
+    deps.isChatClient(e.sender.id) ? threads.star(id, starred) : notChat());
   ipcMain.handle(IPC.chatThreadRename, (e, id: unknown, title: unknown) =>
-    deps.isChatClient(e.sender.id) ? deps.chatThreadHandlers.rename(id, title) : notChat());
+    deps.isChatClient(e.sender.id) ? threads.rename(id, title) : notChat());
   ipcMain.handle(IPC.chatThreadGroup, (e, ids: unknown, name: unknown) =>
-    deps.isChatClient(e.sender.id) ? deps.chatThreadHandlers.group(ids, name) : notChat());
+    deps.isChatClient(e.sender.id) ? threads.group(ids, name) : notChat());
   ipcMain.handle(IPC.chatThreadGroupRename, (e, from: unknown, to: unknown) =>
-    deps.isChatClient(e.sender.id) ? deps.chatThreadHandlers.groupRename(from, to) : notChat());
+    deps.isChatClient(e.sender.id) ? threads.groupRename(from, to) : notChat());
   ipcMain.handle(IPC.syncedChatList, (e) => deps.isChatClient(e.sender.id) ? deps.syncedChatHandlers.list() : notChat());
   ipcMain.handle(IPC.syncedChatGet, (e, surface: unknown, conversationId: unknown, mountId: unknown) => {
-    chatKey(e.sender.id, mountId);
+    chats.key(e.sender.id, mountId);
     return deps.syncedChatHandlers.get(surface, conversationId);
   });
   ipcMain.handle(IPC.syncedChatSend, (e, surface: unknown, conversationId: unknown, text: unknown, mountId: unknown) => {
-    chatKey(e.sender.id, mountId);
+    chats.key(e.sender.id, mountId);
     return deps.syncedChatHandlers.send(surface, conversationId, text);
   });
   ipcMain.handle(IPC.syncedChatResume, (e, surface: unknown, conversationId: unknown, mountId: unknown) => {
-    chatKey(e.sender.id, mountId);
+    chats.key(e.sender.id, mountId);
     return deps.syncedChatHandlers.resume(surface, conversationId);
   });
   // Continue in Discord: one chat (sender + attached mount), its incognito latch read here, not sent.
   ipcMain.handle(IPC.deskContinue, (e, req: unknown, mountId: unknown) => {
-    const key = chatKey(e.sender.id, mountId);
+    const key = chats.key(e.sender.id, mountId);
     if (!deps.deskContinue) return { failed: "Continue in Discord isn't available." };
-    return deps.deskContinue({ clientId: e.sender.id, mountId: key }, memoryHandlers.isIncognito(key), req);
+    return deps.deskContinue({ clientId: e.sender.id, mountId: key }, chats.isIncognito(key), req);
   });
-  ipcMain.on(IPC.rememberOnClose, (e, transcript: unknown, opts: unknown) => {
-    const o = opts as { incognito?: unknown; rejected?: unknown; mountId?: unknown } | null;
-    const key = tryChatKey(e.sender.id, o?.mountId);
-    if (key === undefined) return;
-    const incognito = o?.incognito === true;
-    const rejected = Array.isArray(o?.rejected) ? o.rejected.filter((t): t is string => typeof t === "string") : [];
-    memoryHandlers.rememberOnClose(toTranscript(transcript), { incognito, rejected, key }).catch((err) => {
-      console.error("auto-remember failed:", err);
-    });
-  });
-  ipcMain.handle(IPC.getMemoryBatch, () => memoryHandlers.batch());
-  ipcMain.handle(IPC.undoMemoryBatch, () => memoryHandlers.undoBatch());
-  ipcMain.handle(IPC.getLastDream, () => memoryHandlers.lastDream());
-  ipcMain.handle(IPC.undoLastDream, () => memoryHandlers.undoLastDream());
-  ipcMain.handle(IPC.dreamDetails, () => memoryHandlers.dreamDetails());
+  // Fire-and-forget: the chat window is already closing. A failure already raised its bubble
+  // (onMemoryFailure); this only logs it.
+  ipcMain.on(IPC.rememberOnClose, (e, transcript: unknown, opts: unknown) => chats.rememberOnClose(e.sender.id, transcript, opts));
+  ipcMain.handle(IPC.getMemoryBatch, () => memory.batch());
+  ipcMain.handle(IPC.undoMemoryBatch, () => memory.undoBatch());
+  ipcMain.handle(IPC.getLastDream, () => memory.lastDream());
+  ipcMain.handle(IPC.undoLastDream, () => memory.undoLastDream());
+  ipcMain.handle(IPC.dreamDetails, () => memory.dreamDetails());
 
-  const notesHandlers = buildNotesHandlers(deps);
-  ipcMain.handle(IPC.listNotes, (_e, opts?: unknown) => notesHandlers.list(opts));
-  ipcMain.handle(IPC.saveNote, (_e, draft: NoteDraft, images?: unknown) => notesHandlers.save(draft, images));
-  ipcMain.handle(IPC.saveNoteImage, (_e, bytes: unknown) => notesHandlers.saveImage(bytes));
-  ipcMain.handle(IPC.noteImage, (_e, id: unknown) => notesHandlers.image(id));
-  ipcMain.handle(IPC.archiveNote, (_e, slug: unknown) => notesHandlers.archive(slug));
-  ipcMain.handle(IPC.restoreNote, (_e, slug: unknown) => notesHandlers.restore(slug));
-  ipcMain.handle(IPC.purgeNote, (_e, slug: unknown) => notesHandlers.purge(slug));
+  const notes = host.notes;
+  ipcMain.handle(IPC.listNotes, (_e, opts?: unknown) => notes.list(opts));
+  ipcMain.handle(IPC.saveNote, (_e, draft: NoteDraft, images?: unknown) => notes.save(draft, images));
+  ipcMain.handle(IPC.saveNoteImage, (_e, bytes: unknown) => notes.saveImage(bytes));
+  ipcMain.handle(IPC.noteImage, (_e, id: unknown) => notes.image(id));
+  ipcMain.handle(IPC.archiveNote, (_e, slug: unknown) => notes.archive(slug));
+  ipcMain.handle(IPC.restoreNote, (_e, slug: unknown) => notes.restore(slug));
+  ipcMain.handle(IPC.purgeNote, (_e, slug: unknown) => notes.purge(slug));
   // === true, not a cast: the renderer's types are erased by the time a value crosses IPC,
   // and every truthy payload ("false" included) would otherwise star the note.
-  ipcMain.handle(IPC.starNote, (_e, slug: string, starred: unknown) => notesHandlers.star(slug, starred === true));
-  ipcMain.handle(IPC.noteHistory, (_e, slug: string) => notesHandlers.history(slug));
+  ipcMain.handle(IPC.starNote, (_e, slug: string, starred: unknown) => notes.star(slug, starred === true));
+  ipcMain.handle(IPC.noteHistory, (_e, slug: string) => notes.history(slug));
 
   const configHandlers = buildConfigHandlers({
-    getConfig: deps.getConfig,
-    applyConfig: deps.applyConfig,
+    getConfig: host.getConfig,
+    applyConfig: host.applyConfig,
     onApplied: () => deps.push.broadcast(IPC.cliAvailabilityChanged, undefined),
   });
   ipcMain.handle(IPC.getConfig, () => configHandlers.get());
   ipcMain.handle(IPC.saveConfig, (_e, update: ConfigUpdate) => configHandlers.save(update));
+
+  const chatopsHandlers = buildChatopsHandlers(deps);
+  ipcMain.handle(IPC.chatopsStatus, () => chatopsHandlers.status());
+  ipcMain.on(IPC.chatopsStart, (_e, bot: ChatopsBot) => chatopsHandlers.start(bot));
+  ipcMain.on(IPC.chatopsStop, (_e, bot: ChatopsBot) => chatopsHandlers.stop(bot));
+  const destinations = host.destinations;
+  ipcMain.handle(IPC.destinationsList, () => destinations.list());
+  ipcMain.handle(IPC.destinationsName, (_e, surface: unknown, conversationId: unknown, alias: unknown) =>
+    destinations.name(surface, conversationId, alias));
+  ipcMain.handle(IPC.destinationsClear, (_e, surface: unknown, conversationId: unknown) =>
+    destinations.clear(surface, conversationId));
+  ipcMain.handle(IPC.destinationsNameRaw, (_e, surface: unknown, conversationId: unknown, alias: unknown) =>
+    destinations.nameRaw(surface, conversationId, alias));
+  ipcMain.handle(IPC.sendToDestination, (e, proposalId: unknown, optionId: unknown) => {
+    if (!deps.isChatClient(e.sender.id)) throw new Error("Sends are confirmed in the chat window.");
+    return host.sends.send(proposalId, optionId);
+  });
+  ipcMain.handle(IPC.destinationsRetarget, (_e, alias: unknown, surface: unknown, conversationId: unknown) =>
+    destinations.retarget(alias, surface, conversationId));
+
+
+  const proposals = host.skillProposals;
+  ipcMain.handle(IPC.skillProposalsList, () => proposals.list());
+  ipcMain.handle(IPC.skillProposalsApprove, (_e, id: string) => proposals.approve(id));
+  ipcMain.handle(IPC.skillProposalsReject, (_e, id: string) => proposals.reject(id));
+  ipcMain.handle(IPC.skillProposalsUndo, (_e, id: string) => proposals.undo(id));
+  const routines = host.routines;
+  ipcMain.handle(IPC.routinesList, () => routines.list());
+  ipcMain.handle(IPC.routinesSave, (_e, routine: Routine) => routines.save(routine));
+  ipcMain.handle(IPC.routinesDelete, (_e, name: string) => routines.remove(name));
+  ipcMain.handle(IPC.routinesState, () => routines.state());
+  ipcMain.handle(IPC.routinesRunNow, (_e, name: string) => routines.runNow(name));
+  ipcMain.handle(IPC.routineStop, (_e, name: unknown) => routines.stop(name));
+  ipcMain.handle(IPC.routinesAttempts, (_e, runId: string) => routines.attempts(runId));
+  ipcMain.handle(IPC.routinesCheckNow, (_e, name: string) => routines.checkNow(name));
+  ipcMain.handle(IPC.routinesPreviewWatch, (_e, w: RoutineWatch) => routines.previewWatch(w));
+  ipcMain.handle(IPC.routinesEnableWatch, (_e, name: string, queueExisting: boolean) => routines.enableWatch(name, queueExisting));
+  ipcMain.handle(IPC.routinesSinkRecipients, () => routines.sinkRecipients());
+  ipcMain.handle(IPC.routinesDraftBrief, (_e, sentence: string, previous?: RoutineBrief) => routines.draftBrief(sentence, previous));
+  ipcMain.handle(IPC.routinesBuild, (_e, brief: RoutineBrief) => routines.build(brief));
+  ipcMain.handle(IPC.routinesBuilds, () => routines.builds());
+  ipcMain.handle(IPC.routinesCancelBuild, (_e, name: string) => routines.cancelBuild(name));
+  ipcMain.handle(IPC.routinesDismissBuild, (_e, name: string) => routines.dismissBuild(name));
+
+  const todos = host.todos;
+  ipcMain.handle(IPC.todosList, (_e, routine: string) => todos.list(routine));
+  ipcMain.handle(IPC.todosListAll, () => todos.listAll());
+  ipcMain.handle(IPC.todosAdd, (_e, routine: string, text: string) => todos.add(routine, text));
+  ipcMain.handle(IPC.todosEdit, (_e, id: string, text: string) => todos.edit(id, text));
+  ipcMain.handle(IPC.todosDelete, (_e, id: string) => todos.remove(id));
+  ipcMain.handle(IPC.todosReorder, (_e, id: string, newOrder: number) => todos.reorder(id, newOrder));
+  ipcMain.handle(IPC.todosClearFinished, (_e, routine: string) => todos.clearFinished(routine));
+  ipcMain.handle(IPC.todosRetry, (_e, id: string) => todos.retry(id));
+
+  // Core half of a drop on a skill tile: the plan, from the host's skills and projects. The avatar
+  // shows it through the shell's proposeRun.
+  ipcMain.handle(IPC.planDrop, async (_e, skillName: string, droppedUrl: string) =>
+    planForDroppedSkill(skillName, droppedUrl, await host.listSkills(), await host.listProjects()));
+}
+
+/** The shell's own channels: theme, updates, About, opening windows and their pull-on-mount stores. */
+export function registerShellIpc(electronIpc: IpcLike, deps: ShellIpcDeps): void {
+  const ipcMain = guardIpc(electronIpc, []);
   ipcMain.handle(IPC.getAppInfo, () => deps.getAppInfo());
 
   const theme = buildThemeHandlers(deps);
@@ -1529,82 +566,28 @@ export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): {
     deps.push.broadcast(IPC.themeChanged, next);
   });
 
-  const chatopsHandlers = buildChatopsHandlers(deps);
-  ipcMain.handle(IPC.chatopsStatus, () => chatopsHandlers.status());
-  ipcMain.on(IPC.chatopsStart, (_e, bot: ChatopsBot) => chatopsHandlers.start(bot));
-  ipcMain.on(IPC.chatopsStop, (_e, bot: ChatopsBot) => chatopsHandlers.stop(bot));
-  ipcMain.handle(IPC.destinationsList, () => deps.destinationHandlers.list());
-  ipcMain.handle(IPC.destinationsName, (_e, surface: unknown, conversationId: unknown, alias: unknown) =>
-    deps.destinationHandlers.name(surface, conversationId, alias));
-  ipcMain.handle(IPC.destinationsClear, (_e, surface: unknown, conversationId: unknown) =>
-    deps.destinationHandlers.clear(surface, conversationId));
-  ipcMain.handle(IPC.destinationsNameRaw, (_e, surface: unknown, conversationId: unknown, alias: unknown) =>
-    deps.destinationHandlers.nameRaw(surface, conversationId, alias));
-  ipcMain.handle(IPC.sendToDestination, (e, proposalId: unknown, optionId: unknown) => {
-    if (!deps.isChatClient(e.sender.id) || !deps.sendHandlers) throw new Error("Sends are confirmed in the chat window.");
-    return deps.sendHandlers.send(proposalId, optionId);
-  });
-  ipcMain.handle(IPC.destinationsRetarget, (_e, alias: unknown, surface: unknown, conversationId: unknown) =>
-    deps.destinationHandlers.retarget(alias, surface, conversationId));
-
   const updateHandlers = buildUpdateHandlers(deps);
   ipcMain.handle(IPC.checkForUpdate, () => updateHandlers.check());
   ipcMain.handle(IPC.installUpdate, () => updateHandlers.install());
   ipcMain.on(IPC.openUpdateReleasePage, () => updateHandlers.openReleasesPage());
-
-  ipcMain.handle(IPC.skillProposalsList, () => deps.skillProposalHandlers.list());
-  ipcMain.handle(IPC.skillProposalsApprove, (_e, id: string) => deps.skillProposalHandlers.approve(id));
-  ipcMain.handle(IPC.skillProposalsReject, (_e, id: string) => deps.skillProposalHandlers.reject(id));
-  ipcMain.handle(IPC.skillProposalsUndo, (_e, id: string) => deps.skillProposalHandlers.undo(id));
-  ipcMain.handle(IPC.routinesList, () => deps.routineHandlers.list());
-  ipcMain.handle(IPC.routinesSave, (_e, routine: Routine) => deps.routineHandlers.save(routine));
-  ipcMain.handle(IPC.routinesDelete, (_e, name: string) => deps.routineHandlers.remove(name));
-  ipcMain.handle(IPC.routinesState, () => deps.routineHandlers.state());
-  ipcMain.handle(IPC.routinesRunNow, (_e, name: string) => deps.routineHandlers.runNow(name));
-  ipcMain.handle(IPC.routineStop, (_e, name: unknown) => deps.routineHandlers.stop(name));
-  ipcMain.handle(IPC.routinesAttempts, (_e, runId: string) => deps.routineHandlers.attempts(runId));
-  ipcMain.handle(IPC.routinesCheckNow, (_e, name: string) => deps.routineHandlers.checkNow(name));
-  ipcMain.handle(IPC.routinesPreviewWatch, (_e, w: RoutineWatch) => deps.routineHandlers.previewWatch(w));
-  ipcMain.handle(IPC.routinesEnableWatch, (_e, name: string, queueExisting: boolean) => deps.routineHandlers.enableWatch(name, queueExisting));
-  ipcMain.handle(IPC.routinesSinkRecipients, () => deps.routineHandlers.sinkRecipients());
-  ipcMain.handle(IPC.routinesDraftBrief, (_e, sentence: string, previous?: RoutineBrief) => deps.routineHandlers.draftBrief(sentence, previous));
-  ipcMain.handle(IPC.routinesBuild, (_e, brief: RoutineBrief) => deps.routineHandlers.build(brief));
-  ipcMain.handle(IPC.routinesBuilds, () => deps.routineHandlers.builds());
-  ipcMain.handle(IPC.routinesCancelBuild, (_e, name: string) => deps.routineHandlers.cancelBuild(name));
-  ipcMain.handle(IPC.routinesDismissBuild, (_e, name: string) => deps.routineHandlers.dismissBuild(name));
-
-  ipcMain.handle(IPC.todosList, (_e, routine: string) => deps.todoHandlers.list(routine));
-  ipcMain.handle(IPC.todosListAll, () => deps.todoHandlers.listAll());
-  ipcMain.handle(IPC.todosAdd, (_e, routine: string, text: string) => deps.todoHandlers.add(routine, text));
-  ipcMain.handle(IPC.todosEdit, (_e, id: string, text: string) => deps.todoHandlers.edit(id, text));
-  ipcMain.handle(IPC.todosDelete, (_e, id: string) => deps.todoHandlers.remove(id));
-  ipcMain.handle(IPC.todosReorder, (_e, id: string, newOrder: number) => deps.todoHandlers.reorder(id, newOrder));
-  ipcMain.handle(IPC.todosClearFinished, (_e, routine: string) => deps.todoHandlers.clearFinished(routine));
-  ipcMain.handle(IPC.todosRetry, (_e, id: string) => deps.todoHandlers.retry(id));
 
   ipcMain.handle(IPC.openComponent, (_e, kind: ComponentKind, payload?: unknown) => deps.openComponent(kind, openComponentPayload(kind, payload)));
   ipcMain.on(IPC.proposeRun, (_e, suggestion: RouteSuggestion) => deps.proposeRun(suggestion));
   ipcMain.handle(IPC.getPendingPlan, () => deps.getPendingPlan());
   ipcMain.handle(IPC.getPendingDroppedUrl, () => deps.getPendingDroppedUrl());
   ipcMain.handle(IPC.getPendingDashboardTarget, () => deps.getPendingDashboardTarget());
-  ipcMain.on(IPC.planFromDrop, (_e, skillName: string, droppedUrl: string) => deps.planFromDrop(skillName, droppedUrl));
   ipcMain.on(IPC.runInChat, (_e, payload: ChatPromptPayload) => deps.runInChat(payload));
   ipcMain.handle(IPC.getPendingChatPrompt, () => deps.getPendingChatPrompt());
   ipcMain.handle(IPC.getPendingInterruptedRunNotices, () => deps.getPendingInterruptedRunNotices());
+  ipcMain.handle(IPC.coreList, () => deps.cores.list());
+  ipcMain.handle(IPC.coreAdd, (_e, host: unknown, container: unknown) => deps.cores.add(host, container));
+  ipcMain.handle(IPC.coreRemove, (_e, id: unknown) => deps.cores.remove(id));
+  ipcMain.handle(IPC.coreSwitch, (_e, id: unknown) => deps.cores.switchTo(id));
+  ipcMain.handle(IPC.coreStatus, () => deps.cores.status());
+  ipcMain.on(IPC.coreTakeBack, () => deps.cores.takeBack());
+  ipcMain.on(IPC.chatCloseKept, () => deps.cores.closeKept());
 
   // Lets a component window grow to fit its own content (e.g. About growing when an update
-  // notice appears) instead of clipping it. Width is left alone; height only grows/shrinks to
-  // what the renderer measured, clamped to the display's work area.
-  ipcMain.on(IPC.resizeWindowToContent, (e, height: number) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    if (!win) return;
-    const [width] = win.getContentSize();
-    const workArea = screen.getDisplayMatching(win.getBounds()).workArea;
-    win.setContentSize(width ?? 0, Math.min(Math.round(height), workArea.height), true);
-  });
-
-  return {
-    releaseChatClient: (clientId) => { for (const id of mounts.ofClient(clientId)) releaseChat(clientId, id); },
-    clientOfMount: mounts.clientOf,
-  };
+  // notice appears) instead of clipping it.
+  ipcMain.on(IPC.resizeWindowToContent, (e, height: number) => deps.shell.fitHeight(e.sender.id, height));
 }

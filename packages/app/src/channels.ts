@@ -1,5 +1,31 @@
 export type Theme = "hearth" | "graphite";
-export type ComponentKind = "chat" | "skills" | "persona" | "projects" | "notes" | "plan" | "settings" | "about" | "routines" | "dashboard";
+export type ComponentKind = "chat" | "skills" | "persona" | "projects" | "notes" | "plan" | "settings" | "about" | "routines" | "dashboard" | "cores";
+/** Windows that need no core: with none attached, every other kind opens the Add a core panel instead. */
+export const SHELL_ONLY_KINDS: readonly ComponentKind[] = ["about", "cores"];
+
+/** The one error every core operation rejects with while no core is attached (#810). Electron wraps an
+ * invoke's error ("Error invoking remote method …: Error: <message>"), so renderers match it with
+ * `isNoCore`, not equality. */
+export const NO_CORE = "No core attached";
+export const isNoCore = (err: unknown): boolean => err instanceof Error && err.message.includes(NO_CORE);
+
+/** Which core the shell is attached to, and how that attachment is doing (#811). Remote states:
+ * `connecting` (first attach), `attached`, `reconnecting` (lost; retrying — the composer is read-only),
+ * `revoked` (another machine took the core over; no automatic reconnect), `mismatch` (contract version
+ * differs; blocking). `message` is the last ssh error; `command` the one-time setup to run in a terminal. */
+export type CoreStatus =
+  | { kind: "local" }
+  | { kind: "none" }
+  | { kind: "remote"; host: string; state: "connecting" | "attached" | "reconnecting" | "revoked" | "mismatch"; message?: string; command?: string };
+/** How a core switch ended: the app restarts, or the panel can offer the cores again. */
+export type CoreSwitchOutcome = "restarting" | "kept" | "refused" | "failed";
+/** The Cores panel's list: the saved remote cores, which one is selected, and whether this machine can
+ * run its own core. */
+export interface CoreListing {
+  selected: string | null;
+  cores: Array<{ id: string; label: string }>;
+  canUseLocal: boolean;
+}
 export type AvatarMode = "normal" | "hover" | "menu" | "drag";
 /** A run to open in the Dashboard: routine + its run record's `startedAt` (absent = the routine's
  * latest recorded run — the run itself wasn't recorded). */
@@ -10,38 +36,14 @@ export interface DroppedImage { path: string; mimeType: string; size: number; da
 /** What a drop on the avatar hands the chat: a path/URL as text, or image/PDF files to attach. */
 export type ChatDrop = string | DroppedImage[];
 
-export interface ConfigView {
-  openaiApiKey: string;
-  model: string;
-  terminalApp: string;
-  editorApp: string;
-  delegateCli: string;
-  systemControls: boolean;
-  reasoningEffort: string;
-  routineDigestContext: boolean;
-  disabledClis: string[];
-  webSearch: boolean;
-  autoMemory: boolean;
-  paths: { config: string; skills: string; projects: string; persona: string };
-}
-export interface ConfigUpdate {
-  openaiApiKey: string;
-  model: string;
-  terminalApp: string;
-  editorApp: string;
-  delegateCli: string;
-  systemControls: boolean;
-  reasoningEffort: string;
-  routineDigestContext: boolean;
-  disabledClis: string[];
-  webSearch: boolean;
-  autoMemory: boolean;
-}
+export type { ConfigView, ConfigUpdate } from "@bean/host";
 export interface AppInfo {
   version: string;
   author: string;
   description: string;
   isPackaged: boolean;
+  /** Bean can download and install its own updates (macOS); elsewhere About only links the releases page. */
+  selfUpdate: boolean;
 }
 
 export type UpdateStatus =
@@ -52,6 +54,8 @@ export type UpdateStatus =
 export interface InstallUpdateResult { status: "error"; message: string }
 
 export const IPC = {
+  // The service contract (channel-contract.ts): contract version, core version, platform, capabilities.
+  handshake: "bean:handshake",
   launch: "bean:launch",
   delegateStart: "bean:delegate-start",
   delegateCancel: "bean:delegate-cancel",
@@ -116,7 +120,8 @@ export const IPC = {
   dismissTask: "bean:dismiss-task",
   openChatMount: "bean:open-chat-mount",
   showChatMount: "bean:show-chat-mount",
-  planFromDrop: "bean:plan-from-drop",
+  // avatar → main: the plan for a skill tile a URL was dropped on (shown via proposeRun).
+  planDrop: "bean:plan-drop",
   getConfig: "bean:get-config",
   saveConfig: "bean:save-config",
   getAppInfo: "bean:get-app-info",
@@ -221,4 +226,17 @@ export const IPC = {
   checkForUpdate: "bean:check-for-update",
   installUpdate: "bean:install-update",
   openUpdateReleasePage: "bean:open-update-release-page",
+  // Cores panel / tray (#811): the saved cores, add/remove one, and switch (saved to userData, then Bean
+  // restarts — after the chat window's Keep/Stop review). "local" = the core on this Mac.
+  coreList: "bean:core-list",
+  coreAdd: "bean:core-add",
+  coreRemove: "bean:core-remove",
+  coreSwitch: "bean:core-switch",
+  // The attachment's state (host badge, reconnect bar, takeover and version banners), pulled + pushed.
+  coreStatus: "bean:core-status",
+  coreStatusChanged: "bean:core-status-changed",
+  // "Take back" after another machine took the core over.
+  coreTakeBack: "bean:core-take-back",
+  // Chat → main: the Keep/Stop card's "Keep working" — a close waiting on it (a core switch, a quit) is off.
+  chatCloseKept: "bean:chat-close-kept",
 } as const;

@@ -1,0 +1,76 @@
+name: Windows installer
+
+# The remote-only desktop shell (#813) as an unsigned NSIS installer. Built on a Windows runner —
+# electron-builder's makensis/rcedit don't cross-build reliably from macOS.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # gh release upload/edit needs write access; default token is read-only
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # ponytail: unsigned build (SmartScreen warns, see the release note below); add
+      # CSC_LINK/CSC_KEY_PASSWORD secrets when a code-signing cert exists.
+      - run: pnpm dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # Smoke the installed app, not the build tree: silent per-user install, then the no-core spec
+      # against the installed Bean.exe — it must boot to Add a core with no data directory.
+      - name: Install and smoke
+        run: |
+          shopt -s nullglob
+          installers=(packages/app/release/*.exe)
+          [ "${#installers[@]}" -eq 1 ] || { echo "::error::expected one installer, got ${installers[*]}"; exit 1; }
+          powershell -NoProfile -Command "Start-Process -Wait -FilePath '${installers[0]}' -ArgumentList '/S'"
+          # The one-click per-user install dir is derived from the package name; find it, don't guess.
+          exe="$(find "$(cygpath -u "$LOCALAPPDATA")/Programs" -maxdepth 2 -name Bean.exe | head -1)"
+          [ -n "$exe" ] || { echo "::error::Bean.exe not installed under %LOCALAPPDATA%/Programs"; exit 1; }
+          echo "installed: $exe"
+          BEAN_E2E_EXECUTABLE="$(cygpath -w "$exe")" pnpm --filter @bean/app exec playwright test e2e/no-core.e2e.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bean-win
+          path: packages/app/release/*.exe
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          assets=(packages/app/release/*.exe)
+          note="Windows: the installer is unsigned, so SmartScreen warns on first run — choose More info → Run anyway."
+
+          # Same retry + idempotency as mac-installer.yml (.memory/safety-release-attach-must-retry.md):
+          # either workflow may create the release first; the other uploads into it.
+          attempt=1
+          max=5
+          until [ "$attempt" -gt "$max" ]; do
+            if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+              gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber \
+                && body="$(gh release view "${GITHUB_REF_NAME}" --json body -q .body)" \
+                && { grep -qF "SmartScreen" <<<"$body" || gh release edit "${GITHUB_REF_NAME}" --notes "${body}"$'\n\n'"${note}"; } \
+                && exit 0
+            else
+              gh release create "${GITHUB_REF_NAME}" "${assets[@]}" --generate-notes && continue
+            fi
+            echo "Attach-to-release attempt ${attempt}/${max} failed; retrying in $((attempt * 10))s..." >&2
+            sleep "$((attempt * 10))"
+            attempt=$((attempt + 1))
+          done
+          echo "::error::Failed to attach release ${GITHUB_REF_NAME} after ${max} attempts" >&2
+          exit 1

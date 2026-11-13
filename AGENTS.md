@@ -32,19 +32,24 @@ Before touching code:
 
 ## Project Overview
 
-Bean is a desktop-pet Electron app. Double-click the avatar (or drop a URL on it) → chat in
+Bean is a personal agent split into a **core** and a **shell**. The core (`@bean/core` logic run by
+`@bean/host`) owns the data dir, chats, sprouts, bots and coding-agent runs; it runs inside the
+macOS Electron app or headless as `bean-core`. The **desktop shell** (`@bean/app`, macOS or Windows)
+is the avatar and its windows, attached to a local core in-process or to a remote `bean-core` over
+SSH. Double-click the avatar (or drop a URL on it) → chat in
 the ChatWindow → `converse()` builds a system prompt from persona/skills/projects/memories and
 may propose a run (skill + project + instruction) → user reviews/confirms in a ProposalCard →
 Bean writes a temp shell script and opens it in Terminal.app (or launches `zed` directly for
 open mode). Bean does not stream or track the launched process's output. The exception is
 **delegation**: `converse()` can also propose a delegate run (`propose_delegate`) — a headless
 `claude -p` / `opencode run` / `codex exec` process that Bean spawns, streams, and cancels via core's `delegate.ts` +
-app's `delegate-tasks.ts`, with the result fed back into the chat when it finishes.
+`@bean/host`'s `delegate-tasks.ts`, with the result fed back into the chat when it finishes.
 
 The desktop app is one of **three surfaces**, all sharing the same core brain:
 
 - **Remote chatops** — `@bean/discord` and `@bean/teams` are standalone Node bot servers
-  (`node dist/server.js`) that let you drive Bean from a Discord server/DM or a Teams chat.
+  (`node dist/server.js`), spawned and supervised by the host (in the app or `bean-core`; each
+  optional), that let you drive Bean from a Discord server/DM or a Teams chat.
   They render the same confirm-first cards (run / note / skill; memory saves directly with a Forget receipt) through core's shared
   `chatops/` layer; the per-surface `*-config.ts` holds tokens/IDs.
 - **Routines** — scheduled work. A routine (`~/.bean/routines/<name>.json`) is a cron- or
@@ -53,12 +58,13 @@ The desktop app is one of **three surfaces**, all sharing the same core brain:
 - **System control** — `system-control.ts` lets `converse()` drive the Mac (volume, mute,
   media playback, launch/quit apps) via a closed verb union, opt-in behind a Settings toggle.
 
-It's a **pnpm-workspace monorepo** with four packages:
+It's a **pnpm-workspace monorepo** with five packages:
 
 | Package | Path | Purpose |
 |---------|------|---------|
 | **`@bean/core`** | `packages/core/` | Routing + IO logic. Pure ESM, zero Electron, `tsc`-built. |
-| **`@bean/app`** | `packages/app/` | Electron shell (main + preload + renderer). esbuild-bundled. |
+| **`@bean/host`** | `packages/host/` | Electron-free host: `createHost()` (chat mounts/turns, delegate + live registries, scheduler, handlers); Electron ops injected. `tsc`-built; its `bean-core` bin (esbuild-bundled) runs it headless — [`docs/headless.md`](docs/headless.md). |
+| **`@bean/app`** | `packages/app/` | Electron shell (main + preload + renderer): local core via `createHost()` (macOS) or a remote `bean-core` over SSH (macOS/Windows). esbuild-bundled. |
 | **`@bean/discord`** | `packages/discord/` | Discord bot server. Node, tsc+esbuild-built. |
 | **`@bean/teams`** | `packages/teams/` | Teams bot server. Node, tsc+esbuild-built. |
 
@@ -75,7 +81,7 @@ Root scripts run through Turborepo (which builds `^build` deps first):
 
 ```bash
 pnpm install
-pnpm build       # turbo: tsc @bean/core, then esbuild-bundle @bean/app
+pnpm build       # turbo: tsc @bean/core, then @bean/host (+ bean-core bundle), bots, esbuild-bundle @bean/app
 pnpm test        # turbo: vitest run in every package
 pnpm typecheck   # turbo: tsc --noEmit in every package
 pnpm dev         # build core + app, then `electron dist/main.js`
@@ -98,6 +104,17 @@ run is the only full check before merge; tiers, when a new spec is justified, an
 [`.memory/convention-e2e-tiers.md`](.memory/convention-e2e-tiers.md). Core/Discord/Teams-only
 diffs skip it. When you deliberately change something a test asserts (a token, a size, a list),
 grep `packages/app/e2e/` too, not just `__test__/`.
+A test reads only files of its own package or its workspace deps — Turbo replays a cached pass
+otherwise ([`.memory/convention-tests-read-own-package.md`](.memory/convention-tests-read-own-package.md));
+when in doubt, gate with `pnpm exec turbo run test typecheck --force`.
+If the diff touches `bean-core` (`packages/host/src/bean-core.ts`, `headless.ts`, `remote.ts`,
+`attachments.ts`) or the `Dockerfile`, also smoke-test `pnpm build && TZ=UTC HOME=<fresh tmp>
+node packages/host/dist/bean-core.js` (a `config.json` in that `~/.bean`) and check its boot line;
+for the wire, the e2e `remote-core.e2e.ts` drives a fake `ssh`. Windows: the shell is
+remote-only and `pnpm dist:win` builds only on `windows-latest`
+(`.github/workflows/win-installer.yml`, run it manually for shell boot/packaging changes); keep
+macOS-only calls behind `IS_MAC` and `e2e/no-core.e2e.ts` platform-neutral
+([`.memory/convention-windows-shell.md`](.memory/convention-windows-shell.md)).
 If a change touches subprocesses, spawned CLIs/bots, PATH/env handling,
 Electron resources, app boot, IPC/preload, window/tray behavior, or anything that differs between
 source checkout and packaged app, also verify both worlds before claiming done:
@@ -158,10 +175,22 @@ call paths and signatures.
   - Loaders (`config.ts`, `skill-library.ts`, `project-registry.ts`) take explicit paths;
     missing/invalid files degrade to `[]` — only a missing **config** throws.
 
-- **`@bean/app`** — Electron shell bundled with **esbuild** (not tsc). `main.ts` wires core into
-  Electron; `ipc.ts` keeps handlers thin and separable from Electron so they're unit-testable.
-  The renderer is Preact: the avatar/orb plus one component window per folder under
-  `renderer/components/`.
+- **`@bean/host`** — the core as one process, Electron-free (a test enforces it): `createHost()`
+  owns chat turns, delegate/live registries, the scheduler under the `bean.db` lease, bot
+  supervision and every core handler; Electron-only work comes in as injected shell ops
+  ([`.memory/convention-core-is-electron-free.md`](.memory/convention-core-is-electron-free.md)).
+  `bean-core` is the same host headless. Remote shells reach it only through `remote.ts` — a
+  0600 unix socket bridged by `ssh … bean-core attach`, no TCP, default-deny `REMOTE_OPS`
+  ([`.memory/convention-remote-attach.md`](.memory/convention-remote-attach.md),
+  [`.memory/convention-attachment-lifecycle.md`](.memory/convention-attachment-lifecycle.md)).
+
+- **`@bean/app`** — the desktop **shell**, bundled with **esbuild** (not tsc). `main.ts` boots the
+  shell always and the local core only when selected ([`.memory/convention-no-core-shell.md`](.memory/convention-no-core-shell.md));
+  `ipc.ts` only wires channels to `host.handlers`; `remote-core.ts` is the SSH adapter. Every IPC
+  channel is classified core / host-bound / shell in `channel-contract.ts`
+  ([`.memory/convention-service-contract.md`](.memory/convention-service-contract.md)) — the
+  renderer hides host-bound features by capability. The renderer is Preact: the avatar/orb plus
+  one component window per folder under `renderer/components/`.
 
 - **`@bean/discord` / `@bean/teams`** — thin surfaces wiring a platform SDK to core's `chatops/`
   layer. Adding a surface shouldn't touch core logic.
@@ -196,8 +225,8 @@ Two layers:
   `.js` extensions in relative imports (`from "./types.js"`) and `import type` for type-only
   imports. The **one exception** is the Electron preload, which is emitted as CommonJS `.cjs`.
 - **Async:** async/await with explicit `Promise<T>` return types on exports.
-- **Design:** new IO belongs in `@bean/core` as a pure, dependency-injected function; new
-  Electron wiring belongs in `app/` — see [`.memory/convention-core-is-electron-free.md`](.memory/convention-core-is-electron-free.md).
+- **Design:** new IO belongs in `@bean/core` as a pure, dependency-injected function; process
+  wiring (registries, scheduler, handlers) in `@bean/host`; Electron wiring in `app/` — see [`.memory/convention-core-is-electron-free.md`](.memory/convention-core-is-electron-free.md).
 - **Types:** `strict` + `noUncheckedIndexedAccess` are on, so array access is `T | undefined` —
   handle it. Renderer↔main types flow through `@bean/core` types plus the `window.bean` shape
   in `app/src/renderer/bean.d.ts`.
@@ -208,11 +237,14 @@ Two layers:
 
 ## Runtime config (`~/.bean`)
 
-Per-user, outside the repo. Path helpers live in `core/src/config.ts`.
+Per-user, outside the repo, owned by the **core** (a remote-only shell never touches it). Path
+helpers live in `core/src/config.ts`.
 
 - `~/.bean/config.json` → `BeanConfig` (`core/src/types.ts`; defaults in `loadConfig()`). Only
-  `openaiApiKey`/`model` are load-bearing. A missing config throws; an empty `openaiApiKey`
-  shows an error dialog but the app still opens.
+  `openaiApiKey`/`model` are load-bearing. The desktop local core writes a default on first boot;
+  `bean-core` exits without one (and without `TZ`). Remote shells read it with the key blanked.
+- `~/.bean/discord.json`, `~/.bean/teams.json` → each bot starts only when its file exists.
+- `~/.bean/core.sock` → `bean-core`'s remote-attach socket (0600; the dir must be 0700).
 - `~/.bean/clis.json` → optional per-provider model lists overriding the repo default
   `.bean/clis.json`: `[{ "provider": "claude", "models": ["sonnet", ...] }]`. A user entry
   replaces that provider's default list; model strings are passed verbatim to `--model`.
@@ -224,9 +256,10 @@ Per-user, outside the repo. Path helpers live in `core/src/config.ts`.
 - `~/.bean/routines/*.json` → one routine per file; runtime state (last run, history) lives
   beside them in `.state.json` so definitions stay clean and shareable.
 - `~/.bean/bean.db` → SQLite (FTS5) store for memories, notes, chatops history, and the
-  `delegate_runs` session log ([`.memory/project-delegate-session-receipts.md`](.memory/project-delegate-session-receipts.md)). Other files: `persona.json`, `reminders.json`.
+  `delegate_runs` session log ([`.memory/project-delegate-session-receipts.md`](.memory/project-delegate-session-receipts.md)). Also holds the scheduler lease (`leases`; one scheduler per data dir — [`.memory/safety-one-scheduler-per-data-dir.md`](.memory/safety-one-scheduler-per-data-dir.md)). Other files: `persona.json`, `reminders.json`.
 
-All path helpers live in `core/src/config.ts` — check there for the current set, don't
+The shell's own state lives in Electron `userData` (`cores.json` = the core list and selection,
+window sizes, theme). All path helpers live in `core/src/config.ts` — check there for the current set, don't
 hand-maintain the list here.
 
 ---

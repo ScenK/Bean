@@ -7,7 +7,7 @@ to `terminalOpenLink`, paths to `chatOpenPath`. The printed text is untrusted mo
 - **All validation is in main** (`app/src/chat-open-path.ts`): sender must own the mount, length
   cap, no control chars, no URI scheme, only `~/` expands, `:line[:col]` stripped, missing = no-op.
   The renderer never supplies a working directory — a relative path resolves only against
-  `liveTasks.projectOf(mount)`, main's own record (kept past the session, cleared on release,
+  the host's `liveProjectOf(mount)` (`host/src/live-tasks.ts` `projectOf`) (kept past the session, cleared on release,
   disabled once one chat ran sessions in two projects).
 - **A directory with an extension is only revealed** (`.app`, `.xcodeproj`): a click never launches a bundle.
   Dispatch runs on the `realpath`, so an extensionless symlink to a bundle is revealed too.

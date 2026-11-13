@@ -1,24 +1,22 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult, type CoreListing, type CoreStatus, type CoreSwitchOutcome } from "./channels.js";
 import type {
   RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
-import type { DelegateEvent, DelegateStartRequest } from "./delegate-tasks.js";
-import type { LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult } from "./live-tasks.js";
+import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "@bean/host";
 import type { TerminalEvent, TerminalStartResult } from "./terminal-tasks.js";
-import type { TaskJob } from "./task-status.js";
-import type { ChatopsBot, ChatopsEvent, ChatopsState } from "./chatops-servers.js";
-import type { SkillProposalView, StepAttemptView, RoutineStateView, InterruptedRunNotice, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "./ipc.js";
-import type { RoutineBuildView } from "./routine-builder.js";
+import type { ChatopsBot, ChatopsEvent, ChatopsState } from "@bean/host";
+import type { InterruptedRunNotice } from "./ipc.js";
+import type { SkillProposalView, StepAttemptView, RoutineStateView, SinkRecipients, BriefDraft, MemoryBatch, CloseTurn, RoutineBuildView, DestinationView, NameRawResult, SendResult } from "@bean/host";
 import type { SyncedChatEvent, SyncedChatListing, SyncedChatRow, SyncedSendResult } from "./synced-chats.js";
 import type { DeskContinueReply, DeskContinueRequest } from "./desk-continue.js";
-import type { DestinationView, NameRawResult, SendResult } from "./destinations.js";
 import type { AliasResult } from "@bean/core";
 import type { DesktopChatListing, RunStatus, WatchCheckResult } from "@bean/core";
 
 contextBridge.exposeInMainWorld("bean", {
+  handshake: (): Promise<Handshake> => ipcRenderer.invoke(IPC.handshake),
   launch: (req: LaunchRequest): void => ipcRenderer.send(IPC.launch, req),
   delegateStart: (req: DelegateStartRequest, mountId: string): Promise<string> => ipcRenderer.invoke(IPC.delegateStart, req, mountId),
   delegateCancel: (taskId: string): void => ipcRenderer.send(IPC.delegateCancel, taskId),
@@ -92,8 +90,8 @@ contextBridge.exposeInMainWorld("bean", {
   openChatMount: (mountId: string): void => ipcRenderer.send(IPC.openChatMount, mountId),
   onShowChatMount: (cb: (mountId: string) => void) =>
     ipcRenderer.on(IPC.showChatMount, (_e, mountId: string) => cb(mountId)),
-  planFromDrop: (skillName: string, droppedUrl: string): void =>
-    ipcRenderer.send(IPC.planFromDrop, skillName, droppedUrl),
+  planDrop: (skillName: string, droppedUrl: string): Promise<RouteSuggestion> =>
+    ipcRenderer.invoke(IPC.planDrop, skillName, droppedUrl),
   runInChat: (prompt: string, label: string, noteSlug?: string): void =>
     ipcRenderer.send(IPC.runInChat, { prompt, label, noteSlug }),
   getPendingChatPrompt: (): Promise<{ prompt: string; label: string; noteSlug?: string } | undefined> =>
@@ -122,6 +120,14 @@ contextBridge.exposeInMainWorld("bean", {
   checkForUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke(IPC.checkForUpdate),
   installUpdate: (): Promise<InstallUpdateResult | undefined> => ipcRenderer.invoke(IPC.installUpdate),
   openUpdateReleasePage: (): void => ipcRenderer.send(IPC.openUpdateReleasePage),
+  coreList: (): Promise<CoreListing> => ipcRenderer.invoke(IPC.coreList),
+  coreAdd: (host: string, container?: string): Promise<{ id: string } | { error: string }> => ipcRenderer.invoke(IPC.coreAdd, host, container),
+  coreRemove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.coreRemove, id),
+  coreSwitch: (id: string): Promise<CoreSwitchOutcome> => ipcRenderer.invoke(IPC.coreSwitch, id),
+  coreStatus: (): Promise<CoreStatus> => ipcRenderer.invoke(IPC.coreStatus),
+  onCoreStatus: (cb: (s: CoreStatus) => void) => ipcRenderer.on(IPC.coreStatusChanged, (_e, s: CoreStatus) => cb(s)),
+  coreTakeBack: (): void => ipcRenderer.send(IPC.coreTakeBack),
+  chatCloseKept: (): void => ipcRenderer.send(IPC.chatCloseKept),
   listNotes: (opts?: { includeArchived?: boolean }): Promise<Note[]> => ipcRenderer.invoke(IPC.listNotes, opts),
   saveNote: (draft: NoteDraft, images?: ImageAttachment[]): Promise<string> => ipcRenderer.invoke(IPC.saveNote, draft, images),
   saveNoteImage: (bytes: Uint8Array): Promise<string> => ipcRenderer.invoke(IPC.saveNoteImage, bytes),

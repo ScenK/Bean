@@ -78,6 +78,7 @@ export * from "./scheduler-lease.js";
 export * from "./sprout-trigger.js";
 export * from "./routine-host.js";
 export * from "./routine-steps.js";
+export * from "./routine-wiring.js";
 export * from "./watch-io.js";
 export * from "./safe-fetch.js";
 export * from "./spawn-env.js";
@@ -95,7 +96,7 @@ export { runRoutine, unfence, ROUTINE_STEP_TIMEOUT_MS } from "./routine-runner.j
 export type { CommandStepRequest, DelegateStepRequest, DelegateStepResult, RoutineRunnerDeps, RoutineRunResult, StepInfo, StepResult } from "./routine-runner.js";
 export { claimOutbox, enqueueOutbox, ackOutbox, recoverOutbox, drainOutbox, OUTBOX_MAX_ATTEMPTS } from "./outbox.js";
 export type { OutboxMessage } from "./outbox.js";
-export { recordRun, releaseRun, updateRunPid, interruptedRunNotice, clearReservations, sweepDeadRuns } from "./run-queue.js";
+export { recordRun, releaseRun, updateRunPid, interruptedRunNotice, sweepDeadRuns } from "./run-queue.js";
 export type { TrackedRun } from "./run-queue.js";
 export * from "./live-session.js";
 export { killTree, killPendingGroups, escalateKill } from "./kill-tree.js";

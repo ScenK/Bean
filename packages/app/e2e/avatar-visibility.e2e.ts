@@ -95,8 +95,9 @@ test("long drag lists scroll and dropping selects the visible skill after scroll
     const last = page.locator("#bean-drag-bloom .bean-petal").last();
     const skill = await last.locator(".bean-petal-name").textContent();
     await app.evaluate(({ ipcMain }) => {
-      ipcMain.removeAllListeners("bean:plan-from-drop");
-      ipcMain.on("bean:plan-from-drop", (_e, name) => { (globalThis as any).pickedSkill = name; });
+      ipcMain.removeHandler("bean:plan-drop");
+      // Never resolves: the test only needs the picked skill, not the plan window.
+      ipcMain.handle("bean:plan-drop", (_e, name) => { (globalThis as any).pickedSkill = name; return new Promise(() => {}); });
     });
     await last.evaluate((el) => {
       const rect = el.getBoundingClientRect();

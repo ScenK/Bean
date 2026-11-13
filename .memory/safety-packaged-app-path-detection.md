@@ -12,13 +12,13 @@ only reproduces in the packaged app, never in dev.
 
 Fix: `loginShellPath()` (same file) runs `$SHELL -ilc 'echo -n $PATH'` once via `spawnSync`
 (injectable `SpawnSyncFn` for tests, same pattern as `defaultIsExecutable`/`defaultSpawn`) to get
-the user's actual resolved PATH, and `main.ts` folds it into the string passed to `detectClis`
+the user's actual resolved PATH, and `@bean/host`'s `createHost()` (`host.ts`) folds it into the string passed to `detectClis`
 alongside `process.env.PATH` and the fallbacks (`resolveCliPath()`, same file). Don't replace this
 with more hardcoded directories — the login shell already knows about every tool version manager
 the user has, hardcoding can only ever cover the ones we thought of. **One exception:**
 `~/.local/bin` (the native `claude` installer's dir) is a hardcoded fallback, because the probe can
 fail transiently and invisibly (3 s timeout → `""`) — one bad boot once ran every routine on
-`opencode` for ten hours (#229). Detection itself is no longer cached: `main.ts`'s `detectedClis()`
+`opencode` for ten hours (#229). Detection itself is no longer cached: the host's `detectedClis()`
 and the Discord/Teams servers' `clis()` re-run the sync `detectClis` scan per resolution, so a CLI
 installed after boot shows up without a relaunch (the PATH string itself is still computed once). Verify PATH-detection changes with a real
 `pnpm dist:mac` launched from Finder (not `pnpm dev`), same caveat as
@@ -30,9 +30,9 @@ delegate-spawn path (`core/src/delegate.ts`'s `defaultDelegateSpawn`) spawned th
 with no `env` override, so it inherited the packaged app's raw `process.env` — same minimal
 launchd PATH — even though `detectClis` had already found the CLI using the login-shell-augmented
 PATH. Symptom: "spawn claude ENOENT" when running a delegate task in the packaged app, despite the
-CLI showing as available. Fix: `main.ts` names the merged PATH string (`resolvedPath`) instead of
-building it inline, and passes it to `createDelegateTasks({ resolvedPath, ... })`;
-`delegate-tasks.ts` uses it to build a `spawnFn` with `env: { ...process.env, PATH: resolvedPath }`
-and threads that into `runDelegate(...)`. If you add another child-process spawn path for a CLI
+CLI showing as available. Fix: `host.ts` names the merged PATH string (`resolvedPath`) and passes it to
+`createDelegateTasks({ resolvedPath, ... })` (also live tasks, routines, bots);
+host `delegate-tasks.ts`'s `resolvedPathSpawnFn` builds a `spawnFn` with
+`env: spawnEnv({ PATH: resolvedPath, ... })` and threads that into `runDelegate(...)`. If you add another child-process spawn path for a CLI
 tool, it needs this same `resolvedPath` threaded in — `detectClis` finding a CLI does not mean a
 bare `spawn()` elsewhere will find it too.

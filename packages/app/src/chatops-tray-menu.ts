@@ -1,4 +1,4 @@
-import type { ChatopsBot, ChatopsState } from "./chatops-servers.js";
+import type { ChatopsBot, ChatopsState } from "@bean/host";
 
 export interface ChatopsMenuRow {
   bot: ChatopsBot;

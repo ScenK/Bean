@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { chatopsMenuRows } from "../src/chatops-tray-menu.js";
-import type { ChatopsState } from "../src/chatops-servers.js";
+import type { ChatopsState } from "@bean/host";
 
 const bot = (s: Partial<ChatopsState>): ChatopsState => ({ running: false, enabled: false, ...s });
 const status = (discord: Partial<ChatopsState>, teams: Partial<ChatopsState>) => ({ discord: bot(discord), teams: bot(teams) });

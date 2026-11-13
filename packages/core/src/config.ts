@@ -42,6 +42,8 @@ export function routineStateFile(dir: string): string { return join(dir, "routin
 export function outboxDir(dir: string): string { return join(dir, "outbox"); }
 export function runsDir(dir: string): string { return join(dir, "runs"); }
 export function modelMemoryFile(dir: string): string { return join(dir, "model-memory.json"); }
+// The Discord/Teams bots the user switched on — the host restarts them at boot (#805).
+export function chatopsEnabledFile(dir: string): string { return join(dir, "chatops-enabled.json"); }
 // A "no project" run's working directory (2a) — the launched CLI's cwd when no real project
 // was picked. Bean never seeds it (no git clone/page fetch): if the user typed an optional
 // URL, it's folded into the composed prompt instead, and the launched agent (opencode/claude/codex,
@@ -50,6 +52,8 @@ export function scratchDir(dir: string): string { return join(dir, "workspace");
 // generate_image output lands here as timestamped PNGs; no cleanup policy (add one if it matters).
 export function imagesDir(dir: string): string { return join(dir, "images"); }
 // Avatar recovery evidence (#757): one line per renderer/window event and Bring Bean Back click.
+// bean-core's attach socket (#809): a unix socket inside the private data directory, never a TCP port.
+export function coreSocketFile(dir: string): string { return join(dir, "core.sock"); }
 export function avatarLogFile(dir: string): string { return join(dir, "logs", "avatar.log"); }
 
 export async function loadConfig(file: string, beanDirPath: string): Promise<BeanConfig> {

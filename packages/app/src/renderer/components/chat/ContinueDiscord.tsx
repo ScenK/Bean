@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import { AGENT_NAMES } from "../../shared/AgentAvatar.js";
 import type { LiveCli } from "@bean/core";
-import type { DestinationView } from "../../../destinations.js";
+import type { DestinationView } from "@bean/host";
 
 /** The last channel picked — a renderer-only view pref (convention-renderer-view-prefs-in-localstorage). */
 export const CONTINUE_CHANNEL_KEY = "bean.continueDiscord.channel";

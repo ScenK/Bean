@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { recordRun, releaseRun, updateRunPid, interruptedRunNotice, clearReservations, sweepDeadRuns } from "../src/run-queue.js";
+import { recordRun, releaseRun, updateRunPid, interruptedRunNotice, sweepDeadRuns } from "../src/run-queue.js";
 import { runsDir } from "../src/config.js";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "bean-runqueue-"));
@@ -50,19 +50,6 @@ describe("run-queue", () => {
       JSON.stringify({ id: "old", projectPath: "/p", pid: DEAD, createdAt: "2026-01-01T00:00:00Z" }), "utf8");
     expect(sweepDeadRuns(dir)).toBe(3);
     expect(readdirSync(runsDir(dir))).toEqual(["live.json"]);
-  });
-
-  it("clearReservations kills each recorded group (never this process) and empties runs/, legacy files included", () => {
-    const dir = tmp();
-    expect(clearReservations(dir)).toEqual([]); // no runs/ yet
-    recordRun(dir, "a", "/stale", 424242);
-    recordRun(dir, "b", "/self", process.pid);
-    writeFileSync(join(runsDir(dir), "0123456789abcdef0123456789abcdef.json"),
-      JSON.stringify({ id: "old", projectPath: "/legacy", pid: 434343, createdAt: "2026-01-01T00:00:00Z" }), "utf8");
-    const killed: number[] = [];
-    expect(clearReservations(dir, (pid) => { killed.push(pid); }).sort()).toEqual(["/legacy", "/self", "/stale"]);
-    expect(killed.sort()).toEqual([424242, 434343]);
-    expect(readdirSync(runsDir(dir))).toEqual([]);
   });
 });
 
