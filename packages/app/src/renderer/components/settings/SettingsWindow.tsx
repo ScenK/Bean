@@ -6,6 +6,7 @@ import type { ChatopsBot, ChatopsState } from "@bean/host";
 import { PanelHeader } from "../../shared/Panel.js";
 import { DestinationsList } from "./DestinationsList.js";
 import { useCapabilities } from "../../shared/capabilities.js";
+import { useCoreStatus } from "../../shared/core-status.js";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -89,11 +90,17 @@ export function SettingsWindow() {
     }, 3000);
   };
 
+  // Save stays off until the config loaded (#812): a remote core that was reconnecting when this window
+  // opened would otherwise get the form's blanks saved over its model and settings. Retried on reattach.
+  const [loaded, setLoaded] = useState(false);
+  const core = useCoreStatus();
+  const coreState = core.kind === "remote" ? core.state : core.kind;
   useEffect(() => {
-    window.bean.getTheme().then(setTheme);
-    window.bean.onThemeChanged(setTheme);
-    window.bean.detectedClis().then(setDetectedClis);
+    if (loaded) return;
+    let live = true;
+    window.bean.detectedClis().then((d) => { if (live) setDetectedClis(d); }, () => {});
     window.bean.getConfig().then((c: ConfigView) => {
+      if (!live) return;
       setApiKey(c.openaiApiKey);
       setApiKeySet(c.apiKeySet);
       setModel(c.model);
@@ -107,7 +114,14 @@ export function SettingsWindow() {
       setAutoMemory(c.autoMemory);
       setDisabledClis(c.disabledClis);
       setPaths(c.paths);
-    });
+      setLoaded(true);
+    }, () => {});
+    return () => { live = false; };
+  }, [coreState]);
+
+  useEffect(() => {
+    window.bean.getTheme().then(setTheme);
+    window.bean.onThemeChanged(setTheme);
     window.bean.chatopsStatus().then((status) => {
       setChatops(status);
       (Object.keys(status) as ChatopsBot[]).forEach((bot) => { if (status[bot].error) scheduleErrorClear(bot, status[bot].error!); });
@@ -121,6 +135,7 @@ export function SettingsWindow() {
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
 
   const onSave = async (): Promise<void> => {
+    if (!loaded) return;
     setSave("saving");
     setError(undefined);
     try {
@@ -418,8 +433,8 @@ export function SettingsWindow() {
       <div class="bean-settings-footer">
         {error ? <div class="bean-persona-error">Save failed: {error}</div> : <div />}
         <div class="bean-card-actions">
-          <button type="button" class="bean-btn" disabled={save === "saving"} onClick={() => void onSave()}>
-            {save === "saving" ? "Saving…" : save === "saved" ? "Saved ✓" : "Save"}
+          <button type="button" class="bean-btn" disabled={!loaded || save === "saving"} onClick={() => void onSave()}>
+            {!loaded ? "Loading…" : save === "saving" ? "Saving…" : save === "saved" ? "Saved ✓" : "Save"}
           </button>
         </div>
       </div>
