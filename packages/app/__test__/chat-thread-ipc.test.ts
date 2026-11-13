@@ -3,11 +3,17 @@ import { mkdtempSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getDesktopChat, saveDesktopChat, deleteDesktopChat, starDesktopChat, renameDesktopChat, groupDesktopChats, renameDesktopChatGroup, listDesktopChats, DESKTOP_CHAT_MAX_BYTES } from "@bean/core";
-import { buildChatThreadHandlers, registerIpc, type RegisterDeps } from "../src/ipc.js";
+import {
+  buildChatHandler, buildChatThreadHandlers, buildHandshake, buildMemoryHandlers, CAPABILITIES, createChatSessions,
+  type ChatHandlerDeps, type HostHandlers, type MemoryHandlerDeps,
+} from "@bean/host";
+import { registerIpc, type RegisterDeps } from "../src/ipc.js";
 import { IPC } from "../src/channels.js";
+import { createPush, hostPush } from "../src/push.js";
 import type { Memory } from "@bean/core";
 
-vi.mock("electron", () => ({ shell: { openExternal: vi.fn(async () => {}), openPath: vi.fn(async () => ""), showItemInFolder: vi.fn() } }));
+// The injected Electron side (app/src/shell-ops.ts) — registerIpc never imports electron itself.
+const shell = { openExternal: vi.fn(async () => {}), openPath: vi.fn(async () => {}), reveal: vi.fn(), pickFolder: vi.fn(), pickApp: vi.fn(), fitHeight: vi.fn() };
 
 const ID = "0b6c4a52-1f5e-4c55-9a3e-2c6f0d9e7a10";
 const OTHER = "9f1d7c2e-3b4a-4e6f-8a1b-5c2d3e4f5a6b";
@@ -177,7 +183,12 @@ describe("buildChatThreadHandlers", () => {
 const A = "a0000000-0000-4000-8000-000000000001";
 const B = "b0000000-0000-4000-8000-000000000002";
 
-function ipcHarness(given: Partial<RegisterDeps> = {}) {
+type BrainDeps = ChatHandlerDeps & MemoryHandlerDeps & { onChatTurn: (mountId: string) => (error?: string) => void };
+// Every dep a test doesn't give is a no-op: registration only stores handlers.
+const fallback = <T extends object>(given: Partial<T>): T =>
+  new Proxy(given, { get: (t, k) => (k in t ? t[k as keyof typeof t] : vi.fn()) }) as T;
+
+function ipcHarness(given: Partial<RegisterDeps> & Partial<BrainDeps> = {}) {
   const handles = new Map<string, (e: unknown, ...args: unknown[]) => unknown>();
   const ons = new Map<string, (e: unknown, ...args: unknown[]) => unknown>();
   const ipcMain = {
@@ -189,13 +200,26 @@ function ipcHarness(given: Partial<RegisterDeps> = {}) {
   const delegateTasks = { start: vi.fn(async () => "t1"), cancel: vi.fn(), cancelMount: vi.fn() };
   const liveTasks = { start: vi.fn(async () => ({ sessionId: "s1", handedOver: 0 })), send: vi.fn(), stop: vi.fn(), interrupt: vi.fn(() => true), resume: vi.fn(), stopMount: vi.fn(), projectOf: vi.fn((): string | undefined => undefined) };
   const terminalTasks = { start: vi.fn(async () => ({ cwd: "/scratch" })), write: vi.fn(), resize: vi.fn(), ack: vi.fn(), stop: vi.fn(async () => {}), stopMount: vi.fn(async () => {}), runningCommand: vi.fn(async () => ["pnpm"]) };
-  const all: Partial<RegisterDeps> = { isChatSender: (s) => s === (chat as never), chatThreadHandlers: handlers, delegateTasks, liveTasks, terminalTasks, ...given };
-  // Every other dep is a no-op: registration only stores handlers.
-  const deps = new Proxy(all, { get: (t, k) => (k in t ? t[k as keyof typeof t] : vi.fn()) }) as RegisterDeps;
-  const { releaseChatSender } = registerIpc(ipcMain as never, deps);
+  const isChatClient = (id: number): boolean => id === chat.id;
+  // The real adapter over fake clients, so mount-tagged pushes route through the host's mount table.
+  let clientOfMount: (mountId: string) => number | undefined = () => undefined;
+  const push = createPush({ clientOfMount: (m) => clientOfMount(m), client: (id) => [chat, other].find((c) => c.id === id), clients: () => [chat, other] });
+  // The host's real chat sessions over a fake brain (`given`) and fake registries.
+  const brain = fallback<BrainDeps>(given);
+  const memory = buildMemoryHandlers(brain);
+  const sessions = createChatSessions({
+    isChatClient, chat: buildChatHandler(brain), memory, threads: handlers, delegateTasks, liveTasks, push: hostPush(push),
+    ...(given.onChatTurn ? { onChatTurn: given.onChatTurn } : {}),
+    onRelease: (m) => { void terminalTasks.stopMount(m); },
+  });
+  clientOfMount = sessions.clientOf;
+  const host = fallback<HostHandlers>({ chat: sessions, threads: handlers, memory, liveProjectOf: liveTasks.projectOf, cancelDelegate: delegateTasks.cancel });
+  const handshake = buildHandshake("test", "darwin", [...CAPABILITIES]);
+  registerIpc(ipcMain as never, fallback<RegisterDeps>({ host, isChatClient, push, shell, terminalTasks, handshake, ...given }));
+  const releaseChatClient = sessions.releaseClient;
   const invoke = (ch: string, sender: unknown, ...args: unknown[]): unknown => handles.get(ch)!({ sender }, ...args);
   const emit = (ch: string, sender: unknown, ...args: unknown[]): unknown => ons.get(ch)!({ sender }, ...args);
-  return { handlers, row, chat, other, delegateTasks, liveTasks, terminalTasks, releaseChatSender, invoke, emit };
+  return { handlers, row, chat, other, delegateTasks, liveTasks, terminalTasks, releaseChatClient, invoke, emit };
 }
 
 describe("chat thread IPC", () => {
@@ -207,7 +231,7 @@ describe("chat thread IPC", () => {
     expect(() => invoke(IPC.chatThreadSave, other, save(), A)).toThrow(/chat window/);
     expect(() => invoke(IPC.chatThreadSave, chat, save(), B)).toThrow(/unknown chat session/);
     expect(() => invoke(IPC.chatThreadSave, chat, save(), "not-a-uuid")).toThrow(/unknown chat session/);
-    expect(() => invoke(IPC.chatThreadSave, chat, save())).toThrow(/unknown chat session/);
+    expect(() => invoke(IPC.chatThreadSave, chat, save())).toThrow(/malformed payload/); // no mount id: refused before the host
     expect(() => invoke(IPC.chatThreadGet, other, ID, A)).toThrow(/chat window/);
     expect(() => invoke(IPC.chatThreadGet, chat, ID, B)).toThrow(/unknown chat session/);
     expect(() => invoke(IPC.delegateStart, chat, { projectPath: "", prompt: "p", instruction: "i" }, B)).toThrow(/unknown chat session/);
@@ -225,8 +249,9 @@ describe("chat thread IPC", () => {
   });
 
   it("terminal calls need the chat window and an attached mount; release and window close stop every tab", async () => {
-    const { chat, other, invoke, emit, terminalTasks, releaseChatSender } = ipcHarness();
-    const openExternal = vi.mocked((await import("electron")).shell.openExternal);
+    const { chat, other, invoke, emit, terminalTasks, releaseChatClient } = ipcHarness();
+    const { openExternal } = shell;
+    openExternal.mockClear();
     const T = "d0000000-0000-4000-8000-000000000001";
     emit(IPC.chatAttach, chat, A);
     emit(IPC.chatAttach, chat, B);
@@ -241,7 +266,7 @@ describe("chat thread IPC", () => {
     expect([terminalTasks.start, terminalTasks.write, terminalTasks.resize, terminalTasks.ack, terminalTasks.stop, terminalTasks.stopMount, openExternal]
       .map((f) => f.mock.calls.length)).toEqual([0, 0, 0, 0, 0, 0, 0]);
     expect(await invoke(IPC.terminalStart, chat, "/proj", 80, 24, A, T)).toEqual({ cwd: "/scratch" });
-    expect(terminalTasks.start.mock.calls).toEqual([[{ senderId: chat.id, mountId: A }, T, "/proj", 80, 24]]);
+    expect(terminalTasks.start.mock.calls).toEqual([[{ clientId: chat.id, mountId: A }, T, "/proj", 80, 24]]);
     emit(IPC.terminalWrite, chat, "ls\r", A, T);
     emit(IPC.terminalResize, chat, 100, 30, A, T);
     emit(IPC.terminalAck, chat, 10, A, T);
@@ -263,16 +288,14 @@ describe("chat thread IPC", () => {
     expect(terminalTasks.stopMount.mock.calls).toEqual([[A], [A]]);
     emit(IPC.terminalWrite, chat, "ls\r", A, T);
     expect(terminalTasks.write.mock.calls).toHaveLength(1);
-    releaseChatSender(chat.id);
+    releaseChatClient(chat.id);
     expect(terminalTasks.stopMount.mock.calls).toEqual([[A], [A], [B]]);
   });
 
   it("chatOpenPath: only the owning chat, validated in main, relative paths only against the chat's live project", async () => {
     const proj = realpathSync(mkdtempSync(join(tmpdir(), "bean-open-")));
     const { chat, other, emit, liveTasks } = ipcHarness({ getEditorApp: () => "", getTerminalApp: () => "" });
-    const { shell } = await import("electron");
-    const reveal = vi.mocked(shell.showItemInFolder);
-    const openPath = vi.mocked(shell.openPath);
+    const { reveal, openPath } = shell;
     reveal.mockClear();
     openPath.mockClear();
     const settle = () => new Promise((r) => setTimeout(r, 20));
@@ -298,7 +321,7 @@ describe("chat thread IPC", () => {
   });
 
   it("two mounts in one window: separate threads, per-mount incognito, delete refuses both, release frees them", async () => {
-    const { row, chat, other, invoke, emit, delegateTasks, liveTasks, releaseChatSender } = ipcHarness();
+    const { row, chat, other, invoke, emit, delegateTasks, liveTasks, releaseChatClient } = ipcHarness();
     emit(IPC.chatAttach, chat, A);
     emit(IPC.chatAttach, chat, B);
     emit(IPC.chatAttach, chat, A); // already attached: refused, still A's
@@ -318,17 +341,17 @@ describe("chat thread IPC", () => {
       expect.objectContaining({ mountId: B, offRecord: false }),
     ]);
     // Live sessions are owned by (window, mount); an unattached mount or another window is refused.
-    await invoke(IPC.liveStart, chat, { agent: "claude" }, B);
-    expect(await invoke(IPC.liveStart, chat, { agent: "claude" }, "not-a-uuid")).toEqual({ error: expect.stringMatching(/chat window/) });
-    expect(await invoke(IPC.liveStart, other, { agent: "claude" }, B)).toEqual({ error: expect.stringMatching(/chat window/) });
+    await invoke(IPC.liveStart, chat, { agent: "claude", projectPath: "", ask: "hi" }, B);
+    expect(await invoke(IPC.liveStart, chat, { agent: "claude", projectPath: "", ask: "hi" }, "not-a-uuid")).toEqual({ error: expect.stringMatching(/chat window/) });
+    expect(await invoke(IPC.liveStart, other, { agent: "claude", projectPath: "", ask: "hi" }, B)).toEqual({ error: expect.stringMatching(/chat window/) });
     emit(IPC.liveStop, chat, "s1", B);
-    expect(liveTasks.start.mock.calls).toEqual([[{ senderId: chat.id, mountId: B }, { agent: "claude" }]]);
-    expect(liveTasks.stop.mock.calls).toEqual([[{ senderId: chat.id, mountId: B }, "s1"]]);
+    expect(liveTasks.start.mock.calls).toEqual([[{ clientId: chat.id, mountId: B }, { agent: "claude", projectPath: "", ask: "hi" }]]);
+    expect(liveTasks.stop.mock.calls).toEqual([[{ clientId: chat.id, mountId: B }, "s1"]]);
     // Stop / Esc Esc: same ownership gate; refused senders and mounts never reach live-tasks.
     expect(invoke(IPC.liveInterrupt, other, "s1", B, 0)).toBe(false);
     expect(invoke(IPC.liveInterrupt, chat, "s1", "not-a-uuid", 0)).toBe(false);
     expect(invoke(IPC.liveInterrupt, chat, "s1", B, 2)).toBe(true);
-    expect(liveTasks.interrupt.mock.calls).toEqual([[{ senderId: chat.id, mountId: B }, "s1", 2]]);
+    expect(liveTasks.interrupt.mock.calls).toEqual([[{ clientId: chat.id, mountId: B }, "s1", 2]]);
     // Release: A's tasks stop, its id is never re-attachable, and a stray release is ignored.
     emit(IPC.chatRelease, chat, A);
     emit(IPC.chatRelease, chat, A);
@@ -337,7 +360,7 @@ describe("chat thread IPC", () => {
     emit(IPC.chatAttach, chat, A);
     expect(() => invoke(IPC.chatThreadSave, chat, save(), A)).toThrow(/unknown chat session/);
     // The window closing releases the rest — B's thread may then be deleted.
-    releaseChatSender(chat.id);
+    releaseChatClient(chat.id);
     expect(delegateTasks.cancelMount.mock.calls).toEqual([[A], [B]]);
     invoke(IPC.chatThreadDelete, chat, OTHER);
     expect(row(OTHER)).toBeUndefined();
@@ -359,7 +382,7 @@ describe("chat thread IPC", () => {
     emit(IPC.chatAttach, chat, A);
     await invoke(IPC.chat, chat, { history: [], message: "I live in Seattle", source: "typed", turnId: "item-1" }, A);
     await vi.waitFor(() => expect(chat.send).toHaveBeenCalled());
-    expect(chat.send).toHaveBeenCalledWith(IPC.memoryUpdated, [{ id: expect.any(String), text: "fact 1" }], A);
+    expect(chat.send).toHaveBeenCalledWith(IPC.memoryUpdated, { saved: [{ id: expect.any(String), text: "fact 1" }], mountId: A });
   });
 
   // #740: Stop / Esc Esc for Bean's own turn. The model call never answers, so only an abort ends it.
@@ -400,12 +423,12 @@ describe("chat thread IPC", () => {
   });
 
   it("releasing a chat aborts its running turn", async () => {
-    const { chat, emit, turn, releaseChatSender } = hangingChat();
+    const { chat, emit, turn, releaseChatClient } = hangingChat();
     const a = turn(A, "t1");
     const b = turn(B, "t2");
     emit(IPC.chatRelease, chat, A);
     expect(await a).toMatchObject({ stopped: true });
-    releaseChatSender(chat.id);
+    releaseChatClient(chat.id);
     expect(await b).toMatchObject({ stopped: true });
   });
 

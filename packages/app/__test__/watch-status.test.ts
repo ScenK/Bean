@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Routine } from "@bean/core";
 import { intervalShort, intervalText, watchDashboardText, watchRowSub, watchStatusLine, windowTooShortNote } from "../src/renderer/components/routines/watch-status.js";
-import type { RoutineStateView } from "../src/ipc.js";
+import type { RoutineStateView } from "@bean/host";
 
 const now = new Date("2026-09-28T12:00:00Z");
 const ago = (m: number) => new Date(now.getTime() - m * 60_000).toISOString();

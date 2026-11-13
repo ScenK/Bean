@@ -10,6 +10,7 @@
     "dev": "node scripts/dev.mjs",
     "start": "electron dist/main.js",
     "dist:mac": "pnpm build && electron-builder --mac",
+    "dist:win": "pnpm build && electron-builder --win",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:ci": "playwright test --grep @ci",
@@ -28,28 +29,6 @@
       "assets/**",
       "package.json"
     ],
-    "extraResources": [
-      {
-        "from": "../../.bean",
-        "to": "builtin"
-      },
-      {
-        "from": "../discord/dist",
-        "to": "chatops/discord",
-        "filter": [
-          "server.js",
-          "server.js.map"
-        ]
-      },
-      {
-        "from": "../teams/dist",
-        "to": "chatops/teams",
-        "filter": [
-          "server.js",
-          "server.js.map"
-        ]
-      }
-    ],
     "mac": {
       "target": [
         "dmg",
@@ -59,17 +38,48 @@
       "identity": null,
       "extendInfo": {
         "LSUIElement": true
-      }
+      },
+      "extraResources": [
+        {
+          "from": "../../.bean",
+          "to": "builtin"
+        },
+        {
+          "from": "../discord/dist",
+          "to": "chatops/discord",
+          "filter": [
+            "server.js",
+            "server.js.map"
+          ]
+        },
+        {
+          "from": "../teams/dist",
+          "to": "chatops/teams",
+          "filter": [
+            "server.js",
+            "server.js.map"
+          ]
+        }
+      ],
+      "asarUnpack": [
+        "node_modules/node-pty/**"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "files": [
+        "!node_modules/**"
+      ]
     },
     "npmRebuild": false,
-    "asarUnpack": [
-      "node_modules/node-pty/**"
-    ],
     "afterPack": "scripts/pty-spawn-helper.mjs",
     "afterSign": "scripts/after-sign.mjs"
   },
   "devDependencies": {
     "@bean/core": "workspace:*",
+    "@bean/host": "workspace:*",
     "@playwright/test": "^1.64.1",
     "@types/node": "^26.6.6",
     "@xterm/addon-fit": "^0.11.0",

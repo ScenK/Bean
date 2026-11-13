@@ -7,7 +7,7 @@ desktop chat catalog, chatops, routine pickers and routine execution) while stil
 bloom only — chat and chatops still route to it. `hidden: true` removes it from *every* renderer
 surface — Skills panel, quick-launch tiles, the Projects panel's default-skill picker, and the
 ChatWindow's skill list — all of which read from the single `bean:list-skills` IPC call.
-`buildListSkillsHandler` (`app/src/ipc.ts`) is the one filter point (`.filter(s => !s.hidden)`);
+`buildListSkillsHandler` (`host/src/handlers.ts`) is the one filter point (`.filter(s => !s.hidden)`);
 no per-component change needed for a new hidden skill.
 
 Both toggles are opt-out (absent key = on) and both are ignored by `fingerprint()` in

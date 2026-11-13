@@ -4,6 +4,7 @@ import {
   spawnEnv, BEAN_GIT_IDENTITY, TURN_QUEUE_FULL, dbFile, isLiveSessionId, recordDelegateSession, cliOffersModel,
 } from "@bean/core";
 import type { CliModels, CliName, LiveCli, LiveSessionCallbacks, LiveSessionHandle, LiveSessionRequest, LiveSessionSpawnFn, ResumableRun } from "@bean/core";
+import type { ClientId } from "./shell-ops.js";
 
 // Desktop live agent sessions: Claude Code / Codex / opencode streaming into the chat window.
 // The desktop sibling of chatops' LiveSessionRegistry, without its Discord-shaped parts
@@ -69,7 +70,8 @@ export const LIVE_SESSION_CAP = 10;
 export const LIVE_CAP_REACHED = `${LIVE_SESSION_CAP} live agent sessions are already running in other chats — end one to start another.`;
 
 /** A session's owner: one chat (mount) in one chat window. */
-export interface LiveOwner { senderId: number; mountId: string }
+/** A chat: the client (window) it runs in plus its mount id (push.ts). */
+export interface LiveOwner { clientId: ClientId; mountId: string }
 
 export const LIVE_AGENT_NAMES: Record<LiveCli, string> = { claude: "Claude Code", codex: "Codex", opencode: "opencode" };
 
@@ -153,8 +155,8 @@ export interface LiveTasksDeps {
   modelOffered?: (cli: LiveCli, model: string) => boolean;
   /** Where a "" (no project) request runs — the renderer doesn't know Bean's scratch path. */
   scratchPath?: string;
-  /** Push to the owning window (and the pet's status). */
-  send: (senderId: number, event: LiveEvent) => void;
+  /** Push a mount-tagged event (routed to the owning chat by `mountId`) and the pet's status. */
+  send: (event: LiveEvent) => void;
   newId: () => string;
   /** ~/.bean — run records (run-queue.ts) for crash cleanup. */
   dir: string;
@@ -164,7 +166,7 @@ export interface LiveTasksDeps {
 }
 
 interface Session {
-  senderId: number;
+  clientId: ClientId;
   mountId: string;
   agent: LiveCli;
   seq: number;
@@ -217,7 +219,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
   const handingOver = new Set<string>();
 
   const emit = (sessionId: string, s: Session, body: LiveEventBody): void => {
-    deps.send(s.senderId, { ...body, sessionId, agent: s.agent, mountId: s.mountId, seq: ++s.seq } as LiveEvent);
+    deps.send({ ...body, sessionId, agent: s.agent, mountId: s.mountId, seq: ++s.seq } as LiveEvent);
   };
 
   // Only reached from the engine's onExit, i.e. once the child is confirmed dead — so the run
@@ -232,7 +234,7 @@ export function createLiveTasks(deps: LiveTasksDeps) {
     else emit(sessionId, s, { type: "ended", reason: s.stopping ? "stopped" : "ended" });
   };
 
-  const owns = (s: Session, o: LiveOwner): boolean => s.senderId === o.senderId && s.mountId === o.mountId;
+  const owns = (s: Session, o: LiveOwner): boolean => s.clientId === o.clientId && s.mountId === o.mountId;
   // A session that's stopping (End, a mode switch) is on its way out: the chat's next one may start.
   const hasSession = (o: LiveOwner): boolean => [...sessions.values()].some((s) => owns(s, o) && !s.stopping);
   // Why this chat can't open a session now, if it can't.
@@ -447,8 +449,8 @@ export function createLiveTasks(deps: LiveTasksDeps) {
     },
 
     /** The chat window closed: no agent runs on without its chat. */
-    stopOwner(senderId: number): void {
-      for (const s of sessions.values()) if (s.senderId === senderId) stopSession(s);
+    stopClient(clientId: ClientId): void {
+      for (const s of sessions.values()) if (s.clientId === clientId) stopSession(s);
     },
 
     /** before-quit: SIGKILL every session's process tree now — stop()'s 5s escalation would never

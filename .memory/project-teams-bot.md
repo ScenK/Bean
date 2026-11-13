@@ -19,8 +19,8 @@ Bean has two chat adapters over one shared brain:
   wins; only `/live-session` (no project in mind) takes the remembered project. Steering is
   deliberately not remembered (war-room must be a per-card choice).
 - Conversation/proposal state is in-memory by design (POC): restart = amnesia.
-- Settings has a "CHAT BOTS" section (Start/Stop per bot) wired via `packages/app/src/chatops-servers.ts`
-  (`createChatopsServers`): Electron main spawns a plain child `node` process and tracks running/error
+- Settings has a "CHAT BOTS" section (Start/Stop per bot) wired via `packages/host/src/chatops-servers.ts` (supervised by the host)
+  (`createChatopsServers`): the host spawns a plain child `node` process and tracks running/error
   state, broadcast to renderer via `bean:chatops-event`. Dev uses `packages/{discord,teams}/dist/server.js`;
   packaged builds ship bundled bot servers under `Resources/chatops/{discord,teams}/server.js` and pass
   `BEAN_BUILTIN_DIR=Resources/builtin` so the bot can load built-in skills/persona without a repo checkout.
@@ -55,9 +55,9 @@ Bean has two chat adapters over one shared brain:
   stored in the `AmbientStore` (`chatops_ambient` table in `bean.db`, 200/conversation, survives
   restarts) and never replied to.
 - **Reminders**: Teams passes `reminders: { transport: "teams" }`; core stamps the full ingress
-  conversation id as the target, the desktop app's reminder loop enqueues it to the outbox, and
+  conversation id as the target, the host's reminder loop (core `startReminderLoop`) enqueues it to the outbox, and
   the Teams drain posts to exactly that id (`;messageid=` = thread reply). No reminder loop in
-  the Teams server — reminders fire only while Bean.app runs (late after it was off). The receipt
+  the Teams server — reminders fire only while a host (Bean.app or `bean-core`) runs (late after it was off). The receipt
   card's When uses Adaptive Card `{{DATE()}} {{TIME()}}`, which needs a `Z` RFC 3339 string with no
   milliseconds (`reminderCard` normalises).
 - **Desk ingress** (#528, `chatops/desk.ts`): the desktop app sends `desk-turn {requestId,
@@ -102,14 +102,14 @@ Bean has two chat adapters over one shared brain:
   clears it). A pending request counts as the chat's work: it stays
   mounted and a window close awaits the ack, so the pointer is never lost. A refused agent move leaves a
   status row with the stopped session's receipt (Continue live here).
-- **Sprout triggers** (#637, `chatops/sprout-bridge.ts`): an app-spawned bot has no scheduler
-  (`BEAN_HEADLESS_ROUTINES` is cleared), so its sprout-run card tap sends `routine-trigger
-  {requestId, name, action, origin}` over the same IPC slot (still no message text bot → app). The app
-  (`chatops-servers.ts` → `main.ts`) re-resolves the name with `loadRoutines()` (gone = `missing`) and
+- **Sprout triggers** (#637, `chatops/sprout-bridge.ts`): a host-spawned bot (desktop app or
+  `bean-core`) has no scheduler — bots never schedule —, so its sprout-run card tap sends `routine-trigger
+  {requestId, name, action, origin}` over the same IPC slot (still no message text bot → app). The host
+  (`chatops-servers.ts` → the host's `answerSproutTrigger`) re-resolves the name with `loadRoutines()` (gone = `missing`) and
   re-plans with `planSproutRun` — a sprout whose plan changed since the card (paused, emptied, run ↔
   check) is refused, never run as something the owner didn't confirm — then triggers and posts the
   finish reply itself via the outbox (`withFinishReply`, transport = the asking bot). It answers
   `routine-trigger-result` (started / one fixed refusal code / a check count). Bot side
   (`parentSproutTrigger`): a reply settles only a request it is waiting on; app disconnect, a failed
   send or 2 min silence → "Bean's desktop app isn't reachable"/"didn't answer". No resend. Taps
-  before the app's scheduler exists (bots autostart first) answer `unavailable`.
+  before the host's scheduler exists (bots autostart first) answer `unavailable`.

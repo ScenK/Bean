@@ -68,7 +68,16 @@ export function AboutWindow() {
         {info && !info.isPackaged && (
           <div class="bean-about-update-msg">Updates aren't available in a dev build.</div>
         )}
-        {info?.isPackaged && (
+        {info?.isPackaged && !info.selfUpdate && (
+          <a
+            class="bean-about-update-link"
+            href="#"
+            onClick={(e) => { e.preventDefault(); window.bean.openUpdateReleasePage(); }}
+          >
+            View releases on GitHub
+          </a>
+        )}
+        {info?.isPackaged && info.selfUpdate && (
           <div class="bean-about-update">
             {update.phase === "idle" && (
               <button class="bean-btn" onClick={checkForUpdates}>Check for Updates</button>

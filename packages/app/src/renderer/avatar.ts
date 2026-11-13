@@ -2,7 +2,7 @@ import { createOrb } from "./orb.js";
 import { createTaskBubbles, liveBadgeAgent } from "./task-bubbles.js";
 import { h, render } from "preact";
 import { AgentAvatar } from "./shared/AgentAvatar.js";
-import type { AvatarMode, ComponentKind, DroppedImage } from "../channels.js";
+import { isNoCore, type AvatarMode, type ComponentKind, type CoreStatus, type DroppedImage } from "../channels.js";
 import { PDF_MIME, imageFileGuard, pdfFileGuard, readImageFile } from "./shared/chat-types.js";
 import { createDragPreparationGate } from "../drag-preparation.js";
 import { createDragWatchdog } from "../drag-watchdog.js";
@@ -81,6 +81,28 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
     if (t === "hearth" || t === "graphite") document.documentElement.dataset.theme = t;
   }).catch((err: unknown) => console.warn("Bean: using fallback theme", err));
   window.bean.onThemeChanged((t) => { document.documentElement.dataset.theme = t; });
+
+  // No core attached (#810): a click opens Add a core instead of the quick actions (every tile needs a
+  // core), and a drag gets no tiles — the drop lands on the bean, whose chat drop main sends there too.
+  let noCore = false;
+  window.bean.handshake().catch((err: unknown) => { noCore = isNoCore(err); });
+
+  // A remote core (#811): its host on the box title and tooltip, and a dot on the orb (dim while the
+  // shell is reconnecting or was taken over).
+  const title = el.querySelector<HTMLElement>(".bean-box-title");
+  const hostDot = document.createElement("span");
+  hostDot.className = "bean-orb-host";
+  hostDot.hidden = true;
+  orbSlot.append(hostDot);
+  const showCore = (s: CoreStatus): void => {
+    const host = s.kind === "remote" ? s.host : undefined;
+    if (title) title.textContent = host ? `Bean · ${host}` : "Bean";
+    el.title = host ? `Bean on ${host}` : "Bean";
+    hostDot.hidden = !host;
+    hostDot.classList.toggle("bean-orb-host--off", s.kind === "remote" && s.state !== "attached");
+  };
+  window.bean.onCoreStatus(showCore);
+  window.bean.coreStatus().then(showCore, () => {});
 
   // Avatar mode: "normal" (collapsed bean) | "hover" (proximity box, no tiles) | "menu"
   // (quick-action tiles) | "drag" (skill/quick-action tiles).
@@ -221,6 +243,7 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
   // pressing Escape also closes it. Tiles are rendered collapsed then flipped open next frame (in
   // onAvatarDragLayout) so the slide-in actually plays.
   const setMenuOpen = (open: boolean): void => {
+    if (open && noCore) { void window.bean.openComponent("cores"); return; }
     if (open) {
       cancelCollapse();
       setMode("menu");
@@ -353,7 +376,10 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
         badge: s.name === suggested ? '<span class="bean-petal-badge">best</span>' : "",
         run: (url: string) => {
           reading.classList.add("bean-reading--open");
-          window.bean.planFromDrop(s.name, url);
+          window.bean.planDrop(s.name, url).then(
+            (plan) => window.bean.proposeRun(plan),
+            (err: unknown) => console.error("bean: drop plan failed", err),
+          );
           // ponytail: fixed cosmetic delay standing in for a real "reading the page" step;
           // swap for a real fetch/summarize call if that ever gets built.
           setTimeout(() => reading.classList.remove("bean-reading--open"), 700);
@@ -435,6 +461,7 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
       return;
     }
     if (mode !== "normal" && mode !== "hover") return;
+    if (noCore) return;
     if (!dragPreparation.begin()) return;
     cancelCollapse();
     const version = resetVersion;

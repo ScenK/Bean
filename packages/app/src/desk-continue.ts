@@ -1,5 +1,5 @@
 import { MAX_CONTINUE_TITLE, type DeskContinueBody, type DeskContinueResult, type Destination } from "@bean/core";
-import { buildCarryTail, type LiveHandover, type LiveOwner } from "./live-tasks.js";
+import { buildCarryTail, type LiveHandover, type LiveOwner } from "@bean/host";
 
 // Continue in Discord (#697): the desktop side of desk-continue (core chatops/desk.ts, bot side #695/#696).
 // The renderer names a channel, a title, and either its recent chat (plain) or its agent session;
@@ -14,7 +14,7 @@ export type DeskContinueReply = DeskContinueResult | { failed: string };
 
 export interface DeskContinueDeps {
   listDestinations: () => Destination[];
-  /** chatopsServers.deskContinue for the Discord bot — rejects when it isn't running or doesn't ack. */
+  /** The host's bots.deskContinue for the Discord bot — rejects when it isn't running or doesn't ack. */
   deskContinue: (body: DeskContinueBody) => Promise<DeskContinueResult>;
   handover: (owner: LiveOwner, sessionId: unknown) => Promise<LiveHandover>;
 }

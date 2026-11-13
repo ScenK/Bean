@@ -10,8 +10,8 @@ import {
 import { slashMenu } from "../src/renderer/components/chat/slash-commands.js";
 import { ChatWindow } from "../src/renderer/components/chat/ChatWindow.js";
 import { PDF_NO_PATH, type ChatItem } from "../src/renderer/shared/chat-types.js";
-import type { LiveEvent } from "../src/live-tasks.js";
-import type { DelegateEvent } from "../src/delegate-tasks.js";
+import type { LiveEvent } from "@bean/host";
+import type { DelegateEvent } from "@bean/host";
 
 let n = 0;
 const id = (): string => `t${++n}`;

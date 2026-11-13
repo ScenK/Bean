@@ -1,6 +1,6 @@
 import type { Routine } from "@bean/core";
 import { inWatchWindow, nextWindowStart, watchWindowMinutes, watchWindowText } from "@bean/core/watch-window";
-import type { RoutineStateView } from "../../../ipc.js";
+import type { RoutineStateView } from "@bean/host";
 
 // Wording for watch routines, shared by the Routines panel (2d) and the Dashboard (2e). Pure so
 // it's unit-tested; the panels only render it.

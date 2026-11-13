@@ -2,20 +2,8 @@ import {
   briefToRoutine, buildStageFromLine, composePrompt, describeRoutineError, discoverFeedUrl, looksLikeFeed,
   parseBuildResult,
 } from "@bean/core";
-import type { BuildStage, Routine, RoutineBrief, RoutineWatch, Skill, WatchItem } from "@bean/core";
-
-/** One in-flight (or failed) build, as the Routines list and the 2b screen show it. A successful
- * build leaves no entry: the saved-disabled routine itself is the "needs review" row. */
-export interface RoutineBuildView {
-  name: string;
-  brief: RoutineBrief;
-  status: "building" | "failed";
-  stage: BuildStage;
-  detail?: string;
-  startedAt: string;
-  error?: string;
-  exitCode?: number;
-}
+import type { RoutineBuildView } from "./routines.js";
+import type { Routine, RoutineBrief, RoutineWatch, Skill, WatchItem } from "@bean/core";
 
 export interface AgentHandle { done: Promise<string>; cancel: () => void }
 
