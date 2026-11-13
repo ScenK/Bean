@@ -6,6 +6,7 @@ export * from "./chat.js";
 export * from "./chat-sessions.js";
 export * from "./chatops-servers.js";
 export * from "./config.js";
+export * from "./contract.js";
 export * from "./delegate-tasks.js";
 export * from "./destinations.js";
 export * from "./handlers.js";

@@ -4,13 +4,12 @@ import {
   type Persona, type Routine, type CliModels, type RoutineBrief, type RoutineWatch, type ChatRequest,
 } from "@bean/core";
 import {
-  buildConfigHandlers, type ConfigUpdate, type DelegateStartRequest, type HostHandlers, type ShellOps,
+  buildConfigHandlers, type ConfigUpdate, type DelegateStartRequest, type Handshake, type HostHandlers, type ShellOps,
 } from "@bean/host";
 import { execFile } from "node:child_process";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
-import type { IpcMain } from "electron";
 import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type DroppedImage, type AppInfo, type UpdateStatus, type InstallUpdateResult } from "./channels.js";
 import { terminalLink, type TerminalTasks } from "./terminal-tasks.js";
 import { chatPathTarget, openChatPath } from "./chat-open-path.js";
@@ -19,6 +18,7 @@ import type { UpdateCheckOutcome } from "./updater.js";
 import type { buildSyncedChatHandlers } from "./synced-chats.js";
 import type { buildDeskContinueHandler } from "./desk-continue.js";
 import type { Push } from "./push.js";
+import { guardIpc, type IpcLike } from "./channel-contract.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -273,6 +273,9 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   /** The Electron-free host's handlers (`@bean/host` createHost): chats, registries, stores. */
   host: HostHandlers;
   push: Push;
+  /** What this host offers (contract version, core version, platform, capabilities); its capabilities
+   * gate the host-bound channels. */
+  handshake: Handshake;
   /** Dialogs, Finder, the browser and window sizing — Electron, injected (app/src/shell-ops.ts). */
   shell: ShellOps;
   openComponent: (kind: ComponentKind, payload?: ChatDrop | DashboardTarget) => void;
@@ -302,9 +305,12 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
 }
 
 /** The Electron IPC adapter: every channel (channels.ts) to its host handler, with the sender's
- * webContents id as the client id. Per-chat state and its checks live in the host (`host.chat`). */
-export function registerIpc(ipcMain: IpcMain, deps: RegisterDeps): void {
+ * webContents id as the client id. Each call passes the contract (channel-contract.ts) first. Per-chat
+ * state and its checks live in the host (`host.chat`). */
+export function registerIpc(electronIpc: IpcLike, deps: RegisterDeps): void {
   const { host } = deps;
+  const ipcMain = guardIpc(electronIpc, deps.handshake.capabilities);
+  ipcMain.handle(IPC.handshake, () => deps.handshake);
   const chats = host.chat;
   ipcMain.on(IPC.chatAttach, (e, mountId: unknown) => chats.attach(e.sender.id, mountId));
   ipcMain.on(IPC.chatRelease, (e, mountId: unknown) => chats.release(e.sender.id, mountId));

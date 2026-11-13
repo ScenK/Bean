@@ -5,7 +5,7 @@ import type {
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
-import type { DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "@bean/host";
+import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "@bean/host";
 import type { TerminalEvent, TerminalStartResult } from "./terminal-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "@bean/host";
 import type { InterruptedRunNotice } from "./ipc.js";
@@ -16,6 +16,7 @@ import type { AliasResult } from "@bean/core";
 import type { DesktopChatListing, RunStatus, WatchCheckResult } from "@bean/core";
 
 contextBridge.exposeInMainWorld("bean", {
+  handshake: (): Promise<Handshake> => ipcRenderer.invoke(IPC.handshake),
   launch: (req: LaunchRequest): void => ipcRenderer.send(IPC.launch, req),
   delegateStart: (req: DelegateStartRequest, mountId: string): Promise<string> => ipcRenderer.invoke(IPC.delegateStart, req, mountId),
   delegateCancel: (taskId: string): void => ipcRenderer.send(IPC.delegateCancel, taskId),

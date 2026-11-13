@@ -23,15 +23,15 @@ describe("push routing (#801)", () => {
     const push = createPush({ clientOfMount: mounts.clientOf, client: (id) => [one, two].find((c) => c.id === id), clients: () => [one, two] });
     mounts.attach(1, A);
     mounts.attach(2, B);
-    push.send(A, IPC.liveEvent, "x");
+    push.send(A, IPC.liveEvent, { x: 1 });
     mounts.release(2, B);
-    push.send(B, IPC.memoryUpdated, "late"); // a receipt for a chat switched away from
-    push.send("never-attached", IPC.liveEvent, "lost");
-    expect(one.send.mock.calls).toEqual([[IPC.liveEvent, "x"]]);
-    expect(two.send.mock.calls).toEqual([[IPC.memoryUpdated, "late"]]);
+    push.send(B, IPC.memoryUpdated, { late: 1 }); // a receipt for a chat switched away from
+    push.send("never-attached", IPC.liveEvent, { lost: 1 });
+    expect(one.send.mock.calls).toEqual([[IPC.liveEvent, { x: 1 }]]);
+    expect(two.send.mock.calls).toEqual([[IPC.memoryUpdated, { late: 1 }]]);
     two.destroyed = true;
     push.broadcast(IPC.themeChanged, "graphite");
-    push.send(B, IPC.liveEvent, "gone");
+    push.send(B, IPC.liveEvent, { gone: 1 });
     expect(one.send).toHaveBeenLastCalledWith(IPC.themeChanged, "graphite");
     expect(two.send).toHaveBeenCalledTimes(1);
   });

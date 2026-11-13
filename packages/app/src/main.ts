@@ -4,7 +4,7 @@ import { release } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import { buildSyncedChatHandlers } from "./synced-chats.js";
-import { createHost, type ChatopsBot, type ChatopsState, type Host } from "@bean/host";
+import { buildHandshake, createHost, type ChatopsBot, type ChatopsState, type Host } from "@bean/host";
 import { buildDeskContinueHandler } from "./desk-continue.js";
 import { chatopsMenuRows } from "./chatops-tray-menu.js";
 import { installAvatarControls } from "./avatar-window.js";
@@ -511,6 +511,9 @@ app.whenReady().then(async () => {
     registerIpc(ipcMain, {
       host: h.handlers,
       push,
+      // In-process host on this Mac: everything; off macOS there's no Terminal.app or system controls.
+      handshake: buildHandshake(pkg.version, process.platform, process.platform === "darwin"
+        ? ["systemControls", "terminalHandoff", "pty", "pathOpen"] : ["pty", "pathOpen"]),
       shell: createShellOps(),
       terminalTasks: terminals,
       isChatClient,

@@ -4,7 +4,7 @@ import type {
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
 import type { Theme, ComponentKind, DashboardTarget, ChatDrop, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult } from "../channels.js";
-import type { DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "@bean/host";
+import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "@bean/host";
 import type { TerminalEvent, TerminalStartResult } from "../terminal-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "@bean/host";
 import type { InterruptedRunNotice } from "../ipc.js";
@@ -17,6 +17,8 @@ import type { DesktopChatListing, RunStatus, WatchCheckResult } from "@bean/core
 declare global {
   interface Window {
     bean: {
+      /** The host's contract version, core version, platform and capabilities (channel-contract.ts). */
+      handshake(): Promise<Handshake>;
       launch(req: LaunchRequest): void;
       delegateStart(req: DelegateStartRequest, mountId: string): Promise<string>;
       delegateCancel(taskId: string): void;

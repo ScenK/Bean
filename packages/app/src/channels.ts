@@ -26,6 +26,8 @@ export type UpdateStatus =
 export interface InstallUpdateResult { status: "error"; message: string }
 
 export const IPC = {
+  // The service contract (channel-contract.ts): contract version, core version, platform, capabilities.
+  handshake: "bean:handshake",
   launch: "bean:launch",
   delegateStart: "bean:delegate-start",
   delegateCancel: "bean:delegate-cancel",
