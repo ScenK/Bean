@@ -230,6 +230,8 @@ export function buildChatMounts() {
       return true;
     },
     ofClient: (clientId: ClientId): string[] => [...mounts].flatMap(([id, c]) => (c === clientId ? [id] : [])),
+    /** The client a mount is attached to now (never a released one). */
+    holder: (id: string): ClientId | undefined => mounts.get(id),
     /** Where a mount-tagged push goes: the client holding the mount, or the one that last held it. */
     clientOf: (id: string): ClientId | undefined => mounts.get(id) ?? released.get(id),
   };

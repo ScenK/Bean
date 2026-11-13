@@ -36,6 +36,14 @@ describe("ChatWindow delegate state", () => {
     });
   });
 
+  it("loops a task's result back once: a replayed done is ignored", () => {
+    const event = { taskId: "t1", type: "done", result: "fixed" } satisfies DelegateEvent;
+    const first = applyDelegateEventToItems([delegate], event);
+    const replayed = applyDelegateEventToItems(first.items, event);
+    expect(replayed.loopback).toBeUndefined();
+    expect(replayed.items).toBe(first.items);
+  });
+
   it("keeps the resume receipt on the card but never in the loopback text", () => {
     const receipt = { label: "claude · abcd…", command: "cd '/p' && claude --resume abcd-1" };
     const done = applyDelegateEventToItems([delegate], { taskId: "t1", type: "done", result: "fixed", receipt });
