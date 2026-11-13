@@ -114,7 +114,7 @@ const setTheme = (win: Page, theme: string): Promise<void> => win.evaluate(async
   await Promise.all(document.getAnimations().filter((a) => a instanceof CSSTransition).map((a) => a.finished.catch(() => {})));
 }, theme);
 
-const WINDOWS = ["chat", "skills", "projects", "routines", "dashboard", "settings", "persona", "about", "notes", "plan"];
+const WINDOWS = ["chat", "skills", "projects", "routines", "dashboard", "settings", "persona", "about", "notes", "plan", "cores"];
 
 test("every component window clears WCAG AA text contrast in both themes", { tag: "@ci" }, async () => {
   const home = await makeBeanHome();

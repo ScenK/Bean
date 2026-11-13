@@ -11,6 +11,7 @@
     "typecheck": "turbo run typecheck",
     "dev": "turbo run build --filter=@bean/core --filter=@bean/host --filter=@bean/discord --filter=@bean/teams && pnpm --filter @bean/app build && pnpm --filter @bean/app dev",
     "dist:mac": "turbo run build --filter=@bean/core --filter=@bean/host --filter=@bean/discord --filter=@bean/teams && pnpm --filter @bean/app dist:mac",
+    "dist:win": "turbo run build --filter=@bean/core --filter=@bean/host && pnpm --filter @bean/app dist:win",
     "release": "pnpm --dir packages/app version",
     "worktree:create": "bash scripts/worktree.sh create",
     "worktree:remove": "bash scripts/worktree.sh remove",

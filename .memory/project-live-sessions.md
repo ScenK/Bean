@@ -85,12 +85,8 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
   turn's context is dead, and a stale-context send is silently dropped (same reason Teams'
   `post`/`updateCard` already go proactive). Do not re-route the live stream through `postCard`
   on Teams.
-- Teams' `cards.ts` has **no combined exported `CardBuilders` object** — every card is an
-  individually-exported function, and `teams/server.ts` builds its own inline `cards: {...}`
-  object literal from those imports. Discord's `components.ts` is the opposite (a single
-  exported `discordCards: CardBuilders`). Don't assume one pattern when touching the other
-  surface's card file — this exact mismatch caused a broken typecheck mid-build (see git
-  history around commit range `482d173..c7c0050`).
+- Each surface exports one `CardBuilders` object — Teams `teamsCards` (`cards.ts`), Discord
+  `discordCards` (`components.ts`) — and its `server.ts` passes it as `cards`.
 - Gating differs by surface. **Desktop** starts from the chat window over IPC (see the Desktop
   section below; its old `config.json` opt-in flag was dead and was deleted in #473). **Discord** has no config
   opt-in: `liveSessionsEnabled: () => clis().some(isLiveCli)` — always on when a live CLI is
@@ -260,12 +256,12 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
 - **Stop / Esc Esc (#724)**: banner Stop (shown while the renderer's `live.busy`) and composer Esc
   Esc (800 ms; the first press isn't `preventDefault`ed, so an overlay's Escape still closes it) call
   `liveInterrupt(sessionId, mountId, turns)` → `live-tasks.interrupt`, which drops the press when
-  main has emitted more `turn`s than the renderer's `turns` (that turn already ended — don't cut the
-  queued one). Main forwards `onTurnStart` as a `turn-start` event so the renderer's busy (and Stop)
-  returns for a queued turn before its first output; main's own `busy` never drives the button
+  the host has emitted more `turn`s than the renderer's `turns` (that turn already ended — don't cut the
+  queued one). The host forwards `onTurnStart` as a `turn-start` event so the renderer's busy (and Stop)
+  returns for a queued turn before its first output; the host's own `busy` never drives the button
   (it can stick for claude, #725). An interrupted `turn` footers "— turn interrupted"; the bubble
   keeps its streamed `display`.
-- **Pickup split + "Not read yet" (#746)**: main forwards `onConsumed(n)` as a `consumed`
+- **Pickup split + "Not read yet" (#746)**: the host forwards `onConsumed(n)` as a `consumed`
   LiveEvent. Live user rows carry `pending: <LiveState.key>` (key, not session id — an old
   session's late `ended`/`consumed` must not clear the next session's rows). `consumeLive` (pure,
   agent-mode.ts) clears the oldest `n` rows of the current key and, when the session's open bubble
@@ -285,9 +281,10 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
 - Handoff (`buildHandoff`, pure): last ≤20 user/reply items, ≤8k chars (≤2k per item), as `> `
   quoted context labeled non-instructions, then the ask; an oversized ask is rejected, never
   truncated; `count` is exactly what was sent. Memories/persona never go in.
-- Lifecycle: chat window `closed` → `stopOwner`; `before-quit` → `forceKillAll()` (SIGKILL trees +
-  `killPendingGroups`) beside `killAllDelegates()`, and the update install's `relaunch` hook too
-  (`app.exit()` skips before-quit; a source test in `live-tasks.test.ts` guards both). No outbox notice: records stay for the next
+- Lifecycle: chat window `closed` → `stopOwner`; the host's quit hook (`before-quit` on desktop) →
+  `forceKillAll()` (SIGKILL trees + `killPendingGroups`) beside `killAllDelegates()`, and the update
+  install's `relaunch` too via `main.ts`'s `stopCore` (`app.exit()` skips before-quit; source tests in
+  host `live-tasks.test.ts` and app `live-teardown.test.ts` guard both). No outbox notice: records stay for the next
   boot's silent `sweepDeadRuns`. Record pid moves to the child for claude only (chatops rule).
 - Pet badge: desktop sessions are `TaskJob` `kind: "live"` + `agent`; `liveBadgeAgent` picks the
   newest running one and avatar.ts renders a 16px `AgentAvatar` in the orb slot's corner (visible in
@@ -306,7 +303,7 @@ Chat-bridged multi-turn Claude Code, Codex or opencode sessions on Discord and T
     its current start; events for any other id are ignored. A start ended before its id arrived
     is stopped once the id lands. `start()` ignores a *stopping* session in the one-per-window
     check, so a switch doesn't wait for the old process to exit.
-  - Project: `""` = scratch (main maps it via `scratchPath`); the window's last used project
+  - Project: `""` = scratch (the host maps it via `scratchPath`); the window's last used project
     (chip pick, confirmed delegate/terminal run) — never `projects[0]`.
 - Hand-off offer (#478): desktop passes `liveSessionAvailable` per request **by sender + mount**
   (chat window, a live CLI enabled, `liveTasks.canStart(owner)`) plus `liveSessionHost: "desktop"`,

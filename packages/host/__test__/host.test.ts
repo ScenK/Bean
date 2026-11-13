@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
+import { DISCONNECT_GRACE_MS, HEARTBEAT_TIMEOUT_MS } from "../src/attachments.js";
 import { createHost } from "../src/host.js";
 
 // main.ts isn't unit-testable; this boots the real host on a fresh data dir (no Electron) and checks
@@ -64,6 +65,37 @@ test("a headless host rebases missed sprouts with a notice", async () => {
       expect(state.daily?.lastRun).not.toBe(lastRun);
     });
   } finally {
+    for (const fn of quit) fn();
+  }
+});
+
+// #808: a lost remote shell's grace expiring stops only that shell's chats — the scheduler lease
+// (routines, reminders) and the local window's chats are untouched.
+test("a remote shell's grace expiry leaves the scheduler and local chats alone", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-host-"));
+  const quit: (() => void)[] = [];
+  const host = await createHost({
+    dir, builtinDir: dir, push: vi.fn(), onJobs: vi.fn(),
+    notification: { name: "notification", available: () => false, send: vi.fn() },
+    isChatClient: (id) => id === 1, onQuit: (fn) => quit.push(fn), firstAutoMemory: async () => false,
+    bots: { root: dir, onEvent: vi.fn(), onSynced: vi.fn() },
+  });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const chats = host.handlers.chat;
+    const L = "a0000000-0000-4000-8000-000000000001";
+    const R = "a0000000-0000-4000-8000-000000000002";
+    chats.attach(1, L);
+    const { generation, clientId } = host.attachments.attach("5a000000-0000-4000-8000-00000000000a", vi.fn());
+    host.attachments.resume(generation, {});
+    chats.attach(clientId, R); // an attached shell may hold chats
+    expect(chats.key(clientId, R)).toBe(R);
+    vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS + DISCONNECT_GRACE_MS);
+    expect(() => chats.key(clientId, R)).toThrow(/unknown chat session/);
+    expect(chats.key(1, L)).toBe(L);
+    expect(host.schedulerLease.held()).toBe(true);
+  } finally {
+    vi.useRealTimers();
     for (const fn of quit) fn();
   }
 });

@@ -68,6 +68,32 @@ test("chat handler offers the desktop hand-off only to a chat that can open a li
   expect(toolNames).not.toContain("propose_live_session");
 });
 
+test("a client without a Terminal hand-off (a remote shell, #812) gets no terminal skill in propose_run", async () => {
+  let toolNames: string[] = [];
+  const handler = buildChatHandler({
+    loadSkills: async () => [{ name: "review-code", description: "r", body: "BODY" }],
+    loadProjects: async () => [{ name: "api", path: "/work/api" }],
+    loadPersona: async () => ({ name: "Ponyta", tags: [] }),
+    converse: async ({ tools }) => {
+      toolNames = tools.map((t) => t.name);
+      return { content: "ok", toolCalls: [] };
+    },
+    getModel: () => "m",
+    projectSkillsDir: "/b/project-skills",
+    skillsDir: "/b/skills",
+    projectsFile: "/b/projects.json",
+    personaFile: "/b/persona.json",
+    projectPersonaFile: "/b/project-persona.json",
+    loadMemories: async () => [],
+    dbFile: "/b/memory.json",
+    runAvailable: (clientId) => clientId !== -1,
+  });
+  await handler({ history: [], message: "review it" }, 7, "m1");
+  expect(toolNames).toContain("propose_run");
+  await handler({ history: [], message: "review it" }, -1, "m1");
+  expect(toolNames).not.toContain("propose_run");
+});
+
 test("chat handler rejects bad images in main before converse runs (#733)", async () => {
   let called = false;
   const handler = buildChatHandler({
