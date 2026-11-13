@@ -21,6 +21,8 @@ export interface ChatSessionsDeps {
   onChatTurn?: (mountId: string) => (error?: string) => void;
   /** Shell-owned per-chat state (the desktop's terminals) to drop with the chat. */
   onRelease?: (mountId: string) => void;
+  /** Why a new chat turn, delegate or live session can't start now (a core update, #837), or undefined. */
+  refuseStart?: () => string | undefined;
 }
 
 const NOT_LIVE = "Agent sessions run from the chat window.";
@@ -99,6 +101,8 @@ export function createChatSessions(deps: ChatSessionsDeps) {
     },
     chat: async (client: ClientId, mountId: unknown, req: ChatRequest): Promise<ConverseResult> => {
       const k = key(client, mountId);
+      const refused = deps.refuseStart?.();
+      if (refused) throw new Error(refused);
       // Registered before any await, so a Stop that lands while the loaders run still aborts.
       const turn = { turnId: req?.turnId, ctl: new AbortController() };
       beanTurns.set(k, turn);
@@ -165,11 +169,15 @@ export function createChatSessions(deps: ChatSessionsDeps) {
     },
     delegateStart: (client: ClientId, mountId: unknown, req: DelegateStartRequest): Promise<string> => {
       const k = key(client, mountId);
+      const refused = deps.refuseStart?.();
+      if (refused) return Promise.reject(new Error(refused));
       return deps.delegateTasks.start({ ...req, offRecord: deps.memory.isIncognito(k), mountId: k });
     },
     // Sessions belong to one chat (client + attached mount); every payload is validated in live-tasks.
     liveStart: (client: ClientId, mountId: unknown, req: unknown) => {
       const o = liveOwner(client, mountId);
+      const refused = deps.refuseStart?.();
+      if (refused) return { error: refused };
       return o ? deps.liveTasks.start(o, req) : { error: NOT_LIVE };
     },
     liveSend: (client: ClientId, mountId: unknown, sessionId: unknown, text: unknown) => {
@@ -186,6 +194,8 @@ export function createChatSessions(deps: ChatSessionsDeps) {
     },
     liveResume: (client: ClientId, mountId: unknown, sessionId: unknown) => {
       const o = liveOwner(client, mountId);
+      const refused = deps.refuseStart?.();
+      if (refused) return { error: refused };
       return o ? deps.liveTasks.resume(o, sessionId) : { error: NOT_LIVE };
     },
   };

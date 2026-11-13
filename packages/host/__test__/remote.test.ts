@@ -7,7 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAttachments } from "../src/attachments.js";
 import { buildHandshake, CONTRACT_VERSION } from "../src/contract.js";
 import type { HostHandlers } from "../src/host.js";
-import { attachStdio, encodeFrame, frameReader, listenRemote, MAX_FRAME_BYTES } from "../src/remote.js";
+import { attachStdio, encodeFrame, frameReader, listenRemote, MAX_FRAME_BYTES, requestUpdate } from "../src/remote.js";
+import type { CoreUpdateResult } from "../src/core-update.js";
 
 const SHELL = "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b";
 
@@ -123,6 +124,34 @@ describe("remote attach over the unix socket", () => {
     close = server.close;
     return { path: server.path, getConfig, applyConfig, saveProjects, projectDir, getModel, attachments };
   }
+
+  // #837: `bean-core update` asks the running core, which answers before it exits.
+  it("answers one update request without attaching, and exits only after an \"updated\" answer is out", async () => {
+    dir = mkdtempSync(join(tmpdir(), "bean-remote-"));
+    chmodSync(dir, 0o700);
+    const answers: CoreUpdateResult[] = [
+      { status: "busy", version: "0.2.0", busy: [{ kind: "delegate", name: "bean" }] },
+      { status: "updated", from: "0.1.0", version: "0.2.0", stopped: [{ kind: "delegate", name: "bean" }] },
+    ];
+    const update = vi.fn(async (_force: boolean) => answers.shift()!);
+    const onUpdated = vi.fn();
+    const attach = vi.fn();
+    const server = await listenRemote(dir, {
+      handshake: buildHandshake("0.1.0", "linux", []), attachments: { attach } as never, handlers: {} as HostHandlers, update, onUpdated,
+    });
+    close = server.close;
+    expect(await requestUpdate(server.path, false)).toMatchObject({ status: "busy" });
+    expect(onUpdated).not.toHaveBeenCalled();
+    expect(await requestUpdate(server.path, true)).toMatchObject({ status: "updated", version: "0.2.0" });
+    expect(update.mock.calls).toEqual([[false], [true]]);
+    await vi.waitFor(() => expect(onUpdated).toHaveBeenCalledOnce());
+    expect(attach).not.toHaveBeenCalled();
+  });
+
+  it("requestUpdate: no core listening is undefined (the in-process path)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "bean-remote-"));
+    expect(await requestUpdate(join(dir, "core.sock"), false)).toBeUndefined();
+  });
 
   it("runs a chat turn through `bean-core attach` and receives its events", async () => {
     const { path } = await serve();

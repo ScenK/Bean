@@ -99,3 +99,32 @@ test("a remote shell's grace expiry leaves the scheduler and local chats alone",
     for (const fn of quit) fn();
   }
 });
+
+// #837: while a core update's latch is closed, nothing new starts.
+test("a closed update latch refuses new chat turns, delegates, live sessions and sprout runs", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-host-"));
+  const quit: (() => void)[] = [];
+  const host = await createHost({
+    dir, builtinDir: dir, push: vi.fn(), onJobs: vi.fn(),
+    notification: { name: "notification", available: () => false, send: vi.fn() },
+    isChatClient: (id) => id === 1, onQuit: (fn) => quit.push(fn), firstAutoMemory: async () => false,
+    bots: { root: dir, onEvent: vi.fn(), onSynced: vi.fn() },
+  });
+  try {
+    const chats = host.handlers.chat;
+    const L = "a0000000-0000-4000-8000-000000000001";
+    chats.attach(1, L);
+    expect(host.coreUpdate.busy()).toEqual([]);
+    host.coreUpdate.close();
+    const msg = /Bean is updating/;
+    await expect(chats.chat(1, L, { history: [], message: "hi" })).rejects.toThrow(msg);
+    await expect(chats.delegateStart(1, L, { projectPath: dir, prompt: "p", instruction: "i" })).rejects.toThrow(msg);
+    expect(chats.liveStart(1, L, {})).toEqual({ error: expect.stringMatching(msg) });
+    expect(chats.liveResume(1, L, "s")).toEqual({ error: expect.stringMatching(msg) });
+    expect(await host.handlers.routines.runNow("any")).toMatchObject({ started: false, reason: expect.stringMatching(msg) });
+    host.coreUpdate.open();
+    expect(chats.liveStart(1, L, {})).not.toEqual({ error: expect.stringMatching(msg) }); // its own validation answers now
+  } finally {
+    for (const fn of quit) fn();
+  }
+});

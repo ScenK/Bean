@@ -47,7 +47,8 @@ function tarball(ver: string): string {
   return join(dir, "install.sh");
 }
 
-describe("install.sh", () => {
+// Each case spawns the installer and several node processes: well past vitest's 5 s default on a loaded runner.
+describe("install.sh", { timeout: 30_000 }, () => {
   it("macOS: installs, upgrades, rolls back and uninstalls", () => {
     const { home, root, sys, run } = setup("Darwin");
     const first = run(tarball("1.0.0"), "--tz", "America/Toronto");
@@ -80,6 +81,11 @@ describe("install.sh", () => {
     expect(readlinkSync(join(root, "current"))).toBe("versions/1.0.0");
     expect(readlinkSync(join(root, "previous"))).toBe("versions/2.0.0");
     expect(readFileSync(join(t, "calls"), "utf8")).toMatch(/kickstart -k gui\/\d+\/dev\.bean\.core/);
+
+    // `bean-core update` with no core running (#837) flips the links itself, then restarts through this.
+    const restarted = run(join(root, "current/install.sh"), "--restart");
+    expect(restarted.status).toBe(0);
+    expect(restarted.stdout).toContain("bean-core on: 1.0.0");
 
     const gone = run(join(root, "current/install.sh"), "--uninstall");
     expect(gone.status).toBe(0);

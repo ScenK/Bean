@@ -5,6 +5,7 @@
 #   ./install.sh [--tz <Area/City>]   install, or upgrade to this tarball's version
 #   ./install.sh --uninstall          remove the service, the wrapper and the versions; keep ~/.bean
 #   bean-core rollback                swap the current and previous versions, restart the service
+#   ./install.sh --restart            restart the service on `current` (after `bean-core update`)
 #
 # Run it as the account the core serves, not root: it uses sudo only for /usr/local/bin/bean-core
 # and, on Linux, the unit file and systemctl. Versions live in ~/.local/share/bean-core/versions/<ver>/
@@ -22,7 +23,7 @@ UNIT=$SYSROOT/etc/systemd/system/bean-core.service
 
 die() { printf 'bean-core install: %s\n' "$*" >&2; exit 1; }
 say() { printf '%s\n' "$*"; }
-usage() { sed -n '5,7s/^#  *//p' "$0"; }
+usage() { sed -n '5,8s/^#  *//p' "$0"; }
 
 # Values go into generated files (a shell script, a plist, a unit): refuse control characters (a
 # newline would start a new line in any of them), then escape for each file's own syntax.
@@ -266,6 +267,13 @@ rollback() {
   wait_boot || exit 1
 }
 
+restart() {
+  [ -L "$ROOT/current" ] || die "bean-core is not installed ($ROOT/current is missing)."
+  mark_log
+  restart_service
+  wait_boot || exit 1
+}
+
 uninstall() {
   if [ "$OS" = Darwin ]; then
     launchctl bootout "gui/$UID_/$LABEL" 2>/dev/null || true
@@ -290,6 +298,7 @@ while [ $# -gt 0 ]; do
     --tz=*) tz=${1#--tz=}; shift ;;
     --uninstall) mode=uninstall; shift ;;
     --rollback) mode=rollback; shift ;;
+    --restart) mode=restart; shift ;;
     -h | --help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
@@ -298,5 +307,6 @@ done
 case $mode in
   install) install_core ;;
   rollback) rollback ;;
+  restart) restart ;;
   uninstall) uninstall ;;
 esac

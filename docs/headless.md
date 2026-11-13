@@ -73,11 +73,21 @@ It checks Node (missing or older than 24: it prints how to install it and change
 Day to day:
 
 ```bash
-./bean-core-<newer>/install.sh   # upgrade: installs that version, flips current/previous, restarts
+bean-core update                 # latest signed release; lists running work and asks before stopping it
+bean-core update --yes           # same, stops running work without asking
+./bean-core-<newer>/install.sh   # upgrade from a tarball: installs that version, flips current/previous, restarts
 bean-core rollback               # swap current and previous, restart
 bean-core --version              # prints `bean-core <ver> contract <n>`; reads nothing
 ./bean-core-<ver>/install.sh --uninstall   # or ~/.local/share/bean-core/current/install.sh --uninstall
 ```
+
+`bean-core update` asks the running core to update itself: it downloads the latest release's
+`bean-core-<ver>.tar.gz`, verifies its signature, unpacks it beside the others and runs its
+`--version`. Only then does it stop accepting new work and check what is running. Busy (a
+delegate, sprout run, chat turn, open agent session, or a bot's run) → it lists the work and
+changes nothing unless you confirm (or passed `--yes`). Otherwise it flips the links and exits;
+launchd / systemd start the new version. With no core running, the command updates the links
+itself and restarts the service.
 
 `--uninstall` stops and removes the service, the wrapper and every installed version. It keeps
 `~/.bean` (config, memories, notes, sprouts) and the macOS log; delete them yourself.

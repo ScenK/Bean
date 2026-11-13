@@ -4,6 +4,7 @@ import { isAbsolute } from "node:path";
 import { connect, createServer, type Socket } from "node:net";
 import type { Readable, Writable } from "node:stream";
 import type { Attachments } from "./attachments.js";
+import type { CoreUpdateResult } from "./core-update.js";
 import { argsOk, CONTRACT_VERSION, guard as g, type Guard, type Handshake } from "./contract.js";
 import type { HostHandlers } from "./host.js";
 import type { ClientId } from "./shell-ops.js";
@@ -17,6 +18,9 @@ import type { ClientId } from "./shell-ops.js";
 //                 {type:"heartbeat", acks?}, {type:"resume", acks}, {type:"detach"}
 //   core → shell: {type:"attached", handshake, generation, clientId}, {type:"result", id, ok, value|error},
 //                 the attachment's {type:"push"…} / {type:"revoked"}, and {type:"error", message} before a close
+//
+// `bean-core update` (#837) sends {type:"update", force} as its first frame instead — no attachment,
+// so it never displaces a shell — and gets one {type:"update", result} back before the close.
 //
 // Only the operations in REMOTE_OPS run (default deny): core channels a remote shell needs, never raw
 // config / API-key reads, path opens, pty or the Terminal hand-off. Settings (#812) reads the config
@@ -155,6 +159,10 @@ export interface RemoteDeps {
   handshake: Handshake;
   attachments: Pick<Attachments, "attach" | "run" | "heartbeat" | "resume" | "detach">;
   handlers: HostHandlers;
+  /** The core self-update (`bean-core update`); absent = refused like any unknown first frame. */
+  update?: (force: boolean) => Promise<CoreUpdateResult>;
+  /** An "updated" result has been written out: exit now, so the service manager starts the new version. */
+  onUpdated?: () => void;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -183,7 +191,15 @@ export function serveConnection(sock: Socket, deps: RemoteDeps): void {
     send({ type: "error", message: why });
     close();
   };
+  const update = (force: boolean, run: NonNullable<RemoteDeps["update"]>): void => {
+    closed = true; // one request per connection
+    void run(force).catch((err: unknown): CoreUpdateResult => ({ status: "error", message: message(err) })).then((result) => {
+      send({ type: "update", result });
+      sock.end(() => { if (result.status === "updated") deps.onUpdated?.(); });
+    });
+  };
   const hello = (msg: unknown): void => {
+    if (isObj(msg) && msg.type === "update" && deps.update) return update(msg.force === true, deps.update);
     if (!isObj(msg) || msg.type !== "attach") return fail("The first frame must be the attach handshake.");
     if (msg.contract !== CONTRACT_VERSION) {
       send({ type: "error", handshake: deps.handshake, message: `Contract version mismatch: the core speaks v${CONTRACT_VERSION}.` });
@@ -276,6 +292,32 @@ async function clearStale(path: string): Promise<void> {
   });
   if (live) throw new Error(`another bean-core is already serving ${path}.`);
   unlinkSync(path);
+}
+
+/** `bean-core update`'s side of the socket: one update request to the running core. Undefined when
+ * no core is listening (stopped or crash-looping). */
+export function requestUpdate(path: string, force: boolean): Promise<CoreUpdateResult | undefined> {
+  return new Promise((resolve, reject) => {
+    const sock = connect(path);
+    let answered = false;
+    const answer = (r: CoreUpdateResult | undefined): void => {
+      answered = true;
+      sock.destroy();
+      resolve(r);
+    };
+    sock.once("error", (err: NodeJS.ErrnoException) => {
+      if (answered) return;
+      if (err.code === "ENOENT" || err.code === "ECONNREFUSED") answer(undefined);
+      else reject(err);
+    });
+    sock.once("connect", () => { sock.write(encodeFrame({ type: "update", force })!); });
+    sock.on("data", frameReader((m) => {
+      if (answered || !isObj(m)) return;
+      if (m.type === "update" && isObj(m.result)) answer(m.result as CoreUpdateResult);
+      else if (m.type === "error") answer({ status: "error", message: typeof m.message === "string" ? m.message : "The core refused the update." });
+    }, (why) => { if (!answered) answer({ status: "error", message: why }); }));
+    sock.once("close", () => { if (!answered) reject(new Error("The core closed the connection without answering.")); });
+  });
 }
 
 /** `bean-core attach`: pipes stdio to the core's socket, byte for byte (the core enforces the frames).

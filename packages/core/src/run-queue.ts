@@ -100,6 +100,11 @@ export function sweepDeadRuns(dir: string): number {
   return swept;
 }
 
+/** Records whose process is still alive — work in flight, the core's or a bot's. Read-only. */
+export function liveRuns(dir: string): TrackedRun[] {
+  return runFiles(dir).map((f) => readRun(join(runsDir(dir), f))).filter((r): r is TrackedRun => r !== undefined && isLive(r.pid));
+}
+
 const MAX_DISPLAY_INSTRUCTION = 140;
 
 /** The message an interrupted run leaves for whichever surface requested it. `full` keeps the
