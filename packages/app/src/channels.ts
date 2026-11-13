@@ -92,7 +92,8 @@ export const IPC = {
   dismissTask: "bean:dismiss-task",
   openChatMount: "bean:open-chat-mount",
   showChatMount: "bean:show-chat-mount",
-  planFromDrop: "bean:plan-from-drop",
+  // avatar → main: the plan for a skill tile a URL was dropped on (shown via proposeRun).
+  planDrop: "bean:plan-drop",
   getConfig: "bean:get-config",
   saveConfig: "bean:save-config",
   getAppInfo: "bean:get-app-info",

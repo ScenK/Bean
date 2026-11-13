@@ -353,7 +353,10 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
         badge: s.name === suggested ? '<span class="bean-petal-badge">best</span>' : "",
         run: (url: string) => {
           reading.classList.add("bean-reading--open");
-          window.bean.planFromDrop(s.name, url);
+          window.bean.planDrop(s.name, url).then(
+            (plan) => window.bean.proposeRun(plan),
+            (err: unknown) => console.error("bean: drop plan failed", err),
+          );
           // ponytail: fixed cosmetic delay standing in for a real "reading the page" step;
           // swap for a real fetch/summarize call if that ever gets built.
           setTimeout(() => reading.classList.remove("bean-reading--open"), 700);

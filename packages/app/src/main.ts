@@ -12,8 +12,8 @@ import { createAvatarLog } from "./avatar-log.js";
 import { app, ipcMain, dialog, BrowserWindow, nativeTheme, Notification, Tray, Menu, nativeImage, shell, powerSaveBlocker, powerMonitor, screen, webContents } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import {
-  beanDir, ensurePrivateBeanDir, avatarLogFile, projectsFile, skillsDir, projectBeanDir, dbFile, listSkillProposals,
-  loadLayeredSkills, loadProjects, planForDroppedSkill, scratchDir, outboxDir, claimOutbox, ackOutbox,
+  beanDir, ensurePrivateBeanDir, avatarLogFile, projectBeanDir, dbFile, listSkillProposals,
+  scratchDir, outboxDir, claimOutbox, ackOutbox,
   listChatopsConversations, chatopsConversationTurns, loadChatopsOwners, listDestinations,
 } from "@bean/core";
 import type { RouteSuggestion, Transport } from "@bean/core";
@@ -379,18 +379,6 @@ app.whenReady().then(async () => {
     openComponent("plan");
     sendToWindow(componentWindows.get("plan")!, IPC.proposeRun, suggestion);
   };
-  const planFromDrop = (skillName: string, droppedUrl: string): void => {
-    void (async () => {
-      const [skills, projects] = await Promise.all([
-        loadLayeredSkills(skillsDir(projectDir), skillsDir(dir)),
-        loadProjects(projectsFile(dir)),
-      ]);
-      const suggestion = planForDroppedSkill(skillName, droppedUrl, skills, projects);
-      planStore.set(suggestion);
-      openComponent("plan");
-      sendToWindow(componentWindows.get("plan")!, IPC.proposeRun, suggestion);
-    })();
-  };
 
   // Chat-target skill runs: stash the composed prompt (pull-on-mount, same race fix as
   // planStore) and open/focus the chat window; an already-mounted chat also gets the push.
@@ -562,7 +550,7 @@ app.whenReady().then(async () => {
       chatopsStatus: h.bots.status,
       chatopsStart: h.bots.start,
       chatopsStop: h.bots.stop,
-      getCurrentTheme, setCurrentTheme, openComponent, proposeRun, planFromDrop,
+      getCurrentTheme, setCurrentTheme, openComponent, proposeRun,
       getPendingPlan: planStore.get,
       getPendingDroppedUrl: droppedUrlStore.get,
       getPendingDashboardTarget: () => { const t = pendingDashboardTarget; pendingDashboardTarget = undefined; return t; },

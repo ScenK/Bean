@@ -1,5 +1,5 @@
 import {
-  launchInTerminal, scratchDir, availableModels, pickModel,
+  launchInTerminal, scratchDir, availableModels, pickModel, planForDroppedSkill,
   type Project, type RouteSuggestion, type LaunchRequest, type LaunchSpawnFn, type CliName, type Memory, type NoteDraft,
   type Persona, type Routine, type CliModels, type RoutineBrief, type RoutineWatch, type ChatRequest,
 } from "@bean/core";
@@ -286,7 +286,6 @@ export interface RegisterDeps extends ThemeHandlerDeps, ChatopsHandlerDeps, Upda
   runInChat: (payload: ChatPromptPayload) => void;
   getPendingChatPrompt: () => ChatPromptPayload | undefined;
   getPendingInterruptedRunNotices: () => InterruptedRunNotice[] | undefined;
-  planFromDrop: (skillName: string, droppedUrl: string) => void;
   getAppInfo: () => AppInfo;
   spawnLaunch?: LaunchSpawnFn;
   getTerminalApp: () => string;
@@ -544,7 +543,10 @@ export function registerIpc(electronIpc: IpcLike, deps: RegisterDeps): void {
   ipcMain.handle(IPC.getPendingPlan, () => deps.getPendingPlan());
   ipcMain.handle(IPC.getPendingDroppedUrl, () => deps.getPendingDroppedUrl());
   ipcMain.handle(IPC.getPendingDashboardTarget, () => deps.getPendingDashboardTarget());
-  ipcMain.on(IPC.planFromDrop, (_e, skillName: string, droppedUrl: string) => deps.planFromDrop(skillName, droppedUrl));
+  // Core half of a drop on a skill tile: the plan, from the host's skills and projects. The avatar
+  // shows it through the shell's proposeRun.
+  ipcMain.handle(IPC.planDrop, async (_e, skillName: string, droppedUrl: string) =>
+    planForDroppedSkill(skillName, droppedUrl, await host.listSkills(), await host.listProjects()));
   ipcMain.on(IPC.runInChat, (_e, payload: ChatPromptPayload) => deps.runInChat(payload));
   ipcMain.handle(IPC.getPendingChatPrompt, () => deps.getPendingChatPrompt());
   ipcMain.handle(IPC.getPendingInterruptedRunNotices, () => deps.getPendingInterruptedRunNotices());

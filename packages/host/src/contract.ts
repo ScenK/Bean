@@ -58,6 +58,9 @@ export const guard = {
   opt: (g: Guard): Guard => (v) => v === undefined || g(v),
   nullable: (g: Guard): Guard => (v) => v === null || g(v),
   oneOf: (...values: readonly unknown[]): Guard => (v) => values.includes(v),
+  either: (...gs: Guard[]): Guard => (v) => gs.some((g) => g(v)),
+  /** An object whose listed fields pass (wrap optional ones in `opt`); unlisted fields pass through. */
+  shape: (fields: Record<string, Guard>): Guard => (v) => obj(v) && Object.entries(fields).every(([k, g]) => g(v[k])),
 };
 
 /** A call's arguments against its guards: no extras; a missing trailing one is `undefined`. */

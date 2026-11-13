@@ -43,6 +43,33 @@ describe("service contract (#807)", () => {
     warn.mockRestore();
   });
 
+  it("checks an object payload's required fields, not just that it's an object", () => {
+    const fn = vi.fn();
+    const handles = new Map<string, (e: unknown, ...a: unknown[]) => unknown>();
+    const ipc = guardIpc({ handle: (c, f) => { handles.set(c, f as never); }, on: () => {} }, []);
+    for (const ch of [IPC.saveConfig, IPC.saveProjects, IPC.chat]) ipc.handle(ch, fn);
+    const call = (ch: string, ...a: unknown[]) => () => handles.get(ch)!({ sender: { id: 1 } }, ...a);
+    expect(call(IPC.saveConfig, {})).toThrow(/malformed/); // would have blanked the API key
+    expect(call(IPC.saveProjects, [{ name: 42, path: false }])).toThrow(/malformed/);
+    expect(call(IPC.chat, {}, "m")).toThrow(/malformed/);
+    expect(call(IPC.chat, { history: [{ role: "user", content: 1 }], message: "hi" }, "m")).toThrow(/malformed/);
+    expect(fn).not.toHaveBeenCalled();
+    const config = {
+      openaiApiKey: "k", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false,
+      reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true,
+    };
+    call(IPC.saveConfig, config)();
+    call(IPC.saveProjects, [{ name: "bean", path: "/p", skills: ["a"] }])();
+    call(IPC.chat, { history: [{ role: "user", content: "x" }], message: "hi" }, "m")();
+    expect(fn).toHaveBeenCalledTimes(3);
+    // Events too.
+    const all = ["systemControls", "terminalHandoff", "pty", "pathOpen"] as const;
+    expect(contractRefusal(IPC.memoryUpdated, [{ saved: 42, mountId: "m" }], all)).toMatch(/malformed/);
+    expect(contractRefusal(IPC.memoryUpdated, [{ saved: [{ id: "1", text: "t" }], mountId: "m" }], all)).toBeUndefined();
+    expect(contractRefusal(IPC.routinesPreviewWatch, [{ kind: "feed", command: "ls" }], all)).toMatch(/malformed/);
+    expect(contractRefusal(IPC.routinesPreviewWatch, [{ kind: "command", command: "ls" }], all)).toBeUndefined();
+  });
+
   it("gates a host-bound channel on the host's capability", () => {
     expect(contractRefusal(IPC.revealInFinder, ["/tmp"], ["pty"])).toMatch(/needs the host's pathOpen capability/);
     expect(contractRefusal(IPC.revealInFinder, ["/tmp"], ["pathOpen"])).toBeUndefined();

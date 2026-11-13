@@ -90,8 +90,8 @@ contextBridge.exposeInMainWorld("bean", {
   openChatMount: (mountId: string): void => ipcRenderer.send(IPC.openChatMount, mountId),
   onShowChatMount: (cb: (mountId: string) => void) =>
     ipcRenderer.on(IPC.showChatMount, (_e, mountId: string) => cb(mountId)),
-  planFromDrop: (skillName: string, droppedUrl: string): void =>
-    ipcRenderer.send(IPC.planFromDrop, skillName, droppedUrl),
+  planDrop: (skillName: string, droppedUrl: string): Promise<RouteSuggestion> =>
+    ipcRenderer.invoke(IPC.planDrop, skillName, droppedUrl),
   runInChat: (prompt: string, label: string, noteSlug?: string): void =>
     ipcRenderer.send(IPC.runInChat, { prompt, label, noteSlug }),
   getPendingChatPrompt: (): Promise<{ prompt: string; label: string; noteSlug?: string } | undefined> =>

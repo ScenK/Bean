@@ -11,12 +11,14 @@ A new channel needs an entry (`satisfies Record<keyof typeof IPC, …>` fails ty
 `channel-contract.test.ts` fails the tests). Core and host-bound entries list hand-written guards
 (`@bean/host` `guard`) for the call's arguments — or, for a push, its one payload. The Electron
 adapter runs them before a handler (`registerIpc` → `guardIpc`: an invoke rejects, a send drops)
-and before a push is delivered (`createPush`). Guards are shallow on purpose — the handlers still
-validate ids, paths and enums. A wrong guard breaks the feature silently (dropped send), so match the
+and before a push is delivered (`createPush`). Object payloads use `shape({...})` — each required
+field's type, optional ones in `opt(…)`, unlisted fields pass through — not a bare `obj` (a bare
+`obj` let `saveConfig({})` blank the API key). The handlers still validate ids, paths and enums. A wrong guard breaks the feature silently (dropped send), so match the
 preload's types exactly; optional trailing args are `opt(…)`.
 
 Split a channel whose handler does both host and shell work rather than classifying it twice. The
-chat-mount checks (`chats.key`) are authorization, not shell work; none needed splitting at #807.
+chat-mount checks (`chats.key`) are authorization, not shell work. #807 split the avatar's drop
+plan: `planDrop` (core, returns the plan) + the shell's `proposeRun` (shows it).
 
 The handshake (`IPC.handshake`, `@bean/host` `buildHandshake`/`checkHandshake`) carries
 `CONTRACT_VERSION`, the core version, platform and capabilities; bump `CONTRACT_VERSION` on any

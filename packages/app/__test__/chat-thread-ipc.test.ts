@@ -341,11 +341,11 @@ describe("chat thread IPC", () => {
       expect.objectContaining({ mountId: B, offRecord: false }),
     ]);
     // Live sessions are owned by (window, mount); an unattached mount or another window is refused.
-    await invoke(IPC.liveStart, chat, { agent: "claude" }, B);
-    expect(await invoke(IPC.liveStart, chat, { agent: "claude" }, "not-a-uuid")).toEqual({ error: expect.stringMatching(/chat window/) });
-    expect(await invoke(IPC.liveStart, other, { agent: "claude" }, B)).toEqual({ error: expect.stringMatching(/chat window/) });
+    await invoke(IPC.liveStart, chat, { agent: "claude", projectPath: "", ask: "hi" }, B);
+    expect(await invoke(IPC.liveStart, chat, { agent: "claude", projectPath: "", ask: "hi" }, "not-a-uuid")).toEqual({ error: expect.stringMatching(/chat window/) });
+    expect(await invoke(IPC.liveStart, other, { agent: "claude", projectPath: "", ask: "hi" }, B)).toEqual({ error: expect.stringMatching(/chat window/) });
     emit(IPC.liveStop, chat, "s1", B);
-    expect(liveTasks.start.mock.calls).toEqual([[{ clientId: chat.id, mountId: B }, { agent: "claude" }]]);
+    expect(liveTasks.start.mock.calls).toEqual([[{ clientId: chat.id, mountId: B }, { agent: "claude", projectPath: "", ask: "hi" }]]);
     expect(liveTasks.stop.mock.calls).toEqual([[{ clientId: chat.id, mountId: B }, "s1"]]);
     // Stop / Esc Esc: same ownership gate; refused senders and mounts never reach live-tasks.
     expect(invoke(IPC.liveInterrupt, other, "s1", B, 0)).toBe(false);

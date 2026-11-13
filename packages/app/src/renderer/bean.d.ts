@@ -91,7 +91,8 @@ declare global {
       /** Focus the chat window and show the chat (mount) that owns a bubble's task. */
       openChatMount(mountId: string): void;
       onShowChatMount(cb: (mountId: string) => void): void;
-      planFromDrop(skillName: string, droppedUrl: string): void;
+      /** The plan for a URL dropped on a skill tile (show it with proposeRun). */
+      planDrop(skillName: string, droppedUrl: string): Promise<RouteSuggestion>;
       runInChat(prompt: string, label: string, noteSlug?: string): void;
       getPendingChatPrompt(): Promise<{ prompt: string; label: string; noteSlug?: string } | undefined>;
       onChatPrompt(cb: (p: { prompt: string; label: string; noteSlug?: string }) => void): void;
