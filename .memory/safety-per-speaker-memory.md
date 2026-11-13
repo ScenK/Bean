@@ -9,7 +9,7 @@ preference as the owner's. The platform id gates capture (role); the name is onl
 
 - **Recall is filtered in SQL before ranking** — `loadMemories(file, subject)`: absent = all rows
   (desktop + Persona: the owner's own machine, unchanged), `null` = shared only (channels and
-  **both** routine hosts: `main.ts` and Discord's `headless-routines.ts`), an id = shared + that
+  routine runs, via core's `routine-wiring.ts`), an id = shared + that
   speaker's (their DMs). Never rank first and filter after: the top-K cut would leak or starve.
   Chime-ins (`chatops/chatter.ts`) load `null` too, re-filter `subjectId` defensively, and strip
   `projectPath` — nobody addressed Bean there, so the recall is for whoever reads the channel.

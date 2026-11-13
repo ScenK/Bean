@@ -102,8 +102,8 @@ Bean has two chat adapters over one shared brain:
   clears it). A pending request counts as the chat's work: it stays
   mounted and a window close awaits the ack, so the pointer is never lost. A refused agent move leaves a
   status row with the stopped session's receipt (Continue live here).
-- **Sprout triggers** (#637, `chatops/sprout-bridge.ts`): an app-spawned bot has no scheduler
-  (`BEAN_HEADLESS_ROUTINES` is cleared), so its sprout-run card tap sends `routine-trigger
+- **Sprout triggers** (#637, `chatops/sprout-bridge.ts`): a host-spawned bot (desktop app or
+  `bean-core`) has no scheduler — bots never schedule —, so its sprout-run card tap sends `routine-trigger
   {requestId, name, action, origin}` over the same IPC slot (still no message text bot → app). The app
   (`chatops-servers.ts` → the host's `answerSproutTrigger`) re-resolves the name with `loadRoutines()` (gone = `missing`) and
   re-plans with `planSproutRun` — a sprout whose plan changed since the card (paused, emptied, run ↔

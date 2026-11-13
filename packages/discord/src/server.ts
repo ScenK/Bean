@@ -26,7 +26,6 @@ import { openContinueThread, ownerOnly } from "./desk-continue.js";
 import { deliverOutboxDm } from "./outbox-dm.js";
 import { resolveRepliedTo, type RefMessage } from "./replied-to.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
-import { headlessRoutinesOn, startHeadlessRoutines, tzProblem } from "./headless-routines.js";
 import { answerSlash, slashCommands, slashMessage } from "./slash.js";
 
 const dir = beanDir();
@@ -35,18 +34,9 @@ const builtinDir = process.env.BEAN_BUILTIN_DIR || projectBeanDir();
 const discordConfig = await loadDiscordConfig(discordConfigFile(dir));
 const beanConfig = await loadConfig(configFile(dir), dir);
 if (!beanConfig.openaiApiKey) throw new Error("openaiApiKey missing in ~/.bean/config.json");
-// Headless routines (no desktop app): this process schedules them. Checked before anything starts.
-const headless = headlessRoutinesOn(process.env);
-const tzError = headless ? tzProblem(process.env) : undefined;
-if (tzError) {
-  console.error(tzError);
-  process.exit(1);
-}
-let stopRoutines: (() => Promise<void>) | undefined;
-// Set by startHeadlessRoutines below (before login, so before any turn can use it).
-let headlessSprouts: Awaited<ReturnType<typeof startHeadlessRoutines>>["sprouts"] | undefined;
-// Spawned by the desktop app: the app owns the scheduler, so a sprout-run tap asks it over IPC (#637).
-const appSprouts = !headless && processParentPort.connected() ? parentSproutTrigger() : undefined;
+// Spawned by a host (desktop app or bean-core), which owns the scheduler: a sprout-run tap asks it
+// over IPC (#637). Run standalone, there is no scheduler, so it never offers runs.
+const appSprouts = processParentPort.connected() ? parentSproutTrigger() : undefined;
 
 // Re-scanned per call so a CLI installed after the bot started is picked up.
 const clis = (): CliName[] => detectClis().filter((c) => !beanConfig.disabledClis.includes(c));
@@ -108,17 +98,7 @@ const bot = buildTeamsBot({
     recipients: () => Promise.all([discordConfig.ownerId, ...discordConfig.memberIds].map(async (id) => ({
       id, name: await client.users.fetch(id).then((u) => u.displayName, () => id),
     }))),
-    // Headless: this process owns the scheduler. App-spawned: the app does. Standalone without
-    // headless routines: nothing to trigger.
-    ...(headless ? {
-      sprouts: {
-        trigger: (name, action, origin) => headlessSprouts
-          ? headlessSprouts.trigger(name, action, origin)
-          : Promise.resolve({ status: "refused" as const, reason: "sprouts are still starting — try again in a moment" }),
-        facts: (r) => headlessSprouts ? headlessSprouts.facts(r) : Promise.resolve({ pending: 0, seeded: false }),
-        proposals: new SproutRunProposalStore(),
-      },
-    } : appSprouts ? {
+    ...(appSprouts ? {
       sprouts: { trigger: appSprouts, facts: (r) => sproutRunFacts(dbFile(dir), r), proposals: new SproutRunProposalStore() },
     } : {}),
   },
@@ -771,9 +751,7 @@ process.on("SIGTERM", () => {
   // SIGKILL fallback on a setTimeout that would never fire before process.exit below runs,
   // leaving a permissions-bypassed child orphaned if it doesn't honor SIGTERM promptly.
   liveSessions.forceKillAll();
-  // Headless: stop the scheduler, let its queued .state.json writes land, kill routine children.
-  if (!stopRoutines) process.exit(0);
-  void stopRoutines().finally(() => process.exit(0));
+  process.exit(0);
 });
 
 client.once("clientReady", async () => {
@@ -847,24 +825,6 @@ setInterval(() => {
     if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body);
   }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: discord drain failed", err));
 }, OUTBOX_POLL_MS);
-
-// Before login: boot cleanup of stale run reservations must finish before a chat run can reserve.
-if (headless) {
-  const started = await startHeadlessRoutines({
-    dir, builtinDir, converse: converseChat, model: beanConfig.model, clis, cliModels,
-    delegateCli: beanConfig.delegateCli, routineDigestContext: beanConfig.routineDigestContext, ownerId: discordConfig.ownerId,
-    onLeaseLost: (message) => {
-      console.error(message);
-      void (stopRoutines?.() ?? Promise.resolve()).finally(() => process.exit(1));
-    },
-  }).catch((err: unknown) => {
-    // One data directory, one scheduler (#800): a second one logs why and exits non-zero.
-    console.error(err instanceof Error ? err.message : err);
-    process.exit(1);
-  });
-  stopRoutines = started.shutdown;
-  headlessSprouts = started.sprouts;
-}
 
 // Die with the desktop app that spawned us — see exitWhenOrphaned's doc comment. Discord
 // binds no port, so a stale orphan doesn't announce itself with EADDRINUSE: it just stays

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -34,4 +34,36 @@ test("createHost boots on an empty data dir and its quit hooks tear it down", as
   }
   expect(quit.length).toBeGreaterThanOrEqual(5); // lease, registries, builder, scheduler, bots
   expect(host.schedulerLease.held()).toBe(false);
+});
+
+// bean-core (#806): no shell, so a sprout missed while it was down is announced and rebased to its
+// next slot (no Run-now button would ever clear the flag), and the lease names bean-core.
+test("a headless host rebases missed sprouts with a notice", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-host-"));
+  mkdirSync(join(dir, "routines"));
+  writeFileSync(join(dir, "routines", "daily.json"), JSON.stringify({
+    name: "daily", enabled: true, cron: "0 9 * * *", steps: [{ kind: "command", command: "true" }], sinks: {},
+  }));
+  const lastRun = "2020-01-01T00:00:00.000Z";
+  writeFileSync(join(dir, "routines", ".state.json"), JSON.stringify({ daily: { lastRun, history: [] } }));
+  const quit: (() => void)[] = [];
+  const send = vi.fn();
+  const host = await createHost({
+    dir, builtinDir: dir, push: vi.fn(), onJobs: vi.fn(),
+    notification: { name: "owner", available: () => true, send },
+    isChatClient: () => false, onQuit: (fn) => quit.push(fn), firstAutoMemory: async () => false,
+    bots: { root: dir, onEvent: vi.fn(), onSynced: vi.fn() },
+    headless: { onLeaseLost: vi.fn() },
+  });
+  try {
+    expect(host.schedulerLease.held()).toBe(true);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith({ body: expect.stringContaining('"daily"') }));
+    await vi.waitFor(() => {
+      const state = JSON.parse(readFileSync(join(dir, "routines", ".state.json"), "utf8")) as Record<string, { lastRun?: string; missed?: boolean }>;
+      expect(state.daily?.missed).toBeUndefined();
+      expect(state.daily?.lastRun).not.toBe(lastRun);
+    });
+  } finally {
+    for (const fn of quit) fn();
+  }
 });

@@ -61,7 +61,14 @@ export interface HostDeps {
   onChatRelease?: (mountId: string) => void;
   /** The Discord and Teams bots, which the host supervises and autostarts (#805). */
   bots: HostBotsOptions;
+  /** No desktop shell (`bean-core`, #806): the lease is labelled for it, a lost lease calls this
+   * (the service manager restarts the process, which then stands by), and missed sprouts get a
+   * notice and are rebased to their next slot — there is no Run-now button to clear them. */
+  headless?: { onLeaseLost: () => void };
 }
+
+export const missedNotice = (names: string[]): string =>
+  `Missed while Bean was down (not run — no catch-up): ${names.map((n) => `"${n}"`).join(", ")}. They resume at their next slot.`;
 
 /** The Electron-free host: the stateful registries (chat mounts and turns, delegates, live sessions,
  * status bubbles, runtime config, routine builder), the scheduler lease, the reminder loop, the
@@ -90,14 +97,14 @@ export async function createHost(deps: HostDeps) {
     const why = err instanceof Error ? err.message : String(err);
     taskStatus.error("reminder:error", { kind: "reminder", name: "Reminder", line: `Couldn't deliver: ${r.text}`, detail: why });
   };
-  // One data directory, one scheduler + reminder loop (#800): a headless bot on this ~/.bean can
+  // One data directory, one scheduler + reminder loop (#800): a bean-core on this ~/.bean can
   // hold the same bean.db lease. Refused = standby with a notice; this host takes over (and starts
   // the sprout scheduler) once the holder quits or its heartbeat expires. Lost = stop, relaunch.
   let schedulerLeaseHeld = false;
   let startScheduler: (() => void) | undefined;
   let stopScheduler: (() => void) | undefined;
   const schedulerLease = holdSchedulerLease({
-    file: db, label: "desktop app",
+    file: db, label: deps.headless ? "bean-core" : "desktop app",
     onAcquired: () => {
       schedulerLeaseHeld = true;
       taskStatus.dismiss("scheduler:lease");
@@ -116,6 +123,7 @@ export async function createHost(deps: HostDeps) {
           ? `${by.label} took over the scheduler for this data directory. Relaunch Bean to resume here.`
           : "Bean couldn't write its scheduler heartbeat to bean.db before it expired. Relaunch Bean to resume.",
       });
+      deps.headless?.onLeaseLost();
     },
   });
   deps.onQuit(() => schedulerLease.stop());
@@ -250,6 +258,14 @@ export async function createHost(deps: HostDeps) {
         void deps.notification.send({ title: `Sprout: ${routine.name}`, body: `Can't check for new items — ${error}`, meta: { open: "routines" } });
       }
     },
+    // Headless: rebase each to its next slot (still no catch-up), or the scheduler's missed guard
+    // would skip it forever.
+    ...(deps.headless ? {
+      onMissed: (names: string[]) => {
+        void deps.notification.send({ body: missedNotice(names) });
+        void routines.scheduler.clearMissed(names).catch((err: unknown) => console.error("bean: clearing missed routines failed", err));
+      },
+    } : {}),
   });
   const routineScheduler = routines.scheduler;
   // A bot's sprout-run tap (#637). The host runs the scheduler, so it also posts the finish reply,

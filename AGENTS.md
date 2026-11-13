@@ -58,7 +58,7 @@ It's a **pnpm-workspace monorepo** with five packages:
 | Package | Path | Purpose |
 |---------|------|---------|
 | **`@bean/core`** | `packages/core/` | Routing + IO logic. Pure ESM, zero Electron, `tsc`-built. |
-| **`@bean/host`** | `packages/host/` | Electron-free host: `createHost()` (chat mounts/turns, delegate + live registries, scheduler, handlers); Electron ops injected. `tsc`-built. |
+| **`@bean/host`** | `packages/host/` | Electron-free host: `createHost()` (chat mounts/turns, delegate + live registries, scheduler, handlers); Electron ops injected. `tsc`-built; its `bean-core` bin (esbuild-bundled) runs it headless — [`docs/headless.md`](docs/headless.md). |
 | **`@bean/app`** | `packages/app/` | Electron shell (main + preload + renderer). esbuild-bundled. |
 | **`@bean/discord`** | `packages/discord/` | Discord bot server. Node, tsc+esbuild-built. |
 | **`@bean/teams`** | `packages/teams/` | Teams bot server. Node, tsc+esbuild-built. |

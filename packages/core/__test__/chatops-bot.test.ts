@@ -2325,7 +2325,7 @@ test("a DM remember is private: recalled in that member's DM only, never another
   expect(await recalled(["max", true])).toBe(false);
   expect(await recalled(["mia", false])).toBe(false);
   expect(await recalled(["u1", false])).toBe(false);
-  // Routines load with `null` (shared only) — see main.ts / headless-routines.ts.
+  // Routines load with `null` (shared only) — see core's routine-wiring.ts.
   expect(await h.loadMemories(h.file, null)).toEqual([]);
 });
 

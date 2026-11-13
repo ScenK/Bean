@@ -6,7 +6,7 @@ tool *descriptions*, `.bean/skills/bean.md`) says "sprout". Everything machine-f
 "routine": identifiers, file names, `~/.bean/routines/` paths, JSON keys, IPC channels
 (`bean:routines-*`), CSS classes (`bean-routines-*`), `kind: "routines"`/`openComponent("routines")`,
 tool names (`propose_routine`) and arguments (`routine`), card action ids (`save-routine`…),
-note slugs (`routine-<name>`), `BEAN_HEADLESS_ROUTINES`, and `console.*`/boot log lines.
+note slugs (`routine-<name>`), and `console.*`/boot log lines.
 
 - The model echoes tool descriptions, so `propose_routine`/`propose_todo` carry a bridge
   sentence ("The user calls these sprouts; this tool's name … internal — always say sprout").

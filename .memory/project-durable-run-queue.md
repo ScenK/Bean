@@ -37,11 +37,11 @@ session (`RunRegistry.start` drops `resume` + `BUSY_THREAD_NOTICE`, #384).
 
 ## Boot cleanup: two different policies
 
-- **Desktop** (`main.ts` → `sweepDeadRuns`): deletes records whose pid is dead (or that don't
-  parse). **Never kills** — the bots share `runs/`, and a live record may be their running child.
-- **Headless bot** (`headless-routines.ts` → `clearReservations`): the bot owns `~/.bean` alone,
-  so it SIGKILLs each recorded process group and deletes every file. After a container restart
-  pids start low again, so a stale record's pid can match an unrelated live process.
+- **Every host** (`createHost` → `sweepDeadRuns`, desktop and `bean-core`): deletes records whose
+  pid is dead (or that don't parse). **Never kills** — the bots share `runs/`, a live record may be
+  their running child, and after a container restart pids start low again, so a stale record's pid
+  can match an unrelated live process (even this one). The old headless bot's kill-everything
+  `clearReservations` was deleted with it (#806); records are never a lock, so a survivor is inert.
 - Both treat pre-#385 per-project `<sha256>.json` reservation files like any record (same shape).
 - Pid liveness is `process.kill(pid, 0)`. POSIX-only; revisit if Windows packaging is ever added.
 
