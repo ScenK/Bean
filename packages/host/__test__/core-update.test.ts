@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { busyWork, RELEASES_URL, updateCore, type BusyItem, type CoreUpdateDeps } from "../src/core-update.js";
+import { busyWork, coreUpdateStatus, RELEASES_URL, updateCore, type BusyItem, type CoreUpdateDeps } from "../src/core-update.js";
 import type { TaskJob } from "../src/task-status.js";
 
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
@@ -138,4 +138,16 @@ test("busyWork: running jobs plus live run records the host doesn't already list
   // A sprout admitted to a slot shows before its bubble does, and once (not twice) after.
   const bubble = { ...job("routine:a", "routine", "Morning"), routine: "a" };
   expect(busyWork([bubble], [], ["a", "b"])).toEqual([{ kind: "routine", name: "Morning" }, { kind: "routine", name: "b" }]);
+});
+
+test("coreUpdateStatus (#838): version, a newer release and the busy list — nothing downloaded, latch untouched", async () => {
+  const { deps, latch, calls } = setup({ busy: [{ kind: "delegate", name: "bean" }, { kind: "routine", name: "Morning" }, { kind: "live", name: "Claude · bean" }] });
+  expect(await coreUpdateStatus(deps)).toEqual({ current: "0.1.0", latest: "0.2.0", busy: ["delegate bean", "sprout Morning", "agent Claude · bean"] });
+  expect(deps.fetch).toHaveBeenCalledOnce();
+  expect(calls).toEqual([]);
+  expect(latch.close).not.toHaveBeenCalled();
+  expect(await coreUpdateStatus(setup({ tag: "v0.1.0" }).deps)).toEqual({ current: "0.1.0", busy: [] });
+  const down = setup().deps;
+  expect(await coreUpdateStatus({ ...down, fetch: (async () => { throw new Error("offline"); }) as typeof fetch }))
+    .toEqual({ current: "0.1.0", busy: [], error: "Couldn't reach GitHub: offline" });
 });

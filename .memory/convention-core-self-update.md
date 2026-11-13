@@ -24,6 +24,13 @@ turn lives in the bot process, isn't latched or counted, and is lost if the upda
 `bean-core update` speaks to the running core with a first frame `{type:"update", force}` on
 `core.sock` (no attachment, so a connected shell isn't displaced). A required contract is checked
 only when the caller passes one (a shell must reattach); the box's own update accepts any contract —
-it's the recovery when a shell can't attach. No core listening → it updates in-process and runs
+it's the recovery when a shell can't attach (the mismatch banner offers `ssh <host> bean-core update --yes`).
+
+A shell updates through two zero-argument remote ops (#838): `coreUpdateStatus` (`coreUpdateStatus()`:
+release check only, labels via `busyLabel`) and `coreUpdateApply(force)` (contract pinned to the shell's;
+`serveConnection` flushes the "updated" reply, then `onUpdated` exits). About (`about/CoreUpdate.tsx`) shows
+them only for a remote core and decides success from the **reattached handshake's** version, not the
+reply; no reattach in `CORE_RETURN_MS` (2 min) → the rollback command. An older core refuses the ops
+as "… is not allowed over a remote attach" — that string is how About says "predates remote update". No core listening → it updates in-process and runs
 `current/install.sh --restart`. Rollback stays install.sh's (`bean-core rollback`), which is why
 `bean.db` migrations must stay additive ([convention-bean-db-column-additions.md](convention-bean-db-column-additions.md)).

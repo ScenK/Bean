@@ -173,12 +173,15 @@ describe("remote core over the attach bridge (#811)", () => {
         spawned++;
         return { stdin: new PassThrough(), stdout, stderr: new PassThrough(), on: () => {}, kill: () => {} } as unknown as SshChild;
       },
-      shellId: SHELL_A, setupCommand: "x", onPush: () => {}, onStatus: () => {}, onWorking: () => {}, retryMs: [1],
+      shellId: SHELL_A, setupCommand: "x", cli: "ssh me@box", onPush: () => {}, onStatus: () => {}, onWorking: () => {}, retryMs: [1],
     });
     core.connect();
     stdout.write(encodeFrame({ type: "error", handshake: { contract: 999, core: "9", platform: "linux", capabilities: [] }, message: "mismatch" })!);
     await new Promise((r) => setTimeout(r, 20));
-    expect(core.status()).toMatchObject({ state: "mismatch", message: expect.stringContaining("v999") });
+    // The recovery (#838): the box's own update needs no attach.
+    expect(core.status()).toMatchObject({
+      state: "mismatch", message: expect.stringContaining("v999"), command: "ssh me@box bean-core update --yes", cli: "ssh me@box",
+    });
     expect(spawned).toBe(1);
   });
 });

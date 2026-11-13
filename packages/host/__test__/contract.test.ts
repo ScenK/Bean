@@ -14,7 +14,12 @@ describe("handshake (#807)", () => {
       ok: false, reason: "version", message: expect.stringMatching(new RegExp(`core speaks v${CONTRACT_VERSION + 1}, this shell speaks v${CONTRACT_VERSION}`)),
     });
     expect(checkHandshake(undefined)).toMatchObject({ ok: false, reason: "malformed" });
-    expect(checkHandshake({ ...buildHandshake("1", "darwin", []), capabilities: ["teleport"] })).toMatchObject({ ok: false, reason: "malformed" });
+    expect(checkHandshake({ ...buildHandshake("1", "darwin", []), capabilities: [7] })).toMatchObject({ ok: false, reason: "malformed" });
+  });
+
+  it("drops a capability this shell doesn't know instead of refusing the core (#838)", () => {
+    expect(checkHandshake({ ...buildHandshake("1", "darwin", ["pty"]), capabilities: ["pty", "teleport"] }))
+      .toEqual({ ok: true, handshake: buildHandshake("1", "darwin", ["pty"]) });
   });
 
   it("guards check arity and shallow shape", () => {
