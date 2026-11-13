@@ -85,6 +85,14 @@ export async function createHost(deps: HostDeps) {
   // process exits (or the update is refused / fails). Closed = no new starts, no scheduled fires.
   let updating = false;
   const refuseStart = (): string | undefined => (updating ? UPDATING : undefined);
+  // Starts admitted while open whose work isn't a running job yet (async checks before a delegate or
+  // live session registers, a sprout run before its bubble, a builder agent that never gets one):
+  // busy until they settle, or a latch closed in that gap would read idle.
+  let pendingStarts = 0;
+  const track = <T>(start: Promise<T>): Promise<T> => {
+    pendingStarts++;
+    return start.finally(() => { pendingStarts--; });
+  };
   // A remote shell's attachment (#808): its chats' pushes are numbered and buffered for a replay, and
   // a lost shell's work waits out the grace. Local windows never attach; their pushes pass through.
   const attachments = createAttachments({
@@ -288,7 +296,15 @@ export async function createHost(deps: HostDeps) {
     load: () => loadRoutines(routinesPath),
     facts: (r) => sproutRunFacts(db, r),
     trigger: withFinishReply(
-      (name, action) => (updating && action === "run" ? Promise.resolve({ status: "refused" as const, reason: UPDATING }) : routineScheduler.trigger(name, action)),
+      (name, action) => {
+        if (action !== "run") return routineScheduler.trigger(name, action);
+        if (updating) return Promise.resolve({ status: "refused" as const, reason: UPDATING });
+        // Busy until the admitted run finishes, not just until it is admitted.
+        let finished: Promise<unknown> = Promise.resolve();
+        const admitted = routineScheduler.trigger(name, action).then((t) => { if (t.status === "started") finished = t.done; return t; });
+        void track(admitted.then(() => finished)).catch(() => {});
+        return admitted;
+      },
       (msg) => enqueueOutbox(outboxDir(dir), { transport: bot, ...msg }, randomUUID)),
   });
   const tools = detectTools(resolvedPath);
@@ -319,6 +335,7 @@ export async function createHost(deps: HostDeps) {
         );
         cancel = () => handle.cancel(cleanup);
       });
+      void track(done).catch(() => {}); // no status job of its own
       return { done, cancel: () => cancel() };
     },
   });
@@ -423,6 +440,7 @@ export async function createHost(deps: HostDeps) {
     isChatClient, chat, memory, threads, delegateTasks, liveTasks, push,
     onRelease: deps.onChatRelease,
     refuseStart,
+    track,
     onChatTurn: (mountId) => {
       const id = `chat:${randomUUID()}`;
       chatTurnIds.set(mountId, id);
@@ -480,7 +498,7 @@ export async function createHost(deps: HostDeps) {
         const todos = await listTodos(db, name);
         return { pending: todos.filter((t) => t.status === "pending").length, running: todos.filter((t) => t.status === "running").length };
       },
-      runNow: (name) => (updating ? Promise.resolve({ started: false, reason: UPDATING }) : routineScheduler.runNow(name)),
+      runNow: (name) => (updating ? Promise.resolve({ started: false, reason: UPDATING }) : track(routineScheduler.runNow(name))),
       stopRuns: (name) => {
         routineBubbles.stopping(name);
         routineScheduler.stopRuns(name);
@@ -564,7 +582,10 @@ export async function createHost(deps: HostDeps) {
     coreUpdate: {
       close: () => { updating = true; },
       open: () => { updating = false; },
-      busy: () => busyWork(taskStatus.list(), liveRuns(dir)),
+      busy: () => [
+        ...busyWork(taskStatus.list(), liveRuns(dir)),
+        ...(pendingStarts > 0 ? [{ kind: "request", name: `${pendingStarts} start request(s) in progress` }] : []),
+      ],
     } satisfies CoreLatch,
   };
 }

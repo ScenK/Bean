@@ -115,7 +115,13 @@ test("a closed update latch refuses new chat turns, delegates, live sessions and
     const L = "a0000000-0000-4000-8000-000000000001";
     chats.attach(1, L);
     expect(host.coreUpdate.busy()).toEqual([]);
+    // Admitted just before the latch closed, still in their async checks: busy, not idle.
+    const run = host.handlers.routines.runNow("demo");
+    const delegate = chats.delegateStart(1, L, { projectPath: "/not/configured", prompt: "p", instruction: "i" });
     host.coreUpdate.close();
+    expect(host.coreUpdate.busy()).toEqual([{ kind: "request", name: "2 start request(s) in progress" }]);
+    await Promise.all([run, delegate]);
+    expect(host.coreUpdate.busy()).toEqual([]);
     const msg = /Bean is updating/;
     await expect(chats.chat(1, L, { history: [], message: "hi" })).rejects.toThrow(msg);
     await expect(chats.delegateStart(1, L, { projectPath: dir, prompt: "p", instruction: "i" })).rejects.toThrow(msg);

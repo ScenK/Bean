@@ -23,6 +23,8 @@ export interface ChatSessionsDeps {
   onRelease?: (mountId: string) => void;
   /** Why a new chat turn, delegate or live session can't start now (a core update, #837), or undefined. */
   refuseStart?: () => string | undefined;
+  /** Counts an admitted start as busy until it settles: its async checks run before it shows as a job (#837). */
+  track?: <T>(start: Promise<T>) => Promise<T>;
 }
 
 const NOT_LIVE = "Agent sessions run from the chat window.";
@@ -171,14 +173,17 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       const k = key(client, mountId);
       const refused = deps.refuseStart?.();
       if (refused) return Promise.reject(new Error(refused));
-      return deps.delegateTasks.start({ ...req, offRecord: deps.memory.isIncognito(k), mountId: k });
+      const started = deps.delegateTasks.start({ ...req, offRecord: deps.memory.isIncognito(k), mountId: k });
+      return deps.track ? deps.track(started) : started;
     },
     // Sessions belong to one chat (client + attached mount); every payload is validated in live-tasks.
     liveStart: (client: ClientId, mountId: unknown, req: unknown) => {
       const o = liveOwner(client, mountId);
       const refused = deps.refuseStart?.();
       if (refused) return { error: refused };
-      return o ? deps.liveTasks.start(o, req) : { error: NOT_LIVE };
+      if (!o) return { error: NOT_LIVE };
+      const started = deps.liveTasks.start(o, req);
+      return deps.track ? deps.track(started) : started;
     },
     liveSend: (client: ClientId, mountId: unknown, sessionId: unknown, text: unknown) => {
       const o = liveOwner(client, mountId);

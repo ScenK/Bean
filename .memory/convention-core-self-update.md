@@ -8,7 +8,10 @@
    `versions/<ver>` → preflight `node <new>/…/bean-core.js --version` (`checkCorePreflight`).
 2. **Latch** (`host.coreUpdate.close()`): new chat turns, delegates, live sessions/resumes,
    sprout Run now / bot triggers, builder agents are refused with `UPDATING`; `canSchedule` is false.
-3. **Busy check** (`busyWork`): running `taskStatus` jobs + live `~/.bean/runs/` records (bots).
+3. **Busy check** (`busyWork`): running `taskStatus` jobs + live `~/.bean/runs/` records (bots)
+   + starts admitted before the latch but still in their async checks (host `track()`: delegate /
+   live starts, Run now, bot triggers, builder agents). A new start path must go through `track`,
+   or a latch closed in its gap reads idle.
    Busy and not forced → reopen the latch, return the list. Any failure also reopens it.
 4. **Flip** `previous` ← `current` ← `versions/<new>` (temp link + rename), answer, then `shutdown(0)`;
    launchd `KeepAlive` / systemd `Restart=always` start the new version. The latch stays closed.
