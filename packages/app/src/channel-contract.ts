@@ -1,5 +1,5 @@
 import { argsOk, guard as g, type Capability, type Guard } from "@bean/host";
-import { IPC } from "./channels.js";
+import { IPC, NO_CORE } from "./channels.js";
 
 /** Who owns a channel (#807) — the one table a shell and a host agree on:
  * - `core` — the host's own work (chats, memory, notes, routines, config, bots); runs on any host.
@@ -30,9 +30,11 @@ const chatRequest = shape({
 });
 const project = shape({ name: str, path: str, defaultSkill: opt(str), skills: opt(arr(str)) });
 const persona = shape({ name: str, tags: arr(str) });
+// A patch (#812): each field optional, an omitted one keeps its value — `{}` changes nothing.
 const configUpdate = shape({
-  openaiApiKey: str, model: str, terminalApp: str, editorApp: str, delegateCli: str, systemControls: bool,
-  reasoningEffort: str, routineDigestContext: bool, disabledClis: arr(str), webSearch: bool, autoMemory: bool,
+  openaiApiKey: opt(str), model: opt(str), terminalApp: opt(str), editorApp: opt(str), delegateCli: opt(str),
+  systemControls: opt(bool), reasoningEffort: opt(str), routineDigestContext: opt(bool), disabledClis: opt(arr(str)),
+  webSearch: opt(bool), autoMemory: opt(bool),
 });
 const noteDraft = shape({ title: str, body: str, project: opt(str), source: opt(oneOf("chat", "manual")), slug: opt(str) });
 const memory = shape({
@@ -227,6 +229,14 @@ export const CHANNEL_CONTRACT = {
   checkForUpdate: shell,
   installUpdate: shell,
   openUpdateReleasePage: shell,
+  coreList: shell,
+  coreAdd: shell,
+  coreRemove: shell,
+  coreSwitch: shell,
+  coreStatus: shell,
+  coreStatusChanged: shell,
+  coreTakeBack: shell,
+  chatCloseKept: shell,
 } satisfies Record<keyof typeof IPC, ChannelContract>;
 
 const BY_CHANNEL = new Map<string, ChannelContract>(
@@ -260,4 +270,12 @@ export function guardIpc(ipc: IpcLike, capabilities: readonly Capability[]): Ipc
     handle: (channel, fn) => ipc.handle(channel, wrap(channel, fn, (why) => { throw new Error(`Bean refused the call: ${why}.`); })),
     on: (channel, fn) => ipc.on(channel, wrap(channel, fn, (why) => { console.warn(`bean: dropped — ${why}`); return undefined; })),
   };
+}
+
+/** No core attached (#810): every core and host-bound invoke rejects with the one `NO_CORE` error; their
+ * sends have no listener, so they are dropped. The shell's own channels are registered as usual. */
+export function registerNoCore(ipc: Pick<IpcLike, "handle">): void {
+  for (const [key, c] of Object.entries(CHANNEL_CONTRACT)) {
+    if (c.owner !== "shell") ipc.handle(IPC[key as keyof typeof IPC], () => { throw new Error(NO_CORE); });
+  }
 }

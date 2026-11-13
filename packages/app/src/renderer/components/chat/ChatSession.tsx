@@ -985,6 +985,11 @@ export function ChatSession({
       const result = attachDelegateTaskId(itemsRef.current, id, taskId, prompt, buffered);
       setItems(result.items);
       for (const loopback of result.loopbacks) void sendRef.current(loopback.text, loopback.display, true, undefined, loopback.source);
+    } catch (err) {
+      // Refused, or (remote core) the connection dropped before the core confirmed it: the card says so
+      // instead of sitting on "Starting…".
+      const error = err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "") : String(err);
+      setItems((prev) => prev.map((it) => (it.kind === "delegate" && it.id === id && it.state === "starting" ? { ...it, state: "failed" as const, error } : it)));
     } finally {
       pendingDelegateStartsRef.current.delete(id);
     }

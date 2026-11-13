@@ -29,5 +29,4 @@ harness's tools in the prompt either. That list goes stale.
 
 `propose_delegate`'s `project` is optional when the caller passes `scratchPath`
 (`scratchDir(beanDir)`, created at startup by main.ts and both chatops servers). An omitted
-project runs the delegate in that scratch workspace. Scratch delegates share the per-project
-run lock in chatops `runs.ts`, so only one runs at a time.
+project runs the delegate in that scratch workspace.

@@ -52,6 +52,8 @@ export function scratchDir(dir: string): string { return join(dir, "workspace");
 // generate_image output lands here as timestamped PNGs; no cleanup policy (add one if it matters).
 export function imagesDir(dir: string): string { return join(dir, "images"); }
 // Avatar recovery evidence (#757): one line per renderer/window event and Bring Bean Back click.
+// bean-core's attach socket (#809): a unix socket inside the private data directory, never a TCP port.
+export function coreSocketFile(dir: string): string { return join(dir, "core.sock"); }
 export function avatarLogFile(dir: string): string { return join(dir, "logs", "avatar.log"); }
 
 export async function loadConfig(file: string, beanDirPath: string): Promise<BeanConfig> {

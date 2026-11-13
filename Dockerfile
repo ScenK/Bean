@@ -27,6 +27,9 @@ COPY --from=build /src/packages/host/dist/bean-core.js /app/packages/host/dist/b
 COPY --from=build /src/packages/discord/dist /app/packages/discord/dist
 COPY --from=build /src/packages/teams/dist /app/packages/teams/dist
 COPY --from=build /src/.bean /app/.bean
+# `bean-core` on PATH for a remote shell: `ssh <host> docker exec -i bean bean-core attach` (#809).
+RUN chmod +x /app/packages/host/dist/bean-core.js \
+ && ln -s /app/packages/host/dist/bean-core.js /usr/local/bin/bean-core
 
 # HOME is the volume: ~/.bean (config, bean.db, routines, runs/), the claude/codex logins and
 # their MCP config all live there. One scheduler per ~/.bean: never point the desktop app at this volume.
