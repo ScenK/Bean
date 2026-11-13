@@ -18,9 +18,12 @@ import {
 } from "./agent-mode.js";
 import { SECTION_TITLES, slashMenu, slashPick, slashToken, type SlashEntry } from "./slash-commands.js";
 import { useCmdLinks } from "./chat-links.js";
+import { copyPath, useCapabilities } from "../../shared/capabilities.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
+import { coreOffline, useCoreStatus } from "../../shared/core-status.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 import type { ChatDrop, DroppedImage } from "../../../channels.js";
+import { MOD_LABEL } from "../../shared/mod-key.js";
 
 /** Esc Esc: the window for the second press. */
 const ESC_STOP_MS = 800;
@@ -40,6 +43,7 @@ interface PdfSource { size: number; filename: string; path: string; read: () => 
  */
 function ImagePreview({ image, onClose }: { image: { dataUrl: string; path?: string }; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const reveal = useCapabilities().has("pathOpen");
   const [zoomed, setZoomed] = useState(false);
   useEffect(() => { ref.current?.showModal(); }, []);
   return (
@@ -66,7 +70,10 @@ function ImagePreview({ image, onClose }: { image: { dataUrl: string; path?: str
       </button>
       <div class="bean-image-preview-actions">
         {image.path ? (
-          <button type="button" class="bean-btn" onClick={() => window.bean.revealInFinder(image.path!)}>Show in Finder</button>
+          // A remote core's file is on its machine (#812): copy the path instead of revealing it.
+          <button type="button" class="bean-btn" onClick={() => void (reveal ? window.bean.revealInFinder(image.path!) : copyPath(image.path!))}>
+            {reveal ? "Show in Finder" : "Copy path"}
+          </button>
         ) : null}
         <button type="button" class="bean-btn bean-btn--ghost" onClick={() => ref.current?.close()}>Close</button>
       </div>
@@ -246,7 +253,12 @@ export function ChatPanel({
   onStopTurn: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  useCmdLinks(scrollRef, mountId);
+  const caps = useCapabilities();
+  // A remote core (#812): no terminal pane, and this machine's file paths mean nothing there.
+  const pty = caps.has("pty");
+  const localPaths = caps.has("pathOpen");
+  const localPathHint = `That's a file on this machine — ${caps.host ?? "the core"} can't open it. Images and PDFs still attach.`;
+  useCmdLinks(scrollRef, mountId, { paths: localPaths, urls: pty });
   const [pendingImages, setPendingImages] = useState<Array<{ attachment: ImageAttachment; dataUrl: string }>>([]);
   const [imageError, setImageError] = useState<string | null>(null);
   // FileReader is async — a submit racing an unfinished read would send the text without its
@@ -351,6 +363,7 @@ export function ChatPanel({
   const insertPdfPaths = (paths: string[]): void => {
     const el = inputRef.current;
     const real = paths.filter(Boolean);
+    if (real.length > 0 && !localPaths) { setImageError(localPathHint); return; }
     if (el && real.length > 0) {
       el.value = `${real.join(" ")} ${el.value}`;
       resizeInput();
@@ -461,6 +474,8 @@ export function ChatPanel({
     const el = inputRef.current;
     if (!prefillUrl || !el) return;
     if (Array.isArray(prefillUrl)) { attachDropped(prefillUrl); return; }
+    // A file dropped on the avatar arrives as its path; a URL still goes in.
+    if (!localPaths && !/^[a-z][a-z0-9+.-]*:/i.test(prefillUrl)) { setImageError(localPathHint); return; }
     // Prepend so a drop never clobbers whatever the user was already typing.
     el.value = el.value ? `${prefillUrl} ${el.value}` : `${prefillUrl} `;
     el.focus();
@@ -486,10 +501,13 @@ export function ChatPanel({
     if (!terminalOpen && !hidden) inputRef.current?.focus();
   }, [terminalOpen]);
 
+  // A remote core (#811): its host on the header; while it's unreachable the composer is read-only.
+  const core = useCoreStatus();
+  const offline = coreOffline(core);
   const submit = (): void => {
     const el = inputRef.current;
     // Type-ahead: while Bean answers the draft and images stay put — return before clearing.
-    if (!el || busy || imageReadsInFlight > 0) return;
+    if (!el || busy || offline || imageReadsInFlight > 0) return;
     // An agent's image labels mean nothing to Bean: refuse a Bean-bound send that holds them.
     const slashTo = parseSlash(el.value)?.agent;
     const stray = (slashTo ? slashTo !== "bean" : isLiveAgent(mode)) ? [] : mappedImageLabels(el.value, imageLabels);
@@ -538,6 +556,7 @@ export function ChatPanel({
     const path = droppedPath(e);
     if (!path || !inputRef.current) return;
     e.preventDefault();
+    if (!localPaths) { setImageError(localPathHint); return; }
     const el = inputRef.current;
     const next = insertDroppedPath(el.value, path, el.selectionStart, el.selectionEnd);
     el.value = next.value;
@@ -575,7 +594,7 @@ export function ChatPanel({
   const speaker = (it: ChatItem) => <span class="bean-sr-only">{AGENT_NAMES[itemAgent(it) ?? "bean"]}: </span>;
 
   return (
-    <div class={`bean-chat${terminalOpen ? " bean-chat--term" : ""}`} hidden={hidden}>
+    <div class={`bean-chat${pty && terminalOpen ? " bean-chat--term" : ""}`} hidden={hidden}>
       {/* Pinned below the drag band, not inside it — no drag region here. */}
       <div class="bean-chat-meta">
         <AgentAvatar agent={header.agent} size={18} />
@@ -584,6 +603,9 @@ export function ChatPanel({
           <span class={`bean-chat-state bean-chat-state--${header.status}`} />
           {header.status}
         </span>
+        {core.kind === "remote" ? (
+          <span class={`bean-chat-host${offline ? " bean-chat-host--off" : ""}`} title={`This chat runs on ${core.host}`}>{core.host}</span>
+        ) : null}
         <span class="bean-chat-meta-spacer" />
         {/* The linked-note chip replaces the model id (mockup 1d) — both don't fit. */}
         {linkedNote ? (
@@ -607,7 +629,7 @@ export function ChatPanel({
           Off the record
         </button>
         {continueButton}
-        <button
+        {pty ? <button
           type="button"
           class={`bean-chat-term-toggle${terminalOpen ? " bean-chat-term-toggle--on" : ""}`}
           aria-expanded={terminalOpen}
@@ -616,13 +638,13 @@ export function ChatPanel({
           onClick={onToggleTerminal}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="m7 10 3 2-3 2" /><path d="M13 15h4" /></svg>
-        </button>
+        </button> : null}
       </div>
       <div class="bean-chat-scroll" ref={scrollRef} onScroll={onScroll}>
         {items.length === 0 ? (
           <PanelEmptyState message="What are we brewing today?">
             <div class="bean-panel-empty-text">Ask Bean to do something, or just say hi.</div>
-            <div class="bean-panel-empty-text">⌘-click a link or path to open it</div>
+            {localPaths ? <div class="bean-panel-empty-text">{MOD_LABEL}-click a link or path to open it</div> : null}
           </PanelEmptyState>
         ) : null}
         {items.map((it, i) => {
@@ -946,7 +968,8 @@ export function ChatPanel({
             ref={inputRef}
             class="bean-input bean-input--composer"
             rows={1}
-            placeholder={!agentMode ? "Message Bean · type / for skills" : live
+            readOnly={offline}
+            placeholder={offline ? `Waiting for ${core.kind === "remote" ? core.host : "the core"}…` : !agentMode ? "Message Bean · type / for skills" : live
               ? `Message ${agentName}…`
               : `Message ${agentName}… (Bean will hand over up to ${Math.min(handoffItems(items).filter((h) => h.text.trim()).length, HANDOFF_ITEMS)} messages)`}
             onInput={(e) => { resizeInput(); onComposerInput(e.target as HTMLTextAreaElement); }}
@@ -1054,14 +1077,14 @@ export function ChatPanel({
               disabled={busy || !items.some((it) => it.kind === "reply")}
               onClick={onSaveToNotes}
             >Save to notes</button>
-            <button type="button" class="bean-send" aria-label="Send" disabled={busy || imageReadsInFlight > 0} onClick={submit}>
+            <button type="button" class="bean-send" aria-label="Send" disabled={busy || offline || imageReadsInFlight > 0} onClick={submit}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg>
             </button>
           </div>
         </div>
       </div>
       )}
-      <TerminalPane
+      {pty ? <TerminalPane
         mountId={mountId}
         open={terminalOpen}
         projectPath={agentProject}
@@ -1069,7 +1092,7 @@ export function ChatPanel({
         onOpenChange={onTerminalOpen}
         onShells={onShells}
         shortcutRef={terminalShortcut}
-      />
+      /> : null}
       {preview ? <ImagePreview image={preview} onClose={() => setPreview(null)} /> : null}
     </div>
   );

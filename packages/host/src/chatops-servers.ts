@@ -79,7 +79,7 @@ export interface ChatopsServersDeps {
   serverEntries?: Record<ChatopsBot, string>;
   extraEnv?: NodeJS.ProcessEnv;
   /** Called with the set of bots the user has switched on, whenever that intent changes.
-   * Intent, not liveness: a crash or `stopAll()` at quit leaves the set alone, so main.ts can
+   * Intent, not liveness: a crash or `stopAll()` at quit leaves the set alone, so the host can
    * restart them on the next boot. Only an explicit start/stop moves a bot in or out. */
   onEnabledChange?: (enabled: ChatopsBot[]) => void;
   /** What a running bot is doing (turns, delegate runs, live sessions), already validated. */
@@ -90,6 +90,9 @@ export interface ChatopsServersDeps {
    * Absent, or throwing, answers `unavailable`. */
   onRoutineTrigger?: (bot: ChatopsBot, req: RoutineTrigger) => Promise<RoutineTriggerAnswer>;
   spawnFn?: (command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => SpawnedProcess;
+  /** A bot's config file (`discord.json` / `teams.json` in the data directory). A bot whose file
+   * is missing is not spawned — it would only exit on its first line and burn the retry budget. */
+  configFile?: (bot: ChatopsBot) => string;
   existsFn?: (path: string) => boolean;
   nowFn?: () => number;
   delayFn?: (cb: () => void, ms: number) => void;
@@ -108,7 +111,7 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
   const attempts = new Map<ChatopsBot, number>();
   // Desk turns awaiting their ack, per bot (an ack only settles its own bot's requests).
   const pending: Record<ChatopsBot, Map<string, { settle: (r: DeskAckResult | DeskContinueResult | Error) => void }>> = { discord: new Map(), teams: new Map() };
-  // Set once by stopAll() at quit. A retry timer can outlive the kill it was scheduled by, and
+  // Set once by stopAll() at host shutdown. A retry timer can outlive the kill it was scheduled by, and
   // respawning then would recreate exactly the launchd orphan stopAll() exists to prevent —
   // see .memory/safety-chatops-servers-must-die-with-the-app.md.
   let shuttingDown = false;
@@ -134,15 +137,20 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
       emit(bot);
       return;
     }
+    const config = deps.configFile?.(bot);
+    if (config && !exists(config)) {
+      liveness[bot] = { running: false, error: `Not set up — create ${config} (see packages/${bot}/README.md).` };
+      emit(bot);
+      return;
+    }
     attempts.set(bot, (attempts.get(bot) ?? 0) + 1);
     const spawnedAt = now();
     let lastErr = "";
-    // Run under Electron's bundled Node (not a system "node") so the packaged app
-    // needs no local Node install — ELECTRON_RUN_AS_NODE makes execPath behave as `node <entry>`.
+    // Run under the host's own runtime (not a system "node") so the packaged app needs no local
+    // Node install — under Electron, ELECTRON_RUN_AS_NODE makes execPath behave as `node <entry>`;
+    // under plain Node it is ignored.
     const child = doSpawn(process.execPath, [entry], deps.repoRoot, {
       ...process.env, ...deps.extraEnv, PATH: deps.resolvedPath, ELECTRON_RUN_AS_NODE: "1",
-      // The app owns the scheduler: a spawned bot must never start a second one (#279).
-      BEAN_HEADLESS_ROUTINES: undefined,
     });
     child.stderr?.on("data", (chunk) => { lastErr = chunk.toString().trim() || lastErr; });
     // A child process is a trust boundary: only well-formed activity gets through.
@@ -235,7 +243,7 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
   return {
     status:(): Record<ChatopsBot, ChatopsState> => ({ discord: view("discord"), teams: view("teams") }),
 
-    /** Explicit start (autostart at boot, tray, Settings) — always gets the full retry budget.
+    /** Explicit start (autostart at host boot, tray, Settings) — always gets the full retry budget.
      * Also clears `shuttingDown`: it's only set on the way out, so if the process is still here
      * asking for a bot, that exit didn't happen and retries shouldn't stay dead for the session. */
     start(bot: ChatopsBot): void {

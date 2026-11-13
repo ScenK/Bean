@@ -1,7 +1,9 @@
 # Chatops servers must die with the app — orphans serve stale code forever
 
-A spawned chatops server (`chatops-servers.ts` → `packages/*/dist/server.js`) does **not** die
-when the desktop app exits. Left alone it is reparented to launchd, keeps port 3978, and keeps
+A spawned chatops server (`@bean/host`'s `chatops-servers.ts` → `packages/*/dist/server.js`) does
+**not** die when its host (the desktop app today) exits. The host supervises both bots
+(`bots.ts`'s `startBots()`, built by `createHost()`); the app only wires the tray/Settings toggles
+and broadcasts. Left alone it is reparented to launchd, keeps port 3978, and keeps
 answering Teams/Discord webhooks with **whatever build it booted with** — indefinitely.
 
 This actually happened: three Teams servers were running from three different days; the oldest
@@ -12,9 +14,9 @@ was right; only the process was stale. Debugging cost hours because the tray sti
 
 Three defenses, all load-bearing — don't remove any of them:
 
-1. **`main.ts`'s `before-quit` calls `chatopsServers.stopAll()`.** `stopAll()` existed for ages
-   but nothing called it, which is how the orphans accumulated in the first place. A method
-   that is never called is not a defense.
+1. **`startBots()` registers `stopAll()` through the host's `onQuit`** (the app maps `onQuit` to
+   `before-quit`). `stopAll()` existed for ages but nothing called it, which is how the orphans
+   accumulated in the first place. A method that is never called is not a defense.
 2. **`exitWhenOrphaned()`** (`core/src/chatops/orphan-guard.ts`) runs inside each server and
    exits when `process.ppid` changes. This covers what `before-quit` cannot: crash, force-quit,
    SIGKILL. Discord needs it as much as Teams — it binds no port, so a stale Discord orphan
@@ -30,23 +32,27 @@ about to exit. The success log is therefore deferred with `setImmediate` and gua
 
 ## Autostart is intent, not liveness — and it must not weaken the three defenses
 
-`chatops-enabled-store.ts` persists which bots the user switched on (`chatops-enabled.json` in
-Electron's userData); `main.ts` replays that list at boot so a quit, a `pnpm dev` relaunch, or an
+`chatops-enabled-store.ts` persists which bots the user switched on (`chatops-enabled.json` in the
+**data directory**, `chatopsEnabledFile(dir)` — a host without Electron must be able to read it;
+before #805 it lived in Electron's userData, and `migrateChatopsEnabled()` copies that file once:
+the data-dir file existing at all means migrated). `startBots()` replays that list at boot so a quit, a `pnpm dev` relaunch, or an
 update install doesn't silently leave the bots off. The set tracks **user intent**, so:
 
 - `start()`/`stop()` (tray *and* Settings both route through `createChatopsServers`) are the only
-  things that move a bot in or out — that's why the hook lives in core-app rather than at the two
-  call sites.
+  things that move a bot in or out — that's why the hook lives in the supervisor rather than at the
+  two call sites.
 - **`stopAll()` must never clear it.** It's the quit-time kill from defense 1; clearing it there
   would mean "quit" reads as "the user turned the bots off".
 - A crash / non-zero exit also leaves the set alone, so a crashed bot comes back next boot.
-- A start that fails the "not built" check enables nothing — it never ran.
+- A start that fails the "not built" or "not set up" check (no `<bot>.json` in the data directory)
+  still enables the bot — see the `enable()` corollary below — and shows the error instead of
+  spawning a process that would only exit.
 
 Update installs go `app.relaunch()` + `app.exit()`, which **skips `before-quit`** — so defense 2
 (`exitWhenOrphaned()`) is what reaps the old servers there, not `stopAll()`. Autostart then spawns
 fresh ones. Don't "simplify" the orphan guard away on the theory that `before-quit` covers it.
 
-Because of that, **`installUpdate` in `main.ts` calls `stopAll()` itself** — passed as
+Because of that, **`installUpdate` in `main.ts` calls `stopCore()` (→ `h.bots.stopAll()`) itself** — passed as
 `installAndRelaunch`'s `relaunch` hook, not run up front. Relying on the orphan guard there isn't
 enough: its poll is 5s, and the replacement app autostarts within that window, so Teams would lose
 :3978 to a server that is already doomed. Two writers, one port, and the loser is the one the user
@@ -94,7 +100,7 @@ to say no. Two corollaries, both of which were bugs first:
 `saveChatopsEnabled` writes to `<file>.tmp` and renames over the target. `writeFile` truncates
 first, so an interrupted write (force quit, crash, the update exit) leaves a partial file — and
 `loadChatopsEnabled` reads anything unparseable as "nothing enabled", which switches every bot off
-without saying so. Chaining the writes in `main.ts` orders them; only the rename makes each one
+without saying so. Chaining the writes in `@bean/host`'s `bots.ts` orders them; only the rename makes each one
 all-or-nothing.
 
 **When debugging "my chatops change didn't take effect": check the process, not just the code.**

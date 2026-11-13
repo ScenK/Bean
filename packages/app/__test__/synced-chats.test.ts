@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { formatSummaryBlock, MAX_DESK_TEXT, speakerLine, type ChatopsConversation } from "@bean/core";
 import { buildSyncedChatHandlers, mapSyncedTranscript, type SyncedChatHandlerDeps } from "../src/synced-chats.js";
+import { createChatSessions, type HostHandlers } from "@bean/host";
 import { registerIpc, type RegisterDeps } from "../src/ipc.js";
 import { IPC } from "../src/channels.js";
 import { MAX_DESK_TEXT as RENDERER_MAX } from "../src/renderer/components/chat/SyncedChat.js";
@@ -127,8 +128,13 @@ describe("synced chat IPC", () => {
     };
     const { h, deps: sDeps } = handlers();
     const chat = { id: 1 }, other = { id: 2 };
-    const all: Partial<RegisterDeps> = { isChatSender: (s) => s === (chat as never), syncedChatHandlers: h };
-    const deps = new Proxy(all, { get: (t, k) => (k in t ? t[k as keyof typeof t] : vi.fn()) }) as RegisterDeps;
+    const isChatClient = (id: number): boolean => id === chat.id;
+    // Every dep the test doesn't give is a no-op: registration only stores handlers.
+    const fallback = <T extends object>(given: Partial<T>): T =>
+      new Proxy(given, { get: (t, k) => (k in t ? t[k as keyof typeof t] : vi.fn()) }) as T;
+    const chats = createChatSessions(fallback<Parameters<typeof createChatSessions>[0]>({ isChatClient }));
+    const host = fallback<HostHandlers>({ chat: chats });
+    const deps = fallback<RegisterDeps>({ host, isChatClient, syncedChatHandlers: h });
     registerIpc(ipcMain as never, deps);
     const invoke = (ch: string, sender: unknown, ...args: unknown[]): unknown => handles.get(ch)!({ sender }, ...args);
     ons.get(IPC.chatAttach)!({ sender: chat }, A);

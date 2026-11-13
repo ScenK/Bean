@@ -1,4 +1,4 @@
-import { STOPPING_LINE, type TaskJob } from "../task-status.js";
+import { STOPPING_LINE, type TaskJob } from "@bean/host/task-status";
 import type { DashboardTarget } from "../channels.js";
 
 // Design 2a "speech bubble": one bubble per running job or failure, stacked above the bean, newest

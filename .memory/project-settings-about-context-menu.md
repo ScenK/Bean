@@ -21,9 +21,9 @@ handler to the tray or the avatar body; if Settings/Persona/About need a second 
 add it as another left-click destination, not a right-click one.
 
 Settings edits `~/.bean/config.json` (openaiApiKey + model) via `saveConfig` (core) and
-**live-reloads** the OpenAI clients through `runtime-config.ts` — no restart. `runtime-config`
+**live-reloads** the OpenAI clients through host `runtime-config.ts` — no restart. `runtime-config`
 holds the clients behind *stable* `chat`/`converse` wrappers (identity never changes), and
-`main.ts` passes those wrappers + `getModel()` into `registerIpc`, so handlers registered once
+`createHost` (`host.ts`) passes those wrappers + `getModel()` into its handlers, so handlers built once
 pick up new config. `apply()` builds the new clients **before** persisting, so a bad key can't
 leave disk and memory inconsistent. `~/.bean` stays the durable store (survives reinstalls);
 Settings also shows its paths read-only, and the manual theme toggle now lives in Settings (the

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { userInfo } from "node:os";
 import { escalateKill, killPendingGroups, killTree, spawnEnv } from "@bean/core";
+import type { ClientId } from "./push.js";
 
 // Per-chat interactive terminals: a login shell in a PTY per tab, up to MAX_TABS per chat (mount),
 // owned by the chat window. The tracked, interactive sibling of launcher.ts's Terminal.app
@@ -94,7 +95,8 @@ export function terminalLink(raw: unknown): string | undefined {
   }
 }
 
-export interface TerminalOwner { senderId: number; mountId: string }
+/** A chat: the client (window) it runs in plus its mount id (push.ts). */
+export interface TerminalOwner { clientId: ClientId; mountId: string }
 
 export interface TerminalTasksDeps {
   spawn: PtyFactory;
@@ -102,7 +104,8 @@ export interface TerminalTasksDeps {
   projectAllowed: (path: string) => Promise<boolean>;
   /** Where "" (no project) and a no-longer-configured project open. */
   scratchPath: string;
-  send: (senderId: number, event: TerminalEvent) => void;
+  /** Push a mount-tagged event, routed to the owning chat by `mountId`. */
+  send: (event: TerminalEvent) => void;
   shell?: string;
   /** Batched foreground lookup (default: foregroundCommands). */
   foreground?: (pids: readonly number[]) => Promise<Map<number, string>>;
@@ -112,7 +115,6 @@ export interface TerminalTasksDeps {
 }
 
 interface Terminal {
-  senderId: number;
   mountId: string;
   tabId: string;
   /** Unset while start() awaits its checks — a stop then means "never spawn". */
@@ -138,7 +140,7 @@ export function createTerminalTasks(deps: TerminalTasksDeps) {
   let polling = false;
 
   const emit = (t: Terminal, body: EventBody): void => {
-    deps.send(t.senderId, { ...body, mountId: t.mountId, tabId: t.tabId } as TerminalEvent);
+    deps.send({ ...body, mountId: t.mountId, tabId: t.tabId } as TerminalEvent);
   };
   const current = (t: Terminal): boolean => terms.get(t.mountId)?.get(t.tabId) === t;
   const drop = (t: Terminal): void => {
@@ -214,7 +216,7 @@ export function createTerminalTasks(deps: TerminalTasksDeps) {
       // double start, a fifth tab, release, or quit during validation finds it.
       let settle = (): void => {};
       const exited = new Promise<void>((r) => { settle = r; });
-      const t: Terminal = { senderId: owner.senderId, mountId, tabId, stopping: false, cols, rows, unacked: 0, paused: false, exited, settle };
+      const t: Terminal = { mountId, tabId, stopping: false, cols, rows, unacked: 0, paused: false, exited, settle };
       tabs.set(tabId, t);
       terms.set(mountId, tabs);
       let cwd = rawPath || deps.scratchPath;

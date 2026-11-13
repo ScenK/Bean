@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createKeepAwake, keepAwakeFile, keepAwakeTooltip, loadKeepAwake, saveKeepAwake } from "../src/keep-awake.js";
-import type { TaskJob } from "../src/task-status.js";
+import type { TaskJob } from "@bean/host";
 
 const job = (id: string, kind: TaskJob["kind"], state: TaskJob["state"] = "running"): TaskJob =>
   ({ id, kind, name: id, line: "", detail: "", startedAt: 0, state });

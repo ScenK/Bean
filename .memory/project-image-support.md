@@ -5,8 +5,8 @@
   (all surfaces do this). Deliberate ceiling: multi-turn follow-ups about the same image lose
   the pixels — widen `ChatTurn` only if that ever matters. Never store base64 in bean.db — note images (#182) are
   raw BLOBs in their own `note_images` table, referenced by id, so prompt/search/history rows stay small.
-  Main re-checks renderer-sent images (`checkImageAttachments`: list, ≤4, png/jpeg/webp, ≤10 MB by base64
-  length) in the desktop chat handler and `stageImages` — the renderer's `imageFileGuard` is UX only (#733).
+  The host re-checks renderer-sent images (`checkImageAttachments`: list, ≤4, png/jpeg/webp, ≤10 MB by base64
+  length) in the desktop chat handler (host `chat.ts`) and `stageImages` — the renderer's `imageFileGuard` is UX only (#733).
 - **Generation is a per-request tool.** `makeGenerateImageTool()` (core `image-gen.ts`) must
   be built fresh per converse() call — its `paths` array collects that one turn's generated
   files (a shared instance leaks paths across requests). `converse()` never sets
@@ -45,8 +45,8 @@
   (`DroppedImage` carries PDFs too) → composer chip; `ChatSession`'s `pdfRef` holds the bytes and
   every Bean turn sends `documents` (core re-sends them as one framed message before history). Bytes
   never touch a `ChatItem`: the attaching user item has `pdf: { name, size }`, saved as
-  `[PDF attached: name]`; a restored chat gets one "drop it again" row (`restoredPdf` dedupes). Main
-  runs `checkPdfAttachment` before `converse()`; a thrown check or a `result.error` on a PDF turn
+  `[PDF attached: name]`; a restored chat gets one "drop it again" row (`restoredPdf` dedupes). The host
+  (`chat.ts`) runs `checkPdfAttachment` before `converse()`; a thrown check or a `result.error` on a PDF turn
   unpins it so one bad file can't sink every later turn.
 - **Agent-mode PDFs (#732) are path-only text** — no staging, no Bean call. A Finder drop inserts the
   path; a paste/browser drag (no path) gets `PDF_NO_PATH`. A *pending* (unsent) pin carried into an

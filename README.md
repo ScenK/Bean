@@ -13,7 +13,8 @@ it can on its own, runs errands on a schedule, and when a job needs real hands i
 brings in a coding agent (`claude`, `codex`, `opencode`) — always with your OK.
 No dashboards, no setup files, no ceremony. Just a bean.
 
-> **macOS only, for now.**
+> **The full app is macOS.** On Windows, the desktop app runs as a shell attached to a Bean core
+> on another machine (see [Three ways to run Bean](#three-ways-to-run-bean)).
 
 ---
 
@@ -89,9 +90,24 @@ Set it up entirely from the UI panels — **Settings** (key/model/terminal/edito
 **Persona** (your name and tastes), **Skills**, **Projects**, and **Sprouts**.
 Nothing to hand-edit.
 
+## Three ways to run Bean
+
+Bean is two halves: the **core** (the brain, your `~/.bean` data, sprouts, chat bots, the coding
+agents it runs) and the **desktop shell** (the avatar and its windows). You choose where the core lives.
+
+1. **Desktop with a local core** (macOS, the default). One app, everything on this Mac.
+2. **Headless core.** `bean-core` runs the core with no desktop app — as a launchd/systemd service
+   on a dev machine, or in a Docker container. Sprouts, reminders and the Discord/Teams bots keep
+   running with no screen. Setup: [`docs/headless.md`](docs/headless.md).
+3. **Desktop attached to a remote core.** The desktop app on any Mac or Windows PC attaches to a
+   headless core over SSH (no open port). Add the core in the app's **Cores** panel
+   (`user@host`, plus the container name if it runs in Docker). The **Windows** app is always this
+   mode: it has no local core, so Mac-only features (Mac control, Terminal hand-off, the terminal
+   pane) are hidden.
+
 ## Requirements
 
-- macOS
+- macOS for the full app; Windows for the remote-only shell
 - Your own OpenAI API key (set it in Settings)
 - [`opencode`](https://opencode.ai) and/or `claude`, /`codex` on your `PATH` — for the launch
   modes that hand work to an external agent
@@ -106,8 +122,9 @@ pnpm dev        # build + launch
 pnpm test       # unit tests
 ```
 
-pnpm-workspace monorepo: `packages/core` (pure logic, zero Electron) + `packages/app`
-(Electron shell), plus `packages/discord` and `packages/teams` surfaces. Full
+pnpm-workspace monorepo: `packages/core` (pure logic, zero Electron), `packages/host` (the
+Electron-free host process — in the app, or headless as `bean-core`), `packages/app` (Electron
+shell), plus `packages/discord` and `packages/teams` bot surfaces. Full
 architecture, conventions, and contribution rules live in [`AGENTS.md`](AGENTS.md) —
 read it before opening a PR.
 

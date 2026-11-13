@@ -33,6 +33,14 @@ CREATE TABLE IF NOT EXISTS memory_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+-- Heartbeat leases (scheduler-lease.ts): one row per name ('scheduler'), so one data directory
+-- runs one scheduler + reminder loop across processes and containers. expires = epoch ms.
+CREATE TABLE IF NOT EXISTS leases (
+  name    TEXT PRIMARY KEY,
+  holder  TEXT NOT NULL,
+  label   TEXT NOT NULL,
+  expires INTEGER NOT NULL
+);
 -- Before/after images of each dream run, per merge/drop group, for Undo last dream and Details.
 -- Pruned after 30 days inside the next dream.
 CREATE TABLE IF NOT EXISTS memories_history (

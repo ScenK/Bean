@@ -1,6 +1,6 @@
 ---
 name: project-durable-run-queue
-description: Cross-process delegate-run records (run-queue.ts, ~/.bean/runs/<runId>.json, tracks the delegate CHILD's pid, never a lock — #385 lifted the one-run-per-project rule) for crash cleanup, split from interrupted-run reporting (outbox.ts reuse); why release waits for the child to be confirmed dead; why everything on the interrupt path is fully synchronous and main.ts's before-quit does NOT use preventDefault.
+description: Cross-process delegate-run records (run-queue.ts, ~/.bean/runs/<runId>.json, tracks the delegate CHILD's pid, never a lock — #385 lifted the one-run-per-project rule) for crash cleanup, split from interrupted-run reporting (outbox.ts reuse); why release waits for the child to be confirmed dead; why everything on the interrupt path is fully synchronous and the host's quit hook (desktop `before-quit`) does NOT use preventDefault.
 metadata:
   type: project
 ---
@@ -37,11 +37,11 @@ session (`RunRegistry.start` drops `resume` + `BUSY_THREAD_NOTICE`, #384).
 
 ## Boot cleanup: two different policies
 
-- **Desktop** (`main.ts` → `sweepDeadRuns`): deletes records whose pid is dead (or that don't
-  parse). **Never kills** — the bots share `runs/`, and a live record may be their running child.
-- **Headless bot** (`headless-routines.ts` → `clearReservations`): the bot owns `~/.bean` alone,
-  so it SIGKILLs each recorded process group and deletes every file. After a container restart
-  pids start low again, so a stale record's pid can match an unrelated live process.
+- **Every host** (`createHost` → `sweepDeadRuns`, desktop and `bean-core`): deletes records whose
+  pid is dead (or that don't parse). **Never kills** — the bots share `runs/`, a live record may be
+  their running child, and after a container restart pids start low again, so a stale record's pid
+  can match an unrelated live process (even this one). The old headless bot's kill-everything
+  `clearReservations` was deleted with it (#806); records are never a lock, so a survivor is inert.
 - Both treat pre-#385 per-project `<sha256>.json` reservation files like any record (same shape).
 - Pid liveness is `process.kill(pid, 0)`. POSIX-only; revisit if Windows packaging is ever added.
 
@@ -78,12 +78,14 @@ Two independent reasons drove this, not just one:
   it manifested as Ctrl+C during `pnpm dev` sometimes never actually quitting the Electron
   process (tray icon stayed alive) even though a subsequent manual "Exit" click worked fine.
   Making the whole interrupt path synchronous end-to-end removes the async gating entirely, so
-  `before-quit` doesn't need `preventDefault()` at all — it now matches every *other* listener in
-  `main.ts`, which are all plain synchronous fire-and-forget:
+  the quit hook doesn't need `preventDefault()` at all — `createHost`'s `onQuit` (wired to
+  `before-quit` by `main.ts`, to SIGTERM/SIGINT by `bean-core`) is plain synchronous fire-and-forget:
   ```ts
-  app.on("before-quit", () => {
-    quitting = true;
-    interruptAllDelegates(); // synchronous — fs work is done by the time this call returns
+  deps.onQuit(() => {
+    delegateTasks.interruptAll(); // synchronous — fs work is done by the time this call returns
+    liveTasks.forceKillAll();
+    killAllDelegates();
+    killAllCommands();
   });
   ```
   Discord/Teams bot subprocesses follow the same shape: `runs.interruptAll(); process.exit(0);`
@@ -102,6 +104,6 @@ prompts the user to re-ask.
 Delegates spawn `detached` (own process group), and `cancel()`'s SIGTERM→5s→SIGKILL escalation
 never reaches SIGKILL when the app exits right after — routine-step `claude -p` runs survived quit
 as orphans (SIGTERM alone didn't stop them). `delegate.ts` keeps every unsettled run in a module
-registry and `killAllDelegates()` group-SIGKILLs them synchronously; `main.ts`'s first
-`before-quit` handler calls it right after `interruptAllDelegates()` (which still writes the outbox
+registry and `killAllDelegates()` group-SIGKILLs them synchronously; the host's quit hook
+(`host.ts`) calls it right after `delegateTasks.interruptAll()` (which still writes the outbox
 notices). One call covers every `runDelegate` caller — don't replace it with per-caller handle sets.

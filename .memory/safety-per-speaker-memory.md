@@ -9,7 +9,7 @@ preference as the owner's. The platform id gates capture (role); the name is onl
 
 - **Recall is filtered in SQL before ranking** — `loadMemories(file, subject)`: absent = all rows
   (desktop + Persona: the owner's own machine, unchanged), `null` = shared only (channels and
-  **both** routine hosts: `main.ts` and Discord's `headless-routines.ts`), an id = shared + that
+  routine runs, via core's `routine-wiring.ts`), an id = shared + that
   speaker's (their DMs). Never rank first and filter after: the top-K cut would leak or starve.
   Chime-ins (`chatops/chatter.ts`) load `null` too, re-filter `subjectId` defensively, and strip
   `projectPath` — nobody addressed Bean there, so the recall is for whoever reads the channel.
@@ -34,8 +34,8 @@ preference as the owner's. The platform id gates capture (role); the name is onl
   text must share one prefix (none = the owner's), so one speaker's fact never absorbs another's.
 - **Dream never sees private rows**: `maybeDream` loads `null` and `countMemoriesSince` counts
   shared only. `memories_history` has no `subject_id`, so a private row merged/undone by dream
-  would come back shared — don't widen dream without adding the column there. Dream stays off on
-  the headless host (only the desktop triggers it).
+  would come back shared — don't widen dream without adding the column there. Only desktop-chat
+  memory saves trigger it (`createHost`'s memory handlers, so a shell attached to `bean-core` counts).
 - **Recall is dated** (#352): `memoriesBlock()` suffixes every line with `(saved YYYY-MM-DD HH:MM UTC)`
   from `createdAt` (`(saved unknown)` if it doesn't parse), and both the default header and
   `ROUTINE_MEMORY_HEADER` carry `MEMORY_CONFLICT_CLAUSE` (later-saved wins). It rides its own

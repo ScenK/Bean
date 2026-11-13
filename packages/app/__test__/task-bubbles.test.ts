@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, expect, test, vi } from "vitest";
-import { createTaskBubbles } from "../src/renderer/task-bubbles.js";
-import type { TaskJob } from "../src/task-status.js";
+import { afterEach, beforeAll, describe, expect, it, test, vi } from "vitest";
+import { createTaskBubbles, liveBadgeAgent } from "../src/renderer/task-bubbles.js";
+import type { TaskJob } from "@bean/host";
 
 beforeAll(() => {
   vi.stubGlobal("ResizeObserver", class { observe(): void {} disconnect(): void {} });
@@ -54,4 +54,17 @@ test("Stop names every live run of the sprout, disables while stopping, and keep
   expect(stopping.disabled).toBe(true);
   expect(stopping.textContent).toBe("Stopping…");
   expect((document.activeElement as HTMLElement).dataset.id).toBe("routine:r:1");
+});
+
+describe("liveBadgeAgent", () => {
+  const job = (p: Partial<TaskJob>): TaskJob => ({ id: "j", kind: "live", name: "", line: "", detail: "", startedAt: 0, state: "running", ...p });
+
+  it("wears the newest running desktop session's agent, and clears on end or crash", () => {
+    expect(liveBadgeAgent([job({ agent: "claude", startedAt: 1 }), job({ agent: "codex", startedAt: 2 })])).toBe("codex");
+    expect(liveBadgeAgent([job({ agent: "claude", state: "done" }), job({ agent: "codex", state: "failed" })])).toBeUndefined();
+  });
+
+  it("ignores chatops live sessions (reported as delegate jobs)", () => {
+    expect(liveBadgeAgent([job({ kind: "delegate", name: "proj · live" })])).toBeUndefined();
+  });
 });

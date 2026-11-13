@@ -30,9 +30,9 @@ watches/interacts with the actual CLI directly.
 dropped URL) losslessly into the generated shell script — verified in
 `packages/core/__test__/launcher.test.ts`.
 
-**Still true, unchanged:** the frontmatter/flag-misparsing risk noted in the old runner
-ponytail comment (a prompt starting with `-`/`--` could be misread by `opencode`'s yargs CLI as
-a flag) — carried forward verbatim into `launchCommand()`'s comment. Not yet fixed at the source.
+**Flag misparsing:** a prompt starting with `-`/`--` (leftover `---` frontmatter) could be read
+as a flag — `launchCommand()` guards opencode (`--prompt=` as one token) and codex (`--`); the
+claude prompt is still a bare positional.
 
 **Scope update:** this convention covers Terminal launches (`launchInTerminal`) only. The
 delegate subsystem ([convention-delegate-loopback](convention-delegate-loopback.md)) is the

@@ -32,14 +32,13 @@ the panel edits each entry by its index — never map over a whole transport (#5
 extra channels into duplicates → double posts). `cleanChatSinks` (renderer `chat-sinks.ts`) trims,
 drops blank rows and exact duplicates on every panel save.
 
-**Headless host (#279).** `BEAN_HEADLESS_ROUTINES=1` makes the Discord server a routine host
-(`discord/src/headless-routines.ts`): scheduler + `createRoutineHost` + core `makeRoutineSteps`
-(the same delegate/command adapters main.ts uses). **One scheduler per `~/.bean`** —
-`.state.json` writes are serialized in-process only; `chatops-servers.ts` strips the variable
-from the bot the app spawns, keep that. Headless needs `TZ` (refuses to boot without it),
-turns alarm/`notify`/missed-run notices into owner DMs via the outbox, and on boot SIGKILLs +
-clears every `~/.bean/runs/` reservation (`clearReservations` — only safe because this process
-owns the dir). `saveRoutine`/`saveRoutineStates` write `<file>.tmp` then rename; the temp name
+**Headless host (#806).** `bean-core` (`host/src/bean-core.ts`) is `createHost()` under plain
+Node with `headless` set; bots never schedule (the Discord `BEAN_HEADLESS_ROUTINES` mode is gone).
+**One scheduler per `~/.bean`** — `.state.json` writes are serialized in-process only. It needs
+`TZ` (refuses to boot without it), turns notification-shaped notices (untargeted reminders,
+alarm/`notify`/missed-run) into owner DMs via the outbox of the first configured bot, else logs,
+and rebases missed sprouts (`clearMissed`, no Run-now). Boot cleanup is the desktop's
+`sweepDeadRuns` (never kills). `saveRoutine`/`saveRoutineStates` write `<file>.tmp` then rename; the temp name
 must not end in `.json` (loadRoutines would load it).
 
 Steps carry an optional stable `id` (`[a-z0-9-]`, unique per routine, assigned by
@@ -60,7 +59,7 @@ pass bounded at 50 executions. The goto target gets only the firing gate's newes
 as quoted data; the gated prior block keeps the latest attempt per step. Re-entered delegate
 steps resume their own session (same CLI only). Outcome `needs-attention` (stop / exhausted /
 last gate FAIL) is a third `RunRecord.status` — treat any `!== "ok"` as needing the user. In
-gated routines the app holds a todo's run reservation + scratch dir until the run ends.
+gated routines the routine host (core `routine-steps.ts` `hold`) keeps a todo's scratch dir until the run ends.
 
 **Routes (#400).** `route: { paths: [{ when, goto }], otherwise? }` (≥2 paths, labels
 `[a-z0-9-]`, unique, not pass/fail; targets forward-only or "end"; exclusive with gate/next) is
@@ -103,7 +102,7 @@ the members.
 
 **Command steps (#265).** `kind: "command"` runs `command` via `/bin/sh -c` (core `runShellCommand`,
 own process group, timeout SIGKILLs the group) in `project`, else the same scratch dir a delegate
-step would use, with the app's resolved login-shell PATH. No model/memories/skill — the validator
+step would use, with the host's resolved login-shell PATH. No model/memories/skill — the validator
 rejects `skill`/`model`/`cli`/`instruction` on it. Verdict = exit code (0 PASS, else FAIL), never
 the output text; ungated non-zero = failed step, gated = FAIL routed by the gate with the output
 tail (capped 16k) as feedback; timeout = hard step error. Todo runs get `BEAN_TODO_ID`/`BEAN_TODO_TEXT`

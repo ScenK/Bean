@@ -44,6 +44,9 @@ export interface RoutineSchedulerDeps {
   /** Fired once when a watch fails ALARM_AFTER polls in a row (desktop notification only —
    * never chatops sinks). Best-effort: the panel's status line is the guarantee. */
   alarm?: (routine: Routine, error: string) => void;
+  /** Automatic fires gate: false = tick() does nothing (a host standing by for the scheduler
+   * lease — a manual run's follow-up tick or Check now must not fire due routines). Absent = always. */
+  canSchedule?: () => boolean;
   /** Fired once at start() with every routine just flagged missed (headless hosts DM the owner). */
   onMissed?: (names: string[]) => void;
 }
@@ -104,6 +107,8 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   const inFlight = new Map<string, number>();
   const bump = (name: string, by: number): void => { inFlight.set(name, (inFlight.get(name) ?? 0) + by); };
   let stopped = false;
+  // Automatic fires only while this host holds the scheduler lease (re-checked after awaits).
+  const mayFire = (): boolean => deps.canSchedule?.() ?? true;
   // Per-run Stop handles, registered at admission (before stamp/claims) and dropped when that
   // run/worker settles. `stopRuns(name)` aborts them; `stop()` (shutdown) doesn't touch them.
   const stops = new Map<string, Set<AbortController>>();
@@ -135,7 +140,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
 
   // Every .state.json write goes through one chain: ticks overlap (a long run keeps one tick
   // awaiting while the next starts polling), so bare load→save pairs would drop each other's
-  // fields. ponytail: in-process only — the bots never write .state.json.
+  // fields. In-process only: the scheduler lease (scheduler-lease.ts) keeps it to one process.
   let stateChain: Promise<unknown> = Promise.resolve();
   const withStates = (fn: (all: Record<string, RoutineState>) => Record<string, RoutineState> | undefined): Promise<void> => {
     const run = stateChain.then(async () => {
@@ -180,12 +185,12 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     const left = count(routine.name) - 1;
     if (left > 0) running.set(routine.name, left);
     else running.delete(routine.name);
-    if (!ran || !routine.watch || stopped) return;
+    if (!ran || !routine.watch || stopped || !mayFire()) return;
     // Against the current definition: a watch disabled mid-run must not run its check again.
     void deps.loadRoutines().then(async (all) => {
       const current = all.find((r) => r.name === routine.name);
-      if (!current?.enabled || !current.watch || stopped) return;
-      await poll(current);
+      if (!current?.enabled || !current.watch || stopped || !mayFire()) return;
+      await poll(current, true);
       if (!stopped) await tick();
     }).catch((err: unknown) => console.error(`bean: watch "${routine.name}" post-run check failed`, err));
   };
@@ -282,19 +287,27 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
 
   /** New items on a notify-only watch: the digest is built here (no model, no runRoutine) and
    * one RunRecord is written per fire, so the Dashboard and run list show it. */
-  async function fireNotify(routine: Routine, items: WatchItem[], at: string): Promise<void> {
+  /** False = `lost()` turned true before delivery started (lease gone): nothing was delivered. */
+  async function fireNotify(routine: Routine, items: WatchItem[], at: string, lost: () => boolean): Promise<boolean> {
     const digest = watchDigest(items);
     const fired = checkSinks(routine, {
       digest, results: [], record: { startedAt: at, finishedAt: now().toISOString(), status: "ok", digest, steps: [] },
     });
     await appendAndPrune(routine.name, fired.record, () => count(routine.name) > 0);
+    // ponytail: a lease lost during the history save leaves that one record undelivered; the new
+    // holder re-offers the items (not marked seen). Delivery itself, once started, can't be recalled.
+    if (lost()) return false;
     await deps.deliverDigest(routine, fired);
+    return true;
   }
 
   /** One poll: seed on first sight (fires nothing), otherwise diff against the seen-set.
    * Todo-driven watches only queue — the queue is the due signal tick() drains. */
-  async function poll(routine: Routine): Promise<WatchCheckResult> {
+  /** `auto` = a scheduled/post-run poll: a lease lost mid-poll drops its results with no side
+   * effects (nothing marked seen, so the new holder's next poll re-offers them). Check now isn't. */
+  async function poll(routine: Routine, auto = false): Promise<WatchCheckResult> {
     const watch = routine.watch;
+    const lost = (): boolean => auto && !mayFire();
     if (!watch || !deps.pollWatch || !deps.watchSeen) return { newItems: 0, error: "watch polling isn't available" };
     if (polling.has(routine.name)) return { newItems: 0, error: "already checking" };
     const at = now().toISOString();
@@ -302,6 +315,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     // shows on the status line and counts toward the alarm, and nothing gets marked seen.
     const fail = async (err: unknown): Promise<WatchCheckResult> => {
       const error = err instanceof Error ? err.message : String(err);
+      if (lost()) return { newItems: 0, error };
       const count = (failures.get(routine.name) ?? 0) + 1;
       failures.set(routine.name, count);
       if (count === ALARM_AFTER) deps.alarm?.(routine, error);
@@ -320,6 +334,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
       // them rather than seeding/stamping the new one with them.
       const current = (await deps.loadRoutines()).find((r) => r.name === routine.name);
       if (!current?.watch || watchSourceKey(current.watch) !== watchSourceKey(watch)) return { newItems: 0 };
+      if (lost()) return { newItems: 0 };
       const unique = [...new Map(items.map((i) => [i.id, i])).values()];
       const ids = unique.map((i) => i.id);
       const source = watchSourceKey(watch);
@@ -332,9 +347,10 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
         // At-least-once: an item is marked seen only after its todo/digest is handed off, so a
         // crash or failed insert re-offers it next poll instead of silently dropping it.
         if (fresh.length > 0 && routine.steps.length === 0) {
-          await fireNotify(routine, fresh, at);
+          if (!(await fireNotify(routine, fresh, at, lost))) return { newItems: 0 };
         } else {
           for (const item of fresh) {
+            if (lost()) return { newItems: 0 }; // the rest stay unseen for the new holder
             await deps.addTodo?.(routine.name, watchTodoText(item));
             deps.watchSeen.markNew(routine.name, [item.id]);
           }
@@ -353,6 +369,7 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
   }
 
   async function tick(): Promise<void> {
+    if (!mayFire()) return;
     // Flag candidates right after the routines load (before the states await) so an isRunning()
     // check made while a tick is still in flight sees them.
     const routines = await deps.loadRoutines();
@@ -381,16 +398,18 @@ export function createRoutineScheduler(deps: RoutineSchedulerDeps) {
     }
     // Due routines start together (fill takes its slots synchronously, right after the flags clear).
     // One a Run now started while this tick was deciding (it dropped the flag) is already handled.
-    const go = due.filter((r) => checking.get(r.name) === token);
+    // Re-checked after the awaits above: a lease lost mid-tick admits nothing.
+    const go = mayFire() ? due.filter((r) => checking.get(r.name) === token) : [];
     unflag();
     await Promise.all(go.map(fill));
 
     async function consider(routine: Routine, state: RoutineState | undefined, nowT: Date): Promise<void> {
+      if (!mayFire()) return; // earlier polls this pass may be slow
       if (routine.watch) {
         // No cron, no missed-marking: a watch is due when its queue has work. The window gates
         // scheduled polls only (read against now(), since earlier polls this pass may be slow);
         // a skipped poll leaves lastPoll/failures alone, and draining is never gated.
-        if (pollDue({ ...routine, watch: routine.watch }, state, nowT) && inWatchWindow(routine.watch.window, now())) await poll(routine);
+        if (pollDue({ ...routine, watch: routine.watch }, state, nowT) && inWatchWindow(routine.watch.window, now())) await poll(routine, true);
         const hasWork = routine.steps.length > 0 && routine.todoDriven && deps.hasPendingTodos
           ? await deps.hasPendingTodos(routine.name) : false;
         if (hasWork) due.push(routine);
