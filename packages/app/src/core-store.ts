@@ -39,14 +39,17 @@ const isCore = (v: unknown): v is RemoteCore => {
 };
 
 /** No file (first run) or an unreadable one: a Mac runs its local core, as before; elsewhere none. A
- * selected id that names no saved core (removed, or written by a newer shell) is no core. Malformed
+ * selected id that names no saved core (removed, or written by a newer shell), or "local" off macOS, is
+ * no core. Malformed
  * core entries are dropped. */
 export async function loadCoreChoice(file: string, platform: NodeJS.Platform): Promise<CoreChoice> {
   try {
     const raw = JSON.parse(await readFile(file, "utf8")) as { selected?: unknown; cores?: unknown };
     const cores = Array.isArray(raw.cores) ? raw.cores.filter(isCore) : [];
     if (raw.selected !== undefined) {
-      const selected = raw.selected === "local" || cores.some((c) => c.id === raw.selected) ? raw.selected as string : null;
+      // Local is a macOS-only core: a cores.json carried to another OS falls back to no core.
+      const local = raw.selected === "local" && platform === "darwin";
+      const selected = local || cores.some((c) => c.id === raw.selected) ? raw.selected as string : null;
       return { selected, cores };
     }
     return { selected: platform === "darwin" ? "local" : null, cores };
@@ -82,5 +85,9 @@ export function sshArgs(core: Pick<RemoteCore, "host" | "container">): string[] 
 }
 
 /** The one-time command to run in a terminal when ssh can't attach unattended: it asks to accept the
- * host key and installs this machine's SSH key on the core host. */
-export const oneTimeCommand = (core: Pick<RemoteCore, "host">): string => `ssh-copy-id ${core.host}`;
+ * host key and installs this machine's SSH key on the core host. Windows' OpenSSH has no ssh-copy-id,
+ * so there it's the PowerShell equivalent (an existing ed25519 key; `ssh-keygen` makes one). */
+export const oneTimeCommand = (core: Pick<RemoteCore, "host">, platform: NodeJS.Platform = process.platform): string =>
+  platform === "win32"
+    ? `type $env:USERPROFILE\\.ssh\\id_ed25519.pub | ssh ${core.host} "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"`
+    : `ssh-copy-id ${core.host}`;

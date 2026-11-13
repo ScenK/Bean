@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addCore, coreFile, coreLabel, loadCoreChoice, parseRemoteCore, saveCoreChoice, sshArgs } from "../src/core-store.js";
+import { addCore, coreFile, coreLabel, loadCoreChoice, oneTimeCommand, parseRemoteCore, saveCoreChoice, sshArgs } from "../src/core-store.js";
 
 describe("core choice (#810, #811)", async () => {
   const dir = await mkdtemp(join(tmpdir(), "bean-core-store-"));
@@ -18,7 +18,9 @@ describe("core choice (#810, #811)", async () => {
     await saveCoreChoice(file, { selected: null, cores: [] });
     expect(await loadCoreChoice(file, "darwin")).toEqual({ selected: null, cores: [] });
     await saveCoreChoice(file, { selected: "local", cores: [] });
-    expect(await loadCoreChoice(file, "linux")).toEqual({ selected: "local", cores: [] });
+    expect(await loadCoreChoice(file, "darwin")).toEqual({ selected: "local", cores: [] });
+    // Local is macOS-only (#813): a cores.json carried to Windows boots with no core.
+    expect(await loadCoreChoice(file, "win32")).toEqual({ selected: null, cores: [] });
     await writeFile(file, JSON.stringify({ selected: "remote-1" }));
     expect(await loadCoreChoice(file, "darwin")).toEqual({ selected: null, cores: [] });
     await writeFile(file, "{not json");
@@ -59,5 +61,13 @@ describe("remote core entries", () => {
     expect(args).toContain("StrictHostKeyChecking=yes");
     expect(args.slice(args.indexOf("--"))).toEqual(["--", "me@box", "docker", "exec", "-i", "bean", "bean-core", "attach"]);
     expect(sshArgs({ host: "box" }).slice(-3)).toEqual(["box", "bean-core", "attach"]);
+  });
+});
+
+describe("oneTimeCommand (#813)", () => {
+  it("is ssh-copy-id on a Mac and the PowerShell equivalent on Windows", () => {
+    expect(oneTimeCommand({ host: "me@box" }, "darwin")).toBe("ssh-copy-id me@box");
+    expect(oneTimeCommand({ host: "me@box" }, "win32"))
+      .toBe('type $env:USERPROFILE\\.ssh\\id_ed25519.pub | ssh me@box "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"');
   });
 });

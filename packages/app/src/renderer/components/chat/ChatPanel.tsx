@@ -23,6 +23,7 @@ import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { coreOffline, useCoreStatus } from "../../shared/core-status.js";
 import type { CliName, ImageAttachment, LiveCli, LinkedNote, Project, ProposedNote, ProposedSkill, RouteSuggestion, Skill } from "@bean/core";
 import type { ChatDrop, DroppedImage } from "../../../channels.js";
+import { MOD_LABEL } from "../../shared/mod-key.js";
 
 /** Esc Esc: the window for the second press. */
 const ESC_STOP_MS = 800;
@@ -643,7 +644,7 @@ export function ChatPanel({
         {items.length === 0 ? (
           <PanelEmptyState message="What are we brewing today?">
             <div class="bean-panel-empty-text">Ask Bean to do something, or just say hi.</div>
-            {localPaths ? <div class="bean-panel-empty-text">⌘-click a link or path to open it</div> : null}
+            {localPaths ? <div class="bean-panel-empty-text">{MOD_LABEL}-click a link or path to open it</div> : null}
           </PanelEmptyState>
         ) : null}
         {items.map((it, i) => {

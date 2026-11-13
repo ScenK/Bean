@@ -42,6 +42,8 @@ export interface AppInfo {
   author: string;
   description: string;
   isPackaged: boolean;
+  /** Bean can download and install its own updates (macOS); elsewhere About only links the releases page. */
+  selfUpdate: boolean;
 }
 
 export type UpdateStatus =
