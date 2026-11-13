@@ -2,7 +2,7 @@ import { createOrb } from "./orb.js";
 import { createTaskBubbles, liveBadgeAgent } from "./task-bubbles.js";
 import { h, render } from "preact";
 import { AgentAvatar } from "./shared/AgentAvatar.js";
-import type { AvatarMode, ComponentKind, DroppedImage } from "../channels.js";
+import { isNoCore, type AvatarMode, type ComponentKind, type DroppedImage } from "../channels.js";
 import { PDF_MIME, imageFileGuard, pdfFileGuard, readImageFile } from "./shared/chat-types.js";
 import { createDragPreparationGate } from "../drag-preparation.js";
 import { createDragWatchdog } from "../drag-watchdog.js";
@@ -81,6 +81,11 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
     if (t === "hearth" || t === "graphite") document.documentElement.dataset.theme = t;
   }).catch((err: unknown) => console.warn("Bean: using fallback theme", err));
   window.bean.onThemeChanged((t) => { document.documentElement.dataset.theme = t; });
+
+  // No core attached (#810): a click opens Add a core instead of the quick actions (every tile needs a
+  // core), and a drag gets no tiles — the drop lands on the bean, whose chat drop main sends there too.
+  let noCore = false;
+  window.bean.handshake().catch((err: unknown) => { noCore = isNoCore(err); });
 
   // Avatar mode: "normal" (collapsed bean) | "hover" (proximity box, no tiles) | "menu"
   // (quick-action tiles) | "drag" (skill/quick-action tiles).
@@ -221,6 +226,7 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
   // pressing Escape also closes it. Tiles are rendered collapsed then flipped open next frame (in
   // onAvatarDragLayout) so the slide-in actually plays.
   const setMenuOpen = (open: boolean): void => {
+    if (open && noCore) { void window.bean.openComponent("cores"); return; }
     if (open) {
       cancelCollapse();
       setMode("menu");
@@ -438,6 +444,7 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
       return;
     }
     if (mode !== "normal" && mode !== "hover") return;
+    if (noCore) return;
     if (!dragPreparation.begin()) return;
     cancelCollapse();
     const version = resetVersion;

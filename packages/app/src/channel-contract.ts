@@ -1,5 +1,5 @@
 import { argsOk, guard as g, type Capability, type Guard } from "@bean/host";
-import { IPC } from "./channels.js";
+import { IPC, NO_CORE } from "./channels.js";
 
 /** Who owns a channel (#807) — the one table a shell and a host agree on:
  * - `core` — the host's own work (chats, memory, notes, routines, config, bots); runs on any host.
@@ -227,6 +227,7 @@ export const CHANNEL_CONTRACT = {
   checkForUpdate: shell,
   installUpdate: shell,
   openUpdateReleasePage: shell,
+  useLocalCore: shell,
 } satisfies Record<keyof typeof IPC, ChannelContract>;
 
 const BY_CHANNEL = new Map<string, ChannelContract>(
@@ -260,4 +261,12 @@ export function guardIpc(ipc: IpcLike, capabilities: readonly Capability[]): Ipc
     handle: (channel, fn) => ipc.handle(channel, wrap(channel, fn, (why) => { throw new Error(`Bean refused the call: ${why}.`); })),
     on: (channel, fn) => ipc.on(channel, wrap(channel, fn, (why) => { console.warn(`bean: dropped — ${why}`); return undefined; })),
   };
+}
+
+/** No core attached (#810): every core and host-bound invoke rejects with the one `NO_CORE` error; their
+ * sends have no listener, so they are dropped. The shell's own channels are registered as usual. */
+export function registerNoCore(ipc: Pick<IpcLike, "handle">): void {
+  for (const [key, c] of Object.entries(CHANNEL_CONTRACT)) {
+    if (c.owner !== "shell") ipc.handle(IPC[key as keyof typeof IPC], () => { throw new Error(NO_CORE); });
+  }
 }

@@ -18,8 +18,10 @@ import {
 } from "@bean/core";
 import type { RouteSuggestion, Transport } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
-import { registerIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens, buildPendingUpdateStore, type ChatPromptPayload } from "./ipc.js";
-import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop } from "./channels.js";
+import { registerIpc, registerShellIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens, buildPendingUpdateStore, type ChatPromptPayload } from "./ipc.js";
+import { IPC, SHELL_ONLY_KINDS, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop } from "./channels.js";
+import { registerNoCore } from "./channel-contract.js";
+import { coreFile, loadCoreChoice, saveCoreChoice } from "./core-store.js";
 import { saveTheme, themeFile } from "./theme-store.js";
 import {
   hasRequestedNotificationPermission, markNotificationPermissionRequested, notificationPermissionFile,
@@ -60,10 +62,17 @@ app.on("web-contents-created", (_e, contents) => {
 });
 
 app.whenReady().then(async () => {
+  // Boot is the shell (windows, tray, theme, updater) plus, only when it's the selected core, the local
+  // core (#810). With no core attached Bean never touches ~/.bean: the avatar opens Add a core instead.
+  const userData = app.getPath("userData");
+  const corePath = coreFile(userData);
+  const localCore = (await loadCoreChoice(corePath, process.platform)).selected === "local";
   const dir = beanDir();
-  ensurePrivateBeanDir(dir); // before anything below creates ~/.bean world-readable
-  // Chat delegates with no project (and project-less routine steps) run here; spawn needs the cwd.
-  mkdirSync(scratchDir(dir), { recursive: true });
+  if (localCore) {
+    ensurePrivateBeanDir(dir); // before anything below creates ~/.bean world-readable
+    // Chat delegates with no project (and project-less routine steps) run here; spawn needs the cwd.
+    mkdirSync(scratchDir(dir), { recursive: true });
+  }
   // Packaged builds don't contain the monorepo root, so projectBeanDir()'s "../../../.bean"
   // walk resolves outside the app bundle. electron-builder copies .bean into Resources/builtin
   // instead (see package.json build.extraResources) — use that when packaged.
@@ -73,7 +82,7 @@ app.whenReady().then(async () => {
   app.on("before-quit", () => { quitting = true; });
   const avatar = createAvatarWindow();
   // Evidence for a vanished avatar (#757): renderer/GPU deaths, sleep, displays, each recovery click.
-  const avatarLogPath = avatarLogFile(dir);
+  const avatarLogPath = avatarLogFile(localCore ? dir : userData);
   const writeAvatarLog = createAvatarLog(avatarLogPath);
   let avatarLogOk = true;
   const avatarLog = (event: string, fields?: Record<string, unknown>): void => { avatarLogOk = writeAvatarLog(event, fields); };
@@ -235,6 +244,7 @@ app.whenReady().then(async () => {
   };
   // Retro drafts waiting for review (#263) — shown only when there are some.
   const proposalRows = (): MenuItemConstructorOptions[] => {
+    if (!localCore) return [];
     let n = 0;
     try { n = listSkillProposals(dbFile(dir)).length; } catch (err) { console.error("skill proposals count failed:", err); }
     return n ? [{ label: `${n} Skill Proposal${n === 1 ? "" : "s"} Waiting`, icon: symbol("sparkles"), click: () => openComponent("skills") }] : [];
@@ -243,7 +253,7 @@ app.whenReady().then(async () => {
     { label: "Bring Bean Back", icon: symbol("location"), click: () => avatarControls.bringBack() },
     ...proposalRows(),
     { label: "Settings", icon: symbol("gearshape"), accelerator: "Cmd+,", click: () => openComponent("settings") },
-    { label: "Chat Bots", icon: symbol("message"), submenu: buildChatopsSubmenu() },
+    ...(localCore ? [{ label: "Chat Bots", icon: symbol("message"), submenu: buildChatopsSubmenu() }] : []),
     { label: "Keep Mac Awake", icon: symbol("cup.and.saucer"), type: "checkbox", checked: keepAwake.alwaysOn(), click: (item) => toggleKeepAwake("alwaysOn", item.checked) },
     // Greyed (no click, no beep) while Keep Mac Awake is off; the remembered choice still shows.
     { label: "Keep Display On", icon: symbol("display"), type: "checkbox", checked: keepAwake.display(), enabled: keepAwake.alwaysOn(), click: (item) => toggleKeepAwake("display", item.checked) },
@@ -309,7 +319,11 @@ app.whenReady().then(async () => {
   // A run to open in the Dashboard: pulled on mount by a fresh (or still-loading) window, pushed to
   // an open one. A mounted window never stores it — that would make a later reopen jump to an old run.
   let pendingDashboardTarget: DashboardTarget | undefined;
-  const openComponent = (kind: ComponentKind, payload?: ChatDrop | DashboardTarget): void => {
+  const openComponent = (requested: ComponentKind, requestedPayload?: ChatDrop | DashboardTarget): void => {
+    // No core attached: every window that needs one opens Add a core instead (#810).
+    const noCore = !host && !SHELL_ONLY_KINDS.includes(requested);
+    const kind = noCore ? "cores" : requested;
+    const payload = noCore ? undefined : requestedPayload;
     const droppedUrl = typeof payload === "string" || Array.isArray(payload) ? payload : undefined;
     const target = typeof payload === "object" && !Array.isArray(payload) && kind === "dashboard" ? payload : undefined;
     const existing = componentWindows.get(kind);
@@ -377,7 +391,8 @@ app.whenReady().then(async () => {
   const proposeRun = (suggestion: RouteSuggestion): void => {
     planStore.set(suggestion);
     openComponent("plan");
-    sendToWindow(componentWindows.get("plan")!, IPC.proposeRun, suggestion);
+    const plan = componentWindows.get("plan");
+    if (plan) sendToWindow(plan, IPC.proposeRun, suggestion);
   };
 
   // Chat-target skill runs: stash the composed prompt (pull-on-mount, same race fix as
@@ -388,10 +403,11 @@ app.whenReady().then(async () => {
   const runInChat = (payload: ChatPromptPayload): void => {
     chatPromptStore.set(payload);
     openComponent("chat");
-    sendToWindow(componentWindows.get("chat")!, IPC.chatPrompt, payload);
+    const chat = componentWindows.get("chat");
+    if (chat) sendToWindow(chat, IPC.chatPrompt, payload);
   };
 
-  const themePath = themeFile(app.getPath("userData"));
+  const themePath = themeFile(userData);
   const systemTheme = (): Theme => (nativeTheme.shouldUseDarkColors ? "graphite" : "hearth");
   let currentTheme: Theme = systemTheme();
   const getCurrentTheme = (): Theme => currentTheme;
@@ -442,78 +458,116 @@ app.whenReady().then(async () => {
     await markNotificationPermissionRequested(notifPermissionPath);
   })();
 
+  // The update relaunch's teardown of the local core's processes; nothing without one.
+  let stopCore = (): void => {};
+  const shellOps = createShellOps();
   try {
-    // Chat windows' terminals die with their chat: release (incl. the window's `closed`, which
-    // releases every chat it held), before-quit, and the update relaunch below. Created after the
-    // host (it needs projectAllowed); a chat released before then has no terminals.
-    let terminalTasks: TerminalTasks | undefined;
-    const isChatClient = (clientId: number): boolean => componentWindows.get("chat")?.webContents.id === clientId;
-    // The Electron-free host: chats, delegates, live sessions, routines + scheduler, memory (@bean/host).
-    const h = host = await createHost({
-      dir,
-      builtinDir: projectDir,
-      push: hostPush(push),
-      onJobs: (jobs) => {
-        keepAwake.setJobs(jobs); // before the avatar check: the hold must track work even without a window
-        // Mid-reload the old document is gone; the finished reload replays the current list.
-        if (!avatarControls.reloading()) push.broadcast(IPC.taskStatus, jobs);
-      },
-      notification: notificationTransport,
-      isChatClient,
-      onQuit: (fn) => app.on("before-quit", fn),
-      // One-time heads-up the first time memory saves itself (same one-shot flag-file shape as the
-      // notification-permission prompt).
-      firstAutoMemory: async () => {
-        const first = !(await hasRequestedNotificationPermission(memoryNoticePath));
-        if (first) await markNotificationPermissionRequested(memoryNoticePath);
-        return first;
-      },
-      onChatRelease: (mountId) => { void terminalTasks?.stopMount(mountId); }, // never rejects; the entry is held until the shell is gone
-      bots: {
-        root: app.isPackaged ? process.resourcesPath : dirname(projectBeanDir()),
-        ...(app.isPackaged ? { serverEntries: { discord: "chatops/discord/server.js", teams: "chatops/teams/server.js" } } : {}),
-        // Where the enabled set lived before the host owned it; copied into ~/.bean once.
-        legacyEnabledFile: join(app.getPath("userData"), "chatops-enabled.json"),
-        onEvent: (event) => {
-          if (event.error) chatopsErrorSince[event.bot] = Date.now(); else delete chatopsErrorSince[event.bot];
-          push.broadcast(IPC.chatopsEvent, event);
+    if (localCore) {
+      // Chat windows' terminals die with their chat: release (incl. the window's `closed`, which
+      // releases every chat it held), before-quit, and the update relaunch below. Created after the
+      // host (it needs projectAllowed); a chat released before then has no terminals.
+      let terminalTasks: TerminalTasks | undefined;
+      const isChatClient = (clientId: number): boolean => componentWindows.get("chat")?.webContents.id === clientId;
+      // The Electron-free host: chats, delegates, live sessions, routines + scheduler, memory (@bean/host).
+      const h = host = await createHost({
+        dir,
+        builtinDir: projectDir,
+        push: hostPush(push),
+        onJobs: (jobs) => {
+          keepAwake.setJobs(jobs); // before the avatar check: the hold must track work even without a window
+          // Mid-reload the old document is gone; the finished reload replays the current list.
+          if (!avatarControls.reloading()) push.broadcast(IPC.taskStatus, jobs);
         },
-        // Synced chats (synced-chats.ts): re-read the sidebar.
-        onSynced: (e) => push.broadcast(IPC.syncedChatEvent, e),
-      },
-    });
-    const { runtime } = h;
+        notification: notificationTransport,
+        isChatClient,
+        onQuit: (fn) => app.on("before-quit", fn),
+        // One-time heads-up the first time memory saves itself (same one-shot flag-file shape as the
+        // notification-permission prompt).
+        firstAutoMemory: async () => {
+          const first = !(await hasRequestedNotificationPermission(memoryNoticePath));
+          if (first) await markNotificationPermissionRequested(memoryNoticePath);
+          return first;
+        },
+        onChatRelease: (mountId) => { void terminalTasks?.stopMount(mountId); }, // never rejects; the entry is held until the shell is gone
+        bots: {
+          root: app.isPackaged ? process.resourcesPath : dirname(projectBeanDir()),
+          ...(app.isPackaged ? { serverEntries: { discord: "chatops/discord/server.js", teams: "chatops/teams/server.js" } } : {}),
+          // Where the enabled set lived before the host owned it; copied into ~/.bean once.
+          legacyEnabledFile: join(app.getPath("userData"), "chatops-enabled.json"),
+          onEvent: (event) => {
+            if (event.error) chatopsErrorSince[event.bot] = Date.now(); else delete chatopsErrorSince[event.bot];
+            push.broadcast(IPC.chatopsEvent, event);
+          },
+          // Synced chats (synced-chats.ts): re-read the sidebar.
+          onSynced: (e) => push.broadcast(IPC.syncedChatEvent, e),
+        },
+      });
+      const { runtime } = h;
 
-    // node-pty is loaded on first use, not at boot: a broken native module fails that terminal's
-    // start, never the whole app. Packaged, it resolves from app.asar (spawn-helper unpacked).
-    const requireNative = createRequire(import.meta.url);
-    const spawnPty: PtyFactory = (file, args, opts) => (requireNative("node-pty") as typeof import("node-pty")).spawn(file, args, opts);
-    const terminals = terminalTasks = createTerminalTasks({
-      spawn: spawnPty,
-      projectAllowed: h.projectAllowed,
-      scratchPath: scratchDir(dir),
-      send: (event) => push.send(event.mountId, IPC.terminalEvent, event),
-    });
-    killAllTerminals = terminals.killAll;
+      // node-pty is loaded on first use, not at boot: a broken native module fails that terminal's
+      // start, never the whole app. Packaged, it resolves from app.asar (spawn-helper unpacked).
+      const requireNative = createRequire(import.meta.url);
+      const spawnPty: PtyFactory = (file, args, opts) => (requireNative("node-pty") as typeof import("node-pty")).spawn(file, args, opts);
+      const terminals = terminalTasks = createTerminalTasks({
+        spawn: spawnPty,
+        projectAllowed: h.projectAllowed,
+        scratchPath: scratchDir(dir),
+        send: (event) => push.send(event.mountId, IPC.terminalEvent, event),
+      });
+      killAllTerminals = terminals.killAll;
 
-    registerIpc(ipcMain, {
-      host: h.handlers,
+      // What the update relaunch must stop first: exit() skips before-quit.
+      stopCore = () => {
+        h.bots.stopAll();
+        h.liveTasks.forceKillAll();
+        killAllTerminals();
+        // Release now, or the new app waits out the lease's TTL.
+        h.schedulerLease.stop();
+      };
+
+      registerIpc(ipcMain, {
+        host: h.handlers,
+        push,
+        // In-process host on this Mac: everything; off macOS there's no Terminal.app or system controls.
+        handshake: buildHandshake(pkg.version, process.platform, process.platform === "darwin"
+          ? ["systemControls", "terminalHandoff", "pty", "pathOpen"] : ["pty", "pathOpen"]),
+        shell: shellOps,
+        terminalTasks: terminals,
+        isChatClient,
+        onLaunchError: (req, err) => {
+          const label = req.mode === "open" ? "open the project in your editor" : `launch (${req.mode})`;
+          dialog.showErrorBox("Bean", `Couldn't ${label}: ${err.message}`);
+        },
+        getTerminalApp: () => runtime.getTerminalApp(),
+        getEditorApp: () => runtime.getEditorApp(),
+        getAvailableClis: h.enabledClis,
+        getCliModels: () => h.cliModels,
+        beanDirPath: dir,
+        chatopsStatus: h.bots.status,
+        chatopsStart: h.bots.start,
+        chatopsStop: h.bots.stop,
+        syncedChatHandlers: buildSyncedChatHandlers({
+          dbFile: dbFile(dir),
+          owners: () => loadChatopsOwners(dir),
+          listConversations: listChatopsConversations,
+          conversationTurns: chatopsConversationTurns,
+          liveIds: h.bots.liveIds,
+          deskTurn: h.bots.deskTurn,
+          deskResume: h.bots.deskResume,
+        }),
+        deskContinue: buildDeskContinueHandler({
+          listDestinations: () => listDestinations(dbFile(dir)),
+          deskContinue: (body) => h.bots.deskContinue("discord", body),
+          handover: (owner, sessionId) => h.liveTasks.handover(owner, sessionId),
+        }),
+      });
+    } else {
+      registerNoCore(ipcMain);
+    }
+
+    registerShellIpc(ipcMain, {
       push,
-      // In-process host on this Mac: everything; off macOS there's no Terminal.app or system controls.
-      handshake: buildHandshake(pkg.version, process.platform, process.platform === "darwin"
-        ? ["systemControls", "terminalHandoff", "pty", "pathOpen"] : ["pty", "pathOpen"]),
-      shell: createShellOps(),
-      terminalTasks: terminals,
-      isChatClient,
-      onLaunchError: (req, err) => {
-        const label = req.mode === "open" ? "open the project in your editor" : `launch (${req.mode})`;
-        dialog.showErrorBox("Bean", `Couldn't ${label}: ${err.message}`);
-      },
-      getTerminalApp: () => runtime.getTerminalApp(),
-      getEditorApp: () => runtime.getEditorApp(),
-      getAvailableClis: h.enabledClis,
-      getCliModels: () => h.cliModels,
-      beanDirPath: dir,
+      shell: shellOps,
       getAppInfo: () => ({
         version: pkg.version,
         author: pkg.author,
@@ -526,7 +580,7 @@ app.whenReady().then(async () => {
       // The install ends in app.relaunch() + app.exit(), which skips before-quit — so the only
       // thing that would reap the chatops children is each server's 5s exitWhenOrphaned() poll,
       // and the replacement app can autostart Teams inside that window and lose the port to the
-      // orphan. Kill them ourselves instead, while we still have handles.
+      // orphan. Kill them ourselves instead, while we still have handles (stopCore).
       //
       // Hung off the relaunch hook rather than done up front on purpose: installAndRelaunch()
       // reaches relaunch() only after the bundle swap has succeeded (every failure path rolls
@@ -536,20 +590,13 @@ app.whenReady().then(async () => {
       // sessions likewise: their permissions-bypassed trees must not outlive their chat window.
       installUpdate: (extractedAppPath: string) => installAndRelaunch(extractedAppPath, {
         relaunch: () => {
-          h.bots.stopAll();
-          h.liveTasks.forceKillAll();
-          killAllTerminals();
-          // exit() skips before-quit: release now, or the new app waits out the lease's TTL.
-          h.schedulerLease.stop();
+          stopCore();
           app.relaunch();
         },
       }),
       pendingUpdateStore,
       cleanupExtractedBundle: (extractedAppPath: string) => cleanupExtractedBundle(extractedAppPath),
       openReleasesPage: () => { void shell.openExternal("https://github.com/ScenK/Bean/releases"); },
-      chatopsStatus: h.bots.status,
-      chatopsStart: h.bots.start,
-      chatopsStop: h.bots.stop,
       getCurrentTheme, setCurrentTheme, openComponent, proposeRun,
       getPendingPlan: planStore.get,
       getPendingDroppedUrl: droppedUrlStore.get,
@@ -557,20 +604,15 @@ app.whenReady().then(async () => {
       runInChat,
       getPendingChatPrompt: chatPromptStore.get,
       getPendingInterruptedRunNotices: interruptedRunStore.get,
-      syncedChatHandlers: buildSyncedChatHandlers({
-        dbFile: dbFile(dir),
-        owners: () => loadChatopsOwners(dir),
-        listConversations: listChatopsConversations,
-        conversationTurns: chatopsConversationTurns,
-        liveIds: h.bots.liveIds,
-        deskTurn: h.bots.deskTurn,
-        deskResume: h.bots.deskResume,
-      }),
-      deskContinue: buildDeskContinueHandler({
-        listDestinations: () => listDestinations(dbFile(dir)),
-        deskContinue: (body) => h.bots.deskContinue("discord", body),
-        handover: (owner, sessionId) => h.liveTasks.handover(owner, sessionId),
-      }),
+      // Add a core → "Use this Mac": a Mac's only core is in-process, so save the choice and restart.
+      ...(process.platform === "darwin" && !localCore ? {
+        useLocalCore: () => {
+          saveCoreChoice(corePath, { selected: "local" }).then(
+            () => { app.relaunch(); app.quit(); },
+            (e: unknown) => dialog.showErrorBox("Bean", `Couldn't switch to this Mac's core: ${e instanceof Error ? e.message : String(e)}`),
+          );
+        },
+      } : {}),
     });
 
     await loadAvatarWindow(avatar);
@@ -580,7 +622,7 @@ app.whenReady().then(async () => {
     // interruptAll()/main.ts's own before-quit handler leave one outbox notice per run). A
     // one-shot claim, not a poll loop: main.ts is the only possible producer for the "chat"
     // transport, and only while it's dying — see .memory/project-durable-run-queue.md.
-    const chatNotices = await claimOutbox(outboxDir(dir), "chat");
+    const chatNotices = localCore ? await claimOutbox(outboxDir(dir), "chat") : [];
     for (const m of chatNotices) await ackOutbox(outboxDir(dir), m);
     if (chatNotices.length > 0) {
       const notices = chatNotices.map((m) => ({ text: m.body, display: m.displayBody ?? m.body }));

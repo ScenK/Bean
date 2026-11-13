@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { REMOTE_OPS } from "@bean/host";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { IPC } from "../src/channels.js";
-import { CHANNEL_CONTRACT, contractRefusal, guardIpc } from "../src/channel-contract.js";
+import { IPC, NO_CORE, isNoCore } from "../src/channels.js";
+import { CHANNEL_CONTRACT, contractRefusal, guardIpc, registerNoCore } from "../src/channel-contract.js";
+import { registerShellIpc, type ShellIpcDeps } from "../src/ipc.js";
 import { PUSH_ROUTES } from "../src/push.js";
 
 describe("service contract (#807)", () => {
@@ -85,5 +86,35 @@ describe("service contract (#807)", () => {
     expect(contractRefusal(IPC.revealInFinder, ["/tmp"], ["pathOpen"])).toBeUndefined();
     expect(contractRefusal(IPC.terminalStop, ["m"], ["pty"])).toBeUndefined(); // optional trailing tab
     expect(contractRefusal(IPC.chatopsStart, ["slack"], [])).toMatch(/malformed/);
+  });
+});
+
+describe("no core attached (#810)", () => {
+  const ownerOf = (channel: string) => {
+    const key = (Object.keys(IPC) as (keyof typeof IPC)[]).find((k) => IPC[k] === channel)!;
+    return CHANNEL_CONTRACT[key].owner;
+  };
+
+  it("every core and host-bound invoke rejects with the one NO_CORE error; no shell channel is taken", () => {
+    const handles = new Map<string, () => unknown>();
+    registerNoCore({ handle: (c, f) => { handles.set(c, f as never); } });
+    for (const [key, c] of Object.entries(CHANNEL_CONTRACT)) {
+      const channel = IPC[key as keyof typeof IPC];
+      expect(handles.has(channel), key).toBe(c.owner !== "shell");
+    }
+    let err: unknown;
+    try { handles.get(IPC.listNotes)!(); } catch (e) { err = e; }
+    expect(isNoCore(err)).toBe(true);
+    // What a renderer sees: Electron wraps the main-side error.
+    expect(isNoCore(new Error(`Error invoking remote method 'bean:list-notes': Error: ${NO_CORE}`))).toBe(true);
+    expect(isNoCore(new Error("boom"))).toBe(false);
+  });
+
+  it("the shell half registers only shell channels, so it boots with or without a core", () => {
+    const channels: string[] = [];
+    const fake = { handle: (c: string) => { channels.push(c); }, on: (c: string) => { channels.push(c); } };
+    registerShellIpc(fake, {} as ShellIpcDeps);
+    expect(channels.length).toBeGreaterThan(0);
+    for (const c of channels) expect(ownerOf(c), c).toBe("shell");
   });
 });

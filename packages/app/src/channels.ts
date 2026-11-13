@@ -1,5 +1,13 @@
 export type Theme = "hearth" | "graphite";
-export type ComponentKind = "chat" | "skills" | "persona" | "projects" | "notes" | "plan" | "settings" | "about" | "routines" | "dashboard";
+export type ComponentKind = "chat" | "skills" | "persona" | "projects" | "notes" | "plan" | "settings" | "about" | "routines" | "dashboard" | "cores";
+/** Windows that need no core: with none attached, every other kind opens the Add a core panel instead. */
+export const SHELL_ONLY_KINDS: readonly ComponentKind[] = ["about", "cores"];
+
+/** The one error every core operation rejects with while no core is attached (#810). Electron wraps an
+ * invoke's error ("Error invoking remote method …: Error: <message>"), so renderers match it with
+ * `isNoCore`, not equality. */
+export const NO_CORE = "No core attached";
+export const isNoCore = (err: unknown): boolean => err instanceof Error && err.message.includes(NO_CORE);
 export type AvatarMode = "normal" | "hover" | "menu" | "drag";
 /** A run to open in the Dashboard: routine + its run record's `startedAt` (absent = the routine's
  * latest recorded run — the run itself wasn't recorded). */
@@ -198,4 +206,6 @@ export const IPC = {
   checkForUpdate: "bean:check-for-update",
   installUpdate: "bean:install-update",
   openUpdateReleasePage: "bean:open-update-release-page",
+  // Add a core panel → main: run the core on this Mac (saved to userData, then Bean restarts).
+  useLocalCore: "bean:use-local-core",
 } as const;

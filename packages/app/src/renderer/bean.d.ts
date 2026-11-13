@@ -116,6 +116,8 @@ declare global {
       checkForUpdate(): Promise<UpdateStatus>;
       installUpdate(): Promise<InstallUpdateResult | undefined>;
       openUpdateReleasePage(): void;
+      /** Add a core panel: run the core on this Mac; Bean restarts. */
+      useLocalCore(): void;
       /** Live notes; `includeArchived` adds archived ones (each with `archivedAt`). */
       listNotes(opts?: { includeArchived?: boolean }): Promise<Note[]>;
       saveNote(draft: NoteDraft, images?: ImageAttachment[]): Promise<string>;

@@ -120,6 +120,7 @@ contextBridge.exposeInMainWorld("bean", {
   checkForUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke(IPC.checkForUpdate),
   installUpdate: (): Promise<InstallUpdateResult | undefined> => ipcRenderer.invoke(IPC.installUpdate),
   openUpdateReleasePage: (): void => ipcRenderer.send(IPC.openUpdateReleasePage),
+  useLocalCore: (): void => ipcRenderer.send(IPC.useLocalCore),
   listNotes: (opts?: { includeArchived?: boolean }): Promise<Note[]> => ipcRenderer.invoke(IPC.listNotes, opts),
   saveNote: (draft: NoteDraft, images?: ImageAttachment[]): Promise<string> => ipcRenderer.invoke(IPC.saveNote, draft, images),
   saveNoteImage: (bytes: Uint8Array): Promise<string> => ipcRenderer.invoke(IPC.saveNoteImage, bytes),
