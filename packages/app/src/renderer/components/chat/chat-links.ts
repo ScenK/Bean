@@ -1,4 +1,5 @@
 import { useEffect } from "preact/hooks";
+import { MOD_KEY, modKey } from "../../shared/mod-key.js";
 
 // Cmd+click on a URL or a local path printed in the chat log (#779). The token is found at click
 // time from the text under the pointer — the Markdown is never rewritten. URLs go to the browser
@@ -125,19 +126,19 @@ export function useCmdLinks(ref: { current: HTMLElement | null }, mountId: strin
       root.classList.add("bean-chat-scroll--link");
       owned = true;
     };
-    const onMove = (e: MouseEvent): void => { pointer = { x: e.clientX, y: e.clientY }; show(e.metaKey); };
+    const onMove = (e: MouseEvent): void => { pointer = { x: e.clientX, y: e.clientY }; show(modKey(e)); };
     const onLeave = (): void => { pointer = undefined; clear(); };
-    const onKey = (e: KeyboardEvent): void => { if (e.key === "Meta") show(e.type === "keydown"); };
+    const onKey = (e: KeyboardEvent): void => { if (e.key === MOD_KEY) show(e.type === "keydown"); };
     const onClick = (e: MouseEvent): void => {
       const a = (e.target as Element | null)?.closest?.("a[href]");
       if (a && root.contains(a)) {
         const href = a.getAttribute("href") ?? "";
         if (/^https?:\/\//i.test(href)) return; // main hands these to the browser
         e.preventDefault();
-        if (e.metaKey && allow.paths) window.bean.chatOpenPath(decode(href), mountId);
+        if (modKey(e) && allow.paths) window.bean.chatOpenPath(decode(href), mountId);
         return;
       }
-      if (!e.metaKey) return;
+      if (!modKey(e)) return;
       const hit = allowedAt(e.clientX, e.clientY);
       if (!hit) return;
       e.preventDefault();

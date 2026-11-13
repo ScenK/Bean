@@ -37,8 +37,8 @@ hidden, else pops the menu). Don't revert this to a plain destroy: destroying it
 (Settings/Persona/About) was clicked afterward, and left no way to get the pet back. A
 belt-and-suspenders `avatar.isDestroyed()` guard also wraps that `getBounds()` call.
 
-**Closing the avatar does not quit the app** (macOS-style); the app only quits on
-`window-all-closed` off-darwin. Intentional.
+**Closing the avatar does not quit the app** on any OS: `window-all-closed` has a deliberately empty
+listener (without one Electron quits off macOS), so the tray's Exit is the only quit. Intentional (#813).
 
 **Theme state lives in `main.ts`, not per-window.** `getCurrentTheme`/`setCurrentTheme`
 are closures over a single `currentTheme` variable in `main.ts`; every window's theme

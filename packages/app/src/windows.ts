@@ -103,7 +103,11 @@ export function createComponentWindow(kind: ComponentKind, anchor?: Rectangle): 
     minHeight: min.height,
     ...(anchor ? nearAnchor(anchor, size) : {}),
     title: COMPONENT_WINDOW_TITLE[kind],
-    titleBarStyle: "hiddenInset",
+    // macOS insets the traffic lights into the content; elsewhere "hidden" would drop the window
+    // controls, so Windows keeps its native frame.
+    ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
+    // Windows would show Electron's default File/Edit/View bar in every window; Alt still reveals it.
+    autoHideMenuBar: true,
     webPreferences: { preload },
     // Shown once painted: an immediately-shown window flashes blank before its first frame.
     show: false,
