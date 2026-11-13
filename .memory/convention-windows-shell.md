@@ -16,3 +16,14 @@ macOS-only call is guarded by `IS_MAC` in `main.ts` (or `process.platform === "d
   pty is host-bound, so it never mounts on a remote-only shell, and Ctrl+T is readline's.
 - `scripts/dev.mjs` spawns with `shell: true` on win32 (`pnpm` is a `.cmd` shim). Remote setup shows a
   PowerShell `ssh` key-install line instead of `ssh-copy-id` on Windows.
+
+## Packaging (#814)
+
+`pnpm dist:win` → unsigned NSIS installer, built only on a `windows-latest` runner
+(`.github/workflows/win-installer.yml`, `v*` tags + manual) — makensis/rcedit don't cross-build from
+an arm64 Mac. The remote-only shell ships nothing but `dist/` + `assets/`: `extraResources` (built-in
+`.bean`, bot bundles) and `asarUnpack` live under `build.mac`, and `build.win.files` drops
+`node_modules/**` (node-pty + its deps; everything else is esbuild-bundled). A new runtime dependency
+the Windows shell needs must be re-included there. The workflow silently installs the `.exe` and runs
+`e2e/no-core.e2e.ts` against the installed `Bean.exe` (`BEAN_E2E_EXECUTABLE`), so keep that spec
+platform-neutral (`USERPROFILE`, no "This Mac" row off darwin).
