@@ -114,8 +114,9 @@ export function SettingsWindow() {
       setRoutineDigestContext(c.routineDigestContext);
       setWebSearch(c.webSearch);
       setAutoMemory(c.autoMemory);
-      setGitName(c.gitName);
-      setGitEmail(c.gitEmail);
+      // An older remote core has no identity fields.
+      setGitName(c.gitName ?? "");
+      setGitEmail(c.gitEmail ?? "");
       setDisabledClis(c.disabledClis);
       setPaths(c.paths);
       setLoaded(true);

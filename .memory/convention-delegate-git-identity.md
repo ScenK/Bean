@@ -12,7 +12,9 @@ The object is **mutable on purpose**: host's runtime config calls `setBeanGitIde
 on every Settings save, and every spawn site spreads it into the child `env` *at spawn time*, so a
 save reaches the next run with nothing threaded through. Don't snapshot it into a module-level
 copy, and any new CLI spawn path (delegate or live) must spread it too, or that path's commits
-fall back to the host's global git config identity.
+fall back to the host's global git config identity. Discord/Teams bots are separate processes with their own copy:
+`sharedBotDeps` applies the config's identity at bot start, so a change reaches bot runs after
+the bot restarts.
 
 Env vars only set the commit's identity *fields* — GitHub only shows a contributor badge for a
 name that also appears in the message body. `withCliRules` therefore appends
