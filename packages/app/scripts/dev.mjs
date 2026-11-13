@@ -1,4 +1,4 @@
-// Dev orchestrator: keeps @bean/core and @bean/app's bundles rebuilt on change,
+// Dev orchestrator: keeps @bean/core, @bean/host and @bean/app's bundles rebuilt on change,
 // and relaunches Electron whenever the bundled dist/ output changes.
 import { spawn } from "node:child_process";
 import { mkdirSync, watch } from "node:fs";
@@ -23,8 +23,10 @@ process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
 process.once("exit", () => processes.killAll());
 
-// Rebuild @bean/core's dist as its source changes.
-spawnInherited("pnpm", ["--filter", "@bean/core", "exec", "tsc", "-p", "tsconfig.json", "--watch", "--preserveWatchOutput"]);
+// Rebuild @bean/core's and @bean/host's dist as their source changes.
+for (const pkg of ["@bean/core", "@bean/host"]) {
+  spawnInherited("pnpm", ["--filter", pkg, "exec", "tsc", "-p", "tsconfig.json", "--watch", "--preserveWatchOutput"]);
+}
 
 // Rebuild main/preload/renderer bundles as app source changes.
 spawnInherited("node", ["esbuild.config.mjs", "--watch"]);
