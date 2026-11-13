@@ -25,6 +25,7 @@ process.stdin.on("data", (d) => {
     if (m.type === "attach") send({ type: "attached", handshake: { contract: ${CONTRACT_VERSION}, core: "test", platform: "linux", capabilities: [] }, generation: 1, clientId: -1 });
     if (m.type === "detach") process.exit(0);
     if (m.type !== "call") continue;
+    appendFileSync(${JSON.stringify(log)} + ".calls", JSON.stringify({ op: m.op, args: m.args }) + "\\n");
     if (m.op === "chat") {
       const text = m.args[0].message;
       if (text === "drop") process.exit(1);
@@ -32,7 +33,13 @@ process.stdin.on("data", (d) => {
       send({ type: "result", id: m.id, ok: true, value: { reply: "remote echo: " + text } });
       continue;
     }
-    const value = m.op === "getModel" ? "gpt-remote" : ["listSkills", "listProjects", "availableClis", "availableModels"].includes(m.op) ? [] : undefined;
+    const config = {
+      openaiApiKey: "", apiKeySet: true, model: "gpt-remote", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false,
+      reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true,
+      paths: { config: "/srv/.bean/config.json", skills: "/srv/.bean/skills", projects: "/srv/.bean/projects.json", persona: "/srv/.bean/persona.json" },
+    };
+    const value = m.op === "getModel" ? "gpt-remote" : m.op === "getConfig" ? config
+      : ["listSkills", "listProjects", "availableClis", "availableModels", "detectedClis"].includes(m.op) ? [] : undefined;
     send({ type: "result", id: m.id, ok: true, value });
   }
 });
@@ -97,6 +104,56 @@ test("remote core: chat over ssh, reconnect bar, takeover banner", async () => {
     expect(argv.slice(argv.indexOf("--"))).toEqual(["--", "me@box", "bean-core", "attach"]);
     expect(errors).toEqual([]);
     expect(existsSync(join(homeDir, ".bean"))).toBe(false);
+  } finally {
+    await app.close().catch(() => {});
+    await Promise.allSettled([homeDir, userDataDir, bin].map((d) => rm(d, { recursive: true, force: true })));
+  }
+});
+
+// #812: a Linux core — no terminal pane, no system controls or Terminal/Editor apps in Settings, and a
+// Settings save is a patch that never carries (so never clears) the API key.
+test("remote core: capability-gated chat and key-preserving Settings", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "bean-e2e-home-"));
+  const userDataDir = await mkdtemp(join(tmpdir(), "bean-e2e-userdata-"));
+  const bin = await mkdtemp(join(tmpdir(), "bean-e2e-bin-"));
+  const log = join(bin, "ssh.log");
+  await writeFile(join(bin, "ssh"), fakeSsh(log));
+  await chmod(join(bin, "ssh"), 0o755);
+  await writeFile(join(userDataDir, "cores.json"), JSON.stringify({ selected: "r1", cores: [{ id: "r1", host: "me@box" }] }));
+  const app = await launchBean({ HOME: homeDir, PATH: `${bin}:${process.env.PATH ?? ""}` }, userDataDir);
+  try {
+    const avatar = await app.firstWindow();
+    await expect(avatar.locator("#bean")).toHaveAttribute("title", "Bean on me@box");
+    const open = async (kind: string): Promise<Page> => {
+      const [w] = await Promise.all([
+        app.waitForEvent("window"),
+        avatar.evaluate((k) => (window as unknown as Bean).bean.openComponent(k), kind),
+      ]);
+      await w.waitForLoadState("domcontentloaded");
+      return w;
+    };
+
+    const chat = await open("chat");
+    await expect(chat.locator(".bean-chat-host")).toHaveText("me@box");
+    await expect(chat.locator(".bean-chat-term-toggle")).toHaveCount(0);
+    await chat.keyboard.press("Control+`");
+    await expect(chat.locator(".bean-term")).toHaveCount(0);
+
+    const settings = await open("settings");
+    const key = settings.locator('input[type="password"]');
+    await expect(key).toHaveAttribute("placeholder", "Saved on me@box — type to replace");
+    await expect(key).toHaveValue("");
+    await expect(settings.locator(".bean-settings-row-label", { hasText: "Model name" })).toBeVisible();
+    for (const gone of ["System controls", "Terminal", "Editor"]) {
+      await expect(settings.locator(".bean-settings-row-label", { hasText: new RegExp(`^${gone}$`) })).toHaveCount(0);
+    }
+    await settings.getByRole("button", { name: "Save" }).click();
+    await expect(settings.getByRole("button", { name: "Saved ✓" })).toBeVisible();
+    const calls = (await readFile(`${log}.calls`, "utf8")).trim().split("\n").map((l) => JSON.parse(l) as { op: string; args: unknown[] });
+    const saves = calls.filter((c) => c.op === "saveConfig");
+    expect(saves).toHaveLength(1);
+    expect(saves[0]!.args[0]).toMatchObject({ model: "gpt-remote" });
+    for (const k of ["openaiApiKey", "terminalApp", "editorApp", "systemControls"]) expect(saves[0]!.args[0]).not.toHaveProperty(k);
   } finally {
     await app.close().catch(() => {});
     await Promise.allSettled([homeDir, userDataDir, bin].map((d) => rm(d, { recursive: true, force: true })));

@@ -101,7 +101,7 @@ describe("remote core over the attach bridge (#811)", () => {
     await until(() => a.pushes.length === 1);
     expect(a.pushes[0]).toMatchObject({ mountId: MOUNT, kind: "delegate", payload: { taskId: "t1", type: "started" } });
     expect(a.working).toEqual([true]);
-    await expect(a.core.call("getConfig", [])).rejects.toThrow(/not allowed/);
+    await expect(a.core.call("chatOpenPath", ["/etc/hosts", MOUNT])).rejects.toThrow(/not allowed/);
     a.core.detach();
   });
 
@@ -310,12 +310,17 @@ describe("registerRemoteIpc", () => {
     const ons = new Map<string, (e: { sender: { id: number } }, ...a: unknown[]) => unknown>();
     const call = vi.fn(async (op: string) => (op === "getModel" ? "gpt" : undefined));
     const mounts = new Map<string, number>();
+    const onConfigSaved = vi.fn();
     const remote = registerRemoteIpc(
       { handle: (c, f) => { handles.set(c, f); }, on: (c, f) => { ons.set(c, f); } },
-      { core: { call, handshake: () => undefined }, mounts },
+      { core: { call, handshake: () => undefined }, mounts, onConfigSaved },
     );
     const e = { sender: { id: 7 } };
     expect(await handles.get(IPC.getModel)!(e)).toBe("gpt");
+    // A Settings save is a patch over the wire; the windows refetch their CLI catalogs after it.
+    await handles.get(IPC.saveConfig)!(e, { model: "m" });
+    expect(call).toHaveBeenCalledWith("saveConfig", [{ model: "m" }]);
+    expect(onConfigSaved).toHaveBeenCalledTimes(1);
     ons.get(IPC.chatAttach)!(e, MOUNT);
     expect(mounts.get(MOUNT)).toBe(7);
     await expect(Promise.resolve().then(() => handles.get(IPC.listNotes)!(e))).rejects.toThrow(/remote core/);

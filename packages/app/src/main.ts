@@ -652,7 +652,11 @@ app.whenReady().then(async () => {
         },
         onWorking: (working) => keepAwake.setWorking(working),
       });
-      remoteIpc = registerRemoteIpc(ipcMain, { core: r, mounts: remoteMounts });
+      remoteIpc = registerRemoteIpc(ipcMain, {
+        core: r, mounts: remoteMounts,
+        // As the local save does: a CLI switched off in Settings leaves every picker.
+        onConfigSaved: () => push.broadcast(IPC.cliAvailabilityChanged, undefined),
+      });
       app.on("before-quit", () => { if (quitting) r.detach(); });
       stopCore = () => r.detach();
       r.connect();

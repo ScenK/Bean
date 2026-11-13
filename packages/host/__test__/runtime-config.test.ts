@@ -27,6 +27,24 @@ test("apply saves config and rebuilds clients with the new key", async () => {
   expect(madeConverse).toEqual(["sk-old", "sk-new"]);
 });
 
+test("apply is a patch (#812): an omitted key — or any omitted field — keeps its value", async () => {
+  const saved: RuntimeUpdate[] = [];
+  const rt = createRuntimeConfig(
+    { openaiApiKey: "sk-keep", model: "gpt-4o-mini", terminalApp: "/T.app", editorApp: "", delegateCli: "", systemControls: true, reasoningEffort: "", routineDigestContext: false, disabledClis: [], webSearch: false, autoMemory: true },
+    { makeConverse: () => (async () => ({ content: "", toolCalls: [] })) as never, saveConfigFile: async (u) => { saved.push(u); } },
+  );
+  await rt.apply({ model: "gpt-5" });
+  await rt.apply({});
+  expect(rt.getApiKey()).toBe("sk-keep");
+  expect(rt.getModel()).toBe("gpt-5");
+  expect(rt.getSystemControls()).toBe(true);
+  expect(saved[0]).toMatchObject({ openaiApiKey: "sk-keep", model: "gpt-5", terminalApp: "/T.app", systemControls: true });
+  expect(saved[1]).toEqual(saved[0]);
+  await rt.apply(JSON.parse('{"__proto__": {"polluted": true}, "webSearch": true}'));
+  expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  expect(rt.getWebSearch()).toBe(true);
+});
+
 test("the stable converse wrapper delegates to the current client after apply", async () => {
   const rt = createRuntimeConfig(
     { openaiApiKey: "a", model: "m", terminalApp: "", editorApp: "", delegateCli: "", systemControls: false, disabledClis: [] },

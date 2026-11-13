@@ -1,10 +1,11 @@
 import { useEffect, useState } from "preact/hooks";
 import type { CliName } from "@bean/core";
-import type { ConfigView } from "../../../channels.js";
+import type { ConfigUpdate, ConfigView } from "../../../channels.js";
 import type { Theme } from "../../../channels.js";
 import type { ChatopsBot, ChatopsState } from "@bean/host";
 import { PanelHeader } from "../../shared/Panel.js";
 import { DestinationsList } from "./DestinationsList.js";
+import { useCapabilities } from "../../shared/capabilities.js";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -51,6 +52,13 @@ function EndpointRow({ endpoint }: { endpoint: string }) {
 export function SettingsWindow() {
   const [theme, setTheme] = useState<Theme>("hearth");
   const [apiKey, setApiKey] = useState("");
+  // Sent only once edited (#812): a save is a patch, and a remote core never sends its key here.
+  const [apiKeyEdited, setApiKeyEdited] = useState(false);
+  const [apiKeySet, setApiKeySet] = useState(false);
+  const caps = useCapabilities();
+  const handoff = caps.has("terminalHandoff");
+  // System controls drive the core's machine: offered only when that machine is a Mac.
+  const macCore = caps.platform === "darwin";
   const [model, setModel] = useState("");
   const [terminalApp, setTerminalApp] = useState("");
   const [editorApp, setEditorApp] = useState("");
@@ -87,6 +95,7 @@ export function SettingsWindow() {
     window.bean.detectedClis().then(setDetectedClis);
     window.bean.getConfig().then((c: ConfigView) => {
       setApiKey(c.openaiApiKey);
+      setApiKeySet(c.apiKeySet);
       setModel(c.model);
       setTerminalApp(c.terminalApp);
       setEditorApp(c.editorApp);
@@ -115,15 +124,15 @@ export function SettingsWindow() {
     setSave("saving");
     setError(undefined);
     try {
-      await window.bean.saveConfig({
-        openaiApiKey: apiKey.trim(), model: model.trim(),
-        terminalApp: terminalApp.trim(), editorApp: editorApp.trim(), delegateCli, systemControls,
-        reasoningEffort,
-        routineDigestContext,
-        disabledClis,
-        webSearch,
-        autoMemory,
-      });
+      // Only what this window shows: a hidden field (and an untouched key) keeps its saved value.
+      const patch: ConfigUpdate = {
+        model: model.trim(), delegateCli, reasoningEffort, routineDigestContext, disabledClis, webSearch, autoMemory,
+        ...(apiKeyEdited ? { openaiApiKey: apiKey.trim() } : {}),
+        ...(handoff ? { terminalApp: terminalApp.trim(), editorApp: editorApp.trim() } : {}),
+        ...(macCore ? { systemControls } : {}),
+      };
+      await window.bean.saveConfig(patch);
+      if (apiKeyEdited) { setApiKeySet(apiKey.trim() !== ""); setApiKeyEdited(false); }
       setSave("saved");
     } catch (err) {
       setSave("error");
@@ -174,8 +183,8 @@ export function SettingsWindow() {
                 class="bean-input bean-input--compact"
                 type="password"
                 value={apiKey}
-                placeholder="sk-…"
-                onInput={(e) => { setApiKey((e.target as HTMLInputElement).value); setSave("idle"); }}
+                placeholder={apiKeySet && !apiKey ? `Saved on ${caps.host ?? "the core"} — type to replace` : "sk-…"}
+                onInput={(e) => { setApiKey((e.target as HTMLInputElement).value); setApiKeyEdited(true); setSave("idle"); }}
               />
             </div>
           </div>
@@ -248,7 +257,7 @@ export function SettingsWindow() {
 
         <section id="apps" class="bean-settings-card">
           <div class="bean-settings-card-header">APPS</div>
-          <div class="bean-settings-row">
+          {handoff ? <div class="bean-settings-row">
             <span class="bean-settings-row-label">Terminal</span>
             <div class="bean-settings-row-control">
               <input
@@ -260,20 +269,20 @@ export function SettingsWindow() {
               />
               <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void browseTerminalApp()}>Browse…</button>
             </div>
-          </div>
-          <div class="bean-settings-row">
+          </div> : null}
+          {macCore ? <div class="bean-settings-row">
             <span class="bean-settings-row-label">System controls</span>
             <div class="bean-settings-row-control">
-              <label class="bean-chatops-row" title="Lets Bean's chat set volume, control music, and launch/quit apps via a fixed set of macOS commands.">
+              <label class="bean-chatops-row" title={`Lets Bean's chat set volume, control music, and launch/quit apps on ${caps.host ?? "this Mac"} via a fixed set of macOS commands.`}>
                 <input
                   type="checkbox"
                   checked={systemControls}
                   onChange={(e) => { setSystemControls((e.target as HTMLInputElement).checked); setSave("idle"); }}
                 />
-                <span class="bean-chatops-label">Allow volume / media / app control from chat</span>
+                <span class="bean-chatops-label">Allow volume / media / app control {caps.host ? `on ${caps.host} ` : ""}from chat</span>
               </label>
             </div>
-          </div>
+          </div> : null}
           <div class="bean-settings-row">
             <span class="bean-settings-row-label">Web search</span>
             <div class="bean-settings-row-control">
@@ -300,7 +309,7 @@ export function SettingsWindow() {
               </label>
             </div>
           </div>
-          <div class="bean-settings-row">
+          {handoff ? <div class="bean-settings-row">
             <span class="bean-settings-row-label">Editor</span>
             <div class="bean-settings-row-control">
               <input
@@ -312,7 +321,7 @@ export function SettingsWindow() {
               />
               <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void browseEditorApp()}>Browse…</button>
             </div>
-          </div>
+          </div> : null}
         </section>
 
         <section id="chatbots" class="bean-settings-card">
@@ -391,7 +400,7 @@ export function SettingsWindow() {
         <section id="data" class="bean-settings-card">
           <div class="bean-settings-card-header">
             <span>DATA</span>
-            <span>~/.bean</span>
+            <span>{caps.host ? `~/.bean on ${caps.host}` : "~/.bean"}</span>
           </div>
           <div class="bean-paths" style={{ padding: "10px 14px" }}>
             {paths

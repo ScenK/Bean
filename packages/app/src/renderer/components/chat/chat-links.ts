@@ -99,11 +99,16 @@ const decode = (s: string): string => { try { return decodeURI(s); } catch { ret
 const HIGHLIGHT = "bean-link";
 
 /** Cmd+click opens the hovered URL/path; while Cmd is held the hovered token is underlined (CSS
- * Custom Highlight API) and the cursor is a pointer. A non-http(s) anchor never navigates the window. */
-export function useCmdLinks(ref: { current: HTMLElement | null }, mountId: string): void {
+ * Custom Highlight API) and the cursor is a pointer. A non-http(s) anchor never navigates the window.
+ * `allow` follows the core's capabilities (#812): a remote core opens neither paths nor (no pty) URLs. */
+export function useCmdLinks(ref: { current: HTMLElement | null }, mountId: string, allow = { paths: true, urls: true }): void {
   useEffect(() => {
     const root = ref.current;
     if (!root) return;
+    const allowedAt = (x: number, y: number): Hit | undefined => {
+      const hit = hitAt(root, x, y);
+      return hit && (hit.kind === "url" ? allow.urls : allow.paths) ? hit : undefined;
+    };
     const highlights = typeof Highlight === "function" ? CSS.highlights : undefined;
     let pointer: { x: number; y: number } | undefined;
     let owned = false; // several chats share the document's highlight registry
@@ -114,7 +119,7 @@ export function useCmdLinks(ref: { current: HTMLElement | null }, mountId: strin
       root.classList.remove("bean-chat-scroll--link");
     };
     const show = (meta: boolean): void => {
-      const hit = meta && pointer ? hitAt(root, pointer.x, pointer.y) : undefined;
+      const hit = meta && pointer ? allowedAt(pointer.x, pointer.y) : undefined;
       if (!hit) { clear(); return; }
       highlights?.set(HIGHLIGHT, new Highlight(hit.range));
       root.classList.add("bean-chat-scroll--link");
@@ -129,11 +134,11 @@ export function useCmdLinks(ref: { current: HTMLElement | null }, mountId: strin
         const href = a.getAttribute("href") ?? "";
         if (/^https?:\/\//i.test(href)) return; // main hands these to the browser
         e.preventDefault();
-        if (e.metaKey) window.bean.chatOpenPath(decode(href), mountId);
+        if (e.metaKey && allow.paths) window.bean.chatOpenPath(decode(href), mountId);
         return;
       }
       if (!e.metaKey) return;
-      const hit = hitAt(root, e.clientX, e.clientY);
+      const hit = allowedAt(e.clientX, e.clientY);
       if (!hit) return;
       e.preventDefault();
       if (hit.kind === "url") window.bean.terminalOpenLink(hit.value, mountId);
@@ -156,5 +161,5 @@ export function useCmdLinks(ref: { current: HTMLElement | null }, mountId: strin
       window.removeEventListener("blur", clear);
       clear();
     };
-  }, [mountId]);
+  }, [mountId, allow.paths, allow.urls]);
 }

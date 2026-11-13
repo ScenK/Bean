@@ -8,7 +8,7 @@ key); selecting one boots `remote-core.ts` instead of the local core.
   and container must stay regex-checked (no spaces, `;`, `$`, leading `-`). Never-attached failures show
   ssh's last stderr line + `ssh-copy-id <host>` (the one-time setup).
 - **Adapter** (`registerRemoteIpc`): `REMOTE_OPS` channels go over the wire (both `handle` and `on` are
-  registered — the preload decides which fires); other core channels reject until #812 gates the UI;
+  registered — the preload decides which fires); other core channels reject (host-bound controls are hidden by `useCapabilities`, #812);
   `handshake` answers from the attach reply. Mounts → window ids are tracked here for push routing; every
   (re)attach re-sends `chatAttach` (a chat opened while reconnecting never reached the core).
 - **A lost `delegateStart` reply** (the drop came after the core started it): the call isn't failed — it
