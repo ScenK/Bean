@@ -135,4 +135,7 @@ test("busyWork: running jobs plus live run records the host doesn't already list
     [job("t1", "delegate", "bean"), job("live:s1", "live", "Claude · bean"), job("x", "chat", "Chat", "failed")],
     [run("t1", "/p/bean"), run("s1", "/p/bean"), run("r9", "/p/other")],
   )).toEqual([{ kind: "delegate", name: "bean" }, { kind: "live", name: "Claude · bean" }, { kind: "run", name: "other" }]);
+  // A sprout admitted to a slot shows before its bubble does, and once (not twice) after.
+  const bubble = { ...job("routine:a", "routine", "Morning"), routine: "a" };
+  expect(busyWork([bubble], [], ["a", "b"])).toEqual([{ kind: "routine", name: "Morning" }, { kind: "routine", name: "b" }]);
 });

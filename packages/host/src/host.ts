@@ -325,8 +325,14 @@ export async function createHost(deps: HostDeps) {
       const cwd = join(scratchDir(dir), `build-${brief.name}`); // name validated kebab-case in builder.start
       mkdirSync(cwd, { recursive: true });
       let cancel = (): void => {};
+      // Busy until the agent's process is gone (no status job of its own) — a cancel never settles `done`.
+      let untrack = (): void => {};
+      void track(new Promise<void>((r) => { untrack = r; }));
       const done = new Promise<string>((resolve, reject) => {
-        const cleanup = (): void => rmSync(cwd, { recursive: true, force: true });
+        const cleanup = (): void => {
+          untrack();
+          rmSync(cwd, { recursive: true, force: true });
+        };
         const handle = runDelegate(
           { cli: choice.cli, projectPath: cwd, prompt, ...(choice.model ? { model: choice.model } : {}) },
           { onOutput: onLine, onDone: (out) => { cleanup(); resolve(out); }, onError: (err) => { cleanup(); reject(err); } },
@@ -335,7 +341,6 @@ export async function createHost(deps: HostDeps) {
         );
         cancel = () => handle.cancel(cleanup);
       });
-      void track(done).catch(() => {}); // no status job of its own
       return { done, cancel: () => cancel() };
     },
   });
@@ -583,7 +588,7 @@ export async function createHost(deps: HostDeps) {
       close: () => { updating = true; },
       open: () => { updating = false; },
       busy: () => [
-        ...busyWork(taskStatus.list(), liveRuns(dir)),
+        ...busyWork(taskStatus.list(), liveRuns(dir), routineScheduler.runningNames()),
         ...(pendingStarts > 0 ? [{ kind: "request", name: `${pendingStarts} start request(s) in progress` }] : []),
       ],
     } satisfies CoreLatch,

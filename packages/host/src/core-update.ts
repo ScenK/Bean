@@ -29,12 +29,13 @@ export const installRoot = (home: string = homedir()): string => join(home, ".lo
 /** One piece of running work an update would stop. */
 export interface BusyItem { kind: string; name: string }
 
-/** Busy = any running job on the host (an open live session counts while it waits for input) or
- * any live run record (`~/.bean/runs/`, where the bots' runs show up). A record the host already
- * lists under its own id isn't listed twice. */
-export function busyWork(jobs: readonly TaskJob[], runs: readonly TrackedRun[]): BusyItem[] {
+/** Busy = any running job on the host (an open live session counts while it waits for input), any
+ * sprout holding a scheduler slot (admitted, maybe before its bubble exists), or any live run record
+ * (`~/.bean/runs/`, where the bots' runs show up). Work the host already lists isn't listed twice. */
+export function busyWork(jobs: readonly TaskJob[], runs: readonly TrackedRun[], sprouts: readonly string[] = []): BusyItem[] {
   const running = jobs.filter((j) => j.state === "running");
   const items: BusyItem[] = running.map((j) => ({ kind: j.kind, name: j.name }));
+  for (const name of sprouts) if (!running.some((j) => j.routine === name)) items.push({ kind: "routine", name });
   for (const r of runs) {
     if (running.some((j) => j.id === r.id || j.id.endsWith(`:${r.id}`))) continue;
     items.push({ kind: "run", name: basename(r.projectPath) || r.projectPath });
