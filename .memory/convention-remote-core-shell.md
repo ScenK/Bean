@@ -12,7 +12,7 @@ key); selecting one boots `remote-core.ts` instead of the local core.
   `handshake` answers from the attach reply. Mounts → window ids are tracked here for push routing; every
   (re)attach re-sends `chatAttach` (a chat opened while reconnecting never reached the core).
 - **A lost `delegateStart` reply** (the drop came after the core started it): the call isn't failed — it
-  waits for the core's `started` for the same chat/project/instruction (live, or in the resume replay) and
+  waits for the core's `started` for the same chat/project/instruction (an empty project matches any path: the core resolves it to its scratch dir) (live, or in the resume replay) and
   resolves with that task id; never re-sent. No `started` within `ORPHAN_START_MS` of the reattach =
   it never ran → reject (the card shows failed). Every other in-flight call fails at once on a drop.
 - On attach main broadcasts `cliAvailabilityChanged`, so a window that fetched the catalog too early refetches.

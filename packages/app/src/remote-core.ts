@@ -99,8 +99,11 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
     c.stdin.write(frame);
     return true;
   };
-  const sameStart = (a: Start, b: Start): boolean =>
-    a.mountId === b.mountId && a.projectPath === b.projectPath && a.instruction === b.instruction;
+  /** `asked` = the request, `seen` = a `started` event. The core keeps mount and instruction as sent but
+   * resolves an empty project ("no project") to its own scratch workspace, which this side can't know. */
+  const sameStart = (seen: Start, asked: Start): boolean =>
+    seen.mountId === asked.mountId && seen.instruction === asked.instruction
+    && (asked.projectPath === "" || seen.projectPath === asked.projectPath);
   const startOf = (op: string, args: unknown[]): Start | undefined => {
     const [req, mountId] = args;
     if (op !== "delegateStart" || !isObj(req) || typeof mountId !== "string") return undefined;

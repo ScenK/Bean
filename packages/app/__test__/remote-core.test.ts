@@ -246,6 +246,42 @@ describe("a delegate start whose reply a drop lost (#811 review)", () => {
     core.detach();
   });
 
+  it("a scratch-workspace start (no project) matches the core's resolved scratch path", async () => {
+    const { kids, spawn, attached } = scripted();
+    const core = make(spawn);
+    core.connect();
+    kids[0]!.send(attached);
+    await tick();
+    const start = core.call("delegateStart", [{ ...START, projectPath: "" }, MOUNT]);
+    await tick();
+    kids[0]!.exit();
+    await new Promise((r) => setTimeout(r, 20));
+    kids[1]!.send(attached);
+    kids[1]!.send({ ...started(1, "t5"), payload: { taskId: "t5", type: "started", projectPath: "/home/me/.bean/scratch", instruction: "do it", mountId: MOUNT } });
+    await expect(start).resolves.toBe("t5");
+    core.detach();
+  });
+
+  it("a configured project still has to match its own path", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    try {
+      const { kids, spawn, attached } = scripted();
+      const core = make(spawn);
+      core.connect();
+      kids[0]!.send(attached);
+      await vi.advanceTimersByTimeAsync(5);
+      const start = core.call("delegateStart", [START, MOUNT]);
+      start.catch(() => {});
+      kids[0]!.exit();
+      await vi.advanceTimersByTimeAsync(5);
+      kids[1]!.send(attached);
+      kids[1]!.send({ ...started(1, "tX"), payload: { taskId: "tX", type: "started", projectPath: "/other", instruction: "do it", mountId: MOUNT } });
+      await vi.advanceTimersByTimeAsync(ORPHAN_START_MS + 5);
+      await expect(start).rejects.toThrow(/never confirmed/);
+      core.detach();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("other in-flight calls fail at once; a start the core never ran fails after the grace", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
     try {
