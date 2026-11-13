@@ -14,7 +14,8 @@ import type { ClientId, HostPush, MountPushKind } from "./shell-ops.js";
 export const DISCONNECT_GRACE_MS = 30 * 60_000;
 /** No heartbeat for this long = the shell is gone (it beats every 10 s). */
 export const HEARTBEAT_TIMEOUT_MS = 30_000;
-/** Events kept per chat for a replay; completions are kept past this until acknowledged. */
+/** Events kept per chat for a replay. Only output lines count against it and are evicted; every
+ * other event (results, turns, prose, receipts, ends) is kept until acknowledged. */
 export const REPLAY_LIMIT = 256;
 
 /** A host → shell message on the attachment. `seq` counts per chat (mount) from 1. */
@@ -51,10 +52,9 @@ interface Shell {
 
 interface Buffer { seq: number; events: Extract<AttachmentMessage, { type: "push" }>[] }
 
-const isCompletion = (kind: MountPushKind, payload: unknown): boolean => {
-  const type = (payload as { type?: unknown } | null)?.type;
-  return (kind === "delegate" && (type === "done" || type === "failed" || type === "cancelled")) || (kind === "live" && type === "ended");
-};
+// Output lines are a tail the shell can lose; anything else (a delegate result, a live turn's answer,
+// its prose, a receipt, an end) must replay.
+const isOutputLine = (payload: unknown): boolean => (payload as { type?: unknown } | null)?.type === "output";
 
 const SHELL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -137,6 +137,7 @@ export function createAttachments(deps: AttachmentsDeps) {
     resume: (gen: unknown, acks: unknown): void => {
       const shell = live(gen);
       const conn = shell.conn!;
+      if (conn.resumed) return; // once per connection: a repeat would re-deliver the replay
       trim(shell, acks);
       for (const id of deps.ofClient(shell.clientId)) for (const e of buffers.get(id)?.events ?? []) conn.send(e);
       conn.resumed = true;
@@ -162,10 +163,10 @@ export function createAttachments(deps: AttachmentsDeps) {
       buffers.set(mountId, b);
       const e = { type: "push" as const, mountId, seq: ++b.seq, kind, payload };
       b.events.push(e);
-      // Bounded: drop the oldest non-completion events (output lines); completions wait for an ack.
+      // Bounded: drop the oldest output lines; everything else waits for an ack.
       for (let i = 0; b.events.length > REPLAY_LIMIT && i < b.events.length;) {
         const old = b.events[i]!;
-        if (isCompletion(old.kind, old.payload)) i++;
+        if (!isOutputLine(old.payload)) i++;
         else b.events.splice(i, 1);
       }
       if (shell.conn?.resumed) shell.conn.send(e);

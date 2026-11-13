@@ -148,7 +148,7 @@ describe("attachments", () => {
     expect(() => t.attachments.heartbeat(generation)).toThrow(StaleAttachmentError);
   });
 
-  it("bounds the replay buffer but keeps completions until acknowledged", () => {
+  it("bounds the replay buffer by output lines only: results and a live turn's answer survive until acked", () => {
     const t = setup();
     const { generation, clientId } = t.attachments.attach(SHELL_A, t.inbox().send);
     t.attachments.resume(generation, {});
@@ -156,6 +156,7 @@ describe("attachments", () => {
     t.sessions.attach(clientId, R2);
     vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS);
     t.push(R, "delegate", { taskId: "t1", type: "done", result: "first" });
+    t.push(R, "live", { sessionId: "s", type: "turn", result: "the answer" });
     for (let i = 0; i < REPLAY_LIMIT + 50; i++) t.push(R, "delegate", { taskId: "t2", type: "output", line: `${i}` });
     t.push(R, "live", { sessionId: "s", type: "ended", reason: "ended" });
     t.push(R2, "memory", { saved: [] });
@@ -166,8 +167,12 @@ describe("attachments", () => {
     const r = back.msgs.filter((m) => m.type === "push" && m.mountId === R);
     expect(r).toHaveLength(REPLAY_LIMIT);
     expect(r[0]).toMatchObject({ seq: 1, payload: { type: "done" } });
+    expect(r[1]).toMatchObject({ seq: 2, kind: "live", payload: { type: "turn", result: "the answer" } });
     expect(r.at(-1)).toMatchObject({ kind: "live", payload: { type: "ended" } });
     expect(back.msgs.some((m) => m.type === "push" && m.mountId === R2)).toBe(false); // acked
+    const n = back.msgs.length;
+    t.attachments.resume(g2, {}); // a repeat on the same connection replays nothing
+    expect(back.msgs).toHaveLength(n);
   });
 
   it("local windows' pushes pass through unnumbered", () => {
