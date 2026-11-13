@@ -52,7 +52,8 @@ export interface LiveStartRequest {
 
 export type LiveStartResult = { sessionId: string; handedOver: number } | { error: string };
 /** Continue live: the project comes from the recorded run, so the renderer learns it here. */
-export type LiveResumeResult = { sessionId: string; agent: LiveCli; projectPath: string } | { error: string };
+/** `model` = the recorded run's model it resumed with (still offered); absent = the CLI's default. */
+export type LiveResumeResult = { sessionId: string; agent: LiveCli; projectPath: string; model?: string } | { error: string };
 
 export const HANDOFF_ITEMS = 20;
 export const HANDOFF_CHARS = 8000;
@@ -386,13 +387,11 @@ export function createLiveTasks(deps: LiveTasksDeps) {
       const refused = refusal(owner);
       if (refused) return { error: refused };
       const sessionId = deps.newId();
-      const s: Session = {
-        ...owner, agent: cli, seq: 0, stopping: false, queued: false, turns: 0, resumeId: id,
-        ...(model && deps.modelOffered?.(cli, model) ? { model } : {}),
-      };
+      const kept = model && deps.modelOffered?.(cli, model) ? { model } : {};
+      const s: Session = { ...owner, agent: cli, seq: 0, stopping: false, queued: false, turns: 0, resumeId: id, ...kept };
       sessions.set(sessionId, s);
       const err = launch(sessionId, s, projectPath, "", 0);
-      return err ? { error: err } : { sessionId, agent: cli, projectPath };
+      return err ? { error: err } : { sessionId, agent: cli, projectPath, ...kept };
     },
 
     /** Undefined = sent; otherwise the reason it wasn't. */
