@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult, type CoreListing, type CoreStatus } from "./channels.js";
+import { IPC, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type AvatarMode, type ConfigView, type ConfigUpdate, type AppInfo, type UpdateStatus, type InstallUpdateResult, type CoreListing, type CoreStatus, type CoreSwitchOutcome } from "./channels.js";
 import type {
   RouteSuggestion, ChatRequest, ConverseResult, Skill, Project, Persona, LaunchRequest, CliName,
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
@@ -123,7 +123,7 @@ contextBridge.exposeInMainWorld("bean", {
   coreList: (): Promise<CoreListing> => ipcRenderer.invoke(IPC.coreList),
   coreAdd: (host: string, container?: string): Promise<{ id: string } | { error: string }> => ipcRenderer.invoke(IPC.coreAdd, host, container),
   coreRemove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.coreRemove, id),
-  coreSwitch: (id: string): void => ipcRenderer.send(IPC.coreSwitch, id),
+  coreSwitch: (id: string): Promise<CoreSwitchOutcome> => ipcRenderer.invoke(IPC.coreSwitch, id),
   coreStatus: (): Promise<CoreStatus> => ipcRenderer.invoke(IPC.coreStatus),
   onCoreStatus: (cb: (s: CoreStatus) => void) => ipcRenderer.on(IPC.coreStatusChanged, (_e, s: CoreStatus) => cb(s)),
   coreTakeBack: (): void => ipcRenderer.send(IPC.coreTakeBack),

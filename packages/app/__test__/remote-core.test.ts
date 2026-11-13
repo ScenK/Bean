@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { attachStdio, buildHandshake, createAttachments, encodeFrame, listenRemote, type HostHandlers } from "@bean/host";
+import { attachStdio, buildHandshake, createAttachments, encodeFrame, frameReader, listenRemote, type HostHandlers } from "@bean/host";
 import type { CoreStatus } from "../src/channels.js";
 import { IPC } from "../src/channels.js";
-import { createRemoteCore, registerRemoteIpc, type SshChild } from "../src/remote-core.js";
+import { createRemoteCore, ORPHAN_START_MS, registerRemoteIpc, type SshChild } from "../src/remote-core.js";
 
 const SHELL_A = "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b";
 const SHELL_B = "4a2d3c5b-6e7f-4a81-9bac-1d2e3f4a5b6c";
@@ -180,6 +180,91 @@ describe("remote core over the attach bridge (#811)", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(core.status()).toMatchObject({ state: "mismatch", message: expect.stringContaining("v999") });
     expect(spawned).toBe(1);
+  });
+});
+
+// A scripted core: each spawn is a child whose frames the test reads and answers by hand.
+function scripted() {
+  const kids: Array<{ frames: Record<string, unknown>[]; send: (m: unknown) => void; exit: () => void }> = [];
+  const spawn = (): SshChild => {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const onClose: (() => void)[] = [];
+    const frames: Record<string, unknown>[] = [];
+    stdin.on("data", frameReader((m) => frames.push(m as Record<string, unknown>), () => {}));
+    let gone = false;
+    const exit = (): void => { if (!gone) { gone = true; for (const fn of onClose) fn(); } };
+    kids.push({ frames, send: (m) => stdout.write(encodeFrame(m)!), exit });
+    return {
+      stdin, stdout, stderr: new PassThrough(),
+      on: (event: string, fn: () => void) => { if (event === "close") onClose.push(fn); },
+      kill: exit,
+    } as unknown as SshChild;
+  };
+  const attached = { type: "attached", handshake: buildHandshake("1", "linux", []), generation: 1, clientId: -1 };
+  return { kids, spawn, attached };
+}
+const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 5));
+const START = { projectPath: "/p", prompt: "do it", instruction: "do it" };
+const started = (seq: number, taskId: string) =>
+  ({ type: "push", mountId: MOUNT, seq, kind: "delegate", payload: { taskId, type: "started", projectPath: "/p", instruction: "do it", mountId: MOUNT } });
+
+describe("a delegate start whose reply a drop lost (#811 review)", () => {
+  const make = (spawn: () => SshChild) => createRemoteCore({
+    label: "me@box", spawn, shellId: SHELL_A, setupCommand: "x", onPush: () => {}, onStatus: () => {}, onWorking: () => {}, retryMs: [1],
+  });
+
+  it("resolves with the task id from the `started` the core sent before the drop", async () => {
+    const { kids, spawn, attached } = scripted();
+    const core = make(spawn);
+    core.connect();
+    kids[0]!.send(attached);
+    await tick();
+    const start = core.call("delegateStart", [START, MOUNT]);
+    kids[0]!.send(started(1, "t9"));
+    await tick();
+    kids[0]!.exit(); // the reply never comes
+    await expect(start).resolves.toBe("t9");
+    core.detach();
+  });
+
+  it("resolves from the resume replay after a reconnect, and never re-sends the start", async () => {
+    const { kids, spawn, attached } = scripted();
+    const core = make(spawn);
+    core.connect();
+    kids[0]!.send(attached);
+    await tick();
+    const start = core.call("delegateStart", [START, MOUNT]);
+    await tick();
+    kids[0]!.exit();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(kids).toHaveLength(2);
+    kids[1]!.send(attached);
+    kids[1]!.send(started(1, "t7"));
+    await expect(start).resolves.toBe("t7");
+    expect(kids[1]!.frames.some((f) => f.type === "call")).toBe(false);
+    core.detach();
+  });
+
+  it("other in-flight calls fail at once; a start the core never ran fails after the grace", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    try {
+      const { kids, spawn, attached } = scripted();
+      const core = make(spawn);
+      core.connect();
+      kids[0]!.send(attached);
+      await vi.advanceTimersByTimeAsync(5);
+      const start = core.call("delegateStart", [START, MOUNT]);
+      const model = core.call("getModel", []);
+      start.catch(() => {});
+      kids[0]!.exit();
+      await expect(model).rejects.toThrow(/Lost the connection/);
+      await vi.advanceTimersByTimeAsync(5);
+      kids[1]!.send(attached);
+      await vi.advanceTimersByTimeAsync(ORPHAN_START_MS + 5);
+      await expect(start).rejects.toThrow(/never confirmed/);
+      core.detach();
+    } finally { vi.useRealTimers(); }
   });
 });
 

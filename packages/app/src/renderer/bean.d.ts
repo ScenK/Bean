@@ -3,7 +3,7 @@ import type {
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
-import type { Theme, ComponentKind, DashboardTarget, ChatDrop, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult, CoreListing, CoreStatus } from "../channels.js";
+import type { Theme, ComponentKind, DashboardTarget, ChatDrop, AvatarMode, ConfigView, ConfigUpdate, AppInfo, UpdateStatus, InstallUpdateResult, CoreListing, CoreStatus, CoreSwitchOutcome } from "../channels.js";
 import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "@bean/host";
 import type { TerminalEvent, TerminalStartResult } from "../terminal-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "@bean/host";
@@ -122,7 +122,7 @@ declare global {
       coreAdd(host: string, container?: string): Promise<{ id: string } | { error: string }>;
       coreRemove(id: string): Promise<void>;
       /** Switch to a core ("local" = this Mac): the chat window's Keep/Stop review, then Bean restarts. */
-      coreSwitch(id: string): void;
+      coreSwitch(id: string): Promise<CoreSwitchOutcome>;
       /** The attachment's state: host badge, reconnect bar, takeover and version banners. */
       coreStatus(): Promise<CoreStatus>;
       onCoreStatus(cb: (s: CoreStatus) => void): void;

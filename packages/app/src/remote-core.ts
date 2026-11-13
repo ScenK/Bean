@@ -15,6 +15,8 @@ import { CHANNEL_CONTRACT, guardIpc, type IpcLike } from "./channel-contract.js"
 /** Same beat the core's watchdog expects (HEARTBEAT_TIMEOUT_MS is 30 s). */
 export const HEARTBEAT_MS = 10_000;
 const RETRY_MS = [2_000, 5_000, 10_000, 30_000];
+/** How long after a reattach a delegate start whose reply was lost waits for the core's `started`. */
+export const ORPHAN_START_MS = 30_000;
 
 export interface SshChild {
   stdin: Writable;
@@ -58,7 +60,18 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
   let beat: ReturnType<typeof setInterval> | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let nextId = 1;
-  const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  // A delegate start, as its `started` event will name it.
+  type Start = { mountId: string; projectPath: string; instruction: string };
+  type Settle = { resolve: (v: unknown) => void; reject: (e: Error) => void };
+  const pending = new Map<number, Settle & { start?: Start }>();
+  // The renderer learns a delegate's task id only from delegateStart's reply. A drop can lose that reply
+  // after the core started the task, so an in-flight start isn't failed: it waits ("orphan") for the
+  // core's `started` event for the same chat, project and instruction — live before the drop, or in the
+  // resume replay — and resolves with its task id. Never re-sent: requests that start a process aren't.
+  const orphans: Array<Start & Settle> = [];
+  /** `started` events whose start reply hasn't arrived (yet): what an orphan matches against. */
+  const unclaimed: Array<Start & { taskId: string }> = [];
+  let orphanTimer: ReturnType<typeof setTimeout> | undefined;
   /** Last seq applied per chat: sent with each heartbeat and on resume, so the core replays only the rest. */
   const acks: Record<string, number> = {};
   /** Work this shell started that the core reports running: `d:<taskId>` / `l:<sessionId>`. */
@@ -86,15 +99,43 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
     c.stdin.write(frame);
     return true;
   };
+  const sameStart = (a: Start, b: Start): boolean =>
+    a.mountId === b.mountId && a.projectPath === b.projectPath && a.instruction === b.instruction;
+  const startOf = (op: string, args: unknown[]): Start | undefined => {
+    const [req, mountId] = args;
+    if (op !== "delegateStart" || !isObj(req) || typeof mountId !== "string") return undefined;
+    const { projectPath, instruction } = req;
+    return typeof projectPath === "string" && typeof instruction === "string" ? { mountId, projectPath, instruction } : undefined;
+  };
+  /** Pairs orphans with `started` events seen for them, oldest first. */
+  const matchOrphans = (): void => {
+    for (let i = 0; i < orphans.length;) {
+      const o = orphans[i]!;
+      const j = unclaimed.findIndex((u) => sameStart(u, o));
+      if (j < 0) { i++; continue; }
+      const [u] = unclaimed.splice(j, 1);
+      orphans.splice(i, 1);
+      o.resolve(u!.taskId);
+    }
+  };
+  const failOrphans = (why: string): void => {
+    clearTimeout(orphanTimer);
+    for (const o of orphans.splice(0)) o.reject(new Error(why));
+  };
   const failPending = (why: string): void => {
-    for (const p of pending.values()) p.reject(new Error(why));
+    for (const p of pending.values()) {
+      if (p.start) orphans.push({ ...p.start, resolve: p.resolve, reject: p.reject });
+      else p.reject(new Error(why));
+    }
     pending.clear();
+    matchOrphans();
   };
   /** Ends the current child: its late frames and exit are ignored from here on. */
   const drop = (): void => {
     clearInterval(beat);
     beat = undefined;
     generation = undefined;
+    clearTimeout(orphanTimer);
     const c = child;
     child = undefined;
     if (c) { c.stdin.end(); c.kill(); }
@@ -106,6 +147,7 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
     drop();
     // Nothing this shell started is its to watch any more (taken over, or a core it can't talk to).
     if (running.size > 0) { running.clear(); deps.onWorking(false); }
+    failOrphans(`Lost the connection to ${deps.label} before the core confirmed the start.`);
     setState(next, msg);
   };
   const lost = (c: SshChild, stderr: string): void => {
@@ -131,6 +173,10 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
         everAttached = true;
         failures = 0;
         write(c, { type: "resume", acks });
+        // The replay above carries any `started` an orphan waits for; one that never comes was never run.
+        if (orphans.length > 0) {
+          orphanTimer = setTimeout(() => failOrphans(`${deps.label} never confirmed that start — it didn't run.`), ORPHAN_START_MS);
+        }
         beat = setInterval(() => { if (child === c) write(c, { type: "heartbeat", acks }); }, HEARTBEAT_MS);
         return setState("attached");
       }
@@ -138,6 +184,10 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
         const p = typeof m.id === "number" ? pending.get(m.id) : undefined;
         if (!p) return; // a late answer to a call already failed by a drop
         pending.delete(m.id as number);
+        if (p.start && m.ok === true) {
+          const i = unclaimed.findIndex((u) => u.taskId === m.value);
+          if (i >= 0) unclaimed.splice(i, 1);
+        }
         if (m.ok === true) p.resolve(m.value);
         else p.reject(new Error(typeof m.error === "string" ? m.error : "The core refused the call."));
         return;
@@ -152,6 +202,12 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
           setWorking(`l:${p.sessionId}`, p.type !== "ended");
         }
         deps.onPush(m.mountId, m.kind as MountPushKind, m.payload);
+        if (m.kind === "delegate" && isObj(p) && p.type === "started" && typeof p.taskId === "string"
+          && typeof p.projectPath === "string" && typeof p.instruction === "string") {
+          unclaimed.push({ mountId: m.mountId, taskId: p.taskId, projectPath: p.projectPath, instruction: p.instruction });
+          if (unclaimed.length > 32) unclaimed.shift();
+          matchOrphans();
+        }
         return;
       }
       case "revoked":
@@ -198,8 +254,9 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
       const c = child;
       if (!c || generation === undefined) return Promise.reject(new Error(`Not connected to ${deps.label} — reconnecting.`));
       const id = nextId++;
+      const start = startOf(op, args);
       return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
+        pending.set(id, { resolve, reject, ...(start ? { start } : {}) });
         if (!write(c, { type: "call", id, op, args })) {
           pending.delete(id);
           reject(new Error("That request is too large to send to the core."));
@@ -220,6 +277,7 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
       stopped = true;
       clearTimeout(retry);
       drop();
+      failOrphans(`Detached from ${deps.label}.`);
     },
   };
 }

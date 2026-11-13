@@ -17,6 +17,8 @@ export type CoreStatus =
   | { kind: "local" }
   | { kind: "none" }
   | { kind: "remote"; host: string; state: "connecting" | "attached" | "reconnecting" | "revoked" | "mismatch"; message?: string; command?: string };
+/** How a core switch ended: the app restarts, or the panel can offer the cores again. */
+export type CoreSwitchOutcome = "restarting" | "kept" | "refused" | "failed";
 /** The Cores panel's list: the saved remote cores, which one is selected, and whether this machine can
  * run its own core. */
 export interface CoreListing {

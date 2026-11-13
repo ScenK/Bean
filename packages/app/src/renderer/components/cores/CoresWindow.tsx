@@ -26,7 +26,8 @@ export function CoresWindow() {
 
   const use = (id: string): void => {
     setSwitching(id);
-    window.bean.coreSwitch(id);
+    // Anything but a restart (Keep working on the chat's Keep/Stop card, a failed save) offers the cores again.
+    window.bean.coreSwitch(id).then((r) => { if (r !== "restarting") setSwitching(undefined); }, () => setSwitching(undefined));
   };
   const add = async (e: Event): Promise<void> => {
     e.preventDefault();

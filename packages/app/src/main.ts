@@ -20,7 +20,7 @@ import {
 import type { RouteSuggestion, Transport } from "@bean/core";
 import { createAvatarWindow, loadAvatarWindow, createComponentWindow } from "./windows.js";
 import { registerIpc, registerShellIpc, buildPlanStore, buildDroppedUrlStore, buildChatPromptStore, buildInterruptedRunStore, notificationOpens, buildPendingUpdateStore, type ChatPromptPayload } from "./ipc.js";
-import { IPC, SHELL_ONLY_KINDS, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type CoreStatus } from "./channels.js";
+import { IPC, SHELL_ONLY_KINDS, type Theme, type ComponentKind, type DashboardTarget, type ChatDrop, type CoreStatus, type CoreSwitchOutcome } from "./channels.js";
 import { registerNoCore } from "./channel-contract.js";
 import { addCore, coreFile, coreLabel, loadCoreChoice, oneTimeCommand, parseRemoteCore, saveCoreChoice, sshArgs, type CoreChoice } from "./core-store.js";
 import { createRemoteCore, registerRemoteIpc, type RemoteCore } from "./remote-core.js";
@@ -274,8 +274,8 @@ app.whenReady().then(async () => {
   // on that core, after the chat window's Keep/Stop review.
   const buildCoreSubmenu = (): MenuItemConstructorOptions[] => [
     ...(process.platform === "darwin"
-      ? [{ label: "This Mac", type: "radio" as const, checked: coreChoice.selected === "local", click: () => switchCore("local") }] : []),
-    ...coreChoice.cores.map((c) => ({ label: coreLabel(c), type: "radio" as const, checked: c.id === coreChoice.selected, click: () => switchCore(c.id) })),
+      ? [{ label: "This Mac", type: "radio" as const, checked: coreChoice.selected === "local", click: () => void switchCore("local") }] : []),
+    ...coreChoice.cores.map((c) => ({ label: coreLabel(c), type: "radio" as const, checked: c.id === coreChoice.selected, click: () => void switchCore(c.id) })),
     { type: "separator" },
     { label: "Add Core…", click: () => openComponent("cores") },
   ];
@@ -345,11 +345,12 @@ app.whenReady().then(async () => {
   const componentWindows = new Map<ComponentKind, BrowserWindow>();
   // A core switch or a remote quit waits for the chat window to close through its Keep/Stop review;
   // "Keep working" (chatCloseKept) calls it off.
-  let afterChatClose: (() => void) | undefined;
-  const closeChatThen = (action: () => void): void => {
+  let afterChatClose: { run: () => void; kept?: () => void } | undefined;
+  const closeChatThen = (run: () => void, kept?: () => void): void => {
     const chat = componentWindows.get("chat");
-    if (!chat || chat.isDestroyed()) { action(); return; }
-    afterChatClose = action;
+    if (!chat || chat.isDestroyed()) { run(); return; }
+    afterChatClose?.kept?.(); // a newer close supersedes it
+    afterChatClose = { run, kept };
     chat.close();
   };
   // Every cores.json write goes through one chain, each with the whole current choice.
@@ -359,20 +360,21 @@ app.whenReady().then(async () => {
     coreSave = coreSave.catch(() => {}).then(() => saveCoreChoice(corePath, snapshot));
     return coreSave;
   };
-  const switchCore = (id: unknown): void => {
+  const switchCore = (id: unknown): Promise<CoreSwitchOutcome> => {
     const known = id === "local" ? process.platform === "darwin" : coreChoice.cores.some((c) => c.id === id);
-    if (!known || id === coreChoice.selected) return;
-    closeChatThen(() => {
+    if (!known || id === coreChoice.selected) return Promise.resolve("refused");
+    return new Promise((resolve) => closeChatThen(() => {
       const before = coreChoice.selected;
       coreChoice = { ...coreChoice, selected: id as string };
       saveCores().then(
-        () => { app.relaunch(); app.quit(); },
+        () => { resolve("restarting"); app.relaunch(); app.quit(); },
         (e: unknown) => {
           coreChoice = { ...coreChoice, selected: before };
+          resolve("failed");
           dialog.showErrorBox("Bean", `Couldn't switch cores: ${e instanceof Error ? e.message : String(e)}`);
         },
       );
-    });
+    }, () => resolve("kept")));
   };
   const coreStatus = (): CoreStatus => (remote ? remote.status() : host ? { kind: "local" } : { kind: "none" });
   // Same drop-race fix as planStore below: a URL dropped on the avatar can reach a chat window
@@ -435,7 +437,7 @@ app.whenReady().then(async () => {
         remoteIpc?.releaseClient(clientId);
         const next = afterChatClose;
         afterChatClose = undefined;
-        next?.();
+        next?.run();
       });
     }
     if (droppedUrl && kind === "chat") {
@@ -642,7 +644,11 @@ app.whenReady().then(async () => {
         },
         onStatus: (status) => {
           push.broadcast(IPC.coreStatusChanged, status);
-          if (status.kind === "remote" && status.state === "attached") remoteIpc?.reattach();
+          if (status.kind === "remote" && status.state === "attached") {
+            remoteIpc?.reattach();
+            // A window that asked for the CLI catalog before the core was reachable refetches it now.
+            push.broadcast(IPC.cliAvailabilityChanged, undefined);
+          }
         },
         onWorking: (working) => keepAwake.setWorking(working),
       });
@@ -715,7 +721,11 @@ app.whenReady().then(async () => {
         switchTo: switchCore,
         status: coreStatus,
         takeBack: () => remote?.takeBack(),
-        closeKept: () => { afterChatClose = undefined; },
+        closeKept: () => {
+          const kept = afterChatClose?.kept;
+          afterChatClose = undefined;
+          kept?.();
+        },
       },
     });
 
