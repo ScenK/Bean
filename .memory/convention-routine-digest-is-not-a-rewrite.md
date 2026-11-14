@@ -26,7 +26,7 @@ from the raw step outputs (latest attempt per step/todo, `VERDICT:` lines and th
 `StepResult.todo` label stripped), not from the composed digest. It is a restyle, not a
 summary: a code-side guard (every URL, fenced block and digit-bearing token kept, ≥0.7× the
 input length, a complete reply) falls back to the verbatim digest, as do failed/needs-attention
-runs, stepless runs, input over 12,000 chars, timeouts and errors. `sinks.chatopsVerbatim: true`
+runs, stepless runs, input over 12,000 chars, timeouts and errors. `sinks.chatopsVerbatim: true` (the Sprouts panel's "Rewrite as a first-person brief" box, unchecked)
 opts a sprout out; `config.json` `briefModel` (no Settings UI, boot-time) picks the model. Code
 text appended to the digest (the retro footer) rides on `RoutineRunResult.footer` so the brief
 re-appends it — a new code-owned digest line needs the same treatment.
