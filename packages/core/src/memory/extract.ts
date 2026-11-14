@@ -179,32 +179,37 @@ const mostlyLinkOrCode = (raw: string): boolean =>
   (raw.replace(/https?:\/\/\S+|`[^`]*`/g, "").match(/[\p{L}\p{N}]/gu)?.length ?? 0) * 2 < raw.replace(/\s/g, "").length;
 
 /** The model's topic label, checked in code: one line, ≤80 chars, control characters and
- * brackets stripped; instruction-, secret- and link-shaped labels rejected; every word must occur
- * in `window`, the conversation the extraction call saw (short words exactly, 4+ chars on the
- * shared-prefix rule). null = no usable label — the fact itself is still saved. */
+ * brackets stripped; instruction-, secret- and link-shaped labels rejected; every word, short
+ * ones included, must occur exactly (normalized) in `window`, the conversation the extraction call
+ * saw. null = no usable label — the fact itself is still saved. */
 export function validateContext(raw: unknown, window: string[]): string | null {
   if (typeof raw !== "string") return null;
   const label = raw.replace(/[\p{Cc}[\](){}<>]/gu, " ").replace(/\s+/g, " ").trim();
   if (!label || label.length > CONTEXT_MAX) return null;
   if (INSTRUCTION_SHAPED.test(label) || SECRET_SHAPED.test(label) || mostlyLinkOrCode(label) || /https?:\/\/|www\./i.test(label)) return null;
   const src = norm(window.join("\n"));
-  const srcWords = words(src);
-  const exact = new Set(srcWords);
-  // Short words exactly; 4+ char words on text validation's shared-prefix rule ("show" ~ "shows").
-  const ok = words(label).every((w) =>
-    CJK.test(w) ? bigrams(w).every((x) => src.includes(x)) : exact.has(w) || (w.length >= 4 && has(srcWords, w)));
+  const srcWords = new Set(words(src));
+  const ok = words(label).every((w) => (CJK.test(w) ? bigrams(w).every((x) => src.includes(x)) : srcWords.has(w)));
   return ok ? label : null;
 }
 
-/** True when `merged` uses a content word that its rows' context labels carry but none of their
- * texts do — dream must never fold a topic note into the user's words. */
+// Articles and prepositions a merge may add on its own ("Only in the staging cluster"); every
+// other label word — short names like "API" included — counts as the label's.
+const GLUE = new Set(["a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "is", "it", "by", "with"]);
+
+/** True when `merged` uses a word that its rows' context labels carry but none of their texts do
+ * — dream must never fold a topic note into the user's words. Latin words match exactly (4+ chars
+ * also on the shared-prefix rule, so "deploys" ~ "deploy"); CJK by character bigrams. */
 export function borrowsContext(merged: string, texts: string[], contexts: string[]): boolean {
-  const own = norm(texts.join("\n"));
-  const ownWords = words(own);
-  const mergedNorm = norm(merged);
-  const mergedWords = words(mergedNorm);
-  const inText = (w: string, ws: string[], raw: string): boolean => (CJK.test(w) ? raw.includes(w) : has(ws, w));
-  return content(contexts.join("\n")).some((w) => !inText(w, ownWords, own) && inText(w, mergedWords, mergedNorm));
+  const inText = (raw: string): ((w: string) => boolean) => {
+    const ws = words(raw);
+    const exact = new Set(ws);
+    return (w) => (CJK.test(w) ? raw.includes(w) : exact.has(w) || (w.length >= 4 && has(ws, w)));
+  };
+  const own = inText(norm(texts.join("\n")));
+  const used = inText(norm(merged));
+  const label = words(contexts.join("\n")).flatMap((w) => (CJK.test(w) ? bigrams(w) : GLUE.has(w) ? [] : [w]));
+  return label.some((w) => !own(w) && used(w));
 }
 
 /** Validates one model-proposed remember call against the user's own words. Returns the

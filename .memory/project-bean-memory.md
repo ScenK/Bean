@@ -74,7 +74,7 @@ see `db.ts`'s `migrateFromFiles`.
   writes from the window it saw, so a fragment ("Only in the staging cluster") stays readable —
   `text` validation is unchanged, so the referent can't go there. `validateContext` in code:
   control chars/brackets stripped, ≤80 chars, instruction-/secret-/link-shaped rejected, every word
-  in that call's window (short words exactly, 4+ chars on the shared-prefix rule); a failed label
+  in that call's window, exact (normalized) — no prefix stand-ins; a failed label
   is dropped, the fact still saves. Only `extractMemories` passes a window (desktop close/per-turn,
   DM capture), so explicit `remember` and channel capture drop it (#857 adds channel context).
   The spec always offers `context` (byte-stable). Recall renders `[re: <context>] <text>`; both
@@ -112,7 +112,7 @@ see `db.ts`'s `migrateFromFiles`.
   transaction spans the model call. `proposeMemoryConsolidation()` sees each fact's saved date
   (newer wins) and may merge one id (a rewrite, e.g. relative → absolute date). `planDream()`
   validates in code: disjoint groups, same-`projectPath`/`category`/`source_id` merges only, equal-or-empty
-  `context` (the label is kept; merged text may not borrow its words — `borrowsContext`), non-empty text, drops capped
+  `context` (the label is kept; merged text may not borrow any label word, short names included, articles/prepositions aside — `borrowsContext`), non-empty text, drops capped
   at max(3, 20%); every shared row is reviewed, 150 per model call (merges never span a chunk), and the
   model sees today's date so it can drop follow-ups more than two weeks past. `applyConsolidation()` is one `BEGIN IMMEDIATE`: lease still
   ours + every touched row unchanged, else abort with no partial mutation; before/after images go

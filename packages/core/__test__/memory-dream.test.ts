@@ -285,6 +285,23 @@ test("planDream merges only equal or empty contexts, keeps the label, and never 
   expect(plan.groups).toEqual([{ ids: ["e", "f"], text: "Prefers dark mode and dark themes", context: "editor theme" }]);
 });
 
+test("planDream refuses merged text that borrows a short or framing label word", () => {
+  const mems: Memory[] = [
+    { ...m("a", "Only in staging"), context: "API" }, { ...m("b", "Happens after deploys"), context: "API" },
+    { ...m("c", "Only on Fridays"), context: "user backups" }, { ...m("d", "Also on Mondays"), context: "user backups" },
+    { ...m("e", "Only in staging"), context: "API" }, { ...m("f", "Only in staging cluster"), context: "API" },
+  ];
+  const plan = planDream(mems, {
+    merges: [
+      { ids: ["a", "b"], mergedText: "API only in staging after deploys" },
+      { ids: ["c", "d"], mergedText: "User only on Fridays and Mondays" },
+      { ids: ["e", "f"], mergedText: "Only in the staging cluster" },
+    ],
+    drops: [],
+  }, "run", "2026-09-01T00:00:00.000Z");
+  expect(plan.groups).toEqual([{ ids: ["e", "f"], text: "Only in the staging cluster", context: "API" }]);
+});
+
 test("a dream merge and its undo keep context", async () => {
   const ctx = "where the login bug shows up";
   await appendMemories(file, [
