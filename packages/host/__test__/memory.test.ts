@@ -305,3 +305,28 @@ test("list shows a channel capture under its current destination name, else its 
   });
   expect((await handlers.list()).map((m) => m.sourceTitle)).toEqual(["Task Force", "Teams chat gone", undefined]);
 });
+
+test("settled waits for in-flight close catch-ups and turn captures, failed ones included (#862 quit)", async () => {
+  const gates: Array<() => void> = [];
+  const { handlers, appended } = memoryHandlersFor({
+    extractMemories: async (transcript) => {
+      await new Promise<void>((r) => gates.push(r));
+      if (transcript.some((t) => t.content === "boom")) throw new Error("model down");
+      return { candidates: [{ text: "new fact" }], rejected: 0, failed: false };
+    },
+  });
+  await handlers.settled(); // nothing in flight
+  const close = handlers.rememberOnClose(typed, { key: "a" });
+  const failing = handlers.rememberOnClose([{ role: "user", content: "boom", source: "typed" }], { key: "b" }).catch(() => []);
+  const turn = handlers.captureTurn("c", { message: "I prefer pnpm", history: [], source: "typed", turnId: "t1" } as never, {} as never);
+  let done = false;
+  const settled = handlers.settled().then(() => { done = true; });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(done).toBe(false);
+  while (gates.length < 3) await new Promise((r) => setTimeout(r, 0));
+  for (const open of gates) open();
+  await settled;
+  expect(done).toBe(true);
+  expect(appended).toHaveLength(2);
+  await Promise.all([close, failing, turn]);
+});

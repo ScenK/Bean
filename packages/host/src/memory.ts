@@ -71,6 +71,15 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     windows.delete(key);
     closed.add(key);
   };
+  // Captures and close catch-ups still running: a quit waits for them (`settled`), or the facts die
+  // with the process (#862).
+  const inFlight = new Set<Promise<unknown>>();
+  const track = <T>(p: Promise<T>): Promise<T> => {
+    inFlight.add(p);
+    const done = (): void => { inFlight.delete(p); };
+    p.then(done, done);
+    return p;
+  };
   const pendingIds = (): string[] => [...(lastBatch?.ids ?? []), ...[...windows.values()].flatMap((w) => w.ids)];
   const extract = async (transcript: ChatTurn[], extra: Memory[], latestTurn: boolean): Promise<Memory[]> => {
     const [existing, projects] = await Promise.all([
@@ -151,7 +160,7 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
         throw err;
       });
       w.queue = run.catch(() => {});
-      return run;
+      return track(run);
     },
     /** A chat's 🕶 chip changed — gates its per-turn captures from now on. */
     setIncognito: (key: string, on: boolean): void => {
@@ -174,13 +183,13 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
       if (opts.incognito || !deps.autoMemory()) return [];
       const turns = transcript.map(({ id, ...t }): ChatTurn => (id && w?.turns.has(id) ? { ...t, source: undefined } : t));
       const rejected = (opts.rejected ?? []).map((text): Memory => ({ id: "", text, createdAt: "" }));
-      try {
-        return await remember(turns, rejected);
-      } catch (err) {
+      return track(remember(turns, rejected).catch((err: unknown) => {
         deps.onMemoryFailure?.();
         throw err;
-      }
+      }));
     },
+    /** Resolves once every capture and close catch-up started so far has finished (either way). */
+    settled: async (): Promise<void> => { await Promise.allSettled([...inFlight]); },
     batch: (): MemoryBatch | undefined => lastBatch,
     lastDream: (): Promise<DreamDigest | undefined> => deps.getLastDream(deps.dbFile),
     /** Undo last dream: restores only groups untouched since; `skipped` = kept user edits. */

@@ -220,7 +220,8 @@ declare global {
       /** Restores the last dream run; `skipped` groups were edited since and kept. */
       undoLastDream(): Promise<{ restored: number; skipped: number }>;
       dreamDetails(): Promise<{ before: string[]; after?: string }[]>;
-      onReviewBeforeClose(cb: () => void): void;
+      /** `quit` = a local-core app quit: close without the Keep/Stop card (the quit stops the work). */
+      onReviewBeforeClose(cb: (quit: boolean) => void): void;
       allowChatClose(): void;
       /** The Keep/Stop card's "Keep working": a switch or quit waiting on the close is called off. */
       chatCloseKept(): void;

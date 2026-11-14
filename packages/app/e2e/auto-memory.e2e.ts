@@ -2,8 +2,9 @@ import { test, expect } from "@playwright/test";
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
-import { appendMemories, dbFile } from "@bean/core";
-import { join } from "node:path";
+import { appendMemories, dbFile, loadMemories } from "@bean/core";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { delimiter, join } from "node:path";
 
 // #177 + per-turn capture: a typed turn's facts are saved right after the reply, with a
 // "Remembered" row in the chat whose Undo forgets them; closing stays instant (no card).
@@ -122,6 +123,43 @@ test("forget: a Forgot receipt row whose Undo brings the memory back in Persona"
     await expect(persona.locator(".bean-memory-input")).toHaveCount(2);
     const texts = await persona.locator(".bean-memory-input").evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value).sort());
     expect(texts).toEqual(["Lives in Seattle", "Uses zed"]);
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
+  }
+});
+
+// #862: text typed to a live agent has no per-turn capture — quitting (local core) must still run the
+// chat's close catch-up and let it land before the process exits.
+test("quit: an agent-mode chat's close catch-up is saved before a local core exits", async () => {
+  const home = await makeBeanHome({ disabledClis: ["opencode", "codex"] });
+  const bin = join(home.homeDir, "fake-bin");
+  await mkdir(bin, { recursive: true });
+  // A fake claude that reads its input and never answers: the session is still running at quit.
+  await writeFile(join(bin, "claude"), `#!/bin/sh\ncat > /dev/null\n`, "utf8");
+  await chmod(join(bin, "claude"), 0o755);
+  const stub = await startStubOpenAI();
+  stub.queue({ toolCall: { name: "remember", args: { text: "Staging database is pg-seven", quote: "our staging database is pg-seven" } } });
+  const app = await launchBean({
+    HOME: home.homeDir,
+    OPENAI_BASE_URL: stub.url,
+    PATH: [bin, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter),
+  });
+  try {
+    const avatar = await app.firstWindow();
+    const [chat] = await Promise.all([
+      app.waitForEvent("window"),
+      avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
+    ]);
+    await chat.waitForLoadState("domcontentloaded");
+    await chat.locator(".bean-agent-chip").click();
+    await chat.locator(".bean-chip-menu-row", { hasText: "Claude Code" }).first().click();
+    const composer = chat.locator(".bean-input--composer");
+    await composer.fill("fyi our staging database is pg-seven");
+    await composer.press("Enter");
+    await expect(chat.locator(".bean-bubble--user").last()).toContainText("pg-seven");
+    await app.close(); // app.quit(): no Keep/Stop card on a local core, waits for the save
+    const saved = await loadMemories(dbFile(join(home.homeDir, ".bean")));
+    expect(saved.map((m) => m.text)).toContain("Staging database is pg-seven");
   } finally {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }

@@ -10,7 +10,12 @@ see `db.ts`'s `migrateFromFiles`.
 
 - **Automatic, no confirm card (#177):** closing the chat window is instant — the renderer sends
   `rememberOnClose(transcript, { incognito })` fire-and-forget and calls `allowChatClose` (the
-  `reviewBeforeClose` intercept survives only for the running-delegates Keep/Stop prompt). The host
+  `reviewBeforeClose` intercept survives only for the running-delegates Keep/Stop prompt).
+  **A quit is a close too (#862):** `before-quit` cancels the first quit while the chat window
+  closes. Local core: `reviewBeforeClose(true)` = close with no Keep/Stop card (quit stops the
+  work), then the exit waits for `memory.settled()` (in-flight captures + catch-ups; capped at
+  `QUIT_MEMORY_WAIT_MS`) — the extraction runs in-process and would die with it. Host `onQuit`
+  teardown and terminal kills run only on the quit that proceeds (`quitting`). The host
   (`buildMemoryHandlers` in `host/src/memory.ts`) runs `extractMemories` → `appendMemories` and keeps the id
   batch in memory; a non-empty batch shows a `kind: "memory"` avatar bubble whose click opens
   Persona (never undoes — its old click meaning was dismiss). Persona's **Just remembered · Undo**
