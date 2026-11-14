@@ -3551,3 +3551,18 @@ button, input, textarea, select, a {
 }
 .bean-chat-window .bean-status-action:hover:not(:disabled) { text-decoration: underline; }
 .bean-chat-window .bean-status-action:disabled { color: var(--bean-text-dim); cursor: default; }
+
+/* Dashboard Remembered section (#860): the daily memory digest's rows by day, with Forget. */
+.bean-dash-dot--remembered { background: var(--bean-text-dim); }
+.bean-dash-remembered-group { display: flex; flex-direction: column; gap: 2px; }
+.bean-dash-remembered-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--bean-border);
+}
+.bean-dash-remembered-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bean-dash-remembered-text { font-size: 13.5px; line-height: 1.5; color: var(--bean-text); overflow-wrap: anywhere; }
+.bean-dash-remembered-row .bean-dash-meta { overflow-wrap: anywhere; }
+.bean-dash-footer .bean-dash-link { margin-left: 8px; }

@@ -131,7 +131,8 @@ test("every component window clears WCAG AA text contrast in both themes", { tag
   recordDestination(db, { surface: "discord", conversationId: "c1", kind: "channel", platformName: "general", parentName: "Guild" });
   recordDestination(db, { surface: "teams", conversationId: "t1", kind: "channel", platformName: "Ops", parentName: "Team" });
   setAlias(db, { surface: "teams", conversationId: "t1" }, "Ops room", () => []);
-  // Persona (#858): a memory with a context label, so its muted re: line is measured.
+  // Persona (#858) and the Dashboard's Remembered day (#860): a memory with a context label, so
+  // its muted re: line is measured.
   await appendMemories(db, [{ id: "mem1", text: "Only in staging", context: "deploy cluster", createdAt: new Date().toISOString() }]);
   // A fake claude that reads its turns and never picks one up, so the chat's live row stays
   // "Not read yet" (#746) for the scan below.
@@ -179,6 +180,15 @@ test("every component window clears WCAG AA text contrast in both themes", { tag
       for (const theme of ["hearth", "graphite"]) {
         await setTheme(win, theme);
         expect(await win.evaluate(SCAN), `${kind} / ${theme}`).toEqual([]);
+      }
+      // #860: the Dashboard opens on a run; scan its Remembered day (the seeded memory) too.
+      if (kind === "dashboard") {
+        await win.locator(".bean-dash-dot--remembered").first().click();
+        await expect(win.locator(".bean-dash-remembered-row")).toHaveCount(1);
+        for (const theme of ["hearth", "graphite"]) {
+          await setTheme(win, theme);
+          expect(await win.evaluate(SCAN), `dashboard remembered / ${theme}`).toEqual([]);
+        }
       }
       // #505: the history sidebar inline (default width) is covered above; narrow the window and
       // scan its overlay too.
