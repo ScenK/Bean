@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ConverseDeps } from "../converse.js";
 import { speakerPrefix, type Memory } from "./memory.js";
+import { borrowsContext } from "./extract.js";
 import { proposeMemoryConsolidation, type ConsolidationResult } from "./consolidate.js";
 import {
   applyConsolidation, claimDreamLease, countMemoriesSince, getMemoryMeta, loadMemories, releaseDreamLease,
@@ -17,7 +18,7 @@ const CHUNK = 150;
 
 /** Code-side validation of the model's proposal — the model is only trusted to suggest:
  * merge groups must be disjoint and single-scope (a global fact never absorbs a project one, and
- * two projects never mix), single-category, single-source and single-speaker (same `Name:` prefix), text non-empty, a rewrite must actually change the text, and drops
+ * two projects never mix), single-category, single-source, single-context (or unlabeled) and single-speaker (same `Name:` prefix), text non-empty, a rewrite must actually change the text, and drops
  * are capped at max(3, 20%) per run so a buggy run can't wipe memory. */
 export function planDream(memories: Memory[], result: ConsolidationResult, runId: string, at: string): DreamPlan {
   const byId = new Map(memories.map((m) => [m.id, m]));
@@ -31,13 +32,18 @@ export function planDream(memories: Memory[], result: ConsolidationResult, runId
     // One category and one source per merge: the merged row can carry only one of each.
     if (new Set(members.map((m) => m.category ?? "")).size > 1) continue;
     if (new Set(members.map((m) => m.sourceId ?? "")).size > 1) continue;
+    // Context labels (#856): merge only rows whose labels are equal or empty, keep the one label,
+    // and never let the label's topic words leak into the merged text (they aren't the user's).
+    const contexts = [...new Set(members.flatMap((m) => m.context ?? []))];
+    if (contexts.length > 1) continue;
+    if (contexts.length > 0 && borrowsContext(text, members.map((m) => m.text), contexts)) continue;
     // A channel-captured fact is "Name: fact" (#463): never fold one speaker's into another's (or
     // the owner's unprefixed one), and the merged text must keep the prefix.
     if (new Set([...members.map((m) => m.text), text].map(speakerPrefix)).size > 1) continue;
     if (members.length === 1 && members[0]!.text === text) continue;
     members.forEach((m) => taken.add(m.id));
     const { projectPath, category, sourceId, sourceTitle } = members[0]!;
-    groups.push({ ids: members.map((m) => m.id), text, projectPath, category, sourceId, sourceTitle });
+    groups.push({ ids: members.map((m) => m.id), text, projectPath, category, sourceId, sourceTitle, context: contexts[0] });
   }
   const dropCap = Math.max(3, Math.floor(memories.length * 0.2));
   let removed = 0;

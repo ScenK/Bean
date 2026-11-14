@@ -2,11 +2,11 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { openDb } from "../db.js";
 import { cjkBigrams, ftsMatchQuery } from "../fts-text.js";
-import { OWNER_PIN_LIMIT, sanitizeCategory, type Memory } from "./memory.js";
+import { OWNER_PIN_LIMIT, sanitizeCategory, sanitizeContext, type Memory } from "./memory.js";
 
 interface MemoryRow {
   id: string; text: string; project_path: string | null; created_at: string; subject_id?: string | null;
-  category: string | null; source_id: string | null; source_title: string | null;
+  category: string | null; source_id: string | null; source_title: string | null; context: string | null;
 }
 
 function toMemory(row: MemoryRow): Memory {
@@ -16,6 +16,7 @@ function toMemory(row: MemoryRow): Memory {
     ...(row.category ? { category: row.category } : {}),
     ...(row.source_id ? { sourceId: row.source_id } : {}),
     ...(row.source_title ? { sourceTitle: row.source_title } : {}),
+    ...(row.context ? { context: row.context } : {}),
   };
 }
 
@@ -27,7 +28,7 @@ function toMemory(row: MemoryRow): Memory {
  * owner's DMs, via `ownerSubjectIds`; empty = shared only). */
 export async function loadMemories(file: string, subject?: string | string[] | null): Promise<Memory[]> {
   const db = openDb(file);
-  const cols = "SELECT id, text, project_path, created_at, subject_id, category, source_id, source_title FROM memories";
+  const cols = "SELECT id, text, project_path, created_at, subject_id, category, source_id, source_title, context FROM memories";
   const ids = subject === undefined ? undefined : subject === null ? [] : typeof subject === "string" ? [subject] : [...new Set(subject)];
   const rows = (ids === undefined
     ? db.prepare(`${cols} ORDER BY created_at`).all()
@@ -49,14 +50,14 @@ export async function loadMemories(file: string, subject?: string | string[] | n
 export async function appendMemories(file: string, additions: Memory[]): Promise<void> {
   const db = openDb(file);
   const insert = db.prepare(
-    "INSERT INTO memories (id, text, project_path, created_at, subject_id, category, source_id, source_title) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO memories (id, text, project_path, created_at, subject_id, category, source_id, source_title, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
   db.exec("BEGIN");
   try {
     for (const m of additions) {
       insert.run(
         m.id, m.text, m.projectPath ?? null, m.createdAt, m.subjectId ?? null,
-        sanitizeCategory(m.category), m.sourceId ?? null, m.sourceTitle ?? null,
+        sanitizeCategory(m.category), m.sourceId ?? null, m.sourceTitle ?? null, sanitizeContext(m.context),
       );
     }
     db.exec("COMMIT");
@@ -114,8 +115,9 @@ export async function shareMemory(file: string, id: string, actor: string): Prom
  * rewrite when there's a single id), or simply removed when `text` is absent (a drop). */
 export interface DreamGroup {
   ids: string[]; text?: string; projectPath?: string;
-  /** Carried onto the merged row: planDream only merges within one category and source. */
-  category?: string; sourceId?: string; sourceTitle?: string;
+  /** Carried onto the merged row: planDream only merges within one category and source, and
+   * between equal or empty contexts (the one non-empty context is kept). */
+  category?: string; sourceId?: string; sourceTitle?: string; context?: string;
 }
 export interface DreamDigest { runId: string; at: string; merged: number; rewritten: number; removed: number; undone?: boolean }
 export interface DreamPlan {
@@ -197,19 +199,19 @@ export async function applyConsolidation(file: string, plan: DreamPlan, nowMs: n
       }
       const at = plan.digest.at;
       const hist = db.prepare(
-        "INSERT INTO memories_history (run_id, grp, phase, memory_id, text, project_path, created_at, at, category, source_id, source_title) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO memories_history (run_id, grp, phase, memory_id, text, project_path, created_at, at, category, source_id, source_title, context) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
       const del = db.prepare("DELETE FROM memories WHERE id = ?");
       const ins = db.prepare(
-        "INSERT INTO memories (id, text, project_path, created_at, category, source_id, source_title) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO memories (id, text, project_path, created_at, category, source_id, source_title, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       );
       plan.groups.forEach((g, grp) => {
         const before = g.ids.map((id) => byId.get(id)).filter((m): m is Memory => m !== undefined);
         for (const m of before) {
           hist.run(
             plan.runId, grp, "before", m.id, m.text, m.projectPath ?? null, m.createdAt, at,
-            m.category ?? null, m.sourceId ?? null, m.sourceTitle ?? null,
+            m.category ?? null, m.sourceId ?? null, m.sourceTitle ?? null, m.context ?? null,
           );
           del.run(m.id);
         }
@@ -218,7 +220,7 @@ export async function applyConsolidation(file: string, plan: DreamPlan, nowMs: n
         // dream's ≥N-new trigger, and it keeps recall ordering stable.
         const createdAt = before.map((m) => m.createdAt).sort().at(-1) ?? at;
         const id = randomUUID();
-        const extra = [g.category ?? null, g.sourceId ?? null, g.sourceTitle ?? null] as const;
+        const extra = [g.category ?? null, g.sourceId ?? null, g.sourceTitle ?? null, sanitizeContext(g.context)] as const;
         ins.run(id, g.text, g.projectPath ?? null, createdAt, ...extra);
         hist.run(plan.runId, grp, "after", id, g.text, g.projectPath ?? null, createdAt, at, ...extra);
       });
@@ -239,11 +241,11 @@ export async function applyConsolidation(file: string, plan: DreamPlan, nowMs: n
 
 interface HistoryRow {
   grp: number; phase: "before" | "after"; memory_id: string; text: string; project_path: string | null; created_at: string;
-  category: string | null; source_id: string | null; source_title: string | null;
+  category: string | null; source_id: string | null; source_title: string | null; context: string | null;
 }
 function historyGroups(db: DatabaseSync, runId: string): Map<number, HistoryRow[]> {
   const rows = db.prepare(
-    "SELECT grp, phase, memory_id, text, project_path, created_at, category, source_id, source_title " +
+    "SELECT grp, phase, memory_id, text, project_path, created_at, category, source_id, source_title, context " +
       "FROM memories_history WHERE run_id = ? ORDER BY grp, rowid",
   ).all(runId) as unknown as HistoryRow[];
   const groups = new Map<number, HistoryRow[]>();
@@ -264,7 +266,7 @@ export async function restoreDreamRun(file: string, runId: string): Promise<{ re
     const get = db.prepare("SELECT text, project_path, category FROM memories WHERE id = ?");
     const del = db.prepare("DELETE FROM memories WHERE id = ?");
     const ins = db.prepare(
-      "INSERT OR IGNORE INTO memories (id, text, project_path, created_at, category, source_id, source_title) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO memories (id, text, project_path, created_at, category, source_id, source_title, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     );
     let restored = 0;
     let skipped = 0;
@@ -277,7 +279,7 @@ export async function restoreDreamRun(file: string, runId: string): Promise<{ re
       if (!intact) { skipped++; continue; }
       for (const r of after) del.run(r.memory_id);
       for (const r of rows.filter((x) => x.phase === "before")) {
-        ins.run(r.memory_id, r.text, r.project_path, r.created_at, r.category, r.source_id, r.source_title);
+        ins.run(r.memory_id, r.text, r.project_path, r.created_at, r.category, r.source_id, r.source_title, r.context);
       }
       restored++;
     }
@@ -333,7 +335,9 @@ function rankRelevant(memories: Memory[], latestUserText: string, currentProject
   const scratch = new DatabaseSync(":memory:");
   scratch.exec("CREATE VIRTUAL TABLE t USING fts5(id UNINDEXED, text)");
   const insert = scratch.prepare("INSERT INTO t (id, text) VALUES (?, ?)");
-  for (const m of rest) insert.run(m.id, cjkBigrams(m.text));
+  // The context label is searchable too: "that tool someone mentioned" can match a fact whose
+  // referent lives only in its label.
+  for (const m of rest) insert.run(m.id, cjkBigrams(m.context ? `${m.text} ${m.context}` : m.text));
   const ranked = scratch.prepare(
     "SELECT id FROM t WHERE t MATCH ? ORDER BY bm25(t) LIMIT ?",
   ).all(matchQuery, remaining) as unknown as { id: string }[];

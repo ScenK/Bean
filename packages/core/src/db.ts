@@ -351,6 +351,10 @@ export function openDb(file: string): DatabaseSync {
     ["memories_history", "category", "TEXT"],
     ["memories_history", "source_id", "TEXT"],
     ["memories_history", "source_title", "TEXT"],
+    // Topic label from the capture's conversation window (#856): NULL = none. History carries it
+    // so a dream merge and its undo keep it.
+    ["memories", "context", "TEXT"],
+    ["memories_history", "context", "TEXT"],
     // Member todos (#283): the non-owner chatops speaker who queued it; NULL = the owner's (desktop,
     // watch-created, legacy rows, or the owner on chat) — only NULL rows may reach delegate/command steps.
     ["todos", "created_by", "TEXT"],

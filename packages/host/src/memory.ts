@@ -87,6 +87,7 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     const at = new Date().toISOString();
     return candidates.map((c) => ({
       id: randomUUID(), text: c.text, projectPath: c.projectPath, createdAt: at, ...(c.category ? { category: c.category } : {}),
+      ...(c.context ? { context: c.context } : {}),
     }));
   };
   const remember = async (transcript: ChatTurn[], extra: Memory[]): Promise<Memory[]> => {

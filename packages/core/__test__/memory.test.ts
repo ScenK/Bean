@@ -85,3 +85,10 @@ test("memorySections: owner rows by category (You, A–Z, Uncategorized); channe
   expect(s.others.map((r) => r.id)).toEqual(["u1", "m1"]);
   expect(s.projects.map((r) => r.id)).toEqual(["p1"]);
 });
+
+test("memoriesBlock renders a context label as [re: …] and the header explains it (#856)", () => {
+  const block = memoriesBlock([{ ...good, text: "Only in staging", context: "where the login bug shows up" }, good], [], { ids: false });
+  expect(block).toContain("(about the user) [re: where the login bug shows up] Only in staging (saved");
+  expect(block).toContain("(about the user) prefers pnpm (saved");
+  expect(block.split("\n")[0]).toContain("[re: …] prefix is a topic note");
+});
