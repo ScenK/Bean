@@ -1,4 +1,4 @@
-import { formatMemoryDigest, getMemoryMeta, memoriesSavedBetween, setMemoryMeta, type OutboxMessage } from "@bean/core";
+import { formatMemoryDigest, getMemoryMeta, memoriesSavedBetween, outboxErrorLine, setMemoryMeta, type OutboxMessage } from "@bean/core";
 import type { ChatopsBot } from "./chatops-servers.js";
 
 export const MEMORY_DIGEST_EVERY_MS = 24 * 60 * 60 * 1000;
@@ -40,19 +40,23 @@ export async function sendMemoryDigestIfDue(deps: MemoryDigestDeps): Promise<num
     await memoriesSavedBetween(deps.dbFile, last, until, await deps.ownerIds()),
     { labels: deps.labels() },
   );
+  // The lease may have expired while the selection was awaited: re-check before any write.
+  if (!deps.canRun()) return 0;
   let queued = 0;
-  if (body) {
-    for (const bot of bots) {
-      // One destination failing must not cost the other its digest.
-      try {
-        await deps.enqueue({ transport: bot, title: "Memory digest", body, context: false });
-        queued++;
-      } catch (err) {
-        console.error(`bean: memory digest enqueue failed (${bot})`, err);
-      }
+  let failed = false;
+  // One destination failing must not cost the other its digest.
+  if (body) for (const bot of bots) {
+    try {
+      await deps.enqueue({ transport: bot, title: "Memory digest", body, context: false });
+      queued++;
+    } catch (err) {
+      failed = true;
+      console.error(`bean: memory digest enqueue failed (${bot}):`, outboxErrorLine(err));
     }
-    if (queued === 0) return 0;
   }
+  // Any failed enqueue keeps the watermark, so the next check retries every bot: a duplicate on the
+  // one that got it beats a bot that never sees those rows.
+  if (failed || !deps.canRun()) return queued;
   await setMemoryMeta(deps.dbFile, "lastDigestAt", until);
   return queued;
 }

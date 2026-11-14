@@ -1,7 +1,7 @@
 import {
   beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir, skillsDir,
   projectsFile, dbFile, loadLayeredSkills, loadProjects, detectClis, type CliName, runDelegate, drainOutbox,
-  recoverOutbox, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, buildTeamsBot, exitWhenOrphaned,
+  recoverOutbox, outboxErrorLine, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, buildTeamsBot, exitWhenOrphaned,
   ConversationStore, type ConversationPlace, maybeCompact, ProposalStore, RunRegistry, parentActivitySink,
   parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, parseDeskContinue, type DeskAckResult,
   type BotEffects, loadCliModels, clisFile, LiveSessionProposalStore, type PendingLiveSession, isLiveCli,
@@ -788,7 +788,7 @@ const OUTBOX_POLL_MS = 5_000;
 // One owner notice for a given-up message. A failed owner DM gets none — that's the channel the
 // notice would use, and the notice is itself an owner DM, so its own failure can't loop.
 const onOutboxGiveUp = async (msg: OutboxMessage, err: unknown): Promise<void> => {
-  console.error(`outbox: discord send gave up after ${OUTBOX_MAX_ATTEMPTS} attempts`, err);
+  console.error(`outbox: discord send gave up after ${OUTBOX_MAX_ATTEMPTS} attempts:`, outboxErrorLine(err));
   if (!msg.channel && !msg.userId) return;
   const target = msg.channel ? `<#${msg.channel}>` : `<@${msg.userId}>`;
   const reason = err instanceof Error ? err.message : String(err);
@@ -823,7 +823,7 @@ setInterval(() => {
     await sendChunks(text, async (chunk): Promise<{ id: string }> => channel.send(chunk), chunkGroups);
     destinations.seen(channel);
     if (msg.displayBody || msg.context) appendDelivered(msg.channel, msg.body);
-  }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: discord drain failed", err));
+  }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: discord drain failed:", outboxErrorLine(err)));
 }, OUTBOX_POLL_MS);
 
 // Die with the desktop app that spawned us — see exitWhenOrphaned's doc comment. Discord

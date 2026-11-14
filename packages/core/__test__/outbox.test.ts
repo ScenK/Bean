@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ackOutbox, claimOutbox, drainOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, recoverOutbox } from "../src/outbox.js";
+import { ackOutbox, claimOutbox, drainOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS, outboxErrorLine, recoverOutbox } from "../src/outbox.js";
 
 const tmp = () => mkdtemp(join(tmpdir(), "bean-outbox-"));
 let n = 0;
@@ -129,4 +129,12 @@ describe("outbox", () => {
     expect(files).toEqual([expect.stringMatching(/^discord-.*\.json$/), expect.stringMatching(/^teams-.*\.json\.sending$/)]);
     expect(JSON.parse(await readFile(join(dir, files[0]!), "utf8"))).toMatchObject({ body: "crashed mid-send", attempts: 1 });
   });
+});
+
+it("outboxErrorLine keeps the name and message, never the request a platform error carries", () => {
+  const err = Object.assign(new Error("Cannot send messages to this user"), { requestBody: { json: { content: "private digest" } } });
+  err.name = "DiscordAPIError[50007]";
+  expect(outboxErrorLine(err)).toBe("DiscordAPIError[50007]: Cannot send messages to this user");
+  expect(outboxErrorLine({ config: { data: "private digest" } })).not.toContain("private digest");
+  expect(outboxErrorLine("plain")).toBe("plain");
 });

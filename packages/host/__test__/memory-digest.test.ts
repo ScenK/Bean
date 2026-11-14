@@ -100,7 +100,7 @@ test("not due within a day; the first run only starts the clock", async () => {
   expect(sent[0]!.body).not.toContain("- fact");
 });
 
-test("one failed enqueue still delivers to the other bot", async () => {
+test("one failed enqueue still delivers to the other bot and keeps the watermark for a retry", async () => {
   await setMemoryMeta(file, "lastDigestAt", LAST);
   await appendMemories(file, [row("a", "fact")]);
   const sent: string[] = [];
@@ -109,5 +109,15 @@ test("one failed enqueue still delivers to the other bot", async () => {
   });
   expect(await sendMemoryDigestIfDue(d)).toBe(1);
   expect(sent).toEqual(["teams"]);
-  expect(await getMemoryMeta(file, "lastDigestAt")).toBe(NOW.toISOString());
+  expect(await getMemoryMeta(file, "lastDigestAt")).toBe(LAST);
+});
+
+test("a lease lost while the selection is awaited queues nothing and keeps the watermark", async () => {
+  await setMemoryMeta(file, "lastDigestAt", LAST);
+  await appendMemories(file, [row("a", "fact")]);
+  let held = true;
+  const { d, sent } = deps({ canRun: () => held, ownerIds: async () => { held = false; return ["owner-1"]; } });
+  expect(await sendMemoryDigestIfDue(d)).toBe(0);
+  expect(sent).toEqual([]);
+  expect(await getMemoryMeta(file, "lastDigestAt")).toBe(LAST);
 });
