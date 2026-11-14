@@ -33,9 +33,15 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   gets the normal `rememberedCard` (Forget + Share). Captures run on one serialized chain so each
   sees the last one's rows; `onMessage`'s `finally` awaits it because Teams' `postCard` rides the
   turn's `context`, which is revoked once the handler returns — don't detach it.
-- **Live steering capture:** the owner's typed text steered into a live session goes through the
-  same `captureDm` (private to the owner, categorized, receipt card in the thread); a co-driver's
-  steering is never captured. The session's previous steer (anyone's) and the agent's last turn
+- **Live steering capture (#861):** the owner's typed text steered into a live session is scoped
+  by the adapter's `direct` flag: a DM goes through `captureDm` (private to the owner,
+  categorized); a channel/thread goes through `AmbientCapture.steer` (shared, no category, shared-row
+  dedupe, `source_id` = `<surface>:<scopeId>` — the parent channel for a thread — and `source_title`
+  from `msg.channelName`), under that scope's `memory off` (re-checked before the insert) and the
+  same daily caps as channel capture, on the same chain. No `scopeId` (Teams' targeted personal
+  chat) or no chatter = no capture. **No receipt card or notice either way** — it would interrupt
+  the agent's thread; the row shows up in the daily digest. Explicit `remember` keeps its receipt.
+  A co-driver's steering is never captured. The session's previous steer (anyone's) and the agent's last turn
   result (its last 2000 chars) ride before it as non-citable turns (#857, `liveTurns` in `bot.ts`),
   so an answer to the agent's question gets a `context`. Tagged with the session's run id and
   dropped on end — an earlier session's turns never reach a new session's capture.

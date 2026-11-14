@@ -156,7 +156,9 @@ export function PersonaPanel() {
   // Pinned by id, not by empty text: typing the first character mustn't move the focused row.
   const pinned = (m: Memory): number => Number(addedIds.current.has(m.id));
   const newestFirst = (a: Memory, b: Memory): number => pinned(a) - pinned(b) || b.createdAt.localeCompare(a.createdAt);
-  const shown = (needle ? memories.filter((m) => m.text.toLowerCase().includes(needle)) : [...memories]).sort(newestFirst);
+  // The context label (#858) is searchable too: a fragment's subject often lives only there.
+  const matches = (m: Memory): boolean => `${m.text}\n${m.context ?? ""}`.toLowerCase().includes(needle);
+  const shown = (needle ? memories.filter(matches) : [...memories]).sort(newestFirst);
   const batchIds = new Set(batch?.ids ?? []);
   const justRemembered = shown.filter((m) => batchIds.has(m.id));
   const sections = memorySections(shown.filter((m) => !batchIds.has(m.id)), ownerIds);
@@ -190,6 +192,7 @@ export function PersonaPanel() {
         {new Date(m.createdAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
       </span>
       <button type="button" class="bean-memory-del" onClick={() => deleteMemory(m.id)} aria-label="Delete">×</button>
+      {m.context ? <div class="bean-memory-context" title={m.context}>re: {m.context}</div> : null}
     </div>
   );
   const ownerRow = (m: Memory) => row(m, true);

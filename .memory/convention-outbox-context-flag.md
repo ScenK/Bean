@@ -39,3 +39,7 @@ Serialization is in-process only; see the `ponytail:` note there.
 
 Default is off on purpose: every digest kept as context costs tokens on every later turn in
 that conversation, including the ones nobody asks about.
+
+**Logging.** Bot outbox failure logs go through core `outboxErrorLine(err)` (name + message):
+platform errors carry the request body (DiscordAPIError `requestBody`), and an outbox body can be
+private — the owner's daily memory digest (#859). Never log the raw error object there.

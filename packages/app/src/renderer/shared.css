@@ -1963,7 +1963,9 @@ button, input, textarea, select, a {
 
 .bean-memory-group-label { font-size: 11px; text-transform: uppercase; color: var(--bean-text-dim); margin: 10px 0 4px; }
 .bean-memory-empty { font-size: 13px; color: var(--bean-text-dim); padding: 2px 0 6px; }
-.bean-memory-item { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.bean-memory-item { display: flex; gap: 6px; flex-wrap: wrap; row-gap: 2px; align-items: center; margin-bottom: 6px; }
+/* #858: the conversation-topic label wraps onto its own line under the row; read-only. */
+.bean-memory-context { flex-basis: 100%; min-width: 0; padding-left: 8px; font-size: 11px; color: var(--bean-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bean-memory-just { border: 1px solid var(--bean-control-border); border-radius: 8px; padding: 2px 8px 4px; margin: 6px 0 10px; }
 .bean-memory-just-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .bean-memory-dream-row { font-size: 12px; color: var(--bean-text-dim); padding: 2px 0 4px; }
@@ -3549,3 +3551,18 @@ button, input, textarea, select, a {
 }
 .bean-chat-window .bean-status-action:hover:not(:disabled) { text-decoration: underline; }
 .bean-chat-window .bean-status-action:disabled { color: var(--bean-text-dim); cursor: default; }
+
+/* Dashboard Remembered section (#860): the daily memory digest's rows by day, with Forget. */
+.bean-dash-dot--remembered { background: var(--bean-text-dim); }
+.bean-dash-remembered-group { display: flex; flex-direction: column; gap: 2px; }
+.bean-dash-remembered-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--bean-border);
+}
+.bean-dash-remembered-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bean-dash-remembered-text { font-size: 13.5px; line-height: 1.5; color: var(--bean-text); overflow-wrap: anywhere; }
+.bean-dash-remembered-row .bean-dash-meta { overflow-wrap: anywhere; }
+.bean-dash-footer .bean-dash-link { margin-left: 8px; }

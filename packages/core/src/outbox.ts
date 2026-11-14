@@ -179,3 +179,10 @@ function parseOwn(path: string, file: string, transport: string): OutboxMessage 
   rmSync(path, { force: true });
   return undefined;
 }
+
+/** What a bot may log about a failed outbox send: the error's name and message only. Platform
+ * errors carry the request (DiscordAPIError's `requestBody`, an HTTP client's `config.data`), and
+ * the body can be private — the owner's memory digest — so never log the raw error object. */
+export function outboxErrorLine(err: unknown): string {
+  return err instanceof Error ? `${err.name}: ${err.message}` : typeof err === "string" ? err : "non-Error thrown";
+}

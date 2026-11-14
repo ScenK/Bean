@@ -33,6 +33,7 @@ import {
 } from "./handlers.js";
 import { createLiveTasks, LIVE_AGENT_NAMES } from "./live-tasks.js";
 import { buildMemoryHandlers } from "./memory.js";
+import { startMemoryDigest } from "./memory-digest.js";
 import { startBots, type HostBotsOptions } from "./bots.js";
 import { buildNotesHandlers } from "./notes.js";
 import { createRoutineBuilder } from "./routine-builder.js";
@@ -367,17 +368,18 @@ export async function createHost(deps: HostDeps) {
     taskStatus.upsert("memory:dream", { kind: "memory", name: "Memory", startedAt: Date.now(), state: "running" });
     taskStatus.finish("memory:dream", "done", `🌙 Tidied memory: ${parts} · click to review`);
   };
+  const sourceLabels = (): Map<string, string> => {
+    const rows = listDestinations(db);
+    return new Map(rows.flatMap((r): [string, string][] => {
+      const label = destinationLabel(r, rows);
+      return label ? [[`${r.surface}:${r.conversationId}`, label]] : [];
+    }));
+  };
   const memory = buildMemoryHandlers({
     loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory, deleteMemories, extractMemories,
     restoreDreamRun, dreamDetails, loadProjects,
     ownerSubjectIds: () => ownerSubjectIds(db, dir),
-    sourceLabels: () => {
-      const rows = listDestinations(db);
-      return new Map(rows.flatMap((r): [string, string][] => {
-        const label = destinationLabel(r, rows);
-        return label ? [[`${r.surface}:${r.conversationId}`, label]] : [];
-      }));
-    },
+    sourceLabels,
     getLastDream: async (file) => (await getMemoryMeta(file, "lastDream")) as DreamDigest | undefined,
     autoMemory: () => runtime.getAutoMemory(),
     converse: runtime.converse,
@@ -579,6 +581,12 @@ export async function createHost(deps: HostDeps) {
   const bots = await startBots({
     ...deps.bots, dir, builtinDir: projectDir, resolvedPath, taskStatus, onQuit: deps.onQuit, onRoutineTrigger: answerSproutTrigger,
   });
+  // The owner's daily memory digest (#859): under the scheduler lease, to every bot running now.
+  deps.onQuit(startMemoryDigest({
+    dbFile: db, canRun: schedulerLease.held, ownerIds: () => ownerSubjectIds(db, dir), labels: sourceLabels,
+    runningBots: () => (["discord", "teams"] as const).filter((b) => bots.status()[b].running),
+    enqueue: (msg) => enqueueOutbox(outboxDir(dir), msg, randomUUID),
+  }));
 
   return {
     handlers,

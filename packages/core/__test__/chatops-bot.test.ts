@@ -2302,9 +2302,12 @@ async function household() {
     },
   });
   made.deps.roles = makeRoles({ dbPath: file, surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia", "max"] });
+  const chatter = makeChatter({ dbPath: file, surface: "discord" });
+  made.deps.chatter = chatter;
   const say = (who: string, direct: boolean, text = "what do you know?") =>
-    ({ ...msg, conversationId: direct ? `dm-${who}` : "c1", fromId: who, fromName: who, direct, scopeId: direct ? undefined : "s1", text });
-  return { ...made, file, prompts, say, loadMemories };
+    ({ ...msg, conversationId: direct ? `dm-${who}` : "c1", fromId: who, fromName: who, direct, scopeId: direct ? undefined : "s1", text,
+      channelName: direct ? "DM" : "#general" });
+  return { ...made, file, prompts, say, loadMemories, chatter };
 }
 
 test("a DM remember is private: recalled in that member's DM only, never another DM, a channel, or a routine", async () => {
@@ -2386,7 +2389,7 @@ test("DM auto-capture: a typed fact is saved private with a receipt; guests, cha
   expect((await h.loadMemories(h.file)).map((m) => m.text)).toEqual(["Prefers oat milk"]);
 });
 
-test("live steering: the owner's typed words are captured private; a co-driver's are not", async () => {
+test("live steering: the owner's words save shared in a channel, private in a DM, with no receipt card; a co-driver's never (#861)", async () => {
   const h = await household();
   h.deps.autoMemoryEnabled = async () => true;
   const sent: string[] = [];
@@ -2394,13 +2397,44 @@ test("live steering: the owner's typed words are captured private; a co-driver's
     has: () => true, canSteer: () => true, isStarter: () => false, generation: () => 1,
     send: (_c: string, text: string) => { sent.push(text); return true; },
   });
+  // The model always offers a category; a shared steering row must never keep it.
+  const inner = h.deps.chat;
+  h.deps.chat = async (a) => {
+    const r = await inner(a);
+    return { ...r, toolCalls: r.toolCalls.map((c) => (c.name === "remember" ? { ...c, args: { ...(c.args as object), category: "You" } } : c)) };
+  };
   const bot = buildTeamsBot(h.deps);
   const effects = fx();
   await bot.onMessage(h.say("ada", false, "I prefer rooibos"), effects);
   await bot.onMessage(h.say("u1", false, "I prefer oat milk"), effects);
-  expect(sent).toEqual(["I prefer rooibos", "I prefer oat milk"]);
-  expect(await h.loadMemories(h.file)).toMatchObject([{ text: "Prefers oat milk", subjectId: "u1" }]);
-  expect(effects.cards).toMatchObject([{ kind: "remembered", scope: "private" }]);
+  await inner({ model: "m", messages: [{ role: "user", content: "reset" }] }); // re-arms the fake's remember
+  await bot.onMessage(h.say("u1", true, "I prefer espresso"), effects);
+  expect(sent).toEqual(["I prefer rooibos", "I prefer oat milk", "I prefer espresso"]);
+  const rows = await h.loadMemories(h.file);
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toMatchObject({ text: "Prefers oat milk", sourceId: "discord:s1", sourceTitle: "#general" });
+  expect(rows[0]!.subjectId).toBeUndefined();
+  expect(rows[0]!.category).toBeUndefined();
+  expect(rows[1]).toMatchObject({ text: "Prefers espresso", subjectId: "u1", category: "You" });
+  expect(rows[1]!.sourceId).toBeUndefined();
+  expect(effects.cards).toEqual([]);
+  expect(effects.posted).toEqual([]); // no receipt, no one-time notice
+});
+
+test("live steering in a channel with `memory off` saves nothing (#861)", async () => {
+  const h = await household();
+  h.deps.autoMemoryEnabled = async () => true;
+  h.deps.liveSessions = Object.assign(Object.create(h.deps.liveSessions), {
+    has: () => true, canSteer: () => true, isStarter: () => false, generation: () => 1, send: () => true,
+  });
+  h.chatter.setMemoryOn("s1", false);
+  const bot = buildTeamsBot(h.deps);
+  await bot.onMessage(h.say("u1", false, "I prefer oat milk"), fx());
+  expect(await h.loadMemories(h.file)).toEqual([]);
+  // Back on: the next steer saves.
+  h.chatter.setMemoryOn("s1", true);
+  await bot.onMessage(h.say("u1", false, "I prefer oat milk"), fx());
+  expect(await h.loadMemories(h.file)).toMatchObject([{ text: "Prefers oat milk" }]);
 });
 
 test("live steering capture sees the agent's last result and the previous steer, never an earlier session's (#857)", async () => {
