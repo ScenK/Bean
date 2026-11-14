@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { isValidMemory, memoriesBlock, memorySections, type Memory } from "../src/memory/memory.js";
+import { formatMemoryDigest, isValidMemory, memoriesBlock, memorySections, type Memory } from "../src/memory/memory.js";
 
 const good: Memory = { id: "a1", text: "prefers pnpm", createdAt: "2026-07-03T00:00:00.000Z" };
 
@@ -91,4 +91,26 @@ test("memoriesBlock renders a context label as [re: …] and the header explains
   expect(block).toContain("(about the user) [re: where the login bug shows up] Only in staging (saved");
   expect(block).toContain("(about the user) prefers pnpm (saved");
   expect(block.split("\n")[0]).toContain("[re: …] prefix is a topic note");
+});
+
+test("formatMemoryDigest groups by source, shows context, caps the list and points at Persona", () => {
+  const at = "2026-11-14T00:00:00.000Z";
+  const rows = [
+    { id: "1", text: "Only in\nstaging.", createdAt: at, sourceId: "teams:x", sourceTitle: "Ops", context: "deploy target" },
+    { id: "2", text: "likes tea", createdAt: at, subjectId: "o" },
+    { id: "3", text: "uses pnpm", createdAt: at, projectPath: "/work/api" },
+    { id: "4", text: "desk fact", createdAt: at },
+  ];
+  expect(formatMemoryDigest([])).toBeUndefined();
+  const out = formatMemoryDigest(rows, { labels: new Map([["teams:x", "Ops channel"]]) })!;
+  expect(out).toContain("I remembered 4 new things:");
+  expect(out).toContain("Ops channel\n- Only in staging. (re: deploy target)");
+  expect(out).toContain("Your direct messages\n- likes tea");
+  expect(out).toContain("Project api\n- uses pnpm");
+  expect(out).toContain("Chats with Bean\n- desk fact");
+  expect(out).not.toContain("more in Persona");
+  const capped = formatMemoryDigest(rows, { max: 2 })!;
+  expect(capped).toContain("Ops\n");
+  expect(capped).not.toContain("uses pnpm");
+  expect(capped).toContain("…and 2 more in Persona.");
 });

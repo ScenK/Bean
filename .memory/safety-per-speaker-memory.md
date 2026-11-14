@@ -40,3 +40,8 @@ preference as the owner's. The platform id gates capture (role); the name is onl
   from `createdAt` (`(saved unknown)` if it doesn't parse), and both the default header and
   `ROUTINE_MEMORY_HEADER` carry `MEMORY_CONFLICT_CLAUSE` (later-saved wins). It rides its own
   user-role message after history — never in any system message (safety-saved-text-never-system.md).
+- **Daily digest** (#859, host `memory-digest.ts`): owner-only DM on every running bot under the
+  scheduler lease, rows from `memoriesSavedBetween(…, ownerIds)` (SQL: shared + owner ids, never a
+  member's). Not a routine on purpose — never in run records, chat history (`context: false`, no
+  `displayBody`) or logs. `lastDigestAt` (memory_meta) advances only after an enqueue, and stays
+  put with no bot running so the rows wait for one.

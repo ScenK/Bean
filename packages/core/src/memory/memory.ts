@@ -166,3 +166,36 @@ export function memoriesBlock(
   // imperative), but never authorizes a tool, an action, or skipping a confirmation.
   return `${header}\n${lines.join("\n")}`;
 }
+
+/** How many rows the daily memory digest lists before "…and N more in Persona". */
+export const MEMORY_DIGEST_MAX = 30;
+
+/** The owner's daily memory digest (#859) as plain text, grouped by where each row came from:
+ * a channel (`labels` = current destination names, else the capture-time title), the owner's
+ * DMs, a project, or the rest of Bean's chats. `context` rides as `(re: …)`. Empty → undefined,
+ * so nothing new means nothing sent. */
+export function formatMemoryDigest(
+  rows: Memory[],
+  { labels = new Map(), max = MEMORY_DIGEST_MAX }: { labels?: ReadonlyMap<string, string>; max?: number } = {},
+): string | undefined {
+  if (rows.length === 0) return undefined;
+  const oneLine = (s: string): string => s.replace(/\s*[\r\n]+\s*/g, " ").trim();
+  const groupOf = (m: Memory): string =>
+    m.sourceId ? oneLine(labels.get(m.sourceId) ?? m.sourceTitle ?? m.sourceId)
+      : m.subjectId ? "Your direct messages"
+        : m.projectPath ? `Project ${m.projectPath.split("/").filter(Boolean).at(-1) ?? m.projectPath}`
+          : "Chats with Bean";
+  const groups = new Map<string, string[]>();
+  for (const m of rows.slice(0, max)) {
+    const ctx = sanitizeContext(m.context);
+    const group = groupOf(m);
+    groups.set(group, [...(groups.get(group) ?? []), `- ${oneLine(m.text)}${ctx ? ` (re: ${ctx})` : ""}`]);
+  }
+  const more = rows.length - max;
+  return [
+    `I remembered ${rows.length} new thing${rows.length === 1 ? "" : "s"}:`,
+    ...[...groups].map(([group, lines]) => `\n${group}\n${lines.join("\n")}`),
+    ...(more > 0 ? [`\n…and ${more} more in Persona.`] : []),
+    `\nSomething wrong? Reply "forget …" here, or remove it in Persona.`,
+  ].join("\n");
+}
