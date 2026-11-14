@@ -6,6 +6,7 @@ import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
 const QUIET = "Only post when a run needs me";
+const BRIEF = "Rewrite as a first-person brief";
 
 /** "Only post when a run needs me": shown with a chat sink, round-trips through save, dropped when
  * the last chat sink is unticked, and hidden on a notify-only watch (its fires are always ok). */
@@ -68,6 +69,60 @@ test("routines: only-on-problems chat rule round-trips and hides for notify-only
   } finally {
     await app.close();
     await Promise.allSettled([stub.close(), home.cleanup()]);
+  }
+});
+
+/** "Rewrite as a first-person brief": checked by default with a chat sink; unchecking saves
+ * `chatopsVerbatim: true`, re-checking removes it, and dropping the last chat sink drops it too. */
+test("routines: chat brief switch round-trips chatopsVerbatim", async () => {
+  const home = await makeBeanHome();
+  const dir = join(home.homeDir, ".bean", "routines");
+  const file = join(dir, "brief.json");
+  await writeFile(file, JSON.stringify({
+    name: "brief", enabled: false, cron: "0 6 * * *", sinks: { chatops: [{ transport: "discord" }], note: true },
+    steps: [{ kind: "chat", instruction: "check the build" }],
+  }), "utf8");
+  await writeFile(join(dir, "plain.json"), JSON.stringify({
+    name: "plain", enabled: false, cron: "0 6 * * *", sinks: { note: true },
+    steps: [{ kind: "chat", instruction: "check the build" }],
+  }), "utf8");
+  const saved = async (): Promise<Record<string, unknown>> =>
+    (JSON.parse(await readFile(file, "utf8")) as { sinks: Record<string, unknown> }).sinks;
+
+  const app = await launchBean({ HOME: home.homeDir });
+  try {
+    const avatar = await app.firstWindow();
+    const [win] = await Promise.all([
+      app.waitForEvent("window"),
+      avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("routines")),
+    ]);
+    await win.locator(".bean-routines-row", { hasText: "plain" }).click();
+    await expect(win.getByLabel(BRIEF)).toHaveCount(0);
+
+    await win.locator(".bean-routines-row", { hasText: "brief" }).click();
+    const footer = win.locator(".bean-routines-digest-line");
+    await expect(win.getByLabel(BRIEF)).toBeChecked();
+    await expect(footer).toContainText("Posts a brief to Discord DM and a digest to your Daily Dashboard");
+    await win.getByLabel(BRIEF).uncheck();
+    await expect(footer).toContainText("Posts a digest to your Daily Dashboard, Discord DM");
+    await win.getByRole("button", { name: "Save sprout" }).click();
+    await expect.poll(async () => (await saved()).chatopsVerbatim).toBe(true);
+
+    await win.reload();
+    await win.locator(".bean-routines-row", { hasText: "brief" }).click();
+    await expect(win.getByLabel(BRIEF)).not.toBeChecked();
+    await win.getByLabel(BRIEF).check();
+    await win.getByRole("button", { name: "Save sprout" }).click();
+    await expect.poll(async () => "chatopsVerbatim" in (await saved())).toBe(false);
+
+    await win.getByLabel(BRIEF).uncheck();
+    await win.getByLabel("Post to Discord (DM)").uncheck();
+    await expect(win.getByLabel(BRIEF)).toHaveCount(0);
+    await win.getByRole("button", { name: "Save sprout" }).click();
+    await expect.poll(saved).toEqual({ note: true });
+  } finally {
+    await app.close();
+    await home.cleanup();
   }
 });
 
