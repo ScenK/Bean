@@ -186,6 +186,7 @@ test("converse adapter labels truncated text instead of passing it off as a fini
   const out = await makeOpenAIConverseWithClient(client as never)({ model: "m", messages: [], tools: [] });
   expect(out.content).toContain("partial");
   expect(out.content).toContain("cut off");
+  expect(out.incomplete).toBe(true);
 });
 
 test("converse adapter refuses to act on a tool call from a truncated response", async () => {

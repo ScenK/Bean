@@ -42,6 +42,17 @@ test("preserves imageModel and git identity across a saveConfig that omits it", 
   expect([cfg.gitName, cfg.gitEmail]).toEqual(["Sprout", "s@x"]);
 });
 
+test("briefModel: absent stays absent, a hand edit survives a Settings save", async () => {
+  const file = join(dir, "config.json");
+  await writeFile(file, JSON.stringify({ openaiApiKey: "sk-x" }));
+  expect((await loadConfig(file, "/b")).briefModel).toBeUndefined();
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
+  expect(JSON.parse(await readFile(file, "utf8"))).not.toHaveProperty("briefModel");
+  await writeFile(file, JSON.stringify({ openaiApiKey: "sk-x", briefModel: "gpt-small" }));
+  await saveConfig(file, { openaiApiKey: "sk-x", model: "m" });
+  expect((await loadConfig(file, "/b")).briefModel).toBe("gpt-small");
+});
+
 test("throws when missing", async () => {
   await expect(loadConfig(join(dir, "nope.json"), "/b")).rejects.toThrow("Bean config missing");
 });

@@ -89,6 +89,8 @@ export interface ConverseDeps {
   chat: (a: { model: string; messages: ConvoMsg[]; tools: ToolSpec[]; webSearch?: boolean; signal?: AbortSignal }) => Promise<{
     content: string;
     toolCalls: ToolCall[];
+    /** The model hit its output limit: `content` is partial (and carries a visible cut-off note). */
+    incomplete?: true;
   }>;
   model: string;
 }

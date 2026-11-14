@@ -112,6 +112,14 @@ describe("isValidRoutine", () => {
     expect(describeRoutineError(routine({ sinks: { chatopsOnlyOnProblems: "yes" } } as never))).toMatch(/chatopsOnlyOnProblems must be true or false/);
     expect(isValidRoutine(routine({ sinks: { chatops: [{ transport: "discord" }] } }))).toBe(true);
   });
+  it("chatopsVerbatim: boolean validates and survives a save; non-boolean is rejected", async () => {
+    expect(describeRoutineError(routine({ sinks: { chatopsVerbatim: "yes" } } as never))).toMatch(/chatopsVerbatim must be true or false/);
+    const dir = await tmp();
+    const r = routine({ sinks: { chatops: [{ transport: "discord" }], chatopsVerbatim: true } });
+    expect(isValidRoutine(r)).toBe(true);
+    await saveRoutine(dir, r);
+    expect((await loadRoutines(dir))[0]?.sinks.chatopsVerbatim).toBe(true);
+  });
   it("accepts todoDriven boolean and rejects non-boolean", () => {
     expect(isValidRoutine(routine({ todoDriven: true }))).toBe(true);
     expect(isValidRoutine(routine({ todoDriven: false }))).toBe(true);

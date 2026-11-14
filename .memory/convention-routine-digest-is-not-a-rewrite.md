@@ -16,3 +16,17 @@ Rules now encoded in `routine-runner.ts`:
 
 If you add a new digest path, don't reintroduce a summarizing pass over content a skill already
 formatted for the reader.
+
+## The chat copy is the one exception (#871)
+
+The **record** is never rewritten: `record.digest`, the note sink and the desktop notification
+always get `result.digest` byte for byte. Only the **chat sinks** of an `ok` run with steps get a
+first-person brief (`routine-chat-brief.ts`, called once per run from `deliverDigest`), built
+from the raw step outputs (latest attempt per step/todo, `VERDICT:` lines and the
+`StepResult.todo` label stripped), not from the composed digest. It is a restyle, not a
+summary: a code-side guard (every URL, fenced block and digit-bearing token kept, ≥0.7× the
+input length, a complete reply) falls back to the verbatim digest, as do failed/needs-attention
+runs, stepless runs, input over 12,000 chars, timeouts and errors. `sinks.chatopsVerbatim: true`
+opts a sprout out; `config.json` `briefModel` (no Settings UI, boot-time) picks the model. Code
+text appended to the digest (the retro footer) rides on `RoutineRunResult.footer` so the brief
+re-appends it — a new code-owned digest line needs the same treatment.

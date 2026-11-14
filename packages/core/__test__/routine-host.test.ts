@@ -184,6 +184,88 @@ describe("createRoutineHost", () => {
     expect(await claimOutbox(outboxDir(dir), "discord")).toHaveLength(1);
   });
 
+  describe("chat brief", () => {
+    const REPORT = "Checked 3 repos. PR #42 is green: https://github.com/x/y/pull/42 — merged at 10:15.";
+    const BRIEF = "I checked 3 repos for you. PR #42 is green (https://github.com/x/y/pull/42), and I merged it at 10:15.";
+    const sinks = { note: true, notify: true, chatops: [{ transport: "discord" as const }, { transport: "teams" as const, channel: "conv" }] };
+    /** A converse fake: step calls answer with the report, the brief call (system starts with the persona) with BRIEF. */
+    const briefHost = (over: Partial<RoutineHostDeps> = {}, brief = BRIEF) => {
+      const calls: { model: string; system: string }[] = [];
+      const notify = vi.fn(async () => {});
+      let n = 0;
+      const h = host({
+        notify, newId: () => `id-${n++}`,
+        converse: async (a) => {
+          const system = String(a.messages[0]?.content ?? "");
+          if (system.includes("fidelity rules")) { calls.push({ model: a.model, system }); return { content: brief, toolCalls: [] }; }
+          return { content: REPORT, toolCalls: [] };
+        },
+        ...over,
+      });
+      return { h, calls, notify };
+    };
+    const posted = async () => [...await claimOutbox(outboxDir(dir), "discord"), ...await claimOutbox(outboxDir(dir), "teams")];
+
+    it("an ok single-step run posts one brief to every chat sink; record, note and notification keep the digest", async () => {
+      const { h, calls, notify } = briefHost({ loadPersona: async () => ({ name: "Pip", tags: ["Playful"] }) });
+      const r = routine([{ kind: "chat", instruction: "check" }], { sinks });
+      const res = await h.runOneRoutine(r);
+      await h.deliverDigest(r, res);
+      expect(res.digest).toBe(REPORT);
+      expect(res.record.digest).toBe(REPORT);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.model).toBe("gpt-test");
+      expect(calls[0]!.system).toContain("You are Pip");
+      expect(calls[0]!.system).not.toContain(REPORT);
+      expect((await posted()).map((m) => m.body)).toEqual([BRIEF, BRIEF]);
+      expect((await loadNotes(dbFile(dir)))[0]?.body).toBe(REPORT);
+      expect(notify).toHaveBeenCalledWith(expect.objectContaining({ body: REPORT }));
+    });
+
+    it("an ok multi-step run is briefed from the step outputs, with one brief call", async () => {
+      const { h, calls } = briefHost({}, `${BRIEF}\n\n${BRIEF}`);
+      const r = routine([{ kind: "chat", instruction: "a" }, { kind: "chat", instruction: "b" }], { sinks });
+      const res = await h.runOneRoutine(r);
+      await h.deliverDigest(r, res);
+      expect(calls).toHaveLength(1);
+      expect(res.digest).toBe(REPORT); // the composed digest (the fake answers every non-brief call alike)
+      expect((await posted()).map((m) => m.body)).toEqual([`${BRIEF}\n\n${BRIEF}`, `${BRIEF}\n\n${BRIEF}`]);
+    });
+
+    it("briefModel wins when set; the retro footer follows the brief once, unchanged", async () => {
+      const { h, calls } = briefHost({ getBriefModel: () => "small-m" });
+      const r = routine([{ kind: "chat", instruction: "check" }], { sinks });
+      const res = await h.runOneRoutine(r);
+      await h.deliverDigest(r, { ...res, digest: `${res.digest}\n\n1 skill proposal waiting in Bean → Skills`, footer: "\n\n1 skill proposal waiting in Bean → Skills" });
+      expect(calls[0]!.model).toBe("small-m");
+      expect((await posted())[0]?.body).toBe(`${BRIEF}\n\n1 skill proposal waiting in Bean → Skills`);
+    });
+
+    it("a reply that fails the guard posts the verbatim digest", async () => {
+      const { h, calls } = briefHost({}, "All good!");
+      const r = routine([{ kind: "chat", instruction: "check" }], { sinks });
+      await h.deliverDigest(r, await h.runOneRoutine(r));
+      expect(calls).toHaveLength(1);
+      expect((await posted()).map((m) => m.body)).toEqual([REPORT, REPORT]);
+    });
+
+    it("verbatim shapes make no brief call: not ok, stepless, no pending todos, chatopsVerbatim, muted, no chat sink", async () => {
+      const { h, calls } = briefHost();
+      const okResult = await h.runOneRoutine(routine([{ kind: "chat", instruction: "check" }]));
+      calls.length = 0;
+      const deliver = (over: Partial<Routine>, res = okResult) => h.deliverDigest(routine([{ kind: "chat", instruction: "check" }], { sinks, ...over }), res);
+      await deliver({}, { ...okResult, record: { ...okResult.record, status: "failed" } });
+      await deliver({}, { ...okResult, record: { ...okResult.record, status: "needs-attention" } });
+      await deliver({}, { ...okResult, results: [] }); // stepless / "No pending todos"
+      await deliver({ sinks: { ...sinks, chatopsVerbatim: true } });
+      expect(calls).toHaveLength(0);
+      expect((await posted()).map((m) => m.body).every((b) => b === REPORT)).toBe(true);
+      await deliver({ sinks: { ...sinks, chatopsOnlyOnProblems: true } });
+      await deliver({ sinks: { note: true } });
+      expect(calls).toHaveLength(0);
+    });
+  });
+
   it("skips the notify sink when the host has no notifier", async () => {
     const h = host();
     await expect(h.deliverDigest(routine([], { sinks: { notify: true } }), { digest: "x", results: [], record: {} as never })).resolves.toBeUndefined();

@@ -92,5 +92,8 @@ export interface BeanConfig {
   /** Default on: facts are remembered automatically at desktop chat close (undoable), and
    * dream consolidation runs. Off = explicit remember/forget only — no confirm-card fallback. */
   autoMemory: boolean;
+  /** Model for the first-person sprout chat brief; absent = the brain model. No Settings UI —
+   * edit config.json; applies after a core restart. */
+  briefModel?: string;
   beanDir: string; // resolved absolute path to ~/.bean
 }

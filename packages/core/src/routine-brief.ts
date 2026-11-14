@@ -150,6 +150,8 @@ function cleanSinks(v: unknown): RoutineSinks {
   }
   return {
     ...(chatops.length > 0 ? { chatops } : {}),
+    ...(s.chatopsOnlyOnProblems === true ? { chatopsOnlyOnProblems: true } : {}),
+    ...(s.chatopsVerbatim === true ? { chatopsVerbatim: true } : {}),
     ...(s.note === true ? { note: true } : {}),
     ...(s.notify === true ? { notify: true } : {}),
   };
