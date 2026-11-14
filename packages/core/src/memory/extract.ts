@@ -42,8 +42,8 @@ export function rememberToolSpec(projects: Project[], description?: string): Too
       type: "string",
       description: "a short English category, e.g. You for the user's own preferences and profile",
     },
-    // Also always offered (byte-stable); only extraction passes a window to check it against, so
-    // the explicit remember path and channel capture drop it.
+    // Also always offered (byte-stable); only extraction and channel capture pass a window to
+    // check it against, so the explicit remember path drops it.
     context: {
       type: "string",
       description: "optional short topic (under 80 chars) naming what this fact refers to, using only words from the conversation; omit when the fact is clear on its own",
@@ -214,8 +214,8 @@ export function borrowsContext(merged: string, texts: string[], contexts: string
 
 /** Validates one model-proposed remember call against the user's own words. Returns the
  * candidate, or a short reason it was rejected (fed back to the model on the chat path).
- * `window` = the conversation the call saw; only extraction passes it, so only extraction keeps
- * a `context` label (see validateContext) — everyone else drops it. */
+ * `window` = the conversation the call saw; only extraction and channel capture pass it, so only
+ * they keep a `context` label (see validateContext) — the explicit remember path drops it. */
 export function validateCandidate(
   args: unknown,
   citable: string[],

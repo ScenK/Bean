@@ -8,7 +8,10 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   30 s lull / 2 min max (an addressed turn flushes it). Citable = member+ (`can(role, "memory")` on
   the platform id), not a bot, not quoted (a `>` line, or anything after a `>>>` line); a guest-only batch makes no model call. Each
   fact's quote must match **exactly one** eligible line (ambiguous or cross-speaker quotes are
-  dropped); that line's speaker is bound: owner → plain text, anyone else → `Name: fact`. Saved
+  dropped); that line's speaker is bound: owner → plain text, anyone else → `Name: fact`. The
+  conversation's last 10 lines from earlier batches (≤1 h before this batch) ride along as **not
+  citable** context (#857), so a line with an implied subject can get a `context` label (validated
+  against every line the call saw); a quote that stands only there is still refused. Saved
   shared (`subject_id` NULL). `memory on|off|status` (`chatops_chatty.memory_off`, missing row = on;
   on/off = `channelMemory`, admin; channel scope) and `autoMemory` are re-checked right before the
   insert, so a queued batch obeys them. Receipt: Discord 🧠 reaction (best-effort), Teams silent;
@@ -32,7 +35,10 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   turn's `context`, which is revoked once the handler returns — don't detach it.
 - **Live steering capture:** the owner's typed text steered into a live session goes through the
   same `captureDm` (private to the owner, categorized, receipt card in the thread); a co-driver's
-  steering is never captured.
+  steering is never captured. The session's previous steer (anyone's) and the agent's last turn
+  result (its last 2000 chars) ride before it as non-citable turns (#857, `liveTurns` in `bot.ts`),
+  so an answer to the agent's question gets a `context`. Tagged with the session's run id and
+  dropped on end — an earlier session's turns never reach a new session's capture.
 - Config `autoMemory` gates DM capture only (explicit tools stay on): `deps.autoMemoryEnabled`,
   which core `sharedBotDeps` (`chatops/bot-deps.ts`) wires to a per-turn `loadConfig` re-read (unreadable = off), so a Settings
   toggle applies without restarting the bot.

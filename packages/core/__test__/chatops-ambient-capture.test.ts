@@ -191,3 +191,31 @@ test("a capture records its source from the adapter: <surface>:<scopeId> plus th
   expect(n.saved[0]).toMatchObject({ sourceId: "discord:s" });
   expect(n.saved[0]!.sourceTitle).toBeUndefined();
 });
+
+test("earlier lines ride along as non-citable context: a line with an implied subject gets a `context` (#857)", async () => {
+  const h = harness((p) => (p.includes("I am bringing snacks") ? [
+    { name: "remember", args: { text: "Bringing snacks", quote: "I am bringing snacks", context: "Friday hike" } },
+    // Stands in an earlier line only — the context never makes a quote eligible.
+    { name: "remember", args: { text: "Hikes on Fridays", quote: "anyone up for the Friday hike?" } },
+  ] as Call[] : []));
+  h.say("u1", "anyone up for the Friday hike?");
+  await h.advance(30_000);
+  h.say("mia", "I am bringing snacks");
+  await h.advance(30_000);
+  expect(h.prompts[1]).toContain("u1 (not citable): anyone up for the Friday hike?\nMia (citable): I am bringing snacks");
+  expect(h.saved.map((m) => [m.text, m.context ?? null])).toEqual([["Mia: Bringing snacks", "Friday hike"]]);
+  // An hour later the old lines are no longer context.
+  await h.advance(60 * 60_000);
+  h.say("mia", "I am bringing snacks");
+  await h.advance(30_000);
+  expect(h.prompts[2]).not.toContain("Friday hike");
+});
+
+test("a quote that stands in a context line and one batch line still binds to the batch line", async () => {
+  const h = harness((p) => (p.includes("Mia (citable)") ? [{ name: "remember", args: { text: "Deploys on Tuesdays", quote: "we deploy on Tuesdays" } }] : []));
+  h.say("gus", "we deploy on Tuesdays");
+  await h.advance(30_000);
+  h.say("mia", "we deploy on Tuesdays");
+  await h.advance(30_000);
+  expect(h.saved).toMatchObject([{ text: "Mia: Deploys on Tuesdays" }]);
+});
