@@ -493,6 +493,20 @@ describe("ChatWindow agent mode", () => {
     expect(bean.allowChatClose).toHaveBeenCalledTimes(1);
   });
 
+  it("a local-core quit closes mid-session without the card and still sends the agent turns to memory (#862)", async () => {
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await send("/claude go");
+    await live({ type: "started", projectPath: "/scratch", handedOver: 0 });
+    await send("my staging db is pg-7");
+    await act(async () => { listeners.onReviewBeforeClose!(true); });
+    await flush();
+    expect(root.textContent).not.toContain("Claude Code is still running");
+    const transcript = bean.rememberOnClose!.mock.calls[0]![0] as ChatTurn[];
+    expect(transcript.some((t) => t.role === "user" && t.source === "typed" && t.content.includes("pg-7"))).toBe(true);
+    expect(bean.allowChatClose).toHaveBeenCalledTimes(1);
+  });
+
   it("an ended live session's row offers Continue live with its CLI session id", async () => {
     bean.liveResume = vi.fn(async () => ({ sessionId: "s2", agent: "claude", projectPath: "/p" }));
     await act(async () => { render(h(ChatWindow, {}), root); });

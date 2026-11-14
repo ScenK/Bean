@@ -2,8 +2,9 @@ import { test, expect } from "@playwright/test";
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
-import { appendMemories, dbFile } from "@bean/core";
-import { join } from "node:path";
+import { appendMemories, dbFile, loadMemories } from "@bean/core";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { delimiter, join } from "node:path";
 
 // #177 + per-turn capture: a typed turn's facts are saved right after the reply, with a
 // "Remembered" row in the chat whose Undo forgets them; closing stays instant (no card).
@@ -123,6 +124,56 @@ test("forget: a Forgot receipt row whose Undo brings the memory back in Persona"
     const texts = await persona.locator(".bean-memory-input").evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value).sort());
     expect(texts).toEqual(["Lives in Seattle", "Uses zed"]);
   } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
+  }
+});
+
+// #862: text typed to a live agent has no per-turn capture — quitting (local core) must still run the
+// chat's close catch-up and let it land before the process exits. The quit teardown must still SIGKILL
+// the agent's tree first: closing the chat drops the session, and a tool in its own process group
+// would then be orphaned.
+const isAlive = (pid: number): boolean => {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+};
+test("quit: an agent-mode chat's close catch-up is saved before a local core exits, its tools killed", async () => {
+  const home = await makeBeanHome({ disabledClis: ["opencode", "codex"] });
+  const bin = join(home.homeDir, "fake-bin");
+  await mkdir(bin, { recursive: true });
+  // A fake claude that never answers (still running at quit) and has started a tool in its own session.
+  const tool = "my $p = fork; if ($p == 0) { POSIX::setsid(); sleep 600; exit } "
+    + "open my $f, '>', \"$ENV{HOME}/tool.pid\"; print $f $p; close $f; waitpid $p, 0";
+  await writeFile(join(bin, "claude"), ["#!/bin/sh", `/usr/bin/perl -MPOSIX -e '${tool.replaceAll("'", "'\\''")}' &`, "cat > /dev/null", ""].join("\n"), "utf8");
+  await chmod(join(bin, "claude"), 0o755);
+  const stub = await startStubOpenAI();
+  stub.queue({ toolCall: { name: "remember", args: { text: "Staging database is pg-seven", quote: "our staging database is pg-seven" } } });
+  const app = await launchBean({
+    HOME: home.homeDir,
+    OPENAI_BASE_URL: stub.url,
+    PATH: [bin, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter),
+  });
+  let toolPid: number | undefined;
+  try {
+    const avatar = await app.firstWindow();
+    const [chat] = await Promise.all([
+      app.waitForEvent("window"),
+      avatar.evaluate(() => (window as unknown as { bean: { openComponent: (k: string) => void } }).bean.openComponent("chat")),
+    ]);
+    await chat.waitForLoadState("domcontentloaded");
+    await chat.locator(".bean-agent-chip").click();
+    await chat.locator(".bean-chip-menu-row", { hasText: "Claude Code" }).first().click();
+    const composer = chat.locator(".bean-input--composer");
+    await composer.fill("fyi our staging database is pg-seven");
+    await composer.press("Enter");
+    await expect(chat.locator(".bean-bubble--user").last()).toContainText("pg-seven");
+    await expect.poll(() => readFile(join(home.homeDir, "tool.pid"), "utf8").catch(() => ""), { timeout: 15_000 }).toMatch(/^\d+$/);
+    toolPid = Number(await readFile(join(home.homeDir, "tool.pid"), "utf8"));
+    expect(isAlive(toolPid)).toBe(true);
+    await app.close(); // app.quit(): no Keep/Stop card on a local core, waits for the save
+    const saved = await loadMemories(dbFile(join(home.homeDir, ".bean")));
+    expect(saved.map((m) => m.text)).toContain("Staging database is pg-seven");
+    await expect.poll(() => isAlive(toolPid!), { timeout: 5_000 }).toBe(false);
+  } finally {
+    if (toolPid && isAlive(toolPid)) process.kill(toolPid, "SIGKILL");
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });

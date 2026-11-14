@@ -204,7 +204,7 @@ contextBridge.exposeInMainWorld("bean", {
   getLastDream: (): Promise<DreamDigest | undefined> => ipcRenderer.invoke(IPC.getLastDream),
   undoLastDream: (): Promise<{ restored: number; skipped: number }> => ipcRenderer.invoke(IPC.undoLastDream),
   dreamDetails: (): Promise<{ before: string[]; after?: string }[]> => ipcRenderer.invoke(IPC.dreamDetails),
-  onReviewBeforeClose: (cb: () => void) => ipcRenderer.on(IPC.reviewBeforeClose, () => cb()),
+  onReviewBeforeClose: (cb: (quit: boolean) => void) => ipcRenderer.on(IPC.reviewBeforeClose, (_e, quit) => cb(quit === true)),
   allowChatClose: (): void => ipcRenderer.send(IPC.allowChatClose),
   chatopsStatus: (): Promise<Record<ChatopsBot, ChatopsState>> => ipcRenderer.invoke(IPC.chatopsStatus),
   destinationsList: (): Promise<DestinationView[]> => ipcRenderer.invoke(IPC.destinationsList),

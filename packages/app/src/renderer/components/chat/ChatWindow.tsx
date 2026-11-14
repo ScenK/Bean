@@ -143,7 +143,7 @@ export function ChatWindow() {
   // Layout effect: main's first close is cancelled and only completes through this hand-off, so the
   // listener must exist by the first commit — a passive effect lags it, and a close in that gap is lost.
   useLayoutEffect(() => {
-    window.bean.onReviewBeforeClose(() => void reviewBeforeClose());
+    window.bean.onReviewBeforeClose((quit) => void (quit ? closeAll() : reviewBeforeClose()));
   }, []);
 
   useEffect(() => {

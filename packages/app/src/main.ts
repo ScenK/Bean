@@ -42,6 +42,9 @@ const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url))
 // The shell's own OS. Off macOS (Windows) the shell is remote-only: no local core, no SF Symbols, Ctrl
 // for Cmd, and the updater only links to the releases page (#813).
 const IS_MAC = process.platform === "darwin";
+// How long a local-core quit waits for the chat window's close and its memory catch-up (one model
+// call per chat) before exiting anyway.
+const QUIT_MEMORY_WAIT_MS = 10_000;
 // Windows toasts are attributed by AppUserModelID; without it they show as Electron (or not at all).
 // Literal, not pkg.build.appId: electron-builder strips `build` from the packaged package.json, so
 // that read threw at boot in the installed app (keep in sync with package.json build.appId).
@@ -93,20 +96,46 @@ app.whenReady().then(async () => {
   const projectDir = app.isPackaged ? join(process.resourcesPath, "builtin") : projectBeanDir();
 
   let quitting = false;
-  // Attached to a remote core, a quit is a deliberate detach (the core stops this shell's work), so it
-  // goes through the chat window's Keep/Stop review first, like a core switch.
+  // A quit closes the chat window first, so each chat sends its close-time memory catch-up (live-agent
+  // turns have no other capture, #862). Remote core: a quit is a deliberate detach (the core stops this
+  // shell's work), so it goes through the Keep/Stop review, like a core switch. Local core: a quit stops
+  // the work as it always did (no card, `quitClosing`; teardown runs first, `onQuitTeardown`), and the
+  // exit waits for the catch-ups, which extract in this process — capped, so a hung renderer or model
+  // call can't hold the quit.
   let remote: RemoteCore | undefined;
+  let host: Host | undefined;
   let quitReviewed = false;
+  let quitClosing = false;
   app.on("before-quit", (e) => {
-    // `remote` first: a boot that fails before componentWindows exists still quits (no TDZ throw here).
-    const chat = remote && !quitReviewed ? componentWindows.get("chat") : undefined;
+    // `remote`/`host` first: both are set only after componentWindows exists, so a boot that fails
+    // before then still quits (no TDZ throw here).
+    const chat = (remote || host) && !quitReviewed ? componentWindows.get("chat") : undefined;
     if (chat && !chat.isDestroyed()) {
       e.preventDefault();
-      closeChatThen(() => { quitReviewed = true; app.quit(); });
+      if (remote) {
+        closeChatThen(() => { quitReviewed = true; app.quit(); });
+        return;
+      }
+      quitReviewed = quitClosing = true;
+      const closed = new Promise<void>((r) => closeChatThen(r));
+      const deadline = new Promise<void>((r) => setTimeout(r, QUIT_MEMORY_WAIT_MS));
+      void Promise.race([closed.then(() => host?.handlers.memory.settled()), deadline]).then(() => app.quit());
       return;
     }
     quitting = true;
   });
+  // Quit teardown (host `onQuit`, chat terminals) runs once, as soon as the quit can't be called off:
+  // the real quit, or a local-core quit's first before-quit. The latter must not wait for the chat
+  // close — its cleanup SIGTERMs live agents and drops their sessions, and the SIGKILL of their
+  // process trees (tools in their own groups) then finds nothing and orphans them.
+  const onQuitTeardown = (fn: () => void): void => {
+    let ran = false;
+    app.on("before-quit", () => {
+      if (ran || !(quitting || quitClosing)) return;
+      ran = true;
+      fn();
+    });
+  };
   const avatar = createAvatarWindow();
   // Evidence for a vanished avatar (#757): renderer/GPU deaths, sleep, displays, each recovery click.
   const avatarLogPath = avatarLogFile(localCore ? dir : userData);
@@ -144,7 +173,6 @@ app.whenReady().then(async () => {
   });
   // Main → renderer pushes, by client and chat (mount) id (push.ts). Client = webContents id here
   // only; which client holds a mount comes from the host's chat mounts, once the host exists.
-  let host: Host | undefined;
   // Remote core: chat mount id → the window (webContents id) holding it (remote-core.ts).
   const remoteMounts = new Map<string, number>();
   let remoteIpc: ReturnType<typeof registerRemoteIpc> | undefined;
@@ -347,7 +375,7 @@ app.whenReady().then(async () => {
   // pieces stop here.
   let killAllTerminals: () => void = () => {};
   // Chat terminals' shells and their jobs.
-  app.on("before-quit", () => killAllTerminals());
+  onQuitTeardown(() => killAllTerminals());
   const allowClose = new WeakSet<BrowserWindow>();
   ipcMain.on(IPC.allowChatClose, (evt) => {
     const w = BrowserWindow.fromWebContents(evt.sender);
@@ -440,7 +468,7 @@ app.whenReady().then(async () => {
         // map entry; we're keeping the window open for that hand-off, so re-register it — otherwise
         // a reopen would spawn a second chat window instead of focusing this one.
         componentWindows.set(kind, win);
-        sendToWindow(win, IPC.reviewBeforeClose, undefined);
+        sendToWindow(win, IPC.reviewBeforeClose, quitClosing);
       });
       // Captured now: the webContents is destroyed by the time `closed` fires.
       const clientId = win.webContents.id;
@@ -564,7 +592,7 @@ app.whenReady().then(async () => {
         },
         notification: notificationTransport,
         isChatClient,
-        onQuit: (fn) => app.on("before-quit", fn),
+        onQuit: onQuitTeardown,
         // One-time heads-up the first time memory saves itself (same one-shot flag-file shape as the
         // notification-permission prompt).
         firstAutoMemory: async () => {
