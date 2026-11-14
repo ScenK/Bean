@@ -140,8 +140,26 @@ function writeMeta(db: DatabaseSync, key: string, value: unknown): void {
     .run(key, JSON.stringify(value));
 }
 
-export async function getMemoryMeta(file: string, key: "lastDreamAt" | "lastDream"): Promise<unknown> {
+export async function getMemoryMeta(file: string, key: "lastDreamAt" | "lastDream" | "lastDigestAt"): Promise<unknown> {
   return readMeta(openDb(file), key);
+}
+
+/** Only the daily digest's watermark is written from outside this file (dream's keys stay inside
+ * applyConsolidation's transaction). */
+export async function setMemoryMeta(file: string, key: "lastDigestAt", value: string): Promise<void> {
+  writeMeta(openDb(file), key, value);
+}
+
+/** Rows the owner may see that were saved in (`since`, `until`]: shared rows plus rows private to
+ * one of `ownerIds` — never another member's private row. Filtered in SQL, oldest first. */
+export async function memoriesSavedBetween(file: string, since: string, until: string, ownerIds: string[]): Promise<Memory[]> {
+  const ids = [...new Set(ownerIds)];
+  const mine = ids.length ? ` OR subject_id IN (${ids.map(() => "?").join(", ")})` : "";
+  const rows = openDb(file).prepare(
+    "SELECT id, text, project_path, created_at, subject_id, category, source_id, source_title, context FROM memories " +
+      `WHERE created_at > ? AND created_at <= ? AND (subject_id IS NULL${mine}) ORDER BY created_at`,
+  ).all(since, until, ...ids) as unknown as MemoryRow[];
+  return rows.map(toMemory);
 }
 
 export async function countMemoriesSince(file: string, iso: string): Promise<number> {

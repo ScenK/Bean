@@ -2291,7 +2291,8 @@ async function household() {
       const { messages, tools } = a;
       prompts.push(messages.map((x) => String(x.content)).join("\n"));
       const latest = String(messages.at(-1)?.content ?? "");
-      const drink = /I prefer (oat milk|rooibos|espresso)/.exec(latest)?.[1];
+      // The last one: earlier turns (a live session's previous steer) ride before the typed one.
+      const drink = [...latest.matchAll(/I prefer (oat milk|rooibos|espresso)/g)].at(-1)?.[1];
       if (pending && tools?.some((t) => t.name === "remember") && drink) {
         pending = false;
         return { content: "", toolCalls: [{ name: "remember", args: { text: `Prefers ${drink}`, quote: `I prefer ${drink}` } }] };
@@ -2301,9 +2302,12 @@ async function household() {
     },
   });
   made.deps.roles = makeRoles({ dbPath: file, surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia", "max"] });
+  const chatter = makeChatter({ dbPath: file, surface: "discord" });
+  made.deps.chatter = chatter;
   const say = (who: string, direct: boolean, text = "what do you know?") =>
-    ({ ...msg, conversationId: direct ? `dm-${who}` : "c1", fromId: who, fromName: who, direct, scopeId: direct ? undefined : "s1", text });
-  return { ...made, file, prompts, say, loadMemories };
+    ({ ...msg, conversationId: direct ? `dm-${who}` : "c1", fromId: who, fromName: who, direct, scopeId: direct ? undefined : "s1", text,
+      channelName: direct ? "DM" : "#general" });
+  return { ...made, file, prompts, say, loadMemories, chatter };
 }
 
 test("a DM remember is private: recalled in that member's DM only, never another DM, a channel, or a routine", async () => {
@@ -2385,7 +2389,7 @@ test("DM auto-capture: a typed fact is saved private with a receipt; guests, cha
   expect((await h.loadMemories(h.file)).map((m) => m.text)).toEqual(["Prefers oat milk"]);
 });
 
-test("live steering: the owner's typed words are captured private; a co-driver's are not", async () => {
+test("live steering: the owner's words save shared in a channel, private in a DM, with no receipt card; a co-driver's never (#861)", async () => {
   const h = await household();
   h.deps.autoMemoryEnabled = async () => true;
   const sent: string[] = [];
@@ -2393,13 +2397,90 @@ test("live steering: the owner's typed words are captured private; a co-driver's
     has: () => true, canSteer: () => true, isStarter: () => false, generation: () => 1,
     send: (_c: string, text: string) => { sent.push(text); return true; },
   });
+  // The model always offers a category; a shared steering row must never keep it.
+  const inner = h.deps.chat;
+  h.deps.chat = async (a) => {
+    const r = await inner(a);
+    return { ...r, toolCalls: r.toolCalls.map((c) => (c.name === "remember" ? { ...c, args: { ...(c.args as object), category: "You" } } : c)) };
+  };
   const bot = buildTeamsBot(h.deps);
   const effects = fx();
   await bot.onMessage(h.say("ada", false, "I prefer rooibos"), effects);
   await bot.onMessage(h.say("u1", false, "I prefer oat milk"), effects);
-  expect(sent).toEqual(["I prefer rooibos", "I prefer oat milk"]);
-  expect(await h.loadMemories(h.file)).toMatchObject([{ text: "Prefers oat milk", subjectId: "u1" }]);
-  expect(effects.cards).toMatchObject([{ kind: "remembered", scope: "private" }]);
+  await inner({ model: "m", messages: [{ role: "user", content: "reset" }] }); // re-arms the fake's remember
+  await bot.onMessage(h.say("u1", true, "I prefer espresso"), effects);
+  expect(sent).toEqual(["I prefer rooibos", "I prefer oat milk", "I prefer espresso"]);
+  const rows = await h.loadMemories(h.file);
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toMatchObject({ text: "Prefers oat milk", sourceId: "discord:s1", sourceTitle: "#general" });
+  expect(rows[0]!.subjectId).toBeUndefined();
+  expect(rows[0]!.category).toBeUndefined();
+  expect(rows[1]).toMatchObject({ text: "Prefers espresso", subjectId: "u1", category: "You" });
+  expect(rows[1]!.sourceId).toBeUndefined();
+  expect(effects.cards).toEqual([]);
+  expect(effects.posted).toEqual([]); // no receipt, no one-time notice
+});
+
+test("live steering in a channel with `memory off` saves nothing (#861)", async () => {
+  const h = await household();
+  h.deps.autoMemoryEnabled = async () => true;
+  h.deps.liveSessions = Object.assign(Object.create(h.deps.liveSessions), {
+    has: () => true, canSteer: () => true, isStarter: () => false, generation: () => 1, send: () => true,
+  });
+  h.chatter.setMemoryOn("s1", false);
+  const bot = buildTeamsBot(h.deps);
+  await bot.onMessage(h.say("u1", false, "I prefer oat milk"), fx());
+  expect(await h.loadMemories(h.file)).toEqual([]);
+  // Back on: the next steer saves.
+  h.chatter.setMemoryOn("s1", true);
+  await bot.onMessage(h.say("u1", false, "I prefer oat milk"), fx());
+  expect(await h.loadMemories(h.file)).toMatchObject([{ text: "Prefers oat milk" }]);
+});
+
+test("live steering capture sees the agent's last result and the previous steer, never an earlier session's (#857)", async () => {
+  const h = await household();
+  h.deps.autoMemoryEnabled = async () => true;
+  h.deps.liveSessionsEnabled = () => true;
+  let cbs: LiveSessionCallbacks | undefined;
+  const startFn = (_r: LiveSessionRequest, c: LiveSessionCallbacks): LiveSessionHandle => {
+    cbs = c;
+    return { pid: 1, send: () => true, interrupt: () => false, stop: () => c.onExit(undefined) };
+  };
+  h.deps.liveSessions = new LiveSessionRegistry(startFn as never, { dir: mkdtempSync(join(tmpdir(), "bean-bot-")) });
+  // Extraction: "oat milk" answers the agent's question; the model also tries to cite the question.
+  const extractions: string[] = [];
+  const inner = h.deps.chat;
+  h.deps.chat = async (a) => {
+    const p = String(a.messages.at(-1)?.content ?? "");
+    if (!p.includes("user (typed):")) return inner(a);
+    extractions.push(p);
+    return { content: "", toolCalls: [
+      { name: "remember", args: { text: "oat milk", quote: "oat milk", context: "latte milk" } },
+      { name: "remember", args: { text: "Wants a latte", quote: "Which milk should the latte use?" } },
+    ] };
+  };
+  const bot = buildTeamsBot(h.deps);
+  const effects = fx();
+  const start = async (): Promise<void> => {
+    await bot.onMessage(h.say("u1", false, "/live-session order coffee"), effects);
+    await bot.onCardAction({ conversationId: "c1", fromId: "u1", fromName: "Scen", value: { beanAction: "start-live", proposalId: latestLiveProposalId(effects.cards) } }, effects);
+    expect(h.deps.liveSessions.has("c1")).toBe(true);
+  };
+  await start();
+  await bot.onMessage(h.say("u1", false, "make it a latte"), effects);
+  cbs!.onTurnComplete({ result: "Which milk should the latte use?" });
+  await bot.onMessage(h.say("u1", false, "oat milk"), effects);
+  const p = extractions.at(-1)!;
+  expect(p).toContain("user (not citable): make it a latte\nassistant (not citable): Which milk should the latte use?\nuser (typed): oat milk");
+  // The answer keeps the question as its context; a quote standing only in the context is refused.
+  expect((await h.loadMemories(h.file)).map((m) => [m.text, m.context ?? null])).toEqual([["oat milk", "latte milk"]]);
+
+  // A new session starts clean: the old one's question and steer never reach its capture.
+  await bot.onMessage(h.say("u1", false, "stop"), effects);
+  await start();
+  await bot.onMessage(h.say("u1", false, "oat milk"), effects);
+  expect(extractions.at(-1)).not.toContain("Which milk");
+  expect(extractions.at(-1)).not.toContain("make it a latte");
 });
 
 test("owner DM captures and remembers keep the model's category; member DMs and channels store none (#648)", async () => {

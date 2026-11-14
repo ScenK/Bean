@@ -381,8 +381,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // chains if capture latency ever queues up.
   let captureChain: Promise<void> = Promise.resolve();
   // `owner` = the owner's own DM: facts keep the model's English category (#648); a member's don't.
+  // No `fx` = no receipt card (live steering, #861: a card would interrupt the agent's thread).
   function captureDm(
-    speakerId: string, recall: string | string[], transcript: ChatTurn[], projects: Project[], fx: BotEffects, owner: boolean,
+    speakerId: string, recall: string | string[], transcript: ChatTurn[], projects: Project[], fx: BotEffects | undefined, owner: boolean,
   ): Promise<void> {
     return captureChain = captureChain.then(async () => {
       if (!(await deps.autoMemoryEnabled?.())) return;
@@ -399,7 +400,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         ...(owner && c.category ? { category: c.category } : {}), ...(c.context ? { context: c.context } : {}),
       }));
       await deps.appendMemories(batch);
-      for (const m of batch) {
+      if (fx) for (const m of batch) {
         const projectName = m.projectPath ? projects.find((p) => p.path === m.projectPath)?.name : undefined;
         await fx.postCard(deps.cards.rememberedCard({ memoryId: m.id, text: m.text, projectName, category: m.category, scope: "private" }));
       }
@@ -407,6 +408,20 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       console.error(`[memory] DM capture failed: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
+  // Each live session's last steer and last turn result (#857), in the order they happened, so a
+  // steer that answers the agent's question is captured with that question as non-citable
+  // context. Tagged with the session's run id: an earlier session's turns never reach a new one's.
+  const liveTurns = new Map<string, { run: string; turns: ChatTurn[] }>();
+  function noteLiveTurn(conv: string, run: string | undefined, turn: ChatTurn): void {
+    if (!run) return;
+    const prev = liveTurns.get(conv);
+    const kept = prev?.run === run ? prev.turns.filter((t) => t.role !== turn.role) : [];
+    liveTurns.set(conv, { run, turns: [...kept, turn] });
+  }
+  const liveContext = (conv: string): ChatTurn[] => {
+    const e = liveTurns.get(conv);
+    return e && e.run === deps.liveSessions.generation(conv) ? e.turns : [];
+  };
   const systemTool = systemControlTool(deps.systemControlsEnabled);
 
   // Refusals sent once per key per process (DM gate per user, card taps per user per card), then
@@ -607,6 +622,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       });
     }
     const resetsAtLaunch = resets.get(conv) ?? 0;
+    let run: string | undefined; // set right after start(); turn results only arrive later
     const started = deps.liveSessions.start({
       channelId: p.conversationId,
       projectPath: p.proposal.projectPath,
@@ -620,8 +636,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       // flipped the card to war-room.
       steering: p.proposal.steering ?? "restricted",
       sink,
-      onTurnResult: (result) =>
-        deps.conversations.append(p.conversationId, { role: "assistant", content: `[live session] ${result}` }),
+      onTurnResult: (result) => {
+        deps.conversations.append(p.conversationId, { role: "assistant", content: `[live session] ${result}` });
+        // ponytail: the last 2000 chars — where an agent's closing question sits.
+        noteLiveTurn(conv, run, { role: "assistant", content: result.slice(-2000) });
+      },
       // A `/new` since launch unbound the conversation; a late id must not bind it again.
       ...(owner ? {
         onSessionId: (id: string) => {
@@ -629,6 +648,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         },
       } : {}),
       onEnded: (notice) => {
+        if (run && liveTurns.get(conv)?.run === run) liveTurns.delete(conv);
         updateToEnded().catch(logRunEffectError);
         fx.post(notice).catch(logRunEffectError);
       },
@@ -639,6 +659,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         projectName, startedBy, outcome: "ended", ...shownPrompt(p.proposal), ...(resume ? { resumeLiveId: resume.sessionId } : {}),
       }));
     }
+    run = deps.liveSessions.generation(conv);
     if (started === "channel") {
       if (!quiet) await fx.post("A live session is already running in this channel — say `stop` to end it first.");
       return { refused: "channel-busy" };
@@ -1492,8 +1513,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       if (first === undefined) return true;
       agentText = [text, ...paths.map((p, i) => `[Image #${first + i}]: ${p}`)].filter(Boolean).join("\n");
     }
+    const run = deps.liveSessions.generation(conv);
     if (!deps.liveSessions.send(conv, agentText)) return false;
     const saved = images?.length ? [text, "[image attached]"].filter(Boolean).join("\n") : text;
+    noteLiveTurn(conv, run, { role: "user", content: saved });
     deps.conversations.append(conv, { role: "user", content: speakerLine(fromName, saved) });
     return true;
   }
@@ -1712,18 +1735,25 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             return;
           }
           if (!steers(msg)) return;
+          const context = liveContext(conv); // before this steer becomes the session's last one
           if (!(await steerLive(conv, msg.fromName, msg.text, msg.images, () => steers(msg)))) {
             await fx.reply(TURN_QUEUE_FULL);
             return;
           }
-          // What the owner types to an agent is their own words too: same private capture as an
-          // owner DM turn (a co-driver's steering is never captured).
+          // What the owner types to an agent is their own words too (a co-driver's steering is
+          // never captured), scoped by where it was typed (#861): a DM saves private like an owner
+          // DM turn; a channel or thread saves shared under that channel's memory switch and caps.
+          // No receipt card either way — the row shows up in the next digest.
           const steered = msg.typedText ?? msg.text;
           if (speakerRole(msg).role === "owner" && steered.trim()) {
-            capture = captureDm(
-              msg.fromId, [msg.fromId, ...(await deps.ownerSubjectIds?.() ?? [])],
-              [{ role: "user", content: steered, source: "typed" }], await deps.loadProjects(), fx, true,
-            );
+            const transcript: ChatTurn[] = [...context, { role: "user", content: steered, source: "typed" }];
+            if (msg.direct) {
+              capture = captureDm(
+                msg.fromId, [msg.fromId, ...(await deps.ownerSubjectIds?.() ?? [])], transcript, await deps.loadProjects(), undefined, true,
+              );
+            } else if (msg.scopeId && channelCapture) {
+              capture = channelCapture.steer(msg.scopeId, msg.channelName, transcript, await deps.loadProjects());
+            }
           }
           return;
         }
