@@ -15,7 +15,9 @@ see `db.ts`'s `migrateFromFiles`.
   closes. Local core: `reviewBeforeClose(true)` = close with no Keep/Stop card (quit stops the
   work), then the exit waits for `memory.settled()` (in-flight captures + catch-ups; capped at
   `QUIT_MEMORY_WAIT_MS`) — the extraction runs in-process and would die with it. Host `onQuit`
-  teardown and terminal kills run only on the quit that proceeds (`quitting`). The host
+  teardown and terminal kills run once (`onQuitTeardown`) — on a local quit *before* the
+  chat closes: its close cleanup SIGTERMs live agents and drops their sessions, so a later SIGKILL
+  of their trees would miss tools in their own process groups and orphan them. The host
   (`buildMemoryHandlers` in `host/src/memory.ts`) runs `extractMemories` → `appendMemories` and keeps the id
   batch in memory; a non-empty batch shows a `kind: "memory"` avatar bubble whose click opens
   Persona (never undoes — its old click meaning was dismiss). Persona's **Just remembered · Undo**

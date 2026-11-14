@@ -99,8 +99,9 @@ app.whenReady().then(async () => {
   // A quit closes the chat window first, so each chat sends its close-time memory catch-up (live-agent
   // turns have no other capture, #862). Remote core: a quit is a deliberate detach (the core stops this
   // shell's work), so it goes through the Keep/Stop review, like a core switch. Local core: a quit stops
-  // the work as it always did (no card, `quitClosing`), and the exit waits for the catch-ups, which
-  // extract in this process — capped, so a hung renderer or model call can't hold the quit.
+  // the work as it always did (no card, `quitClosing`; teardown runs first, `onQuitTeardown`), and the
+  // exit waits for the catch-ups, which extract in this process — capped, so a hung renderer or model
+  // call can't hold the quit.
   let remote: RemoteCore | undefined;
   let host: Host | undefined;
   let quitReviewed = false;
@@ -123,6 +124,18 @@ app.whenReady().then(async () => {
     }
     quitting = true;
   });
+  // Quit teardown (host `onQuit`, chat terminals) runs once, as soon as the quit can't be called off:
+  // the real quit, or a local-core quit's first before-quit. The latter must not wait for the chat
+  // close — its cleanup SIGTERMs live agents and drops their sessions, and the SIGKILL of their
+  // process trees (tools in their own groups) then finds nothing and orphans them.
+  const onQuitTeardown = (fn: () => void): void => {
+    let ran = false;
+    app.on("before-quit", () => {
+      if (ran || !(quitting || quitClosing)) return;
+      ran = true;
+      fn();
+    });
+  };
   const avatar = createAvatarWindow();
   // Evidence for a vanished avatar (#757): renderer/GPU deaths, sleep, displays, each recovery click.
   const avatarLogPath = avatarLogFile(localCore ? dir : userData);
@@ -362,9 +375,7 @@ app.whenReady().then(async () => {
   // pieces stop here.
   let killAllTerminals: () => void = () => {};
   // Chat terminals' shells and their jobs.
-  // Only on the quit that proceeds: the first before-quit of a quit with a chat open is cancelled
-  // while the chat closes (above).
-  app.on("before-quit", () => { if (quitting) killAllTerminals(); });
+  onQuitTeardown(() => killAllTerminals());
   const allowClose = new WeakSet<BrowserWindow>();
   ipcMain.on(IPC.allowChatClose, (evt) => {
     const w = BrowserWindow.fromWebContents(evt.sender);
@@ -581,7 +592,7 @@ app.whenReady().then(async () => {
         },
         notification: notificationTransport,
         isChatClient,
-        onQuit: (fn) => app.on("before-quit", () => { if (quitting) fn(); }),
+        onQuit: onQuitTeardown,
         // One-time heads-up the first time memory saves itself (same one-shot flag-file shape as the
         // notification-permission prompt).
         firstAutoMemory: async () => {
