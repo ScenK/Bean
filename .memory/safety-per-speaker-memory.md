@@ -5,7 +5,9 @@ is the chatops speaker's platform id a fact is private to; NULL = household-shar
 pre-#281 row and every desktop save (auto or Persona) is shared. Chatops DM auto-capture (#462)
 is always private to the speaker; channel capture (#463) is always shared, with a non-owner
 speaker's fact labelled `Name: fact` so recall ("about the household") never reads a coworker's
-preference as the owner's. The platform id gates capture (role); the name is only a label.
+preference as the owner's. The owner's live-session steering follows where it was typed (#861):
+DM → private, channel/thread → shared (uncategorized, under that channel's `memory off` and caps),
+so a provisional answer typed where everyone reads it is reviewed by dream like any shared row. The platform id gates capture (role); the name is only a label.
 
 - **Recall is filtered in SQL before ranking** — `loadMemories(file, subject)`: absent = all rows
   (desktop + Persona: the owner's own machine, unchanged), `null` = shared only (channels and

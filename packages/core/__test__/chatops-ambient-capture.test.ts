@@ -219,3 +219,22 @@ test("a quote that stands in a context line and one batch line still binds to th
   await h.advance(30_000);
   expect(h.saved).toMatchObject([{ text: "Mia: Deploys on Tuesdays" }]);
 });
+
+test("live steering (#861) shares the scope's daily call cap and obeys `memory off` landing mid-call", async () => {
+  const h = harness(() => [{ name: "remember", args: { text: "Deploys on Tuesdays", quote: "we deploy on Tuesdays", category: "You" } }]);
+  const steer = (): Promise<void> => h.capture.steer("s", "Live: deploy", [{ role: "user", content: "we deploy on Tuesdays", source: "typed" }], []);
+  h.onCall(() => h.chatter.setMemoryOn("s", false));
+  await steer();
+  expect(h.chat).toHaveBeenCalledTimes(1);
+  expect(h.saved).toEqual([]);
+  h.onCall(() => {});
+  await steer(); // still off: no call
+  expect(h.chat).toHaveBeenCalledTimes(1);
+  h.chatter.setMemoryOn("s", true);
+  await steer();
+  expect(h.saved).toEqual([expect.objectContaining({ text: "Deploys on Tuesdays", sourceId: "discord:s", sourceTitle: "Live: deploy" })]);
+  expect(h.saved[0]!.category).toBeUndefined();
+  expect(h.posts).toEqual([]); // no one-time notice from a steer
+  for (let i = 2; i < CAPTURE_DAILY_CALLS + 3; i++) await steer();
+  expect(h.chat).toHaveBeenCalledTimes(CAPTURE_DAILY_CALLS);
+});

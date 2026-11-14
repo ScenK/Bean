@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { ConverseDeps, ConvoMsg } from "../converse.js";
+import type { ChatTurn, ConverseDeps, ConvoMsg } from "../converse.js";
+import type { Project } from "../types.js";
 import { speakerLabel as label, type Memory } from "../memory/memory.js";
-import { existingBlock, rememberToolSpec, validateCandidate } from "../memory/extract.js";
+import { existingBlock, extractMemories, rememberToolSpec, validateCandidate } from "../memory/extract.js";
 import type { ConversationPlace } from "./catalog.js";
 import { CHIME_FORCE_MS, CHIME_LULL_MS, type Chatter } from "./chatter.js";
 import { can, type Role, type Speaker } from "./roles.js";
@@ -48,6 +49,10 @@ export interface AmbientCapture {
   onLine(conversationId: string, scopeId: string, line: AmbientLine, fx: CaptureFx): void;
   /** An addressed turn here: extract what's buffered now rather than wait for the lull. */
   flush(conversationId: string): void;
+  /** The owner's steering typed into a live session in a channel or thread (#861): its latest
+   * turn's facts saved shared, under the same memory switch, daily caps and source fields as
+   * channel capture (`title` from the adapter). No category, no receipt, no notice. Never rejects. */
+  steer(scopeId: string, title: string | undefined, transcript: ChatTurn[], projects: Project[]): Promise<void>;
 }
 
 export const CAPTURE_DAILY_CALLS = 200;
@@ -166,6 +171,29 @@ export function makeAmbientCapture(deps: AmbientCaptureDeps): AmbientCapture {
     if (deps.chatter.claimMemoryNotice(scopeId)) await fx.post(MEMORY_NOTICE);
   }
 
+  async function steer(scopeId: string, title: string | undefined, transcript: ChatTurn[], projects: Project[]): Promise<void> {
+    if (!(await deps.autoMemoryEnabled?.()) || !deps.chatter.memoryOn(scopeId)) return;
+    const b = today(scopeId);
+    if (b.calls >= CAPTURE_DAILY_CALLS || b.saves >= CAPTURE_DAILY_SAVES) return;
+    b.calls++;
+    // Shared rows only: the dedupe list a channel reader may see.
+    const { candidates, rejected, failed } = await extractMemories(
+      transcript, await deps.loadMemories(null), projects, { chat: deps.chat, model: deps.model }, { latestTurn: true },
+    );
+    if (rejected > 0) console.warn(`[memory] live steering capture rejected ${rejected} candidate(s)`);
+    if (failed) throw new Error("extraction model call failed");
+    const kept = candidates.slice(0, Math.max(0, CAPTURE_DAILY_SAVES - b.saves));
+    // Same re-check as a channel batch: `memory off` during the call wins.
+    if (kept.length === 0 || !(await deps.autoMemoryEnabled?.()) || !deps.chatter.memoryOn(scopeId)) return;
+    b.saves += kept.length;
+    const at = new Date(now()).toISOString();
+    const source = { sourceId: `${deps.chatter.surface}:${scopeId}`, sourceTitle: sourceTitle(title) };
+    await deps.appendMemories(kept.map((c) => ({
+      id: randomUUID(), text: c.text, createdAt: at, ...source,
+      ...(c.projectPath ? { projectPath: c.projectPath } : {}), ...(c.context ? { context: c.context } : {}),
+    })));
+  }
+
   function fire(conv: string): void {
     const p = pending.get(conv);
     if (!p) return;
@@ -186,5 +214,9 @@ export function makeAmbientCapture(deps: AmbientCaptureDeps): AmbientCapture {
       p.stop = setTimer(() => fire(conv), Math.max(0, Math.min(CHIME_LULL_MS, p.firstAt + CHIME_FORCE_MS - t)));
     },
     flush: fire,
+    // On the batch chain, so a steer and a channel batch each see what the other saved.
+    steer(scopeId, title, transcript, projects) {
+      return chain = chain.then(() => steer(scopeId, title, transcript, projects)).catch((err: unknown) => deps.onError?.(err));
+    },
   };
 }
