@@ -94,7 +94,7 @@ export * from "./command-step.js";
 export * from "./routine-graph.js";
 export { runRoutine, unfence, ROUTINE_STEP_TIMEOUT_MS } from "./routine-runner.js";
 export type { CommandStepRequest, DelegateStepRequest, DelegateStepResult, RoutineRunnerDeps, RoutineRunResult, StepInfo, StepResult } from "./routine-runner.js";
-export { claimOutbox, enqueueOutbox, ackOutbox, recoverOutbox, drainOutbox, OUTBOX_MAX_ATTEMPTS } from "./outbox.js";
+export { claimOutbox, enqueueOutbox, ackOutbox, recoverOutbox, drainOutbox, outboxErrorLine, OUTBOX_MAX_ATTEMPTS } from "./outbox.js";
 export type { OutboxMessage } from "./outbox.js";
 export { recordRun, releaseRun, updateRunPid, interruptedRunNotice, sweepDeadRuns, liveRuns } from "./run-queue.js";
 export type { TrackedRun } from "./run-queue.js";

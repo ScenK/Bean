@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { Routine } from "@bean/core";
+import type { Memory, Routine } from "@bean/core";
 import { nextRun } from "@bean/core/cron";
+import { memorySource } from "@bean/core/memory";
 import { Markdown } from "../../shared/Markdown.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
@@ -13,6 +14,7 @@ import {
 import type { RoutineStateView, StepAttemptView } from "@bean/host";
 import type { DashboardTarget } from "../../../channels.js";
 import { watchDashboardText } from "../routines/watch-status.js";
+import { rememberedDays, type RememberedDay } from "./remembered.js";
 
 // Renderer-only view prefs (see .memory/convention-renderer-view-prefs-in-localstorage.md):
 // which runs you've marked reviewed, and which day headers are folded. Nothing in main or
@@ -111,11 +113,24 @@ export function DashboardPanel() {
   const [pending, setPending] = useState<DashboardTarget | undefined>(undefined);
   const misses = useRef(0);
   const [deepNotice, setDeepNotice] = useState("");
+  // The Remembered section (#860): the daily digest's rows, read live from the memory list — the
+  // Dashboard stores nothing for it.
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [ownerIds, setOwnerIds] = useState<string[]>([]);
+  const [forgetError, setForgetError] = useState("");
 
   const refresh = async (): Promise<void> => {
-    const [list, st] = await Promise.all([window.bean.routinesList(), window.bean.routinesState()]);
+    const [list, st, mem, owners] = await Promise.all([
+      window.bean.routinesList(),
+      window.bean.routinesState(),
+      // A failed memory read must not blank the runs.
+      window.bean.listMemories().catch((): Memory[] => []),
+      window.bean.memoryOwnerIds().catch((): string[] => []),
+    ]);
     setRoutines(list);
     setStates(st);
+    setMemories(mem);
+    setOwnerIds(owners);
     setLoaded(true);
   };
 
@@ -141,6 +156,7 @@ export function DashboardPanel() {
   const runs = useMemo(() => flattenRuns(states), [states]);
   const days = useMemo(() => groupRuns(runs), [runs]);
   const buckets = useMemo(() => days.flatMap((d) => d.buckets), [days]);
+  const remembered = useMemo(() => rememberedDays(memories, ownerIds), [memories, ownerIds]);
   const reviewedSet = useMemo(() => new Set(reviewed), [reviewed]);
   const unreadIds = useMemo(
     () => new Set(unreadRuns(runs, reviewedSet).map((r) => r.id)),
@@ -148,12 +164,15 @@ export function DashboardPanel() {
   );
 
   // The newest day's first routine is the default read — the dashboard opens on "what happened
-  // last night". History is capped, so the selection can also roll out from under us on a poll;
-  // fall back to the newest rather than leaving the detail pane blank.
+  // last night" (the newest Remembered day only when nothing has run). History is capped, and a
+  // Remembered day empties when its last row is forgotten, so the selection can roll out from
+  // under us; fall back to the default rather than leaving the detail pane blank.
   useEffect(() => {
-    if (!pending && buckets[0] && !buckets.some((b) => b.key === selectedKey)) setSelectedKey(buckets[0].key);
-  }, [buckets, selectedKey, pending]);
-  useEffect(() => { setOpenResolved([]); setFlippedDigests([]); setNotice(""); setAttempts({}); setOpenOutputs([]); }, [selectedKey]);
+    const fallback = buckets[0]?.key ?? remembered[0]?.key;
+    const live = buckets.some((b) => b.key === selectedKey) || remembered.some((d) => d.key === selectedKey);
+    if (!pending && fallback && !live) setSelectedKey(fallback);
+  }, [buckets, remembered, selectedKey, pending]);
+  useEffect(() => { setOpenResolved([]); setFlippedDigests([]); setNotice(""); setAttempts({}); setOpenOutputs([]); setForgetError(""); }, [selectedKey]);
 
   // Bucket-level landing: the target's day for that routine, whose newest run reads on top with its
   // digest open. No startedAt means the run itself wasn't recorded — show the routine's latest.
@@ -188,6 +207,7 @@ export function DashboardPanel() {
   };
 
   const bucket: RunBucket | undefined = buckets.find((b) => b.key === selectedKey);
+  const rememberedDay: RememberedDay | undefined = remembered.find((d) => d.key === selectedKey);
   const routine = routines.find((r) => r.name === bucket?.routine);
   const now = new Date();
 
@@ -259,6 +279,62 @@ export function DashboardPanel() {
     } finally {
       setRerunning(false);
     }
+  };
+
+  // Forget is the per-row delete Persona uses: the row leaves the store, so it's gone there too.
+  const forget = async (id: string): Promise<void> => {
+    setMemories((prev) => prev.filter((m) => m.id !== id));
+    try {
+      await window.bean.deleteMemories([id]);
+      setForgetError("");
+    } catch (err) {
+      setForgetError(err instanceof Error ? err.message : String(err));
+      await refresh();
+    }
+  };
+
+  // Rows grouped by where they came from, groups in order of their newest row.
+  const rememberedView = (day: RememberedDay) => {
+    const groups = new Map<string, Memory[]>();
+    for (const m of day.rows) {
+      const source = memorySource(m);
+      groups.set(source, [...(groups.get(source) ?? []), m]);
+    }
+    return (
+      <>
+        <div class="bean-dash-header">
+          <span class="bean-dash-orb" />
+          <div class="bean-dash-header-main">
+            <h2 class="bean-dash-title">{dayLabel(day.date, now)} · Remembered</h2>
+            <div class="bean-dash-header-sub">
+              {plural(day.rows.length, "thing")} Bean saved · forget anything that's wrong
+            </div>
+          </div>
+        </div>
+        {forgetError ? <div class="bean-dash-notice" role="alert">Forget failed: {forgetError}</div> : null}
+        {[...groups].map(([source, rows]) => (
+          <div key={source} class="bean-dash-remembered-group">
+            <div class="bean-field-label">{source}</div>
+            {rows.map((m) => (
+              <div key={m.id} class="bean-dash-remembered-row" data-memory-id={m.id}>
+                <span class="bean-dash-meta">{clock(m.createdAt)}</span>
+                <div class="bean-dash-remembered-main">
+                  <div class="bean-dash-remembered-text">{m.text}</div>
+                  {m.context ? <div class="bean-dash-meta" title={m.context}>re: {m.context}</div> : null}
+                </div>
+                <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void forget(m.id)}>Forget</button>
+              </div>
+            ))}
+          </div>
+        ))}
+        <div class="bean-dash-footer">
+          <span>Read live from Bean's memory — the full list is in Persona.</span>
+          <button type="button" class="bean-dash-link" onClick={() => void window.bean.openComponent("persona")}>
+            Open Persona →
+          </button>
+        </div>
+      </>
+    );
   };
 
   const bucketRow = (b: RunBucket) => {
@@ -481,6 +557,32 @@ export function DashboardPanel() {
     <div class={listFolded ? "bean-skills bean-skills--folded" : "bean-skills"}>
       <ListFoldToggle folded={listFolded} onToggle={toggleListFold} listId="bean-dashboard-list" />
       <div class="bean-skills-list" id="bean-dashboard-list">
+        {remembered.length > 0 ? (
+          <>
+            <div class="bean-skills-list-label">Remembered</div>
+            {remembered.map((d) => (
+              <div
+                key={d.key}
+                role="button"
+                tabIndex={0}
+                aria-pressed={selectedKey === d.key}
+                class={`bean-skills-row bean-dash-row bean-dash-row--nested${selectedKey === d.key ? " bean-skills-row--selected" : ""}`}
+                onClick={() => pick(d.key)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" && e.key !== " ") return;
+                  e.preventDefault();
+                  pick(d.key);
+                }}
+              >
+                <span class="bean-dash-dot bean-dash-dot--remembered" />
+                <div class="bean-skills-row-main">
+                  <div class="bean-skills-row-name">{dayLabel(d.date, now)}</div>
+                  <div class="bean-dash-row-sub">{d.rows.length} {d.rows.length === 1 ? "memory" : "memories"}</div>
+                </div>
+              </div>
+            ))}
+          </>
+        ) : null}
         <div class="bean-skills-list-label">Runs · {runs.length}</div>
         {runs.length === 0 ? (
           <div class="bean-panel-empty">Nothing has run yet — sprouts report here once they finish.</div>
@@ -527,7 +629,7 @@ export function DashboardPanel() {
 
       <div class="bean-skills-detail">
         {deepNotice ? <div class="bean-dash-meta" role="status">{deepNotice}</div> : null}
-        {!bucket ? (
+        {rememberedDay ? rememberedView(rememberedDay) : !bucket ? (
           <PanelEmptyState message="Pick a day to read what Bean did while you were away." />
         ) : (
           <>

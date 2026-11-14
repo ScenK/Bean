@@ -381,8 +381,9 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // chains if capture latency ever queues up.
   let captureChain: Promise<void> = Promise.resolve();
   // `owner` = the owner's own DM: facts keep the model's English category (#648); a member's don't.
+  // No `fx` = no receipt card (live steering, #861: a card would interrupt the agent's thread).
   function captureDm(
-    speakerId: string, recall: string | string[], transcript: ChatTurn[], projects: Project[], fx: BotEffects, owner: boolean,
+    speakerId: string, recall: string | string[], transcript: ChatTurn[], projects: Project[], fx: BotEffects | undefined, owner: boolean,
   ): Promise<void> {
     return captureChain = captureChain.then(async () => {
       if (!(await deps.autoMemoryEnabled?.())) return;
@@ -399,7 +400,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         ...(owner && c.category ? { category: c.category } : {}), ...(c.context ? { context: c.context } : {}),
       }));
       await deps.appendMemories(batch);
-      for (const m of batch) {
+      if (fx) for (const m of batch) {
         const projectName = m.projectPath ? projects.find((p) => p.path === m.projectPath)?.name : undefined;
         await fx.postCard(deps.cards.rememberedCard({ memoryId: m.id, text: m.text, projectName, category: m.category, scope: "private" }));
       }
@@ -1739,14 +1740,20 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             await fx.reply(TURN_QUEUE_FULL);
             return;
           }
-          // What the owner types to an agent is their own words too: same private capture as an
-          // owner DM turn (a co-driver's steering is never captured).
+          // What the owner types to an agent is their own words too (a co-driver's steering is
+          // never captured), scoped by where it was typed (#861): a DM saves private like an owner
+          // DM turn; a channel or thread saves shared under that channel's memory switch and caps.
+          // No receipt card either way — the row shows up in the next digest.
           const steered = msg.typedText ?? msg.text;
           if (speakerRole(msg).role === "owner" && steered.trim()) {
-            capture = captureDm(
-              msg.fromId, [msg.fromId, ...(await deps.ownerSubjectIds?.() ?? [])],
-              [...context, { role: "user", content: steered, source: "typed" }], await deps.loadProjects(), fx, true,
-            );
+            const transcript: ChatTurn[] = [...context, { role: "user", content: steered, source: "typed" }];
+            if (msg.direct) {
+              capture = captureDm(
+                msg.fromId, [msg.fromId, ...(await deps.ownerSubjectIds?.() ?? [])], transcript, await deps.loadProjects(), undefined, true,
+              );
+            } else if (msg.scopeId && channelCapture) {
+              capture = channelCapture.steer(msg.scopeId, msg.channelName, transcript, await deps.loadProjects());
+            }
           }
           return;
         }

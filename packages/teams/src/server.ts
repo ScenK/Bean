@@ -1,6 +1,6 @@
 import {
   beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir, dbFile,
-  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, OUTBOX_MAX_ATTEMPTS,
+  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, outboxErrorLine, OUTBOX_MAX_ATTEMPTS,
   type OutboxMessage, outboxDir, ownerDmRefs, buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore,
   ConversationStore, maybeCompact, ProposalStore, RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink,
   parseDeskTurn, parseDeskResume, type DeskAckResult, loadCliModels, clisFile, LiveSessionProposalStore,
@@ -394,7 +394,7 @@ const OUTBOX_POLL_MS = 5_000;
 // One owner-DM notice for a given-up channel message. A failed owner DM gets none — the notice
 // would ride that same path, and being an owner DM itself, its own failure can't loop.
 const onOutboxGiveUp = async (msg: OutboxMessage, err: unknown): Promise<void> => {
-  console.error(`outbox: teams send gave up after ${OUTBOX_MAX_ATTEMPTS} attempts`, err);
+  console.error(`outbox: teams send gave up after ${OUTBOX_MAX_ATTEMPTS} attempts:`, outboxErrorLine(err));
   if (!msg.channel) return;
   const reason = err instanceof Error ? err.message : String(err);
   await enqueueOutbox(outboxDir(beanDir()), {
@@ -442,10 +442,10 @@ setInterval(() => {
         if (save === "missing-id") console.error(`outbox: teams post to ${ref.conversation?.id} returned no id; digest not saved`);
         else if (save) appendDelivered(save.key, save.body);
       } catch (err) {
-        console.error("outbox: teams send failed", err);
+        console.error("outbox: teams send failed:", outboxErrorLine(err));
         lastErr = err;
       }
     }
     if (!delivered) throw lastErr;
-  }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: teams drain failed", err));
+  }, onOutboxGiveUp).catch((err: unknown) => console.error("outbox: teams drain failed:", outboxErrorLine(err)));
 }, OUTBOX_POLL_MS);

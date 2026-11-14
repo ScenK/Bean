@@ -15,6 +15,7 @@ export * from "./handlers.js";
 export * from "./host.js";
 export * from "./live-tasks.js";
 export * from "./memory.js";
+export * from "./memory-digest.js";
 export * from "./notes.js";
 export * from "./remote.js";
 export * from "./routine-builder.js";
