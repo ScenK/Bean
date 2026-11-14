@@ -70,6 +70,17 @@ see `db.ts`'s `migrateFromFiles`.
   extraction + remember (`categorize: true`), owner-DM `captureDm` + remember. Member DMs,
   channels and channel capture drop whatever the model gave. Quote validation covers `text`
   only, so a Chinese fact with an English category passes; `sanitizeCategory` normalizes it.
+- **Context label (#856):** `memories.context` (nullable) is a one-line topic the extraction model
+  writes from the window it saw, so a fragment ("Only in the staging cluster") stays readable —
+  `text` validation is unchanged, so the referent can't go there. `validateContext` in code:
+  control chars/brackets stripped, ≤80 chars, instruction-/secret-/link-shaped rejected, every word
+  in that call's window, exact (normalized) — no prefix stand-ins; a failed label
+  is dropped, the fact still saves. Only `extractMemories` passes a window (desktop close/per-turn,
+  DM capture), so explicit `remember` and channel capture drop it (#857 adds channel context).
+  The spec always offers `context` (byte-stable). Recall renders `[re: <context>] <text>`; both
+  recall headers (`memoriesBlock` default + routine) carry `MEMORY_CONTEXT_CLAUSE` (topic note,
+  not the user's words); relevance ranking indexes `text + context`. Live check:
+  `memory-context.live.test.ts` prints the usable-label share.
 - **Capture bar is generous on purpose (owner ask, 2026-11):** extraction keeps current work,
   decisions and anything needing a follow-up (category `Follow-up`), not only durable preferences —
   only step-by-step task instructions and small talk are out. Token cost was explicitly accepted;
@@ -100,12 +111,13 @@ see `db.ts`'s `migrateFromFiles`.
   expired` statement (10-min expiry, stale taken over) and the due-check is repeated under it; no
   transaction spans the model call. `proposeMemoryConsolidation()` sees each fact's saved date
   (newer wins) and may merge one id (a rewrite, e.g. relative → absolute date). `planDream()`
-  validates in code: disjoint groups, same-`projectPath`/`category`/`source_id` merges only, non-empty text, drops capped
+  validates in code: disjoint groups, same-`projectPath`/`category`/`source_id` merges only, equal-or-empty
+  `context` (the label is kept; merged text may not borrow any label word, short names included, articles/prepositions aside — `borrowsContext`), non-empty text, drops capped
   at max(3, 20%); every shared row is reviewed, 150 per model call (merges never span a chunk), and the
   model sees today's date so it can drop follow-ups more than two weeks past. `applyConsolidation()` is one `BEGIN IMMEDIATE`: lease still
   ours + every touched row unchanged, else abort with no partial mutation; before/after images go
   to `memories_history` (pruned after 30 days) — any new `memories` column must be carried through
-  apply/history/undo or a merge silently clears it (#646 added category/source). Merged rows keep the group's newest `created_at`
+  apply/history/undo or a merge silently clears it (#646 added category/source, #856 context). Merged rows keep the group's newest `created_at`
   so a dream never counts toward the next one's "5 new". **Undo last dream** (`restoreDreamRun`)
   restores only groups whose after-image (text, project, category) is still intact and reports the rest as kept edits. The
   digest is a `memory:dream` bubble + Persona's "Last dream" row — never written into a transcript

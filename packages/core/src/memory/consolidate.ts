@@ -17,7 +17,9 @@ const CONSOLIDATE_INSTRUCTIONS =
   "Call drop_memory for a fact that is stale, contradicted by a newer fact (when two facts " +
   "conflict, the more recently saved one wins), or no longer meaningful — including a follow-up, " +
   "deadline or plan whose date is more than two weeks before today. Only merge facts about " +
-  "the same project (or both global). Only act when confident — leave everything else alone. " +
+  "the same project (or both global). A \"[re: …]\" prefix is a topic note, not part of the fact: " +
+  "only merge facts whose re: notes are the same or absent, and never copy its words into " +
+  "mergedText. Only act when confident — leave everything else alone. " +
   "If nothing needs changing, call no tools.";
 
 function mergeTool(ids: string[]): ToolSpec {
@@ -53,7 +55,7 @@ function dropTool(ids: string[]): ToolSpec {
 
 function factsBlock(memories: Memory[]): string {
   return memories
-    .map((m) => `- [${m.id}] (saved ${m.createdAt.slice(0, 10)}) ${m.text}${m.projectPath ? ` (project: ${m.projectPath})` : ""}`)
+    .map((m) => `- [${m.id}] (saved ${m.createdAt.slice(0, 10)}) ${m.context ? `[re: ${m.context}] ` : ""}${m.text}${m.projectPath ? ` (project: ${m.projectPath})` : ""}`)
     .join("\n");
 }
 

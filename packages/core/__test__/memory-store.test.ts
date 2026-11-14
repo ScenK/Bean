@@ -486,3 +486,19 @@ test("an abort during the remember classifier writes nothing and the classifier 
   expect(t.remembered).toEqual([]);
   expect(t.forgotten).toEqual([]);
 });
+
+test("context round-trips through append/load, sanitized on write (#856)", async () => {
+  await appendMemories(file, [{ ...m("c1", "Only in staging"), context: "the [login]\nbug" }, m("c2", "no label")]);
+  const rows = await loadMemories(file);
+  expect(rows.find((r) => r.id === "c1")?.context).toBe("the login bug");
+  expect(rows.find((r) => r.id === "c2")).not.toHaveProperty("context");
+});
+
+test("selectRelevantMemories selects a row whose context alone matches the query", () => {
+  const memories = [
+    ...Array.from({ length: 25 }, (_, i) => m(`filler-${i}`, `unrelated filler fact number ${i}`)),
+    { ...m("labeled", "Only in the staging cluster"), context: "where the login bug shows up" },
+  ];
+  const picked = selectRelevantMemories(memories, "where does the login bug happen?", undefined, { limit: 3, skipThreshold: 20 });
+  expect(picked[0]?.id).toBe("labeled");
+});

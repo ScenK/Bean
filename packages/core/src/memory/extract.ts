@@ -1,5 +1,5 @@
 import type { ChatTurn, ConvoMsg, ConverseDeps, ToolCall, ToolSpec } from "../converse.js";
-import { sanitizeCategory, type Memory, type MemoryCandidate } from "./memory.js";
+import { CONTEXT_MAX, sanitizeCategory, type Memory, type MemoryCandidate } from "./memory.js";
 import type { Project } from "../types.js";
 
 const EXTRACT_INSTRUCTIONS =
@@ -20,6 +20,11 @@ const EXTRACT_INSTRUCTIONS =
   '("I live in Lisbon" → "Lives in Lisbon"), not synonyms. Only `category` is always English: a ' +
   "short label such as You (the user's own preferences and profile) — reuse one of the existing " +
   "categories when it fits. " +
+  "When a fact only makes sense with the conversation around it (an answer to a question, a " +
+  "\"that\" or \"it\" whose subject was said elsewhere), also give `context`: a short topic " +
+  "naming what the fact refers to, built only from words that appear in the conversation lines " +
+  "(any line, citable or not), and leave `text` in the user's own words. Omit `context` when the " +
+  "fact is clear on its own. " +
   "Lines marked \"not citable\" (Bean's replies, tool " +
   "results, pasted-in context) are background only — never remember something only they say. " +
   "If nothing meets that bar, call no tools. Tag a fact with a projectPath only when it is " +
@@ -36,6 +41,12 @@ export function rememberToolSpec(projects: Project[], description?: string): Too
     category: {
       type: "string",
       description: "a short English category, e.g. You for the user's own preferences and profile",
+    },
+    // Also always offered (byte-stable); only extraction and channel capture pass a window to
+    // check it against, so the explicit remember path drops it.
+    context: {
+      type: "string",
+      description: "optional short topic (under 80 chars) naming what this fact refers to, using only words from the conversation; omit when the fact is clear on its own",
     },
   };
   if (projects.length > 0) {
@@ -167,14 +178,51 @@ function widened(src: string, quote: string): string[] {
 const mostlyLinkOrCode = (raw: string): boolean =>
   (raw.replace(/https?:\/\/\S+|`[^`]*`/g, "").match(/[\p{L}\p{N}]/gu)?.length ?? 0) * 2 < raw.replace(/\s/g, "").length;
 
+/** The model's topic label, checked in code: one line, ≤80 chars, control characters and
+ * brackets stripped; instruction-, secret- and link-shaped labels rejected; every word, short
+ * ones included, must occur exactly (normalized) in `window`, the conversation the extraction call
+ * saw. null = no usable label — the fact itself is still saved. */
+export function validateContext(raw: unknown, window: string[]): string | null {
+  if (typeof raw !== "string") return null;
+  const label = raw.replace(/[\p{Cc}[\](){}<>]/gu, " ").replace(/\s+/g, " ").trim();
+  if (!label || label.length > CONTEXT_MAX) return null;
+  if (INSTRUCTION_SHAPED.test(label) || SECRET_SHAPED.test(label) || mostlyLinkOrCode(label) || /https?:\/\/|www\./i.test(label)) return null;
+  const src = norm(window.join("\n"));
+  const srcWords = new Set(words(src));
+  const ok = words(label).every((w) => (CJK.test(w) ? bigrams(w).every((x) => src.includes(x)) : srcWords.has(w)));
+  return ok ? label : null;
+}
+
+// Articles and prepositions a merge may add on its own ("Only in the staging cluster"); every
+// other label word — short names like "API" included — counts as the label's.
+const GLUE = new Set(["a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "is", "it", "by", "with"]);
+
+/** True when `merged` uses a word that its rows' context labels carry but none of their texts do
+ * — dream must never fold a topic note into the user's words. Latin words match exactly (4+ chars
+ * also on the shared-prefix rule, so "deploys" ~ "deploy"); CJK by character bigrams. */
+export function borrowsContext(merged: string, texts: string[], contexts: string[]): boolean {
+  const inText = (raw: string): ((w: string) => boolean) => {
+    const ws = words(raw);
+    const exact = new Set(ws);
+    return (w) => (CJK.test(w) ? raw.includes(w) : exact.has(w) || (w.length >= 4 && has(ws, w)));
+  };
+  const own = inText(norm(texts.join("\n")));
+  const used = inText(norm(merged));
+  const label = words(contexts.join("\n")).flatMap((w) => (CJK.test(w) ? bigrams(w) : GLUE.has(w) ? [] : [w]));
+  return label.some((w) => !own(w) && used(w));
+}
+
 /** Validates one model-proposed remember call against the user's own words. Returns the
- * candidate, or a short reason it was rejected (fed back to the model on the chat path). */
+ * candidate, or a short reason it was rejected (fed back to the model on the chat path).
+ * `window` = the conversation the call saw; only extraction and channel capture pass it, so only
+ * they keep a `context` label (see validateContext) — the explicit remember path drops it. */
 export function validateCandidate(
   args: unknown,
   citable: string[],
   projects: Project[],
+  window?: string[],
 ): MemoryCandidate | string {
-  const a = (args ?? {}) as { text?: unknown; quote?: unknown; projectPath?: unknown; category?: unknown };
+  const a = (args ?? {}) as { text?: unknown; quote?: unknown; projectPath?: unknown; category?: unknown; context?: unknown };
   const text = typeof a.text === "string" ? a.text.trim() : "";
   if (!text) return "empty fact.";
   const raw = typeof a.quote === "string" ? a.quote : "";
@@ -193,7 +241,9 @@ export function validateCandidate(
     : undefined;
   // Validation covers text only: the category is an English label, sanitized, never quoted.
   const category = sanitizeCategory(typeof a.category === "string" ? a.category : null);
-  return { text, projectPath, ...(category ? { category } : {}) };
+  // The "about Bean" reject above covers text only: a label may well name what Bean asked.
+  const context = window ? validateContext(a.context, window) : null;
+  return { text, projectPath, ...(category ? { category } : {}), ...(context ? { context } : {}) };
 }
 
 /** Only turns the user actually typed are fact sources: a delegate loopback, ambient channel
@@ -242,6 +292,7 @@ export async function extractMemories(
   const citable = turns.filter(citableAt).map((t) => t.content);
   if (citable.length === 0) return { candidates: [], rejected: 0, failed: false };
 
+  const window = turns.map((t) => t.content);
   const lines = turns.map((t, i) => `${citableAt(t, i) ? "user (typed)" : `${t.role} (not citable)`}: ${t.content}`);
   const messages: ConvoMsg[] = [
     { role: "system", content: EXTRACT_INSTRUCTIONS },
@@ -265,7 +316,7 @@ export async function extractMemories(
   let rejected = 0;
   for (const call of toolCalls) {
     if (call.name !== "remember") continue;
-    const v = validateCandidate(call.args, citable, projects);
+    const v = validateCandidate(call.args, citable, projects, window);
     if (typeof v === "string") {
       rejected++;
       continue;

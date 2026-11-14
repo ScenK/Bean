@@ -262,3 +262,58 @@ test("a dream reviews every shared row, 150 per model call, as one plan", async 
   expect(seen).toEqual([150, 150, 20]);
   expect(await loadMemories(file)).toHaveLength(319);
 });
+
+test("planDream merges only equal or empty contexts, keeps the label, and never folds it into the text", () => {
+  const mems: Memory[] = [
+    { ...m("a", "Only in staging"), context: "where the login bug shows up" },
+    { ...m("b", "Happens after deploys"), context: "where the login bug shows up" },
+    { ...m("c", "Kind of want it blue"), context: "the new logo color" },
+    { ...m("d", "Only on Fridays"), context: "the backup schedule" },
+    m("e", "Prefers dark mode"),
+    { ...m("f", "Prefers dark themes"), context: "editor theme" },
+    { ...m("g", "Only weekdays"), context: "the backup schedule" },
+  ];
+  const plan = planDream(mems, {
+    merges: [
+      { ids: ["c", "d"], mergedText: "Only blue, on Fridays" }, // two different labels
+      { ids: ["a", "b"], mergedText: "Login bug only in staging, after deploys" }, // borrows "login"
+      { ids: ["e", "f"], mergedText: "Prefers dark mode and dark themes" }, // label + unlabeled: ok
+      { ids: ["g"], mergedText: "Backup only on weekdays" }, // rewrite that borrows "backup"
+    ],
+    drops: [],
+  }, "run", "2026-09-01T00:00:00.000Z");
+  expect(plan.groups).toEqual([{ ids: ["e", "f"], text: "Prefers dark mode and dark themes", context: "editor theme" }]);
+});
+
+test("planDream refuses merged text that borrows a short or framing label word", () => {
+  const mems: Memory[] = [
+    { ...m("a", "Only in staging"), context: "API" }, { ...m("b", "Happens after deploys"), context: "API" },
+    { ...m("c", "Only on Fridays"), context: "user backups" }, { ...m("d", "Also on Mondays"), context: "user backups" },
+    { ...m("e", "Only in staging"), context: "API" }, { ...m("f", "Only in staging cluster"), context: "API" },
+  ];
+  const plan = planDream(mems, {
+    merges: [
+      { ids: ["a", "b"], mergedText: "API only in staging after deploys" },
+      { ids: ["c", "d"], mergedText: "User only on Fridays and Mondays" },
+      { ids: ["e", "f"], mergedText: "Only in the staging cluster" },
+    ],
+    drops: [],
+  }, "run", "2026-09-01T00:00:00.000Z");
+  expect(plan.groups).toEqual([{ ids: ["e", "f"], text: "Only in the staging cluster", context: "API" }]);
+});
+
+test("a dream merge and its undo keep context", async () => {
+  const ctx = "where the login bug shows up";
+  await appendMemories(file, [
+    { ...m("a", "Only in staging"), context: ctx }, { ...m("b", "Only in staging cluster"), context: ctx },
+    m("c", "fact c"), m("d", "fact d"), m("e", "fact e"),
+  ]);
+  const digest = (await maybeDream(deps(chatCalling([
+    { name: "merge_memories", args: { ids: ["a", "b"], mergedText: "Only in the staging cluster" } },
+  ]))))!;
+  expect((await loadMemories(file)).find((x) => x.text === "Only in the staging cluster")?.context).toBe(ctx);
+  expect(await restoreDreamRun(file, digest.runId)).toEqual({ restored: 1, skipped: 0 });
+  const rows = new Map((await loadMemories(file)).map((x) => [x.id, x]));
+  expect(rows.get("a")).toEqual({ ...m("a", "Only in staging"), context: ctx });
+  expect(rows.get("b")?.context).toBe(ctx);
+});
