@@ -167,6 +167,18 @@ export function memoriesBlock(
   return `${header}\n${lines.join("\n")}`;
 }
 
+const oneLine = (s: string): string => s.replace(/\s*[\r\n]+\s*/g, " ").trim();
+
+/** Where a memory came from, as the digest and the Dashboard's Remembered card name it: a channel
+ * (`labels` = current destination names, else the capture-time title), the owner's DMs, a
+ * project, or the rest of Bean's chats. */
+export function memorySource(m: Memory, labels: ReadonlyMap<string, string> = new Map()): string {
+  return m.sourceId ? oneLine(labels.get(m.sourceId) ?? m.sourceTitle ?? m.sourceId)
+    : m.subjectId ? "Your direct messages"
+      : m.projectPath ? `Project ${m.projectPath.split("/").filter(Boolean).at(-1) ?? m.projectPath}`
+        : "Chats with Bean";
+}
+
 /** How many rows the daily memory digest lists before "…and N more in Persona". */
 export const MEMORY_DIGEST_MAX = 30;
 
@@ -179,16 +191,10 @@ export function formatMemoryDigest(
   { labels = new Map(), max = MEMORY_DIGEST_MAX }: { labels?: ReadonlyMap<string, string>; max?: number } = {},
 ): string | undefined {
   if (rows.length === 0) return undefined;
-  const oneLine = (s: string): string => s.replace(/\s*[\r\n]+\s*/g, " ").trim();
-  const groupOf = (m: Memory): string =>
-    m.sourceId ? oneLine(labels.get(m.sourceId) ?? m.sourceTitle ?? m.sourceId)
-      : m.subjectId ? "Your direct messages"
-        : m.projectPath ? `Project ${m.projectPath.split("/").filter(Boolean).at(-1) ?? m.projectPath}`
-          : "Chats with Bean";
   const groups = new Map<string, string[]>();
   for (const m of rows.slice(0, max)) {
     const ctx = sanitizeContext(m.context);
-    const group = groupOf(m);
+    const group = memorySource(m, labels);
     groups.set(group, [...(groups.get(group) ?? []), `- ${oneLine(m.text)}${ctx ? ` (re: ${ctx})` : ""}`]);
   }
   const more = rows.length - max;

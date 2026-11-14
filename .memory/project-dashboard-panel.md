@@ -66,6 +66,14 @@ Mapping decisions worth keeping:
   click cancels it; ~2 misses → "isn't in the history" notice. Notification clicks route on `meta`
   (`notificationOpens`): digest → Dashboard, watch alarm → Routines, else Chat. Shown
   `Notification`s are retained (cap 20) or Electron drops their click handler.
+- **Remembered (#860)** is a separate rail section above Runs, not a run: one entry per local day
+  in the last `REMEMBERED_DAYS` (7) that has rows, read live from `listMemories()` +
+  `memoryOwnerIds()` on the same 5s poll — nothing stored, no new channel. `rememberedDays()`
+  (`remembered.ts`) applies the digest's visibility rule (shared + owner ids, never a member's
+  private row). Rows group by core `memorySource()` (shared with `formatMemoryDigest`); Forget is
+  `deleteMemories([id])`, so Persona loses the row too. It stays out of the run day folds and the
+  default selection (`buckets[0]`, else the newest Remembered day) on purpose — merging it into
+  the day headers made a memory-only today fold the run days the contrast guard measures.
 - `runs.ts` is pure and unit-tested (`__test__/dashboard-runs.test.ts`); the panel holds the JSX.
 
 **Adding any new component window touches five places** — miss one and it fails at a different

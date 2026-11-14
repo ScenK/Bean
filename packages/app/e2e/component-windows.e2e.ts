@@ -130,3 +130,47 @@ test("chat window: default size, minimum size, remembered size", async () => {
     await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
   }
 });
+
+// #860: the Dashboard's Remembered day lists today's rows the owner may see, read live from the
+// memory list; Forget is the shared per-row delete, so Persona loses the row too.
+test("dashboard: Remembered shows today's rows and Forget removes them from Persona too", async () => {
+  const home = await makeBeanHome();
+  const stub = await startStubOpenAI();
+  const now = new Date().toISOString();
+  await appendMemories(dbFile(join(home.homeDir, ".bean")), [
+    { id: "today", text: "Only in staging", context: "deploy cluster", createdAt: now },
+    { id: "member", text: "Alice's private fact", subjectId: "discord:alice", createdAt: now },
+    { id: "old", text: "An old fact", createdAt: "2026-08-01T00:00:00.000Z" },
+  ]);
+  const app = await launchBean({ HOME: home.homeDir, OPENAI_BASE_URL: stub.url });
+  try {
+    const avatar = await app.firstWindow();
+    const open = (kind: string) =>
+      Promise.all([
+        app.waitForEvent("window"),
+        avatar.evaluate((k) => (window as unknown as { bean: { openComponent: (kind: string) => void } }).bean.openComponent(k), kind),
+      ]).then(([win]) => win);
+
+    const dash = await open("dashboard");
+    const rememberedRow = dash.locator(".bean-dash-row", { has: dash.locator(".bean-dash-dot--remembered") });
+    await expect(rememberedRow).toHaveCount(1); // today only: no entry for a day without rows
+    await rememberedRow.click();
+    await expect(dash.locator(".bean-dash-title")).toContainText("Remembered");
+    const rows = dash.locator(".bean-dash-remembered-row");
+    await expect(rows).toHaveCount(1); // another member's private row is not shown
+    await expect(rows.first()).toContainText("Only in staging");
+    await expect(rows.first()).toContainText("re: deploy cluster");
+    await expect(dash.locator(".bean-dash-remembered-group .bean-field-label")).toHaveText("Chats with Bean");
+
+    await rows.first().getByRole("button", { name: "Forget" }).click();
+    await expect(rememberedRow).toHaveCount(0);
+    await expect(dash.locator(".bean-dash-title")).not.toContainText("Remembered");
+
+    const persona = await open("persona");
+    await persona.waitForLoadState("domcontentloaded");
+    await expect(persona.locator(".bean-memory-input")).toHaveCount(2);
+    await expect(persona.locator('[data-memory-id="today"]')).toHaveCount(0);
+  } finally {
+    await Promise.allSettled([app.close(), stub.close(), home.cleanup()]);
+  }
+});
