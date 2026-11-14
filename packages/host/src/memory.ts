@@ -13,6 +13,9 @@ export interface MemoryHandlerDeps {
   updateMemoryCategory: (file: string, id: string, category: string | null) => Promise<void>;
   renameMemoryCategory: (file: string, from: string, to: string) => Promise<number>;
   ownerSubjectIds?: () => Promise<string[]>;
+  /** Channel captures' current names by `sourceId` (`<surface>:<conversationId>`): the Settings
+   * alias, else the platform name. Display only; a missing id keeps the row's capture-time title. */
+  sourceLabels?: () => Map<string, string>;
   deleteMemories: (file: string, ids: string[]) => Promise<string[]>;
   extractMemories: (
     transcript: ChatTurn[], existing: Memory[], projects: Project[], deps: ConverseDeps, opts?: { latestTurn?: boolean; categorize?: boolean },
@@ -104,7 +107,13 @@ export function buildMemoryHandlers(deps: MemoryHandlerDeps) {
     return batch;
   };
   return {
-    list: (): Promise<Memory[]> => deps.loadMemories(deps.dbFile),
+    list: async (): Promise<Memory[]> => {
+      const labels = deps.sourceLabels?.();
+      return (await deps.loadMemories(deps.dbFile)).map((m) => {
+        const label = m.sourceId && labels?.get(m.sourceId);
+        return label ? { ...m, sourceTitle: label } : m;
+      });
+    },
     append: (additions: Memory[]): Promise<void> => deps.appendMemories(deps.dbFile, additions),
     update: (id: string, text: string): Promise<void> => deps.updateMemory(deps.dbFile, id, text),
     updateCategory: (id: string, category: string | null): Promise<void> => deps.updateMemoryCategory(deps.dbFile, id, category),
