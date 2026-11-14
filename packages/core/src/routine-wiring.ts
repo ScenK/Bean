@@ -2,9 +2,10 @@
 import { randomUUID } from "node:crypto";
 import type { ActionTool } from "./converse.js";
 import type { CliName } from "./launcher.js";
-import { dbFile, outboxDir, remindersFile, routinesDir, routineStateFile, skillsDir } from "./config.js";
+import { dbFile, outboxDir, personaFile, remindersFile, routinesDir, routineStateFile, skillsDir } from "./config.js";
 import type { DelegateSpawnFn } from "./delegate.js";
 import { loadMemories } from "./memory/store.js";
+import { loadPersona } from "./persona-store.js";
 import type { CliModels } from "./cli-models.js";
 import { availableModels, pinnedStepSelection, resolveDelegateSelection } from "./models.js";
 import { enqueueOutbox } from "./outbox.js";
@@ -27,6 +28,8 @@ export interface RoutineWiringDeps {
   builtinDir: string;
   converse: RoutineHostDeps["converse"];
   getModel: () => string;
+  /** config.json's `briefModel` (read at boot); absent = getModel(). */
+  getBriefModel?: () => string | undefined;
   /** Enabled CLIs, read per step. */
   clis: () => CliName[];
   cliModels: CliModels[];
@@ -75,6 +78,9 @@ export function createRoutineWiring(deps: RoutineWiringDeps): RoutineWiring {
     dir,
     converse: deps.converse,
     getModel: deps.getModel,
+    ...(deps.getBriefModel ? { getBriefModel: deps.getBriefModel } : {}),
+    // The same user file → bundled file → default chain chat and the bots use.
+    loadPersona: () => loadPersona(personaFile(dir), personaFile(deps.builtinDir)),
     delegateStep: steps.delegateStep,
     commandStep: steps.commandStep,
     tools: deps.tools,

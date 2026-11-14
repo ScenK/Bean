@@ -108,9 +108,13 @@ export interface StepResult {
   stepId?: string; cli?: CliName; verdict?: string; round?: number;
   /** A route step's chosen label (also its verdict). */
   chose?: string;
+  /** The todo's text on a todo run — `output` then starts with the `[todo: <todo>] ` label. */
+  todo?: string;
 }
-/** `stopped`: the user stopped it mid-run — status failed, a fixed digest, and no sink gets it. */
-export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[]; stopped?: true }
+/** `stopped`: the user stopped it mid-run — status failed, a fixed digest, and no sink gets it.
+ * `footer`: code-owned text already appended to `digest` (the retro proposal line), so a chat
+ * brief built from `results` can re-append it. */
+export interface RoutineRunResult { record: RunRecord; digest: string; results: StepResult[]; stopped?: true; footer?: string }
 
 export const ROUTINE_STEP_TIMEOUT_MS = 15 * 60_000;
 const MAX_TOOL_ROUNDS = 5;
@@ -459,7 +463,7 @@ async function runSteps(
       result: {
         index, kind: step.kind, ok, output: labelPrefix + shown,
         ...(step.id ? { stepId: step.id } : {}), ...(cli ? { cli } : {}), ...(verdict ? { verdict } : {}),
-        ...(graph ? { round } : {}), ...(chose ? { chose } : {}),
+        ...(graph ? { round } : {}), ...(chose ? { chose } : {}), ...(todo ? { todo: todo.text } : {}),
       },
       attempt: {
         runId, routine: routine.name, stepIndex: index, round, kind: step.kind, ok, output, startedAt,
@@ -478,7 +482,7 @@ async function runSteps(
     const at = now().toISOString();
     return {
       index, round, ok: false, output, said: output,
-      result: { index, kind: step.kind, ok: false, output: labelPrefix + output, ...(step.id ? { stepId: step.id } : {}), round },
+      result: { index, kind: step.kind, ok: false, output: labelPrefix + output, ...(step.id ? { stepId: step.id } : {}), round, ...(todo ? { todo: todo.text } : {}) },
       attempt: {
         runId, routine: routine.name, stepIndex: index, round, kind: step.kind, ok: false, output, startedAt: at, finishedAt: at,
         ...(todo ? { todoId: todo.id } : {}), ...(step.id ? { stepId: step.id } : {}),
@@ -606,7 +610,7 @@ export async function runRoutine(routine: Routine, deps: RoutineRunnerDeps, todo
     // or command step since a member queued this. Their todo text must never reach one.
     if (item.createdBy && !memberTodoEligible(routine)) {
       const why = `refused: this sprout ${MEMBER_TODO_REFUSAL}`;
-      results.push({ index: 0, kind: routine.steps[0]?.kind ?? "chat", ok: false, output: labelPrefix + why });
+      results.push({ index: 0, kind: routine.steps[0]?.kind ?? "chat", ok: false, output: labelPrefix + why, todo: item.text });
       await setStatus(item.id, "failed", why);
       worst("failed");
       return;

@@ -5,6 +5,8 @@ import type { ActionTool } from "./converse.js";
 import type { CliName } from "./launcher.js";
 import type { CommandStepOutcome } from "./command-step.js";
 import type { Memory } from "./memory/memory.js";
+import { DEFAULT_PERSONA, type Persona } from "./persona.js";
+import { composeChatBrief } from "./routine-chat-brief.js";
 import type { Skill } from "./types.js";
 import { dbFile, outboxDir, routinesDir, routineStateFile } from "./config.js";
 import { enqueueOutbox } from "./outbox.js";
@@ -39,6 +41,10 @@ export interface RoutineHostDeps {
   converse: RoutineRunnerDeps["chat"];
   /** Read per run, so a Settings change applies to the next run. */
   getModel: () => string;
+  /** config.json's `briefModel` for the chat brief; absent/undefined = getModel(). */
+  getBriefModel?: () => string | undefined;
+  /** The persona the chat brief speaks in, loaded per delivery; absent = the default persona. */
+  loadPersona?: () => Promise<Persona>;
   /** Spawns a delegate step. */
   delegateStep: (
     req: DelegateStepRequest,
@@ -201,6 +207,27 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     }
   };
 
+  /** What chat sinks post: an ok run's step outputs as one first-person brief (one model call,
+   * shared by every chat sink), else — or when the brief is skipped — the digest as-is. Only the
+   * chat copy is restyled: the record, note and notification keep `result.digest`. */
+  const chatSinkBody = async (routine: Routine, result: RoutineRunResult): Promise<string> => {
+    // Failed / needs-attention runs keep their problem lines out of a model; a stepless run
+    // ("No pending todos", a notify-only watch fire) has nothing to restyle.
+    if (routine.sinks.chatopsVerbatim === true || result.record.status !== "ok" || result.stopped || result.results.length === 0) {
+      return result.digest;
+    }
+    let persona: Persona;
+    try {
+      persona = deps.loadPersona ? await deps.loadPersona() : DEFAULT_PERSONA;
+    } catch {
+      persona = DEFAULT_PERSONA;
+    }
+    const brief = await composeChatBrief({
+      results: result.results, persona, chat: deps.converse, model: deps.getBriefModel?.() || deps.getModel(),
+    });
+    return brief === undefined ? result.digest : brief + (result.footer ?? "");
+  };
+
   const deliverDigest = async (routine: Routine, result: RoutineRunResult): Promise<void> => {
     if (routine.sinks.note) {
       await saveNote(dbFile(dir), {
@@ -215,19 +242,19 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     const sinks = quiet ? [] : routine.sinks.chatops ?? [];
     // Read at enqueue, so a retarget in Settings applies to the next digest.
     const named = sinks.some((s) => s.alias !== undefined) ? listDestinations(dbFile(dir)) : [];
-    for (const sink of sinks) {
-      let channel = sink.channel;
-      if (sink.alias !== undefined) {
-        const resolved = resolveSinkAlias(sink, named);
-        // Unresolved: sinkProblems already marked the run; never fall back to the owner's DM.
-        if ("error" in resolved) continue;
-        channel = resolved.channel;
-      }
+    const targets = sinks.flatMap((sink) => {
+      if (sink.alias === undefined) return [{ sink, channel: sink.channel }];
+      const resolved = resolveSinkAlias(sink, named);
+      // Unresolved: sinkProblems already marked the run; never fall back to the owner's DM.
+      return "error" in resolved ? [] : [{ sink, channel: resolved.channel }];
+    });
+    const chatBody = targets.length > 0 ? await chatSinkBody(routine, result) : result.digest;
+    for (const { sink, channel } of targets) {
       await enqueueOutbox(outboxDir(dir), {
         transport: sink.transport, channel, userId: sink.user,
         title: `Sprout: ${routine.name}`,
         // A member DM says whose routine it is — they didn't set it up.
-        body: sink.user ? `${result.digest}\n\n_Sent by Bean's owner's sprout "${routine.name}"._` : result.digest,
+        body: sink.user ? `${chatBody}\n\n_Sent by Bean's owner's sprout "${routine.name}"._` : chatBody,
         context: deps.getRoutineDigestContext(),
       }, newId);
     }

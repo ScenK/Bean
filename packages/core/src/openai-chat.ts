@@ -150,7 +150,7 @@ export function makeOpenAIConverseWithClient(client: ResponsesClient, reasoningE
     if (res.status === "incomplete" && (!content || toolCalls.length > 0)) {
       throw new Error(`response incomplete (${res.incomplete_details?.reason ?? "unknown reason"})`);
     }
-    if (res.status === "incomplete") return { content: `${content}\n\n_(cut off — the model hit its output limit.)_`, toolCalls };
+    if (res.status === "incomplete") return { content: `${content}\n\n_(cut off — the model hit its output limit.)_`, toolCalls, incomplete: true };
     return { content, toolCalls };
   };
 }

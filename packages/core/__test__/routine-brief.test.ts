@@ -24,6 +24,11 @@ describe("parseBrief", () => {
       { kind: "chat", instruction: "Summarise" },
     ]);
     expect(brief.sinks).toEqual({ chatops: [{ transport: "discord", channel: "123" }, { transport: "teams" }], note: true });
+    const flags = parseBrief(JSON.stringify({
+      name: "x", trigger: "schedule", steps: [{ kind: "chat", instruction: "go" }],
+      sinks: { chatops: [{ transport: "discord" }], chatopsVerbatim: true, chatopsOnlyOnProblems: true },
+    }), ctx);
+    expect(flags.sinks).toEqual({ chatops: [{ transport: "discord" }], chatopsOnlyOnProblems: true, chatopsVerbatim: true });
     expect(brief.missing).toEqual([{ field: "steps.0.project", question: "Which repo?" }]);
     expect(brief.everyMinutes).toBe(5);
     expect(brief.notifyOnly).toBe(false);

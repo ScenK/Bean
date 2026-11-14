@@ -479,13 +479,16 @@ export function RoutinesPanel() {
   const sinkTargets: string[] = [];
   if (draft.sinks.note) sinkTargets.push("your Daily Dashboard");
   const chatTargetList = chatTargets(draft.sinks.chatops);
+  const stepless = draft.steps.length === 0;
   // Inert on a notify-only watch (deliverDigest ignores it there), so the footer doesn't claim it.
-  if (chatTargetList.length > 0 && draft.sinks.chatopsOnlyOnProblems && !(draft.watch && draft.steps.length === 0)) {
-    sinkTargets.push(`${chatTargetList.join(" and ")} only when a run needs you`);
-  } else sinkTargets.push(...chatTargetList);
-  // No chat sink left = the only-on-problems rule has nothing to govern; drop it.
+  const quiet = chatTargetList.length > 0 && draft.sinks.chatopsOnlyOnProblems === true && !(draft.watch && stepless);
+  // The chat brief rewrites only ok runs with steps: never under only-on-problems, never stepless.
+  const brief = chatTargetList.length > 0 && !draft.sinks.chatopsVerbatim && !quiet && !stepless;
+  if (quiet) sinkTargets.push(`${chatTargetList.join(" and ")} only when a run needs you`);
+  else if (!brief) sinkTargets.push(...chatTargetList);
+  // No chat sink left = the only-on-problems and verbatim rules have nothing to govern; drop them.
   const setChatops = (chatops: RoutineChatopsSink[]): void => {
-    const { chatops: _c, chatopsOnlyOnProblems: _q, ...rest } = draft.sinks;
+    const { chatops: _c, chatopsOnlyOnProblems: _q, chatopsVerbatim: _v, ...rest } = draft.sinks;
     setDraft({ ...draft, sinks: chatops.length > 0 ? { ...draft.sinks, chatops } : rest });
   };
   if (draft.sinks.notify) sinkTargets.push("a desktop notification");
@@ -1174,6 +1177,20 @@ export function RoutinesPanel() {
               Only post when a run needs me
             </label>
           ) : null}
+          {(draft.sinks.chatops?.length ?? 0) > 0 && !notifyOnly ? (
+            <label class="bean-routines-sink-row bean-routines-chat-brief">
+              <input
+                type="checkbox"
+                checked={draft.sinks.chatopsVerbatim !== true}
+                onChange={(e) => {
+                  const { chatopsVerbatim: _v, ...rest } = draft.sinks;
+                  setDraft({ ...draft, sinks: (e.target as HTMLInputElement).checked ? rest : { ...rest, chatopsVerbatim: true } });
+                }}
+              />
+              Rewrite as a first-person brief
+              <span class="bean-routines-sink-hint">Off = post the output word for word</span>
+            </label>
+          ) : null}
         </div>
 
         {error ? <div class="bean-status bean-status--error">{error}</div> : null}
@@ -1182,9 +1199,11 @@ export function RoutinesPanel() {
         <div class="bean-routines-footer">
           <span class="bean-routines-digest-line">
             <span class="bean-routines-bean-chip" />
-            {sinkTargets.length > 0
-              ? <>Posts a digest to <b>{sinkTargets.join(", ")}</b></>
-              : "No digest sink — results stay in run history."}
+            {brief
+              ? <span>Posts a brief to <b>{chatTargetList.join(", ")}</b>{sinkTargets.length > 0 ? <> and a digest to <b>{sinkTargets.join(", ")}</b></> : null}</span>
+              : sinkTargets.length > 0
+                ? <>Posts a digest to <b>{sinkTargets.join(", ")}</b></>
+                : "No digest sink — results stay in run history."}
           </span>
           <span class="bean-skills-spacer" />
           {selected && !notifyOnly ? (

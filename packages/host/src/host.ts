@@ -264,6 +264,8 @@ export async function createHost(deps: HostDeps) {
     builtinDir: projectDir,
     converse: runtime.converse,
     getModel: () => runtime.getModel(),
+    // ponytail: briefModel read at boot like imageModel; move into runtime-config if a Settings field ever exists
+    getBriefModel: () => cfg.briefModel,
     clis: enabledClis,
     cliModels,
     getDelegateCli: () => runtime.getDelegateCli(),

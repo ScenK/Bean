@@ -36,7 +36,7 @@ describe("cleanChatSinks", () => {
   });
 
   it("drops chatops and the only-on-problems rule when nothing is left", () => {
-    expect(cleanChatSinks({ chatops: [{ transport: "teams", channel: " " }], chatopsOnlyOnProblems: true, notify: true }))
+    expect(cleanChatSinks({ chatops: [{ transport: "teams", channel: " " }], chatopsOnlyOnProblems: true, chatopsVerbatim: true, notify: true }))
       .toEqual({ notify: true });
   });
 });
