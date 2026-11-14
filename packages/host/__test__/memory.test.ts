@@ -292,3 +292,16 @@ test("facts undone in the window reach close catch-up as already remembered", as
   await handlers.rememberOnClose(typed, { rejected: ["Lives in Seattle"] });
   expect(seen.map((m) => m.text)).toEqual([...existing.map((m) => m.text), "Lives in Seattle"]);
 });
+
+test("list shows a channel capture under its current destination name, else its capture-time title", async () => {
+  const rows: Memory[] = [
+    { id: "a", text: "x", createdAt: "2026-07-03T00:00:00.000Z", sourceId: "teams:19:abc", sourceTitle: "Teams chat abc" },
+    { id: "b", text: "y", createdAt: "2026-07-03T00:00:00.000Z", sourceId: "teams:19:gone", sourceTitle: "Teams chat gone" },
+    { id: "c", text: "z", createdAt: "2026-07-03T00:00:00.000Z" },
+  ];
+  const { handlers } = memoryHandlersFor({
+    loadMemories: async () => rows,
+    sourceLabels: () => new Map([["teams:19:abc", "Task Force"]]),
+  });
+  expect((await handlers.list()).map((m) => m.sourceTitle)).toEqual(["Task Force", "Teams chat gone", undefined]);
+});

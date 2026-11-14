@@ -371,6 +371,13 @@ export async function createHost(deps: HostDeps) {
     loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory, deleteMemories, extractMemories,
     restoreDreamRun, dreamDetails, loadProjects,
     ownerSubjectIds: () => ownerSubjectIds(db, dir),
+    sourceLabels: () => {
+      const rows = listDestinations(db);
+      return new Map(rows.flatMap((r): [string, string][] => {
+        const label = destinationLabel(r, rows);
+        return label ? [[`${r.surface}:${r.conversationId}`, label]] : [];
+      }));
+    },
     getLastDream: async (file) => (await getMemoryMeta(file, "lastDream")) as DreamDigest | undefined,
     autoMemory: () => runtime.getAutoMemory(),
     converse: runtime.converse,

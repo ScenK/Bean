@@ -18,6 +18,8 @@ and from un-addressed channel/thread chatter (#463, household-shared).
   Each row records its source (#649): `source_id` = `<chatter.surface>:<scopeId>`, `source_title`
   = the adapter's `AmbientLine.place.title` (its catalog `placeOf`; Teams' `capturePlace` adds a
   short id to an unnamed chat), one line ≤80 chars. Never from the model's tool args.
+  The stored title is a capture-time snapshot; Persona's list (`buildMemoryHandlers().list`)
+  shows the destination's current name instead (Settings alias, else platform name) when one exists.
 
 - **DM auto-capture** (`captureDm` in `bot.ts`): after a DM reply, core's per-turn
   `extractMemories(..., { latestTurn: true })` runs on the speaker's `typedText` only (the audio
