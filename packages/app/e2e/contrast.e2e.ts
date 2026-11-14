@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
-import { dbFile, groupDesktopChats, recordDestination, saveDesktopChat, setAlias } from "@bean/core";
+import { appendMemories, dbFile, groupDesktopChats, recordDestination, saveDesktopChat, setAlias } from "@bean/core";
 import { launchBean } from "./fixtures/launch-app.js";
 import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
@@ -131,6 +131,8 @@ test("every component window clears WCAG AA text contrast in both themes", { tag
   recordDestination(db, { surface: "discord", conversationId: "c1", kind: "channel", platformName: "general", parentName: "Guild" });
   recordDestination(db, { surface: "teams", conversationId: "t1", kind: "channel", platformName: "Ops", parentName: "Team" });
   setAlias(db, { surface: "teams", conversationId: "t1" }, "Ops room", () => []);
+  // Persona (#858): a memory with a context label, so its muted re: line is measured.
+  await appendMemories(db, [{ id: "mem1", text: "Only in staging", context: "deploy cluster", createdAt: new Date().toISOString() }]);
   // A fake claude that reads its turns and never picks one up, so the chat's live row stays
   // "Not read yet" (#746) for the scan below.
   const bin = join(home.homeDir, "fake-bin");

@@ -17,7 +17,7 @@ test("persona memory: categorized sections, move a row, rename a heading", async
   }));
   await appendMemories(file, [
     ...you,
-    { id: "w1", text: "Uses zed at work", category: "Work", createdAt: at(20) },
+    { id: "w1", text: "Uses zed at work", category: "Work", context: "laptop editor setup", createdAt: at(20) },
     { id: "n1", text: "Likes tea", createdAt: at(21) },
     { id: "c0", text: "Kim: deploys at noon", sourceId: "discord:42", sourceTitle: "old title", createdAt: at(19) },
     { id: "c1", text: "Sam: prefers rebase", sourceId: "discord:42", sourceTitle: "#eng", createdAt: at(22) },
@@ -53,6 +53,9 @@ test("persona memory: categorized sections, move a row, rename a heading", async
 
     await expect(item("m1").locator(".bean-memory-private")).toHaveText("🔒");
     await expect(item("l1").locator(".bean-memory-cat")).toHaveCount(0); // Others: no category input
+    // #858: a row with a context shows it as a muted re: line; one without shows nothing extra.
+    await expect(item("w1").locator(".bean-memory-context")).toHaveText("re: laptop editor setup");
+    await expect(item("n1").locator(".bean-memory-context")).toHaveCount(0);
 
     // Move "Likes tea" into a new category, then rename that heading.
     // Typed key by key: each keystroke must keep focus (the row regroups only on commit).
@@ -76,8 +79,13 @@ test("persona memory: categorized sections, move a row, rename a heading", async
     await expect(item("n1").locator(".bean-memory-cat")).toHaveValue("Drinks");
     await expect(persona.getByText("Uncategorized")).toHaveCount(0);
 
+    // #858: a word only in the context finds the row.
+    const search = persona.getByRole("searchbox", { name: "Search memories" });
+    await search.fill("laptop");
+    await expect(persona.locator(".bean-memory-input")).toHaveCount(1);
+    await expect(item("w1")).toHaveCount(1);
     // Search keeps working across sections.
-    await persona.getByRole("searchbox", { name: "Search memories" }).fill("rebase");
+    await search.fill("rebase");
     await expect(persona.locator(".bean-memory-input")).toHaveCount(1);
     // "Forget all from here" forgets the whole source, not just the rows the search shows.
     await persona.locator(".bean-memory-channel summary").click(); // reopened window: the group starts collapsed
