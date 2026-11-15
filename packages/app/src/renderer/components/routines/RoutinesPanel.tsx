@@ -482,7 +482,7 @@ export function RoutinesPanel() {
   const stepless = draft.steps.length === 0;
   // Inert on a notify-only watch (deliverDigest ignores it there), so the footer doesn't claim it.
   const quiet = chatTargetList.length > 0 && draft.sinks.chatopsOnlyOnProblems === true && !(draft.watch && stepless);
-  // The chat brief rewrites only ok runs with steps: never under only-on-problems, never stepless.
+  // The chat brief sums up only ok runs with steps: never under only-on-problems, never stepless.
   const brief = chatTargetList.length > 0 && !draft.sinks.chatopsVerbatim && !quiet && !stepless;
   if (quiet) sinkTargets.push(`${chatTargetList.join(" and ")} only when a run needs you`);
   else if (!brief) sinkTargets.push(...chatTargetList);
@@ -1187,8 +1187,8 @@ export function RoutinesPanel() {
                   setDraft({ ...draft, sinks: (e.target as HTMLInputElement).checked ? rest : { ...rest, chatopsVerbatim: true } });
                 }}
               />
-              Rewrite as a first-person brief
-              <span class="bean-routines-sink-hint">Off = post the output word for word</span>
+              Sum up as a short brief
+              <span class="bean-routines-sink-hint">Off = post the full digest word for word</span>
             </label>
           ) : null}
         </div>

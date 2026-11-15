@@ -17,8 +17,9 @@ import { describeContinueErrors, describeEdgeError, describeGroupErrors } from "
 export interface RoutineChatopsSink { transport: "teams" | "discord"; channel?: string; user?: string; alias?: string }
 /** `chatopsOnlyOnProblems`: the chatops sinks post only when a run isn't `ok` (failed /
  * needs-attention); note, notify and run history still get every run. Absent = every run.
- * `chatopsVerbatim`: chat sinks get the digest as-is instead of the first-person brief an ok
- * run gets by default (routine-chat-brief.ts). Note, notify and the record never get the brief. */
+ * `chatopsVerbatim`: chat sinks get the full digest as-is instead of the short brief in the
+ * persona's voice an ok run gets by default (routine-chat-brief.ts) — for sprouts where fidelity
+ * beats brevity. Note, notify and the record never get the brief. */
 export interface RoutineSinks { chatops?: RoutineChatopsSink[]; chatopsOnlyOnProblems?: boolean; chatopsVerbatim?: boolean; note?: boolean; notify?: boolean }
 
 /** A gated step ends its output with `VERDICT: PASS|FAIL`; FAIL either stops the run or jumps

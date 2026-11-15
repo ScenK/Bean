@@ -6,7 +6,7 @@ import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 
 const QUIET = "Only post when a run needs me";
-const BRIEF = "Rewrite as a first-person brief";
+const BRIEF = "Sum up as a short brief";
 
 /** "Only post when a run needs me": shown with a chat sink, round-trips through save, dropped when
  * the last chat sink is unticked, and hidden on a notify-only watch (its fires are always ok). */
@@ -72,7 +72,7 @@ test("routines: only-on-problems chat rule round-trips and hides for notify-only
   }
 });
 
-/** "Rewrite as a first-person brief": checked by default with a chat sink; unchecking saves
+/** "Sum up as a short brief": checked by default with a chat sink; unchecking saves
  * `chatopsVerbatim: true`, re-checking removes it, and dropping the last chat sink drops it too. */
 test("routines: chat brief switch round-trips chatopsVerbatim", async () => {
   const home = await makeBeanHome();
