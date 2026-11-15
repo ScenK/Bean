@@ -29,5 +29,9 @@ the optional `Routine.projects`.
   agrees with the Skills window's chips); SPROUTS is `sproutProjects()` membership, never written
   onto `Project`. `routinesList` isn't a remote op, so a failed/non-array listing omits SPROUTS
   (and the row's sprout count). e2e: `component-windows.e2e.ts`.
+- Bots' `sprouts` reply (`routineListText`, #885): same section order, but each sprout once —
+  Needs fixing (folder problem), else its first project in registry order (`· also` the rest),
+  else Scratch; `⚠` marker per problem with folder basenames only. Free text goes through
+  `inert()` (one line, markdown escaped, `@` defused) — never print a path in a channel.
 
 Related: [[convention-hidden-skills]], [[convention-renderer-imports-node-free-subpaths]].
