@@ -1789,8 +1789,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           return;
         }
         // Typed `stop` with nothing live stays a model turn, as it always was; so does a typed
-        // `continue` where no live session was ever bound (it's an ordinary word in a chat).
-        const plainContinue = cmd === "continue" && !deps.catalog?.get(msg.conversationId)?.liveSessionId;
+        // bare `continue` where no live session was ever bound (it's an ordinary word in a chat).
+        const plainContinue = cmd === "continue" && !msg.text.trim().startsWith("/") && !deps.catalog?.get(msg.conversationId)?.liveSessionId;
         if (cmd !== "stop" && !plainContinue && await onCommand(msg, fx)) return;
         const { role, scopeId } = speakerRole(msg);
         const isOwner = role === "owner";

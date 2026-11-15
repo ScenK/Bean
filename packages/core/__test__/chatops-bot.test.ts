@@ -3639,7 +3639,7 @@ describe("desk turns (#528)", () => {
     expect(d.reqs).toHaveLength(1);
   });
 
-  test("`continue` where no session was bound: the slash pick says so, a typed one stays a model turn", async () => {
+  test("`continue` where no session was bound: a slash pick or typed `/continue` says so, a bare one stays a model turn", async () => {
     const d = deskBot({ found: ownRun });
     d.catalog.upsert({ conversationId: "d1", place: { kind: "dm", title: "DM" }, ownerId: "u1" });
     const slash = fx();
@@ -3648,6 +3648,10 @@ describe("desk turns (#528)", () => {
     const typed = fx();
     await d.bot.onMessage({ conversationId: "d1", text: "continue", fromId: "u1", fromName: "Scen", direct: true }, typed);
     expect(typed.posted).toEqual(["hello there"]);
+    expect(d.chats()).toBe(1);
+    const slashed = fx();
+    await d.bot.onMessage({ conversationId: "d1", text: "/continue", fromId: "u1", fromName: "Scen", direct: true }, slashed);
+    expect(slashed.posted).toEqual(["There's no ended live session here to continue."]);
     expect(d.chats()).toBe(1);
     expect(d.reqs).toEqual([]);
   });
