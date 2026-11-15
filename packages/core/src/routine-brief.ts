@@ -107,7 +107,7 @@ function cleanStep(v: unknown, ctx: BriefContext): RoutineStep | undefined {
     const pinned = cli ? { cli, ...(str(s.model) && s.model ? { model: s.model } : {}) } : {};
     // Shape-only, like an edge: parseBrief drops it when the continues rules reject it.
     const continues = str(s.continues) && STEP_ID_RE.test(s.continues) ? { continues: s.continues } : {};
-    return { kind: "delegate", ...id, skill: skill ?? "", ...(project ? { project } : {}), ...pinned, instruction, ...continues, ...edges };
+    return { kind: "delegate", ...id, ...(skill ? { skill } : {}), ...(project ? { project } : {}), ...pinned, instruction, ...continues, ...edges };
   }
   return { kind: "chat", ...id, ...(skill ? { skill } : {}), instruction, ...edges };
 }

@@ -47,7 +47,7 @@ export type RoutineStep = StepEdges & (
    * fallback); absent = today's inference from `model` + the Settings preference.
    * `continues`: an earlier delegate step's id — this step resumes the newest session of that
    * step's lane (same `cli` and `project` required; rules: `describeContinueErrors`). */
-  | { kind: "delegate"; id?: string; skill: string; project?: string; cli?: CliName; model?: string; timeoutMinutes?: number; instruction: string; continues?: string }
+  | { kind: "delegate"; id?: string; skill?: string; project?: string; cli?: CliName; model?: string; timeoutMinutes?: number; instruction: string; continues?: string }
   | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string; continues?: never }
   /** A deterministic check: runs `command` in a shell (in `project`, else the run's scratch dir)
    * — no model, memories, or skill (the `never`s keep `step.skill`/`.model` readable on the
@@ -159,7 +159,8 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
     // Mac's model list changed — the run refuses with a clear error instead.
     const offered = s.cli !== undefined && cliModels?.find((c) => c.provider === s.cli)?.models;
     if (offered && str(s.model) && !offered.includes(s.model)) return `${at}: ${String(s.cli)} doesn't offer model "${s.model}"`;
-    if (!str(s.skill) || !s.skill) return `${at} (delegate) needs a skill`;
+    // Optional: a skill-less delegate step runs on its instruction alone. "No skill" omits the key.
+    if (s.skill !== undefined && (!str(s.skill) || !s.skill)) return `${at} has an invalid skill`;
     if (s.project !== undefined && !str(s.project)) return `${at} has an invalid project`;
     return null;
   }

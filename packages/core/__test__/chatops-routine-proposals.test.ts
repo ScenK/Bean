@@ -1,8 +1,9 @@
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
-  describeSchedule, parseRoutineCommand, routineCardInput, RoutineProposalStore,
+  describeSchedule, describeStep, parseRoutineCommand, routineCardInput, RoutineProposalStore, routineListText,
 } from "../src/chatops/routine-proposals.js";
 import type { Routine } from "../src/routine-store.js";
+import type { Project } from "../src/types.js";
 
 const base: Routine = { name: "r", enabled: true, cron: "0 7 * * 1-5", steps: [{ kind: "chat", instruction: "hi" }], sinks: {} };
 
@@ -76,4 +77,61 @@ test("a stepped day-of-month gets a resets-monthly warning; weekday lists don't"
   expect(warnings("0 9 1-31/2 * *")).toHaveLength(1);
   expect(warnings("0 9 * * 1,4")).toBeUndefined();
   expect(warnings("*/15 * * * *")).toBeUndefined();
+});
+
+test("describeStep renders a skill-less delegate step without undefined", () => {
+  expect(describeStep({ kind: "delegate", instruction: "fix it" }, 0)).toBe("1. agent: fix it");
+  expect(describeStep({ kind: "delegate", project: "/code/bean", instruction: "fix it" }, 1)).toBe("2. agent (in bean): fix it");
+  expect(describeStep({ kind: "delegate", skill: "review", project: "/code/bean", instruction: "go" }, 2)).toBe("3. agent (review in bean): go");
+});
+
+describe("routineListText sections (#885)", () => {
+  const delegate = (project: string, skill = "fix"): Routine["steps"][number] => ({ kind: "delegate", skill, project, instruction: "go" });
+  const sprout = (name: string, over: Partial<Routine>): Routine => ({ ...base, name, ...over });
+  const projects: Project[] = [
+    { name: "Zed", path: "/w/zed" },
+    { name: "App", path: "/w/app" },
+    { name: "Ops @everyone *x*", path: "/w/ops" },
+  ];
+  const skills = new Set(["fix"]);
+  const routines = [
+    sprout("in-app", { steps: [delegate("/w/app/sub")] }),
+    sprout("listed", { projects: ["/w/zed", "/w/app"] }),
+    sprout("chatty", {}),
+    sprout("stray", { enabled: false, steps: [delegate("/Users/scen/secret/repo")] }),
+    sprout("ops-run", { steps: [delegate("/w/ops", "gone")] }),
+    sprout("too-wide", { steps: [delegate("/w")] }),
+  ];
+  const text = routineListText(routines, projects, skills, "UTC");
+  const headings = text.split("\n").filter((l) => l.startsWith("**"));
+
+  test("headings follow the desktop order: Needs fixing, projects A–Z, Scratch", () => {
+    expect(headings).toEqual(["**Needs fixing**", "**App**", "**Ops @\u200beveryone \\*x\\***", "**Zed**", "**Scratch**"]);
+  });
+
+  test("each sprout once: first project in registry order with also, folder problems under Needs fixing", () => {
+    const section = (h: string): string[] => {
+      const lines = text.split("\n");
+      const rest = lines.slice(lines.indexOf(h) + 1);
+      return rest.slice(0, rest.findIndex((l) => !l.startsWith("•")));
+    };
+    expect(section("**Zed**")).toEqual(["• **listed** — on — Weekdays at 7:00 AM · also App"]);
+    expect(section("**App**")).toEqual(["• **in-app** — on — Weekdays at 7:00 AM"]);
+    expect(section("**Scratch**")).toEqual(["• **chatty** — on — Weekdays at 7:00 AM"]);
+    expect(section("**Needs fixing**")).toEqual([
+      "• **stray** — off — Weekdays at 7:00 AM · ⚠ step 1 folder repo isn't a registered project",
+      "• **too-wide** — on — Weekdays at 7:00 AM · ⚠ step 1 folder w holds several projects",
+    ]);
+    expect(text).toContain("• **ops-run** — on — Weekdays at 7:00 AM · ⚠ step 1 skill gone not found");
+  });
+
+  test("no absolute path and no live mention", () => {
+    expect(text).not.toMatch(/\/(Users|w)\b/);
+    expect(text).not.toMatch(/@everyone/);
+    expect(text).toMatch(/Times are UTC\. `enable <name>` \/ `disable <name>` to switch one\.$/);
+  });
+
+  test("no projects: everything under Scratch", () => {
+    expect(routineListText([base], [], skills, "UTC").split("\n").slice(0, 2)).toEqual(["**Scratch**", "• **r** — on — Weekdays at 7:00 AM"]);
+  });
 });

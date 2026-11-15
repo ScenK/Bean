@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Project, RouteSuggestion, Skill } from "@bean/core";
 import { parseFrontmatter, setFrontmatter } from "@bean/core/frontmatter";
 import { bestProjectForSkill } from "@bean/core/project-select";
 import { composePrompt } from "@bean/core/prompt";
+import { skillSection, type SkillSection } from "@bean/core/usage-sections";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import { ProposalsInbox, type ProposalLists } from "./ProposalsInbox.js";
@@ -16,6 +17,55 @@ export function runForSkill(skill: Skill, projects: Project[]): RouteSuggestion 
 }
 
 type Mode = "view" | "edit" | "add" | "proposals";
+
+const SECTION_LABELS: Record<SkillSection, string> = { skills: "Skills", "sprout-steps": "Sprout steps", disabled: "Disabled" };
+const SECTION_ORDER: SkillSection[] = ["skills", "sprout-steps", "disabled"];
+
+/** Sections need every skill's `usedBy`; absent (older core, unreadable sprouts) means unknown,
+ * and filing by a guess would misplace sprout-only skills — so the list stays flat. */
+export const hasUsage = (skills: Skill[]): boolean => skills.every((s) => s.usedBy !== undefined);
+
+/** The list's sections, in order, empty ones dropped. Not `sectioned`: the flat list — enabled
+ * skills (rendered under no header), then Disabled. */
+export function skillGroups(skills: Skill[], projects: Project[], sectioned: boolean): { key: SkillSection; skills: Skill[] }[] {
+  const sectionOf = (s: Skill): SkillSection =>
+    sectioned ? skillSection(s, projects) : s.enabled === false ? "disabled" : "skills";
+  return SECTION_ORDER
+    .map((key) => ({ key, skills: skills.filter((s) => sectionOf(s) === key) }))
+    .filter((g) => g.skills.length > 0);
+}
+
+export type SkillChip = { label: string; kind: "tag" | "general" | "warn" };
+
+/** Where a row's skill is reachable: `avatar`, its projects, `↻ <sprout>` per sprout — or
+ * `chat & bots` when none apply. A disabled skill a sprout still uses says that step fails. */
+export function skillChips(skill: Skill, projects: Project[]): SkillChip[] {
+  const off = skill.enabled === false;
+  const sprouts = skill.usedBy ?? [];
+  const chips: SkillChip[] = [
+    ...(!off && skill.quickLaunch !== false ? [{ label: "avatar", kind: "tag" as const }] : []),
+    ...projects.filter((p) => p.skills?.includes(skill.name)).map((p) => ({ label: p.name, kind: "tag" as const })),
+  ];
+  if (off) {
+    if (sprouts.length > 0) {
+      chips.push({ label: `used by ${sprouts.join(", ")} — ${sprouts.length === 1 ? "its step fails" : "their steps fail"}`, kind: "warn" });
+    }
+    return chips;
+  }
+  chips.push(...sprouts.map((n) => ({ label: `↻ ${n}`, kind: "tag" as const })));
+  return chips.length > 0 ? chips : [{ label: "chat & bots", kind: "general" }];
+}
+
+// Which sections are open, by key. A view preference, so the renderer's own localStorage
+// (pattern: NotesPanel); absent or unreadable = the default, Skills open and the rest folded.
+const OPEN_SECTIONS_KEY = "bean.skills.openSections";
+function loadOpenSections(): SkillSection[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(OPEN_SECTIONS_KEY) ?? "null") as unknown;
+    if (Array.isArray(raw)) return raw.filter((v): v is SkillSection => SECTION_ORDER.includes(v as SkillSection));
+  } catch { /* fall through to the default */ }
+  return ["skills"];
+}
 
 export function SkillsPanel({
   onRunSkill = () => {},
@@ -31,7 +81,7 @@ export function SkillsPanel({
   const [draft, setDraft] = useState("");
   const [draftName, setDraftName] = useState("");
   const [saveError, setSaveError] = useState<string | undefined>(undefined);
-  const [showDisabled, setShowDisabled] = useState(false);
+  const [openSections, setOpenSections] = useState<SkillSection[]>(loadOpenSections);
   const [proposals, setProposals] = useState<ProposalLists>({ pending: [], applied: [] });
 
   const refresh = async (): Promise<void> => {
@@ -57,17 +107,34 @@ export function SkillsPanel({
   const selectedSkill = skills.find((s) => s.name === selectedName);
   const filteredSkills = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const matched = q ? skills.filter((s) => s.name.toLowerCase().includes(q)) : skills;
-    // Enabled first, disabled last; stable within each group.
-    return [...matched].sort((a, b) => Number(a.enabled === false) - Number(b.enabled === false));
+    return q ? skills.filter((s) => s.name.toLowerCase().includes(q)) : skills;
   }, [skills, query]);
-  const firstDisabledName = filteredSkills.find((s) => s.enabled === false)?.name;
-  const disabledCount = filteredSkills.filter((s) => s.enabled === false).length;
-  const projectNamesFor = (name: string): string[] =>
-    projects.filter((p) => p.skills?.includes(name)).map((p) => p.name);
+  const sectioned = hasUsage(skills);
+  const groups = useMemo(() => skillGroups(filteredSkills, projects, sectioned), [filteredSkills, projects, sectioned]);
+
+  const setSectionOpen = (key: SkillSection, open: boolean): void => {
+    setOpenSections((prev) => {
+      if (prev.includes(key) === open) return prev;
+      const next = open ? [...prev, key] : prev.filter((k) => k !== key);
+      try { localStorage.setItem(OPEN_SECTIONS_KEY, JSON.stringify(next)); } catch { /* private mode / quota: fold still works this session */ }
+      return next;
+    });
+  };
+
+  // A toggle (enable, quick-launch, project) can move the selected skill to another section:
+  // open that section if it is folded and keep the row in view, so it never vanishes from under
+  // the click. Keyed on the skill name, so only a change of section — not of selection — acts.
+  const lastSection = useRef<{ name: string; key: SkillSection } | undefined>(undefined);
+  useEffect(() => {
+    const key = selectedName ? groups.find((g) => g.skills.some((s) => s.name === selectedName))?.key : undefined;
+    const prev = lastSection.current;
+    lastSection.current = selectedName && key ? { name: selectedName, key } : undefined;
+    if (!key || !prev || prev.name !== selectedName || prev.key === key) return;
+    setSectionOpen(key, true);
+    requestAnimationFrame(() => document.querySelector(".bean-skills-list .bean-skills-row--selected")?.scrollIntoView({ block: "nearest" }));
+  }, [groups, selectedName]);
 
   const skillRow = (s: Skill) => {
-    const chips = projectNamesFor(s.name);
     return (
       <div
         key={s.name}
@@ -88,9 +155,9 @@ export function SkillsPanel({
         <div class="bean-skills-row-main">
           <div class="bean-skills-row-name">{s.name}</div>
           <div class="bean-skills-row-chips">
-            {chips.length > 0
-              ? chips.map((n) => <span key={n} class="bean-skills-tag">{n}</span>)
-              : <span class="bean-skills-tag bean-skills-tag--general">general — no project</span>}
+            {skillChips(s, projects).map((c) => (
+              <span key={c.label} class={`bean-skills-tag${c.kind === "tag" ? "" : ` bean-skills-tag--${c.kind}`}`}>{c.label}</span>
+            ))}
             {s.browser ? <span class="bean-skills-tag">🌐 uses your browser</span> : null}
           </div>
         </div>
@@ -259,23 +326,30 @@ export function SkillsPanel({
         ) : filteredSkills.length === 0 ? (
           <div class="bean-panel-empty">No skills match "{query}".</div>
         ) : (
-          filteredSkills.map((s) => {
-            if (s.enabled === false) {
-              if (s.name !== firstDisabledName) return showDisabled ? skillRow(s) : null;
-              return (
-                <div key={s.name} class="bean-skills-row-group">
-                  <button
-                    type="button"
-                    class="bean-skills-list-label bean-skills-list-label--toggle"
-                    onClick={() => setShowDisabled((v) => !v)}
-                  >
-                    {showDisabled ? "▾" : "▸"} Disabled ({disabledCount})
-                  </button>
-                  {showDisabled ? skillRow(s) : null}
-                </div>
-              );
-            }
-            return skillRow(s);
+          groups.map((g) => {
+            // The flat fallback lists enabled skills under no header, as before sections.
+            if (!sectioned && g.key === "skills") return <div key={g.key}>{g.skills.map(skillRow)}</div>;
+            // A live query opens every section with a hit (empty ones are already gone) and
+            // locks folding meanwhile; the stored state returns when the query clears.
+            const searching = query.trim() !== "";
+            const open = searching || openSections.includes(g.key);
+            return (
+              <div key={g.key} class="bean-skills-section" data-section={g.key}>
+                <button
+                  type="button"
+                  class="bean-skills-list-label bean-skills-list-label--toggle bean-notes-group"
+                  aria-expanded={open}
+                  disabled={searching}
+                  title={searching ? "Clear the search to fold sections" : undefined}
+                  onClick={() => setSectionOpen(g.key, !open)}
+                >
+                  <span class="bean-notes-group-caret">{open ? "\u25be" : "\u25b8"}</span>
+                  {SECTION_LABELS[g.key]}
+                  <span class="bean-notes-group-count">{g.skills.length}</span>
+                </button>
+                {open ? g.skills.map(skillRow) : null}
+              </div>
+            );
           })
         )}
         <span class="bean-skills-spacer" />

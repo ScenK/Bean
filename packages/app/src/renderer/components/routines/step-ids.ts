@@ -108,7 +108,7 @@ export function switchStepKind(step: RoutineStep, kind: RoutineStep["kind"]): Ro
   const edges = { ...(step.gate ? { gate: step.gate } : {}), ...(step.next ? { next: step.next } : {}), ...(step.route ? { route: step.route } : {}), ...(step.alongside ? { alongside: step.alongside } : {}) };
   const text = step.kind === "command" ? step.command : step.instruction;
   return kind === "delegate"
-    ? { kind: "delegate", id: step.id, skill: step.skill ?? "", model: step.model, instruction: text, ...edges }
+    ? { kind: "delegate", id: step.id, ...(step.skill ? { skill: step.skill } : {}), model: step.model, instruction: text, ...edges }
     : kind === "chat"
       ? { kind: "chat", id: step.id, skill: step.skill || undefined, model: step.model, instruction: text, ...edges }
       : { kind: "command", id: step.id, command: text, ...(step.kind !== "chat" && step.project ? { project: step.project } : {}), ...edges };
