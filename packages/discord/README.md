@@ -45,7 +45,8 @@ THIS machine.
 
 Slash commands (Discord `/` menu): `/new` (clear this conversation's context), `/cancel`
 (stop in-flight runs), `/stop` (end the channel's live session), and — when live sessions are
-enabled — `/live-session <prompt>`. The same words also work as plain text (`cancel`, `stop`,
+enabled — `/live-session <prompt>` and `/continue` (owner only: reopen the thread's ended live
+session, same as the desktop's Continue live). The same words also work as plain text (`cancel`, `stop`,
 `/new`, `/live-session …`), so an `@bean /live-session …` message routes the same as the slash
 command (verbatim, not reworded by the model).
 

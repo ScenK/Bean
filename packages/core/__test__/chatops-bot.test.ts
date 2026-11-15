@@ -3609,6 +3609,52 @@ describe("desk turns (#528)", () => {
     expect((await gone.resume("t1")).acks).toEqual([{ refused: "cli-missing" }]);
     expect(gone.reqs).toEqual([]);
   });
+
+  test("the owner's `continue` in the thread reopens its ended session like desk Continue live", async () => {
+    const d = deskBot({ found: ownRun });
+    bindOwner(d);
+    const said = (fromId: string, text = "continue") => ({ conversationId: "t1", text, fromId, fromName: "Scen", direct: false });
+    // A member can't; the owner's typed `continue` resumes with no card and posts the mode line.
+    const member = fx();
+    await d.bot.onCommand(said("m1"), member);
+    expect(member.posted).toEqual(["Only the owner can continue a live session."]);
+    const owner = fx();
+    await d.bot.onMessage(said("u1"), owner);
+    expect(d.reqs).toEqual([expect.objectContaining({ resume: "sess-1", projectPath: "/p/bean", cli: "claude", prompt: "" })]);
+    expect(owner.cards).toEqual([]);
+    expect(owner.posted).toEqual([expect.stringContaining("picks up where it left off on your next message")]);
+    expect(d.liveSessions.canSteer("t1", "u1")).toBe(true);
+    // The slash pick while it runs is refused; nothing starts twice.
+    const busy = fx();
+    await d.bot.onCommand(said("u1", "/continue"), busy);
+    expect(busy.posted).toEqual(["A live session is already running here."]);
+    expect(d.reqs).toHaveLength(1);
+    // Typed while it runs: a slashed `/continue` is never a steer; a bare `continue` is one.
+    const typedBusy = fx();
+    await d.bot.onMessage(said("u1", "/continue"), typedBusy);
+    expect(typedBusy.posted).toEqual([expect.stringContaining("already running here")]);
+    expect(d.sent).toEqual([]);
+    await d.bot.onMessage(said("u1"), fx());
+    expect(d.sent).toEqual(["continue"]);
+    expect(d.reqs).toHaveLength(1);
+  });
+
+  test("`continue` where no session was bound: a slash pick or typed `/continue` says so, a bare one stays a model turn", async () => {
+    const d = deskBot({ found: ownRun });
+    d.catalog.upsert({ conversationId: "d1", place: { kind: "dm", title: "DM" }, ownerId: "u1" });
+    const slash = fx();
+    await d.bot.onCommand({ conversationId: "d1", text: "continue", fromId: "u1", fromName: "Scen", direct: true }, slash);
+    expect(slash.posted).toEqual(["There's no ended live session here to continue."]);
+    const typed = fx();
+    await d.bot.onMessage({ conversationId: "d1", text: "continue", fromId: "u1", fromName: "Scen", direct: true }, typed);
+    expect(typed.posted).toEqual(["hello there"]);
+    expect(d.chats()).toBe(1);
+    const slashed = fx();
+    await d.bot.onMessage({ conversationId: "d1", text: "/continue", fromId: "u1", fromName: "Scen", direct: true }, slashed);
+    expect(slashed.posted).toEqual(["There's no ended live session here to continue."]);
+    expect(d.chats()).toBe(1);
+    expect(d.reqs).toEqual([]);
+  });
 });
 
 describe("desk continue (#695)", () => {
