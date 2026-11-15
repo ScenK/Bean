@@ -18,5 +18,11 @@ the optional `Routine.projects`.
   flat list. Open sections live in localStorage `bean.skills.openSections` (default: Skills only);
   a toggle that moves the selected skill opens its new section and scrolls it into view.
   e2e: `skills-sections.e2e.ts`.
+- Sprouts window (`RoutinesPanel.tsx` + `routines/sprout-sections.ts`): Needs fixing (a folder
+  problem; never also in Scratch), projects A–Z (one row per project, `also:` names the rest),
+  Scratch. Folded keys in localStorage `bean.routines.foldedSections` (project path, `""` =
+  Scratch, `!needs-fixing`; default all open). Listed under edits only the draft (saves with the
+  sprout). Register folder re-reads `listProjects` before appending. The renderer has no hidden
+  skills, so a hidden step skill reads "not found" (muted note only). e2e: `routines-sections.e2e.ts`.
 
 Related: [[convention-hidden-skills]], [[convention-renderer-imports-node-free-subpaths]].
