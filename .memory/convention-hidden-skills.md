@@ -11,8 +11,11 @@ ChatWindow's skill list — all of which read from the single `bean:list-skills`
 no per-component change needed for a new hidden skill.
 
 Both toggles are opt-out (absent key = on) and both are ignored by `fingerprint()` in
-`skill-library.ts`, so flipping either on a built-in skill doesn't make its shadow copy count as
-a user customization.
+`skill-library.ts`. A toggle-only save of a built-in (`saveSkill` given the built-in dir) writes a
+**toggle overlay** — a user file with only the flags that differ, no body — which
+`loadLayeredSkills` layers onto the built-in's *current* body (#877). Never write a full shadow
+copy for a toggle: it pins the old body and swallows later built-in updates. Legacy full copies
+that still match the built-in modulo toggles stay tagged built-in.
 
 `converse()` still routes against hidden skills: `buildChatHandler` loads skills via its own
 `deps.loadSkills` call, not through `buildListSkillsHandler`, so a hidden skill stays usable —

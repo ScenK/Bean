@@ -87,11 +87,11 @@ describe("saveProjects handler", () => {
   });
 });
 
-test("saveSkill handler writes through the injected deps with the configured skills dir", async () => {
+test("saveSkill handler writes through the injected deps with the configured skills dirs", async () => {
   const saveSkill = vi.fn(async () => {});
-  const handler = buildSaveSkillHandler({ saveSkill, skillsDir: "/b/skills" });
+  const handler = buildSaveSkillHandler({ saveSkill, skillsDir: "/b/skills", projectSkillsDir: "/repo/.bean/skills" });
   await handler("review-code", "new body");
-  expect(saveSkill).toHaveBeenCalledWith("/b/skills", "review-code", "new body");
+  expect(saveSkill).toHaveBeenCalledWith("/b/skills", "review-code", "new body", "/repo/.bean/skills");
 });
 
 test("deleteSkill handler deletes through the injected deps with the configured skills dir", async () => {
