@@ -213,4 +213,9 @@ describe("continues", () => {
     expect("continues" in switchStepKind(step, "command")).toBe(false);
     expect(switchStepKind(step, "delegate")).toBe(step);
   });
+
+  it("switching a skill-less step to delegate leaves the skill out, not empty", () => {
+    expect("skill" in switchStepKind({ kind: "chat", id: "a", instruction: "x" }, "delegate")).toBe(false);
+    expect(switchStepKind({ kind: "chat", id: "a", skill: "s", instruction: "x" }, "delegate")).toMatchObject({ kind: "delegate", skill: "s" });
+  });
 });

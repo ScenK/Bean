@@ -80,6 +80,9 @@ describe("service contract (#807)", () => {
     expect(contractRefusal(IPC.memoryUpdated, [{ saved: [{ id: "1", text: "t" }], mountId: "m" }], all)).toBeUndefined();
     expect(contractRefusal(IPC.routinesPreviewWatch, [{ kind: "feed", command: "ls" }], all)).toMatch(/malformed/);
     expect(contractRefusal(IPC.routinesPreviewWatch, [{ kind: "command", command: "ls" }], all)).toBeUndefined();
+    const sprout = { name: "s", enabled: true, cron: "0 8 * * *", steps: [], sinks: {} };
+    expect(contractRefusal(IPC.routinesSave, [{ ...sprout, projects: ["/w/app"] }], all)).toBeUndefined();
+    expect(contractRefusal(IPC.routinesSave, [{ ...sprout, projects: "/w/app" }], all)).toMatch(/malformed/);
   });
 
   it("gates a host-bound channel on the host's capability", () => {

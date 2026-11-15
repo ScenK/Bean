@@ -56,7 +56,7 @@ const watch = either(
 );
 const routine = shape({
   name: str, description: opt(str), enabled: bool, cron: opt(str), watch: opt(watch), todoDriven: opt(bool),
-  maxParallel: opt(num), webSearch: opt(bool), steps: arr(obj), sinks: obj,
+  maxParallel: opt(num), webSearch: opt(bool), projects: opt(arr(str)), steps: arr(obj), sinks: obj,
 });
 const brief = shape({
   name: str, description: opt(str), trigger: oneOf("schedule", "watch"), cron: opt(str), source: opt(str),

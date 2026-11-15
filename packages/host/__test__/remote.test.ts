@@ -9,6 +9,7 @@ import { buildHandshake, CONTRACT_VERSION } from "../src/contract.js";
 import type { HostHandlers } from "../src/host.js";
 import { attachStdio, encodeFrame, frameReader, listenRemote, MAX_FRAME_BYTES, requestUpdate, type RemoteDeps } from "../src/remote.js";
 import type { CoreUpdateResult } from "../src/core-update.js";
+import { buildListSkillsHandler } from "../src/handlers.js";
 
 const SHELL = "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b";
 
@@ -119,6 +120,13 @@ describe("remote attach over the unix socket", () => {
       listProjects,
       saveProjects,
       getModel,
+      listSkills: buildListSkillsHandler({
+        projectSkillsDir: "/p", skillsDir: "/u",
+        loadSkills: async () => [{ name: "fix", description: "", body: "" }, { name: "intro", description: "", body: "", hidden: true }],
+        loadRoutines: async () => [{ name: "nightly", enabled: true, cron: "0 1 * * *", steps: [
+          { kind: "delegate", skill: "fix", instruction: "go" }, { kind: "chat", skill: "intro", instruction: "hi" },
+        ], sinks: {} }],
+      }),
     } as unknown as HostHandlers;
     const server = await listenRemote(dir, { handshake: buildHandshake("1.0.0", "linux", []), attachments, handlers, ...extra });
     close = server.close;
@@ -198,6 +206,16 @@ describe("remote attach over the unix socket", () => {
     const event = await shell.next((m) => m.type === "push");
     expect(event).toMatchObject({ mountId: "m1", seq: 1, kind: "delegate", payload: { taskId: "t1", type: "started" } });
     expect(await shell.call("getModel")).toMatchObject({ ok: true, value: "gpt-test" });
+    shell.send({ type: "detach" });
+    await shell.closed;
+  });
+
+  it("listSkills carries each skill's usedBy over the wire, hidden skills still filtered", async () => {
+    const { path } = await serve();
+    const shell = shellOverBridge(path);
+    shell.send({ type: "attach", shellId: SHELL, contract: CONTRACT_VERSION });
+    await shell.next((m) => m.type === "attached");
+    expect(await shell.call("listSkills")).toMatchObject({ ok: true, value: [{ name: "fix", usedBy: ["nightly"] }] });
     shell.send({ type: "detach" });
     await shell.closed;
   });

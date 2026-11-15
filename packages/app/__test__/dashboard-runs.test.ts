@@ -210,7 +210,7 @@ describe("gated runs", () => {
 describe("attempt sessions", () => {
   // 1 chat · 2,4,6 continue one opencode session · 3,5 one claude session.
   const d = (id: string, cli: "opencode" | "claude", continues?: string): RoutineStep =>
-    ({ kind: "delegate", id, skill: "", cli, instruction: "x", ...(continues ? { continues } : {}) });
+    ({ kind: "delegate", id, cli, instruction: "x", ...(continues ? { continues } : {}) });
   const steps: RoutineStep[] = [
     { kind: "chat", id: "a", instruction: "x" }, d("b", "opencode"), d("c", "claude"),
     d("d", "opencode", "b"), d("e", "claude", "c"), d("f", "opencode", "d"),

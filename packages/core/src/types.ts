@@ -33,6 +33,9 @@ export interface Skill {
    * browser (claude `--chrome`; opencode refuses). Only frontmatter can turn it on — see
    * .memory/safety-browser-skills-and-failed-sentinel.md. Absent = off. */
   browser?: boolean;
+  /** Names of the saved sprouts whose steps use this skill — set only by the host's `listSkills`
+   * (derived, never in the file). Absent = unknown (sprouts couldn't be read, or an older core). */
+  usedBy?: string[];
 }
 
 export interface Project {

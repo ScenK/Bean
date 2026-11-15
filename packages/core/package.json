@@ -52,6 +52,10 @@
     "./project-select": {
       "types": "./dist/project-select.d.ts",
       "default": "./dist/project-select.js"
+    },
+    "./usage-sections": {
+      "types": "./dist/usage-sections.d.ts",
+      "default": "./dist/usage-sections.js"
     }
   },
   "scripts": {

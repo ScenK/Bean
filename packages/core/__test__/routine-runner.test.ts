@@ -67,6 +67,18 @@ describe("runRoutine", () => {
     expect(res.results[0]!.output).toContain("disabled");
   });
 
+  it("runs a skill-less delegate step, or one naming a missing skill, on its instruction alone", async () => {
+    const seen: { skill?: Skill; instruction: string }[] = [];
+    const res = await runRoutine(routine([
+      { kind: "delegate", instruction: "no skill" },
+      { kind: "delegate", skill: "gone", instruction: "missing skill" },
+    ]), baseDeps(async () => ({ content: "digest", toolCalls: [] }), {
+      delegate: async (req) => { seen.push({ skill: req.skill, instruction: req.instruction }); return "ok"; },
+    }));
+    expect(res.results.map((r) => r.ok)).toEqual([true, true]);
+    expect(seen).toEqual([{ skill: undefined, instruction: "no skill" }, { skill: undefined, instruction: "missing skill" }]);
+  });
+
   it("runs steps in order and threads prior outputs into later steps", async () => {
     const { fn, calls } = chatStub([
       { content: "chat step output" },

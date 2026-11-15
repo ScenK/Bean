@@ -64,6 +64,41 @@ describe("save/load/delete routines", () => {
   });
 });
 
+describe("skill-less delegate step", () => {
+  it("saves without a skill key and reloads", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "bean-routines-"));
+    const r = routine({ steps: [{ kind: "delegate", id: "fix", project: "/p", instruction: "fix the build" }] });
+    await saveRoutine(dir, r);
+    expect(await readFile(join(dir, `${r.name}.json`), "utf8")).not.toContain("skill");
+    expect(await loadRoutines(dir)).toEqual([r]);
+  });
+});
+
+describe("Routine.projects (display only)", () => {
+  it("validates a list of non-empty strings", () => {
+    expect(describeRoutineError(routine({ projects: ["/w/app"] }))).toBeNull();
+    expect(describeRoutineError({ ...routine(), projects: "/w/app" })).toMatch(/projects must be a list/);
+    expect(describeRoutineError({ ...routine(), projects: [""] })).toMatch(/projects must be a list/);
+    expect(describeRoutineError({ ...routine(), projects: [3] })).toMatch(/projects must be a list/);
+  });
+  it("round-trips, keeps unknown paths, and stores [] as absent", async () => {
+    const dir = await tmp();
+    await saveRoutine(dir, routine({ projects: ["/w/app", "/nowhere"] }));
+    expect((await loadRoutines(dir))[0]?.projects).toEqual(["/w/app", "/nowhere"]);
+    await saveRoutine(dir, routine({ projects: [] }));
+    expect(await readFile(join(dir, "morning-triage.json"), "utf8")).not.toContain("projects");
+    await writeFile(join(dir, "morning-triage.json"), JSON.stringify(routine({ projects: [] })));
+    expect(await loadRoutines(dir)).toEqual([routine()]);
+  });
+  it("strict load throws on an unreadable dir, but a missing dir is still []", async () => {
+    const dir = await tmp();
+    await writeFile(join(dir, "file"), "x");
+    expect(await loadRoutines(join(dir, "missing"), true)).toEqual([]);
+    expect(await loadRoutines(join(dir, "file"))).toEqual([]);
+    await expect(loadRoutines(join(dir, "file"), true)).rejects.toThrow();
+  });
+});
+
 describe("describeRoutineError", () => {
   it("names the specific field/step at fault instead of a generic message", () => {
     expect(describeRoutineError(routine())).toBeNull();
@@ -73,7 +108,11 @@ describe("describeRoutineError", () => {
     expect(describeRoutineError(routine({ steps: [{ kind: "chat", instruction: "" }] }))).toMatch(/step 1 needs an instruction/);
     expect(describeRoutineError(routine({
       steps: [{ kind: "delegate", skill: "", instruction: "go" }],
-    }))).toMatch(/step 1 \(delegate\) needs a skill/);
+    }))).toMatch(/step 1 has an invalid skill/);
+    expect(describeRoutineError(routine({
+      steps: [{ kind: "delegate", skill: 3 as unknown as string, instruction: "go" }],
+    }))).toMatch(/step 1 has an invalid skill/);
+    expect(describeRoutineError(routine({ steps: [{ kind: "delegate", instruction: "go" }] }))).toBeNull();
     expect(describeRoutineError(routine({
       steps: [{ kind: "delegate", skill: "s", timeoutMinutes: 0, instruction: "go" }],
     }))).toMatch(/step 1 timeout must be a whole number/);

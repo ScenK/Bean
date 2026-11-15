@@ -1,10 +1,11 @@
-import { useEffect, useState } from "preact/hooks";
-import type { Project, LaunchMode } from "@bean/core";
+import { useEffect, useMemo, useState } from "preact/hooks";
+import type { Project, LaunchMode, Routine, Skill } from "@bean/core";
 import { projectsByName } from "@bean/core/project-select";
 import { truncateMiddle } from "./truncate-path.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
 import { useCliAvailability } from "../../shared/cli-availability.js";
 import { copyPath, useCapabilities } from "../../shared/capabilities.js";
+import { countOf, sproutsByProject, withProjectSkill } from "./project-members.js";
 
 const LAUNCH_CHIPS: { mode: LaunchMode; label: string; needsPrompt: boolean }[] = [
   { mode: "opencode", label: "opencode", needsPrompt: true },
@@ -23,6 +24,9 @@ export function ProjectsPanel({
   onLaunch: (mode: LaunchMode, project: Project, prompt?: string) => void;
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [skills, setSkills] = useState<Skill[]>([]);
+  // `undefined` = the core can't list sprouts (a remote core): the SPROUTS section is omitted.
+  const [routines, setRoutines] = useState<Routine[] | undefined>(undefined);
   const { clis } = useCliAvailability();
   // A remote core (#812): no folder picker, Finder or Terminal hand-off across machines — the path is
   // typed and the core checks it.
@@ -44,7 +48,22 @@ export function ProjectsPanel({
 
   useEffect(() => {
     void refresh();
+    window.bean.listSkills().then(setSkills, () => {});
+    window.bean.routinesList().then((rs) => setRoutines(Array.isArray(rs) ? rs : undefined), () => {});
   }, []);
+
+  const sprouts = useMemo(() => (routines ? sproutsByProject(routines, projects) : undefined), [routines, projects]);
+
+  // Re-reads the registry first so a concurrent write (the Skills window's chips) isn't lost.
+  const setProjectSkill = async (path: string, skill: string, on: boolean): Promise<void> => {
+    try {
+      await window.bean.saveProjects(withProjectSkill(await window.bean.listProjects(), path, skill, on));
+      setSaveError(undefined);
+      await refresh();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const selectedProject = projects.find((p) => p.path === selected);
   const chips = LAUNCH_CHIPS.filter((c) => c.mode === "open" || clis.includes(c.mode));
@@ -75,7 +94,7 @@ export function ProjectsPanel({
     setEditing({ original: p.path, form: { name: p.name, path: p.path } });
   };
 
-  const cancelEdit = (): void => setEditing(undefined);
+  const cancelEdit = (): void => { setEditing(undefined); setSaveError(undefined); };
 
   const browsePath = async (): Promise<void> => {
     const dir = await window.bean.pickProjectFolder();
@@ -130,10 +149,14 @@ export function ProjectsPanel({
             <div
               key={p.path}
               class={`bean-projects-row${selected === p.path ? " bean-projects-row--selected" : ""}`}
-              onClick={() => setSelected(p.path === selected ? undefined : p.path)}
+              onClick={() => { setSaveError(undefined); setSelected(p.path === selected ? undefined : p.path); }}
             >
               <span class="bean-projects-name">{p.name}</span>
               <span class="bean-projects-path" title={p.path}>{truncateMiddle(p.path)}</span>
+              <span class="bean-projects-meta">
+                {countOf(p.skills?.length ?? 0, "skill")}
+                {sprouts ? ` · ${countOf(sprouts.get(p.path)?.length ?? 0, "sprout")}` : ""}
+              </span>
               <span class="bean-projects-row-actions">
                 <button
                   type="button"
@@ -234,6 +257,49 @@ export function ProjectsPanel({
                   <button type="button" class="bean-btn bean-btn--ghost" onClick={() => setFormMode(undefined)}>Cancel</button>
                 </div>
               </div>
+            ) : null}
+            <div class="bean-launch-label">SKILLS</div>
+            <div class="bean-launch-chips bean-projects-members">
+              {(selectedProject.skills ?? []).map((name) => (
+                <span key={name} class="bean-projects-member">
+                  {name}
+                  <button
+                    type="button"
+                    class="bean-projects-member-remove"
+                    aria-label={`Remove ${name}`}
+                    title={`Remove ${name} from ${selectedProject.name}`}
+                    onClick={() => void setProjectSkill(selectedProject.path, name, false)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              <select
+                class="bean-input bean-projects-add-skill"
+                value=""
+                onChange={(e) => {
+                  const name = (e.target as HTMLSelectElement).value;
+                  (e.target as HTMLSelectElement).value = "";
+                  if (name) void setProjectSkill(selectedProject.path, name, true);
+                }}
+              >
+                <option value="">+ Add skill…</option>
+                {skills
+                  .filter((s) => s.enabled !== false && !selectedProject.skills?.includes(s.name))
+                  .map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+              </select>
+            </div>
+            {saveError ? <div class="bean-skills-error">{saveError}</div> : null}
+            {sprouts ? (
+              <>
+                <div class="bean-launch-label">SPROUTS</div>
+                <div class="bean-launch-chips bean-projects-members">
+                  {(sprouts.get(selectedProject.path) ?? []).map((name) => (
+                    <span key={name} class="bean-projects-member">{name}</span>
+                  ))}
+                  {(sprouts.get(selectedProject.path)?.length ?? 0) === 0 ? <span class="bean-projects-none">None</span> : null}
+                </div>
+              </>
             ) : null}
           </div>
         ) : (
