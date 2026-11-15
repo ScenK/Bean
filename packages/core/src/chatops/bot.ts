@@ -293,6 +293,13 @@ const SEND_EXPIRED = "That send card expired — ask me again.";
 /** The longest body a send card shows in full (Discord's embed description caps at 4096). */
 export const MAX_SEND_CHARS = 4000;
 
+/** `continue`'s answer per refusal; the rest fall back to a generic line. */
+const CONTINUE_REFUSED: Partial<Record<DeskRefusal, string>> = {
+  "no-record": "There's no ended live session here to continue.",
+  "channel-busy": "A live session is already running here.",
+  "cli-missing": "That session's CLI isn't installed on this Mac any more.",
+};
+
 const nameTaken = (name: string): string => `a sprout named "${name}" already exists — ask for a different name.`;
 
 const DESKTOP_ONLY =
@@ -1415,6 +1422,16 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       return true;
     }
+    if (cmd === "continue") {
+      if (speakerRole(msg).role !== "owner") await fx.reply("Only the owner can continue a live session.");
+      else if (!deps.liveSessionsEnabled()) await fx.reply("Live sessions are disabled here.");
+      else {
+        const r = await resumeBoundLive(conv, async () => fx);
+        // On success the mode line is the answer (posted by startLiveSessionAction).
+        if ("refused" in r) await fx.reply(CONTINUE_REFUSED[r.refused] ?? "I couldn't reopen that session.");
+      }
+      return true;
+    }
     const chatterCmd = deps.chatter ? parseChatterCommand(msg.text) : undefined;
     // In a DM, mute/unmute stay model turns (the owner may mean the Mac's volume).
     if (deps.chatter && chatterCmd && (chatterCmd.kind === "chatty" || chatterCmd.kind === "memory" || !msg.direct)) {
@@ -1537,6 +1554,57 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
   // second one for the same conversation is channel-busy, never a second session.
   const deskResuming = new Set<string>();
 
+  // Reopens the conversation's ended owner-started live session from its catalog binding, with
+  // no card: the desk's Continue live click, or the owner's `continue` here, is the confirmation.
+  // CLI, session id and project come from the catalog row and `findDelegateRun`, never the caller.
+  // `getFx` is only called once the request is eligible. Never starts a fresh session.
+  async function resumeBoundLive(conv: string, getFx: () => Promise<BotEffects>): Promise<DeskAckResult> {
+    const catalog = deps.catalog;
+    const row = catalog?.get(conv);
+    if (!catalog || !row || row.archivedFrom) return { refused: "no-record" };
+    const owner = { fromId: row.ownerId, fromAltId: row.ownerAltId };
+    if (deps.roles.roleOf(owner) !== "owner") return { refused: "not-eligible" };
+    if (deps.liveSessions.has(conv) || deskResuming.has(conv)) return { refused: "channel-busy" };
+    // The catalog binding and the delegate_runs row must agree on surface, CLI and session; the
+    // project comes from the row (findDelegateRun checks the folder still exists). A
+    // conversation with no recorded session never starts fresh.
+    const found = row.liveCli && row.liveSessionId ? deps.findDelegateRun?.(row.liveSessionId) : undefined;
+    if (!found || "refusal" in found || found.run.surface !== catalog.surface || found.run.cli !== row.liveCli) {
+      return { refused: "no-record" };
+    }
+    const { run } = found;
+    if (!isLiveCli(run.cli)) return { refused: "no-record" };
+    if (!liveClis().includes(run.cli)) return { refused: "cli-missing" };
+    deskResuming.add(conv);
+    try {
+      let fx: BotEffects;
+      try {
+        fx = await getFx();
+      } catch (err) {
+        console.warn("bean: live resume target failed:", err instanceof Error ? err.name : "error");
+        return { refused: "post-failed" };
+      }
+      const startedBy = deps.roles.ownerName;
+      const pending: PendingLiveSession = {
+        id: "desk", conversationId: conv, proposedBy: startedBy, createdAt: Date.now(),
+        proposal: {
+          projectPath: run.projectPath, instruction: "", steering: "restricted",
+          resume: { sessionId: run.sessionId, projectPath: run.projectPath, instruction: run.instruction, cli: run.cli },
+        },
+      };
+      try {
+        return await startLiveSessionAction(pending, startedBy, row.ownerId, fx,
+          { altId: row.ownerAltId, place: { kind: row.kind, title: row.title } }, true);
+      } catch (err) {
+        // The mode line's post failed after the bind: the session is open all the same.
+        console.warn("bean: live resume post failed:", err instanceof Error ? err.name : "error");
+        return deps.liveSessions.has(conv) ? { ok: true } : { refused: "post-failed" };
+      }
+    } finally {
+      deskResuming.delete(conv);
+    }
+  }
+
   const bot: ReturnType<typeof buildTeamsBot> = {
     onCommand,
 
@@ -1594,53 +1662,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     },
 
     async onDeskResume(req, effects, ack): Promise<void> {
-      const conv = req.conversationId;
-      const catalog = deps.catalog;
-      const row = catalog?.get(conv);
-      if (!catalog || !row || row.archivedFrom) return ack({ refused: "no-record" });
-      const owner = { fromId: row.ownerId, fromAltId: row.ownerAltId };
-      if (deps.roles.roleOf(owner) !== "owner") return ack({ refused: "not-eligible" });
-      if (deps.liveSessions.has(conv) || deskResuming.has(conv)) return ack({ refused: "channel-busy" });
-      // The catalog binding and the delegate_runs row must agree on surface, CLI and session; the
-      // project comes from the row (findDelegateRun checks the folder still exists). A
-      // conversation with no recorded session never starts fresh.
-      const found = row.liveCli && row.liveSessionId ? deps.findDelegateRun?.(row.liveSessionId) : undefined;
-      if (!found || "refusal" in found || found.run.surface !== catalog.surface || found.run.cli !== row.liveCli) {
-        return ack({ refused: "no-record" });
-      }
-      const { run } = found;
-      if (!isLiveCli(run.cli)) return ack({ refused: "no-record" });
-      if (!liveClis().includes(run.cli)) return ack({ refused: "cli-missing" });
-      deskResuming.add(conv);
-      try {
-        let fx: BotEffects;
-        try {
-          fx = (await effects()).fx;
-        } catch (err) {
-          console.warn("bean: desk resume target failed:", err instanceof Error ? err.name : "error");
-          return ack({ refused: "post-failed" });
-        }
-        const startedBy = deps.roles.ownerName;
-        const pending: PendingLiveSession = {
-          id: "desk", conversationId: conv, proposedBy: startedBy, createdAt: Date.now(),
-          proposal: {
-            projectPath: run.projectPath, instruction: "", steering: "restricted",
-            resume: { sessionId: run.sessionId, projectPath: run.projectPath, instruction: run.instruction, cli: run.cli },
-          },
-        };
-        let result: DeskAckResult;
-        try {
-          result = await startLiveSessionAction(pending, startedBy, row.ownerId, fx,
-            { altId: row.ownerAltId, place: { kind: row.kind, title: row.title } }, true);
-        } catch (err) {
-          // The mode line's post failed after the bind: the session is open all the same.
-          console.warn("bean: desk resume post failed:", err instanceof Error ? err.name : "error");
-          result = deps.liveSessions.has(conv) ? { ok: true } : { refused: "post-failed" };
-        }
-        ack(result);
-      } finally {
-        deskResuming.delete(conv);
-      }
+      ack(await resumeBoundLive(req.conversationId, async () => (await effects()).fx));
     },
 
     async onDeskContinue(req, openThread, ack): Promise<void> {
@@ -1765,8 +1787,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
           }
           return;
         }
-        // Typed `stop` with nothing live stays a model turn, as it always was.
-        if (cmd !== "stop" && await onCommand(msg, fx)) return;
+        // Typed `stop` with nothing live stays a model turn, as it always was; so does a typed
+        // `continue` where no live session was ever bound (it's an ordinary word in a chat).
+        const plainContinue = cmd === "continue" && !deps.catalog?.get(msg.conversationId)?.liveSessionId;
+        if (cmd !== "stop" && !plainContinue && await onCommand(msg, fx)) return;
         const { role, scopeId } = speakerRole(msg);
         const isOwner = role === "owner";
         if (await dmBlocked(msg, role, fx)) return;

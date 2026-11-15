@@ -11,6 +11,7 @@ export interface ChatopsCommand {
  * from. Teams' manifest `commandLists` must name the same set (a test checks). */
 export const CHATOPS_COMMANDS: readonly ChatopsCommand[] = [
   { name: "stop", description: "end the live session" },
+  { name: "continue", description: "reopen this chat's ended live session (owner only)" },
   { name: "cancel", description: "cancel running delegated tasks" },
   { name: "new", description: "start a fresh conversation" },
   { name: "whoami", description: "show your Bean role" },

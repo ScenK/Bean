@@ -5,7 +5,7 @@ import { answerSlash, slashCommands, slashMessage, type SlashInvocation } from "
 test("registers every catalog command, with its one required option", () => {
   const cmds = slashCommands() as { name: string; options?: { name: string; required: boolean }[] }[];
   expect(cmds.map((c) => c.name)).toEqual(CHATOPS_COMMANDS.map((c) => c.name));
-  expect(cmds).toHaveLength(12);
+  expect(cmds).toHaveLength(13);
   // Users see "sprouts"; the old `routines` keyword still parses but isn't advertised.
   expect(cmds.map((c) => c.name)).toContain("sprouts");
   expect(cmds.map((c) => c.name)).not.toContain("routines");

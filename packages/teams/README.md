@@ -113,7 +113,7 @@ message* to Bean (`recipient.isTargeted`), which Bean treats as addressed to it 
 
 | Command | 1:1 | Channel | Group chat |
 |---|---|---|---|
-| `stop`, `cancel`, `new`, `whoami`, `live-session <prompt>` | ✓ | ✓ | ✓ |
+| `stop`, `continue`, `cancel`, `new`, `whoami`, `live-session <prompt>` | ✓ | ✓ | ✓ |
 | `drivers`, `admins`, `add-admin @name`, `remove-admin @name` | | ✓ | ✓ |
 | `sprouts`, `enable <sprout name>`, `disable <sprout name>` | ✓ | | |
 
