@@ -2922,6 +2922,14 @@ describe("owner routines from chat (#285)", () => {
     expect(h.offered).toEqual([]); // commands never reach the model
   });
 
+  test("the sprouts list groups by the registry's projects, Scratch last (#885)", async () => {
+    const h = setup(routineJson, [{ ...(routineJson as Routine), projects: ["/p/bean"] }, { ...(routineJson as Routine), name: "loose" }]);
+    const effects = fx();
+    await h.bot.onMessage({ ...msg, text: "sprouts" }, effects);
+    expect(effects.posted.at(-1)).toMatch(/^\*\*bean\*\*\n• \*\*mia-summary\*\* — on — [^\n]+\n\*\*Scratch\*\*\n• \*\*loose\*\* — on — /);
+    expect(effects.posted.at(-1)).not.toContain("/p/bean");
+  });
+
   test("Routine.projects survives disable/enable and an owner's chat replacement", async () => {
     const h = setup(routineJson, [{ ...(routineJson as Routine), projects: ["/w/app", "/w/gone"] }]);
     const effects = fx();
