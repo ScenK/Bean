@@ -1760,7 +1760,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             return;
           }
           // A start/resume while one runs is never a steer: the owner hears why, anyone else is dropped.
-          if (/^\/?live-session\b/i.test(trimmed)) {
+          // Only a slashed `/continue` counts; a bare `continue` is a word the agent may be waiting for.
+          if (/^\/?live-session\b|^\/continue$/i.test(trimmed)) {
             if (speakerRole(msg).role === "owner") await fx.reply(liveBusyLine(deps.liveSessions.cli(conv) ?? "claude"));
             return;
           }

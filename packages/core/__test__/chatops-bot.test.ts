@@ -3629,6 +3629,14 @@ describe("desk turns (#528)", () => {
     await d.bot.onCommand(said("u1", "/continue"), busy);
     expect(busy.posted).toEqual(["A live session is already running here."]);
     expect(d.reqs).toHaveLength(1);
+    // Typed while it runs: a slashed `/continue` is never a steer; a bare `continue` is one.
+    const typedBusy = fx();
+    await d.bot.onMessage(said("u1", "/continue"), typedBusy);
+    expect(typedBusy.posted).toEqual([expect.stringContaining("already running here")]);
+    expect(d.sent).toEqual([]);
+    await d.bot.onMessage(said("u1"), fx());
+    expect(d.sent).toEqual(["continue"]);
+    expect(d.reqs).toHaveLength(1);
   });
 
   test("`continue` where no session was bound: the slash pick says so, a typed one stays a model turn", async () => {

@@ -51,10 +51,6 @@
               "description": "stop — end the live session"
             },
             {
-              "title": "continue",
-              "description": "continue — reopen this chat's ended live session (owner only)"
-            },
-            {
               "title": "cancel",
               "description": "cancel — cancel running delegated tasks"
             },
