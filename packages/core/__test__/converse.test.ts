@@ -9,7 +9,7 @@ const skills: Skill[] = [
   { name: "write-tests", description: "write tests", body: "TESTS BODY" },
 ];
 const projects: Project[] = [
-  { name: "api", path: "/work/api", defaultSkill: "review-code" },
+  { name: "api", path: "/work/api", skills: ["review-code"] },
   { name: "bean", path: "/dev/bean" },
 ];
 

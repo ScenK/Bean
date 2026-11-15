@@ -38,10 +38,8 @@ export interface Skill {
 export interface Project {
   name: string;
   path: string;
-  defaultSkill?: string;
-  /** Names of skills grouped under this project in the Skills panel. Many-to-many: a skill
-   * name can appear in multiple projects' lists. Separate from `defaultSkill`, which is an
-   * unrelated best-guess fallback used by the drop-plan/avatar heuristics. */
+  /** Names of the skills linked to this project. Many-to-many: a skill name can appear in
+   * multiple projects' lists; `bestProjectForSkill` picks the first, in file order. */
   skills?: string[];
 }
 

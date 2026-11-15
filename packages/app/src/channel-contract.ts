@@ -28,7 +28,7 @@ const chatRequest = shape({
   history: arr(turn), message: str, source: opt(str), incognito: opt(bool), droppedUrl: opt(str),
   linkedNote: opt(obj), images: opt(arr(image)), documents: opt(list), turnId: opt(str),
 });
-const project = shape({ name: str, path: str, defaultSkill: opt(str), skills: opt(arr(str)) });
+const project = shape({ name: str, path: str, skills: opt(arr(str)) });
 const persona = shape({ name: str, tags: arr(str) });
 // A patch (#812): each field optional, an omitted one keeps its value — `{}` changes nothing.
 const configUpdate = shape({

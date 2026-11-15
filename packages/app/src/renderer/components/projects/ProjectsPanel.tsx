@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import type { Project, LaunchMode, Skill } from "@bean/core";
+import type { Project, LaunchMode } from "@bean/core";
 import { projectsByName } from "@bean/core/project-select";
 import { truncateMiddle } from "./truncate-path.js";
 import { PanelEmptyState } from "../../shared/PanelEmptyState.js";
@@ -13,8 +13,8 @@ const LAUNCH_CHIPS: { mode: LaunchMode; label: string; needsPrompt: boolean }[] 
   { mode: "open", label: "Open in Editor", needsPrompt: false },
 ];
 
-type FormState = { name: string; path: string; defaultSkill: string };
-const EMPTY_FORM: FormState = { name: "", path: "", defaultSkill: "" };
+type FormState = { name: string; path: string };
+const EMPTY_FORM: FormState = { name: "", path: "" };
 
 
 export function ProjectsPanel({
@@ -23,7 +23,6 @@ export function ProjectsPanel({
   onLaunch: (mode: LaunchMode, project: Project, prompt?: string) => void;
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [skills, setSkills] = useState<Skill[]>([]);
   const { clis } = useCliAvailability();
   // A remote core (#812): no folder picker, Finder or Terminal hand-off across machines — the path is
   // typed and the core checks it.
@@ -40,12 +39,7 @@ export function ProjectsPanel({
   const [saveError, setSaveError] = useState<string | undefined>(undefined);
 
   const refresh = async (): Promise<void> => {
-    const [nextProjects, nextSkills] = await Promise.all([
-      window.bean.listProjects(),
-      window.bean.listSkills(),
-    ]);
-    setProjects(nextProjects);
-    setSkills(nextSkills);
+    setProjects(await window.bean.listProjects());
   };
 
   useEffect(() => {
@@ -78,7 +72,7 @@ export function ProjectsPanel({
 
   const startEdit = (p: Project): void => {
     setSaveError(undefined);
-    setEditing({ original: p.path, form: { name: p.name, path: p.path, defaultSkill: p.defaultSkill ?? "" } });
+    setEditing({ original: p.path, form: { name: p.name, path: p.path } });
   };
 
   const cancelEdit = (): void => setEditing(undefined);
@@ -105,11 +99,7 @@ export function ProjectsPanel({
     }
     // Preserve skill-group assignments across an edit — they're not part of the edit form.
     const priorSkills = projects.find((p) => p.path === editing.original)?.skills;
-    const edited: Project = {
-      name, path,
-      ...(editing.form.defaultSkill ? { defaultSkill: editing.form.defaultSkill } : {}),
-      ...(priorSkills ? { skills: priorSkills } : {}),
-    };
+    const edited: Project = { name, path, ...(priorSkills ? { skills: priorSkills } : {}) };
     // Edit in place: re-appending would jump the project (and its Notes group) to the bottom.
     const at = projects.findIndex((p) => p.path === editing.original);
     const next = at < 0 ? [...others, edited] : projects.map((p, i) => (i === at ? edited : p));
@@ -144,7 +134,6 @@ export function ProjectsPanel({
             >
               <span class="bean-projects-name">{p.name}</span>
               <span class="bean-projects-path" title={p.path}>{truncateMiddle(p.path)}</span>
-              {p.defaultSkill ? <span class="bean-chip">{p.defaultSkill}</span> : null}
               <span class="bean-projects-row-actions">
                 <button
                   type="button"
@@ -192,17 +181,6 @@ export function ProjectsPanel({
                 />
                 {pickFolder ? <button type="button" class="bean-btn bean-btn--ghost" onClick={() => void browsePath()}>Browse…</button> : null}
               </div>
-            </label>
-            <label class="bean-field">
-              <span class="bean-field-label">DEFAULT SKILL</span>
-              <select
-                class="bean-input bean-input--boxed"
-                value={editing.form.defaultSkill}
-                onChange={(e) => setEditing({ ...editing, form: { ...editing.form, defaultSkill: (e.target as HTMLSelectElement).value } })}
-              >
-                <option value="">None</option>
-                {skills.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
-              </select>
             </label>
             {saveError ? <div class="bean-skills-error">{saveError}</div> : null}
             <div class="bean-card-actions">

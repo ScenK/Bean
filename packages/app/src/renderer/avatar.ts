@@ -9,6 +9,7 @@ import { createDragWatchdog } from "../drag-watchdog.js";
 import { AVATAR_SIZE } from "../avatar-menu.js";
 import { computeStackPositions, nearestPetalIndex, pointInRect, type Point } from "../petal-geometry.js";
 import type { Project, Skill } from "@bean/core";
+import { bestProjectForSkill } from "@bean/core/project-select";
 
 // Quick-actions and drag skills share a scrolling tile stack. Main places its viewport
 // above or below the capsule according to available display space.
@@ -363,11 +364,8 @@ if (el && orbSlot && hint && bloom && reading && bubbles) {
     // `quick-launch: false` (this surface only — the chat agent and chatops still see it).
     const active = skills.filter((s) => s.enabled !== false && s.quickLaunch !== false);
     if (active.length > 0) {
-      // Same priority order as bestProjectForSkill (explicit Project.skills before the legacy
-      // defaultSkill badge), just picking a skill — keeps the "best guess" hint consistent with
-      // what dropping on that tile will actually resolve to.
-      const suggested = active.find((s) => projects.some((p) => p.skills?.includes(s.name)))?.name
-        ?? active.find((s) => projects.some((p) => p.defaultSkill === s.name))?.name
+      // A skill some project links — the project a drop on that tile resolves to.
+      const suggested = active.find((s) => bestProjectForSkill(s.name, projects))?.name
         ?? active[0]?.name;
       dragTiles = active.map((s) => ({
         icon: DOT,

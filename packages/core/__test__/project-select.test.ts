@@ -4,18 +4,10 @@ import type { Project } from "../src/types.js";
 
 test("prefers a project whose skills array includes the name", () => {
   const projects: Project[] = [
-    { name: "api", path: "/dev/api", defaultSkill: "write-tests" },
+    { name: "api", path: "/dev/api", skills: ["write-tests"] },
     { name: "web", path: "/dev/web", skills: ["review-code"] },
   ];
   expect(bestProjectForSkill("review-code", projects)?.path).toBe("/dev/web");
-});
-
-test("falls back to defaultSkill match when no skills array matches", () => {
-  const projects: Project[] = [
-    { name: "api", path: "/dev/api", defaultSkill: "write-tests" },
-    { name: "web", path: "/dev/web" },
-  ];
-  expect(bestProjectForSkill("write-tests", projects)?.path).toBe("/dev/api");
 });
 
 test("an unlinked skill gets no project (scratch), not the first one", () => {
@@ -26,10 +18,10 @@ test("an unlinked skill gets no project (scratch), not the first one", () => {
   expect(bestProjectForSkill("nonexistent", projects)).toBeUndefined();
 });
 
-test("skills array takes priority even when defaultSkill points elsewhere", () => {
+test("a skill linked to several projects resolves to the first in file order", () => {
   const projects: Project[] = [
-    { name: "api", path: "/dev/api", defaultSkill: "review-code" },
     { name: "web", path: "/dev/web", skills: ["review-code"] },
+    { name: "api", path: "/dev/api", skills: ["review-code"] },
   ];
   expect(bestProjectForSkill("review-code", projects)?.path).toBe("/dev/web");
 });

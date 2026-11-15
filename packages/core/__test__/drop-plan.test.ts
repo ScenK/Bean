@@ -7,11 +7,11 @@ const skills: Skill[] = [
   { name: "write-tests", description: "cover the fix", body: "TEST BODY" },
 ];
 const projects: Project[] = [
-  { name: "api", path: "/dev/api", defaultSkill: "triage-issues" },
+  { name: "api", path: "/dev/api", skills: ["triage-issues"] },
   { name: "core", path: "/dev/core" },
 ];
 
-test("matches the project whose defaultSkill equals the dropped skill", () => {
+test("matches the project that links the dropped skill", () => {
   const plan = planForDroppedSkill("triage-issues", "https://jira/PROJ-1", skills, projects);
   expect(plan.skillName).toBe("triage-issues");
   expect(plan.projectPath).toBe("/dev/api");

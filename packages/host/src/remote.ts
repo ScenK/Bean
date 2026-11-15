@@ -105,7 +105,7 @@ const configPatch = shape({
   systemControls: opt(bool), reasoningEffort: opt(str), routineDigestContext: opt(bool), disabledClis: opt(arr(str)),
   webSearch: opt(bool), autoMemory: opt(bool), gitName: opt(str), gitEmail: opt(str),
 });
-const project = shape({ name: str, path: str, defaultSkill: opt(str), skills: opt(arr(str)) });
+const project = shape({ name: str, path: str, skills: opt(arr(str)) });
 
 /** A remote shell types a project's path (it has no folder picker on this machine): a new or changed
  * path must be an absolute directory here. Paths already saved pass, so a moved repo can't block an

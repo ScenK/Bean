@@ -1,6 +1,6 @@
 import {
-  listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash, resolveTodoRoutine,
-  type SkillProposal, type ProposalOutcome, type Project, type Skill, type Persona, type Routine, type TodoItem,
+  foldDefaultSkills, listSkillProposals, approveSkillProposal, rejectSkillProposal, undoSkillProposal, skillHash, resolveTodoRoutine,
+  type SkillProposal, type ProposalOutcome, type Project, type LegacyProject, type Skill, type Persona, type Routine, type TodoItem,
 } from "@bean/core";
 
 // The stateless handler builders: each one closes over its file paths and calls core. No Electron.
@@ -29,11 +29,22 @@ export function buildListProjectsHandler(deps: ListProjectsHandlerDeps) {
 
 export interface SaveProjectsHandlerDeps {
   saveProjects: (file: string, projects: Project[]) => Promise<void>;
+  loadSkills: (projectDir: string, userDir: string) => Promise<Skill[]>;
   projectsFile: string;
+  projectSkillsDir: string;
+  skillsDir: string;
 }
 
 export function buildSaveProjectsHandler(deps: SaveProjectsHandlerDeps) {
-  return (projects: Project[]): Promise<void> => deps.saveProjects(deps.projectsFile, projects);
+  // An older shell may still send the retired `defaultSkill`: fold it like a load does. Skill names
+  // without a file (hidden and disabled count as files) are dropped — unless the catalog read came
+  // back empty, which may be a failed read rather than no skills.
+  return async (projects: LegacyProject[]): Promise<void> => {
+    const known = new Set((await deps.loadSkills(deps.projectSkillsDir, deps.skillsDir)).map((s) => s.name));
+    const next = foldDefaultSkills(projects).map((p) =>
+      known.size > 0 && p.skills ? { ...p, skills: p.skills.filter((n) => known.has(n)) } : p);
+    await deps.saveProjects(deps.projectsFile, next);
+  };
 }
 
 export interface SaveSkillHandlerDeps {
