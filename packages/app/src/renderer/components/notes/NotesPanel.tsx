@@ -83,7 +83,14 @@ export function NotesPanel() {
     );
   };
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    void refresh();
+    // A chat (Continue in chat), bot or sprout can update a note while the window sits open;
+    // catch up on focus. Drafts live in their own state, so an open editor is untouched.
+    const onFocus = (): void => { void refresh(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   const selected = notes.find((n) => n.slug === selectedSlug);
   const projectName = (path?: string): string | undefined =>
