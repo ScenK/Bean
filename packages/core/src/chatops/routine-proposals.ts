@@ -3,6 +3,8 @@ import { basename } from "node:path";
 import type { ProposedRoutine } from "../converse.js";
 import { parseCron } from "../cron.js";
 import { memberTodoEligible, watchEveryMinutes, type Routine, type RoutineStep } from "../routine-store.js";
+import type { Project } from "../types.js";
+import { sproutProblems, sproutProjects, type SproutProblem } from "../usage-sections.js";
 import type { RoutineProposalCardInput } from "./cards-api.js";
 import { localTimeZone } from "./turn-cap.js";
 
@@ -200,10 +202,45 @@ function stripQuotes(s: string): string {
   return s.slice(start, end);
 }
 
-/** `runnable` = this bot can run a sprout on request (headless): the list says so. */
-export function routineListText(routines: Routine[], tz: string = localTimeZone(), runnable = false): string {
+/** Free text (a project/skill name, a folder's basename) as inert chat text: one line, markdown
+ * escaped, and no `@` that could mention anyone. */
+const inert = (s: string): string =>
+  s.replace(/\s+/g, " ").trim().replace(/[\\`*_~|<>[\]#]/g, "\\$&").replace(/@/g, "@\u200b");
+
+/** A short marker for one problem; folders show their basename only (no absolute paths in channels). */
+function problemText(p: SproutProblem): string {
+  if (p.kind === "missing-skill") return `step ${p.step} skill ${inert(p.skill)} not found`;
+  const folder = inert(basename(p.folder) || p.folder);
+  return p.kind === "ancestor-folder" ? `step ${p.step} folder ${folder} holds several projects` : `step ${p.step} folder ${folder} isn't a registered project`;
+}
+
+/** The owner's `sprouts` reply, sectioned like the desktop Sprouts list (#885): Needs fixing, the
+ * registered projects A–Z, Scratch; empty sections dropped. Each sprout is listed once — under
+ * Needs fixing if a step folder needs fixing, else its first project in registry order (`· also`
+ * names the rest), else Scratch. `skillNames` must be the full catalog (hidden skills included).
+ * `runnable` = this bot can run a sprout on request (headless): the list says so. */
+export function routineListText(
+  routines: Routine[], projects: readonly Project[], skillNames: ReadonlySet<string>,
+  tz: string = localTimeZone(), runnable = false,
+): string {
   if (routines.length === 0) return "No sprouts yet — describe one and I'll draft it.";
-  return routines
-    .map((r) => `• **${r.name}** — ${r.enabled ? "on" : "off"} — ${describeSchedule(r, tz).replace(` (${tz})`, "")}`)
-    .join("\n") + `\nTimes are ${tz}. \`enable <name>\` / \`disable <name>\` to switch one.${runnable ? " Ask me to run one." : ""}`;
+  const sorted = [...projects].sort((a, b) => a.name.localeCompare(b.name));
+  const sections = [
+    { label: "Needs fixing", lines: [] as string[] },
+    ...sorted.map((p) => ({ label: p.name, lines: [] as string[] })),
+    { label: "Scratch", lines: [] as string[] },
+  ];
+  const at = (p: Project | undefined): number => (p ? 1 + sorted.indexOf(p) : sections.length - 1);
+  for (const r of routines) {
+    const problems = sproutProblems(r, projects, skillNames);
+    const homes = sproutProjects(r, projects);
+    const needsFixing = problems.some((p) => p.kind !== "missing-skill");
+    const also = (needsFixing ? homes : homes.slice(1)).map((p) => inert(p.name));
+    let line = `• **${r.name}** — ${r.enabled ? "on" : "off"} — ${describeSchedule(r, tz).replace(` (${tz})`, "")}`;
+    if (also.length > 0) line += ` · also ${also.join(", ")}`;
+    if (problems.length > 0) line += ` · ⚠ ${problems.map(problemText).join("; ")}`;
+    sections[needsFixing ? 0 : at(homes[0])]!.lines.push(line);
+  }
+  return sections.filter((s) => s.lines.length > 0).map((s) => `**${inert(s.label)}**\n${s.lines.join("\n")}`).join("\n")
+    + `\nTimes are ${tz}. \`enable <name>\` / \`disable <name>\` to switch one.${runnable ? " Ask me to run one." : ""}`;
 }

@@ -4,6 +4,7 @@ import { makeBeanHome } from "./fixtures/bean-home.js";
 import { startStubOpenAI } from "./fixtures/stub-openai.js";
 import { appendMemories, dbFile } from "@bean/core";
 import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 
 test("component windows: skills, projects, settings open and render their fixture data", async () => {
   const home = await makeBeanHome();
@@ -25,6 +26,15 @@ test("component windows: skills, projects, settings open and render their fixtur
 
     const projects = await open("projects");
     await expect(projects.locator(".bean-projects-name", { hasText: "demo" })).toBeVisible();
+    // #884: the row counts the project's skills and sprouts; adding one in the detail pane writes
+    // projects.json (no derived field) and the count follows.
+    const demoRow = projects.locator(".bean-projects-row", { hasText: "demo" });
+    await expect(demoRow.locator(".bean-projects-meta")).toHaveText("0 skills · 0 sprouts");
+    await demoRow.click();
+    await projects.locator(".bean-projects-add-skill").selectOption("review-pr");
+    await expect(demoRow.locator(".bean-projects-meta")).toHaveText("1 skill · 0 sprouts");
+    await expect.poll(async () => JSON.parse(await readFile(join(home.homeDir, ".bean", "projects.json"), "utf8")))
+      .toEqual([{ name: "demo", path: home.projectPath, skills: ["review-pr"] }]);
 
     const settings = await open("settings");
     await expect(settings.locator('input[placeholder="sk-…"]')).toBeVisible();
