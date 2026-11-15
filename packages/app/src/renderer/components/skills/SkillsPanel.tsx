@@ -88,7 +88,8 @@ export function SkillsPanel({
     const [nextSkills, nextProjects, nextProposals] = await Promise.all([
       window.bean.listSkills(),
       window.bean.listProjects(),
-      window.bean.skillProposalsList(),
+      // A remote core has no proposals op (it rejects) — the list still loads, the inbox stays hidden.
+      window.bean.skillProposalsList().catch((): ProposalLists => ({ pending: [], applied: [] })),
     ]);
     setSkills(nextSkills);
     setProjects(nextProjects);

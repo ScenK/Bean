@@ -17,3 +17,6 @@ local core is assumed to have them until its handshake answers.
 - Delegate cards on a remote core say where they run and that they stop 30 min after a disconnect.
 - New host-bound UI: gate it with `useCapabilities().has(...)` and extend `remote-core.e2e.ts`'s
   capability test.
+- Core channels missing from `REMOTE_OPS` reject on a remote core (`<key> isn't available on a remote
+  core yet.`). A window refresh that `Promise.all`s one with a remote-able call must `.catch` it to an
+  empty value, or the whole load fails (#876: Skills list vs `skillProposalsList`).
