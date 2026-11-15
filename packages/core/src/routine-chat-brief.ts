@@ -70,7 +70,8 @@ export function finalStepOutput(routine: Routine, results: StepResult[]): string
   return parts.map((p) => (byTodo.size > 1 ? `## Task: ${p.todo}\n\n${p.text}` : p.text)).join("\n\n");
 }
 
-const URL_RE = /https?:\/\/[^\s<>()"'`\]]+/g;
+// A balanced `(…)` belongs to the URL (wiki links); a bare `)` ends it (markdown `[text](url)`).
+const URL_RE = /https?:\/\/(?:[^\s<>()"'`\]]|\([^\s<>()"'`\]]*\))+/g;
 const NUMBER_RE = /\d+(?:[.,:]\d+)*/g;
 const urls = (text: string): string[] => (text.match(URL_RE) ?? []).map((u) => u.replace(/[.,;:!?]+$/, ""));
 
@@ -81,7 +82,8 @@ const urls = (text: string): string[] => (text.match(URL_RE) ?? []).map((u) => u
 export function briefGuardMiss(input: string, brief: string): string | undefined {
   const tasks = Math.max(1, input.match(/^## Task: /gm)?.length ?? 0);
   if (brief.length > BRIEF_MAX_CHARS * tasks) return "too long";
-  for (const u of urls(brief)) if (!input.includes(u)) return "made up a link";
+  const linked = new Set(urls(input)); // whole links: `/pull/42` is not in `/pull/421`
+  for (const u of urls(brief)) if (!linked.has(u)) return "made up a link";
   const reported = new Set(input.match(NUMBER_RE)); // whole numbers: "5" is not in "10:15"
   for (const n of brief.replace(URL_RE, "").match(NUMBER_RE) ?? []) if (!reported.has(n)) return "made up a number";
   return undefined;
@@ -132,7 +134,8 @@ export async function composeChatBrief(a: {
     const miss = briefGuardMiss(input, brief);
     if (miss) return skip(miss);
     // The result's links are the one thing a brief may not lose: code adds any the model left out.
-    const missing = [...new Set(urls(a.final ?? ""))].filter((u) => !brief.includes(u));
+    const given = new Set(urls(brief));
+    const missing = [...new Set(urls(a.final ?? ""))].filter((u) => !given.has(u));
     return missing.length > 0 ? `${brief}\n\n${missing.join("\n")}` : brief;
   } catch (err) {
     return skip(ctl.signal.aborted ? "timed out or stopped" : err instanceof Error ? err.name : "error");

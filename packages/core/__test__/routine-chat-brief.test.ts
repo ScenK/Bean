@@ -67,6 +67,7 @@ describe("briefGuardMiss", () => {
   });
   it.each([
     ["a made-up link", "PR #42: https://github.com/x/y/pull/42, docs at https://example.com/docs", "made up a link"],
+    ["a link that is only a prefix of a reported one", "PR #42: https://github.com/x/y/pull/4", "made up a link"],
     ["a made-up number", "PR #42 is merged (https://github.com/x/y/pull/42) after 5 review rounds.", "made up a number"],
     ["a walkthrough", `https://github.com/x/y/pull/42 ${"and then I did more. ".repeat(80)}`, "too long"],
   ])("rejects %s", (_, brief, why) => {
@@ -105,6 +106,9 @@ describe("composeChatBrief", () => {
     const final = `${REPORT} Again: https://github.com/x/y/pull/42`;
     const out = await composeChatBrief({ input: final, final, persona: DEFAULT_PERSONA, chat: replying("PR #42 is merged."), model: "m" });
     expect(out).toBe("PR #42 is merged.\n\nhttps://github.com/x/y/pull/42");
+    const wiki = "See https://en.wikipedia.org/wiki/Function_(mathematics) and [the PR](https://github.com/x/y/pull/421).";
+    const got = await composeChatBrief({ input: wiki, final: wiki, persona: DEFAULT_PERSONA, chat: replying("Done: https://github.com/x/y/pull/421"), model: "m" });
+    expect(got).toBe("Done: https://github.com/x/y/pull/421\n\nhttps://en.wikipedia.org/wiki/Function_(mathematics)");
   });
 
   it("a faithful reply passes", async () => {
