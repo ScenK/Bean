@@ -3046,6 +3046,7 @@ button, input, textarea, select, a {
   color: var(--bean-text);
 }
 .bean-dash-resolved-item { display: flex; flex-direction: column; gap: 3px; white-space: pre-wrap; }
+.bean-dash-resolved-out { max-height: 260px; overflow: auto; overflow-wrap: anywhere; }
 
 .bean-dash-card {
   display: flex;

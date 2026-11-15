@@ -9,7 +9,7 @@ import { ListFoldToggle, useListFold } from "../../shared/ListFold.js";
 import {
   attemptSessions, attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, pathName, reviewRuns, sessionSummary,
   splitSteps, stepLabel, stepPassed, unreadRuns,
-  type DashRun, type DashStep, type RunBucket,
+  type DashRun, type DashStep, type RunBucket, stepFullOutput,
 } from "./runs.js";
 import type { RoutineStateView, StepAttemptView } from "@bean/host";
 import type { DashboardTarget } from "../../../channels.js";
@@ -433,7 +433,10 @@ export function DashboardPanel() {
                 type="button"
                 class="bean-dash-resolved-head"
                 aria-expanded={resolvedOpen}
-                onClick={() => toggle(openResolved, setOpenResolved, run.id)}
+                onClick={() => {
+                  toggle(openResolved, setOpenResolved, run.id);
+                  if (run.recordId) void loadAttempts(run.recordId); // the summaries are cut at 200 characters
+                }}
               >
                 <span class="bean-dash-resolved-count">{resolved.length} RESOLVED</span>
                 <span class="bean-dash-resolved-preview">
@@ -449,7 +452,9 @@ export function DashboardPanel() {
                         {s.id ? pathName(s) : stepLabel(s)} · {s.kind}{s.cli ? ` · ${s.cli}` : ""}
                         {s.verdict ? ` · ${stepPassed(s) ? "✓" : "✗"} ${s.verdict}` : ""}
                       </span>
-                      <span>{s.summary}</span>
+                      <span class="bean-dash-resolved-out">
+                        {stepFullOutput(s, run.steps.length, loaded) ?? (s.cut ? `${s.summary}…` : s.summary)}
+                      </span>
                     </div>
                   ))}
                 </div>
