@@ -30,6 +30,21 @@ test("listSkills handler filters out hidden skills", async () => {
   expect(await handler()).toEqual([visible]);
 });
 
+test("listSkills handler adds each visible skill's usedBy; unreadable sprouts omit it (unknown, not unused)", async () => {
+  const skills: Skill[] = [
+    { name: "fix", description: "", body: "" }, { name: "lone", description: "", body: "" },
+    { name: "intro", description: "", body: "", hidden: true },
+  ];
+  const routines = [{ name: "nightly", enabled: true, cron: "0 1 * * *", steps: [{ kind: "chat" as const, skill: "fix", instruction: "go" }], sinks: {} }];
+  const deps = { loadSkills: async () => skills, projectSkillsDir: "/p", skillsDir: "/u" };
+  expect(await buildListSkillsHandler({ ...deps, loadRoutines: async () => routines })()).toEqual([
+    { ...skills[0], usedBy: ["nightly"] }, { ...skills[1], usedBy: [] },
+  ]);
+  const failed = await buildListSkillsHandler({ ...deps, loadRoutines: async () => { throw new Error("EACCES"); } })();
+  expect(failed).toEqual(skills.slice(0, 2));
+  expect(failed.some((s) => "usedBy" in s)).toBe(false);
+});
+
 test("listProjects handler loads projects from the configured projects file", async () => {
   const projects: Project[] = [{ name: "api", path: "/work/api" }];
   const handler = buildListProjectsHandler({

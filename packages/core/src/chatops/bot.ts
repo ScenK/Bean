@@ -1208,7 +1208,12 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       return;
     }
     try {
-      await (createOnly ? r.create(routine) : r.save(routine));
+      if (createOnly) await r.create(routine);
+      else {
+        // Replacing a sprout keeps its display-only "Listed under" (the draft tool has no such field).
+        const listed = (await r.load()).find((x) => x.name === name)?.projects;
+        await r.save(listed && routine.projects === undefined ? { ...routine, projects: listed } : routine);
+      }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") await fail(nameTaken(name));
       else await fx.post(`Couldn't save the sprout: ${err instanceof Error ? err.message : String(err)}`);

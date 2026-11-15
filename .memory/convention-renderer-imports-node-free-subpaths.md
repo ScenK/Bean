@@ -11,7 +11,7 @@ Rules:
   is erased at build, so it never reaches esbuild's resolver.
 - For **values** the renderer needs (e.g. `composePrompt`, `bestProjectForSkill`, `setFrontmatter`),
   import from a **node-free subpath**: `@bean/core/prompt`, `@bean/core/project-select`,
-  `@bean/core/frontmatter`. Each is a pure module with no `node:*` imports and its own `exports`
+  `@bean/core/frontmatter`, `@bean/core/usage-sections`. Each is a pure module with no `node:*` imports and its own `exports`
   entry in `packages/core/package.json`.
 - Need a new pure helper in the renderer? Put it in (or split it into) a node-free module, add a
   subpath to `package.json` `exports`, and import from that subpath — don't reach through the barrel.

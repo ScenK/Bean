@@ -2921,6 +2921,18 @@ describe("owner routines from chat (#285)", () => {
     expect(h.store[0]?.enabled).toBe(false);
     expect(h.offered).toEqual([]); // commands never reach the model
   });
+
+  test("Routine.projects survives disable/enable and an owner's chat replacement", async () => {
+    const h = setup(routineJson, [{ ...(routineJson as Routine), projects: ["/w/app", "/w/gone"] }]);
+    const effects = fx();
+    await h.bot.onMessage({ ...msg, text: "disable mia-summary" }, effects);
+    await h.bot.onMessage({ ...msg, text: "enable mia-summary" }, effects);
+    expect(h.store[0]).toMatchObject({ enabled: true, projects: ["/w/app", "/w/gone"] });
+    await h.bot.onMessage({ ...msg, text: "weekday 7am summary to Mia" }, effects);
+    const card = effects.cards.at(-1) as { proposalId: string };
+    await h.bot.onCardAction(tap("save-routine", card.proposalId), effects);
+    expect(h.store).toEqual([{ ...routineJson, projects: ["/w/app", "/w/gone"] }]);
+  });
 });
 
 // Note archive (#306): real bean.db notes, a model that proposes an archive on cue, real roles.

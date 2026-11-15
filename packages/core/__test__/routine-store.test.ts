@@ -64,6 +64,31 @@ describe("save/load/delete routines", () => {
   });
 });
 
+describe("Routine.projects (display only)", () => {
+  it("validates a list of non-empty strings", () => {
+    expect(describeRoutineError(routine({ projects: ["/w/app"] }))).toBeNull();
+    expect(describeRoutineError({ ...routine(), projects: "/w/app" })).toMatch(/projects must be a list/);
+    expect(describeRoutineError({ ...routine(), projects: [""] })).toMatch(/projects must be a list/);
+    expect(describeRoutineError({ ...routine(), projects: [3] })).toMatch(/projects must be a list/);
+  });
+  it("round-trips, keeps unknown paths, and stores [] as absent", async () => {
+    const dir = await tmp();
+    await saveRoutine(dir, routine({ projects: ["/w/app", "/nowhere"] }));
+    expect((await loadRoutines(dir))[0]?.projects).toEqual(["/w/app", "/nowhere"]);
+    await saveRoutine(dir, routine({ projects: [] }));
+    expect(await readFile(join(dir, "morning-triage.json"), "utf8")).not.toContain("projects");
+    await writeFile(join(dir, "morning-triage.json"), JSON.stringify(routine({ projects: [] })));
+    expect(await loadRoutines(dir)).toEqual([routine()]);
+  });
+  it("strict load throws on an unreadable dir, but a missing dir is still []", async () => {
+    const dir = await tmp();
+    await writeFile(join(dir, "file"), "x");
+    expect(await loadRoutines(join(dir, "missing"), true)).toEqual([]);
+    expect(await loadRoutines(join(dir, "file"))).toEqual([]);
+    await expect(loadRoutines(join(dir, "file"), true)).rejects.toThrow();
+  });
+});
+
 describe("describeRoutineError", () => {
   it("names the specific field/step at fault instead of a generic message", () => {
     expect(describeRoutineError(routine())).toBeNull();
