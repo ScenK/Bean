@@ -21,12 +21,29 @@ formatted for the reader.
 
 The **record** is never rewritten: `record.digest`, the note sink and the desktop notification
 always get `result.digest` byte for byte. Only the **chat sinks** of an `ok` run with steps get a
-first-person brief (`routine-chat-brief.ts`, called once per run from `deliverDigest`), built
-from the raw step outputs (latest attempt per step/todo, `VERDICT:` lines and the
-`StepResult.todo` label stripped), not from the composed digest. It is a restyle, not a
-summary: a code-side guard (every URL, fenced block and digit-bearing token kept, ≥0.7× the
-input length, a complete reply) falls back to the verbatim digest, as do failed/needs-attention
-runs, stepless runs, input over 12,000 chars, timeouts and errors. `sinks.chatopsVerbatim: true` (the Sprouts panel's "Rewrite as a first-person brief" box, unchecked)
-opts a sprout out; `config.json` `briefModel` (no Settings UI, boot-time) picks the model. Code
-text appended to the digest (the retro footer) rides on `RoutineRunResult.footer` so the brief
-re-appends it — a new code-owned digest line needs the same treatment.
+brief (`routine-chat-brief.ts`, one model call per run from `deliverDigest`): the model reads
+**every** step's output (`chatBriefInput`: latest attempt per step/todo, minus the todo label,
+`VERDICT:`/`ROUTE:` lines, a command's `(exit 0)`, an outer fence) and writes a **short,
+conclusion-first** message — the outcome, then only what the user must know or act on. The
+voice is the persona's; the prompt fixes no opening and does not force first person.
+
+It is a summary, so the code-side guard checks the other way round from a restyle: at most
+`BRIEF_MAX_CHARS` per task and no link or number the run didn't report (this has caught a
+mistyped repo URL). Links of the final step the model left out are appended by code, not
+rejected — models drop the PR link about one time in five. A guard miss, a cut-off reply,
+input over 60,000 chars, a timeout or an error
+posts the **final step's output** as it is (`finalStepOutput`: the last step executed per todo,
+every member of a closing parallel group) — not the digest. Failed/needs-attention and stepless
+runs post the digest. `sinks.chatopsVerbatim: true` (the Sprouts panel's "Sum up as a short
+brief" box, unchecked) posts the full digest word for word — the switch for sprouts where
+fidelity beats brevity; `config.json` `briefModel` (no Settings UI, boot-time) picks the model.
+Code text appended to the digest (the retro footer) rides on `RoutineRunResult.footer` so the
+brief re-appends it — a new code-owned digest line needs the same treatment.
+
+Don't go back to "restyle every step at the same length". The first cut did (a ≥0.7× length
+floor, "do not summarize", "I checked… I found…"): chat posts tripled (about 1k → 2.5–4k chars),
+repeated each step's facts, leaked `WORKTREE:`/`COUNTS:` lines and opened every sentence with
+"I found". Don't cut the input to the last step either — the model needs the whole run to
+pick what matters. Sprouts whose steps are independent reports, or whose output is a formatted
+team report, should set `chatopsVerbatim`: a trial brief of a three-branch rebase said "all five
+branches" — a number in words passes the guard.

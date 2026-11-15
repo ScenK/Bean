@@ -222,6 +222,21 @@ describe("createRoutineHost", () => {
       expect(notify).toHaveBeenCalledWith(expect.objectContaining({ body: REPORT }));
     });
 
+    it("the brief is written from every step; a skipped brief posts the final step's output, not the digest", async () => {
+      const users: string[] = [];
+      let reply = "Shipped: PR #7 is open.";
+      let n = 0;
+      const h = host({ newId: () => `id-${n++}`, converse: async (a) => { users.push(String(a.messages[1]?.content)); return { content: reply, toolCalls: [] }; } });
+      const r = routine([{ kind: "chat", instruction: "a" }, { kind: "chat", instruction: "b" }], { sinks: { chatops: [{ transport: "discord" }] } });
+      const step = (index: number, output: string) => ({ index, kind: "chat" as const, ok: true, output });
+      const res = { digest: "DIGEST", results: [step(0, "implemented 12 files\nROUTE: ready"), step(1, "PR #7 is open\nVERDICT: PASS")], record: { status: "ok" } as never };
+      await h.deliverDigest(r, res);
+      expect(users).toEqual([expect.stringContaining("implemented 12 files\n\nPR #7 is open")]);
+      reply = "I merged 99 PRs."; // a number the run never reported
+      await h.deliverDigest(r, res);
+      expect((await claimOutbox(outboxDir(dir), "discord")).map((m) => m.body)).toEqual(["Shipped: PR #7 is open.", "PR #7 is open"]);
+    });
+
     it("an ok multi-step run is briefed from the step outputs, with one brief call", async () => {
       const { h, calls } = briefHost({}, `${BRIEF}\n\n${BRIEF}`);
       const r = routine([{ kind: "chat", instruction: "a" }, { kind: "chat", instruction: "b" }], { sinks });
@@ -241,8 +256,8 @@ describe("createRoutineHost", () => {
       expect((await posted())[0]?.body).toBe(`${BRIEF}\n\n1 skill proposal waiting in Bean → Skills`);
     });
 
-    it("a reply that fails the guard posts the verbatim digest", async () => {
-      const { h, calls } = briefHost({}, "All good!");
+    it("a reply that fails the guard posts the final step's output as it is", async () => {
+      const { h, calls } = briefHost({}, "All good after 99 tries!"); // a number the run never reported
       const r = routine([{ kind: "chat", instruction: "check" }], { sinks });
       await h.deliverDigest(r, await h.runOneRoutine(r));
       expect(calls).toHaveLength(1);

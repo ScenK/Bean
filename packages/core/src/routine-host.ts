@@ -6,7 +6,7 @@ import type { CliName } from "./launcher.js";
 import type { CommandStepOutcome } from "./command-step.js";
 import type { Memory } from "./memory/memory.js";
 import { DEFAULT_PERSONA, type Persona } from "./persona.js";
-import { composeChatBrief } from "./routine-chat-brief.js";
+import { chatBriefInput, composeChatBrief, finalStepOutput } from "./routine-chat-brief.js";
 import type { Skill } from "./types.js";
 import { dbFile, outboxDir, routinesDir, routineStateFile } from "./config.js";
 import { enqueueOutbox } from "./outbox.js";
@@ -207,12 +207,13 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     }
   };
 
-  /** What chat sinks post: an ok run's step outputs as one first-person brief (one model call,
-   * shared by every chat sink), else — or when the brief is skipped — the digest as-is. Only the
-   * chat copy is restyled: the record, note and notification keep `result.digest`. */
+  /** What chat sinks post: an ok run summed up as one short brief in the persona's voice,
+   * conclusion first (one model call over every step's output, shared by every chat sink). Brief
+   * skipped = the final step's output as it is; the sprout asks for it, or nothing to brief = the
+   * full digest. Only the chat copy is rewritten: record, note and notification keep `result.digest`. */
   const chatSinkBody = async (routine: Routine, result: RoutineRunResult): Promise<string> => {
     // Failed / needs-attention runs keep their problem lines out of a model; a stepless run
-    // ("No pending todos", a notify-only watch fire) has nothing to restyle.
+    // ("No pending todos", a notify-only watch fire) has nothing to brief.
     if (routine.sinks.chatopsVerbatim === true || result.record.status !== "ok" || result.stopped || result.results.length === 0) {
       return result.digest;
     }
@@ -222,10 +223,12 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     } catch {
       persona = DEFAULT_PERSONA;
     }
+    const final = finalStepOutput(routine, result.results);
     const brief = await composeChatBrief({
-      results: result.results, persona, chat: deps.converse, model: deps.getBriefModel?.() || deps.getModel(),
+      input: chatBriefInput(result.results), final, persona, chat: deps.converse, model: deps.getBriefModel?.() || deps.getModel(),
     });
-    return brief === undefined ? result.digest : brief + (result.footer ?? "");
+    const body = brief ?? final;
+    return body ? body + (result.footer ?? "") : result.digest;
   };
 
   const deliverDigest = async (routine: Routine, result: RoutineRunResult): Promise<void> => {
