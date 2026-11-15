@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { attemptSessions, attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, reviewRuns, sessionSummary, splitSteps, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
+import { attemptSessions, attentionOf, bucketKeyFor, executedPath, flattenRuns, groupRuns, reviewRuns, sessionSummary, splitSteps, stepFullOutput, stepLabel, unreadRuns } from "../src/renderer/components/dashboard/runs.js";
 import type { RoutineStep, RunRecord } from "@bean/core";
 import { stepFlow } from "@bean/core/routine-graph";
 import type { RoutineStateView } from "@bean/host";
@@ -262,5 +262,30 @@ describe("attempt sessions", () => {
     const strip = (xs: ReturnType<typeof attemptSessions>) => xs.map(({ fresh: _f, ...rest }) => rest);
     expect(strip(attemptSessions(run, edited))).toEqual(strip(attemptSessions(run, steps)));
     expect(attemptSessions(run, edited).some((s) => s.fresh)).toBe(false);
+  });
+});
+
+describe("stepFullOutput", () => {
+  const run = (summaries: string[]) => ({
+    routine: "r", id: "r@t", startedAt: "2026-01-01T00:00:00Z", finishedAt: "2026-01-01T00:01:00Z", status: "ok" as const, digest: "d",
+    steps: summaries.map((summary, i) => ({ kind: "delegate" as const, ok: true, summary, id: `s${i}`, round: 1 })),
+  });
+  const attempt = (i: number, output: string, over: object = {}) => ({ stepIndex: i, stepId: `s${i}`, round: 1, kind: "delegate" as const, ok: true, output, ...over });
+
+  test("a step cut at the record's 200 characters is flagged, and its attempt gives the whole output", () => {
+    const long = `[todo: ship it] ${"x".repeat(300)}`;
+    const { resolved } = splitSteps(run([long.slice(0, 200), "short"]));
+    expect(resolved.map((s) => s.cut)).toEqual([true, undefined]);
+    const attempts = [attempt(0, "x".repeat(300)), attempt(1, "short")];
+    expect(stepFullOutput(resolved[0]!, 2, attempts)).toBe("x".repeat(300));
+    expect(stepFullOutput(resolved[1]!, 2, attempts)).toBe("short");
+  });
+
+  test("no output when the attempts aren't loaded, don't line up with the steps, or are another step", () => {
+    const [step] = splitSteps(run(["a", "b"])).resolved;
+    expect(stepFullOutput(step!, 2, undefined)).toBeUndefined();
+    expect(stepFullOutput(step!, 2, [attempt(0, "a")])).toBeUndefined(); // a refused todo: a step with no attempt
+    expect(stepFullOutput(step!, 2, [attempt(0, "a", { stepId: "other" }), attempt(1, "b")])).toBeUndefined();
+    expect(stepFullOutput(step!, 2, [attempt(0, "a", { round: 2 }), attempt(1, "b")])).toBeUndefined();
   });
 });

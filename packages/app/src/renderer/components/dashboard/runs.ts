@@ -19,7 +19,10 @@ export interface DashStep {
   index: number;
   kind: StepKind;
   ok: boolean;
+  /** The first 200 characters of the step's output (the record's cap), todo label removed. */
   summary: string;
+  /** The record cut the output off: `summary` is only its start. */
+  cut?: true;
   /** The todo this pass ran for, when the runner labelled the output `[todo: ...] `. */
   todo?: string;
   /** Gated routines: the step's stable id, its round (executions so far this pass), harness and verdict. */
@@ -31,6 +34,7 @@ export interface DashStep {
 
 type RecordedStep = RunRecord["steps"][number];
 
+const SUMMARY_CAP = 200; // routine-runner.ts caps RunRecord.steps[].summary here
 const TODO_LABEL = /^\[todo: ([^\]]*)\] ?/;
 const TODO_OPEN = "[todo: ";
 
@@ -44,6 +48,7 @@ const TODO_OPEN = "[todo: ";
  * of a `]` in the step's own output. */
 export function parseStep(step: { kind: StepKind; ok: boolean; summary: string } & Partial<RecordedStep>, index: number): DashStep {
   const extra = {
+    ...(step.summary.length >= SUMMARY_CAP ? { cut: true as const } : {}),
     ...(step.id ? { id: step.id } : {}), ...(step.round ? { round: step.round } : {}),
     ...(step.cli ? { cli: step.cli } : {}), ...(step.verdict ? { verdict: step.verdict } : {}),
   };
@@ -53,6 +58,15 @@ export function parseStep(step: { kind: StepKind; ok: boolean; summary: string }
     return { index, kind: step.kind, ok: step.ok, summary: step.summary.slice(TODO_OPEN.length), todo: "", ...extra };
   }
   return { index, kind: step.kind, ok: step.ok, summary: step.summary, ...extra };
+}
+
+/** A recorded step's whole output: the run's attempts are kept in the order the steps were
+ * recorded, so step `index` is attempt `index` — trusted only when the counts agree and the
+ * attempt is the same step (a refused todo records a step with no attempt). */
+export function stepFullOutput(step: DashStep, stepCount: number, attempts: readonly StepAttemptView[] | undefined): string | undefined {
+  const a = attempts?.length === stepCount ? attempts[step.index] : undefined;
+  if (!a || a.kind !== step.kind || (step.id !== undefined && a.stepId !== step.id)) return undefined;
+  return step.round === undefined || a.round === step.round ? a.output : undefined;
 }
 
 /** A gated step can finish `ok` with a FAIL verdict (the gate routed it) — that's not a pass. */
