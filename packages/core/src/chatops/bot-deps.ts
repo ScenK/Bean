@@ -86,7 +86,7 @@ export function sharedBotDeps(opts: {
     listOpenTodos: (createdBy) => listOpenTodos(db, createdBy),
     cancelTodo: (id, createdBy) => cancelPendingTodo(db, id, createdBy),
     skillProposals: new SkillProposalStore(),
-    saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body),
+    saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body, skillsDir(builtinDir)),
     appendMemories: (m) => appendMemories(db, m),
     deleteMemories: (ids, subject) => deleteMemories(db, ids, subject),
     shareMemory: (id, actor) => shareMemory(db, id, actor),

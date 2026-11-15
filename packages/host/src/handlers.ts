@@ -55,12 +55,14 @@ export function buildSaveProjectsHandler(deps: SaveProjectsHandlerDeps) {
 }
 
 export interface SaveSkillHandlerDeps {
-  saveSkill: (dir: string, name: string, body: string) => Promise<void>;
+  saveSkill: (dir: string, name: string, body: string, builtinDir?: string) => Promise<void>;
   skillsDir: string;
+  projectSkillsDir: string;
 }
 
 export function buildSaveSkillHandler(deps: SaveSkillHandlerDeps) {
-  return (name: string, body: string): Promise<void> => deps.saveSkill(deps.skillsDir, name, body);
+  // The built-in dir lets a toggle-only save (Skills panel enable/quick-launch) store just the flags.
+  return (name: string, body: string): Promise<void> => deps.saveSkill(deps.skillsDir, name, body, deps.projectSkillsDir);
 }
 
 export interface DeleteSkillHandlerDeps {

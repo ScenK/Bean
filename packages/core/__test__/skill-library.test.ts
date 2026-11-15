@@ -199,6 +199,38 @@ test("loadLayeredSkills: disabling a built-in skill with no pre-existing frontma
   expect(skills[0]!.enabled).toBe(false);
 });
 
+test("toggling a built-in keeps receiving built-in updates, toggle kept (#877)", async () => {
+  await writeFile(join(projectDir, "a.md"), "---\ndescription: d\n---\nOld body");
+  const [before] = await loadLayeredSkills(projectDir, userDir);
+  await saveSkill(userDir, "a", setFrontmatter(before!.body, "enabled", "false"), projectDir);
+  expect(await readFile(join(userDir, "a.md"), "utf8")).toBe("---\nenabled: false\n---\n");
+  await writeFile(join(projectDir, "a.md"), "---\ndescription: d2\n---\nNew body");
+  const [skill] = await loadLayeredSkills(projectDir, userDir);
+  expect(skill!.body).toContain("New body");
+  expect(skill!.description).toBe("d2");
+  expect(skill!.enabled).toBe(false);
+  expect(skill!.source).toBe("project");
+  expect(skill!.overridesBuiltIn).toBe(false);
+});
+
+test("saveSkill with builtinDir: re-enabling a toggled built-in removes the overlay; a real edit is a full copy", async () => {
+  await writeFile(join(projectDir, "a.md"), "---\ndescription: d\nquick-launch: false\n---\nBody");
+  await saveSkill(userDir, "a", "---\ndescription: d\n---\nBody", projectDir);
+  expect(await readFile(join(userDir, "a.md"), "utf8")).toBe("---\nquick-launch: true\n---\n");
+  expect((await loadLayeredSkills(projectDir, userDir))[0]!.quickLaunch).toBe(true);
+  await saveSkill(userDir, "a", "---\ndescription: d\nquick-launch: false\n---\nBody", projectDir);
+  await expect(readFile(join(userDir, "a.md"), "utf8")).rejects.toThrow();
+  await saveSkill(userDir, "a", "---\ndescription: d\n---\nEdited", projectDir);
+  const [skill] = await loadLayeredSkills(projectDir, userDir);
+  expect(skill!.source).toBe("user");
+  expect(skill!.body).toContain("Edited");
+});
+
+test("loadLayeredSkills: a toggle overlay whose built-in is gone is dropped", async () => {
+  await writeFile(join(userDir, "a.md"), "---\nenabled: false\n---\n");
+  expect(await loadLayeredSkills(projectDir, userDir)).toEqual([]);
+});
+
 test("loadSkills: quick-launch: false is the desktop-bloom-only hide, independent of enabled", async () => {
   await writeFile(join(dir, "a.md"), "---\ndescription: d\nquick-launch: false\n---\nBody");
   const [skill] = await loadSkills(dir);
