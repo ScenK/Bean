@@ -3,6 +3,7 @@ export * from "./prompt.js";
 export * from "./skill-library.js";
 export * from "./project-registry.js";
 export * from "./project-select.js";
+export * from "./usage-sections.js";
 export * from "./config.js";
 export * from "./persona.js";
 export * from "./persona-store.js";

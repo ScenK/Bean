@@ -252,8 +252,8 @@ helpers live in `core/src/config.ts`.
   Providers are still code (`opencode`, `claude`, `codex`) — only their model lists are config.
 - `~/.bean/skills/*.md` → one markdown file per skill. `description:` frontmatter is the
   catalog summary the model sees; otherwise the first heading is used. The full body composes the prompt.
-- `~/.bean/projects.json` → `[{ "name": "...", "path": "/abs/path", "defaultSkill": "..." }]`
-  (`defaultSkill` optional).
+- `~/.bean/projects.json` → `[{ "name": "...", "path": "/abs/path", "skills": ["..."] }]`
+  (`skills` optional).
 - `~/.bean/routines/*.json` → one routine per file; runtime state (last run, history) lives
   beside them in `.state.json` so definitions stay clean and shareable.
 - `~/.bean/bean.db` → SQLite (FTS5) store for memories, notes, chatops history, and the

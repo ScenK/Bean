@@ -11,6 +11,6 @@ test("Run on an unlinked skill opens the Plan card with no project (scratch), ev
 });
 
 test("Run on a linked skill picks its project", () => {
-  expect(runForSkill(skill, [p("a"), p("b", { defaultSkill: "deploy" })]).projectPath).toBe("/p/b");
-  expect(runForSkill(skill, [p("a", { defaultSkill: "deploy" }), p("b", { skills: ["deploy"] })]).projectPath).toBe("/p/b");
+  expect(runForSkill(skill, [p("a"), p("b", { skills: ["deploy"] })]).projectPath).toBe("/p/b");
+  expect(runForSkill(skill, [p("a", { skills: ["other"] }), p("b", { skills: ["deploy"] }), p("c", { skills: ["deploy"] })]).projectPath).toBe("/p/b");
 });

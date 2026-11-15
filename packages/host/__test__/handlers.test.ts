@@ -30,6 +30,21 @@ test("listSkills handler filters out hidden skills", async () => {
   expect(await handler()).toEqual([visible]);
 });
 
+test("listSkills handler adds each visible skill's usedBy; unreadable sprouts omit it (unknown, not unused)", async () => {
+  const skills: Skill[] = [
+    { name: "fix", description: "", body: "" }, { name: "lone", description: "", body: "" },
+    { name: "intro", description: "", body: "", hidden: true },
+  ];
+  const routines = [{ name: "nightly", enabled: true, cron: "0 1 * * *", steps: [{ kind: "chat" as const, skill: "fix", instruction: "go" }], sinks: {} }];
+  const deps = { loadSkills: async () => skills, projectSkillsDir: "/p", skillsDir: "/u" };
+  expect(await buildListSkillsHandler({ ...deps, loadRoutines: async () => routines })()).toEqual([
+    { ...skills[0], usedBy: ["nightly"] }, { ...skills[1], usedBy: [] },
+  ]);
+  const failed = await buildListSkillsHandler({ ...deps, loadRoutines: async () => { throw new Error("EACCES"); } })();
+  expect(failed).toEqual(skills.slice(0, 2));
+  expect(failed.some((s) => "usedBy" in s)).toBe(false);
+});
+
 test("listProjects handler loads projects from the configured projects file", async () => {
   const projects: Project[] = [{ name: "api", path: "/work/api" }];
   const handler = buildListProjectsHandler({
@@ -39,12 +54,37 @@ test("listProjects handler loads projects from the configured projects file", as
   expect(await handler()).toBe(projects);
 });
 
-test("saveProjects handler writes through the injected deps with the configured projects file", async () => {
-  const projects: Project[] = [{ name: "api", path: "/work/api" }];
-  const saveProjects = vi.fn(async () => {});
-  const handler = buildSaveProjectsHandler({ saveProjects, projectsFile: "/b/projects.json" });
-  await handler(projects);
-  expect(saveProjects).toHaveBeenCalledWith("/b/projects.json", projects);
+describe("saveProjects handler", () => {
+  const skill = (name: string, extra: Partial<Skill> = {}): Skill => ({ name, description: "", body: "", ...extra });
+  const build = (catalog: Skill[]) => {
+    const saveProjects = vi.fn(async (_file: string, _projects: Project[]) => {});
+    const loadSkills = vi.fn(async (projectDir: string, userDir: string) => {
+      expect([projectDir, userDir]).toEqual(["/b/project-skills", "/b/skills"]);
+      return catalog;
+    });
+    const handler = buildSaveProjectsHandler({ saveProjects, loadSkills, projectsFile: "/b/projects.json", projectSkillsDir: "/b/project-skills", skillsDir: "/b/skills" });
+    return { handler, saveProjects };
+  };
+
+  test("writes to the configured projects file, dropping skill names without a file", async () => {
+    const { handler, saveProjects } = build([skill("deploy"), skill("bean", { hidden: true }), skill("off", { enabled: false })]);
+    await handler([{ name: "api", path: "/work/api", skills: ["deploy", "gone", "bean", "off"] }, { name: "web", path: "/w" }]);
+    expect(saveProjects).toHaveBeenCalledWith("/b/projects.json", [
+      { name: "api", path: "/work/api", skills: ["deploy", "bean", "off"] }, { name: "web", path: "/w" },
+    ]);
+  });
+
+  test("strips a legacy defaultSkill an older shell sends, folding it like a load", async () => {
+    const { handler, saveProjects } = build([skill("deploy")]);
+    await handler([{ name: "api", path: "/a", defaultSkill: "deploy" } as Project]);
+    expect(saveProjects).toHaveBeenCalledWith("/b/projects.json", [{ name: "api", path: "/a", skills: ["deploy"] }]);
+  });
+
+  test("an empty (or failed) catalog read prunes nothing", async () => {
+    const { handler, saveProjects } = build([]);
+    await handler([{ name: "api", path: "/a", skills: ["gone"] }]);
+    expect(saveProjects).toHaveBeenCalledWith("/b/projects.json", [{ name: "api", path: "/a", skills: ["gone"] }]);
+  });
 });
 
 test("saveSkill handler writes through the injected deps with the configured skills dir", async () => {

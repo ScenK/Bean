@@ -9,6 +9,13 @@ const ctx: BriefContext = {
 };
 
 describe("parseBrief", () => {
+  it("a delegate step with no known skill omits the key instead of an empty placeholder", () => {
+    const brief = parseBrief(JSON.stringify({
+      name: "x", trigger: "schedule", steps: [{ kind: "delegate", skill: "made-up", instruction: "go" }, { kind: "delegate", instruction: "go" }],
+    }), ctx);
+    expect(brief.steps).toEqual([{ kind: "delegate", instruction: "go" }, { kind: "delegate", instruction: "go" }]);
+  });
+
   it("keeps known skills/projects and drops invented ones", () => {
     const brief = parseBrief(JSON.stringify({
       name: "review-queue", trigger: "watch", source: "PRs where my review is requested", sourceKind: "command", via: "gh",

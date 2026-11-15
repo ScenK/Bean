@@ -494,7 +494,7 @@ export async function createHost(deps: HostDeps) {
     memory,
     notes: buildNotesHandlers({ loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote, loadNoteHistory, saveNoteImage, loadNoteImage, dbFile: db }),
     persona: buildPersonaHandlers(paths),
-    listSkills: buildListSkillsHandler(paths),
+    listSkills: buildListSkillsHandler({ ...paths, loadRoutines: () => loadRoutines(routinesPath, true) }),
     saveSkill: buildSaveSkillHandler(paths),
     deleteSkill: buildDeleteSkillHandler(paths),
     listProjects: buildListProjectsHandler(paths),

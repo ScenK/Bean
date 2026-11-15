@@ -82,12 +82,12 @@ describe("slash commands", () => {
     expect(resolveSlash("/deploy fix it", "bean", catalogs)).toEqual({ kind: "skill", name: "deploy", rest: "fix it" });
   });
 
-  it("terminal destination: assigned project > default skill > scratch; CLI = main's pick", () => {
+  it("terminal destination: first assigned project > scratch; CLI = main's pick", () => {
     const p = (name: string, extra: Partial<Project> = {}): Project => ({ name, path: `/p/${name}`, ...extra });
-    const projects = [p("first"), p("dflt", { defaultSkill: "deploy" }), p("mine", { skills: ["deploy"] })];
+    const projects = [p("first"), p("mine", { skills: ["deploy"] }), p("also", { skills: ["deploy"] })];
     const d: SlashDelegate = { projects, clis: ["claude"], models: [], delegateCli: "", lastUsedModels: {} };
     expect(terminalDestination("deploy", d)).toEqual({ projectPath: "/p/mine", projectName: "mine", cli: "claude" });
-    expect(terminalDestination("deploy", { ...d, projects: projects.slice(0, 2) })).toMatchObject({ projectPath: "/p/dflt" });
+    expect(terminalDestination("deploy", { ...d, projects: [projects[0]!, projects[2]!] })).toMatchObject({ projectPath: "/p/also" });
     expect(terminalDestination("other", d)).toMatchObject({ projectPath: "", projectName: "scratch" }); // unlinked
     expect(terminalDestination("deploy", { ...d, projects: [] })).toMatchObject({ projectPath: "", projectName: "scratch" });
     expect(terminalDestination("deploy", { ...d, clis: [] }).cli).toBeUndefined();

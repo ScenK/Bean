@@ -47,7 +47,7 @@ export type RoutineStep = StepEdges & (
    * fallback); absent = today's inference from `model` + the Settings preference.
    * `continues`: an earlier delegate step's id — this step resumes the newest session of that
    * step's lane (same `cli` and `project` required; rules: `describeContinueErrors`). */
-  | { kind: "delegate"; id?: string; skill: string; project?: string; cli?: CliName; model?: string; timeoutMinutes?: number; instruction: string; continues?: string }
+  | { kind: "delegate"; id?: string; skill?: string; project?: string; cli?: CliName; model?: string; timeoutMinutes?: number; instruction: string; continues?: string }
   | { kind: "chat"; id?: string; skill?: string; model?: string; instruction: string; continues?: never }
   /** A deterministic check: runs `command` in a shell (in `project`, else the run's scratch dir)
    * — no model, memories, or skill (the `never`s keep `step.skill`/`.model` readable on the
@@ -92,6 +92,10 @@ export interface Routine {
   /** Opt-in: this routine's chat steps may search the public web. Off by default — report
    * routines don't need it and each search is billed. No panel toggle; set it in the JSON. */
   webSearch?: boolean;
+  /** Display only: the registered project paths this sprout is listed under (usage-sections.ts)
+   * — never a cwd, command, permission or recipient. Unknown paths are kept and ignored; `[]` is
+   * stored as absent. Absent = derived from the steps' folders. */
+  projects?: string[];
   steps: RoutineStep[];
   sinks: RoutineSinks;
 }
@@ -155,7 +159,8 @@ function describeStepError(v: unknown, index: number, cliModels?: CliModels[]): 
     // Mac's model list changed — the run refuses with a clear error instead.
     const offered = s.cli !== undefined && cliModels?.find((c) => c.provider === s.cli)?.models;
     if (offered && str(s.model) && !offered.includes(s.model)) return `${at}: ${String(s.cli)} doesn't offer model "${s.model}"`;
-    if (!str(s.skill) || !s.skill) return `${at} (delegate) needs a skill`;
+    // Optional: a skill-less delegate step runs on its instruction alone. "No skill" omits the key.
+    if (s.skill !== undefined && (!str(s.skill) || !s.skill)) return `${at} has an invalid skill`;
     if (s.project !== undefined && !str(s.project)) return `${at} has an invalid project`;
     return null;
   }
@@ -208,6 +213,9 @@ export function describeRoutineError(v: unknown, cliModels?: CliModels[]): strin
   }
   if (r.todoDriven !== undefined && typeof r.todoDriven !== "boolean") return "todoDriven must be true or false";
   if (r.webSearch !== undefined && typeof r.webSearch !== "boolean") return "webSearch must be true or false";
+  if (r.projects !== undefined && (!Array.isArray(r.projects) || r.projects.some((p) => !str(p) || !p))) {
+    return "projects must be a list of folder paths";
+  }
   // Ignored (not rejected) on a plain sprout: the panel's type toggle keeps the field, and a
   // switch back to plain must still save.
   if (r.maxParallel !== undefined && (typeof r.maxParallel !== "number" || !Number.isInteger(r.maxParallel) || r.maxParallel < 1 || r.maxParallel > MAX_PARALLEL)) {
@@ -366,18 +374,28 @@ export function todoRunHint(r: Routine, now: Date): string {
   return r.watch ? "It runs within a minute or so." : "";
 }
 
-export async function loadRoutines(dir: string): Promise<Routine[]> {
+/** `projects: []` is stored as absent. */
+function normalizeRoutine(r: Routine): Routine {
+  if (r.projects?.length !== 0) return r;
+  const { projects: _, ...rest } = r;
+  return rest;
+}
+
+/** `strict`: a routines dir that exists but can't be read throws instead of reading as "no
+ * sprouts" (for callers that must tell unknown from empty). A missing dir is `[]` either way. */
+export async function loadRoutines(dir: string, strict = false): Promise<Routine[]> {
   let entries: string[];
   try {
     entries = await readdir(dir);
-  } catch {
+  } catch (err) {
+    if (strict && (err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     return [];
   }
   const routines: Routine[] = [];
   for (const file of entries.filter((f) => f.endsWith(".json") && !f.startsWith(".")).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))) {
     try {
       const parsed: unknown = JSON.parse(await readFile(join(dir, file), "utf8"));
-      if (isValidRoutine(parsed)) routines.push(parsed);
+      if (isValidRoutine(parsed)) routines.push(normalizeRoutine(parsed));
     } catch {
       // unreadable/invalid file — skip, same policy as skills/projects loaders
     }
@@ -399,7 +417,7 @@ export async function saveRoutine(dir: string, routine: Routine, cliModels?: Cli
   const error = describeRoutineError(routine as unknown, cliModels);
   if (error) throw new Error(error);
   await mkdir(dir, { recursive: true });
-  await writeAtomic(join(dir, `${routine.name}.json`), JSON.stringify(routine, null, 2) + "\n");
+  await writeAtomic(join(dir, `${routine.name}.json`), JSON.stringify(normalizeRoutine(routine), null, 2) + "\n");
 }
 
 /** Create-only save (non-owner drafts, #322): validated like saveRoutine, but `link` refuses an
@@ -411,7 +429,7 @@ export async function createRoutine(dir: string, routine: Routine, cliModels?: C
   await mkdir(dir, { recursive: true });
   const file = join(dir, `${routine.name}.json`);
   const tmp = `${file}.${randomUUID()}.tmp`;
-  await writeFile(tmp, JSON.stringify(routine, null, 2) + "\n", "utf8");
+  await writeFile(tmp, JSON.stringify(normalizeRoutine(routine), null, 2) + "\n", "utf8");
   try {
     await link(tmp, file);
   } finally {

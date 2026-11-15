@@ -12,6 +12,7 @@ import { chatTargets, cleanChatSinks, isDmSink } from "./chat-sinks.js";
 import { DestinationPicker } from "./DestinationPicker.js";
 import { stepProblemsText } from "./step-ids.js";
 import { BuildPane, DescribePane, ExampleChips, ReviewPane, buildElapsed, ipcErrorMessage } from "./RoutineBuilder.js";
+import { NEEDS_FIXING, derivedSectionLabel, folderName, isListedUnder, sproutSections, toggleListedUnder, type SproutRow } from "./sprout-sections.js";
 import { everyMinutes, failureCount, intervalText, needsReview, WATCH_MINUTES, watchRowSub, watchStatusLine, windowTooShortNote } from "./watch-status.js";
 
 const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -181,6 +182,17 @@ function AutoTextarea(props: { value: string; onValue: (v: string) => void; clas
   );
 }
 
+// Folded list sections by key (project path, "" = Scratch, NEEDS_FIXING) — a renderer view pref
+// (pattern: NotesPanel). Absent or unreadable = everything open.
+const FOLDED_SECTIONS_KEY = "bean.routines.foldedSections";
+function loadFoldedSections(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FOLDED_SECTIONS_KEY) ?? "null") as unknown;
+    if (Array.isArray(raw)) return raw.filter((v): v is string => typeof v === "string");
+  } catch { /* fall through to the default */ }
+  return [];
+}
+
 // 1a "Routine as a recipe": list rail on the left, a recipe-style editor on the right —
 // cadence reads as a sentence, the fan-out is a numbered timeline of delegate steps.
 export function RoutinesPanel() {
@@ -210,9 +222,6 @@ export function RoutinesPanel() {
   // Catalogs that back the per-step skill / project / model pickers (same sources the
   // ProposalCard/DelegateCard chips use).
   const [skills, setSkills] = useState<Skill[]>([]);
-  // Step skill pickers should only offer skills currently enabled — a disabled skill stays
-  // assigned to a step that already references it, it just can't be newly picked.
-  const enabledSkills = useMemo(() => skills.filter((s) => s.enabled !== false), [skills]);
   const [projects, setProjects] = useState<Project[]>([]);
   // Named chat destinations for the sink pickers (Settings → ChatOps owns naming them).
   const [chatDestinations, setChatDestinations] = useState<DestinationView[]>([]);
@@ -235,6 +244,9 @@ export function RoutinesPanel() {
   // (separate state since the two lists reorder independently).
   const [todoDragId, setTodoDragId] = useState<string | null>(null);
   const [todoOverId, setTodoOverId] = useState<string | null>(null);
+  const [foldedSections, setFoldedSections] = useState<string[]>(loadFoldedSections);
+  // "Pick projects…" on a Needs fixing row: once that sprout's editor is up, scroll to Listed under.
+  const [pickFor, setPickFor] = useState<string | undefined>(undefined);
 
   const refresh = async (): Promise<void> => {
     const [list, st, bs] = await Promise.all([window.bean.routinesList(), window.bean.routinesState(), window.bean.routinesBuilds()]);
@@ -304,9 +316,39 @@ export function RoutinesPanel() {
     // Enabled routines first, paused sink to the bottom (dimmed), original order otherwise.
     return [...list].sort((a, b) => Number(b.enabled) - Number(a.enabled));
   }, [routines, query]);
+  // `listSkills` omits hidden skills, so a step naming one reads as missing here (as in the steps editor).
+  const sections = useMemo(() => sproutSections(filtered, projects, new Set(skills.map((s) => s.name))), [filtered, projects, skills]);
+  const setSectionFolded = (key: string, folded: boolean): void => {
+    setFoldedSections((prev) => {
+      if (prev.includes(key) === folded) return prev;
+      const next = folded ? [...prev, key] : prev.filter((k) => k !== key);
+      try { localStorage.setItem(FOLDED_SECTIONS_KEY, JSON.stringify(next)); } catch { /* private mode / quota: fold still works this session */ }
+      return next;
+    });
+  };
+  useEffect(() => {
+    if (!pickFor || pickFor !== selected) return;
+    setPickFor(undefined);
+    document.querySelector(".bean-routines-listed")?.scrollIntoView({ block: "center" });
+  }, [pickFor, selected]);
 
   const select = (name: string): void => {
     setSelected(name); setCreating(false); setDescribing(false); setSelectedBuild(undefined); setEditorFor(undefined); setError("");
+  };
+  // Listed under lives in the editor, so a needs-review sprout skips its review card here.
+  const pickProjects = (name: string): void => { select(name); setEditorFor(name); setPickFor(name); };
+  // Re-read the registry right before appending, so a project added elsewhere since this window
+  // loaded isn't overwritten.
+  const registerFolder = async (folder: string): Promise<void> => {
+    if (!confirm(`Register ${folder} as a project?\n\nChat members who can start runs will be able to start runs in this folder.`)) return;
+    try {
+      const fresh = await window.bean.listProjects();
+      const next = fresh.some((p) => p.path === folder) ? fresh : [...fresh, { name: folderName(folder), path: folder }];
+      if (next !== fresh) await window.bean.saveProjects(next);
+      setProjects(next);
+    } catch (e) {
+      setError(ipcErrorMessage(e) ?? "couldn't register the folder");
+    }
   };
   const selectBuild = (name: string): void => {
     setSelectedBuild(name); setSelected(undefined); setCreating(false); setDescribing(false);
@@ -493,9 +535,9 @@ export function RoutinesPanel() {
   };
   if (draft.sinks.notify) sinkTargets.push("a desktop notification");
 
-  const routineRow = (r: Routine) => (
+  const routineRow = (sectionKey: string, { routine: r, also, problems }: SproutRow) => (
     <div
-      key={r.name}
+      key={`${sectionKey}:${r.name}`}
       class={`bean-skills-row bean-routines-row${r.enabled ? "" : " bean-routines-row--off"}${needsReview(r, states[r.name]) ? " bean-routines-row--review" : ""}${selected === r.name ? " bean-skills-row--selected" : ""}`}
       onClick={() => select(r.name)}
     >
@@ -519,7 +561,24 @@ export function RoutinesPanel() {
               {r.todoDriven ? " · ⚡ todo-driven" : ""}
             </>
           )}
+          {problems.filter((p) => p.kind === "missing-skill").map((p) => (
+            <span key={`skill${p.step}`} class="bean-routines-row-note"> · step {p.step} skill not found</span>
+          ))}
         </div>
+        {also.length > 0 ? <div class="bean-routines-row-sub bean-routines-row-note">also: {also.join(", ")}</div> : null}
+        {sectionKey === NEEDS_FIXING ? (
+          <div class="bean-routines-fix">
+            {[...new Map(problems.flatMap((p) => (p.kind === "missing-skill" ? [] : [[p.folder, p] as const]))).values()].map((p) => (
+              <div key={p.folder} class="bean-routines-fix-line">
+                <span class="bean-routines-fix-text">Starts in <code>{p.folder}</code> — not a project</span>
+                {p.kind === "unregistered-folder" ? (
+                  <button type="button" class="bean-routines-todo-link bean-routines-fix-btn" onClick={(e) => { e.stopPropagation(); void registerFolder(p.folder); }}>Register folder</button>
+                ) : null}
+              </div>
+            ))}
+            <button type="button" class="bean-routines-todo-link bean-routines-fix-btn" onClick={(e) => { e.stopPropagation(); pickProjects(r.name); }}>Pick projects…</button>
+          </div>
+        ) : null}
       </div>
       <span class={`bean-routines-dot bean-routines-dot--${dotKind(r, states[r.name])}`} />
     </div>
@@ -604,7 +663,29 @@ export function RoutinesPanel() {
         ) : filtered.length === 0 ? (
           <div class="bean-panel-empty">No sprouts match "{query}".</div>
         ) : (
-          filtered.map(routineRow)
+          sections.map((sec) => {
+            // A live query opens every section with a hit (empty ones are already gone) and locks
+            // folding meanwhile; the stored state returns when the query clears.
+            const searching = query.trim() !== "";
+            const open = searching || !foldedSections.includes(sec.key);
+            return (
+              <div key={sec.key} class="bean-routines-section" data-section={sec.key}>
+                <button
+                  type="button"
+                  class="bean-skills-list-label bean-skills-list-label--toggle bean-notes-group"
+                  aria-expanded={open}
+                  disabled={searching}
+                  title={searching ? "Clear the search to fold sections" : undefined}
+                  onClick={() => setSectionFolded(sec.key, open)}
+                >
+                  <span class="bean-notes-group-caret">{open ? "\u25be" : "\u25b8"}</span>
+                  {sec.label}
+                  <span class="bean-notes-group-count">{sec.rows.length}</span>
+                </button>
+                {open ? sec.rows.map((row) => routineRow(sec.key, row)) : null}
+              </div>
+            );
+          })
         )}
         <span class="bean-skills-spacer" />
         <button type="button" class="bean-routines-new" onClick={startNew}>＋ New sprout</button>
@@ -616,7 +697,7 @@ export function RoutinesPanel() {
           <DescribePane
             initial={briefSeed}
             taken={routines.map((r) => r.name)}
-            skills={enabledSkills}
+            skills={skills}
             projects={projects}
             clis={clis}
             models={models}
@@ -688,6 +769,24 @@ export function RoutinesPanel() {
                 />
               </>
             )}
+            {projects.length > 0 ? (
+              <div class="bean-routines-listed">
+                <div class="bean-field-label">LISTED UNDER</div>
+                <div class="bean-routines-listed-chips">
+                  {projects.map((p) => {
+                    const on = isListedUnder(draft, p.path);
+                    return (
+                      <button key={p.path} type="button" class={`bean-rb-chip${on ? " bean-rb-chip--on" : ""}`} aria-pressed={on} title={p.path}
+                        onClick={() => setDraft(toggleListedUnder(draft, p.path))}>{p.name}</button>
+                    );
+                  })}
+                  {projects.some((p) => isListedUnder(draft, p.path)) ? null : (
+                    <span class="bean-routines-section-note">Follows its steps → {derivedSectionLabel(draft, projects)}</span>
+                  )}
+                </div>
+                <span class="bean-routines-section-note">Only where this sprout appears in lists. Each step still starts in the folder set on that step.</span>
+              </div>
+            ) : null}
           </div>
           <div class="bean-skills-toggle-col">
             <button
@@ -1074,7 +1173,7 @@ export function RoutinesPanel() {
           <StepsEditor
             steps={draft.steps}
             onSteps={(steps) => setDraft({ ...draft, steps })}
-            skills={enabledSkills}
+            skills={skills}
             projects={projects}
             clis={clis}
             models={models}

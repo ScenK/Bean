@@ -100,6 +100,11 @@ run isn't `ok` and no later record of the same id (same todo) passed. `executedP
 brackets a group: `[lint ✓ | test ✗ | review ✓]`. Editor diagram: forks/joins meet a bar above/below
 the members.
 
+**Delegate step skill is optional (#881).** No skill = the key is omitted (never `""`, which the
+validator rejects); the step runs on its instruction alone, same as a step naming a skill with no
+file. A disabled skill still fails the step. Builds older than #881 skip a skill-less delegate
+routine as invalid (rollback hazard). The editor's "No skill" row removes the link.
+
 **Command steps (#265).** `kind: "command"` runs `command` via `/bin/sh -c` (core `runShellCommand`,
 own process group, timeout SIGKILLs the group) in `project`, else the same scratch dir a delegate
 step would use, with the host's resolved login-shell PATH. No model/memories/skill — the validator
