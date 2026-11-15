@@ -13,6 +13,8 @@ const HARNESSES: CliName[] = ["claude", "codex", "opencode"];
 export function StepsEditor(props: {
   steps: RoutineStep[];
   onSteps: (steps: RoutineStep[]) => void;
+  /** Every skill, disabled ones included: the picker offers only enabled ones, and a step
+   * naming a skill outside this list reads "not found". */
   skills: Skill[];
   projects: Project[];
   clis: CliName[];
@@ -21,7 +23,11 @@ export function StepsEditor(props: {
   note?: (index: number) => string | undefined;
   addHint?: string;
 }) {
-  const { steps, skills, projects, clis, models } = props;
+  const { steps, skills: allSkills, projects, clis, models } = props;
+  // A disabled skill stays assigned to a step that already names it; it just can't be newly picked.
+  const skills = allSkills.filter((s) => s.enabled !== false);
+  // ponytail: an empty catalog reads as "still loading", so nothing is flagged until skills arrive.
+  const skillMissing = (name?: string): boolean => !!name && allSkills.length > 0 && !allSkills.some((s) => s.name === name);
   // Every edit assigns ids to id-less steps; an untouched routine never passes through here.
   const onSteps = (next: RoutineStep[]): void => props.onSteps(withStepIds(next));
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -100,8 +106,11 @@ export function StepsEditor(props: {
 
   // skill/model live on delegate and chat steps; project on delegate and command. Cast keeps the
   // union spread legible without widening the kind.
-  const setSkill = (i: number, step: RoutineStep, name?: string): void =>
-    setStep(i, step.kind === "delegate" ? { ...step, skill: name ?? "" } : { ...step, skill: name } as RoutineStep);
+  // "No skill" omits the key; everything else on the step (id, instruction, project, edges) stays.
+  const setSkill = (i: number, step: RoutineStep, name?: string): void => {
+    const { skill: _old, ...rest } = step as RoutineStep & { skill?: string };
+    setStep(i, (name ? { ...rest, skill: name } : rest) as RoutineStep);
+  };
   const setModel = (i: number, step: RoutineStep, id?: string): void =>
     setStep(i, { ...step, model: id } as RoutineStep);
   // A pinned harness keeps only a model it offers; "auto" keeps any model.
@@ -114,7 +123,8 @@ export function StepsEditor(props: {
   return (
     <div class="bean-routines-steps">
       {steps.map((step, i) => {
-        const skillLabel = step.skill ? `skill · ${step.skill}` : (step.kind === "delegate" ? "skill · choose…" : "skill · none");
+        const missingSkill = step.kind !== "command" && skillMissing(step.skill);
+        const skillLabel = step.skill ? `skill · ${step.skill}${missingSkill ? " — not found" : ""}` : "skill · none";
         const projName = projects.find((p) => p.path === (step.kind !== "chat" ? step.project : undefined))?.name;
         const modelLabel = step.model ? (models.find((m) => m.id === step.model)?.label ?? step.model) : "Bean picks model";
         const cli = step.kind === "delegate" ? step.cli : undefined;
@@ -197,13 +207,11 @@ export function StepsEditor(props: {
                 <ChipMenu chipClass="bean-chip-menu-trigger--accent" chipLabel={<span class="bean-routines-chip-label">{skillLabel}</span>} menuWidth={340}>
                   {(close) => (
                     <div class="bean-chip-menu-list">
-                      {step.kind === "chat" ? (
-                        <button
-                          type="button"
-                          class={`bean-chip-menu-row${step.skill ? "" : " bean-chip-menu-row--on"}`}
-                          onClick={() => { setSkill(i, step, undefined); close(); }}
-                        >{step.skill ? "" : "✓ "}No skill</button>
-                      ) : null}
+                      <button
+                        type="button"
+                        class={`bean-chip-menu-row${step.skill ? "" : " bean-chip-menu-row--on"}`}
+                        onClick={() => { setSkill(i, step, undefined); close(); }}
+                      >{step.skill ? "" : "✓ "}No skill</button>
                       {skills.map((s) => (
                         <button
                           key={s.name}
@@ -550,6 +558,7 @@ export function StepsEditor(props: {
                 </div>
               ) : null}
               {caption ? <div class="bean-routines-step-path">{caption}</div> : null}
+              {missingSkill ? <div class="bean-routines-step-warning bean-routines-step-skill-missing">Runs on its instruction alone. Pick No skill to remove the link.</div> : null}
               {edgeWarnings[i] ? <div class="bean-routines-step-warning">{edgeWarnings[i]}</div> : null}
               {edgeProblems[i] ? <div class="bean-routines-step-missing bean-routines-step-edge-problem" role="alert">{edgeProblems[i]}</div> : null}
               {problem ? <div class="bean-routines-step-missing" role="alert">{problem}{cli ? " — this step will refuse to run" : " — Bean will pick another"}</div> : null}

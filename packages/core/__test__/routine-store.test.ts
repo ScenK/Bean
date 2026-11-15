@@ -64,6 +64,16 @@ describe("save/load/delete routines", () => {
   });
 });
 
+describe("skill-less delegate step", () => {
+  it("saves without a skill key and reloads", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "bean-routines-"));
+    const r = routine({ steps: [{ kind: "delegate", id: "fix", project: "/p", instruction: "fix the build" }] });
+    await saveRoutine(dir, r);
+    expect(await readFile(join(dir, `${r.name}.json`), "utf8")).not.toContain("skill");
+    expect(await loadRoutines(dir)).toEqual([r]);
+  });
+});
+
 describe("Routine.projects (display only)", () => {
   it("validates a list of non-empty strings", () => {
     expect(describeRoutineError(routine({ projects: ["/w/app"] }))).toBeNull();
@@ -98,7 +108,11 @@ describe("describeRoutineError", () => {
     expect(describeRoutineError(routine({ steps: [{ kind: "chat", instruction: "" }] }))).toMatch(/step 1 needs an instruction/);
     expect(describeRoutineError(routine({
       steps: [{ kind: "delegate", skill: "", instruction: "go" }],
-    }))).toMatch(/step 1 \(delegate\) needs a skill/);
+    }))).toMatch(/step 1 has an invalid skill/);
+    expect(describeRoutineError(routine({
+      steps: [{ kind: "delegate", skill: 3 as unknown as string, instruction: "go" }],
+    }))).toMatch(/step 1 has an invalid skill/);
+    expect(describeRoutineError(routine({ steps: [{ kind: "delegate", instruction: "go" }] }))).toBeNull();
     expect(describeRoutineError(routine({
       steps: [{ kind: "delegate", skill: "s", timeoutMinutes: 0, instruction: "go" }],
     }))).toMatch(/step 1 timeout must be a whole number/);

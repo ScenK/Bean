@@ -210,9 +210,6 @@ export function RoutinesPanel() {
   // Catalogs that back the per-step skill / project / model pickers (same sources the
   // ProposalCard/DelegateCard chips use).
   const [skills, setSkills] = useState<Skill[]>([]);
-  // Step skill pickers should only offer skills currently enabled — a disabled skill stays
-  // assigned to a step that already references it, it just can't be newly picked.
-  const enabledSkills = useMemo(() => skills.filter((s) => s.enabled !== false), [skills]);
   const [projects, setProjects] = useState<Project[]>([]);
   // Named chat destinations for the sink pickers (Settings → ChatOps owns naming them).
   const [chatDestinations, setChatDestinations] = useState<DestinationView[]>([]);
@@ -616,7 +613,7 @@ export function RoutinesPanel() {
           <DescribePane
             initial={briefSeed}
             taken={routines.map((r) => r.name)}
-            skills={enabledSkills}
+            skills={skills}
             projects={projects}
             clis={clis}
             models={models}
@@ -1074,7 +1071,7 @@ export function RoutinesPanel() {
           <StepsEditor
             steps={draft.steps}
             onSteps={(steps) => setDraft({ ...draft, steps })}
-            skills={enabledSkills}
+            skills={skills}
             projects={projects}
             clis={clis}
             models={models}

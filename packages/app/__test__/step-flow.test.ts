@@ -185,7 +185,7 @@ describe("StepFlow", () => {
 
 describe("StepFlow shared sessions", () => {
   // 1 chat · 2,4,6 one session · 3,5 another · 7 alone.
-  const d = (id: string, continues?: string): RoutineStep => ({ kind: "delegate", id, skill: "", cli: "claude", instruction: "x", ...(continues ? { continues } : {}) });
+  const d = (id: string, continues?: string): RoutineStep => ({ kind: "delegate", id, cli: "claude", instruction: "x", ...(continues ? { continues } : {}) });
   const steps = [s("a"), d("b"), d("c"), d("d", "b"), d("e", "c"), d("f", "d"), d("g")];
   const mount = (lanes?: number[]): HTMLElement => {
     const root = document.createElement("div");

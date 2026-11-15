@@ -104,7 +104,7 @@ export function describeStep(s: RoutineStep, i: number): string {
   const what = s.kind === "command"
     ? `command \`${clip(s.command, 80)}\``
     : s.kind === "delegate"
-      ? `agent (${s.skill}${s.project ? ` in ${basename(s.project)}` : ""}): ${clip(s.instruction)}`
+      ? `agent${s.skill || s.project ? ` (${[s.skill, s.project && `in ${basename(s.project)}`].filter(Boolean).join(" ")})` : ""}: ${clip(s.instruction)}`
       : `chat${s.skill ? ` (${s.skill})` : ""}: ${clip(s.instruction)}`;
   return `${i + 1}. ${what}`;
 }

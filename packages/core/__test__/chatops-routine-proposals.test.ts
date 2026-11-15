@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  describeSchedule, parseRoutineCommand, routineCardInput, RoutineProposalStore,
+  describeSchedule, describeStep, parseRoutineCommand, routineCardInput, RoutineProposalStore,
 } from "../src/chatops/routine-proposals.js";
 import type { Routine } from "../src/routine-store.js";
 
@@ -76,4 +76,10 @@ test("a stepped day-of-month gets a resets-monthly warning; weekday lists don't"
   expect(warnings("0 9 1-31/2 * *")).toHaveLength(1);
   expect(warnings("0 9 * * 1,4")).toBeUndefined();
   expect(warnings("*/15 * * * *")).toBeUndefined();
+});
+
+test("describeStep renders a skill-less delegate step without undefined", () => {
+  expect(describeStep({ kind: "delegate", instruction: "fix it" }, 0)).toBe("1. agent: fix it");
+  expect(describeStep({ kind: "delegate", project: "/code/bean", instruction: "fix it" }, 1)).toBe("2. agent (in bean): fix it");
+  expect(describeStep({ kind: "delegate", skill: "review", project: "/code/bean", instruction: "go" }, 2)).toBe("3. agent (review in bean): go");
 });
