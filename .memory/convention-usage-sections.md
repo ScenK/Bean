@@ -24,5 +24,10 @@ the optional `Routine.projects`.
   Scratch, `!needs-fixing`; default all open). Listed under edits only the draft (saves with the
   sprout). Register folder re-reads `listProjects` before appending. The renderer has no hidden
   skills, so a hidden step skill reads "not found" (muted note only). e2e: `routines-sections.e2e.ts`.
+- Projects window (`ProjectsPanel.tsx` + `projects/project-members.ts`): row shows `n skills · m
+  sprouts`; SKILLS edits the project's `skills` (re-reads `listProjects` before `saveProjects`, so it
+  agrees with the Skills window's chips); SPROUTS is `sproutProjects()` membership, never written
+  onto `Project`. `routinesList` isn't a remote op, so a failed/non-array listing omits SPROUTS
+  (and the row's sprout count). e2e: `component-windows.e2e.ts`.
 
 Related: [[convention-hidden-skills]], [[convention-renderer-imports-node-free-subpaths]].
