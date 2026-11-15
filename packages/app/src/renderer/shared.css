@@ -1156,6 +1156,10 @@ button, input, textarea, select, a {
   background: transparent;
   border: 1px dashed var(--bean-border);
 }
+.bean-skills-tag--warn {
+  color: var(--bean-error);
+  background: color-mix(in oklch, var(--bean-error) 12%, transparent);
+}
 .bean-skills-row--selected .bean-skills-tag {
   color: var(--bean-accent-ink);
   background: color-mix(in oklch, var(--bean-accent-ink) 22%, transparent);
