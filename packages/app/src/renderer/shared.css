@@ -1588,6 +1588,30 @@ button, input, textarea, select, a {
   text-overflow: ellipsis;
 }
 .bean-projects-row-actions { display: flex; gap: 6px; flex: none; }
+.bean-projects-meta { font-size: 11px; color: var(--bean-text-dim); flex: none; }
+.bean-projects-members { align-items: center; margin-bottom: 14px; }
+.bean-projects-member {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 12px ui-monospace, monospace;
+  color: var(--bean-text);
+  border: 1px solid var(--bean-border);
+  border-radius: 8px;
+  padding: 5px 9px;
+}
+.bean-projects-member-remove {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--bean-text-dim);
+  cursor: pointer;
+}
+.bean-projects-member-remove:hover { color: var(--bean-text); }
+.bean-projects-add-skill { width: auto; }
+.bean-projects-none { font-size: 12px; color: var(--bean-text-dim); }
 
 /* --- projects launcher (SP7) --- */
 .bean-projects-grid {
