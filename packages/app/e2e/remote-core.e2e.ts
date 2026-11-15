@@ -54,7 +54,8 @@ process.stdin.on("data", (d) => {
       paths: { config: "/srv/.bean/config.json", skills: "/srv/.bean/skills", projects: "/srv/.bean/projects.json", persona: "/srv/.bean/persona.json" },
     };
     const value = m.op === "getModel" ? "gpt-remote" : m.op === "getConfig" ? config
-      : ["listSkills", "listProjects", "availableClis", "availableModels", "detectedClis"].includes(m.op) ? [] : undefined;
+      : m.op === "listSkills" ? [{ name: "remote-skill", description: "On the core.", body: "Do it." }]
+      : ["listProjects", "availableClis", "availableModels", "detectedClis"].includes(m.op) ? [] : undefined;
     send({ type: "result", id: m.id, ok: true, value });
   }
 });
@@ -127,6 +128,7 @@ test("remote core: chat over ssh, reconnect bar, takeover banner", async () => {
 
 // #812: a Linux core — no terminal pane, no system controls or Terminal/Editor apps in Settings, and a
 // Settings save is a patch that never carries (so never clears) the API key.
+// #876: the Skills list loads though the core has no proposals op.
 test("remote core: capability-gated chat and key-preserving Settings", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "bean-e2e-home-"));
   const userDataDir = await mkdtemp(join(tmpdir(), "bean-e2e-userdata-"));
@@ -153,6 +155,11 @@ test("remote core: capability-gated chat and key-preserving Settings", async () 
     await expect(chat.locator(".bean-chat-term-toggle")).toHaveCount(0);
     await chat.keyboard.press("Control+`");
     await expect(chat.locator(".bean-term")).toHaveCount(0);
+
+    // #876: no remote skillProposals* op — the proposals call fails, the skill list still loads.
+    const skills = await open("skills");
+    await expect(skills.locator(".bean-skills-row-name", { hasText: "remote-skill" })).toBeVisible();
+    await expect(skills.locator(".bean-skills-proposals-tab")).toHaveCount(0);
 
     const settings = await open("settings");
     const key = settings.locator('input[type="password"]');
