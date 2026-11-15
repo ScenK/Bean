@@ -25,7 +25,9 @@ brief (`routine-chat-brief.ts`, one model call per run from `deliverDigest`): th
 **every** step's output (`chatBriefInput`: latest attempt per step/todo, minus the todo label,
 `VERDICT:`/`ROUTE:` lines, a command's `(exit 0)`, an outer fence) and writes a **short,
 conclusion-first** message — the outcome, then only what the user must know or act on. The
-voice is the persona's; the prompt fixes no opening and does not force first person.
+voice is the persona's; the prompt fixes no opening and does not force first person. The prompt
+does fix the layout (conclusion on its own line, a blank line, then short bullets): without it
+the model posts one dense paragraph, which reads as a wall in Discord.
 
 It is a summary, so the code-side guard checks the other way round from a restyle: at most
 `BRIEF_MAX_CHARS` per task and no link or number the run didn't report (this has caught a
