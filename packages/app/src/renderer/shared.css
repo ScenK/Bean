@@ -529,6 +529,44 @@ button, input, textarea, select, a {
 /* ⌘ held over a link or path in the chat log (chat-links.ts): only that token underlines. */
 .bean-chat-scroll--link { cursor: pointer; }
 ::highlight(bean-link) { text-decoration: underline; }
+/* Find in chat (FindBar.tsx, #901): floats top-right over the shown chat's messages, under its header. */
+.bean-find {
+  position: absolute;
+  top: 80px;
+  right: 16px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 10px;
+  background: var(--bean-surface);
+  border: 1px solid var(--bean-control-border);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.12);
+  font-size: 12px;
+}
+.bean-find-input {
+  width: 180px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--bean-text);
+  font: inherit;
+}
+.bean-find-count { min-width: 64px; text-align: right; color: var(--bean-text-dim); white-space: nowrap; }
+.bean-find-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--bean-text);
+  cursor: pointer;
+}
+.bean-find-btn:hover:not(:disabled) { background: var(--bean-surface-2); }
+.bean-find-btn:disabled { color: var(--bean-text-dim); cursor: default; }
+::highlight(bean-find) { background-color: var(--bean-find-bg); color: var(--bean-text); }
+::highlight(bean-find-current) { background-color: var(--bean-find-current-bg); color: var(--bean-text); }
 .bean-term {
   position: relative;
   flex: 0 1 auto;
