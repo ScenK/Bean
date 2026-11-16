@@ -87,6 +87,11 @@ describe.each(["hearth", "graphite"])("%s theme contrast", (theme) => {
     expect(contrast(t["--bean-accent-ink"]!, t["--bean-accent"]!)).toBeGreaterThanOrEqual(inkOnFill);
   });
 
+  // Find in chat (#901) repaints matched text as --bean-text on these fills.
+  test.each(["--bean-find-bg", "--bean-find-current-bg"])("--bean-text reads on %s (>= 4.5:1)", (name) => {
+    expect(contrast(t["--bean-text"]!, t[name]!)).toBeGreaterThanOrEqual(4.5);
+  });
+
   // The terminal pane paints every ANSI color on --bean-surface (TerminalPane.tsx).
   const ansi = Object.keys(t).filter((n) => n.startsWith("--bean-ansi-"));
   test("all 16 ANSI tokens are defined", () => expect(ansi).toHaveLength(16));

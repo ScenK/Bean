@@ -14,6 +14,9 @@
   /* White on the amber fill is 3.3:1 — below AA, kept deliberately: the light theme's look is
      the product decision here. See .memory/convention-theme-contrast.md. */
   --bean-accent-ink: #fff;
+  /* Find-in-chat match fills (#901): --bean-text reads 4.5:1 on both. */
+  --bean-find-bg: oklch(0.92 0.09 95);
+  --bean-find-current-bg: oklch(0.82 0.14 75);
   --bean-orb-1: oklch(0.85 0.12 74);
   --bean-orb-2: oklch(0.71 0.16 50);
   --bean-orb-3: oklch(0.58 0.16 32);
@@ -65,6 +68,8 @@
   --bean-error: oklch(0.7 0.16 25); /* 5.8:1 on --bean-surface */
   --bean-control-border: oklch(0.52 0.014 265); /* 3.3:1 on --bean-bg — control outlines, not separators */
   --bean-accent-ink: oklch(0.18 0.012 265);
+  --bean-find-bg: oklch(0.36 0.06 95);
+  --bean-find-current-bg: oklch(0.46 0.1 75);
   --bean-orb-1: oklch(0.87 0.09 215);
   --bean-orb-2: oklch(0.71 0.13 248);
   --bean-orb-3: oklch(0.52 0.15 278);

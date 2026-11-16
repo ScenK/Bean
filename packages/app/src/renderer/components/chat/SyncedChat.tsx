@@ -118,9 +118,14 @@ export function SyncedChat({ listing, botRunning, version, onWorking, hasArchive
   }, [listing.live, botRunning]);
   useEffect(() => { onWorking(pending.length > 0); }, [pending.length > 0]);
   useEffect(() => () => onWorking(false), []);
+  // Follow new output only while near the bottom (like ChatPanel), so it can't drag the view off a
+  // find match the user scrolled to; a message the user just sent always snaps down.
+  const atBottomRef = useRef(true);
+  const sentRef = useRef(0);
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && (atBottomRef.current || pending.length > sentRef.current)) el.scrollTop = el.scrollHeight;
+    sentRef.current = pending.length;
   }, [rows, pending, errors]);
 
   const { readOnly, placeholder } = composerState(listing, botRunning, rows);
@@ -182,7 +187,11 @@ export function SyncedChat({ listing, botRunning, version, onWorking, hasArchive
         <span class="bean-chat-sidebar-badge">{surface}</span>
         <span class="bean-chat-name">{kindChip(listing)}</span>
       </div>
-      <div class="bean-chat-scroll" ref={scrollRef}>
+      <div
+        class="bean-chat-scroll"
+        ref={scrollRef}
+        onScroll={(e) => { const el = e.currentTarget; atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}
+      >
         {rows.length === 0 && pending.length === 0 ? <div class="bean-panel-empty">{hasArchive ? "Fresh start — the earlier conversation is in the archived entry." : "Nothing here yet."}</div> : null}
         {rows.map((r, i) => {
           if (r.role === "user") {

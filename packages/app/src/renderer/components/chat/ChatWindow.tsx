@@ -11,6 +11,8 @@ import type { ChatDrop } from "../../../channels.js";
 import type { SyncedChatListing } from "../../../synced-chats.js";
 import type { CoreStatus } from "../../../channels.js";
 import { useCoreStatus } from "../../shared/core-status.js";
+import { modKey } from "../../shared/mod-key.js";
+import { FindBar } from "./FindBar.js";
 
 /** A remote core's bar over the chat (#811): reconnecting (the composer is read-only meanwhile) or taken
  * over by another machine. Nothing for a local core or an attached remote one; a version mismatch is
@@ -69,6 +71,7 @@ export function ChatWindow() {
   const [live, setLive] = useState<Record<string, string>>({}); // mount → thread with an open agent session
   const [shells, setShells] = useState<Set<string>>(new Set()); // mounts with a live terminal shell
   const [closing, setClosing] = useState<{ title: string; stop: string } | null>(null);
+  const [find, setFind] = useState(0); // Cmd/Ctrl+F presses while the find bar is open; 0 = closed
   const coreStatus = useCoreStatus();
   const [droppedUrl, setDroppedUrl] = useState<ChatDrop | undefined>(undefined);
   // A per-turn memory receipt is tagged with the mount that asked. One for a chat switched away
@@ -294,11 +297,17 @@ export function ChatWindow() {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
   // Control+` folds/unfolds the shown chat's terminal, Cmd+T / Cmd+1…4 / Cmd+Shift+[ ] drive its
-  // tabs — capture phase, so they win over the shell's own keydown (xterm would send NUL) and work
-  // from the composer or the terminal alike.
+  // tabs, Cmd/Ctrl+F opens (or refocuses) find — capture phase, so they win over the shell's own
+  // keydown (xterm would send NUL) and work from the composer or the terminal alike.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.isComposing) return;
+      if (modKey(e) && !(e.metaKey && e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!e.repeat) setFind((n) => n + 1);
+        return;
+      }
       const tab = tabShortcut(e);
       if (!tab && !isTerminalToggle(e)) return;
       e.preventDefault();
@@ -310,6 +319,8 @@ export function ChatWindow() {
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
   }, []);
+  // Switching chats closes find.
+  useEffect(() => setFind(0), [shown, syncedShown]);
   const deleteThread = (id: string): void => {
     window.bean.chatThreadDelete(id).then(
       () => setThreads((prev) => prev.filter((t) => t.id !== id)),
@@ -432,6 +443,7 @@ export function ChatWindow() {
           </div>
         </div>
       ) : null}
+      {find ? <FindBar seq={find} onClose={() => setFind(0)} /> : null}
       <CoreBar status={coreStatus} />
       {coreStatus.kind === "remote" && coreStatus.state === "mismatch" ? (
         <div class="bean-memory-review" role="alertdialog">
