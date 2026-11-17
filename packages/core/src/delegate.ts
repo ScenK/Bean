@@ -17,12 +17,42 @@ export interface DelegateRequest {
    * or a renderer/model-supplied flag. claude gets `--chrome` (else `--no-chrome`); codex
    * already has browser tools; opencode is refused before spawn. */
   browser?: boolean;
+  /** "plan" = enforced read-only: the CLI can read the project but cannot write, run a shell,
+   * reach the network, load MCP servers or open a browser (overrides `browser`). claude and codex
+   * only (denial probes in #908); opencode is refused before spawn. Never falls back to the
+   * ordinary mode — the resume retry re-spawns with the same request. */
+  mode?: "plan";
 }
 
 // Moved to agent-rules.ts; re-exported for existing importers.
 export { BEAN_GIT_IDENTITY, gitTrailerInstruction, FAILED_SENTINEL_INSTRUCTION } from "./agent-rules.js";
 
 export const OPENCODE_BROWSER_REFUSAL = "This skill needs the browser; opencode can't — pick a claude or codex model.";
+export const OPENCODE_PLAN_REFUSAL = "Read-only runs need claude or codex; opencode can't be locked down — pick a claude or codex model.";
+
+// claude plan mode: an allowlist of read-only tools (no Bash, Write/Edit, WebFetch/WebSearch,
+// Task, Skill, …), no MCP server from any config or plugin, no browser. Verified 2026-11 on
+// claude 2.1.325: init reports tools [Glob, Grep, Read] and mcp_servers [].
+const CLAUDE_PLAN_ARGS = [
+  "--permission-mode", "plan",
+  "--tools", "Read,Glob,Grep",
+  "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+  "--no-chrome",
+];
+
+// codex read-only: the sandbox blocks writes (.git included) and network; --ignore-user-config
+// drops the user's mcp_servers/plugins/hooks (a `-c mcp_servers={}` override merges, it doesn't
+// replace) and leaves the project untrusted, so its .codex/config.toml MCP servers don't load
+// either. Verified 2026-11 on codex-cli 0.169.0. `exec resume` rejects --sandbox: fresh runs only.
+const CODEX_PLAN_ARGS = [
+  "exec", "--json",
+  "--sandbox", "read-only",
+  "--skip-git-repo-check",
+  "--ignore-user-config",
+  "-c", 'web_search="disabled"',
+  "--disable", "plugins", "--disable", "apps",
+  "--disable", "browser_use", "--disable", "computer_use", "--disable", "in_app_browser",
+];
 
 /** The reason after a first-line `FAILED:` (CRLF-safe), or undefined when the run succeeded. */
 export function failedReason(result: string): string | undefined {
@@ -58,6 +88,16 @@ export function delegateCommand(req: DelegateRequest): { command: string; args: 
   const modelArgs = req.model ? ["--model", req.model] : [];
   const prompt = withCliRules(req.prompt, "delegate");
   const resume = req.resume;
+  if (req.mode === "plan") {
+    if (req.cli === "claude") {
+      return {
+        command: "claude",
+        args: ["-p", prompt, "--output-format", "stream-json", "--verbose", ...CLAUDE_PLAN_ARGS, ...(resume ? ["--resume", resume] : []), ...modelArgs],
+      };
+    }
+    if (req.cli === "codex") return { command: "codex", args: [...CODEX_PLAN_ARGS, ...modelArgs, "--", prompt] };
+    throw new Error(OPENCODE_PLAN_REFUSAL); // runDelegate refuses before this; never fall back to the bypass argv
+  }
   if (req.cli === "claude") {
     return {
       command: "claude",
@@ -237,7 +277,12 @@ export function runDelegate(
     callbacks.onError(new Error(OPENCODE_BROWSER_REFUSAL));
     return { pid: undefined, cancel: () => {} };
   }
-  let resume = req.resume;
+  if (req.mode === "plan" && req.cli === "opencode") {
+    callbacks.onError(new Error(OPENCODE_PLAN_REFUSAL));
+    return { pid: undefined, cancel: () => {} };
+  }
+  // codex plan runs are fresh only (argv drops it), so there's no rejected resume to retry.
+  let resume = req.mode === "plan" && req.cli === "codex" ? undefined : req.resume;
   let command = "";
   let child!: ChildProcess;
 
