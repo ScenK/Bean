@@ -58,6 +58,12 @@ per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_ad
   fixed outbox line from the scheduler host (`withFinishReply`), never step output.
 - **Send by name (#689)**: `send` (owner) — and only in the owner's real DM, checked via the
   adapter's `CardAction.direct`; see [project-chat-destinations](project-chat-destinations.md).
+- **Away mode (#903)**: `chatops/away.ts`, `chatops_away` (one row per surface, missing = off).
+  `away on [reason]|off|status` = `NEEDS.away` (owner) **and** `msg.direct` (a Teams targeted `/`
+  pick is not direct); every other use hears one fixed `awayRefusal` line that never reveals the
+  state. Keyword command, never a model call, not in `CHATOPS_COMMANDS` (typed only, no Teams
+  manifest change); Discord's thread/turn-cap exemptions reuse `parseAwayCommand`. While on, the
+  owner's addressed answers on that surface get `awayReminder` appended (not saved to history).
 - **Chatty setting (#444)**: `chatops/chatter.ts`, `chatops_chatty` (missing row = off), scoped like
   admins (channel, never a thread). `chatty on|off` = `NEEDS.chatty` (admin); `chatty status`,
   addressed mute (`quiet|hush|mute|be quiet|stay quiet [for] <n><unit>`, whole message only, 30 min

@@ -20,6 +20,7 @@ import { TodoProposalStore } from "../src/chatops/todo-proposals.js";
 import { RunRegistry } from "../src/chatops/runs.js";
 import { makeRoles } from "../src/chatops/roles.js";
 import { NOT_CHATTY, formatMuteEnd, makeChatter } from "../src/chatops/chatter.js";
+import { makeAway } from "../src/chatops/away.js";
 import type { CardBuilders } from "../src/chatops/cards-api.js";
 import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index.js";
 import { SkillProposalStore } from "../src/chatops/skill-proposals.js";
@@ -4126,5 +4127,53 @@ describe("owner-DM send cards (#689)", () => {
     await t.bot.onCardAction(tap("send-confirm", b.proposalId), effects);
     expect(effects.posted.at(-1)).toBe("That send card expired — ask me again.");
     expect(t.queued).toEqual([]);
+  });
+});
+
+describe("away mode (#903)", () => {
+  function awayBot() {
+    const file = dbFile(mkdtempSync(join(tmpdir(), "bean-away-bot-")));
+    let calls = 0;
+    const made = makeDeps({ chat: async () => { calls++; return { content: "sure", toolCalls: [] }; } });
+    made.deps.roles = makeRoles({ dbPath: file, surface: "discord", ownerId: "u1", ownerName: "Scen", memberIds: ["mia"] });
+    made.deps.away = makeAway({ dbPath: file, surface: "discord" });
+    const bot = buildTeamsBot(made.deps);
+    const say = async (fromId: string, direct: boolean, text: string): Promise<string[]> => {
+      const effects = fx();
+      await bot.onMessage({ ...msg, conversationId: direct ? `dm-${fromId}` : "c1", fromId, fromName: fromId, direct,
+        scopeId: direct ? undefined : "s1", text }, effects);
+      return effects.posted;
+    };
+    return { ...made, say, calls: () => calls };
+  }
+  const REFUSED = "Only Scen can use `away`, and only in a direct message with me.";
+
+  test("the owner switches and reads it from their DM, without a model call", async () => {
+    const h = awayBot();
+    expect(await h.say("u1", true, "away on out sick")).toEqual(["Away mode is on for Discord (reason: out sick). `away off` ends it."]);
+    expect((await h.say("u1", true, "away status"))[0]).toMatch(/^Away mode is on for Discord since .+ \(reason: out sick\)\.$/);
+    expect(await h.say("u1", true, "away off")).toEqual(["Away mode is off for Discord."]);
+    expect(h.calls()).toBe(0);
+  });
+
+  test("non-owners and non-DM uses get one fixed line that never reveals the state, without a model call", async () => {
+    const h = awayBot();
+    h.deps.away!.setOn("secret trip", 1);
+    for (const [who, direct] of [["u1", false], ["mia", true], ["mia", false], ["guest", false], ["guest", true]] as const) {
+      for (const text of ["away status", "away off", "away on hi"]) {
+        expect(await h.say(who, direct, text)).toEqual([REFUSED]);
+      }
+    }
+    expect(h.deps.away!.get()).toMatchObject({ on: true, reason: "secret trip" });
+    expect(h.calls()).toBe(0);
+  });
+
+  test("the owner's answers carry a reminder while away here; nobody else's do, and history doesn't", async () => {
+    const h = awayBot();
+    expect(await h.say("u1", false, "hi bean")).toEqual(["sure"]);
+    h.deps.away!.setOn(undefined, 1);
+    expect(await h.say("u1", false, "hi bean")).toEqual(["sure\n\n(Away mode is on for Discord — `away off` in our DM ends it.)"]);
+    expect(await h.say("mia", false, "hi bean")).toEqual(["sure"]);
+    expect(h.deps.conversations.history("c1").filter((t) => t.role === "assistant").map((t) => t.content)).toEqual(["sure", "sure", "sure"]);
   });
 });

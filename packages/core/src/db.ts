@@ -167,6 +167,15 @@ CREATE TABLE IF NOT EXISTS chatops_chatty (
   PRIMARY KEY (surface, scope_id)
 );
 
+-- The owner's away mode per chat surface (chatops/away.ts, #903); a missing row means off.
+-- since is epoch ms (set only while on); reason is the owner's literal text, at most 200 chars.
+CREATE TABLE IF NOT EXISTS chatops_away (
+  surface TEXT PRIMARY KEY,
+  is_on   INTEGER NOT NULL DEFAULT 0,
+  since   INTEGER,
+  reason  TEXT
+);
+
 -- One row per admitted chatops turn (chatops/turn-cap.ts), for the per-member daily cap. The
 -- platform message/interaction id is the key, so a redelivered message never counts twice.
 -- day is the calendar date in the process's TZ; older days are pruned on insert.

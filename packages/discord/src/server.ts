@@ -9,7 +9,7 @@ import {
   type PendingProposal, type ProposedLiveSession, threadTitle, makeOpenAISpeak, makeOpenAITranscribe,
   MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeTurnCap, makeChunkGroups,
   localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand,
-  parseRoutineCommand, parseChatterCommand, SproutRunProposalStore, type Role, parentSproutTrigger, processParentPort,
+  parseRoutineCommand, parseChatterCommand, parseAwayCommand, SproutRunProposalStore, type Role, parentSproutTrigger, processParentPort,
   sproutRunFacts, recordDestination, forgetDestination, sharedBotDeps,
 } from "@bean/core";
 import {
@@ -146,7 +146,8 @@ const placeOf = (channel: TextBasedChannel): ConversationPlace =>
 // in one line, so they never open a session thread. Chatty/mute/unmute reuse core's parser.
 // `live-session` is absent on purpose: its card and session get a thread, never the channel.
 const KEYWORD_RE = /^\/*(?:(?:cancel|new|stop|drivers|whoami|admins|usage|sprouts|routines)$|(?:add|remove)-admin\b|(?:enable|disable)\s)/i;
-const isKeywordCommand = (text: string): boolean => KEYWORD_RE.test(text) || parseChatterCommand(text) !== undefined;
+const isKeywordCommand = (text: string): boolean =>
+  KEYWORD_RE.test(text) || parseChatterCommand(text) !== undefined || parseAwayCommand(text) !== undefined;
 
 // A thread Bean opened is a session: every message in it is addressed to Bean. The Discord
 // API's ownerId survives restarts, so no local record of owned threads is needed.
@@ -336,6 +337,7 @@ client.on("messageCreate", async (message) => {
     const chatterCmd = parseChatterCommand(text);
     const coreCommand = !hasAudio &&
       (cmd === "cancel" || cmd === "new" || cmd === "drivers" || parseRoleCommand(text) !== undefined || parseRoutineCommand(text) !== undefined ||
+        parseAwayCommand(text) !== undefined ||
         // A DM mute/unmute is a model turn in bot.ts (the Mac's volume), so it counts there.
         (chatterCmd !== undefined && (!isDm || chatterCmd.kind === "chatty" || chatterCmd.kind === "memory")) ||
         /^\/?live-session\b/i.test(text));

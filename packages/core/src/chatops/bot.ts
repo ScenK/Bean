@@ -56,6 +56,7 @@ import {
   type Capability, type Role, type Roles,
 } from "./roles.js";
 import { makeAmbientCapture, type AmbientLine } from "./ambient-capture.js";
+import { awayRefusal, awayReminder, parseAwayCommand, runAwayCommand, type Away } from "./away.js";
 import { NOT_CHATTY, formatMuteEnd, makeChimeIn, parseChatterCommand, type Chatter, type ChatterCommand, type ChimeInFx } from "./chatter.js";
 
 /** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
@@ -258,6 +259,9 @@ export interface TeamsBotDeps {
   /** Per-channel chime-in setting and mute (`chatty on|off|status`, `quiet 30m`, `unmute`).
    * Absent = those words are ordinary turns. */
   chatter?: Chatter;
+  /** The owner's away mode on this surface (`away on|off|status`, owner's real DM only, #903).
+   * Absent = those words are ordinary turns. */
+  away?: Away;
   routines?: {
     transport: "discord" | "teams";
     load: () => Promise<Routine[]>;
@@ -1432,6 +1436,14 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
       }
       return true;
     }
+    const awayCmd = deps.away ? parseAwayCommand(msg.text) : undefined;
+    if (deps.away && awayCmd) {
+      // Owner + real DM only (a Teams targeted `/` pick isn't `direct`). Everyone else hears one
+      // fixed line that never reveals the state. Never a model call.
+      const ok = msg.direct && can(speakerRole(msg).role, "away");
+      await fx.reply(ok ? runAwayCommand(deps.away, awayCmd, Date.now()) : awayRefusal(deps.roles.ownerName));
+      return true;
+    }
     const chatterCmd = deps.chatter ? parseChatterCommand(msg.text) : undefined;
     // In a DM, mute/unmute stay model turns (the owner may mean the Mac's volume).
     if (deps.chatter && chatterCmd && (chatterCmd.kind === "chatty" || chatterCmd.kind === "memory" || !msg.direct)) {
@@ -1755,7 +1767,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
             }
           }
           // `new` too: a typed reset clears context like Discord's native /new; the session keeps running.
-          if (cmd === "stop" || cmd === "drivers" || cmd === "new") {
+          if (cmd === "stop" || cmd === "drivers" || cmd === "new" || (deps.away && parseAwayCommand(msg.text))) {
             await onCommand(msg, fx);
             return;
           }
@@ -1946,7 +1958,8 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         });
         if (result.reply) {
           deps.conversations.append(msg.conversationId, { role: "assistant", content: result.reply });
-          await fx.reply(result.reply);
+          // The owner talking to Bean while away here: a reminder, kept out of history.
+          await fx.reply(isOwner && deps.away?.get().on ? `${result.reply}\n\n${awayReminder(deps.away)}` : result.reply);
         }
         // Drains (splices) the collector so a later pass — the chat-target follow-up below
         // shares this same tool instance — never re-sends already-delivered images.

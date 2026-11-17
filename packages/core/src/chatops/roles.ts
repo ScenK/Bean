@@ -24,6 +24,8 @@ const NEEDS = {
   runRoutines: "owner",
   // Posting to a named destination from the owner's DM (propose_send and its card, #689).
   send: "owner",
+  // `away on|off|status` (#903): the owner, and only in their real DM (bot.ts checks `direct`).
+  away: "owner",
   systemControl: "owner", liveSession: "owner", skillWrites: "owner", routineWrites: "owner", manageAdmins: "owner",
 } as const satisfies Record<string, Role>;
 export type Capability = keyof typeof NEEDS;

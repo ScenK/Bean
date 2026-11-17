@@ -21,6 +21,7 @@ import { parentActivitySink } from "./activity.js";
 import type { TeamsBotDeps } from "./bot.js";
 import { ConversationCatalog, ownerSubjectIds } from "./catalog.js";
 import { makeChatter } from "./chatter.js";
+import { makeAway } from "./away.js";
 import { NoteArchiveProposalStore } from "./note-archive-proposals.js";
 import { NoteProposalStore } from "./note-proposals.js";
 import { RoutineProposalStore } from "./routine-proposals.js";
@@ -41,7 +42,7 @@ export type SharedBotDeps = Pick<TeamsBotDeps,
   | "skillProposals" | "saveSkill"
   | "appendMemories" | "deleteMemories" | "shareMemory" | "autoMemoryEnabled"
   | "systemControlsEnabled" | "webSearchEnabled" | "imageGen"
-  | "catalog" | "chatter" | "reminders" | "send"
+  | "catalog" | "chatter" | "away" | "reminders" | "send"
 > & {
   routines: Omit<NonNullable<TeamsBotDeps["routines"]>, "recipients" | "sprouts">;
 };
@@ -97,6 +98,7 @@ export function sharedBotDeps(opts: {
     imageGen: { generate: makeOpenAIImageGen(config.openaiApiKey), model: config.imageModel, imagesDir: imagesDir(dir) },
     catalog: new ConversationCatalog(db, transport),
     chatter: makeChatter({ dbPath: db, surface: transport }),
+    away: makeAway({ dbPath: db, surface: transport }),
     // Fired by the desktop app's reminder loop into the outbox; each bot's drain delivers them.
     reminders: { file: remindersFile(dir), transport },
     // Owner-DM sends by name (#689): this surface's destinations, delivered by its own outbox drain.
