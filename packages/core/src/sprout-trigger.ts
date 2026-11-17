@@ -75,6 +75,7 @@ export function sproutFinishText(name: string, status: RunStatus | "interrupted"
 
 /** Run or check a sprout for a chat, the result going to `origin` (`channel` absent = the
  * owner's DM; `actor` = who tapped). What a bot's `routines.sprouts.trigger` is; the scheduler
- * host records the dispatch (`withDispatch`, dispatch-store.ts). */
-export type SproutTrigger = (name: string, action: "run" | "check", origin: SproutOrigin) => Promise<TriggerResult>;
-export interface SproutOrigin { channel?: string; actor?: string }
+ * host records the dispatch (`withDispatch`, dispatch-store.ts) and names it by `jobId`. */
+export type SproutTrigger = (name: string, action: "run" | "check", origin: SproutOrigin) => Promise<TriggerResult & { jobId?: string }>;
+/** `keepBrief: false` = an off-the-record desktop chat: the dispatch never stores the run's brief. */
+export interface SproutOrigin { channel?: string; actor?: string; keepBrief?: boolean }

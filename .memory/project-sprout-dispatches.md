@@ -18,8 +18,18 @@ chat thread id), actor, sprout, optional todo id, run ids, terminal status, brie
   next holder's start releases (so `deliver` must be idempotent per job id). Chatops hand-off is
   `enqueueDispatchNotice`: outbox message id = job id (a repeat rewrites the still-queued file; a
   `.sending` one is skipped); one already sent can repeat — the outbox's own at-least-once.
-  Runs at start, after every run's digest, and at each dispatch's end. Desktop rows return false
-  until #921 wires the loopback.
+  Runs at start, after every run's digest, and at each dispatch's end.
+- **Desktop chats (#921).** A sprout card's Run is `chatSproutRun` (host `chat-sessions.ts`
+  `sproutRun`): lease holder only, answers at admission with the job id (`withDispatch` returns
+  `jobId`), conversation = the chat's thread id (an off-the-record chat sends a per-chat UUID
+  that's never saved; `keepBrief: false`). Hand-off = `deliverSprout`: a mount-tagged `sprout`
+  push to the chat that started it (in-memory thread → mount, for unpinned threads) or the chat
+  that has the thread pinned; no chat → false (owed) while `desktop_chats` has the thread, else
+  dropped (true). A restore is the other half: `threadGet` returns the thread's dispatches
+  (`sprouts`; closed ones marked delivered), so a running card (saved with its `jobId`) settles
+  from the real row even if a push was lost. The renderer settles the card and loops
+  `[sprout result for "…"]` back through `queueIfBusy` once per job (a settled card ignores
+  repeats); a running sprout card is chat work (stays mounted). No Stop on the card.
 - `keep_brief = 0` (incognito desktop chat) → `brief` stays NULL. Delivered rows are pruned after
   30 days at start.
 - **The chatops notice is chat context (#920).** `enqueueDispatchNotice` posts the finish line +

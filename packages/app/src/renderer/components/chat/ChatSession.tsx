@@ -9,7 +9,7 @@ import {
 } from "./agent-mode.js";
 import { resolveSlash, terminalDestination } from "./slash-commands.js";
 import type { TabShortcut } from "./TerminalPane.js";
-import { continuedTo, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, threadTitle } from "./chat-thread.js";
+import { applySproutEnd, continuedTo, normalizeForSave, pdfAskAgain, restoredPdf, restoreItems, settleRestoredSprouts, threadTitle } from "./chat-thread.js";
 import { ContinueDiscord } from "./ContinueDiscord.js";
 import { withSaveAck } from "./ChatSidebar.js";
 import { composePrompt } from "@bean/core/prompt";
@@ -19,7 +19,7 @@ import type {
   AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { ChatDrop } from "../../../channels.js";
-import type { DelegateEvent, LiveEvent, LiveReceipt, LiveStartResult } from "@bean/host";
+import type { DelegateEvent, LiveEvent, LiveReceipt, LiveStartResult, SproutEvent } from "@bean/host";
 import type { InterruptedRunNotice } from "../../../ipc.js";
 import type { CloseTurn } from "@bean/host";
 
@@ -82,6 +82,10 @@ export function markDelegateStarting(items: ChatItem[], id: string): ChatItem[] 
 export function hasActiveDelegates(items: ChatItem[], pendingStarts: number): boolean {
   return pendingStarts > 0 || items.some((it) => it.kind === "delegate" && (it.state === "starting" || it.state === "running"));
 }
+
+/** A sprout card still running (its start in flight, or the run admitted) is work: its chat stays
+ * mounted, so the result turn lands there (#921). */
+export const hasRunningSprouts = (items: readonly ChatItem[]): boolean => items.some((it) => it.kind === "sprout" && it.state === "running");
 
 export function addDelegateProposal(items: ChatItem[], proposal: ProposedDelegate, id: string): ChatItem[] {
   return [...items, { kind: "delegate", id, proposal, state: "pending", tail: [] }];
@@ -160,6 +164,8 @@ export function leaveTitle(t: ChatTasks): string | undefined {
 export interface ChatSessionApi {
   mountId: string;
   delegateEvent: (e: DelegateEvent) => void;
+  /** A sprout run this chat started has ended. */
+  sproutEvent: (e: SproutEvent) => void;
   liveEvent: (e: LiveEvent) => void;
   /** The thread this chat writes, once it has one. */
   threadId: () => string | undefined;
@@ -278,6 +284,8 @@ export function ChatSession({
   // real change writes and viewing a chat never bumps it. `flushRef` = write on the next render.
   const threadRef = useRef<{ id: string; title: string } | undefined>(undefined);
   const unsavableRef = useRef(false);
+  // An off-the-record chat has no thread: its sprout runs name this one, known only to main's memory.
+  const offRecordThreadRef = useRef(crypto.randomUUID());
   const savedRef = useRef<string | undefined>(undefined);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const flushRef = useRef(false);
@@ -373,6 +381,8 @@ export function ChatSession({
   const pendingDelegateStartsRef = useRef(new Map<string, Promise<string>>());
   const delegateTaskIdsRef = useRef(new Map<string, string>());
   const pendingDelegateEventsRef = useRef(new Map<string, DelegateEvent[]>());
+  // A sprout run's end that beat its start's answer (the card has no job id yet): applied with it.
+  const pendingSproutEndsRef = useRef(new Map<string, SproutEvent>());
   // sendMessage is reached via sendRef from async callbacks, so it reads the linked note through a
   // ref too — state alone would be a stale closure there.
   const linkedNoteRef = useRef<LinkedNote | undefined>(undefined);
@@ -466,7 +476,9 @@ export function ChatSession({
       }
       threadRef.current = { id: t.id, title: t.title };
       onActive(t.id);
-      const restored = restoreItems(t.items);
+      // Running sprout cards settle from main's record of their runs (their results loop back below).
+      const sprouts = settleRestoredSprouts(restoreItems(t.items), t.sprouts);
+      const restored = sprouts.items;
       // PDF bytes are never saved: ask for the file again. Part of the baseline, so viewing still
       // never writes; restoredPdf skips the ask once a later save has kept it.
       const pdfName = restoredPdf(restored);
@@ -479,7 +491,9 @@ export function ChatSession({
         itemsRef.current = [...itemsRef.current, ...late];
         flushRef.current = true;
       }
+      if (sprouts.changed) flushRef.current = true;
       setItems(itemsRef.current);
+      for (const lb of sprouts.loopbacks) void sendRef.current(lb.text, lb.display, true, undefined, lb.source);
     }, (err: unknown) => addStatus(`Couldn't open that chat: ${err instanceof Error ? err.message : String(err)}`, "error"));
   }, []);
 
@@ -1117,7 +1131,8 @@ export function ChatSession({
     setItems((prev) => prev.map((it) => (it.id === id && it.kind === "todo" ? { ...it, state: "dismissed" } : it)));
   };
 
-  // Triggers exactly the action frozen on the card; Run now resolves only when the run ends.
+  // Triggers exactly the action frozen on the card. A run answers at admission (#921): the card keeps
+  // its job id and settles when the run's end is pushed here, its result looped back as a turn.
   const triggerSprout = async (id: string): Promise<void> => {
     const item = itemsRef.current.find((it): it is Extract<ChatItem, { kind: "sprout" }> => it.kind === "sprout" && it.id === id);
     if (!item || item.state !== "pending") return;
@@ -1128,12 +1143,25 @@ export function ChatSession({
     try {
       if (plan.action === "check") settle(sproutCheckText(await window.bean.routinesCheckNow(plan.routine), plan.queuesNew));
       else {
-        const res = await window.bean.routinesRunNow(plan.routine);
-        settle(!res.started ? res.reason ?? "Couldn't start"
-          : res.stopped ? "Stopped"
-          : res.status === "failed" ? "Failed"
-          : res.status === "needs-attention" ? "Needs attention"
-          : "Finished");
+        // The run's origin is this chat's thread: give an untitled chat one now, so it's in history.
+        if (!threadRef.current && !unsavableRef.current) {
+          threadRef.current = { id: crypto.randomUUID(), title: threadTitle(plan.actionLine) };
+          onActive(threadRef.current.id);
+        }
+        const res = await window.bean.chatSproutRun(plan.routine, threadRef.current?.id ?? offRecordThreadRef.current, mountId);
+        const jobId = res.jobId;
+        if (!jobId) { settle(res.reason ?? "Couldn't start"); return; }
+        const early = pendingSproutEndsRef.current.get(jobId);
+        pendingSproutEndsRef.current.delete(jobId);
+        flushRef.current = true;
+        setItems((prev) => {
+          const next = prev.map((it) => (it.id === id && it.kind === "sprout" ? { ...it, jobId } : it));
+          return early ? applySproutEnd(next, early).items : next;
+        });
+        if (early) {
+          const lb = applySproutEnd([{ ...item, state: "running", jobId }], early).loopback;
+          if (lb) void sendRef.current(lb.text, lb.display, true, undefined, lb.source);
+        }
       }
     } catch (err) {
       settle(err instanceof Error ? err.message : String(err));
@@ -1212,6 +1240,19 @@ export function ChatSession({
     }
   };
 
+  // A sprout run's end (main's `sprout` push): the card settles and the result loops back once. An
+  // end for a job no card holds yet waits for its start's answer (triggerSprout).
+  const applySproutEvent = (e: SproutEvent): void => {
+    const { loopback } = applySproutEnd(itemsRef.current, e);
+    if (!loopback) {
+      if (!itemsRef.current.some((it) => it.kind === "sprout" && it.jobId === e.jobId)) pendingSproutEndsRef.current.set(e.jobId, e);
+      return;
+    }
+    flushRef.current = true;
+    setItems((prev) => applySproutEnd(prev, e).items);
+    void sendRef.current(loopback.text, loopback.display, true, undefined, loopback.source);
+  };
+
   const applyDelegateEvent = (e: DelegateEvent): void => {
     const { loopback } = applyDelegateEventToItems(itemsRef.current, e);
     if (!itemsRef.current.some((it) => it.kind === "delegate" && it.taskId === e.taskId)) {
@@ -1249,7 +1290,8 @@ export function ChatSession({
   const hasWork = (): boolean => (threadRef.current !== undefined && !unsavableRef.current && (composerRef.current?.value.trim() ?? "") !== "")
     || busyRef.current || queuedSendsRef.current.length > 0 || liveRef.current !== undefined
     || continuingRef.current !== undefined
-    || shellRef.current > 0 || hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size);
+    || shellRef.current > 0 || hasActiveDelegates(itemsRef.current, pendingDelegateStartsRef.current.size)
+    || hasRunningSprouts(itemsRef.current);
   const tasks = async (): Promise<ChatTasks> => {
     const terminal = shellRef.current > 0 ? await window.bean.terminalRunning(mountId).catch(() => []) : [];
     return {
@@ -1261,7 +1303,7 @@ export function ChatSession({
   };
   // The sidebar spinner follows the same work, from state — a live session only while its turn runs
   // (the green bar says it's open; bar without spinner = waiting for you).
-  const working = busy || live?.busy === true || hasActiveDelegates(items, 0);
+  const working = busy || live?.busy === true || hasActiveDelegates(items, 0) || hasRunningSprouts(items);
   useEffect(() => onWorking(working ? threadRef.current?.id : undefined), [working]);
   const isLive = live !== undefined;
   // What Stop / Esc Esc ends: the live turn first (loopbacks and skill prompts can run a Bean turn
@@ -1368,6 +1410,7 @@ export function ChatSession({
   sessions.set(mountId, {
     mountId,
     delegateEvent: applyDelegateEvent,
+    sproutEvent: applySproutEvent,
     liveEvent: onLiveEvent,
     threadId: () => threadRef.current?.id,
     renamed: (title) => { if (threadRef.current) threadRef.current = { ...threadRef.current, title }; },

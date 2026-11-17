@@ -358,6 +358,7 @@ export function registerIpc(electronIpc: IpcLike, deps: RegisterDeps): void {
   ipcMain.on(IPC.launch, (_e, req: LaunchRequest) => launchHandler(req));
   ipcMain.handle(IPC.delegateStart, (e, req: DelegateStartRequest, mountId: unknown) => chats.delegateStart(e.sender.id, mountId, req));
   ipcMain.on(IPC.delegateCancel, (_e, taskId: string) => host.cancelDelegate(taskId));
+  ipcMain.handle(IPC.chatSproutRun, (e, name: unknown, thread: unknown, mountId: unknown) => chats.sproutRun(e.sender.id, mountId, name, thread));
   ipcMain.handle(IPC.liveStart, (e, req: unknown, mountId: unknown) => chats.liveStart(e.sender.id, mountId, req));
   ipcMain.handle(IPC.liveSend, (e, sessionId: unknown, text: unknown, mountId: unknown) => chats.liveSend(e.sender.id, mountId, sessionId, text));
   ipcMain.on(IPC.liveStop, (e, sessionId: unknown, mountId: unknown) => chats.liveStop(e.sender.id, mountId, sessionId));

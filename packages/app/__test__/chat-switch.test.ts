@@ -183,6 +183,61 @@ describe("ChatWindow switches chats in place", () => {
     expect(bean.chatRelease!.mock.calls.map((c) => c[0])).toEqual([mounts("chatAttach")[1]]);
   });
 
+  it("a sprout card answers at admission; the chat stays mounted and the result turn lands there, after a busy turn (#921)", async () => {
+    const plan = { routine: "digest", action: "run", actionLine: "Runs its steps once now", resultsTo: "a note", paused: false, queuesNew: false };
+    bean.chatSproutRun = vi.fn(async () => ({ jobId: "job1" }));
+    bean.chat!.mockResolvedValueOnce({ reply: "want me to?", model: "m", sproutRun: plan });
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    const first = mounts("chatAttach")[0]!;
+    await send("run digest");
+    await clickEl(button("Run", shownChat()));
+    const [, thread, mount] = bean.chatSproutRun.mock.calls[0]!;
+    expect(mount).toBe(first);
+    expect(thread).toMatch(/^[0-9a-f-]{36}$/);
+    expect(button("Running…", shownChat())).toBeDefined(); // answered; still running, no Stop
+
+    await clickEl(otherRow());
+    expect(bean.chatRelease).not.toHaveBeenCalled(); // a running sprout is work: kept mounted
+    expect(rowOf("run digest")!.querySelector(".bean-chat-sidebar-spinner")).not.toBeNull();
+
+    // Back in A, a Bean turn is running when the result arrives: it runs after that turn.
+    await clickEl(openRow("run digest"));
+    let reply: (r: unknown) => void = () => {};
+    bean.chat!.mockImplementationOnce(() => new Promise((r) => { reply = r; }));
+    await send("meanwhile");
+    await act(async () => { listeners.onSproutEvent!({ mountId: first, jobId: "job1", status: "ok", text: "digest finished ✓" }); });
+    await flush();
+    expect(bean.chat!.mock.calls.at(-1)![0].message).toBe("meanwhile");
+    bean.chat!.mockResolvedValueOnce({ reply: "the digest went out", model: "m" });
+    await act(async () => { reply({ reply: "sure", model: "m" }); });
+    await flush();
+    expect(bean.chat!.mock.calls.at(-1)).toEqual([expect.objectContaining({ source: "loopback", message: expect.stringContaining('[sprout result for "digest"]: digest finished ✓') }), first]);
+    expect(shownChat().textContent).toContain("the digest went out");
+    expect(shownChat().textContent).toContain("Finished");
+    // A repeated push loops nothing back again.
+    await act(async () => { listeners.onSproutEvent!({ mountId: first, jobId: "job1", status: "ok", text: "digest finished ✓" }); });
+    await flush();
+    expect(bean.chat!.mock.calls.filter((c) => c[0].source === "loopback")).toHaveLength(1);
+  });
+
+  it("a restored chat's running sprout card shows how the run really ended and loops it back (#921)", async () => {
+    const plan = { routine: "digest", action: "run", actionLine: "Runs its steps once now", resultsTo: "a note", paused: false, queuesNew: false };
+    bean.chatThreadGet!.mockResolvedValueOnce({
+      id: OTHER, title: "other chat", noteSlug: null,
+      items: [{ kind: "sprout", id: "item-1", plan, state: "running", jobId: "job1" }],
+      sprouts: [{ jobId: "job1", status: "interrupted", text: "digest was interrupted ✗" }],
+    });
+    bean.chat!.mockResolvedValueOnce({ reply: "it was cut off by a restart", model: "m" });
+    await act(async () => { render(h(ChatWindow, {}), root); });
+    await flush();
+    await clickEl(otherRow());
+    await flush();
+    expect(shownChat().textContent).toContain("Interrupted — Bean restarted before it finished");
+    expect(bean.chat!.mock.calls.at(-1)![0]).toMatchObject({ source: "loopback", message: expect.stringContaining("digest was interrupted ✗") });
+    expect(shownChat().textContent).toContain("it was cut off by a restart");
+  });
+
   it("a hidden chat that went idle is evicted at the next switch", async () => {
     await act(async () => { render(h(ChatWindow, {}), root); });
     await flush();

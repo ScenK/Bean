@@ -1,8 +1,8 @@
-import { stageImages, type ChatRequest, type ConverseResult } from "@bean/core";
+import { dispatchContext, stageImages, type ChatRequest, type ConverseResult, type Dispatch, type SproutOrigin, type TriggerResult } from "@bean/core";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildChatMounts, type buildChatHandler, type buildChatThreadHandlers } from "./chat.js";
+import { buildChatMounts, THREAD_ID, type buildChatHandler, type buildChatThreadHandlers, type SproutEvent, type SproutOutcome } from "./chat.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { createLiveTasks, LiveOwner } from "./live-tasks.js";
 import { toTranscript, type buildMemoryHandlers, type CloseTurn } from "./memory.js";
@@ -25,7 +25,15 @@ export interface ChatSessionsDeps {
   refuseStart?: () => string | undefined;
   /** Counts an admitted start as busy until it settles: its async checks run before it shows as a job (#837). */
   track?: <T>(start: Promise<T>) => Promise<T>;
+  /** Runs a sprout for a chat, recording its dispatch (`withDispatch`, surface desktop): `jobId`
+   * names it. Absent = sprouts don't run from chats here. */
+  sproutRun?: (name: string, origin: SproutOrigin) => Promise<TriggerResult & { jobId?: string }>;
+  /** A restored thread's sprout dispatches, the closed ones marked delivered (#921). */
+  sproutOutcomes?: (thread: string) => SproutOutcome[];
 }
+
+/** A chat sprout run that was admitted but couldn't be recorded: it runs on, with no result turn. */
+export const SPROUT_UNRECORDED = "Started — see the Dashboard for how it went";
 
 const NOT_LIVE = "Agent sessions run from the chat window.";
 // ponytail: the newest turns kept per chat for a host-run close catch-up; a longer chat's oldest
@@ -53,9 +61,13 @@ export function createChatSessions(deps: ChatSessionsDeps) {
   // close catch-up a lost shell can't send itself (#808). A turn per-turn capture handled carries its
   // id, so the catch-up treats it as context; nothing typed = nothing to extract.
   const transcripts = new Map<string, { turns: CloseTurn[]; typed: boolean }>();
+  // Sprout runs started here (#921): their thread → the chat that started it, so its result reaches
+  // that chat even when the thread isn't pinned (not saved yet, or off the record). Dropped at release.
+  const sproutThreads = new Map<string, string>();
   const release = (client: ClientId, mountId: unknown): void => {
     if (!mounts.release(client, mountId)) return;
     const id = mountId as string;
+    for (const [thread, k] of sproutThreads) if (k === id) sproutThreads.delete(thread);
     beanTurns.get(id)?.ctl.abort();
     transcripts.delete(id);
     deps.memory.release(id);
@@ -157,7 +169,45 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       try { deps.threads.setIncognito(k, on === true); } catch (err) { console.error("chat history delete failed:", err); }
     },
     threadSave: (client: ClientId, mountId: unknown, req: unknown) => deps.threads.save(key(client, mountId), req),
-    threadGet: (client: ClientId, mountId: unknown, id: unknown) => deps.threads.get(key(client, mountId), id),
+    // A restored thread carries its sprout runs' outcomes: its running cards settle (and loop the
+    // result back) from them, however long the chat was closed.
+    threadGet: (client: ClientId, mountId: unknown, id: unknown) => {
+      const t = deps.threads.get(key(client, mountId), id);
+      if ("missing" in t || !deps.sproutOutcomes) return t;
+      let sprouts: SproutOutcome[] = [];
+      try { sprouts = deps.sproutOutcomes(t.id); } catch (err) { console.error("bean: reading a chat's sprout runs failed", err); }
+      return sprouts.length > 0 ? { ...t, sprouts } : t;
+    },
+    /** A sprout card's Run (#921): answers at admission with the run's job id (or why it didn't
+     * start). Its end reaches the chat holding `thread` as a `sprout` push (`deliverSprout`). */
+    sproutRun: async (client: ClientId, mountId: unknown, name: unknown, thread: unknown): Promise<{ jobId?: string; reason?: string }> => {
+      const k = key(client, mountId);
+      if (typeof name !== "string" || !name) throw new Error("sprout name must be a string");
+      if (typeof thread !== "string" || !THREAD_ID.test(thread)) throw new Error("chat thread id must be a UUID");
+      const pinned = deps.threads.pinnedOf(k);
+      const other = deps.threads.holderOf(thread) ?? sproutThreads.get(thread);
+      if ((pinned !== undefined && pinned !== thread) || (other !== undefined && other !== k)) throw new Error("this chat saves a different chat thread");
+      const refused = deps.refuseStart?.();
+      if (refused) return { reason: refused };
+      if (!deps.sproutRun) return { reason: "Sprouts don't run from chats on this Bean." };
+      sproutThreads.set(thread, k);
+      const t = await deps.sproutRun(name, { channel: thread, keepBrief: !deps.memory.isIncognito(k) });
+      if (t.status === "refused") return { reason: t.reason };
+      return t.status === "started" && t.jobId ? { jobId: t.jobId } : { reason: SPROUT_UNRECORDED };
+    },
+    /** A desktop dispatch's hand-off: pushed to the chat that holds its thread. False = no open chat
+     * has it yet (it's delivered when that thread is restored); a thread that no chat holds and
+     * history doesn't have (off the record, deleted) can never take it, so it's dropped (true). */
+    deliverSprout: (d: Dispatch): boolean => {
+      const thread = d.conversation;
+      if (thread === undefined || d.status === undefined) return true;
+      const started = sproutThreads.get(thread);
+      const k = started !== undefined && mounts.holder(started) !== undefined ? started : deps.threads.holderOf(thread);
+      if (k === undefined) return !deps.threads.exists(thread);
+      const event: SproutEvent = { mountId: k, jobId: d.id, status: d.status, text: dispatchContext(d) };
+      deps.push(k, "sprout", event);
+      return true;
+    },
     /** The chat is closing: its typed transcript goes to memory in the background. */
     rememberOnClose: (client: ClientId, transcript: unknown, opts: unknown): void => {
       const o = opts as { incognito?: unknown; rejected?: unknown; mountId?: unknown } | null;

@@ -62,6 +62,8 @@ export const IPC = {
   delegateStart: "bean:delegate-start",
   delegateCancel: "bean:delegate-cancel",
   delegateEvent: "bean:delegate-event",
+  chatSproutRun: "bean:chat-sprout-run",
+  sproutEvent: "bean:sprout-event",
   liveStart: "bean:live-start",
   liveSend: "bean:live-send",
   liveStop: "bean:live-stop",

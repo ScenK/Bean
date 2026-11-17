@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   addTodo, claimTodo, closeDispatch, deliverDispatches, dispatchNotice, enqueueDispatchNotice, getDispatch, interruptOpenDispatches,
-  openDispatch, recoverInterruptedTodos, todoDispatchOrigins, undeliveredDispatches, updateTodoStatus, withDispatch,
+  markDispatchDelivered, openDispatch, recoverInterruptedTodos, threadDispatches, todoDispatchOrigins, undeliveredDispatches, updateTodoStatus, withDispatch,
   type Dispatch, type TriggerOutcome,
 } from "../src/index.js";
 import { closeDb, openDb } from "../src/db.js";
@@ -176,6 +176,38 @@ describe("dispatch-store", () => {
     await delivered;
     expect(s.sent).toHaveLength(1);
     expect(s.sent[0]).toMatchObject({ surface: "teams", conversation: "c1", actor: "u1", routine: "digest", runIds: ["r1"], brief: "done" });
+  });
+
+  it("withDispatch names the job it opened; an off-the-record desktop origin keeps no brief", async () => {
+    let finish!: (o: TriggerOutcome) => void;
+    const done = new Promise<TriggerOutcome>((r) => { finish = r; });
+    let swept!: () => void;
+    const closed = new Promise<void>((r) => { swept = r; });
+    const asked: unknown[] = [];
+    const trigger = withDispatch(async (...args) => { asked.push(args); return { status: "started", done }; }, {
+      file, surface: "desktop", deliver: async () => swept(),
+    });
+    const t = await trigger("digest", "run", { channel: "thread-1", keepBrief: false });
+    expect(asked).toEqual([["digest", "run", { brief: true }]]); // a desktop origin is no chat sink
+    expect(t.jobId).toBeDefined();
+    expect(getDispatch(file, t.jobId!)).toMatchObject({ surface: "desktop", conversation: "thread-1", routine: "digest" });
+    finish({ status: "ok", runs: 1, ok: 1, needsAttention: 0, failed: 0, perRun: [{ id: "r1", status: "ok", brief: "secret" }] });
+    await closed;
+    expect(getDispatch(file, t.jobId!)).toMatchObject({ status: "ok" });
+    expect(getDispatch(file, t.jobId!)?.brief).toBeUndefined();
+  });
+
+  it("threadDispatches lists a desktop thread's runs, open ones too; markDispatchDelivered takes a closed one off the sweep", async () => {
+    const open = openDispatch(file, { surface: "desktop", conversation: "t1", routine: "a" });
+    const ended = openDispatch(file, { surface: "desktop", conversation: "t1", routine: "b" });
+    openDispatch(file, { surface: "desktop", conversation: "t2", routine: "c" });
+    openDispatch(file, { surface: "teams", conversation: "t1", routine: "d" });
+    closeDispatch(file, ended, { status: "failed" });
+    expect(threadDispatches(file, "t1").map((d) => [d.id, d.status])).toEqual([[open, undefined], [ended, "failed"]]);
+    markDispatchDelivered(file, open); // still running: nothing to mark
+    markDispatchDelivered(file, ended);
+    expect(getDispatch(file, open)?.deliveredAt).toBeUndefined();
+    expect(undeliveredDispatches(file)).toEqual([]);
   });
 
   it("withDispatch records nothing for a refused trigger", async () => {

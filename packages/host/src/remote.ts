@@ -150,6 +150,7 @@ export const REMOTE_OPS: Readonly<Record<string, RemoteOp>> = {
   chatIncognito: op((h, c, on, mountId) => h.chat.incognito(c, mountId, on), bool, str),
   rememberOnClose: op((h, c, transcript, opts) => h.chat.rememberOnClose(c, transcript, opts), arr(turn), closeOpts),
   delegateStart: op((h, c, req, mountId) => h.chat.delegateStart(c, mountId, req), delegateStart, str),
+  chatSproutRun: op((h, c, name, thread, mountId) => h.chat.sproutRun(c, mountId, name, thread), str, str, str),
   delegateCancel: op((h, _c, taskId) => h.cancelDelegate(taskId), str),
   liveStart: op((h, c, req, mountId) => h.chat.liveStart(c, mountId, req), liveStart, str),
   liveSend: op((h, c, sessionId, text, mountId) => h.chat.liveSend(c, mountId, sessionId, text), str, str, str),

@@ -8,7 +8,7 @@ import {
   loadConfig, saveConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
   makeOpenAIConverse, makeOpenAIImageGen, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory,
   deleteMemories, extractMemories, maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, holdSchedulerLease, enqueueOutbox,
-  answerRoutineTrigger, sproutRunFacts, withDispatch, enqueueDispatchNotice, loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote,
+  answerRoutineTrigger, sproutRunFacts, withDispatch, enqueueDispatchNotice, threadDispatches, markDispatchDelivered, dispatchContext, type Dispatch, loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote,
   loadNoteHistory, saveNoteImage, loadNoteImage, detectClis, loginShellPath, resolveCliPath, deliver, loadRoutines, saveRoutine,
   deleteRoutine, loadRoutineStates, runDelegate, killAllDelegates, killAllCommands, ROUTINE_STEP_TIMEOUT_MS, addTodo, listTodos,
   listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo, deleteTodosForRoutine, sweepDeadRuns,
@@ -285,9 +285,9 @@ export async function createHost(deps: HostDeps) {
     },
     // Headless: rebase each to its next slot (still no catch-up), or the scheduler's missed guard
     // would skip it forever.
-    // A dispatch's result goes back where it was asked (#919). Desktop origins: #921's loopback.
+    // A dispatch's result goes back where it was asked (#919); a desktop chat's loops back (#921).
     deliverDispatch: async (d) => {
-      if (d.surface === "desktop") return false;
+      if (d.surface === "desktop") return deliverDesktopSprout?.(d) ?? false;
       await enqueueDispatchNotice(outboxDir(dir), { ...d, surface: d.surface });
       return true;
     },
@@ -299,24 +299,27 @@ export async function createHost(deps: HostDeps) {
     } : {}),
   });
   const routineScheduler = routines.scheduler;
+  // Set once the chat sessions exist; a sweep before then leaves desktop results owed.
+  let deliverDesktopSprout: ((d: Dispatch) => boolean) | undefined;
+  const triggerSprout = (name: string, action: "run" | "check", opts: Parameters<typeof routineScheduler.trigger>[2]) => {
+    if (action !== "run") return routineScheduler.trigger(name, action);
+    if (updating) return Promise.resolve({ status: "refused" as const, reason: UPDATING });
+    // Busy until the admitted run finishes, not just until it is admitted.
+    let finished: Promise<unknown> = Promise.resolve();
+    const admitted = routineScheduler.trigger(name, action, opts).then((t) => { if (t.status === "started") finished = t.done; return t; });
+    void track(admitted.then(() => finished)).catch(() => {});
+    return admitted;
+  };
   // A bot's sprout-run tap (#637). The host runs the scheduler, so it also records the dispatch and
   // posts the finish reply to the asking conversation, across a restart (#919). Lease holder only.
   const answerSproutTrigger = (bot: ChatopsSurface, req: RoutineTrigger): Promise<RoutineTriggerAnswer> => answerRoutineTrigger(req, {
     load: () => loadRoutines(routinesPath),
     facts: (r) => sproutRunFacts(db, r),
     held: schedulerLease.held,
-    trigger: withDispatch(
-      (name, action, opts) => {
-        if (action !== "run") return routineScheduler.trigger(name, action);
-        if (updating) return Promise.resolve({ status: "refused" as const, reason: UPDATING });
-        // Busy until the admitted run finishes, not just until it is admitted.
-        let finished: Promise<unknown> = Promise.resolve();
-        const admitted = routineScheduler.trigger(name, action, opts).then((t) => { if (t.status === "started") finished = t.done; return t; });
-        void track(admitted.then(() => finished)).catch(() => {});
-        return admitted;
-      },
-      { file: db, surface: bot, deliver: routines.deliverDispatches }),
+    trigger: withDispatch(triggerSprout, { file: db, surface: bot, deliver: routines.deliverDispatches }),
   });
+  // A desktop chat's sprout card (#921): the same recorded dispatch, its origin the chat thread.
+  const chatSproutTrigger = withDispatch(triggerSprout, { file: db, surface: "desktop", deliver: routines.deliverDispatches });
   const tools = detectTools(resolvedPath);
   const routineBuilder = createRoutineBuilder({
     loadRoutines: () => loadRoutines(routinesPath),
@@ -464,6 +467,15 @@ export async function createHost(deps: HostDeps) {
     onRelease: deps.onChatRelease,
     refuseStart,
     track,
+    // Lease holder only, like a bot's tap: the holder's start closes any other host's open dispatch.
+    sproutRun: (name, origin) => (schedulerLease.held()
+      ? chatSproutTrigger(name, "run", origin)
+      : Promise.resolve({ status: "refused" as const, reason: "Sprouts are paused on this Bean — another Bean process runs them for this data directory." })),
+    sproutOutcomes: (thread) => threadDispatches(db, thread).map((d) => {
+      if (d.status === undefined) return { jobId: d.id };
+      markDispatchDelivered(db, d.id);
+      return { jobId: d.id, status: d.status, text: dispatchContext(d) };
+    }),
     onChatTurn: (mountId) => {
       const id = `chat:${randomUUID()}`;
       chatTurnIds.set(mountId, id);
@@ -476,6 +488,8 @@ export async function createHost(deps: HostDeps) {
       };
     },
   });
+
+  deliverDesktopSprout = sessions.deliverSprout;
 
   const getConfig = (): ConfigView => ({
     openaiApiKey: runtime.getApiKey(),
