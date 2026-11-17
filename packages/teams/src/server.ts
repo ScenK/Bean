@@ -1,6 +1,6 @@
 import {
   beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir, dbFile,
-  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, outboxErrorLine, OUTBOX_MAX_ATTEMPTS,
+  detectClis, type CliName, runDelegate, killAllDelegates, drainOutbox, recoverOutbox, enqueueOutbox, outboxErrorLine, OUTBOX_MAX_ATTEMPTS,
   type OutboxMessage, outboxDir, ownerDmRefs, buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore,
   ConversationStore, maybeCompact, ProposalStore, RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink,
   parseDeskTurn, parseDeskResume, type DeskAckResult, loadCliModels, clisFile, LiveSessionProposalStore,
@@ -129,6 +129,8 @@ const bot = buildTeamsBot({
   liveSessionsEnabled: () => clis().some(isLiveCli),
   findDelegateRun: (sessionId) => findDelegateRun(dbFile(dir), sessionId),
   scratchPath,
+  // Away-mode prepares (#909): read-only plan runs, results only in bean.db.
+  awayPrepareRun: runDelegate,
   cards: teamsCards,
   roles,
   // Digests reach a channel/group chat via scopeOf's keys, or the owner's 1:1 (no channel).
@@ -187,6 +189,10 @@ async function downloadImages(a: Activity): Promise<ImageAttachment[]> {
 // before this process disappears, instead of just dying mid-run with the requester left hanging.
 process.on("SIGTERM", () => {
   runs.interruptAll(); // synchronous — see its doc comment; safe to exit right after
+  bot.interruptAwayPrepares(); // synchronous: stops a running prepare, marks it interrupted
+  // The process exits next, so a cancel's SIGKILL escalation would never fire: kill every
+  // delegate child now (codex gets a detached watchdog that outlives this process).
+  killAllDelegates();
   liveSessions.forceKillAll(); // don't orphan live `claude -p` process groups on shutdown
   process.exit(0);
 });

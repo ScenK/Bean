@@ -32,5 +32,26 @@ to Bean (non-DM), so tagging Bean **and** the owner gets the normal answer plus 
   command covers a remote core). It reads bean.db on every menu open, is independent of the bot
   process (start/stop never touches it), turns on with no reason (leaving a period already on
   alone), and off goes through `closeAwayToOwnerDm`.
+- **Suggestion (#907)**: after the away line, and only with config `webSearch` on, `awaySuggestion`
+  makes one tool-less call (built-in web search only, 30 s timeout, no retry) whose input is a fixed
+  instruction plus the fenced tagged text — never persona, memories, notes, history, the owner's
+  name or reason (tested). The post is a second message: the code-built `awaySuggestionPrefix`
+  line, then the model text clipped to 600 chars; `NO_SUGGESTION`, timeout or failure posts nothing.
+  Cap: 100 calls per surface per day in `chatops_away_suggestions` (claimed before the call).
+- **Prepare (#909)**: with a read-only CLI (claude/codex) and an executor (`awayPrepareRun`, the
+  servers pass `runDelegate`), the suggestion call also offers `prepare(project, brief)` — `project`
+  an enum of registered names + `scratch`, re-checked in code (unknown → scratch) — and runs even
+  with `webSearch` off (its text discarded). A suggestion text naming a project is dropped. Claims go
+  to `chatops_away_prepares` (1:1 with the capture key; read only by `away.ts`, tested) under
+  persisted caps (`AWAY_PREPARE_LIMITS`; over one = `not_prepared` with the reason). The claim
+  re-checks, in the same transaction, that the capture's away period is still on — a suggestion
+  that finishes after `away off` starts nothing. `away-prepare.ts`
+  runs one per surface: `mode: "plan"`, fresh, brief + tagged text fenced as data, 20-min timeout,
+  no retry; every outcome is written to the row only — never the conversation, history, cards or
+  thread session. `setOff` cancels queued + running rows (the runner polls its row every 5 s, so a
+  tray toggle in another process stops it); a timed-out or cancelled run keeps the slot until its
+  child exits. Bot start and SIGTERM mark a running row interrupted, and the servers' SIGTERM
+  handler calls `killAllDelegates()` — a cancel's SIGKILL escalation timer dies with the process.
+  The summary adds each plan's first 3 lines (inline code, clipped) and a `cd … && <resume>` receipt.
 - **Known gap**: a conversation bound to a live session bypasses ambient and addressed paths
   (every message is a steer), so tags there are not captured. Personal 1:1 chats never capture.
