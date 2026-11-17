@@ -4392,10 +4392,16 @@ describe("away suggestion (#907)", () => {
   test("a timeout or a failed call posts nothing more, without retrying", async () => {
     let calls = 0;
     const hang: TeamsBotDeps["chat"] = () => { calls++; return new Promise(() => {}); };
-    expect(await awaySuggestion({ chat: hang, model: "m", ownerName: "Scen", text: "hi", timeoutMs: 5 })).toEqual({});
+    const hung = awaySuggestion({ chat: hang, model: "m", ownerName: "Scen", text: "hi", timeoutMs: 5, projects: ["bean"] });
+    expect([await hung.text, await hung.prepare]).toEqual([undefined, undefined]);
     const fail: TeamsBotDeps["chat"] = async () => { calls++; throw new Error("500"); };
-    expect(await awaySuggestion({ chat: fail, model: "m", ownerName: "Scen", text: "hi" })).toEqual({});
-    expect(calls).toBe(2);
+    const failed = awaySuggestion({ chat: fail, model: "m", ownerName: "Scen", text: "hi", projects: ["bean"] });
+    expect([await failed.text, await failed.prepare]).toEqual([undefined, undefined]);
+    expect(calls).toBe(4); // one public and one private call each
+    // A hung private call never holds the public answer (well inside the 60 s timeout).
+    const half: TeamsBotDeps["chat"] = async (req) => req.tools.length ? new Promise(() => {}) : { content: "tip", toolCalls: [] };
+    expect(await awaySuggestion({ chat: half, model: "m", ownerName: "Scen", text: "hi", timeoutMs: 60_000, projects: ["bean"] }).text)
+      .toBe(`${PREFIX}\ntip`);
   });
 });
 
@@ -4411,7 +4417,10 @@ describe("away prepare (#909)", () => {
     const made = makeDeps({
       chat: async (req) => {
         chats.push(req);
-        return { content: o.reply ?? "NO_SUGGESTION", toolCalls: [{ name: "prepare", args: { project: o.project ?? "bean", brief: "Look into the login bug." } }] };
+        // Only the private call is offered `prepare`; the public one answers in text.
+        return req.tools.length
+          ? { content: "", toolCalls: [{ name: "prepare", args: { project: o.project ?? "bean", brief: "Look into the login bug." } }] }
+          : { content: o.reply ?? "NO_SUGGESTION", toolCalls: [] };
       },
       detectClis: () => o.clis ?? ["claude"],
       scratchPath: "/p/scratch",
@@ -4427,8 +4436,8 @@ describe("away prepare (#909)", () => {
     made.deps.away.setOn(undefined, 500);
     const bot = buildTeamsBot(made.deps);
     const posted: string[] = [];
-    const tag = (n = 1, from = "mia"): Promise<void> => bot.onAwayTag("c1",
-      { fromId: from, name: "Mia", text: `<@u1> login is broken ${n}`, at: 1_000 + n, taggedIds: ["u1"], messageId: `m${n}` },
+    const tag = (n = 1, from = "mia", text = `<@u1> login is broken ${n}`): Promise<void> => bot.onAwayTag("c1",
+      { fromId: from, name: "Mia", text, at: 1_000 + n, taggedIds: ["u1"], messageId: `m${n}` },
       async (t) => { posted.push(t); });
     // Everything anyone but the owner's DM could ever see: posts, cards, the conversation's history.
     const publicText = (): string => JSON.stringify([posted, made.deps.conversations.history("c1"), made.deps.conversations.threadSession("c1", "claude") ?? null]);
@@ -4528,13 +4537,18 @@ describe("away prepare (#909)", () => {
     expect(started).toBe(0);
   });
 
-  test("with webSearch on, the suggestion still posts, but never one naming a project", async () => {
-    const ok = prepareBot({ webSearch: true, reply: "Try clearing cookies." });
-    await ok.tag();
-    expect(ok.posted[1]).toContain("Try clearing cookies.");
-    const leak = prepareBot({ webSearch: true, reply: "The BEAN project has it." });
-    await leak.tag();
-    expect(leak.posted).toHaveLength(1);
+  test("with webSearch on, the public answer is its own call that never sees the project names", async () => {
+    const h = prepareBot({ webSearch: true, reply: "Bean's away mode starts only with `away on`." });
+    await h.tag(1, "mia", "<@u1> does bean's away mode start by itself?");
+    expect(h.posted[1]).toContain("Bean's away mode starts only");
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    expect(h.chats).toHaveLength(2);
+    const pub = h.chats.find((c) => c.tools.length === 0)!;
+    expect(pub.webSearch).toBe(true);
+    expect(JSON.stringify(pub.messages)).not.toMatch(/prepare|scratch|project/i);
+    const priv = h.chats.find((c) => c.tools.length > 0)!;
+    expect(priv).toMatchObject({ webSearch: false });
+    expect(priv.tools.map((t) => t.name)).toEqual(["prepare"]);
   });
 
   test("one runs at a time; `away off` cancels the running and the queued ones", async () => {
