@@ -26,8 +26,9 @@ returned id = logged and not saved, never the bare key. Thread (`;messageid=`) t
 and group chats follow the flag as below.
 
 `displayBody` is the separate, unconditional append path (interrupted-run notices, whose `body`
-is model-facing). The two are mutually exclusive by convention; `deliveredAppend` picks exactly
-one of them per delivery, so a message carrying both can't double-write.
+is model-facing). A sprout dispatch notice (#920) carries both — `context: true` plus a
+`displayBody` — since its saved `body` is the fenced brief; every drain branch still appends
+`body` exactly once per delivery, so a message carrying both can't double-write.
 
 Delivery-side appends go through each server's local `appendDelivered`, which also fires
 `maybeCompact` — `bot.ts` only compacts after an *inbound* turn, so a channel that merely

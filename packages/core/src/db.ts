@@ -366,6 +366,28 @@ CREATE TABLE IF NOT EXISTS watch_source (
   routine TEXT PRIMARY KEY,
   source  TEXT NOT NULL
 );
+
+-- Sprout runs dispatched from a conversation (dispatch-store.ts): where to deliver the result,
+-- across a restart. status NULL = open; delivered_at NULL on a closed row = still owed;
+-- claimed_at = a sweep is handing it off (reset at the lease holder's start).
+-- conversation NULL = a chatops owner DM; desktop = the chat thread id.
+CREATE TABLE IF NOT EXISTS sprout_dispatches (
+  id           TEXT PRIMARY KEY,
+  surface      TEXT NOT NULL,
+  conversation TEXT,
+  actor        TEXT,
+  routine      TEXT NOT NULL,
+  todo_id      TEXT,
+  run_ids      TEXT,
+  status       TEXT,
+  brief        TEXT,
+  keep_brief   INTEGER NOT NULL DEFAULT 1,
+  created_at   TEXT NOT NULL,
+  finished_at  TEXT,
+  claimed_at   TEXT,
+  delivered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS sprout_dispatches_todo ON sprout_dispatches(todo_id);
 `;
 
 const cache = new Map<string, DatabaseSync>();

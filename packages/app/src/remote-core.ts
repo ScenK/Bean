@@ -15,7 +15,7 @@ import { CHANNEL_CONTRACT, guardIpc, type IpcLike } from "./channel-contract.js"
 /** Same beat the core's watchdog expects (HEARTBEAT_TIMEOUT_MS is 30 s). */
 export const HEARTBEAT_MS = 10_000;
 const RETRY_MS = [2_000, 5_000, 10_000, 30_000];
-/** How long after a reattach a delegate start whose reply was lost waits for the core's `started`. */
+/** How long after a reattach a delegate or sprout start whose reply was lost waits for the core's `started`. */
 export const ORPHAN_START_MS = 30_000;
 
 export interface SshChild {
@@ -63,17 +63,18 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
   let beat: ReturnType<typeof setInterval> | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let nextId = 1;
-  // A delegate start, as its `started` event will name it.
-  type Start = { mountId: string; projectPath: string; instruction: string };
+  // A delegate or chat sprout start, as its `started` push will name it.
+  type Start = { kind: "delegate"; mountId: string; projectPath: string; instruction: string }
+    | { kind: "sprout"; mountId: string; name: string };
   type Settle = { resolve: (v: unknown) => void; reject: (e: Error) => void };
   const pending = new Map<number, Settle & { start?: Start }>();
-  // The renderer learns a delegate's task id only from delegateStart's reply. A drop can lose that reply
-  // after the core started the task, so an in-flight start isn't failed: it waits ("orphan") for the
-  // core's `started` event for the same chat, project and instruction — live before the drop, or in the
-  // resume replay — and resolves with its task id. Never re-sent: requests that start a process aren't.
+  // The renderer learns a delegate's task id (a sprout run's job id) only from its start's reply. A drop
+  // can lose that reply after the core started it, so an in-flight start isn't failed: it waits
+  // ("orphan") for the core's `started` push for the same chat and request — live before the drop, or
+  // in the resume replay — and resolves as the reply would have. Never re-sent: starts aren't.
   const orphans: Array<Start & Settle> = [];
-  /** `started` events whose start reply hasn't arrived (yet): what an orphan matches against. */
-  const unclaimed: Array<Start & { taskId: string }> = [];
+  /** `started` pushes whose start reply hasn't arrived (yet): what an orphan matches against. */
+  const unclaimed: Array<Start & { id: string }> = [];
   let orphanTimer: ReturnType<typeof setTimeout> | undefined;
   /** Last seq applied per chat: sent with each heartbeat and on resume, so the core replays only the rest. */
   const acks: Record<string, number> = {};
@@ -107,15 +108,23 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
   };
   /** `asked` = the request, `seen` = a `started` event. The core keeps mount and instruction as sent but
    * resolves an empty project ("no project") to its own scratch workspace, which this side can't know. */
-  const sameStart = (seen: Start, asked: Start): boolean =>
-    seen.mountId === asked.mountId && seen.instruction === asked.instruction
-    && (asked.projectPath === "" || seen.projectPath === asked.projectPath);
+  const sameStart = (seen: Start, asked: Start): boolean => {
+    if (seen.mountId !== asked.mountId) return false;
+    if (seen.kind === "sprout" || asked.kind === "sprout") return seen.kind === "sprout" && asked.kind === "sprout" && seen.name === asked.name;
+    return seen.instruction === asked.instruction && (asked.projectPath === "" || seen.projectPath === asked.projectPath);
+  };
   const startOf = (op: string, args: unknown[]): Start | undefined => {
+    if (op === "chatSproutRun") {
+      const [name, , mountId] = args;
+      return typeof name === "string" && typeof mountId === "string" ? { kind: "sprout", mountId, name } : undefined;
+    }
     const [req, mountId] = args;
     if (op !== "delegateStart" || !isObj(req) || typeof mountId !== "string") return undefined;
     const { projectPath, instruction } = req;
-    return typeof projectPath === "string" && typeof instruction === "string" ? { mountId, projectPath, instruction } : undefined;
+    return typeof projectPath === "string" && typeof instruction === "string" ? { kind: "delegate", mountId, projectPath, instruction } : undefined;
   };
+  /** The id a start's reply carries: a delegate's task id, a sprout run's `{ jobId }`. */
+  const replyId = (v: unknown): unknown => (isObj(v) ? v.jobId : v);
   /** Pairs orphans with `started` events seen for them, oldest first. */
   const matchOrphans = (): void => {
     for (let i = 0; i < orphans.length;) {
@@ -124,7 +133,7 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
       if (j < 0) { i++; continue; }
       const [u] = unclaimed.splice(j, 1);
       orphans.splice(i, 1);
-      o.resolve(u!.taskId);
+      o.resolve(u!.kind === "sprout" ? { jobId: u!.id } : u!.id);
     }
   };
   const failOrphans = (why: string): void => {
@@ -194,7 +203,8 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
         if (!p) return; // a late answer to a call already failed by a drop
         pending.delete(m.id as number);
         if (p.start && m.ok === true) {
-          const i = unclaimed.findIndex((u) => u.taskId === m.value);
+          const id = replyId(m.value);
+          const i = unclaimed.findIndex((u) => u.id === id);
           if (i >= 0) unclaimed.splice(i, 1);
         }
         if (m.ok === true) p.resolve(m.value);
@@ -211,9 +221,15 @@ export function createRemoteCore(deps: RemoteCoreDeps) {
           setWorking(`l:${p.sessionId}`, p.type !== "ended");
         }
         deps.onPush(m.mountId, m.kind as MountPushKind, m.payload);
-        if (m.kind === "delegate" && isObj(p) && p.type === "started" && typeof p.taskId === "string"
-          && typeof p.projectPath === "string" && typeof p.instruction === "string") {
-          unclaimed.push({ mountId: m.mountId, taskId: p.taskId, projectPath: p.projectPath, instruction: p.instruction });
+        const seen: (Start & { id: string }) | undefined = !isObj(p) ? undefined
+          : m.kind === "delegate" && p.type === "started" && typeof p.taskId === "string"
+            && typeof p.projectPath === "string" && typeof p.instruction === "string"
+            ? { kind: "delegate", mountId: m.mountId, id: p.taskId, projectPath: p.projectPath, instruction: p.instruction }
+          : m.kind === "sprout" && p.status === undefined && typeof p.jobId === "string" && typeof p.name === "string"
+            ? { kind: "sprout", mountId: m.mountId, id: p.jobId, name: p.name }
+          : undefined;
+        if (seen) {
+          unclaimed.push(seen);
           if (unclaimed.length > 32) unclaimed.shift();
           matchOrphans();
         }

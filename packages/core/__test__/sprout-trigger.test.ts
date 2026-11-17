@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { planSproutRun, sproutCheckText, sproutFinishText, sproutTriggerAction } from "../src/sprout-trigger.js";
-import { createRoutineScheduler, triggerOutcome, type RoutineSchedulerDeps } from "../src/routine-scheduler.js";
+import { createRoutineScheduler, RUN_BRIEF_MAX, triggerOutcome, type RoutineSchedulerDeps } from "../src/routine-scheduler.js";
 import type { Routine, RoutineRunResult, RoutineState, RunStatus, TodoItem } from "../src/index.js";
 
 const steps = [{ kind: "chat" as const, instruction: "x" }];
@@ -60,8 +60,8 @@ describe("planSproutRun", () => {
 });
 
 const todo = (id: string): TodoItem => ({ id, routine: "q", text: id, status: "pending", createdAt: "x", order: 0 });
-const result = (status: RunStatus): RoutineRunResult => {
-  const record = { startedAt: "a", finishedAt: "b", status, digest: status, steps: [] };
+const result = (status: RunStatus, id?: string): RoutineRunResult => {
+  const record = { ...(id ? { id } : {}), startedAt: "a", finishedAt: "b", status, digest: status, steps: [] };
   return { record, digest: status, results: [] };
 };
 
@@ -93,7 +93,7 @@ describe("scheduler trigger", () => {
     expect(settled).toBe(false);
     expect(sched.isRunning("s")).toBe(true);
     finish(result("needs-attention"));
-    expect(await t.done).toEqual({ status: "needs-attention", runs: 1, ok: 0, needsAttention: 1, failed: 0 });
+    expect(await t.done).toEqual({ status: "needs-attention", runs: 1, ok: 0, needsAttention: 1, failed: 0, perRun: [{ status: "needs-attention" }] });
   });
 
   it("aggregates parallel workers, counting a worker that claims nothing as no run", async () => {
@@ -106,7 +106,7 @@ describe("scheduler trigger", () => {
     });
     const t = await sched.trigger("q", "run");
     if (t.status !== "started") throw new Error(`not started: ${JSON.stringify(t)}`);
-    expect(await t.done).toEqual({ status: "needs-attention", runs: 2, ok: 1, needsAttention: 1, failed: 0 });
+    expect(await t.done).toMatchObject({ status: "needs-attention", runs: 2, ok: 1, needsAttention: 1, failed: 0 });
   });
 
   it("failed beats needs-attention, and a throwing run counts as failed", async () => {
@@ -121,7 +121,7 @@ describe("scheduler trigger", () => {
     });
     const t = await sched.trigger("q", "run");
     if (t.status !== "started") throw new Error("not started");
-    expect(await t.done).toEqual({ status: "failed", runs: 3, ok: 1, needsAttention: 1, failed: 1 });
+    expect(await t.done).toMatchObject({ status: "failed", runs: 3, ok: 1, needsAttention: 1, failed: 1 });
   });
 
   it("refuses with runNow's reasons, plus an empty queue", async () => {
@@ -156,7 +156,48 @@ describe("scheduler trigger", () => {
     expect(await sched.trigger("s", "check")).toEqual({ status: "checked", result: { newItems: 0, error: 'no watch sprout named "s"' } });
   });
 
+  it("with brief asked, each parallel run carries its own id and capped brief", async () => {
+    const queue = [todo("1"), todo("2"), todo("3")];
+    const deliverDigest = vi.fn(async (_r: Routine, res: RoutineRunResult, brief?: boolean) =>
+      brief ? (res.record.id === "run-3" ? "x".repeat(RUN_BRIEF_MAX + 50) : `brief of ${res.record.id}`) : undefined);
+    const sched = setup([{ ...todoSprout, maxParallel: 3 }], {
+      hasPendingTodos: async () => queue.length > 0,
+      claimTodo: async () => queue.shift(),
+      runRoutine: vi.fn(async (_r: Routine, t?: TodoItem) => result(t?.id === "2" ? "needs-attention" : "ok", `run-${t?.id}`)),
+      deliverDigest,
+    });
+    const t = await sched.trigger("q", "run", { brief: true });
+    if (t.status !== "started") throw new Error("not started");
+    const perRun = [...(await t.done).perRun].sort((a, b) => (a.id ?? "").localeCompare(b.id ?? ""));
+    expect(perRun.slice(0, 2)).toEqual([
+      { id: "run-1", status: "ok", brief: "brief of run-1" },
+      { id: "run-2", status: "needs-attention", brief: "brief of run-2" },
+    ]);
+    expect(perRun[2]?.brief).toHaveLength(RUN_BRIEF_MAX);
+    expect(perRun[2]?.brief?.endsWith("…")).toBe(true);
+    expect(deliverDigest.mock.calls.every((c) => c[2] === true)).toBe(true);
+  });
+
+  it("no brief unless asked, and a stopped run never has one", async () => {
+    const deliverDigest = vi.fn(async () => "body");
+    let stop = false;
+    const sched = setup([schedule], {
+      runRoutine: vi.fn(async () => (stop ? { ...result("failed", "r2"), stopped: true as const } : result("ok", "r1"))),
+      deliverDigest,
+    });
+    expect(await sched.runNow("s")).toEqual({ started: true, status: "ok", runs: [{ id: "r1", status: "ok" }] });
+    expect(deliverDigest).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), false);
+    // A chat origin rides along to the digest, so the sink there is skipped (#920).
+    const t = await sched.trigger("s", "run", { brief: true, origin: { transport: "teams", channel: "c1" } });
+    if (t.status === "started") await t.done;
+    expect(deliverDigest).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), true, { transport: "teams", channel: "c1" });
+    deliverDigest.mockClear();
+    stop = true;
+    expect(await sched.runNow("s", { brief: true })).toEqual({ started: true, status: "failed", runs: [{ id: "r2", status: "failed" }], stopped: true });
+    expect(deliverDigest).not.toHaveBeenCalled();
+  });
+
   it("an empty fold is ok with no runs", () => {
-    expect(triggerOutcome([])).toEqual({ status: "ok", runs: 0, ok: 0, needsAttention: 0, failed: 0 });
+    expect(triggerOutcome([])).toEqual({ status: "ok", runs: 0, ok: 0, needsAttention: 0, failed: 0, perRun: [] });
   });
 });

@@ -83,11 +83,15 @@ export type ChatItem =
   // Bean's offer to hand the chat over to a live agent (propose_live_session) — Start runs the
   // same handoff as /claude; Not now leaves Bean in charge.
   | { kind: "offer"; id: string; offer: ProposedLiveSession; state: "pending" | "started" | "dismissed" | "expired" }
-  // A propose_todo draft awaiting confirmation — todos are never queued silently.
-  | { kind: "todo"; id: string; todo: ProposedTodo; state: "pending" | "queued" | "dismissed" | "expired" }
+  // A propose_todo draft awaiting confirmation — todos are never queued silently. Run now / Queue
+  // (#923) keep the dispatch's `jobId` (through saves): "running" = only this task is running,
+  // "queued" = waiting in line; either settles ("done", `result`) when its result is pushed here.
+  // "sending" = a tap in flight.
+  | { kind: "todo"; id: string; todo: ProposedTodo; state: "pending" | "sending" | "queued" | "running" | "done" | "dismissed" | "expired"; jobId?: string; result?: string }
   // "Run the X sprout": the run-vs-check action is frozen in `plan` (main decided it); a tap
-  // triggers exactly that. `result` = the outcome line once the tap settles.
-  | { kind: "sprout"; id: string; plan: SproutRunPlan; state: "pending" | "running" | "done" | "dismissed" | "expired"; result?: string }
+  // triggers exactly that. `result` = the outcome line once the tap settles. `jobId` = an admitted
+  // run's dispatch (#921): kept through saves, so a restored card still learns how it ended.
+  | { kind: "sprout"; id: string; plan: SproutRunPlan; state: "pending" | "running" | "done" | "dismissed" | "expired"; result?: string; jobId?: string }
   // A propose_send card: main holds the body and rows (`card.id`); Send hands back the picked option.
   | { kind: "send"; id: string; card: SendCard; state: "pending" | "sending" | "sent" | "dismissed" | "expired" }
   // `details` expand under the row (e.g. the messages handed over to an agent). `receipt`: an ended

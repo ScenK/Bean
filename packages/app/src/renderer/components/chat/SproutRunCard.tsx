@@ -21,7 +21,7 @@ export function SproutRunCard({
     <div class="bean-card">
       <div class="bean-card-chips">
         <span class="bean-chip">{`Sprout "${plan.routine}"`}</span>
-        {plan.paused && <span class="bean-chip">Paused · runs once</span>}
+        {plan.paused && <span class="bean-chip">On demand · runs once</span>}
       </div>
       <div class="bean-offer-title">{plan.actionLine}</div>
       <div class="bean-offer-ask">{`Results go to ${plan.resultsTo}`}</div>

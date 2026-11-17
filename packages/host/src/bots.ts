@@ -28,6 +28,7 @@ interface BotsDeps extends HostBotsOptions {
   taskStatus: ReturnType<typeof createTaskStatus>;
   onQuit: (fn: () => void) => void;
   onRoutineTrigger: (bot: ChatopsBot, req: RoutineTrigger) => Promise<RoutineTriggerAnswer>;
+  onRoutineRunning: () => { name: string; runs: number }[] | undefined;
 }
 
 /** The Discord and Teams bots as children of the host that owns the data directory: their status
@@ -53,6 +54,7 @@ export async function startBots(deps: BotsDeps) {
     configFile: (bot) => join(deps.dir, `${bot}.json`),
     // A spawned bot's sprout-run tap (#637), answered by the host's scheduler.
     onRoutineTrigger: deps.onRoutineTrigger,
+    onRoutineRunning: deps.onRoutineRunning,
     onActivity: (bot, e) => {
       applyChatopsActivity(taskStatus, bot, e);
       if (e.type !== "live") return;

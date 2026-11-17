@@ -120,7 +120,11 @@ describe("maxParallel workers", () => {
     await vi.waitFor(() => expect(runs.openIds()).toHaveLength(2));
     expect(await t.sched.runNow("q")).toEqual({ started: false, reason: "2/2 running" });
     await drain(runs, first);
-    expect(await first).toEqual({ started: true, status: "ok" });
+    const ran = await first;
+    expect(ran).toMatchObject({ started: true, status: "ok" });
+    // One outcome per worker run, each with its own record id; no brief unless asked for.
+    expect(ran.runs?.map((x) => x.id).sort()).toEqual(["run-1", "run-2", "run-3"]);
+    expect(ran.runs?.every((x) => x.status === "ok" && x.brief === undefined)).toBe(true);
     expect(runs.started).toHaveLength(3);
   });
 
@@ -172,7 +176,7 @@ describe("maxParallel workers", () => {
     });
     const tick = t.sched.tick(); // q is due; the slow watch poll holds the tick
     await vi.waitFor(() => expect(t.deps.pollWatch).toHaveBeenCalled());
-    expect(await t.sched.runNow("q")).toEqual({ started: true, status: "ok" });
+    expect(await t.sched.runNow("q")).toEqual({ started: true, status: "ok", runs: [{ status: "ok" }] });
     releasePoll();
     await tick;
     expect(runRoutineFn).toHaveBeenCalledOnce();

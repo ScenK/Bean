@@ -14,8 +14,10 @@ import { saveNote } from "./note-store.js";
 import { listSkillProposals, RETRO_SKILL, saveSkillProposals, withProposalFooter } from "./retro.js";
 import { listStepAttempts, recordStepAttempt } from "./step-attempts.js";
 import { claimTodo, listTodos, updateTodoStatus, type TodoItem, type TodoStatus } from "./todo-store.js";
-import { DEFAULT_GATE_ROUNDS, loadRoutines, loadRoutineStates, resolveSinkAlias, sinkAliasProblems, usesGates, type Routine } from "./routine-store.js";
+import { DEFAULT_GATE_ROUNDS, loadRoutines, loadRoutineStates, resolveSinkAlias, sinkAliasProblems, usesGates, type Routine, type RoutineChatopsSink } from "./routine-store.js";
 import { listDestinations } from "./destinations.js";
+import { todoDispatchOrigins } from "./dispatch-store.js";
+import type { RunOrigin } from "./routine-scheduler.js";
 import { stepGroups } from "./routine-graph.js";
 import {
   runRoutine,
@@ -70,13 +72,22 @@ export interface RoutineHost {
   /** `todo` (already claimed): run just that todo, as its own bubble/record/digest. `signal` =
    * the run's Stop (see RoutineRunnerDeps.signal). */
   runOneRoutine: (routine: Routine, todo?: TodoItem, signal?: AbortSignal) => Promise<RoutineRunResult>;
-  deliverDigest: (routine: Routine, result: RoutineRunResult) => Promise<void>;
+  /** Resolves with the chat sinks' body when `brief` is set (computed even with no chat sink). */
+  deliverDigest: (routine: Routine, result: RoutineRunResult, brief?: boolean, origin?: RunOrigin) => Promise<string | undefined>;
   /** Alias sinks that can't be delivered right now (unknown name, wrong platform). */
   sinkProblems: (routine: Routine) => string[];
 }
 
 /** The glue between the scheduler and `runRoutine()` shared by every routine host (desktop
  * today): builds the runner deps, writes the proposal footer, and fans digests to sinks. */
+/** A chat sink posts to the origin's conversation: same transport and resolved conversation id (a
+ * thread and its parent channel differ). No channel on both = the owner's DM — except a Discord
+ * sink with `user`, which DMs that user instead (Teams ignores `user`). */
+export function sameChatTarget(origin: RunOrigin, t: { sink: RoutineChatopsSink; channel?: string | undefined }): boolean {
+  if (origin.transport !== t.sink.transport || origin.channel !== t.channel) return false;
+  return origin.channel !== undefined || t.sink.transport === "teams" || t.sink.user === undefined;
+}
+
 export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
   const { dir } = deps;
   const newId = deps.newId ?? randomUUID;
@@ -231,7 +242,10 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
     return body ? body + (result.footer ?? "") : result.digest;
   };
 
-  const deliverDigest = async (routine: Routine, result: RoutineRunResult): Promise<void> => {
+  /** `origin` = the chat conversation that triggered this run: it gets the result itself (#920),
+   * so a chat sink resolving there is skipped. A drain covers many todos: then a conversation
+   * counts only when every todo of the run was dispatched from it. */
+  const deliverDigest = async (routine: Routine, result: RoutineRunResult, brief = false, origin?: RunOrigin): Promise<string | undefined> => {
     if (routine.sinks.note) {
       await saveNote(dbFile(dir), {
         title: `sprout: ${routine.name}`,
@@ -251,8 +265,10 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
       // Unresolved: sinkProblems already marked the run; never fall back to the owner's DM.
       return "error" in resolved ? [] : [{ sink, channel: resolved.channel }];
     });
-    const chatBody = targets.length > 0 ? await chatSinkBody(routine, result) : result.digest;
-    for (const { sink, channel } of targets) {
+    const asked = targets.length > 0 ? askedFrom(result, origin) : [];
+    const kept = targets.filter((t) => !asked.some((o) => sameChatTarget(o, t)));
+    const chatBody = kept.length > 0 || brief ? await chatSinkBody(routine, result) : result.digest;
+    for (const { sink, channel } of kept) {
       await enqueueOutbox(outboxDir(dir), {
         transport: sink.transport, channel, userId: sink.user,
         title: `Sprout: ${routine.name}`,
@@ -266,6 +282,17 @@ export function createRoutineHost(deps: RoutineHostDeps): RoutineHost {
         title: `Sprout: ${routine.name}`, body: result.digest,
         target: { routine: routine.name, startedAt: result.record.startedAt },
       });
+    }
+    return brief ? chatBody : undefined;
+  };
+
+  const askedFrom = (result: RoutineRunResult, origin: RunOrigin | undefined): RunOrigin[] => {
+    if (!result.todoIds) return origin ? [origin] : [];
+    try {
+      return todoDispatchOrigins(dbFile(dir), result.todoIds);
+    } catch (err) {
+      console.error("bean: reading todo dispatch origins failed — every chat sink gets the digest", err);
+      return [];
     }
   };
 

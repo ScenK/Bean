@@ -231,7 +231,7 @@ describe("scheduler stopRuns", () => {
     const run = t.sched.runNow("r");
     await vi.waitFor(() => expect(t.runs.runRoutine).toHaveBeenCalled());
     t.sched.stopRuns("r");
-    expect(await run).toEqual({ started: true, status: "failed", stopped: true });
+    expect(await run).toEqual({ started: true, status: "failed", runs: [{ status: "failed" }], stopped: true });
     expect(t.deps.deliverDigest).not.toHaveBeenCalled();
     expect(t.states().r?.history).toHaveLength(1);
     expect(t.sched.isRunning("r")).toBe(false);
@@ -245,7 +245,7 @@ describe("scheduler stopRuns", () => {
     await vi.waitFor(() => expect(t.runs.runRoutine).toHaveBeenCalled());
     expect(t.runs.signals[0]?.aborted).toBe(false);
     t.runs.finishAll();
-    expect(await run).toEqual({ started: true, status: "ok" });
+    expect(await run).toEqual({ started: true, status: "ok", runs: [{ status: "ok" }] });
     expect(t.deps.deliverDigest).toHaveBeenCalledOnce();
   });
 

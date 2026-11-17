@@ -156,7 +156,7 @@ describe("routine scheduler", () => {
     const { deps } = makeDeps();
     const sched = createRoutineScheduler(deps);
     expect(await sched.runNow("nope")).toMatchObject({ started: false });
-    expect(await sched.runNow("morning")).toEqual({ started: true, status: "ok" });
+    expect(await sched.runNow("morning")).toEqual({ started: true, status: "ok", runs: [{ status: "ok" }] });
     expect(deps.runRoutine).toHaveBeenCalledTimes(1);
   });
 
@@ -212,7 +212,7 @@ describe("routine scheduler", () => {
     expect(states.morning?.missed).toBe(true);
 
     const res = await sched.runNow("morning"); // runRoutine rejects on this first call
-    expect(res).toEqual({ started: true, status: "failed" }); // errors are caught inside execute(), runNow still resolves
+    expect(res).toEqual({ started: true, status: "failed", runs: [{ status: "failed" }] }); // errors are caught inside execute(), runNow still resolves
     expect(states.morning?.missed).toBeUndefined(); // disk-cleared regardless of the failure
 
     currentTime = d(6, 31, 13); // jump past the next fire time so the routine is due again
