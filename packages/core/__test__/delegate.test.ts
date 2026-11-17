@@ -22,6 +22,7 @@ import {
   gitTrailerInstruction,
   FAILED_SENTINEL_INSTRUCTION,
   OPENCODE_BROWSER_REFUSAL,
+  OPENCODE_PLAN_REFUSAL,
   failedReason,
   type DelegateCallbacks,
 } from "../src/delegate.js";
@@ -755,6 +756,100 @@ describe("browser skills", () => {
     expect(dones).toEqual([]);
     expect(handle.pid).toBeUndefined();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("plan (read-only) mode", () => {
+  const P = GIT_TRAILER_INSTRUCTION;
+
+  it("claude: plan permission mode, no hooks, read-only tool allowlist, no MCP, no browser, no bypass", () => {
+    const { command, args } = delegateCommand({ cli: "claude", projectPath: "/p", prompt: "look", mode: "plan", model: "opus" });
+    expect(command).toBe("claude");
+    expect(args).toEqual([
+      "-p", "look" + P,
+      "--output-format", "stream-json",
+      "--verbose",
+      "--permission-mode", "plan",
+      "--settings", '{"disableAllHooks":true}',
+      "--tools", "Read,Glob,Grep",
+      "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+      "--no-chrome",
+      "--model", "opus",
+    ]);
+  });
+
+  it("claude: browser can't turn Chrome on, and resume keeps every plan flag", () => {
+    const args = delegateCommand({ cli: "claude", projectPath: "/p", prompt: "x", mode: "plan", browser: true, resume: "c-1" }).args;
+    expect(args).not.toContain("--chrome");
+    expect(args).not.toContain("--dangerously-skip-permissions");
+    expect(args.slice(args.indexOf("--resume"), args.indexOf("--resume") + 2)).toEqual(["--resume", "c-1"]);
+    expect(args).toEqual(expect.arrayContaining(["--permission-mode", "plan", '{"disableAllHooks":true}', "--strict-mcp-config", "--no-chrome"]));
+  });
+
+  it("codex: read-only sandbox, no user config/rules/MCP/plugins/browser/web search, never resumed", () => {
+    const { command, args } = delegateCommand({ cli: "codex", projectPath: "/p", prompt: "-look", mode: "plan", model: "gpt-x", resume: "t-1", browser: true });
+    expect(command).toBe("codex");
+    expect(args).toEqual([
+      "exec", "--json",
+      "--sandbox", "read-only",
+      "--skip-git-repo-check",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "-c", 'web_search="disabled"',
+      "--disable", "plugins", "--disable", "apps",
+      "--disable", "browser_use", "--disable", "computer_use", "--disable", "in_app_browser",
+      "--model", "gpt-x",
+      "--", "-look" + P,
+    ]);
+  });
+
+  it("no plan argv ever carries a bypass flag", () => {
+    for (const cli of ["claude", "codex"] as const) {
+      const { args } = delegateCommand({ cli, projectPath: "/p", prompt: "x", mode: "plan", resume: "r" });
+      expect(args.filter((a) => a.startsWith("--dangerously"))).toEqual([]);
+    }
+  });
+
+  it("opencode: delegateCommand throws rather than build the bypass argv", () => {
+    expect(() => delegateCommand({ cli: "opencode", projectPath: "/p", prompt: "x", mode: "plan" })).toThrow(OPENCODE_PLAN_REFUSAL);
+  });
+
+  it("opencode: refused before spawn, with no timer left behind", () => {
+    vi.useFakeTimers();
+    const spawnFn = vi.fn();
+    const { cbs, errors, dones } = collect();
+    const handle = runDelegate({ cli: "opencode", projectPath: "/p", prompt: "x", mode: "plan" }, cbs, spawnFn);
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(errors).toEqual([OPENCODE_PLAN_REFUSAL]);
+    expect(dones).toEqual([]);
+    expect(handle.pid).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("claude: a rejected resume retries fresh, still in plan mode", () => {
+    const first = new FakeChild();
+    const second = new FakeChild();
+    const children = [first, second];
+    const spawnFn = vi.fn((_c: string, _a: string[], _cwd: string) => asChild(children.shift()!));
+    const { cbs } = collect();
+    runDelegate({ cli: "claude", projectPath: "/p", prompt: "go", resume: "gone", mode: "plan" }, cbs, spawnFn);
+    first.emit("close", 1);
+    expect(spawnFn).toHaveBeenCalledTimes(2);
+    const retry = spawnFn.mock.calls[1]![1];
+    expect(retry).not.toContain("--resume");
+    expect(retry).toEqual(expect.arrayContaining(["--permission-mode", "plan", '{"disableAllHooks":true}', "--tools", "Read,Glob,Grep"]));
+    expect(retry).not.toContain("--dangerously-skip-permissions");
+    second.emit("close", 0);
+  });
+
+  it("codex: a failed plan run is an error, not a resume retry", () => {
+    const child = new FakeChild();
+    const spawnFn = vi.fn((_c: string, _a: string[], _cwd: string) => asChild(child));
+    const { cbs, errors } = collect();
+    runDelegate({ cli: "codex", projectPath: "/p", prompt: "go", resume: "t-1", mode: "plan" }, cbs, spawnFn);
+    child.emit("close", 1);
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(errors[0]).toMatch(/^codex exited with code 1/);
   });
 });
 
