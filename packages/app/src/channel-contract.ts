@@ -64,7 +64,8 @@ const brief = shape({
 });
 
 // Push payloads: the fields a subscriber reads.
-const sproutEvent = shape({ mountId: str, jobId: str, status: str, text: str });
+// A sprout run's admission (`name`) or its end (`status`, `text`).
+const sproutEvent = shape({ mountId: str, jobId: str, name: opt(str), status: opt(str), text: opt(str) });
 const delegateEvent = shape({ taskId: str, type: oneOf("started", "output", "done", "failed", "cancelled"), mountId: opt(str) });
 const liveEvent = shape({ sessionId: str, agent: str, mountId: str, seq: num, type: str });
 const terminalEvent = shape({ mountId: str, tabId: str, type: oneOf("data", "busy", "exit") });

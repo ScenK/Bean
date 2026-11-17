@@ -50,6 +50,8 @@ describe("a desktop chat's sprout run (#921)", () => {
     t.sessions.attach(CLIENT, A);
     expect(await t.sessions.sproutRun(CLIENT, A, "digest", THREAD)).toEqual({ jobId: "job-1" });
     expect(t.sproutRun).toHaveBeenLastCalledWith("digest", { channel: THREAD, keepBrief: true });
+    // Its admission is pushed too: a remote shell whose reply a drop lost finds the job id in it (#922).
+    expect(t.push).toHaveBeenCalledWith(A, "sprout", { mountId: A, jobId: "job-1", name: "digest" });
     t.incognito.add(A);
     await t.sessions.sproutRun(CLIENT, A, "digest", THREAD);
     expect(t.sproutRun).toHaveBeenLastCalledWith("digest", { channel: THREAD, keepBrief: false });
@@ -74,6 +76,7 @@ describe("a desktop chat's sprout run (#921)", () => {
     t.sessions.attach(CLIENT, A);
     t.sessions.attach(CLIENT, B); // a new chat opened mid-run
     await t.sessions.sproutRun(CLIENT, A, "digest", THREAD);
+    t.push.mockClear(); // the admission
     expect(t.sessions.deliverSprout(ended())).toBe(true);
     expect(t.push).toHaveBeenCalledTimes(1);
     expect(t.push).toHaveBeenCalledWith(A, "sprout", expect.objectContaining({ mountId: A, jobId: "job-1", status: "ok" }));
@@ -87,6 +90,7 @@ describe("a desktop chat's sprout run (#921)", () => {
     t.sessions.threadSave(CLIENT, A, { id: THREAD, title: "a", items: [] });
     await t.sessions.sproutRun(CLIENT, A, "digest", THREAD);
     t.sessions.release(CLIENT, A);
+    t.push.mockClear(); // the admission
     expect(t.sessions.deliverSprout(ended())).toBe(false);
     expect(t.push).not.toHaveBeenCalled();
     t.sessions.attach(CLIENT, B);
@@ -102,6 +106,7 @@ describe("a desktop chat's sprout run (#921)", () => {
     t.sessions.attach(CLIENT, A);
     await t.sessions.sproutRun(CLIENT, A, "digest", THREAD);
     t.sessions.release(CLIENT, A);
+    t.push.mockClear(); // the admission
     expect(t.sessions.deliverSprout(ended())).toBe(true);
     expect(t.push).not.toHaveBeenCalled();
   });

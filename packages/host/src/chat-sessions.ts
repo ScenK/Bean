@@ -2,7 +2,7 @@ import { dispatchContext, stageImages, type ChatRequest, type ConverseResult, ty
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildChatMounts, THREAD_ID, type buildChatHandler, type buildChatThreadHandlers, type SproutEvent, type SproutOutcome } from "./chat.js";
+import { buildChatMounts, THREAD_ID, type buildChatHandler, type buildChatThreadHandlers, type SproutEvent, type SproutOutcome, type SproutStarted } from "./chat.js";
 import type { DelegateStartRequest } from "./delegate-tasks.js";
 import type { createLiveTasks, LiveOwner } from "./live-tasks.js";
 import { toTranscript, type buildMemoryHandlers, type CloseTurn } from "./memory.js";
@@ -193,7 +193,10 @@ export function createChatSessions(deps: ChatSessionsDeps) {
       sproutThreads.set(thread, k);
       const t = await deps.sproutRun(name, { channel: thread, keepBrief: !deps.memory.isIncognito(k) });
       if (t.status === "refused") return { reason: t.reason };
-      return t.status === "started" && t.jobId ? { jobId: t.jobId } : { reason: SPROUT_UNRECORDED };
+      if (t.status !== "started" || !t.jobId) return { reason: SPROUT_UNRECORDED };
+      const started: SproutStarted = { mountId: k, jobId: t.jobId, name };
+      deps.push(k, "sprout", started);
+      return { jobId: t.jobId };
     },
     /** A desktop dispatch's hand-off: pushed to the chat that holds its thread. False = no open chat
      * has it yet (it's delivered when that thread is restored); a thread that no chat holds and

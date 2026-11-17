@@ -30,6 +30,12 @@ chat thread id), actor, sprout, optional todo id, run ids, terminal status, brie
   from the real row even if a push was lost. The renderer settles the card and loops
   `[sprout result for "…"]` back through `queueIfBusy` once per job (a settled card ignores
   repeats); a running sprout card is chat work (stays mounted). No Stop on the card.
+- **Remote shells (#922).** `chatSproutRun` is the one routines-side `REMOTE_OPS` entry (the
+  contract test pins it; `routines*` stay default-deny, so a remote *check* card still fails).
+  `sproutRun` also pushes the admission (`{ mountId, jobId, name }`, no `status`; the renderer
+  ignores it): a start whose reply a drop lost is an orphan in `remote-core.ts` and resolves from
+  it, like a delegate's `started`. Ends ride the attachment's per-mount replay (not `output`, so
+  never evicted).
 - `keep_brief = 0` (incognito desktop chat) → `brief` stays NULL. Delivered rows are pruned after
   30 days at start.
 - **The chatops notice is chat context (#920).** `enqueueDispatchNotice` posts the finish line +

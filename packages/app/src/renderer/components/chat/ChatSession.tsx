@@ -19,7 +19,7 @@ import type {
   AvailableModel, CliName, DesktopChatListing, ImageAttachment, LiveCli, LinkedNote, Project, ProposedDelegate, ProposedNote, ProposedSkill, RouteSuggestion, Skill, TurnSource,
 } from "@bean/core";
 import type { ChatDrop } from "../../../channels.js";
-import type { DelegateEvent, LiveEvent, LiveReceipt, LiveStartResult, SproutEvent } from "@bean/host";
+import type { DelegateEvent, LiveEvent, LiveReceipt, LiveStartResult, SproutEvent, SproutPush } from "@bean/host";
 import type { InterruptedRunNotice } from "../../../ipc.js";
 import type { CloseTurn } from "@bean/host";
 
@@ -165,7 +165,7 @@ export interface ChatSessionApi {
   mountId: string;
   delegateEvent: (e: DelegateEvent) => void;
   /** A sprout run this chat started has ended. */
-  sproutEvent: (e: SproutEvent) => void;
+  sproutEvent: (e: SproutPush) => void;
   liveEvent: (e: LiveEvent) => void;
   /** The thread this chat writes, once it has one. */
   threadId: () => string | undefined;
@@ -1242,7 +1242,8 @@ export function ChatSession({
 
   // A sprout run's end (main's `sprout` push): the card settles and the result loops back once. An
   // end for a job no card holds yet waits for its start's answer (triggerSprout).
-  const applySproutEvent = (e: SproutEvent): void => {
+  const applySproutEvent = (e: SproutPush): void => {
+    if (!("status" in e)) return; // its admission: the start's answer already carries the job id
     const { loopback } = applySproutEnd(itemsRef.current, e);
     if (!loopback) {
       if (!itemsRef.current.some((it) => it.kind === "sprout" && it.jobId === e.jobId)) pendingSproutEndsRef.current.set(e.jobId, e);

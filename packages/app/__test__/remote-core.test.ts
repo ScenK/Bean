@@ -63,6 +63,11 @@ describe("remote core over the attach bridge (#811)", () => {
           push(m, "delegate", { taskId: "t1", type: "started", mountId: m });
           return { reply: `echo: ${req.message}` };
         },
+        sproutRun: async (c: number, m: string, name: string) => {
+          if (mounts.get(m) !== c) throw new Error("not your chat");
+          push(m, "sprout", { mountId: m, jobId: "job-1", name });
+          return { jobId: "job-1" };
+        },
       },
       getModel: () => "gpt-test",
     } as unknown as HostHandlers;
@@ -118,6 +123,25 @@ describe("remote core over the attach bridge (#811)", () => {
     push(MOUNT, "delegate", { taskId: "t2", type: "done", mountId: MOUNT });
     await until(() => a.state() === "attached");
     await until(() => a.pushes.some((p) => (p.payload as { taskId?: string }).taskId === "t2"));
+    a.core.detach();
+  });
+
+  it("a chat's sprout run (#922) starts over the wire and its end arrives after a dropped link", async () => {
+    const { path, push } = await serve();
+    const a = shell(path, SHELL_A);
+    a.core.connect();
+    await until(() => a.state() === "attached");
+    await a.core.call("chatAttach", [MOUNT]);
+    expect(await a.core.call("chatSproutRun", ["digest", "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b", MOUNT])).toEqual({ jobId: "job-1" });
+    a.children[0]!.kill();
+    await until(() => a.state() === "reconnecting");
+    push(MOUNT, "sprout", { mountId: MOUNT, jobId: "job-1", status: "ok", text: "digest finished ✓" });
+    await until(() => a.state() === "attached");
+    await until(() => a.pushes.some((p) => (p.payload as { status?: string }).status === "ok"));
+    expect(a.pushes.filter((p) => p.kind === "sprout").map((p) => p.payload)).toEqual([
+      { mountId: MOUNT, jobId: "job-1", name: "digest" },
+      { mountId: MOUNT, jobId: "job-1", status: "ok", text: "digest finished ✓" },
+    ]);
     a.core.detach();
   });
 
@@ -336,5 +360,52 @@ describe("registerRemoteIpc", () => {
     remote.releaseClient(7);
     expect(call).toHaveBeenCalledWith("chatRelease", [MOUNT]);
     expect(mounts.size).toBe(0);
+  });
+});
+
+describe("a chat sprout start whose reply a drop lost (#922)", () => {
+  const make = (spawn: () => SshChild) => createRemoteCore({
+    label: "me@box", spawn, shellId: SHELL_A, setupCommand: "x", onPush: () => {}, onStatus: () => {}, onWorking: () => {}, retryMs: [1],
+  });
+  const THREAD = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b";
+  const admitted = (seq: number, jobId: string, name: string) =>
+    ({ type: "push", mountId: MOUNT, seq, kind: "sprout", payload: { mountId: MOUNT, jobId, name } });
+
+  it("resolves with the job id from the replayed admission, never re-sending the start", async () => {
+    const { kids, spawn, attached } = scripted();
+    const core = make(spawn);
+    core.connect();
+    kids[0]!.send(attached);
+    await tick();
+    const start = core.call("chatSproutRun", ["digest", THREAD, MOUNT]);
+    await tick();
+    kids[0]!.exit();
+    await new Promise((r) => setTimeout(r, 20));
+    kids[1]!.send(attached);
+    kids[1]!.send(admitted(1, "job-7", "digest"));
+    await expect(start).resolves.toEqual({ jobId: "job-7" });
+    expect(kids[1]!.frames.some((f) => f.type === "call")).toBe(false);
+    core.detach();
+  });
+
+  it("another sprout's admission or a delegate's start doesn't answer it: it fails after the grace", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    try {
+      const { kids, spawn, attached } = scripted();
+      const core = make(spawn);
+      core.connect();
+      kids[0]!.send(attached);
+      await vi.advanceTimersByTimeAsync(5);
+      const start = core.call("chatSproutRun", ["digest", THREAD, MOUNT]);
+      start.catch(() => {});
+      kids[0]!.exit();
+      await vi.advanceTimersByTimeAsync(5);
+      kids[1]!.send(attached);
+      kids[1]!.send(admitted(1, "job-8", "other"));
+      kids[1]!.send(started(2, "t1"));
+      await vi.advanceTimersByTimeAsync(ORPHAN_START_MS + 5);
+      await expect(start).rejects.toThrow(/never confirmed/);
+      core.detach();
+    } finally { vi.useRealTimers(); }
   });
 });

@@ -196,6 +196,10 @@ describe("ChatWindow switches chats in place", () => {
     expect(mount).toBe(first);
     expect(thread).toMatch(/^[0-9a-f-]{36}$/);
     expect(button("Running…", shownChat())).toBeDefined(); // answered; still running, no Stop
+    // The run's admission push (#922, for a remote shell's lost reply) settles nothing.
+    await act(async () => { listeners.onSproutEvent!({ mountId: first, jobId: "job1", name: "digest" }); });
+    await flush();
+    expect(button("Running…", shownChat())).toBeDefined();
 
     await clickEl(otherRow());
     expect(bean.chatRelease).not.toHaveBeenCalled(); // a running sprout is work: kept mounted

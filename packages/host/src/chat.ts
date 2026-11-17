@@ -197,6 +197,10 @@ export type PendingChatThread = { id: string; title: string; items: unknown[]; n
  * dispatch is delivered, and listed with a restored thread (`sprouts`) for the cards it holds. */
 export interface SproutOutcome { jobId: string; status?: DispatchStatus; text?: string }
 export type SproutEvent = Required<SproutOutcome> & { mountId: string };
+/** A run's admission, pushed the same way before its end (no `status`): a remote shell whose start
+ * reply a dropped link lost learns the run's job id from it (#922). The chat ignores it. */
+export interface SproutStarted { mountId: string; jobId: string; name: string }
+export type SproutPush = SproutEvent | SproutStarted;
 
 export interface ChatThreadHandlerDeps {
   saveDesktopChat: (file: string, chat: DesktopChatInput, now?: Date) => string;

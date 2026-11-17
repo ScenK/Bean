@@ -22,6 +22,12 @@ describe("service contract (#807)", () => {
     for (const denied of ["launch", "terminalStart", "chatOpenPath", "revealInFinder", "pickProjectFolder"]) expect(Object.hasOwn(REMOTE_OPS, denied)).toBe(false);
   });
 
+  it("a remote shell reaches the chat's sprout dispatch (#922) and no other routines operation", () => {
+    expect(Object.hasOwn(REMOTE_OPS, "chatSproutRun")).toBe(true);
+    expect(Object.keys(REMOTE_OPS).filter((op) => /^routine|sprout/i.test(op))).toEqual(["chatSproutRun"]);
+    for (const key of Object.keys(IPC).filter((k) => k.startsWith("routines"))) expect(Object.hasOwn(REMOTE_OPS, key), key).toBe(false);
+  });
+
   it("every channel main registers or the preload calls is in IPC (no string-literal side doors)", () => {
     const src = ["ipc.ts", "main.ts", "avatar-window.ts", "preload.ts"].map((f) => readFileSync(join(__dirname, "../src", f), "utf8")).join("\n");
     expect(src).not.toMatch(/ipc(Main|Renderer)\.(on|handle|send|invoke)\(\s*["'`]/);
