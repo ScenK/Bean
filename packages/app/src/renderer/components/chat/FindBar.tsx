@@ -36,12 +36,19 @@ export function FindBar({ seq, onClose }: { seq: number; onClose: () => void }) 
     const r = rangesRef.current[currentRef.current];
     const list = root();
     if (!r || !list) return;
+    // Scroll the list (and sideways boxes inside it) only — never scrollIntoView, which also
+    // scrolls every ancestor, overflow:hidden included: a match near the end shoved the whole
+    // window up, blank below. A wide table scrolls sideways: bring the match into its view first.
+    for (let a = r.startContainer.parentElement; a && a !== list; a = a.parentElement) {
+      if (a.scrollWidth <= a.clientWidth || !/auto|scroll/.test(getComputedStyle(a).overflowX)) continue;
+      const ab = a.getBoundingClientRect();
+      const m = r.getBoundingClientRect();
+      if (m.left < ab.left || m.right > ab.right) a.scrollLeft += m.left + m.width / 2 - (ab.left + ab.width / 2);
+    }
     const box = list.getBoundingClientRect();
     const at = r.getBoundingClientRect();
     if (at.top >= box.top && at.bottom <= box.bottom) return; // already on screen — no jump
-    // Scroll the list only (clamped by the browser). scrollIntoView also scrolls every ancestor,
-    // overflow:hidden included: a match near the end shoved the whole window up, blank below.
-    list.scrollTop += at.top + at.height / 2 - (box.top + box.height / 2);
+    list.scrollTop += at.top + at.height / 2 - (box.top + box.height / 2); // clamped by the browser
   };
   const select = (i: number, scroll: boolean): void => {
     currentRef.current = i;

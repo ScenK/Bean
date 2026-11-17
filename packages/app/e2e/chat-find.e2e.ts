@@ -25,6 +25,9 @@ test("chat find: Cmd+F counts, steps and scrolls through the shown chat's matche
     { kind: "user", id: `u${i}`, text: `ask ${i}` },
     { kind: "reply", id: `r${i}`, text: `Here is the needle number ${i}.\n\nAnother paragraph of filler text.` },
   ]).flat();
+  // A wide table (scrolls sideways) at the top, its only "tablematch" in the clipped last column.
+  const cols = Array.from({ length: 16 }, (_, i) => `column heading ${i}`);
+  items.unshift({ kind: "reply", id: "wide", text: `| ${cols.join(" | ")} |\n|${" --- |".repeat(16)}\n|${" cell |".repeat(15)} tablematch |` });
   saveDesktopChat(dbFile(join(home.homeDir, ".bean")), { id, title: "needle chat", itemsJson: JSON.stringify(items) });
   const app = await launchBean({ HOME: home.homeDir });
   try {
@@ -59,6 +62,15 @@ test("chat find: Cmd+F counts, steps and scrolls through the shown chat's matche
       for (let a = el.parentElement; a; a = a.parentElement) if (a.scrollTop) shifted.push(a.className || a.tagName);
       return shifted;
     })).toEqual([]);
+
+    // A match in a wide table's clipped column: the list scrolls up and the table scrolls sideways.
+    await input.fill("tablematch");
+    await expect(status).toHaveText("1 of 1");
+    expect(await chat.locator(".bean-chat:not([hidden]) .bean-chat-scroll table").evaluate((t) => {
+      const r = CSS.highlights.get("bean-find-current")?.values().next().value as Range;
+      const m = r.getBoundingClientRect(), b = t.getBoundingClientRect();
+      return t.scrollLeft > 0 && m.left >= b.left && m.right <= b.right;
+    })).toBe(true);
 
     await input.fill("no such thing");
     await expect(status).toHaveText("No matches");
