@@ -102,8 +102,10 @@ test("closeAwayToOwnerDm closes the period and queues the summary for the owner'
 test("prepare caps hold across a reopen: queue, per sender and per surface per day (#909)", () => {
   const file = db();
   const away = makeAway({ dbPath: file, surface: "discord" });
+  away.setOn(undefined, 1);
+  makeAway({ dbPath: file, surface: "teams" }).setOn(undefined, 1);
   const claim = (n: number, sender: string, a = away, now?: Date) =>
-    a.claimPrepare({ conversationId: "c1", messageId: `m${n}`, senderId: sender, project: "scratch", brief: "b" }, now);
+    a.claimPrepare({ conversationId: "c1", messageId: `m${n}`, senderId: sender, project: "scratch", brief: "b", awaySince: 1 }, now);
   // The queue holds 5 (nothing running here).
   for (let i = 0; i < AWAY_PREPARE_LIMITS.queued; i++) expect(claim(i, `s${i}`)).toBeUndefined();
   expect(claim(5, "s5")).toBe("the queue was full");
@@ -126,7 +128,8 @@ test("prepare caps hold across a reopen: queue, per sender and per surface per d
 test("one prepare runs at a time; a restart marks the running one interrupted", () => {
   const file = db();
   const away = makeAway({ dbPath: file, surface: "discord" });
-  for (const n of [1, 2]) away.claimPrepare({ conversationId: "c1", messageId: `m${n}`, senderId: "mia", project: "scratch", brief: "b" });
+  away.setOn(undefined, 1);
+  for (const n of [1, 2]) away.claimPrepare({ conversationId: "c1", messageId: `m${n}`, senderId: "mia", project: "scratch", brief: "b", awaySince: 1 });
   const first = away.nextPrepare()!;
   expect(away.nextPrepare()).toBeUndefined();
   makeAway({ dbPath: file, surface: "discord" }).interruptPrepares("interrupted");
@@ -139,7 +142,7 @@ test("the summary shows prepared, failed and not-prepared entries (#909)", () =>
   away.setOn(undefined, 1);
   const tag = (n: number) => {
     away.capture({ conversationId: "c1", messageId: `m${n}`, senderId: `s${n}`, senderName: `S${n}`, text: `t${n}`, at: n + 1, awaySince: 1 });
-    return away.claimPrepare({ conversationId: "c1", messageId: `m${n}`, senderId: `s${n}`, project: n === 1 ? "bean" : "scratch", brief: "b" });
+    return away.claimPrepare({ conversationId: "c1", messageId: `m${n}`, senderId: `s${n}`, project: n === 1 ? "bean" : "scratch", brief: "b", awaySince: 1 });
   };
   tag(1);
   away.finishPrepare(away.nextPrepare()!.id, {
@@ -157,4 +160,16 @@ test("the summary shows prepared, failed and not-prepared entries (#909)", () =>
   expect(s).toContain("- S3: `t3`\n  - Prepare cancelled: away mode ended.");
   expect(s).toContain("- S9: `t9`\n  - Not prepared: `the queue was full`");
   expect(s.endsWith("- S10: `no prepare`")).toBe(true); // a capture without a prepare gets no sub-line
+});
+
+test("a prepare claimed after its away period ended writes nothing (#909)", () => {
+  const away = makeAway({ dbPath: db(), surface: "discord" });
+  const claim = (since: number) => away.claimPrepare({ conversationId: "c1", messageId: `m${since}`, senderId: "mia", project: "scratch", brief: "b", awaySince: since });
+  expect(claim(1)).toBe("away mode ended"); // off
+  away.setOn(undefined, 5);
+  expect(claim(1)).toBe("away mode ended"); // an earlier period
+  expect(claim(5)).toBeUndefined();
+  away.setOff();
+  away.setOn(undefined, 9);
+  expect(away.nextPrepare()).toBeUndefined(); // the earlier row was cancelled by setOff
 });

@@ -1,6 +1,6 @@
 import {
   beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir, skillsDir,
-  projectsFile, dbFile, loadLayeredSkills, loadProjects, detectClis, type CliName, runDelegate, drainOutbox,
+  projectsFile, dbFile, loadLayeredSkills, loadProjects, detectClis, type CliName, runDelegate, killAllDelegates, drainOutbox,
   recoverOutbox, outboxErrorLine, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, buildTeamsBot, exitWhenOrphaned,
   ConversationStore, type ConversationPlace, maybeCompact, ProposalStore, RunRegistry, parentActivitySink,
   parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, parseDeskContinue, type DeskAckResult,
@@ -760,6 +760,9 @@ process.on("message", (raw) => {
 process.on("SIGTERM", () => {
   runs.interruptAll(); // synchronous — see its doc comment; safe to exit right after
   bot.interruptAwayPrepares(); // synchronous: stops a running prepare, marks it interrupted
+  // The process exits next, so a cancel's SIGKILL escalation would never fire: kill every
+  // delegate child now (codex gets a detached watchdog that outlives this process).
+  killAllDelegates();
   // forceKillAll(), not stopAll(): stop()'s graceful SIGTERM-then-escalate dance schedules its
   // SIGKILL fallback on a setTimeout that would never fire before process.exit below runs,
   // leaving a permissions-bypassed child orphaned if it doesn't honor SIGTERM promptly.

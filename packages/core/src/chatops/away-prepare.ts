@@ -70,29 +70,42 @@ export function makeAwayPrepare(opts: {
     const req: DelegateRequest = { cli, projectPath, prompt: preparePrompt(job), mode: "plan", ...(model ? { model } : {}) };
     let sessionId: string | undefined;
     await new Promise<void>((resolve) => {
-      let done = false;
-      const end = (f?: PrepareFinish): void => {
-        if (done) return;
-        done = true;
+      // The row takes the first outcome; the slot (this promise) is held until the child has
+      // exited, so a timed-out or cancelled run never overlaps the next one.
+      let written = false;
+      let exited = false;
+      let h: DelegateHandle | undefined;
+      const write = (f: PrepareFinish): void => {
+        if (written) return;
+        written = true;
+        finish({ ...f, cli, projectPath, ...(sessionId ? { sessionId } : {}) });
+      };
+      const exit = (): void => {
+        if (exited) return;
+        exited = true;
         clearTimeout(timer);
         clearInterval(poll);
-        if (f) finish({ ...f, cli, projectPath, ...(sessionId ? { sessionId } : {}) });
         resolve();
       };
+      // f absent = cancelled elsewhere (`away off`): the row already says so.
       const stop = (f?: PrepareFinish): void => {
-        handle?.cancel();
-        end(f);
+        if (f) write(f);
+        written = true;
+        clearTimeout(timer);
+        clearInterval(poll);
+        if (h) h.cancel(exit);
+        else exit();
       };
       const timer = setTimeout(() => stop({ status: "failed", result: "Timed out after 20 minutes." }), opts.timeoutMs ?? AWAY_PREPARE_TIMEOUT_MS);
       // `away off` (any process) cancels the row; stop the CLI once it's seen.
       const poll = setInterval(() => { if (away.prepareStatus(job.id) !== "running") stop(); }, opts.pollMs ?? POLL_MS);
-      const h = opts.run(req, {
+      h = opts.run(req, {
         onOutput: () => {},
         onSessionStart: (_pid, id) => { sessionId = id; },
-        onDone: (result, id) => { sessionId = id ?? sessionId; end({ status: "prepared", result: result.trim() || "(no output)" }); },
-        onError: (err) => end({ status: "failed", result: err.message || "failed" }),
+        onDone: (result, id) => { sessionId = id ?? sessionId; write({ status: "prepared", result: result.trim() || "(no output)" }); exit(); },
+        onError: (err) => { write({ status: "failed", result: err.message || "failed" }); exit(); },
       });
-      if (!done) handle = h; // a refusal before spawn settles synchronously
+      if (!exited) handle = h; // a refusal before spawn settles synchronously
     });
     handle = undefined;
   }

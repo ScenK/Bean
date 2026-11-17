@@ -447,7 +447,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         });
         if (s.prepare && awayPrepare) {
           try {
-            const notPrepared = away.claimPrepare({ conversationId, messageId: line.messageId, senderId: line.fromId, ...s.prepare });
+            const notPrepared = away.claimPrepare({
+              conversationId, messageId: line.messageId, senderId: line.fromId, ...s.prepare,
+              ...(state.since !== undefined ? { awaySince: state.since } : {}),
+            });
             if (notPrepared === undefined) awayPrepare.pump();
           } catch (err) {
             console.error(`[away] prepare claim failed: ${err instanceof Error ? err.message : String(err)}`);

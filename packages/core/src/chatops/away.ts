@@ -32,7 +32,8 @@ export interface Away {
   claimSuggestion(now?: Date, cap?: number): boolean;
   /** Queues a read-only prepare for one recorded capture (#909) under the persisted caps, in one
    * transaction. undefined = queued; otherwise the row is written `not_prepared` and the reason
-   * returned. A capture already claimed writes nothing and returns "already claimed". */
+   * returned. A capture already claimed, or one whose away period (`awaySince`) has ended, writes
+   * nothing and returns the reason — a suggestion that finished after `away off` starts nothing. */
   claimPrepare(p: PrepareClaim, now?: Date): string | undefined;
   /** The oldest queued prepare, moved to running — none while one already runs here. */
   nextPrepare(): PrepareJob | undefined;
@@ -53,6 +54,8 @@ export interface PrepareClaim {
   senderId: string;
   project: string;
   brief: string;
+  /** The capture's away period (`AwayState.since`). */
+  awaySince?: number;
 }
 
 /** A prepare the runner starts: the claim plus the captured text. */
@@ -196,6 +199,12 @@ export function makeAway(opts: { dbPath: string; surface: "discord" | "teams" })
       // One write transaction: two claims can't both see room under a cap.
       db.exec("BEGIN IMMEDIATE");
       try {
+        const state = db.prepare("SELECT is_on, since FROM chatops_away WHERE surface = ?").get(surface) as
+          { is_on: number; since: number | null } | undefined;
+        if (state?.is_on !== 1 || state.since !== (p.awaySince ?? null)) {
+          db.exec("COMMIT");
+          return "away mode ended";
+        }
         const reason =
           count("day = ? AND status <> 'not_prepared'", day) >= AWAY_PREPARE_LIMITS.surfacePerDay ? "the daily limit for this chat app was reached"
           : count("day = ? AND sender_id = ? AND status <> 'not_prepared'", day, p.senderId) >= AWAY_PREPARE_LIMITS.senderPerDay ? "the daily limit for this sender was reached"

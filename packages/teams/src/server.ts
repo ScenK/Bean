@@ -1,6 +1,6 @@
 import {
   beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir, dbFile,
-  detectClis, type CliName, runDelegate, drainOutbox, recoverOutbox, enqueueOutbox, outboxErrorLine, OUTBOX_MAX_ATTEMPTS,
+  detectClis, type CliName, runDelegate, killAllDelegates, drainOutbox, recoverOutbox, enqueueOutbox, outboxErrorLine, OUTBOX_MAX_ATTEMPTS,
   type OutboxMessage, outboxDir, ownerDmRefs, buildTeamsBot, exitWhenOrphaned, type BotEffects, AmbientStore,
   ConversationStore, maybeCompact, ProposalStore, RunRegistry, parentActivitySink, parentDeskAck, parentSavedSink,
   parseDeskTurn, parseDeskResume, type DeskAckResult, loadCliModels, clisFile, LiveSessionProposalStore,
@@ -190,6 +190,9 @@ async function downloadImages(a: Activity): Promise<ImageAttachment[]> {
 process.on("SIGTERM", () => {
   runs.interruptAll(); // synchronous — see its doc comment; safe to exit right after
   bot.interruptAwayPrepares(); // synchronous: stops a running prepare, marks it interrupted
+  // The process exits next, so a cancel's SIGKILL escalation would never fire: kill every
+  // delegate child now (codex gets a detached watchdog that outlives this process).
+  killAllDelegates();
   liveSessions.forceKillAll(); // don't orphan live `claude -p` process groups on shutdown
   process.exit(0);
 });

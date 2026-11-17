@@ -4448,7 +4448,7 @@ describe("away prepare (#909)", () => {
     const away = makeAway({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-away-prepare-"))), surface: "discord" });
     away.setOn(undefined, 1);
     away.capture({ conversationId: "c1", messageId: "m1", senderId: "mia", senderName: "Mia", text: "hi", at: 2, awaySince: 1 });
-    expect(away.claimPrepare({ conversationId: "c1", messageId: "m1", senderId: "mia", project: "scratch", brief: "b" })).toBeUndefined();
+    expect(away.claimPrepare({ conversationId: "c1", messageId: "m1", senderId: "mia", project: "scratch", brief: "b", awaySince: 1 })).toBeUndefined();
     const runs: Fake[] = [];
     const { makeAwayPrepare } = await import("../src/chatops/away-prepare.js");
     makeAwayPrepare({
@@ -4483,7 +4483,7 @@ describe("away prepare (#909)", () => {
     const away = makeAway({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-away-prepare-"))), surface: "discord" });
     away.setOn(undefined, 1);
     away.capture({ conversationId: "c1", messageId: "m1", senderId: "mia", senderName: "Mia", text: "hi", at: 2, awaySince: 1 });
-    away.claimPrepare({ conversationId: "c1", messageId: "m1", senderId: "mia", project: "scratch", brief: "b" });
+    away.claimPrepare({ conversationId: "c1", messageId: "m1", senderId: "mia", project: "scratch", brief: "b", awaySince: 1 });
     let started = 0;
     const { makeAwayPrepare } = await import("../src/chatops/away-prepare.js");
     makeAwayPrepare({
@@ -4519,4 +4519,53 @@ describe("away prepare (#909)", () => {
     expect(h.deps.away!.captures(500)[0]!.prepare?.status).toBe("cancelled");
     expect(h.runs).toHaveLength(1);
   }, 10_000);
+});
+
+describe("away prepare ordering (#909 review)", () => {
+  test("a timed-out run holds the slot until its child has exited", async () => {
+    const away = makeAway({ dbPath: dbFile(mkdtempSync(join(tmpdir(), "bean-away-prepare-"))), surface: "discord" });
+    away.setOn(undefined, 1);
+    for (const n of [1, 2]) {
+      away.capture({ conversationId: "c1", messageId: `m${n}`, senderId: "mia", senderName: "Mia", text: "hi", at: 1 + n, awaySince: 1 });
+      expect(away.claimPrepare({ conversationId: "c1", messageId: `m${n}`, senderId: "mia", project: "scratch", brief: "b", awaySince: 1 })).toBeUndefined();
+    }
+    const exits: (() => void)[] = [];
+    let started = 0;
+    const { makeAwayPrepare } = await import("../src/chatops/away-prepare.js");
+    makeAwayPrepare({
+      away, loadProjects: async () => [], scratchPath: "/s", detectClis: () => ["claude"], cliModels: [],
+      loadModelMemory: async () => ({}), timeoutMs: 10,
+      run: () => { started++; return { pid: 1, cancel: (done?: () => void) => { if (done) exits.push(done); } }; },
+    }).pump();
+    await vi.waitFor(() => expect(exits).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(started).toBe(1); // timed out and marked failed, but its child hasn't exited yet
+    exits[0]!();
+    await vi.waitFor(() => expect(started).toBe(2));
+  });
+
+  test("a suggestion that finishes after `away off` starts no prepare", async () => {
+    const file = dbFile(mkdtempSync(join(tmpdir(), "bean-away-prepare-")));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let runs = 0;
+    const made = makeDeps({
+      chat: async () => { await gate; return { content: "", toolCalls: [{ name: "prepare", args: { project: "bean", brief: "b" } }] }; },
+      scratchPath: "/p/scratch",
+      awayPrepareRun: () => { runs++; return { pid: 1, cancel: () => {} }; },
+    });
+    made.deps.roles = makeRoles({ dbPath: file, surface: "discord", ownerId: "u1", ownerName: "Scen" });
+    made.deps.away = makeAway({ dbPath: file, surface: "discord" });
+    made.deps.away.setOn(undefined, 500);
+    const bot = buildTeamsBot(made.deps);
+    const tagged = bot.onAwayTag("c1", { fromId: "mia", name: "Mia", text: "<@u1> hi", at: 1_000, taggedIds: ["u1"], messageId: "m1" }, async () => {});
+    await vi.waitFor(() => expect(made.deps.away!.captures(500)).toHaveLength(1));
+    closeAway(made.deps.away!);
+    made.deps.away.setOn(undefined, 900); // even a new period doesn't adopt the old capture
+    release();
+    await tagged;
+    await new Promise((r) => setTimeout(r, 20));
+    expect(runs).toBe(0);
+    expect(made.deps.away.nextPrepare()).toBeUndefined();
+  });
 });
