@@ -2088,7 +2088,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const result = await converse({
           ...converseBase,
           actions: [...converseBase.actions, ...(canMemory ? memoryTools.tools : []), ...(reminderTools?.tools ?? []), ...todoTools],
-          sproutCatalog: sproutRoutines.map((r) => ({ name: r.name, description: r.description })),
+          sproutCatalog: sproutRoutines.map((r) => ({ name: r.name, description: r.description, takesTask: r.todoDriven })),
           history: [...history, ...repliedHint], latestUserText: msg.text, latestUserImages: msg.images,
           ...(ownerDm && canMemory ? { memoryCategories: memoryCategories(memories) } : {}),
         });
