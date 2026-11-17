@@ -6,7 +6,7 @@ import {
   parseDeskTurn, parseDeskResume, type DeskAckResult, loadCliModels, clisFile, LiveSessionProposalStore,
   LiveSessionRegistry, isLiveCli, findDelegateRun, MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment,
   makeRoles, dmAllowed, SproutRunProposalStore, parentSproutTrigger, processParentPort, sproutRunFacts,
-  recordDestination, sharedBotDeps,
+  recordDestination, sharedBotDeps, type AmbientLine,
 } from "@bean/core";
 import {
   ActivityTypes, CloudAdapter, ConfigurationBotFrameworkAuthentication, ConfigurationServiceClientCredentialFactory,
@@ -22,7 +22,7 @@ import { teamsCards } from "./cards.js";
 import { addressedToBot } from "./addressing.js";
 import { teamsDestinationRecorder, type TeamsChannelData } from "./destinations.js";
 import { startDevtunnel } from "./devtunnel.js";
-import { bareChannelId, capturePlace, cardActionOf, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
+import { bareChannelId, capturePlace, messageLink, cardActionOf, placeOf, proactiveEffects, refFor, refScope } from "./proactive.js";
 import { parseQuote } from "./replied-to.js";
 import { deliveredAppend, loadTeamsConfig, teamsConfigFile } from "./teams-config.js";
 import { teamsText } from "./teams-text.js";
@@ -205,6 +205,30 @@ function mentionedUsers(a: Activity): { id: string; name: string }[] {
     .map((m) => ({ id: m.id, name: m.name ?? "someone" }));
 }
 
+/** A plain post into this activity's own conversation (a channel reply stays in its post). It may
+ * land after the turn context is revoked, so it is proactive, with activityId dropped (it would
+ * become replyToId). Plain text never pings on Teams (that needs a mention entity). */
+function postHere(a: Activity): (text: string) => Promise<void> {
+  const ref: Partial<ConversationReference> = { ...TurnContext.getConversationReference(a), activityId: undefined };
+  return async (text) => {
+    await adapter.continueConversationAsync(teamsConfig.botAppId, ref, async (ctx) => {
+      await ctx.sendActivity({ type: ActivityTypes.Message, text: teamsText(text) });
+    });
+  };
+}
+
+/** The ambient line core reads for an un-addressed message (and, addressed, its away check).
+ * `text` is the sender's own words (quote split out). Tagged ids are the explicit `29:` user
+ * mentions; a quote's preview carries no mention entities. */
+function lineOf(a: Activity, text: string): AmbientLine {
+  return {
+    fromId: a.from.id, fromAltId: a.from.aadObjectId, name: a.from.name ?? "someone",
+    text, at: Date.now(), bot: a.from.role === "bot",
+    taggedIds: mentionedUsers(a).map((m) => m.id),
+    ...(a.id ? { messageId: a.id, link: messageLink(a.conversation.id, a.id) } : {}),
+  };
+}
+
 /** Admin scope: the bare channel id for channel posts (not the thread), the group chat's id for
  * group chats. Personal chats have none. */
 function scopeOf(a: Activity): string | undefined {
@@ -262,25 +286,14 @@ app.post("/api/messages", (req, res) => {
       if (!text) return;
       ambient.append(a.conversation.id, { fromName: a.from.name ?? "someone", text, at: Date.now() });
       // Channel/group chatter may earn a text-only chime-in (if `chatty on` in its scope); personal
-      // chats have no scope and never chime in. The turn context is revoked by the time the lull
-      // timer fires, so the post is proactive: the full conversation id keeps it in this thread,
-      // and activityId is dropped (it would become replyToId).
+      // chats have no scope and never chime in.
       const scopeId = scopeOf(a);
       if (scopeId) {
         const conv = a.conversation.id;
-        const ref: Partial<ConversationReference> = { ...TurnContext.getConversationReference(a), activityId: undefined };
-        bot.onAmbient(conv, scopeId, {
-          fetchRecent: async (sinceMs) => ambient.since(conv, sinceMs),
-          post: async (reply) => {
-            await adapter.continueConversationAsync(teamsConfig.botAppId, ref, async (ctx) => {
-              await ctx.sendActivity({ type: ActivityTypes.Message, text: teamsText(reply) });
-            });
-          },
-        }, {
+        bot.onAmbient(conv, scopeId, { fetchRecent: async (sinceMs) => ambient.since(conv, sinceMs), post: postHere(a) }, {
           // Household memory capture (#463): the id gates (role), the name only labels a saved fact.
           // `text` already has any quote-reply split out (parseQuote). No receipt on Teams.
-          fromId: a.from.id, fromAltId: a.from.aadObjectId, name: a.from.name ?? "someone",
-          text, at: Date.now(), bot: a.from.role === "bot", place: capturePlace({ conversation: a.conversation, bot: a.recipient }),
+          ...lineOf(a, text), place: capturePlace({ conversation: a.conversation, bot: a.recipient }),
         });
       }
       return;
@@ -288,6 +301,9 @@ app.post("/api/messages", (req, res) => {
     // A `/` pick in a shared chat arrives `personal` but targeted: not a DM (see isDirect).
     const place = placeOf({ conversation: a.conversation, bot: a.recipient });
     const direct = place.kind === "dm";
+    // Tagging Bean and the owner: the normal answer below, plus the away record + line (#904).
+    // A live session here bypasses it (documented gap). Never rejects.
+    if (!direct && !capturing && text) void bot.onAwayTag(a.conversation.id, lineOf(a, text), postHere(a));
     // Role before any paid pre-work: a non-owner DM with guest DMs off gets core's one fixed
     // line (or a whoami answer), so its images are never downloaded.
     const role = roles.roleOf({ fromId: a.from.id, fromAltId: a.from.aadObjectId, scopeId: direct ? undefined : scopeOf(a) });

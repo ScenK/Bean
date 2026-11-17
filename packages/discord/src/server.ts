@@ -24,7 +24,7 @@ import { discordCards } from "./components.js";
 import { discordDestinations } from "./destinations.js";
 import { openContinueThread, ownerOnly } from "./desk-continue.js";
 import { deliverOutboxDm } from "./outbox-dm.js";
-import { resolveRepliedTo, type RefMessage } from "./replied-to.js";
+import { resolveRepliedTo, taggedUserIds, type RefMessage } from "./replied-to.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
 import { answerSlash, slashCommands, slashMessage } from "./slash.js";
 
@@ -294,24 +294,32 @@ client.on("messageCreate", async (message) => {
       isBeanThread(message.channel) ||
       message.mentions.users.has(client.user?.id ?? "") ||
       message.mentions.repliedUser?.id === client.user?.id;
+    const here = message.channel;
+    // Same channel/thread, never a new thread; nothing in it pings anyone.
+    const postHere = async (text: string): Promise<void> => {
+      if ("send" in here) await here.send({ content: text, allowedMentions: { parse: [] } });
+    };
+    const line = {
+      // Household memory capture (#463): the id gates (role), the name only labels a saved fact.
+      fromId: message.author.id, name: message.member?.displayName ?? message.author.displayName,
+      text: message.content, at: message.createdTimestamp,
+      // Away mode (#904): literal tags only (no reply ping, quote or forward).
+      taggedIds: taggedUserIds(message.content, client.user?.id), messageId: message.id, link: message.url,
+    };
     if (!addressed && !capturing) {
       // Chatter in a channel or user-made thread may earn a text-only chime-in (if `chatty on` in
       // its channel). DMs and Bean threads are always addressed, and capturing never gets here.
-      const channel = message.channel;
-      if (message.content && "send" in channel) {
-        bot.onAmbient(channel.id, scopeId, {
-          fetchRecent: effectsFor(channel).fetchRecent!,
-          // Same channel/thread, never a new thread; nothing in it pings anyone.
-          post: async (text) => { await channel.send({ content: text, allowedMentions: { parse: [] } }); },
-        }, {
-          // Household memory capture (#463): the id gates (role), the name only labels a saved fact.
-          fromId: message.author.id, name: message.member?.displayName ?? message.author.displayName,
-          text: message.content, at: message.createdTimestamp, place: placeOf(channel),
-          react: async () => { await message.react("🧠"); },
+      if (message.content && "send" in here) {
+        bot.onAmbient(here.id, scopeId, { fetchRecent: effectsFor(here).fetchRecent!, post: postHere }, {
+          ...line, place: placeOf(here), react: async () => { await message.react("🧠"); },
         });
       }
       return;
     }
+    // Tagging Bean and the owner: the normal answer below, plus the away record + line here,
+    // in the message's own channel/thread (never the thread a channel turn opens). Never rejects.
+    // A live session here bypasses it (documented gap).
+    if (!isDm && !capturing && message.content) void bot.onAwayTag(here.id, line, postHere);
     if (!dmBlocked) destinations.seen(message.channel, isDm ? message.author.displayName : undefined);
     let text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
     // A forward arrives with empty content; its snapshot is the thing to talk about.

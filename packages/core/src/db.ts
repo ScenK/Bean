@@ -176,6 +176,22 @@ CREATE TABLE IF NOT EXISTS chatops_away (
   reason  TEXT
 );
 
+-- Owner tags captured while away (chatops/away.ts, #904): owner-only, never a note, never searched
+-- by any tool. One row per tagged message (redelivery inserts nothing); at/away_since are epoch ms,
+-- away_since is the away period's start; text is bounded (AWAY_CAPTURE_TEXT_MAX).
+CREATE TABLE IF NOT EXISTS chatops_away_captures (
+  surface         TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  message_id      TEXT NOT NULL,
+  sender_id       TEXT NOT NULL,
+  sender_name     TEXT NOT NULL,
+  text            TEXT NOT NULL,
+  link            TEXT,
+  at              INTEGER NOT NULL,
+  away_since      INTEGER,
+  UNIQUE (surface, conversation_id, message_id)
+);
+
 -- One row per admitted chatops turn (chatops/turn-cap.ts), for the per-member daily cap. The
 -- platform message/interaction id is the key, so a redelivered message never counts twice.
 -- day is the calendar date in the process's TZ; older days are pruned on insert.

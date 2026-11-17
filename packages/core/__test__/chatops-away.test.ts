@@ -36,3 +36,9 @@ test("away state survives a reopen, and Teams and Discord are independent", () =
   expect(runAwayCommand(discord, { kind: "status" }, 7_000)).toBe("Away mode is off for Discord.");
   expect(makeAway({ dbPath: file, surface: "discord" }).get()).toEqual({ on: false });
 });
+
+test("awayLine is fixed text: the reason only when set, the recorded claim only when it was", async () => {
+  const { awayLine } = await import("../src/chatops/away.js");
+  expect(awayLine("Scen", "vacation", true)).toBe("Scen is away (vacation). I've recorded your message for when Scen is back.");
+  expect(awayLine("Scen", undefined, false)).toBe("Scen is away.");
+});

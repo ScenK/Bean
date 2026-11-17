@@ -64,6 +64,7 @@ per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_ad
   state. Keyword command, never a model call, not in `CHATOPS_COMMANDS` (typed only, no Teams
   manifest change); Discord's thread/turn-cap exemptions reuse `parseAwayCommand`. While on, the
   owner's addressed answers on that surface get `awayReminder` appended (not saved to history).
+  Owner tags while away (#904): [convention-chatops-away-tags](convention-chatops-away-tags.md).
 - **Chatty setting (#444)**: `chatops/chatter.ts`, `chatops_chatty` (missing row = off), scoped like
   admins (channel, never a thread). `chatty on|off` = `NEEDS.chatty` (admin); `chatty status`,
   addressed mute (`quiet|hush|mute|be quiet|stay quiet [for] <n><unit>`, whole message only, 30 min

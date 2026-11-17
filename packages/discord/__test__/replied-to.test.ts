@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { refText, resolveRepliedTo, type RefMessage } from "../src/replied-to.js";
+import { refText, resolveRepliedTo, taggedUserIds, type RefMessage } from "../src/replied-to.js";
 
 const BOT = "bot";
 const m = (o: Partial<RefMessage> = {}): RefMessage =>
@@ -68,4 +68,14 @@ test("refText falls back to embeds and lists attachments", () => {
     embeds: [{ title: "Digest", description: "body", fields: [{ name: "PRs", value: "3" }] }],
     attachments: [{ name: "a.png" }],
   }))).toBe("Digest\nbody\nPRs: 3\n[attachment: a.png]");
+});
+
+test("taggedUserIds counts only literal tags in the sender's own words", () => {
+  expect(taggedUserIds("hey <@111> and <@!222>, <@111> again", "999")).toEqual(["111", "222"]);
+  expect(taggedUserIds("<@999> ask <@111>", "999")).toEqual(["111"]);
+  // Quotes and code spans never ping; plain names and role/everyone tags aren't user ids.
+  expect(taggedUserIds("> <@111> said\nok", "999")).toEqual([]);
+  expect(taggedUserIds("hi\n>>> <@111>\n<@222>", "999")).toEqual([]);
+  expect(taggedUserIds("`<@111>` and ```\n<@222>\n```", "999")).toEqual([]);
+  expect(taggedUserIds("@scen <@&333> @everyone", "999")).toEqual([]);
 });

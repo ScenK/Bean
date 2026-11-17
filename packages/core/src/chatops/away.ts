@@ -16,7 +16,26 @@ export interface Away {
   /** On again while already on keeps `since` and replaces the reason. */
   setOn(reason: string | undefined, now: number): void;
   setOff(): void;
+  /** Records one owner tag (`chatops_away_captures`). false = this message was already recorded
+   * (a redelivery). Throws on a storage failure. */
+  capture(c: AwayCapture): boolean;
 }
+
+/** One message that tagged the owner while away (#904). Owner-only: no tool or command reads it. */
+export interface AwayCapture {
+  conversationId: string;
+  messageId: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  link?: string;
+  /** epoch ms */
+  at: number;
+  /** The away period's start (`AwayState.since`). */
+  awaySince?: number;
+}
+
+export const AWAY_CAPTURE_TEXT_MAX = 4000;
 
 export const AWAY_REASON_MAX = 200;
 
@@ -40,6 +59,16 @@ export function makeAway(opts: { dbPath: string; surface: "discord" | "teams" })
     },
     setOff() {
       db.prepare("UPDATE chatops_away SET is_on = 0, since = NULL, reason = NULL WHERE surface = ?").run(surface);
+    },
+    capture(c) {
+      return Number(db.prepare(
+        `INSERT OR IGNORE INTO chatops_away_captures
+           (surface, conversation_id, message_id, sender_id, sender_name, text, link, at, away_since)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        surface, c.conversationId, c.messageId, c.senderId, c.senderName.slice(0, 200),
+        c.text.slice(0, AWAY_CAPTURE_TEXT_MAX), c.link ?? null, c.at, c.awaySince ?? null,
+      ).changes) > 0;
     },
   };
 }
@@ -84,3 +113,8 @@ export function runAwayCommand(away: Away, c: AwayCommand, now: number): string 
 /** Appended to the owner's own answers on a surface where away mode is on. */
 export const awayReminder = (away: Away): string =>
   `(Away mode is on for ${label(away.surface)} — \`away off\` in our DM ends it.)`;
+
+/** The fixed line a tagger hears while the owner is away (#904). Code-built; `recorded` false (the
+ * row failed to save) drops the claim that it was recorded. */
+export const awayLine = (ownerName: string, reason: string | undefined, recorded: boolean): string =>
+  `${ownerName} is away${reason ? ` (${reason})` : ""}.${recorded ? ` I've recorded your message for when ${ownerName} is back.` : ""}`;

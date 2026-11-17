@@ -56,7 +56,7 @@ import {
   type Capability, type Role, type Roles,
 } from "./roles.js";
 import { makeAmbientCapture, type AmbientLine } from "./ambient-capture.js";
-import { awayRefusal, awayReminder, parseAwayCommand, runAwayCommand, type Away } from "./away.js";
+import { awayLine, awayRefusal, awayReminder, parseAwayCommand, runAwayCommand, type Away } from "./away.js";
 import { NOT_CHATTY, formatMuteEnd, makeChimeIn, parseChatterCommand, type Chatter, type ChatterCommand, type ChimeInFx } from "./chatter.js";
 
 /** Only messages that explicitly address the bot (DM, @mention, or reply-to-bot) reach
@@ -339,6 +339,11 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
    * text-only chime-in after a lull, if `chatty on` there, and feeds household memory capture
    * (#463, unless `memory off` there or config `autoMemory` is off). No-op without `deps.chatter`. */
   onAmbient: (conversationId: string, scopeId: string, fx: ChimeInFx, line: AmbientLine) => void;
+  /** A message addressed to Bean in a channel, group chat or thread (not a DM, not a live
+   * session) that may also tag the owner: the away-mode record + fixed line only (#904) — the
+   * ambient path runs the same check itself. `post` lands in the message's own conversation and
+   * never pings. Never rejects. */
+  onAwayTag: (conversationId: string, line: AmbientLine, post: (text: string) => Promise<void>) => Promise<void>;
   /** A turn the owner typed at the desktop (desk ingress, chatops/desk.ts). Checks the catalog,
    * posts the `🖥 (desk):` echo, then runs it as the owner's turn — or steers the running live
    * session. `ack` is called exactly once, as soon as the turn is accepted or refused (before the
@@ -385,6 +390,36 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     onError: (err) => console.error(`[memory] channel capture failed: ${err instanceof Error ? err.message : String(err)}`),
   });
   const noteTool = retrieveNoteTool(deps.searchNotes);
+
+  // Away mode (#904): a non-bot sender other than the owner explicitly tags the owner while away
+  // here → record the message (owner-only table), then one fixed, non-pinging line in the same
+  // conversation. A redelivered message is already recorded and gets nothing; a storage failure
+  // still gets the away line, minus the claim it was recorded. Never rejects.
+  async function awayTag(conversationId: string, line: AmbientLine, post: (text: string) => Promise<void>): Promise<void> {
+    const away = deps.away;
+    const configured = deps.roles.ownerId;
+    if (!away || !configured || line.bot || !line.messageId || !line.taggedIds?.length) return;
+    try {
+      const state = away.get();
+      if (!state.on || deps.roles.roleOf({ fromId: line.fromId, fromAltId: line.fromAltId }) === "owner") return;
+      const owner = new Set(deps.catalog?.ownerIds(configured) ?? [configured]);
+      if (!line.taggedIds.some((id) => owner.has(id))) return;
+      let recorded = false;
+      try {
+        recorded = away.capture({
+          conversationId, messageId: line.messageId, senderId: line.fromId, senderName: line.name,
+          text: line.text, at: line.at, ...(line.link ? { link: line.link } : {}),
+          ...(state.since !== undefined ? { awaySince: state.since } : {}),
+        });
+        if (!recorded) return;
+      } catch (err) {
+        console.error(`[away] capture failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      await post(awayLine(deps.roles.ownerName, state.reason, recorded));
+    } catch (err) {
+      console.error(`[away] owner-tag reply failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // DM auto-capture (#462): after the reply, the latest typed turn's facts are saved private to
   // the speaker, each with the usual Forget/Share receipt. Captures run one at a time so each
@@ -1718,7 +1753,10 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     onAmbient(conversationId, scopeId, fx, line) {
       chimeIn?.onAmbient(conversationId, scopeId, fx);
       channelCapture?.onLine(conversationId, scopeId, line, fx);
+      void awayTag(conversationId, line, fx.post);
     },
+
+    onAwayTag: awayTag,
 
     proposeLiveSession(args, fx): Promise<string> {
       return proposeLiveSessionFrom(args.conversationId, args.instruction, args.proposedBy, fx);

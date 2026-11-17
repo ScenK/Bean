@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
@@ -21,6 +21,7 @@ import { RunRegistry } from "../src/chatops/runs.js";
 import { makeRoles } from "../src/chatops/roles.js";
 import { NOT_CHATTY, formatMuteEnd, makeChatter } from "../src/chatops/chatter.js";
 import { makeAway } from "../src/chatops/away.js";
+import type { AmbientLine } from "../src/chatops/ambient-capture.js";
 import type { CardBuilders } from "../src/chatops/cards-api.js";
 import type { DelegateCallbacks, DelegateRequest, NoteDraft } from "../src/index.js";
 import { SkillProposalStore } from "../src/chatops/skill-proposals.js";
@@ -4175,5 +4176,92 @@ describe("away mode (#903)", () => {
     expect(await h.say("u1", false, "hi bean")).toEqual(["sure\n\n(Away mode is on for Discord — `away off` in our DM ends it.)"]);
     expect(await h.say("mia", false, "hi bean")).toEqual(["sure"]);
     expect(h.deps.conversations.history("c1").filter((t) => t.role === "assistant").map((t) => t.content)).toEqual(["sure", "sure", "sure"]);
+  });
+});
+
+describe("away owner tags (#904)", () => {
+  function tagBot(surface: "discord" | "teams" = "discord", ownerId = "u1") {
+    const file = dbFile(mkdtempSync(join(tmpdir(), "bean-away-tag-")));
+    let calls = 0;
+    const made = makeDeps({ chat: async () => { calls++; return { content: "sure", toolCalls: [] }; } });
+    made.deps.roles = makeRoles({ dbPath: file, surface, ownerId, ownerName: "Scen", memberIds: ["mia"] });
+    made.deps.away = makeAway({ dbPath: file, surface });
+    made.deps.catalog = new ConversationCatalog(file, surface);
+    const bot = buildTeamsBot(made.deps);
+    const rows = () => openDb(file).prepare("SELECT * FROM chatops_away_captures ORDER BY at").all() as Record<string, unknown>[];
+    const posted: string[] = [];
+    const post = async (t: string): Promise<void> => { posted.push(t); };
+    const line = (o: Partial<AmbientLine> = {}): AmbientLine =>
+      ({ fromId: "mia", name: "Mia", text: "<@u1> can you look?", at: 1_000, taggedIds: ["u1"], messageId: "m1", link: "https://x/m1", ...o });
+    return { ...made, file, bot, rows, posted, post, line, calls: () => calls };
+  }
+
+  test("records the tag, then one fixed non-model line with the reason; a redelivery gets nothing", async () => {
+    const h = tagBot();
+    h.deps.away!.setOn("at the dentist", 500);
+    await h.bot.onAwayTag("c1", h.line(), h.post);
+    await h.bot.onAwayTag("c1", h.line(), h.post);
+    expect(h.posted).toEqual(["Scen is away (at the dentist). I've recorded your message for when Scen is back."]);
+    expect(h.rows()).toEqual([{
+      surface: "discord", conversation_id: "c1", message_id: "m1", sender_id: "mia", sender_name: "Mia",
+      text: "<@u1> can you look?", link: "https://x/m1", at: 1_000, away_since: 500,
+    }]);
+    expect(h.calls()).toBe(0);
+  });
+
+  test("the ambient path runs the same check", async () => {
+    const h = tagBot();
+    h.deps.away!.setOn(undefined, 1);
+    h.bot.onAmbient("c1", "s1", { fetchRecent: async () => [], post: h.post }, h.line({ messageId: "m9" }));
+    await vi.waitFor(() => expect(h.posted).toEqual(["Scen is away. I've recorded your message for when Scen is back."]));
+    expect(h.rows().map((r) => r.message_id)).toEqual(["m9"]);
+  });
+
+  test("off, untagged, bot authors and the owner never trigger", async () => {
+    const h = tagBot();
+    await h.bot.onAwayTag("c1", h.line(), h.post); // away off
+    h.deps.away!.setOn(undefined, 1);
+    await h.bot.onAwayTag("c1", h.line({ taggedIds: [] }), h.post); // plain name / reply ping / quote
+    await h.bot.onAwayTag("c1", h.line({ taggedIds: ["mia"] }), h.post);
+    await h.bot.onAwayTag("c1", h.line({ bot: true }), h.post);
+    await h.bot.onAwayTag("c1", h.line({ fromId: "u1" }), h.post);
+    await h.bot.onAwayTag("c1", h.line({ messageId: undefined }), h.post);
+    expect(h.posted).toEqual([]);
+    expect(h.rows()).toEqual([]);
+  });
+
+  test("a storage failure still answers, but never claims the message was recorded", async () => {
+    const h = tagBot();
+    h.deps.away!.setOn(undefined, 1);
+    h.deps.away = { ...h.deps.away!, capture: () => { throw new Error("disk full"); } };
+    const bot = buildTeamsBot(h.deps);
+    await bot.onAwayTag("c1", h.line(), h.post);
+    expect(h.posted).toEqual(["Scen is away."]);
+  });
+
+  test("a failed post never rejects", async () => {
+    const h = tagBot();
+    h.deps.away!.setOn(undefined, 1);
+    await expect(h.bot.onAwayTag("c1", h.line(), async () => { throw new Error("403"); })).resolves.toBeUndefined();
+    expect(h.rows()).toHaveLength(1);
+  });
+
+  test("Teams: an owner configured by AAD id matches the `29:` id the catalog saw", async () => {
+    const h = tagBot("teams", "aad-scen");
+    h.deps.away!.setOn(undefined, 1);
+    await h.bot.onAwayTag("c1", h.line({ taggedIds: ["29:scen"] }), h.post);
+    expect(h.posted).toEqual([]);
+    h.deps.catalog!.upsert({ conversationId: "dm", place: { kind: "dm", title: "DM" }, ownerId: "29:scen", ownerAltId: "aad-scen" });
+    await h.bot.onAwayTag("c1", h.line({ taggedIds: ["29:scen"] }), h.post);
+    // The owner tagging themself (either id form) never triggers.
+    await h.bot.onAwayTag("c1", h.line({ fromId: "29:scen", fromAltId: "aad-scen", messageId: "m2", taggedIds: ["29:scen"] }), h.post);
+    expect(h.posted).toHaveLength(1);
+  });
+
+  test("captures are read nowhere but their own module: no tool or command reaches them", () => {
+    const src = join(import.meta.dirname, "..", "src");
+    const hits = (readdirSync(src, { recursive: true }) as string[])
+      .filter((f) => f.endsWith(".ts") && readFileSync(join(src, f), "utf8").includes("chatops_away_captures"));
+    expect(hits.sort()).toEqual(["chatops/away.ts", "db.ts"]);
   });
 });

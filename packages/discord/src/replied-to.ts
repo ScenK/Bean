@@ -89,3 +89,15 @@ export async function resolveRepliedTo(
   const truncated = lo > 0 || hi < group.ids.length - 1;
   return { ...base, text: stitched, ...(truncated ? { truncated: true } : {}) };
 }
+
+/** User ids tagged literally (`<@id>` / `<@!id>`) in the sender's own words, minus `exclude` (the
+ * bot): never a reply ping (not in content), a `>`/`>>>` quote or a code span (neither pings), or a
+ * forward (empty content). The away-mode owner-tag check (#904). */
+export function taggedUserIds(content: string, exclude?: string): string[] {
+  const own = content
+    .replace(/^>>> [\s\S]*$/m, "")
+    .replace(/^> .*$/gm, "")
+    .replace(/```[\s\S]*?```|`[^`\n]*`/g, "");
+  const ids = [...own.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]!).filter((id) => id !== exclude);
+  return [...new Set(ids)];
+}
