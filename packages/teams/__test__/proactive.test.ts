@@ -1,6 +1,6 @@
 import type { ConversationReference, TurnContext } from "botbuilder";
 import { expect, test } from "vitest";
-import { capturePlace, cardActionOf, isDirect, placeOf, proactiveEffects, refFor, refScope, type ContinueConversation } from "../src/proactive.js";
+import { capturePlace, cardActionOf, isDirect, messageLink, placeOf, proactiveEffects, refFor, refScope, type ContinueConversation } from "../src/proactive.js";
 
 const CHANNEL = "19:abc@thread.tacv2";
 const POST = `${CHANNEL};messageid=1700`;
@@ -96,4 +96,10 @@ test("cardActionOf (#689): the send card's destination reaches core; direct only
   expect(act({ id: "a:pick", conversationType: "personal" }, { isTargeted: true }).direct).toBe(false);
   expect(act({ id: "19:g@thread.v2", conversationType: "groupChat" }).direct).toBe(false);
   expect(act({ id: CHANNEL, conversationType: "channel" })).toMatchObject({ direct: false, scopeId: CHANNEL });
+});
+
+test("messageLink deep-links a chat message, and a channel reply under its root post", () => {
+  expect(messageLink("19:chat@thread.v2", "171")).toBe("https://teams.microsoft.com/l/message/19%3Achat%40thread.v2/171");
+  expect(messageLink("19:ch@thread.tacv2;messageid=100", "171"))
+    .toBe("https://teams.microsoft.com/l/message/19%3Ach%40thread.tacv2/171?parentMessageId=100");
 });

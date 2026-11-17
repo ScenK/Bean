@@ -64,6 +64,13 @@ per channel / group chat by the owner with `add-admin @x`, `bean.db` `chatops_ad
   state. Keyword command, never a model call, not in `CHATOPS_COMMANDS` (typed only, no Teams
   manifest change); Discord's thread/turn-cap exemptions reuse `parseAwayCommand`. While on, the
   owner's addressed answers on that surface get `awayReminder` appended (not saved to history).
+  Owner tags while away (#904): [convention-chatops-away-tags](convention-chatops-away-tags.md).
+  **Paid work for guests, by design (#909)**: an owner tag from *anyone* (guest included) may start a
+  silent read-only prepare run (a claude/codex plan-mode delegate) — the one path where a non-member
+  makes Bean spend CLI time. It is bounded by code, not by role: plan mode enforced by argv
+  ([safety-plan-delegate-read-only](safety-plan-delegate-read-only.md)), persisted caps (5 queued,
+  20/surface/day, 5/sender/day, 1 running, 20 min, no retry), and output that reaches only the owner's
+  DM summary. Don't widen it to ordinary (write-capable) delegates or to a public result.
 - **Chatty setting (#444)**: `chatops/chatter.ts`, `chatops_chatty` (missing row = off), scoped like
   admins (channel, never a thread). `chatty on|off` = `NEEDS.chatty` (admin); `chatty status`,
   addressed mute (`quiet|hush|mute|be quiet|stay quiet [for] <n><unit>`, whole message only, 30 min

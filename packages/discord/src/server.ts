@@ -1,6 +1,6 @@
 import {
   beanDir, ensurePrivateBeanDir, scratchDir, configFile, loadConfig, makeOpenAIConverse, projectBeanDir, skillsDir,
-  projectsFile, dbFile, loadLayeredSkills, loadProjects, detectClis, type CliName, runDelegate, drainOutbox,
+  projectsFile, dbFile, loadLayeredSkills, loadProjects, detectClis, type CliName, runDelegate, killAllDelegates, drainOutbox,
   recoverOutbox, outboxErrorLine, OUTBOX_MAX_ATTEMPTS, type OutboxMessage, enqueueOutbox, outboxDir, buildTeamsBot, exitWhenOrphaned,
   ConversationStore, type ConversationPlace, maybeCompact, ProposalStore, RunRegistry, parentActivitySink,
   parentDeskAck, parentSavedSink, parseDeskTurn, parseDeskResume, parseDeskContinue, type DeskAckResult,
@@ -24,7 +24,7 @@ import { discordCards } from "./components.js";
 import { discordDestinations } from "./destinations.js";
 import { openContinueThread, ownerOnly } from "./desk-continue.js";
 import { deliverOutboxDm } from "./outbox-dm.js";
-import { resolveRepliedTo, type RefMessage } from "./replied-to.js";
+import { resolveRepliedTo, taggedUserIds, type RefMessage } from "./replied-to.js";
 import { discordConfigFile, loadDiscordConfig } from "./discord-config.js";
 import { answerSlash, slashCommands, slashMessage } from "./slash.js";
 
@@ -90,6 +90,8 @@ const bot = buildTeamsBot({
   findDelegateRun: (sessionId, surface) => findDelegateRun(dbFile(dir), sessionId, undefined, surface),
   recordDelegateRun: (row) => recordDelegateSession(dbFile(dir), row),
   scratchPath,
+  // Away-mode prepares (#909): read-only plan runs, results only in bean.db.
+  awayPrepareRun: runDelegate,
   cards: discordCards,
   roles,
   routines: {
@@ -294,24 +296,32 @@ client.on("messageCreate", async (message) => {
       isBeanThread(message.channel) ||
       message.mentions.users.has(client.user?.id ?? "") ||
       message.mentions.repliedUser?.id === client.user?.id;
+    const here = message.channel;
+    // Same channel/thread, never a new thread; nothing in it pings anyone.
+    const postHere = async (text: string): Promise<void> => {
+      if ("send" in here) await here.send({ content: text, allowedMentions: { parse: [] } });
+    };
+    const line = {
+      // Household memory capture (#463): the id gates (role), the name only labels a saved fact.
+      fromId: message.author.id, name: message.member?.displayName ?? message.author.displayName,
+      text: message.content, at: message.createdTimestamp,
+      // Away mode (#904): literal tags only (no reply ping, quote or forward).
+      taggedIds: taggedUserIds(message.content, client.user?.id), messageId: message.id, link: message.url,
+    };
     if (!addressed && !capturing) {
       // Chatter in a channel or user-made thread may earn a text-only chime-in (if `chatty on` in
       // its channel). DMs and Bean threads are always addressed, and capturing never gets here.
-      const channel = message.channel;
-      if (message.content && "send" in channel) {
-        bot.onAmbient(channel.id, scopeId, {
-          fetchRecent: effectsFor(channel).fetchRecent!,
-          // Same channel/thread, never a new thread; nothing in it pings anyone.
-          post: async (text) => { await channel.send({ content: text, allowedMentions: { parse: [] } }); },
-        }, {
-          // Household memory capture (#463): the id gates (role), the name only labels a saved fact.
-          fromId: message.author.id, name: message.member?.displayName ?? message.author.displayName,
-          text: message.content, at: message.createdTimestamp, place: placeOf(channel),
-          react: async () => { await message.react("🧠"); },
+      if (message.content && "send" in here) {
+        bot.onAmbient(here.id, scopeId, { fetchRecent: effectsFor(here).fetchRecent!, post: postHere }, {
+          ...line, place: placeOf(here), react: async () => { await message.react("🧠"); },
         });
       }
       return;
     }
+    // Tagging Bean and the owner: the normal answer below, plus the away record + line here,
+    // in the message's own channel/thread (never the thread a channel turn opens). Never rejects.
+    // A live session here bypasses it (documented gap).
+    if (!isDm && !capturing && message.content) void bot.onAwayTag(here.id, line, postHere);
     if (!dmBlocked) destinations.seen(message.channel, isDm ? message.author.displayName : undefined);
     let text = message.content.replace(new RegExp(`<@!?${client.user?.id ?? ""}>`, "g"), "").trim();
     // A forward arrives with empty content; its snapshot is the thing to talk about.
@@ -749,6 +759,10 @@ process.on("message", (raw) => {
 // before this process disappears, instead of just dying mid-run with the requester left hanging.
 process.on("SIGTERM", () => {
   runs.interruptAll(); // synchronous — see its doc comment; safe to exit right after
+  bot.interruptAwayPrepares(); // synchronous: stops a running prepare, marks it interrupted
+  // The process exits next, so a cancel's SIGKILL escalation would never fire: kill every
+  // delegate child now (codex gets a detached watchdog that outlives this process).
+  killAllDelegates();
   // forceKillAll(), not stopAll(): stop()'s graceful SIGTERM-then-escalate dance schedules its
   // SIGKILL fallback on a setTimeout that would never fire before process.exit below runs,
   // leaving a permissions-bypassed child orphaned if it doesn't honor SIGTERM promptly.

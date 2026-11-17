@@ -23,6 +23,12 @@ export interface AmbientLine {
   react?: () => Promise<void>;
   /** The conversation as the surface sees it (its catalog `placeOf`) — titles a saved fact's source. */
   place?: ConversationPlace;
+  /** User ids explicitly tagged in the sender's own words — never a reply ping, a quote or a
+   * forward. Feeds the away-mode owner-tag check (#904). */
+  taggedIds?: string[];
+  /** The platform message id (the away capture's key) and a link to it, when the surface has them. */
+  messageId?: string;
+  link?: string;
 }
 
 export interface CaptureFx {

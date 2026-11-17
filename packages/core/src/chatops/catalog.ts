@@ -77,6 +77,15 @@ export class ConversationCatalog {
     };
   }
 
+  /** The configured owner id plus every id the bot saw for that owner on this surface (Teams:
+   * config may hold the AAD id while mentions carry the `29:` id, stored as `owner_alt_id`). */
+  ownerIds(configured: string): string[] {
+    const rows = openDb(this.file).prepare(
+      "SELECT DISTINCT owner_id FROM chatops_conversations WHERE surface = ? AND owner_alt_id = ?",
+    ).all(this.surface, configured) as unknown as { owner_id: string }[];
+    return [...new Set([configured, ...rows.map((r) => r.owner_id)])];
+  }
+
   /** Records the live session id the CLI reported for this conversation's current binding. */
   setLiveSession(conversationId: string, cli: LiveCli, sessionId: string): void {
     openDb(this.file).prepare(
