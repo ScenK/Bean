@@ -11,6 +11,9 @@ export interface PendingTodo {
   requesterId: string;
   /** Requested by a non-owner: the routine must be member-eligible and the todo is stamped. */
   member: boolean;
+  /** Where the todo's result is reported (#923): `channel` absent = the owner's DM. Absent = no
+   * report (a member's DM — the outbox can only DM the owner by default). */
+  report?: { channel?: string };
   cardActivityId?: string;
   createdAt: number;
 }

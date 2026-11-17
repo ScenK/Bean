@@ -187,9 +187,14 @@ describe("scheduler trigger", () => {
     });
     expect(await sched.runNow("s")).toEqual({ started: true, status: "ok", runs: [{ id: "r1", status: "ok" }] });
     expect(deliverDigest).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), false);
+    // A chat origin rides along to the digest, so the sink there is skipped (#920).
+    const t = await sched.trigger("s", "run", { brief: true, origin: { transport: "teams", channel: "c1" } });
+    if (t.status === "started") await t.done;
+    expect(deliverDigest).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), true, { transport: "teams", channel: "c1" });
+    deliverDigest.mockClear();
     stop = true;
     expect(await sched.runNow("s", { brief: true })).toEqual({ started: true, status: "failed", runs: [{ id: "r2", status: "failed" }], stopped: true });
-    expect(deliverDigest).toHaveBeenCalledOnce();
+    expect(deliverDigest).not.toHaveBeenCalled();
   });
 
   it("an empty fold is ok with no runs", () => {

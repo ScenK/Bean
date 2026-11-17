@@ -7,6 +7,7 @@ import { newId, type ChatItem } from "../../shared/chat-types.js";
 // .memory/project-desktop-chat-history.md.
 
 export const THREAD_TEXT_MAX = 20_000;
+export const SPROUT_UNKNOWN = "Started — see the Dashboard for how it went";
 export const THREAD_ITEMS_MAX = 500;
 // Renderer copy of core's DESKTOP_CHAT_MAX_BYTES (node-free bundle rule) — keep in step.
 export const THREAD_MAX_BYTES = 2 * 1024 * 1024;
@@ -51,17 +52,22 @@ function normalizeItem(it: ChatItem): ChatItem | undefined {
       const { images: _i, ...rest } = it;
       return it.state === "pending" ? { ...rest, state: "expired" } : rest;
     }
+    case "todo":
+      // Like a sprout card: one with a job id settles on restore; a tap never answered can't say. (A
+      // "queued" card without one predates #923's report-back and stays as it was.)
+      return it.state === "pending" ? { ...it, state: "expired" }
+        : it.state === "sending" || (it.state === "running" && !it.jobId) ? { ...it, state: "done", result: SPROUT_UNKNOWN } : it;
     case "proposal":
     case "skill":
-    case "todo":
     case "offer":
       return it.state === "pending" ? { ...it, state: "expired" } : it;
     case "send": // main's pending proposal is gone after a reload
       return it.state === "pending" || it.state === "sending" ? { ...it, state: "expired" } : it;
     case "sprout":
-      // The run itself lives on in main; a restored card only can't say how it ended.
+      // An admitted run keeps its job id and stays running: the restore settles it from main's record
+      // (settleRestoredSprouts). Anything else running (a check, a start never answered) can't say.
       return it.state === "pending" ? { ...it, state: "expired" }
-        : it.state === "running" ? { ...it, state: "done", result: "Started — see the Dashboard for how it went" } : it;
+        : it.state === "running" && !it.jobId ? { ...it, state: "done", result: SPROUT_UNKNOWN } : it;
     case "status": {
       const { exiting: _e, ...rest } = it; // the child is long gone
       return { ...rest, text: cap(it.text) };
@@ -128,4 +134,64 @@ export const continuedTo = (items: readonly ChatItem[]): Extract<ChatItem, { kin
 export function threadTitle(text: string): string {
   const line = text.replace(/\s+/g, " ").trim();
   return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1)}…` : line || "New chat";
+}
+
+type SproutItem = Extract<ChatItem, { kind: "sprout" }>;
+type TodoItem = Extract<ChatItem, { kind: "todo" }>;
+/** A card waiting on a dispatch's end: a running sprout card, or a todo card run or queued (#923). */
+const awaitsEnd = (it: ChatItem): it is (SproutItem | TodoItem) & { jobId: string } =>
+  Boolean((it.kind === "sprout" && it.state === "running") || (it.kind === "todo" && (it.state === "running" || it.state === "queued")))
+  && (it as { jobId?: string }).jobId !== undefined;
+/** A sprout run's end, as its card and the chat learn it (main's `SproutOutcome` with a status). */
+export interface SproutEnd { jobId: string; status: string; text: string }
+
+/** The card's outcome line for a run's end. */
+export function sproutResultLine(status: string): string {
+  return status === "ok" ? "Finished" : status === "needs-attention" ? "Needs attention"
+    : status === "interrupted" ? "Interrupted — Bean restarted before it finished, nothing was re-run" : "Failed";
+}
+
+/** The result turn a run's end loops back into its chat (#921), collapsed to a labelled row. */
+export function sproutLoopback(routine: string, end: SproutEnd): { text: string; display: string; source: "loopback" } {
+  return {
+    text: `[sprout result for "${routine}"]: ${end.text}\n\nBriefly summarize this outcome for the user in your own words.`,
+    display: `🌱 Sprout "${routine}" — ${sproutResultLine(end.status).split(" — ")[0]!.toLowerCase()}`,
+    source: "loopback",
+  };
+}
+
+/** A run's end on its card: the running card with that job settles and its result loops back. Once
+ * per job — a settled card (or one this chat doesn't hold) takes nothing, so a repeat is a no-op. */
+export function applySproutEnd(items: ChatItem[], end: SproutEnd): { items: ChatItem[]; loopback?: ReturnType<typeof sproutLoopback> } {
+  const match = items.find((it) => awaitsEnd(it) && it.jobId === end.jobId) as SproutItem | TodoItem | undefined;
+  if (!match) return { items };
+  return {
+    items: items.map((it) => (it === match ? { ...match, state: "done" as const, result: sproutResultLine(end.status) } : it)),
+    loopback: sproutLoopback(match.kind === "sprout" ? match.plan.routine : match.todo.routine, end),
+  };
+}
+
+/** A restored chat's running sprout cards against main's record of its runs: an ended run settles
+ * (and loops back, oldest first), one still running stays, and one main has no record of (pruned,
+ * or another core's) can't say how it went. */
+export function settleRestoredSprouts(
+  items: ChatItem[], outcomes: ReadonlyArray<{ jobId: string; status?: string; text?: string }> | undefined,
+): { items: ChatItem[]; loopbacks: ReturnType<typeof sproutLoopback>[]; changed: boolean } {
+  let next = items;
+  const loopbacks: ReturnType<typeof sproutLoopback>[] = [];
+  let changed = false;
+  for (const it of items) {
+    if (!awaitsEnd(it)) continue;
+    const o = outcomes?.find((x) => x.jobId === it.jobId);
+    if (o && o.status === undefined) continue;
+    changed = true;
+    if (!o) {
+      next = next.map((x) => (x.id === it.id ? { ...it, state: "done" as const, result: SPROUT_UNKNOWN } : x));
+      continue;
+    }
+    const r = applySproutEnd(next, { jobId: o.jobId, status: o.status!, text: o.text ?? "" });
+    next = r.items;
+    if (r.loopback) loopbacks.push(r.loopback);
+  }
+  return { items: next, loopbacks, changed };
 }

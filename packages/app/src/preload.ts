@@ -5,7 +5,7 @@ import type {
   Memory, ChatTurn, DreamDigest, Note, NoteDraft, AvailableModel, Routine, TodoItem, ImageAttachment,
   RoutineBrief, RoutineWatch, WatchItem, ProposalOutcome,
 } from "@bean/core";
-import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread } from "@bean/host";
+import type { Handshake, DelegateEvent, DelegateStartRequest, LiveEvent, LiveResumeResult, LiveStartRequest, LiveStartResult, TaskJob, ChatThreadSaveRequest, ChatThreadAck, PendingChatThread, SproutPush, TodoDispatchAnswer } from "@bean/host";
 import type { TerminalEvent, TerminalStartResult } from "./terminal-tasks.js";
 import type { ChatopsBot, ChatopsEvent, ChatopsState } from "@bean/host";
 import type { InterruptedRunNotice } from "./ipc.js";
@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld("bean", {
   delegateCancel: (taskId: string): void => ipcRenderer.send(IPC.delegateCancel, taskId),
   onDelegateEvent: (cb: (e: DelegateEvent) => void) =>
     ipcRenderer.on(IPC.delegateEvent, (_e, ev: DelegateEvent) => cb(ev)),
+  chatSproutRun: (name: string, thread: string, mountId: string): Promise<{ jobId?: string; reason?: string }> =>
+    ipcRenderer.invoke(IPC.chatSproutRun, name, thread, mountId),
+  chatTodoDispatch: (routine: string, text: string, mode: "run" | "queue", thread: string, mountId: string): Promise<TodoDispatchAnswer | { reason: string }> =>
+    ipcRenderer.invoke(IPC.chatTodoDispatch, routine, text, mode, thread, mountId),
+  onSproutEvent: (cb: (e: SproutPush) => void) => ipcRenderer.on(IPC.sproutEvent, (_e, ev: SproutPush) => cb(ev)),
   liveStart: (req: LiveStartRequest, mountId: string): Promise<LiveStartResult> => ipcRenderer.invoke(IPC.liveStart, req, mountId),
   liveSend: (sessionId: string, text: string, mountId: string): Promise<string | undefined> => ipcRenderer.invoke(IPC.liveSend, sessionId, text, mountId),
   liveStop: (sessionId: string, mountId: string): void => ipcRenderer.send(IPC.liveStop, sessionId, mountId),

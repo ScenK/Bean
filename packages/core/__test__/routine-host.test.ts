@@ -13,6 +13,7 @@ import { loadNotes } from "../src/note-store.js";
 import { listStepAttempts } from "../src/step-attempts.js";
 import { saveSkillProposals } from "../src/retro.js";
 import { addTodo, claimTodo, listTodos } from "../src/todo-store.js";
+import { openDispatch } from "../src/dispatch-store.js";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bean-host-")); });
@@ -53,6 +54,7 @@ describe("createRoutineHost", () => {
     expect(h.status.at(-1)).toMatchObject({ type: "finish", id: `routine:r:${todo.id}`, state: "done" });
     expect(reqs[0]?.todoId).toBe(todo.id);
     expect((await listTodos(dbFile(dir), "r"))[0]?.status).toBe("done");
+    expect(res.todoIds).toEqual([todo.id]); // what a drain's sink skip checks (#920)
   });
 
   it("a claimed todo ends failed when the skills can't load", async () => {
@@ -175,6 +177,40 @@ describe("createRoutineHost", () => {
     // Without the flag (or with it off) every run posts.
     expect(await run("ok")).toEqual({ posted: 2, notified: 1, note: "d-ok" });
     expect(await run("ok", false)).toEqual({ posted: 2, notified: 1, note: "d-ok" });
+  });
+
+  it("skips a chat sink that resolves to the origin; other sinks still get the digest", async () => {
+    const notify = vi.fn(async () => {});
+    let n = 0;
+    const h = host({ notify, newId: () => `id-${n++}` });
+    const chatops = [
+      { transport: "discord" as const, channel: "c1" }, // the origin: skipped
+      { transport: "discord" as const, channel: "c1-thread" }, // a thread isn't its parent channel
+      { transport: "teams" as const, channel: "c1" }, // another transport
+      { transport: "discord" as const, user: "u2" }, // a member's DM, not the owner's
+    ];
+    const r = routine([], { sinks: { note: true, notify: true, chatops } });
+    const result = { digest: "hello", results: [], record: { startedAt: "2026-10-23T06:00:00.000Z", status: "ok" } as never };
+    await h.deliverDigest(r, result, false, { transport: "discord", channel: "c1" });
+    const posted = [...await claimOutbox(outboxDir(dir), "discord"), ...await claimOutbox(outboxDir(dir), "teams")];
+    expect(posted.map((m) => [m.transport, m.channel ?? m.userId])).toEqual(expect.arrayContaining([["discord", "c1-thread"], ["teams", "c1"], ["discord", "u2"]]));
+    expect(posted).toHaveLength(3);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect((await loadNotes(dbFile(dir)))[0]?.body).toBe("hello");
+    // An owner-DM origin matches an owner-DM sink.
+    await h.deliverDigest(routine([], { sinks: { chatops: [{ transport: "teams" }, { transport: "teams", user: "x" }] } }), result, false, { transport: "teams" });
+    expect(await claimOutbox(outboxDir(dir), "teams")).toEqual([]); // Teams ignores `user`: both are the owner's DM
+  });
+
+  it("a drain skips the origin's sink only when every todo of the run was dispatched from it", async () => {
+    const h = host({ newId: (() => { let n = 0; return () => `id-${n++}`; })() });
+    const r = routine([], { sinks: { chatops: [{ transport: "teams", channel: "c1" }] } });
+    openDispatch(dbFile(dir), { surface: "teams", conversation: "c1", routine: "r", todoId: "t1" });
+    const run = (todoIds: string[]) => ({ digest: "d", results: [], todoIds, record: { status: "ok" } as never });
+    await h.deliverDigest(r, run(["t1", "t2"]), false, { transport: "teams", channel: "c1" }); // t2 came from elsewhere
+    expect(await claimOutbox(outboxDir(dir), "teams")).toHaveLength(1);
+    await h.deliverDigest(r, run(["t1"]));
+    expect(await claimOutbox(outboxDir(dir), "teams")).toEqual([]);
   });
 
   it("chatopsOnlyOnProblems doesn't mute a notify-only watch fire (always ok)", async () => {

@@ -81,7 +81,8 @@ restore.** Never mutates. Drops `working` items, `reply.session`/`tail`/`streami
 gets the "— turn interrupted" footer), delegate `taskId`/`tail`, status `exiting`, and every image data
 URL (user/reply images → `[image attached]` appended to the text once; note-card images dropped). Pending
 proposal/delegate/note/skill/todo/offer cards become `expired`, starting/running delegates
-`interrupted`, memory rows `kept` (no Undo). Delegate and live-status **receipts are kept** — Continue
+`interrupted`, memory rows `kept` (no Undo); a running sprout card with a `jobId` stays running and settles
+from the thread's dispatch rows at restore (#921, [project-sprout-dispatches](project-sprout-dispatches.md)). Delegate and live-status **receipts are kept** — Continue
 live resumes through the host's `findDelegateRun(…, "desktop")`, never through restored JSON. Each text is
 capped at 20k chars, the list at 500 items (oldest dropped), the JSON at 2 MB (renderer copy of
 `DESKTOP_CHAT_MAX_BYTES`). `restoreItems` remaps every id with `newId()` (a restored `item-3` would

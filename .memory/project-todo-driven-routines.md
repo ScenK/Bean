@@ -72,4 +72,5 @@ validates the name. The host freezes the card with `planSproutRun(routine, pendi
 Chatops (#636): bot.ts posts the card (`sproutRunCard`, same contents as desktop) and words blocked
 sprouts itself ("say `enable X` first"). Bots never schedule (#637): they trigger over IPC
 (`chatops/sprout-bridge.ts`) to the host's `answerSproutTrigger` (`host.ts`: `trigger` wrapped by
-`withFinishReply`, plus `sproutRunFacts` for `planSproutRun`); both helpers live in core.
+`withDispatch`, plus `sproutRunFacts` for `planSproutRun`); both helpers live in core. The finish reply is
+persisted, not a closure: [project-sprout-dispatches](project-sprout-dispatches.md).

@@ -14,6 +14,8 @@ describe("wire parsers", () => {
   it("rebuild a trigger from known fields and drop malformed ones", () => {
     expect(parseRoutineTrigger({ type: "routine-trigger", requestId: "q", name: "digest", action: "run", origin: { channel: "c", x: 1 }, text: "hi" }))
       .toEqual({ type: "routine-trigger", requestId: "q", name: "digest", action: "run", origin: { channel: "c" } });
+    expect(parseRoutineTrigger({ type: "routine-trigger", requestId: "q", name: "digest", action: "run", origin: { actor: "u1" } }))
+      .toEqual({ type: "routine-trigger", requestId: "q", name: "digest", action: "run", origin: { actor: "u1" } });
     expect(parseRoutineTrigger({ type: "routine-trigger", requestId: "q", name: "digest", action: "check", origin: {} }))
       .toEqual({ type: "routine-trigger", requestId: "q", name: "digest", action: "check", origin: {} });
     for (const bad of [
@@ -21,6 +23,7 @@ describe("wire parsers", () => {
       { type: "routine-trigger", requestId: "", name: "digest", action: "run", origin: {} },
       { type: "routine-trigger", requestId: "q", name: "x".repeat(201), action: "run", origin: {} },
       { type: "routine-trigger", requestId: "q", name: "digest", action: "run", origin: { channel: 5 } },
+      { type: "routine-trigger", requestId: "q", name: "digest", action: "run", origin: { actor: "" } },
       { type: "routine-trigger", requestId: "q", name: "digest", action: "run" },
     ]) expect(parseRoutineTrigger(bad)).toBeUndefined();
   });
@@ -48,7 +51,7 @@ describe("answerRoutineTrigger (app side)", () => {
     ({ type: "routine-trigger", requestId: "q", name, action, origin: { channel: "c1" } });
   const deps = (routines: Routine[], facts = { pending: 0, seeded: true }, result: TriggerResult = { status: "started", done: new Promise(() => {}) }) => {
     const trigger = vi.fn(async () => result);
-    return { trigger, d: { load: async () => routines, facts: async () => facts, trigger } };
+    return { trigger, d: { load: async () => routines, facts: async () => facts, trigger, held: () => true } };
   };
 
   it("re-resolves the name: a renamed or deleted sprout is refused without triggering", async () => {
@@ -61,6 +64,14 @@ describe("answerRoutineTrigger (app side)", () => {
     const { trigger, d } = deps([schedule]);
     expect(await answerRoutineTrigger(req("digest"), d)).toEqual({ status: "started" });
     expect(trigger).toHaveBeenCalledWith("digest", "run", { channel: "c1" });
+  });
+
+  it("a standby host (no scheduler lease) refuses a run, still answers a check", async () => {
+    const run = deps([schedule]);
+    expect(await answerRoutineTrigger(req("digest"), { ...run.d, held: () => false })).toEqual({ status: "refused", reason: "standby" });
+    expect(run.trigger).not.toHaveBeenCalled();
+    const check = deps([watch], undefined, { status: "checked", result: { newItems: 0 } });
+    expect(await answerRoutineTrigger(req("feed", "check"), { ...check.d, held: () => false })).toEqual({ status: "checked", newItems: 0 });
   });
 
   it("refuses a sprout whose plan changed since the card", async () => {

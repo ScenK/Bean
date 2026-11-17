@@ -19,5 +19,5 @@ export interface ShellOps {
 
 /** A host push to one chat (mount): the shell adapter maps each kind to its channel and routes it
  * to the client that holds (or last held) the mount. */
-export type MountPushKind = "delegate" | "live" | "memory" | "imageProgress";
+export type MountPushKind = "delegate" | "live" | "memory" | "imageProgress" | "sprout";
 export type HostPush = (mountId: string, kind: MountPushKind, payload: unknown) => void;
