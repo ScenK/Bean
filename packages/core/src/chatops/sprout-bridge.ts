@@ -1,12 +1,12 @@
 // Sprout trigger bridge (#637): a bot the desktop app spawned has no scheduler (the app owns it),
 // so its sprout-run card asks the app over the bot's Node IPC slot. Beside desk.ts and in the same
 // shape: a request/answer pair, each side's parser rebuilding the message from known fields.
-// Bot → app carries a sprout name, the action frozen on the card and the asking conversation's id
-// — never message text. App → bot carries a status, a fixed refusal code, or a check's count.
+// Bot → app carries a sprout name, the action frozen on the card, the asking conversation's id and
+// the tapper's id — never message text. App → bot carries a status, a fixed refusal code, or a check's count.
 import { randomUUID } from "node:crypto";
 import type { Routine } from "../routine-store.js";
 import type { TriggerResult, WatchCheckResult } from "../routine-scheduler.js";
-import { planSproutRun, type SproutTrigger } from "../sprout-trigger.js";
+import { planSproutRun, type SproutOrigin, type SproutTrigger } from "../sprout-trigger.js";
 import { listTodos } from "../todo-store.js";
 import { isWatchSeeded } from "../watch-store.js";
 import { watchSourceKey } from "../watch.js";
@@ -16,11 +16,11 @@ import { watchSourceKey } from "../watch.js";
 export type SproutTriggerAnswer = { status: "started" } | Exclude<TriggerResult, { status: "started" }>;
 
 /** Why the app refused a bridged trigger. A fixed set: the bot words each itself. */
-export const ROUTINE_TRIGGER_REFUSALS = ["missing", "changed", "off", "review", "empty", "busy", "unavailable"] as const;
+export const ROUTINE_TRIGGER_REFUSALS = ["missing", "changed", "off", "review", "empty", "busy", "unavailable", "standby"] as const;
 export type RoutineTriggerRefusal = (typeof ROUTINE_TRIGGER_REFUSALS)[number];
 
 export type RoutineTrigger = {
-  type: "routine-trigger"; requestId: string; name: string; action: "run" | "check"; origin: { channel?: string };
+  type: "routine-trigger"; requestId: string; name: string; action: "run" | "check"; origin: SproutOrigin;
 };
 export type RoutineTriggerAnswer =
   | { status: "started" }
@@ -44,9 +44,12 @@ export function parseRoutineTrigger(v: unknown): RoutineTrigger | undefined {
   const o = fields(v, "routine-trigger");
   if (!o || !id(o.requestId) || !id(o.name) || (o.action !== "run" && o.action !== "check")) return undefined;
   if (typeof o.origin !== "object" || o.origin === null) return undefined;
-  const { channel } = o.origin as Record<string, unknown>;
-  if (channel !== undefined && !id(channel)) return undefined;
-  return { type: "routine-trigger", requestId: o.requestId, name: o.name, action: o.action, origin: channel === undefined ? {} : { channel } };
+  const { channel, actor } = o.origin as Record<string, unknown>;
+  if ((channel !== undefined && !id(channel)) || (actor !== undefined && !id(actor))) return undefined;
+  return {
+    type: "routine-trigger", requestId: o.requestId, name: o.name, action: o.action,
+    origin: { ...(channel !== undefined ? { channel } : {}), ...(actor !== undefined ? { actor } : {}) },
+  };
 }
 
 /** App → bot, validated in the bot. */
@@ -77,11 +80,14 @@ export async function sproutRunFacts(dbPath: string, r: Routine): Promise<{ pend
 /** App side: answers a bot's trigger. The card was planned in the bot, so the name is re-resolved
  * here (renamed or deleted = `missing`) and the frozen action re-planned: a sprout whose plan
  * changed since the card (now paused, emptied, or run ↔ check) is refused, never run as
- * something the owner didn't confirm. `trigger` is the scheduler's, finish reply included. */
+ * something the owner didn't confirm. `trigger` is the scheduler's, dispatch record included.
+ * `held` = this host holds the scheduler lease: a standby host refuses a run (`standby`), since
+ * the holder's start would close its dispatch as interrupted. */
 export async function answerRoutineTrigger(req: RoutineTrigger, deps: {
   load: () => Promise<Routine[]>;
   facts: (r: Routine) => Promise<{ pending: number; seeded: boolean }>;
   trigger: SproutTrigger;
+  held: () => boolean;
 }): Promise<RoutineTriggerAnswer> {
   const routine = (await deps.load()).find((r) => r.name === req.name);
   if (!routine) return { status: "refused", reason: "missing" };
@@ -89,6 +95,7 @@ export async function answerRoutineTrigger(req: RoutineTrigger, deps: {
   const out = planSproutRun(routine, pending, seeded);
   if ("blocked" in out) return { status: "refused", reason: out.blocked };
   if (out.plan.action !== req.action) return { status: "refused", reason: "changed" };
+  if (req.action === "run" && !deps.held()) return { status: "refused", reason: "standby" };
   const t = await deps.trigger(routine.name, req.action, req.origin);
   if (t.status === "checked") return { status: "checked", newItems: t.result.newItems, ...(t.result.error ? { error: t.result.error.slice(0, MAX_ERROR) } : {}) };
   // Past the checks above, the scheduler only refuses for its own reasons — a full run slot (or
@@ -106,6 +113,7 @@ const REFUSAL_TEXT: Record<RoutineTriggerRefusal, (name: string) => string> = {
   empty: (name) => `${name}'s queue is empty — queue a todo first`,
   busy: (name) => `${name} is already running`,
   unavailable: () => UNREACHABLE,
+  standby: () => "sprouts are paused on this Bean — another Bean process runs them for this data directory",
 };
 
 /** The bot's IPC slot to the app that spawned it (`process` in a real bot). */
@@ -162,7 +170,7 @@ export function parentSproutTrigger(port: ParentPort = processParentPort, timeou
   };
 }
 
-export type SproutTriggerClient = (name: string, action: "run" | "check", origin: { channel?: string }) => Promise<SproutTriggerAnswer>;
+export type SproutTriggerClient = (name: string, action: "run" | "check", origin: SproutOrigin) => Promise<SproutTriggerAnswer>;
 
 const answerText = (name: string, a: RoutineTriggerAnswer): SproutTriggerAnswer => {
   if (a.status === "started") return { status: "started" };

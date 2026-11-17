@@ -65,29 +65,16 @@ export function sproutCheckText(result: { newItems: number; error?: string }, qu
   return `${result.newItems} new — ${queuesNew ? "queued" : "sent"}`;
 }
 
-/** The one fixed line a chat posts when a run it started ends — never step output. */
-export function sproutFinishText(name: string, status: RunStatus): string {
+/** The one fixed line a chat posts when a run it started ends — never step output.
+ * `interrupted` = Bean restarted before the run ended; nothing was re-run. */
+export function sproutFinishText(name: string, status: RunStatus | "interrupted"): string {
   if (status === "ok") return `${name} finished ✓`;
+  if (status === "interrupted") return `${name} was interrupted ✗ · Bean restarted before it finished, nothing was re-run`;
   return status === "needs-attention" ? `${name} needs attention ⚠` : `${name} failed ✗ · see Dashboard`;
 }
 
-/** Run or check a sprout for a chat, finish reply going to `origin` (`channel` absent = the
- * owner's DM). What a bot's `routines.sprouts.trigger` is. */
-export type SproutTrigger = (name: string, action: "run" | "check", origin: { channel?: string }) => Promise<TriggerResult>;
-
-/** Wraps the scheduler's trigger so a run started from chat posts one fixed line where it was
- * asked once it ends (#636): a channel post, not an interaction follow-up (those expire). Used by
- * whichever process hosts the scheduler — headless Discord, or the app for a bot it spawned. */
-export function withFinishReply(
-  trigger: (name: string, action: "run" | "check") => Promise<TriggerResult>,
-  enqueue: (msg: { channel?: string; body: string }) => Promise<unknown>,
-): SproutTrigger {
-  return async (name, action, origin) => {
-    const t = await trigger(name, action);
-    if (t.status === "started") {
-      void t.done.then((o) => enqueue({ ...origin, body: sproutFinishText(name, o.status) }))
-        .catch((err: unknown) => console.error(`bean: finish reply for "${name}" failed`, err));
-    }
-    return t;
-  };
-}
+/** Run or check a sprout for a chat, the result going to `origin` (`channel` absent = the
+ * owner's DM; `actor` = who tapped). What a bot's `routines.sprouts.trigger` is; the scheduler
+ * host records the dispatch (`withDispatch`, dispatch-store.ts). */
+export type SproutTrigger = (name: string, action: "run" | "check", origin: SproutOrigin) => Promise<TriggerResult>;
+export interface SproutOrigin { channel?: string; actor?: string }

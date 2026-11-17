@@ -6,15 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dbFile } from "../src/config.js";
 import { createRoutineWiring, type RoutineWiringDeps } from "../src/routine-wiring.js";
 import { addTodo, claimTodo, listTodos } from "../src/todo-store.js";
+import { getDispatch, openDispatch, type Dispatch } from "../src/dispatch-store.js";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bean-wiring-")); });
 afterEach(() => { vi.restoreAllMocks(); rmSync(dir, { recursive: true, force: true }); });
 
-const wiring = (canSchedule: () => boolean) => createRoutineWiring({
+const wiring = (canSchedule: () => boolean, deliverDispatch?: RoutineWiringDeps["deliverDispatch"]) => createRoutineWiring({
   dir, builtinDir: dir, converse: async () => ({ content: "", toolCalls: [] }), getModel: () => "m",
   clis: () => [], cliModels: [], getDelegateCli: () => "", path: "", tools: [],
   getRoutineDigestContext: () => false, canSchedule, alarm: () => {},
+  ...(deliverDispatch ? { deliverDispatch } : {}),
 } satisfies RoutineWiringDeps);
 
 describe("createRoutineWiring start", () => {
@@ -31,5 +33,15 @@ describe("createRoutineWiring start", () => {
     await w.start();
     expect(interval).toHaveBeenCalledTimes(1);
     w.scheduler.stop();
+  });
+
+  it("closes the previous holder's open dispatches as interrupted and delivers each once", async () => {
+    const id = openDispatch(dbFile(dir), { surface: "teams", conversation: "c1", routine: "r" });
+    const sent: Dispatch[] = [];
+    const w = wiring(() => false, async (d) => { sent.push(d); return true; });
+    await w.start();
+    await w.start();
+    expect(sent.map((d) => [d.id, d.status])).toEqual([[id, "interrupted"]]);
+    expect(getDispatch(dbFile(dir), id)?.deliveredAt).toBeDefined();
   });
 });

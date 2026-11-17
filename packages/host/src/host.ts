@@ -8,7 +8,7 @@ import {
   loadConfig, saveConfig, loadLayeredSkills, loadProjects, saveProjects, saveSkill, deleteSkill, loadPersona, savePersona,
   makeOpenAIConverse, makeOpenAIImageGen, loadMemories, appendMemories, updateMemory, updateMemoryCategory, renameMemoryCategory,
   deleteMemories, extractMemories, maybeDream, getMemoryMeta, restoreDreamRun, dreamDetails, holdSchedulerLease, enqueueOutbox,
-  answerRoutineTrigger, sproutRunFacts, withFinishReply, loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote,
+  answerRoutineTrigger, sproutRunFacts, withDispatch, dispatchNotice, loadNotes, saveNote, archiveNote, restoreNote, purgeNote, starNote,
   loadNoteHistory, saveNoteImage, loadNoteImage, detectClis, loginShellPath, resolveCliPath, deliver, loadRoutines, saveRoutine,
   deleteRoutine, loadRoutineStates, runDelegate, killAllDelegates, killAllCommands, ROUTINE_STEP_TIMEOUT_MS, addTodo, listTodos,
   listAllTodos, editTodoText, deleteTodo, reorderTodo, clearFinishedTodos, retryTodo, deleteTodosForRoutine, sweepDeadRuns,
@@ -285,6 +285,12 @@ export async function createHost(deps: HostDeps) {
     },
     // Headless: rebase each to its next slot (still no catch-up), or the scheduler's missed guard
     // would skip it forever.
+    // A dispatch's result goes back where it was asked (#919). Desktop origins: #921's loopback.
+    deliverDispatch: async (d) => {
+      if (d.surface === "desktop") return false;
+      await enqueueOutbox(outboxDir(dir), { transport: d.surface, ...(d.conversation ? { channel: d.conversation } : {}), body: dispatchNotice(d) }, randomUUID);
+      return true;
+    },
     ...(deps.headless ? {
       onMissed: (names: string[]) => {
         void deps.notification.send({ body: missedNotice(names) });
@@ -293,12 +299,13 @@ export async function createHost(deps: HostDeps) {
     } : {}),
   });
   const routineScheduler = routines.scheduler;
-  // A bot's sprout-run tap (#637). The host runs the scheduler, so it also posts the finish reply,
-  // to the asking conversation.
+  // A bot's sprout-run tap (#637). The host runs the scheduler, so it also records the dispatch and
+  // posts the finish reply to the asking conversation, across a restart (#919). Lease holder only.
   const answerSproutTrigger = (bot: ChatopsSurface, req: RoutineTrigger): Promise<RoutineTriggerAnswer> => answerRoutineTrigger(req, {
     load: () => loadRoutines(routinesPath),
     facts: (r) => sproutRunFacts(db, r),
-    trigger: withFinishReply(
+    held: schedulerLease.held,
+    trigger: withDispatch(
       (name, action) => {
         if (action !== "run") return routineScheduler.trigger(name, action);
         if (updating) return Promise.resolve({ status: "refused" as const, reason: UPDATING });
@@ -308,7 +315,7 @@ export async function createHost(deps: HostDeps) {
         void track(admitted.then(() => finished)).catch(() => {});
         return admitted;
       },
-      (msg) => enqueueOutbox(outboxDir(dir), { transport: bot, ...msg }, randomUUID)),
+      { file: db, surface: bot, deliver: routines.deliverDispatches }),
   });
   const tools = detectTools(resolvedPath);
   const routineBuilder = createRoutineBuilder({

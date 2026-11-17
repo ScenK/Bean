@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { openDb } from "./db.js";
+import { closeTodoDispatches } from "./dispatch-store.js";
 
 export type TodoStatus = "pending" | "running" | "done" | "failed";
 
@@ -80,6 +81,11 @@ export async function updateTodoStatus(
   const finished = status === "done" || status === "failed";
   openDb(file).prepare("UPDATE todos SET status = ?, finished_at = ?, result_summary = ? WHERE id = ?")
     .run(status, finished ? now().toISOString() : null, resultSummary ?? null, id);
+  // A dispatch following this todo (#919) closes with the todo's own result, whichever run took it.
+  if (finished) {
+    const runStatus = status === "done" ? "ok" : resultSummary?.startsWith("needs attention:") ? "needs-attention" : "failed";
+    closeTodoDispatches(file, id, runStatus, resultSummary, now);
+  }
 }
 
 /** Atomically moves the routine's first pending todo (queue order) to `running` and returns it;

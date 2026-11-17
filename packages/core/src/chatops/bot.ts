@@ -15,7 +15,7 @@ import { destinationLabel, matchDestination, type Destination, type DestinationK
 import type { OutboxMessage } from "../outbox.js";
 import type { TodoItem } from "../todo-store.js";
 import type { SproutTriggerAnswer } from "./sprout-bridge.js";
-import { planSproutRun, sproutCheckText, type SproutRunBlock } from "../sprout-trigger.js";
+import { planSproutRun, sproutCheckText, type SproutOrigin, type SproutRunBlock } from "../sprout-trigger.js";
 import type { SproutRunProposalStore } from "./sprout-run-proposals.js";
 import type { SendProposalStore } from "./send-proposals.js";
 import { cancelReminder } from "../reminders.js";
@@ -279,10 +279,10 @@ export interface TeamsBotDeps {
     proposals: RoutineProposalStore;
     /** Run or check a sprout now (#636) — where this process owns the scheduler (headless
      * Discord) or asks the app that spawned it over IPC (#637, `parentSproutTrigger`). `trigger`
-     * answers at admission; the scheduler host posts the finish reply to `origin` (`channel`
-     * absent = the owner's DM). Absent = propose_sprout_run is never offered. */
+     * answers at admission; the scheduler host records the dispatch and posts the finish reply to
+     * `origin` (`channel` absent = the owner's DM), across a restart (#919). Absent = propose_sprout_run is never offered. */
     sprouts?: {
-      trigger: (name: string, action: "run" | "check", origin: { channel?: string }) => Promise<SproutTriggerAnswer>;
+      trigger: (name: string, action: "run" | "check", origin: SproutOrigin) => Promise<SproutTriggerAnswer>;
       /** A sprout's pending todos and whether its watch is seeded, for planSproutRun. */
       facts: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
       proposals: SproutRunProposalStore;
@@ -1204,7 +1204,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
     }
     let result: string;
     try {
-      const t = await sprouts.trigger(plan.routine, plan.action, pending.channel ? { channel: pending.channel } : {});
+      const t = await sprouts.trigger(plan.routine, plan.action, { ...(pending.channel ? { channel: pending.channel } : {}), ...(action.fromId ? { actor: action.fromId } : {}) });
       result = t.status === "started" ? `Started (by ${action.fromName}) — I'll post here when it finishes.`
         : t.status === "checked" ? sproutCheckText(t.result, plan.queuesNew) : `Didn't start: ${t.reason}`;
     } catch (err) {
