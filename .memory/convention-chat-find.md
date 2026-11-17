@@ -12,3 +12,5 @@ match never spans paragraphs. Highlights are `bean-find` / `bean-find-current` (
 Gotchas: Preact can run a component's unmount effect cleanup *after* its DOM is gone, so `close()`
 deletes the highlights itself (the e2e caught them lingering). Any chat list that auto-scrolls
 must follow only when near the bottom (ChatPanel, SyncedChat) or it drags the view off a match.
+Reveal a match by setting the list's own `scrollTop`, never `scrollIntoView` — it also scrolls
+`overflow: hidden` ancestors, so centering a match near the end shoved the window up (blank below).

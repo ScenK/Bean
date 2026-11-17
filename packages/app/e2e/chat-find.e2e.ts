@@ -53,6 +53,12 @@ test("chat find: Cmd+F counts, steps and scrolls through the shown chat's matche
     await input.press("Shift+Enter");
     await expect(status).toHaveText("30 of 30");
     await expect.poll(scrollTop).toBeGreaterThan(top + 200);
+    // Only the list scrolls: centering the last match must not push the window's layout up (blank below).
+    expect(await chat.locator(".bean-chat:not([hidden]) .bean-chat-scroll").evaluate((el) => {
+      const shifted: string[] = [];
+      for (let a = el.parentElement; a; a = a.parentElement) if (a.scrollTop) shifted.push(a.className || a.tagName);
+      return shifted;
+    })).toEqual([]);
 
     await input.fill("no such thing");
     await expect(status).toHaveText("No matches");

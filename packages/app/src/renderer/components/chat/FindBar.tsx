@@ -34,12 +34,14 @@ export function FindBar({ seq, onClose }: { seq: number; onClose: () => void }) 
   };
   const reveal = (): void => {
     const r = rangesRef.current[currentRef.current];
-    const box = root()?.getBoundingClientRect();
-    if (!r || !box) return;
+    const list = root();
+    if (!r || !list) return;
+    const box = list.getBoundingClientRect();
     const at = r.getBoundingClientRect();
     if (at.top >= box.top && at.bottom <= box.bottom) return; // already on screen — no jump
-    const el = r.startContainer.parentElement;
-    el?.scrollIntoView({ block: "center" });
+    // Scroll the list only (clamped by the browser). scrollIntoView also scrolls every ancestor,
+    // overflow:hidden included: a match near the end shoved the whole window up, blank below.
+    list.scrollTop += at.top + at.height / 2 - (box.top + box.height / 2);
   };
   const select = (i: number, scroll: boolean): void => {
     currentRef.current = i;
