@@ -147,11 +147,70 @@ const REFUSAL_TEXT: Record<RoutineTriggerRefusal, (name: string) => string> = {
   standby: () => "sprouts are paused on this Bean — another Bean process runs them for this data directory",
 };
 
+/** Bot → app (#924): which sprouts have a run going now — background_work's live counts. Carries
+ * nothing but its request id. App → bot: names and slot counts, or none (`running` absent) when the
+ * app isn't the scheduler host. */
+export type RoutineRunning = { type: "routine-running"; requestId: string };
+export type RoutineRunningResult = { type: "routine-running-result"; requestId: string; running?: { name: string; runs: number }[] };
+const MAX_RUNNING = 200;
+
+export function parseRoutineRunning(v: unknown): RoutineRunning | undefined {
+  const o = fields(v, "routine-running");
+  return o && id(o.requestId) ? { type: "routine-running", requestId: o.requestId } : undefined;
+}
+
+export function parseRoutineRunningResult(v: unknown): RoutineRunningResult | undefined {
+  const o = fields(v, "routine-running-result");
+  if (!o || !id(o.requestId)) return undefined;
+  const base = { type: "routine-running-result" as const, requestId: o.requestId };
+  if (o.running === undefined) return base;
+  if (!Array.isArray(o.running) || o.running.length > MAX_RUNNING) return undefined;
+  const running: { name: string; runs: number }[] = [];
+  for (const r of o.running as unknown[]) {
+    const e = r as Record<string, unknown> | null;
+    if (typeof e !== "object" || e === null || !id(e.name) || !Number.isSafeInteger(e.runs) || (e.runs as number) < 0) return undefined;
+    running.push({ name: e.name, runs: e.runs as number });
+  }
+  return { ...base, running };
+}
+
+/** How long background_work waits for the app's live counts before reporting them unknown. */
+export const ROUTINE_RUNNING_TIMEOUT_MS = 5_000;
+
+/** Bot side: the app's live run counts, or undefined (standalone bot, app gone, no answer, standby). */
+export function parentSproutRunning(port: ParentPort = processParentPort, timeoutMs = ROUTINE_RUNNING_TIMEOUT_MS, newId: () => string = randomUUID):
+  () => Promise<{ name: string; runs: number }[] | undefined> {
+  const pending = new Map<string, (r: { name: string; runs: number }[] | undefined) => void>();
+  port.onMessage((raw) => {
+    const r = parseRoutineRunningResult(raw);
+    if (r) pending.get(r.requestId)?.(r.running);
+  });
+  port.onDisconnect(() => { for (const settle of [...pending.values()]) settle(undefined); });
+  return () => {
+    if (!port.connected()) return Promise.resolve(undefined);
+    const requestId = newId();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => settle(undefined), timeoutMs);
+      const settle = (r: { name: string; runs: number }[] | undefined): void => {
+        if (!pending.delete(requestId)) return;
+        clearTimeout(timer);
+        resolve(r);
+      };
+      pending.set(requestId, settle);
+      try {
+        port.send({ type: "routine-running", requestId }, (err) => { if (err) settle(undefined); });
+      } catch {
+        settle(undefined);
+      }
+    });
+  };
+}
+
 /** The bot's IPC slot to the app that spawned it (`process` in a real bot). */
 export interface ParentPort {
   /** False for a standalone bot, or once the app has gone. */
   connected(): boolean;
-  send(msg: RoutineTrigger, cb: (err: Error | null) => void): void;
+  send(msg: RoutineTrigger | RoutineRunning, cb: (err: Error | null) => void): void;
   onMessage(cb: (raw: unknown) => void): void;
   onDisconnect(cb: () => void): void;
 }

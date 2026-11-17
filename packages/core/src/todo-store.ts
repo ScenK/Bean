@@ -110,6 +110,11 @@ export async function listTodos(file: string, routine: string): Promise<TodoItem
   return rows.map(toItem);
 }
 
+export function getTodo(file: string, id: string): TodoItem | undefined {
+  const row = openDb(file).prepare(`${SELECT} WHERE id = ?`).get(id) as unknown as TodoRow | undefined;
+  return row ? toItem(row) : undefined;
+}
+
 export async function listAllTodos(file: string): Promise<TodoItem[]> {
   const rows = openDb(file).prepare(`${SELECT} ORDER BY routine ASC, ord ASC`).all() as unknown as TodoRow[];
   return rows.map(toItem);

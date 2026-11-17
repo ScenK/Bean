@@ -62,3 +62,11 @@ chat thread id), actor, sprout, optional todo id, run ids, terminal status, brie
   todo deletes its open row (else a restart would report it "interrupted"). Desktop: the todo card
   keeps `jobId`, settles via the same `sprout` push/restore as a sprout card (`chatTodoDispatch`,
   a `REMOTE_OPS` entry; no orphan matching for it on a dropped remote reply).
+- **`background_work` (#924).** Read-only action tool (core `background-work.ts`): live run slots
+  (scheduler `runningNames`/`runningCount`, lease holder only — else `"unknown"`), open todo counts,
+  this conversation's dispatch rows (`conversationDispatches`; unset conversation = the owner DM)
+  with state/queue position/brief, each sprout's last run. A spawned bot gets the live counts over
+  the IPC slot (`routine-running` → `routine-running-result`, request id only; no answer in 5s =
+  unknown). Same gate as `list_todos`; a non-owner sees only `myTodos` + jobs they tapped or queued
+  (never counts across people, last results or anyone else's text), and a member DM reads no rows.
+  Desktop: owner view, rows of the chat's pinned thread + threads it dispatched from.

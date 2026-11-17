@@ -2075,6 +2075,38 @@ test("list_todos / cancel_todo pass the member's id (own only); the owner's are 
   expect(seen).toEqual(["mia", "mia", undefined, undefined]);
 });
 
+test("background_work: the owner gets live counts; a member's DM reads no dispatches and is scoped to them", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bean-bot-work-"));
+  {
+    const asked: (string | undefined)[] = [];
+    const outs: string[] = [];
+    for (const who of [owner, member]) {
+      let call = 0;
+      const { deps } = withRoles({
+        chat: async (a) => {
+          if (++call === 1) return { content: "", toolCalls: [{ name: "background_work", args: {} }] };
+          outs.push(String(a.messages.at(-1)?.content ?? ""));
+          return { content: "ok", toolCalls: [] };
+        },
+      });
+      deps.backgroundWork = { file: join(dir, "bean.db"), stateFile: join(dir, ".state.json"), dispatches: (c) => { asked.push(c); return []; } };
+      deps.routines = {
+        transport: "teams", load: async () => [], save: async () => {}, create: async () => {},
+        notifyOwner: async () => {}, recipients: async () => [], proposals: new RoutineProposalStore(),
+        sprouts: {
+          trigger: async () => ({ status: "started" }), facts: async () => ({ pending: 0, seeded: true }),
+          proposals: new SproutRunProposalStore(), running: async () => [{ name: "triage", runs: 1 }],
+        },
+      };
+      await buildTeamsBot(deps).onMessage({ ...who, direct: true, conversationId: `dm-${who.fromId}` }, fx());
+    }
+    // The owner's DM reads the unset conversation; the member's DM never reads (it's the owner's).
+    expect(asked).toEqual([undefined]);
+    expect(JSON.parse(outs[0]!)).toMatchObject({ running: [{ sprout: "triage", runs: 1 }] });
+    expect(JSON.parse(outs[1]!)).toEqual({ myTodos: [], dispatched: [] });
+  }
+});
+
 test("a member's forced delegate/skill proposal (not offered) is refused at runtime: no card, no IO", async () => {
   for (const converseResult of [delegateResult, { reply: "", proposedSkill: { name: "x", body: "b" } } as ConverseResult]) {
     const { deps, delegateCalls, savedSkills } = withRoles({ converseResult });

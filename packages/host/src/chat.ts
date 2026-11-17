@@ -1,6 +1,6 @@
 import {
   converse, checkPdfAttachment, scratchDir, makeGenerateImageTool, makeMemoryTools, memoryCategories, type ImageGenDeps,
-  checkImageAttachments, availableModels, planSproutRun, type SproutRunBlock,
+  checkImageAttachments, availableModels, planSproutRun, makeBackgroundWorkTool, threadDispatches, type SproutRunBlock,
   type Project, type Skill, type ConverseDeps, type ConverseResult, type ChatRequest, type Persona,
   type CliName, type Memory, type ActionTool, type AvailableModel, type Routine, type CliModels, type SendCard,
   DESKTOP_CHAT_MAX_BYTES, type DesktopChat, type DesktopChatInput, type DesktopChatListing, type DispatchStatus,
@@ -38,6 +38,13 @@ export interface ChatHandlerDeps {
   loadRoutines?: () => Promise<Routine[]>;
   /** A sprout's pending todos and whether its watch is seeded — enables propose_sprout_run. */
   sproutFacts?: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
+  /** Enables background_work (#924): the sprouts' state file, the live run counts, and the chat
+   * threads this chat (mount) dispatched from. */
+  backgroundWork?: {
+    stateFile: string;
+    running: () => { name: string; runs: number }[] | undefined;
+    threadsOf: (mountId: string) => string[];
+  };
   /** A routine's pending todos: a todo card's "N ahead in queue" (#923). */
   todoAhead?: (routine: string) => number;
   /** Enables propose_send: matches the spoken destination and keeps the proposal for the Send tap. */
@@ -88,7 +95,15 @@ export function buildChatHandler(deps: ChatHandlerDeps) {
           classifier: { chat: deps.converse, model: deps.getModel() },
         })
       : undefined;
-    const actions = [...(deps.actions ?? []), ...(imageTool ? [imageTool.tool] : []), ...(memoryTools?.tools ?? [])];
+    const work = deps.backgroundWork;
+    // The desktop is the owner's own machine: background_work shows everything (no viewer).
+    const workTool = work
+      ? makeBackgroundWorkTool({
+          file: deps.dbFile, stateFile: work.stateFile, running: async () => work.running(),
+          dispatches: () => (mountId === undefined ? [] : work.threadsOf(mountId).flatMap((t) => threadDispatches(deps.dbFile, t))),
+        })
+      : undefined;
+    const actions = [...(deps.actions ?? []), ...(imageTool ? [imageTool.tool] : []), ...(memoryTools?.tools ?? []), ...(workTool ? [workTool] : [])];
     const result = await converse({
       history: req.history,
       latestUserText: req.message,

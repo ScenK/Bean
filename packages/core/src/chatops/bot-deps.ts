@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
   configFile, dbFile, imagesDir, loadConfig, modelMemoryFile, outboxDir, personaFile, projectsFile, remindersFile,
-  routinesDir, skillsDir,
+  routinesDir, routineStateFile, skillsDir,
 } from "../config.js";
 import { setBeanGitIdentity } from "../agent-rules.js";
+import { conversationDispatches } from "../dispatch-store.js";
 import { listDestinations } from "../destinations.js";
 import { appendMemories, deleteMemories, loadMemories, shareMemory } from "../memory/store.js";
 import { loadModelMemory, saveModelMemory } from "../model-memory.js";
@@ -38,7 +39,7 @@ export type SharedBotDeps = Pick<TeamsBotDeps,
   | "onActivity" | "model"
   | "loadSkills" | "loadProjects" | "loadPersona" | "loadMemories" | "ownerSubjectIds" | "loadModelMemory" | "saveModelMemory"
   | "noteProposals" | "saveNote" | "saveNoteImage" | "searchNotes" | "noteArchiveProposals" | "archiveNote" | "restoreNote"
-  | "todoProposals" | "queueTodo" | "queueTodoDispatch" | "pendingTodos" | "listTodoRoutines" | "listOpenTodos" | "cancelTodo"
+  | "todoProposals" | "queueTodo" | "queueTodoDispatch" | "pendingTodos" | "listTodoRoutines" | "listOpenTodos" | "cancelTodo" | "backgroundWork"
   | "skillProposals" | "saveSkill"
   | "appendMemories" | "deleteMemories" | "shareMemory" | "autoMemoryEnabled"
   | "systemControlsEnabled" | "webSearchEnabled" | "imageGen"
@@ -92,6 +93,7 @@ export function sharedBotDeps(opts: {
       .filter((r) => (member ? memberTodoEligible(r) : r.todoDriven)).map((r) => r.name),
     listOpenTodos: (createdBy) => listOpenTodos(db, createdBy),
     cancelTodo: (id, createdBy) => cancelPendingTodo(db, id, createdBy),
+    backgroundWork: { file: db, stateFile: routineStateFile(dir), dispatches: (conversation) => conversationDispatches(db, transport, conversation) },
     skillProposals: new SkillProposalStore(),
     saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body, skillsDir(builtinDir)),
     appendMemories: (m) => appendMemories(db, m),
