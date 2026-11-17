@@ -302,6 +302,7 @@ export async function createHost(deps: HostDeps) {
   const SPROUTS_STANDBY = "Sprouts are paused on this Bean — another Bean process runs them for this data directory.";
   // Set once the chat sessions exist; a sweep before then leaves desktop results owed.
   let deliverDesktopSprout: ((d: Dispatch) => boolean) | undefined;
+  let threadsOfChat: ((mountKey: string) => string[]) | undefined;
   const triggerSprout = (name: string, action: "run" | "check", opts: Parameters<typeof routineScheduler.trigger>[2]) => {
     if (action !== "run") return routineScheduler.trigger(name, action);
     if (updating) return Promise.resolve({ status: "refused" as const, reason: UPDATING });
@@ -329,6 +330,11 @@ export async function createHost(deps: HostDeps) {
     file: db,
     runTodo: runTodoNow,
   });
+  // background_work's live counts (#924), for desktop chats and the bots: none on a standby host,
+  // whose scheduler isn't the one running sprouts.
+  const liveSprouts = (): { name: string; runs: number }[] | undefined => (schedulerLease.held()
+    ? routineScheduler.runningNames().map((name) => ({ name, runs: routineScheduler.runningCount(name) }))
+    : undefined);
   // A desktop chat's sprout card (#921): the same recorded dispatch, its origin the chat thread.
   const chatSproutTrigger = withDispatch(triggerSprout, { file: db, surface: "desktop", deliver: routines.deliverDispatches });
   const tools = detectTools(resolvedPath);
@@ -455,6 +461,7 @@ export async function createHost(deps: HostDeps) {
     loadRoutines: () => loadRoutines(routinesPath),
     sproutFacts: (r) => sproutRunFacts(db, r),
     todoAhead: (r) => pendingTodoCount(db, r),
+    backgroundWork: { stateFile: routineStateFile(dir), running: liveSprouts, threadsOf: (k) => threadsOfChat?.(k) ?? [] },
     proposeSend: sends.propose,
     imageGen: {
       generate: (a) => makeOpenAIImageGen(runtime.getApiKey())(a),
@@ -515,6 +522,7 @@ export async function createHost(deps: HostDeps) {
   });
 
   deliverDesktopSprout = sessions.deliverSprout;
+  threadsOfChat = sessions.threadsOf;
 
   const getConfig = (): ConfigView => ({
     openaiApiKey: runtime.getApiKey(),
@@ -628,6 +636,7 @@ export async function createHost(deps: HostDeps) {
   // Last: a replayed autostart may answer a sprout tap at once, so the scheduler must exist.
   const bots = await startBots({
     ...deps.bots, dir, builtinDir: projectDir, resolvedPath, taskStatus, onQuit: deps.onQuit, onRoutineTrigger: answerSproutTrigger,
+    onRoutineRunning: liveSprouts,
   });
   // The owner's daily memory digest (#859): under the scheduler lease, to every bot running now.
   deps.onQuit(startMemoryDigest({

@@ -9,7 +9,7 @@ import {
   type PendingProposal, type ProposedLiveSession, threadTitle, makeOpenAISpeak, makeOpenAITranscribe,
   MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES, type ImageAttachment, makeRoles, makeTurnCap, makeChunkGroups,
   localDay, localTimeZone, DAILY_TURN_CAP, atLeast, cardActionNeeds, cardTapRefusal, dmAllowed, parseRoleCommand,
-  parseRoutineCommand, parseChatterCommand, parseAwayCommand, SproutRunProposalStore, type Role, parentSproutTrigger, processParentPort,
+  parseRoutineCommand, parseChatterCommand, parseAwayCommand, SproutRunProposalStore, type Role, parentSproutTrigger, parentSproutRunning, processParentPort,
   sproutRunFacts, recordDestination, forgetDestination, sharedBotDeps,
 } from "@bean/core";
 import {
@@ -101,7 +101,7 @@ const bot = buildTeamsBot({
       id, name: await client.users.fetch(id).then((u) => u.displayName, () => id),
     }))),
     ...(appSprouts ? {
-      sprouts: { trigger: appSprouts, facts: (r) => sproutRunFacts(dbFile(dir), r), proposals: new SproutRunProposalStore() },
+      sprouts: { trigger: appSprouts, facts: (r) => sproutRunFacts(dbFile(dir), r), proposals: new SproutRunProposalStore(), running: parentSproutRunning() },
     } : {}),
   },
 });

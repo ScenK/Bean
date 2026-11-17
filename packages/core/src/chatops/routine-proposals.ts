@@ -236,7 +236,7 @@ export function routineListText(
     const homes = sproutProjects(r, projects);
     const needsFixing = problems.some((p) => p.kind !== "missing-skill");
     const also = (needsFixing ? homes : homes.slice(1)).map((p) => inert(p.name));
-    let line = `• **${r.name}** — ${r.enabled ? "on" : "off"} — ${describeSchedule(r, tz).replace(` (${tz})`, "")}`;
+    let line = `• **${r.name}** — ${r.enabled ? "on" : r.watch ? "off" : "on demand"} — ${describeSchedule(r, tz).replace(` (${tz})`, "")}`;
     if (also.length > 0) line += ` · also ${also.join(", ")}`;
     if (problems.length > 0) line += ` · ⚠ ${problems.map(problemText).join("; ")}`;
     sections[needsFixing ? 0 : at(homes[0])]!.lines.push(line);

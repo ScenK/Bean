@@ -231,7 +231,7 @@ export function sproutRunCard({ proposalId, plan, result }: SproutRunCardInput):
       { type: "TextBlock", size: "medium", weight: "bolder", text: `Sprout "${plan.routine}"`, wrap: true },
       { type: "TextBlock", text: plan.actionLine, wrap: true },
       { type: "TextBlock", text: `Results go to ${plan.resultsTo}`, wrap: true, isSubtle: true },
-      ...(plan.paused ? [{ type: "TextBlock", text: "Paused · runs once", wrap: true, isSubtle: true }] : []),
+      ...(plan.paused ? [{ type: "TextBlock", text: "On demand · runs once", wrap: true, isSubtle: true }] : []),
       ...(result !== undefined ? [{ type: "TextBlock", weight: "bolder", text: result, wrap: true }] : []),
     ],
     actions: result !== undefined ? [] : [

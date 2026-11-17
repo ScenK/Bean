@@ -223,7 +223,7 @@ function todoResultCard(input: TodoResultCardInput): object {
 function sproutRunCard({ proposalId, plan, result }: SproutRunCardInput): object {
   const fields = [
     { name: "Results go to", value: clampField(plan.resultsTo) },
-    ...(plan.paused ? [{ name: "Paused", value: "Runs once — stays paused" }] : []),
+    ...(plan.paused ? [{ name: "On demand", value: "Runs once now — no schedule" }] : []),
     ...(result !== undefined ? [{ name: "Result", value: clampField(result) }] : []),
   ];
   return {

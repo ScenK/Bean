@@ -134,7 +134,11 @@ export interface ProposedSproutRun { routine: string; }
 export interface ProposedSend { destination: string; text: string; }
 /** One sprout in propose_sprout_run's catalog — saved definition fields only, so the tool spec
  * stays byte-stable while the sprouts don't change. */
-export interface SproutCatalogEntry { name: string; description?: string; }
+export interface SproutCatalogEntry {
+  name: string; description?: string;
+  /** Todo-driven: the sprout takes a task (propose_todo) instead of only running its own steps. */
+  takesTask?: boolean;
+}
 // A confirm-first background coding task that reports its final result back to this chat.
 export interface ProposedDelegate {
   projectPath: string;
@@ -405,7 +409,8 @@ const SPROUT_LINE_MAX = 120;
 const sproutLine = (e: SproutCatalogEntry): string => {
   const line = (e.description ?? "").split("\n")[0]!.trim();
   const short = line.length > SPROUT_LINE_MAX ? `${line.slice(0, SPROUT_LINE_MAX - 1)}…` : line;
-  return short ? `- ${e.name}: ${short}` : `- ${e.name}`;
+  const name = e.takesTask ? `${e.name} (takes a task)` : e.name;
+  return short ? `- ${name}: ${short}` : `- ${name}`;
 };
 
 // Enum-gated like propose_todo. Built from definitions only (no queue counts, no run state), so
@@ -417,8 +422,13 @@ function proposeSproutRunTool(sprouts: SproutCatalogEntry[]): ToolSpec {
       "Run or check one of the user's sprouts right now — use when the user asks to run, start, " +
       "trigger or check a sprout. Bean decides whether it runs the sprout's steps or checks its " +
       "source, and the user confirms a card before anything starts. " +
-      "The user calls these sprouts; this tool's name and `routine` argument are internal — always say sprout.\n" +
-      `Sprouts:\n${sprouts.map(sproutLine).join("\n")}`,
+      "The user calls these sprouts; this tool's name and `routine` argument are internal — always say sprout. " +
+      "Asked what heavy work you can do, list these sprouts and say which take a task." +
+      (sprouts.some((e) => e.takesTask)
+        ? " For a heavy task, prefer a sprout marked (takes a task) whose description fits — hand it " +
+          "the task with propose_todo; otherwise use propose_delegate when it's offered."
+        : "") +
+      `\nSprouts:\n${sprouts.map(sproutLine).join("\n")}`,
     parameters: {
       type: "object",
       properties: {

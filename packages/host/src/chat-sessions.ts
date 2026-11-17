@@ -98,6 +98,15 @@ export function createChatSessions(deps: ChatSessionsDeps) {
     /** Where a mount-tagged push goes: the client holding the mount, or the one that last held it. */
     clientOf: mounts.clientOf,
     isIncognito: (k: string): boolean => deps.memory.isIncognito(k),
+    /** The chat threads a chat (mount key) dispatches sprouts from: its pinned thread and any it
+     * started a sprout under (#924, background_work). */
+    threadsOf: (k: string): string[] => {
+      const out = new Set<string>();
+      const pinned = deps.threads.pinnedOf(k);
+      if (pinned !== undefined) out.add(pinned);
+      for (const [thread, owner] of sproutThreads) if (owner === k) out.add(thread);
+      return [...out];
+    },
     attach: (client: ClientId, mountId: unknown): void => {
       if (deps.isChatClient(client) && !mounts.attach(client, mountId)) console.error("chat attach refused");
     },

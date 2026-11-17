@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
-  parseChatopsActivity, parseDeskAck, parseDeskSaved, parseRoutineTrigger,
-  type ChatopsActivity, type DeskAckResult, type DeskContinue, type DeskContinueBody, type DeskContinueResult, type DeskResume, type DeskTurn, type RoutineTrigger, type RoutineTriggerAnswer, type RoutineTriggerResult,
+  parseChatopsActivity, parseDeskAck, parseDeskSaved, parseRoutineRunning, parseRoutineTrigger,
+  type ChatopsActivity, type DeskAckResult, type DeskContinue, type DeskContinueBody, type DeskContinueResult, type DeskResume, type DeskTurn, type RoutineTrigger, type RoutineTriggerAnswer, type RoutineTriggerResult, type RoutineRunningResult,
 } from "@bean/core";
 
 export type ChatopsBot = "discord" | "teams";
@@ -29,7 +29,7 @@ export interface SpawnedProcess {
   on(event: "message", cb: (msg: unknown) => void): void;
   /** IPC to the bot (desk turns, desk resumes, sprout-trigger answers). The callback reports a
    * send that never left this process. */
-  send(msg: DeskTurn | DeskResume | DeskContinue | RoutineTriggerResult, cb: (err: Error | null) => void): boolean;
+  send(msg: DeskTurn | DeskResume | DeskContinue | RoutineTriggerResult | RoutineRunningResult, cb: (err: Error | null) => void): boolean;
   kill(): void;
 }
 
@@ -89,6 +89,9 @@ export interface ChatopsServersDeps {
   /** A bot asks the app (the scheduler host) to run or check a sprout from a tapped card (#637).
    * Absent, or throwing, answers `unavailable`. */
   onRoutineTrigger?: (bot: ChatopsBot, req: RoutineTrigger) => Promise<RoutineTriggerAnswer>;
+  /** A bot's background_work asks which sprouts are running now (#924). Absent, throwing or
+   * undefined (not the scheduler host) answers with no counts. */
+  onRoutineRunning?: () => { name: string; runs: number }[] | undefined;
   spawnFn?: (command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => SpawnedProcess;
   /** A bot's config file (`discord.json` / `teams.json` in the data directory). A bot whose file
    * is missing is not spawned — it would only exit on its first line and burn the retry budget. */
@@ -179,6 +182,15 @@ export function createChatopsServers(deps: ChatopsServersDeps) {
               child.send({ type: "routine-trigger-result", requestId: trigger.requestId, ...a }, () => {});
             } catch { /* channel closed — that bot is gone */ }
           });
+        return;
+      }
+      const askRunning = parseRoutineRunning(msg);
+      if (askRunning) {
+        let running: { name: string; runs: number }[] | undefined;
+        try { running = deps.onRoutineRunning?.(); } catch (err) { console.error(`bean: ${bot} running sprouts failed`, err); }
+        try {
+          child.send({ type: "routine-running-result", requestId: askRunning.requestId, ...(running ? { running } : {}) }, () => {});
+        } catch { /* channel closed — that bot is gone */ }
         return;
       }
       const saved = parseDeskSaved(msg);

@@ -21,7 +21,7 @@ export interface SproutRunPlan {
   actionLine: string;
   /** Where results go, from the sprout's sinks. */
   resultsTo: string;
-  /** A paused schedule sprout: it runs once and stays paused. */
+  /** A disabled schedule sprout — on demand: it runs once now and keeps no schedule. */
   paused: boolean;
   /** A check queues new items (steps) rather than only sending them on (notify-only). */
   queuesNew: boolean;

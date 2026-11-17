@@ -10,6 +10,8 @@ import { makeMemoryTools, saveScope } from "../memory/tools.js";
 import { extractMemories, memoryCategories } from "../memory/extract.js";
 import { makeReminderTools, reminderInConversation } from "./reminder-tools.js";
 import { makeTodoTools } from "./todo-tools.js";
+import { makeBackgroundWorkTool } from "../background-work.js";
+import type { Dispatch } from "../dispatch-store.js";
 import { chatRoutineProblem, todoRunHint, type Routine } from "../routine-store.js";
 import { destinationLabel, matchDestination, type Destination, type DestinationKey } from "../destinations.js";
 import type { OutboxMessage } from "../outbox.js";
@@ -201,6 +203,9 @@ export interface TeamsBotDeps {
   /** Backs list_todos / cancel_todo: `createdBy` set = only that speaker's rows (SQL-filtered). */
   listOpenTodos: (createdBy?: string) => Promise<TodoItem[]>;
   cancelTodo: (id: string, createdBy?: string) => Promise<boolean>;
+  /** Backs background_work (#924): bean.db, the sprouts' state file, and this conversation's
+   * dispatches (`conversation` absent = the owner DM). Absent = the tool isn't offered. */
+  backgroundWork?: { file: string; stateFile: string; dispatches: (conversation?: string) => Dispatch[] };
   skillProposals: SkillProposalStore;
   /** Persists a confirmed skill draft to the user's ~/.bean/skills (server injects the dir). */
   saveSkill: (name: string, body: string) => Promise<void>;
@@ -294,6 +299,8 @@ export interface TeamsBotDeps {
       /** A sprout's pending todos and whether its watch is seeded, for planSproutRun. */
       facts: (routine: Routine) => Promise<{ pending: number; seeded: boolean }>;
       proposals: SproutRunProposalStore;
+      /** Live run slots per sprout, from the scheduler host (`parentSproutRunning`); undefined = unknown. */
+      running?: () => Promise<{ name: string; runs: number }[] | undefined>;
     };
   };
 }
@@ -2036,6 +2043,19 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const todoTools = can(role, "todos")
           ? makeTodoTools({ list: deps.listOpenTodos, cancel: deps.cancelTodo, speakerId: msg.fromId, isOwner })
           : [];
+        // background_work (#924): same gate as list_todos. The owner sees everything; anyone else
+        // only their own todos and jobs — and a member's DM has no dispatch rows of theirs at all
+        // (an unset conversation is the owner's DM).
+        const work = deps.backgroundWork;
+        if (work && can(role, "todos")) {
+          const conversation = msg.direct ? undefined : msg.conversationId;
+          const running = deps.routines?.sprouts?.running;
+          todoTools.push(makeBackgroundWorkTool({
+            file: work.file, stateFile: work.stateFile,
+            dispatches: () => (msg.direct && !isOwner ? [] : work.dispatches(conversation)),
+            ...(isOwner ? (running ? { running } : {}) : { viewer: msg.fromId }),
+          }));
+        }
         // runAvailable=false: propose_run is never offered here — confirming one couldn't
         // execute anything from Teams/Discord; propose_delegate is the only run path.
         // The tool list is built from the role (action tools run inside converse(), so leaving
@@ -2068,7 +2088,7 @@ export function buildTeamsBot(deps: TeamsBotDeps): {
         const result = await converse({
           ...converseBase,
           actions: [...converseBase.actions, ...(canMemory ? memoryTools.tools : []), ...(reminderTools?.tools ?? []), ...todoTools],
-          sproutCatalog: sproutRoutines.map((r) => ({ name: r.name, description: r.description })),
+          sproutCatalog: sproutRoutines.map((r) => ({ name: r.name, description: r.description, takesTask: r.todoDriven })),
           history: [...history, ...repliedHint], latestUserText: msg.text, latestUserImages: msg.images,
           ...(ownerDm && canMemory ? { memoryCategories: memoryCategories(memories) } : {}),
         });
