@@ -81,6 +81,7 @@ export const CHANNEL_CONTRACT = {
   delegateCancel: core(str),
   delegateEvent: core(delegateEvent),
   chatSproutRun: core(str, str, str),
+  chatTodoDispatch: core(str, str, oneOf("run", "queue"), str, str),
   sproutEvent: core(sproutEvent),
   liveStart: core(liveStart, str),
   liveSend: core(str, str, str),

@@ -24,6 +24,8 @@ function setup() {
   const push = vi.fn();
   const sproutRun = vi.fn(async (_name: string, _origin: { channel?: string; keepBrief?: boolean }) =>
     ({ status: "started" as const, done: new Promise<TriggerOutcome>(() => {}), jobId: "job-1" }));
+  const todoDispatch = vi.fn(async (_t: { routine: string; text: string }, _mode: "run" | "queue", _origin: { channel: string; keepBrief: boolean }) =>
+    ({ jobId: "job-1", outcome: "next" as const }));
   const sproutOutcomes = vi.fn((_thread: string) => [{ jobId: "job-1", status: "ok" as const, text: "digest finished ✓" }]);
   const sessions = createChatSessions({
     isChatClient: (c) => c === CLIENT,
@@ -34,9 +36,10 @@ function setup() {
     liveTasks: { start: vi.fn(), send: vi.fn(), stop: vi.fn(), interrupt: vi.fn(), resume: vi.fn(), stopMount: vi.fn() } as never,
     push,
     sproutRun: sproutRun as never,
+    todoDispatch,
     sproutOutcomes: sproutOutcomes as never,
   });
-  return { sessions, saved, incognito, push, sproutRun, sproutOutcomes };
+  return { sessions, saved, incognito, push, sproutRun, todoDispatch, sproutOutcomes };
 }
 
 const ended = (over: Partial<Dispatch> = {}): Dispatch => ({
@@ -109,5 +112,18 @@ describe("a desktop chat's sprout run (#921)", () => {
     t.push.mockClear(); // the admission
     expect(t.sessions.deliverSprout(ended())).toBe(true);
     expect(t.push).not.toHaveBeenCalled();
+  });
+});
+
+describe("a desktop todo card's Run now / Queue (#923)", () => {
+  it("hands the task over with this chat's thread as origin, and its result comes back to this chat", async () => {
+    const t = setup();
+    t.sessions.attach(CLIENT, A);
+    expect(await t.sessions.todoDispatch(CLIENT, A, "nightly", "fix it", "run", THREAD)).toEqual({ jobId: "job-1", outcome: "next" });
+    expect(t.todoDispatch).toHaveBeenCalledWith({ routine: "nightly", text: "fix it" }, "run", { channel: THREAD, keepBrief: true });
+    expect(t.sessions.deliverSprout(ended({ todoId: "todo-1" }))).toBe(true);
+    expect(t.push).toHaveBeenLastCalledWith(A, "sprout", expect.objectContaining({ mountId: A, jobId: "job-1", status: "ok" }));
+    await expect(t.sessions.todoDispatch(CLIENT, A, "nightly", "fix it", "later", THREAD)).rejects.toThrow(/run or queue/);
+    await expect(t.sessions.todoDispatch(CLIENT, B, "nightly", "fix it", "queue", THREAD)).rejects.toThrow();
   });
 });

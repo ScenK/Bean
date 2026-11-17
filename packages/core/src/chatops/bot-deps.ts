@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
   configFile, dbFile, imagesDir, loadConfig, modelMemoryFile, outboxDir, personaFile, projectsFile, remindersFile,
-  routinesDir, skillsDir,
+  routinesDir, routineStateFile, skillsDir,
 } from "../config.js";
 import { setBeanGitIdentity } from "../agent-rules.js";
+import { conversationDispatches } from "../dispatch-store.js";
 import { listDestinations } from "../destinations.js";
 import { appendMemories, deleteMemories, loadMemories, shareMemory } from "../memory/store.js";
 import { loadModelMemory, saveModelMemory } from "../model-memory.js";
@@ -15,7 +16,7 @@ import { loadPersona } from "../persona-store.js";
 import { loadProjects } from "../project-registry.js";
 import { createRoutine, loadRoutines, memberTodoEligible, resolveTodoRoutine, saveRoutine } from "../routine-store.js";
 import { loadLayeredSkills, saveSkill } from "../skill-library.js";
-import { addTodo, cancelPendingTodo, listOpenTodos } from "../todo-store.js";
+import { addTodo, cancelPendingTodo, listOpenTodos, pendingTodoCount, queueTodoDispatch } from "../todo-store.js";
 import type { BeanConfig } from "../types.js";
 import { parentActivitySink } from "./activity.js";
 import type { TeamsBotDeps } from "./bot.js";
@@ -38,7 +39,7 @@ export type SharedBotDeps = Pick<TeamsBotDeps,
   | "onActivity" | "model"
   | "loadSkills" | "loadProjects" | "loadPersona" | "loadMemories" | "ownerSubjectIds" | "loadModelMemory" | "saveModelMemory"
   | "noteProposals" | "saveNote" | "saveNoteImage" | "searchNotes" | "noteArchiveProposals" | "archiveNote" | "restoreNote"
-  | "todoProposals" | "queueTodo" | "listTodoRoutines" | "listOpenTodos" | "cancelTodo"
+  | "todoProposals" | "queueTodo" | "queueTodoDispatch" | "pendingTodos" | "listTodoRoutines" | "listOpenTodos" | "cancelTodo" | "backgroundWork"
   | "skillProposals" | "saveSkill"
   | "appendMemories" | "deleteMemories" | "shareMemory" | "autoMemoryEnabled"
   | "systemControlsEnabled" | "webSearchEnabled" | "imageGen"
@@ -82,10 +83,17 @@ export function sharedBotDeps(opts: {
       await addTodo(db, routine, text, undefined, undefined, createdBy);
       return target;
     },
+    queueTodoDispatch: async (t, report) => {
+      const routine = resolveTodoRoutine(await loadRoutines(routinesDir(dir)), t.routine, t.createdBy !== undefined);
+      const q = queueTodoDispatch(db, t, { surface: transport, ...(report.channel ? { conversation: report.channel } : {}), ...(report.actor ? { actor: report.actor } : {}) });
+      return { ...(routine ? { routine } : {}), jobId: q.jobId, ahead: q.ahead };
+    },
+    pendingTodos: async (routine) => pendingTodoCount(db, routine),
     listTodoRoutines: async (member) => (await loadRoutines(routinesDir(dir)))
       .filter((r) => (member ? memberTodoEligible(r) : r.todoDriven)).map((r) => r.name),
     listOpenTodos: (createdBy) => listOpenTodos(db, createdBy),
     cancelTodo: (id, createdBy) => cancelPendingTodo(db, id, createdBy),
+    backgroundWork: { file: db, stateFile: routineStateFile(dir), dispatches: (conversation) => conversationDispatches(db, transport, conversation) },
     skillProposals: new SkillProposalStore(),
     saveSkill: (name, body) => saveSkill(skillsDir(dir), name, body, skillsDir(builtinDir)),
     appendMemories: (m) => appendMemories(db, m),

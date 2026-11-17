@@ -83,6 +83,20 @@ describe("normalizeForSave", () => {
     expect(applySproutEnd(items, { ...end, jobId: "other" }).loopback).toBeUndefined();
   });
 
+  it("a todo card run or queued (#923) settles on its result like a sprout card; a legacy queued card stays", () => {
+    const todo = { routine: "nightly", text: "fix it" };
+    const items: ChatItem[] = [
+      { kind: "todo", id: "t1", todo, state: "queued", jobId: "j1", result: "Queued" },
+      { kind: "todo", id: "t2", todo, state: "queued" },
+    ];
+    const out = applySproutEnd(items, { jobId: "j1", status: "ok", text: "nightly finished ✓" });
+    expect(out.items[0]).toMatchObject({ state: "done", result: "Finished" });
+    expect(out.loopback?.display).toBe('🌱 Sprout "nightly" — finished');
+    expect(normalizeForSave([items[1]!])[0]).toMatchObject({ state: "queued" });
+    expect(normalizeForSave([{ kind: "todo", id: "t3", todo, state: "sending" }])[0]).toMatchObject({ state: "done" });
+    expect(settleRestoredSprouts([items[0]!], [{ jobId: "j1" }]).changed).toBe(false); // still waiting in line
+  });
+
   it("restored running sprout cards settle from main's record: ended loops back, running stays, unknown can't say", () => {
     const plan = { routine: "r", action: "run" as const, actionLine: "x", resultsTo: "a note", paused: false, queuesNew: false };
     const items: ChatItem[] = ["a", "b", "c"].map((j) => ({ kind: "sprout" as const, id: j, plan, state: "running" as const, jobId: j }));

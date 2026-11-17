@@ -153,7 +153,7 @@ test("todo proposal message shows the routine/text and wires queue/cancel custom
 test("sprout-run card: action line, destinations, Run/Cancel; tapped = result and no buttons", () => {
   const plan = { routine: "pr-digest", action: "run" as const, actionLine: "Runs its steps once now", resultsTo: "Discord", paused: true, queuesNew: false };
   const s = JSON.stringify(discordCards.sproutRunCard({ proposalId: "sprout-1", plan }));
-  for (const bit of ['Sprout \\"pr-digest\\"', "Runs its steps once now", "Discord", "Runs once", "bean:run-sprout:sprout-1", "bean:cancel-sprout:sprout-1", '"label":"Run"']) {
+  for (const bit of ['Sprout \\"pr-digest\\"', "Runs its steps once now", "Discord", "On demand", "Runs once", "bean:run-sprout:sprout-1", "bean:cancel-sprout:sprout-1", '"label":"Run"']) {
     expect(s).toContain(bit);
   }
   const done = discordCards.sproutRunCard({ proposalId: "sprout-1", plan: { ...plan, action: "check" }, result: "nothing new" }) as { components: unknown[] };

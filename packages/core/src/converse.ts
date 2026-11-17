@@ -122,7 +122,11 @@ export interface RoutineAuthoring {
   destinations?: Destination[];
 }
 /** A queue item draft awaiting user confirmation — todos are never queued silently. */
-export interface ProposedTodo { routine: string; text: string; }
+export interface ProposedTodo {
+  routine: string; text: string;
+  /** Pending todos it would wait behind — filled in by the host for the card, never by the model. */
+  ahead?: number;
+}
 /** A sprout the model asked to run or check; the host decides the action (planSproutRun). */
 export interface ProposedSproutRun { routine: string; }
 /** propose_send: the destination exactly as the user named it (resolved by the surface, never an
@@ -130,7 +134,11 @@ export interface ProposedSproutRun { routine: string; }
 export interface ProposedSend { destination: string; text: string; }
 /** One sprout in propose_sprout_run's catalog — saved definition fields only, so the tool spec
  * stays byte-stable while the sprouts don't change. */
-export interface SproutCatalogEntry { name: string; description?: string; }
+export interface SproutCatalogEntry {
+  name: string; description?: string;
+  /** Todo-driven: the sprout takes a task (propose_todo) instead of only running its own steps. */
+  takesTask?: boolean;
+}
 // A confirm-first background coding task that reports its final result back to this chat.
 export interface ProposedDelegate {
   projectPath: string;
@@ -261,8 +269,8 @@ const behaviorInstructions = (runAvailable: boolean, delegateOffered: boolean, w
   "so plainly; never claim you remembered or forgot something the tool didn't. " +
   "When the user asks you to create a new skill or change an existing one, call propose_skill " +
   "with the complete markdown — the user confirms the card before anything is written. " +
-  "If you are given a propose_todo tool, use it when the user wants a task queued for later " +
-  "instead of done now — the sprout runs it on its own schedule; the card is the confirmation.";
+  "If you are given a propose_todo tool, use it when the user wants a sprout to take a task — " +
+  "now or queued for later; the card's Run now / Queue is the confirmation.";
   
 
 // Attached files are third-party content: data, never authority (safety-saved-text-never-system).
@@ -379,9 +387,11 @@ function proposeTodoTool(todoRoutines: string[]): ToolSpec {
   return {
     name: "propose_todo",
     description:
-      "Queue a task on one of the user's todo-driven sprouts — the sprout works through its " +
-      "queue on its own schedule (e.g. overnight). Use when the user wants a task queued for " +
-      "later rather than done now. The user confirms a card before anything is queued. " +
+      "Hand a task to one of the user's todo-driven sprouts. The card offers two actions: Run now " +
+      "(runs only this task, right away — or next, if the sprout is busy) and Queue (the sprout " +
+      "works through its queue on its own schedule, e.g. overnight). Either way the task's result " +
+      "is reported back to this conversation. The user picks on the card; nothing runs or is " +
+      "queued before that. " +
       "The user calls these sprouts; this tool's name and `routine` argument are internal — always say sprout.",
     parameters: {
       type: "object",
@@ -399,7 +409,8 @@ const SPROUT_LINE_MAX = 120;
 const sproutLine = (e: SproutCatalogEntry): string => {
   const line = (e.description ?? "").split("\n")[0]!.trim();
   const short = line.length > SPROUT_LINE_MAX ? `${line.slice(0, SPROUT_LINE_MAX - 1)}…` : line;
-  return short ? `- ${e.name}: ${short}` : `- ${e.name}`;
+  const name = e.takesTask ? `${e.name} (takes a task)` : e.name;
+  return short ? `- ${name}: ${short}` : `- ${name}`;
 };
 
 // Enum-gated like propose_todo. Built from definitions only (no queue counts, no run state), so
@@ -411,8 +422,13 @@ function proposeSproutRunTool(sprouts: SproutCatalogEntry[]): ToolSpec {
       "Run or check one of the user's sprouts right now — use when the user asks to run, start, " +
       "trigger or check a sprout. Bean decides whether it runs the sprout's steps or checks its " +
       "source, and the user confirms a card before anything starts. " +
-      "The user calls these sprouts; this tool's name and `routine` argument are internal — always say sprout.\n" +
-      `Sprouts:\n${sprouts.map(sproutLine).join("\n")}`,
+      "The user calls these sprouts; this tool's name and `routine` argument are internal — always say sprout. " +
+      "Asked what heavy work you can do, list these sprouts and say which take a task." +
+      (sprouts.some((e) => e.takesTask)
+        ? " For a heavy task, prefer a sprout marked (takes a task) whose description fits — hand it " +
+          "the task with propose_todo; otherwise use propose_delegate when it's offered."
+        : "") +
+      `\nSprouts:\n${sprouts.map(sproutLine).join("\n")}`,
     parameters: {
       type: "object",
       properties: {
